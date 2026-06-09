@@ -10,6 +10,8 @@ MESHTASTIC_CMD = "/home/flint/.local/bin/meshtastic"
 LOCAL_NODE_NAME = "Flint Base"
 KNOWN_NODES = {
     "!1fa065f0": "Elektroniker",
+    "!067a40fa": "Flint Base",
+    "!756f9960": "Flint TAP2",
 }
 
 app = Flask(__name__)

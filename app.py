@@ -8,6 +8,9 @@ APP_HOST = "0.0.0.0"
 APP_PORT = 5000
 MESHTASTIC_CMD = "/home/flint/.local/bin/meshtastic"
 LOCAL_NODE_NAME = "Flint Base"
+KNOWN_NODES = {
+    "!1fa065f0": "Elektroniker",
+}
 
 app = Flask(__name__)
 
@@ -224,7 +227,12 @@ def extract_packet_id(line):
 def extract_sender(line):
     m = re.search(r"'fromId':\s*'([^']+)'", line)
     if m:
-        return m.group(1)
+        node_id = m.group(1)
+
+        if node_id in KNOWN_NODES:
+            return KNOWN_NODES[node_id]
+
+        return node_id
 
     m = re.search(r"'from':\s*(\d+)", line)
     if m:
@@ -400,4 +408,3 @@ if __name__ == "__main__":
     t = threading.Thread(target=listen_meshtastic, daemon=True)
     t.start()
     app.run(host=APP_HOST, port=APP_PORT)
-    

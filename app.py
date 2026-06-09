@@ -8,6 +8,7 @@ APP_HOST = "0.0.0.0"
 APP_PORT = 5000
 MESHTASTIC_CMD = "/home/flint/.local/bin/meshtastic"
 LOCAL_NODE_NAME = "Flint Base"
+
 KNOWN_NODES = {
     "!1fa065f0": "Elektroniker",
     "!067a40fa": "Flint Base",
@@ -19,6 +20,7 @@ app = Flask(__name__)
 messages = []
 seen_ids = set()
 seen_recent_texts = {}
+nodes = {}
 
 listen_process = None
 radio_lock = threading.Lock()
@@ -57,12 +59,50 @@ body {
     color: #777;
     font-size: 12px;
 }
+.main {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+}
 #chat {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
     padding: 12px;
     background: #eeeeee;
+}
+#nodes {
+    width: 260px;
+    flex: 0 0 260px;
+    overflow-y: auto;
+    background: #f8f8f8;
+    border-left: 1px solid #ccc;
+    padding: 10px;
+    box-sizing: border-box;
+}
+.nodes-title {
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+.node-card {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 8px;
+    margin-bottom: 8px;
+}
+.node-name {
+    font-weight: bold;
+    font-size: 14px;
+}
+.node-id {
+    color: #777;
+    font-size: 11px;
+}
+.node-meta {
+    color: #555;
+    font-size: 12px;
+    margin-top: 4px;
 }
 .row {
     display: flex;
@@ -120,12 +160,24 @@ button {
     padding: 8px 22px;
     font-size: 17px;
 }
+@media (max-width: 900px) {
+    #nodes {
+        display: none;
+    }
+}
 </style>
 </head>
 <body>
 <div class="header">Meshnode Web Chat - LongFast Channel 0</div>
 <div class="status" id="status">loading...</div>
-<div id="chat"></div>
+
+<div class="main">
+    <div id="chat"></div>
+    <div id="nodes">
+        <div class="nodes-title">Nodes</div>
+        <div id="nodesList"></div>
+    </div>
+</div>
 
 <form id="sendForm">
 <input id="text" autocomplete="off" placeholder="Введите сообщение..." />
@@ -173,6 +225,31 @@ async function loadMessages() {
     if (nearBottom) {
         chat.scrollTop = chat.scrollHeight;
     }
+
+    const nodesList = document.getElementById('nodesList');
+    nodesList.innerHTML = '';
+
+    data.nodes.forEach(n => {
+        const card = document.createElement('div');
+        card.className = 'node-card';
+
+        const name = document.createElement('div');
+        name.className = 'node-name';
+        name.textContent = n.name;
+
+        const id = document.createElement('div');
+        id.className = 'node-id';
+        id.textContent = n.node_id;
+
+        const meta = document.createElement('div');
+        meta.className = 'node-meta';
+        meta.textContent = n.meta;
+
+        card.appendChild(name);
+        card.appendChild(id);
+        card.appendChild(meta);
+        nodesList.appendChild(card);
+    });
 }
 
 document.getElementById('sendForm').addEventListener('submit', async (e) => {
@@ -226,15 +303,17 @@ def extract_packet_id(line):
 
     return None
 
-def extract_sender(line):
+def extract_node_id(line):
     m = re.search(r"'fromId':\s*'([^']+)'", line)
     if m:
-        node_id = m.group(1)
+        return m.group(1)
 
-        if node_id in KNOWN_NODES:
-            return KNOWN_NODES[node_id]
+    return None
 
-        return node_id
+def extract_sender(line):
+    node_id = extract_node_id(line)
+    if node_id:
+        return KNOWN_NODES.get(node_id, node_id)
 
     m = re.search(r"'from':\s*(\d+)", line)
     if m:
@@ -260,6 +339,74 @@ def extract_text_message(line):
 
     return None
 
+def extract_rssi(line):
+    m = re.search(r"'rxRssi':\s*(-?\d+)", line)
+    if m:
+        return m.group(1)
+
+    m = re.search(r"\brx_rssi:\s*(-?\d+)", line)
+    if m:
+        return m.group(1)
+
+    return None
+
+def extract_snr(line):
+    m = re.search(r"'rxSnr':\s*(-?\d+(?:\.\d+)?)", line)
+    if m:
+        return m.group(1)
+
+    m = re.search(r"\brx_snr:\s*(-?\d+(?:\.\d+)?)", line)
+    if m:
+        return m.group(1)
+
+    return None
+
+def update_node(line, sender, text):
+    node_id = extract_node_id(line) or sender
+    rssi = extract_rssi(line)
+    snr = extract_snr(line)
+
+    name = KNOWN_NODES.get(node_id, sender)
+
+    meta_parts = []
+    meta_parts.append("last: " + now())
+
+    if rssi:
+        meta_parts.append("RSSI " + rssi + " dBm")
+
+    if snr:
+        meta_parts.append("SNR " + snr + " dB")
+
+    if text:
+        short_text = text
+        if len(short_text) > 28:
+            short_text = short_text[:28] + "..."
+        meta_parts.append(short_text)
+
+    nodes[node_id] = {
+        "name": name,
+        "node_id": node_id,
+        "last_seen": time.time(),
+        "meta": " | ".join(meta_parts)
+    }
+
+def get_nodes_list():
+    sorted_nodes = sorted(
+        nodes.values(),
+        key=lambda n: n.get("last_seen", 0),
+        reverse=True
+    )
+
+    result = []
+    for n in sorted_nodes:
+        result.append({
+            "name": n["name"],
+            "node_id": n["node_id"],
+            "meta": n["meta"]
+        })
+
+    return result
+
 def is_duplicate_text(sender, text):
     cleaned_text = text.strip()
     if not cleaned_text:
@@ -267,7 +414,6 @@ def is_duplicate_text(sender, text):
 
     current_time = time.time()
 
-    # Удаляем старые записи, чтобы словарь не рос бесконечно
     old_keys = []
     for key, ts in seen_recent_texts.items():
         if current_time - ts > 60:
@@ -276,8 +422,6 @@ def is_duplicate_text(sender, text):
     for key in old_keys:
         del seen_recent_texts[key]
 
-    # Дубликаты от meshtastic --listen часто отличаются только sender,
-    # поэтому ключ делаем по тексту, а не по sender+text.
     key = cleaned_text
 
     old_time = seen_recent_texts.get(key)
@@ -349,6 +493,7 @@ def listen_meshtastic():
                 if is_duplicate_text(sender, text):
                     continue
 
+                update_node(line, sender, text)
                 add_message("rx", sender, text)
 
         except Exception as e:
@@ -365,7 +510,8 @@ def api_messages():
     status = "radio: sending..." if pause_listen.is_set() else "radio: listening"
     return jsonify({
         "status": status,
-        "messages": messages
+        "messages": messages,
+        "nodes": get_nodes_list()
     })
 
 @app.route("/api/send", methods=["POST"])
@@ -392,6 +538,14 @@ def api_send():
 
             if result.returncode == 0:
                 add_message("me", LOCAL_NODE_NAME, text)
+
+                nodes["local"] = {
+                    "name": LOCAL_NODE_NAME,
+                    "node_id": "local",
+                    "last_seen": time.time(),
+                    "meta": "last sent: " + now()
+                }
+
                 return jsonify({"ok": True})
 
             err = result.stderr.strip() or result.stdout.strip() or "unknown send error"

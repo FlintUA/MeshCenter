@@ -13,6 +13,7 @@ app = Flask(__name__)
 
 messages = []
 seen_ids = set()
+seen_recent_texts = {}
 
 listen_process = None
 radio_lock = threading.Lock()
@@ -241,13 +242,40 @@ def extract_text_message(line):
 
     m = re.search(r"'text':\s*'([^']*)'", line)
     if m:
-        return m.group(1)
+        return m.group(1).strip()
 
     m = re.search(r'"text":\s*"([^"]*)"', line)
     if m:
-        return m.group(1)
+        return m.group(1).strip()
 
     return None
+
+def is_duplicate_text(sender, text):
+    cleaned_text = text.strip()
+    if not cleaned_text:
+        return True
+
+    current_time = time.time()
+
+    # Удаляем старые записи, чтобы словарь не рос бесконечно
+    old_keys = []
+    for key, ts in seen_recent_texts.items():
+        if current_time - ts > 60:
+            old_keys.append(key)
+
+    for key in old_keys:
+        del seen_recent_texts[key]
+
+    # Дубликаты от meshtastic --listen часто отличаются только sender,
+    # поэтому ключ делаем по тексту, а не по sender+text.
+    key = cleaned_text
+
+    old_time = seen_recent_texts.get(key)
+    if old_time and current_time - old_time < 15:
+        return True
+
+    seen_recent_texts[key] = current_time
+    return False
 
 def stop_listener():
     global listen_process
@@ -307,6 +335,10 @@ def listen_meshtastic():
                     seen_ids.add(pid)
 
                 sender = extract_sender(line)
+
+                if is_duplicate_text(sender, text):
+                    continue
+
                 add_message("rx", sender, text)
 
         except Exception as e:
@@ -368,4 +400,4 @@ if __name__ == "__main__":
     t = threading.Thread(target=listen_meshtastic, daemon=True)
     t.start()
     app.run(host=APP_HOST, port=APP_PORT)
-
+    

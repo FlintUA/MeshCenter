@@ -1,0 +1,38 @@
+[
+  {
+    "kind": "rx",
+    "sender": "Elektroniker",
+    "text": "Test",
+    "time": "22:10:01"
+  },
+  {
+    "kind": "rx",
+    "sender": "Elektroniker",
+    "text": "Test2",
+    "time": "22:10:20"
+  },
+  {
+    "kind": "rx",
+    "sender": "Elektroniker",
+    "text": "Test3",
+    "time": "22:12:58"
+  },
+  {
+    "kind": "rx",
+    "sender": "Elektroniker",
+    "text": "Test4",
+    "time": "22:13:01"
+  },
+  {
+    "kind": "rx",
+    "sender": "Elektroniker",
+    "text": "Test",
+    "time": "22:22:34"
+  },
+  {
+    "kind": "rx",
+    "sender": "Flint TAP2",
+    "text": "Test",
+    "time": "22:24:26"
+  }
+]

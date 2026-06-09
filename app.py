@@ -3,11 +3,15 @@ import subprocess
 import threading
 import time
 import re
+import json
+import os
 
 APP_HOST = "0.0.0.0"
 APP_PORT = 5000
 MESHTASTIC_CMD = "/home/flint/.local/bin/meshtastic"
 LOCAL_NODE_NAME = "Flint Base"
+HISTORY_FILE = "/home/flint/mesh_web/messages.json"
+MAX_HISTORY_MESSAGES = 300
 
 KNOWN_NODES = {
     "!1fa065f0": "Elektroniker",
@@ -245,9 +249,14 @@ async function loadMessages() {
         meta.className = 'node-meta';
         meta.textContent = n.meta;
 
+        const lastText = document.createElement('div');
+        lastText.className = 'node-meta';
+        lastText.textContent = n.last_text ? "Msg: " + n.last_text : "";
+
         card.appendChild(name);
         card.appendChild(id);
         card.appendChild(meta);
+        card.appendChild(lastText);
         nodesList.appendChild(card);
     });
 }
@@ -283,6 +292,27 @@ loadMessages();
 def now():
     return time.strftime("%H:%M:%S")
 
+def save_messages():
+    try:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(messages[-MAX_HISTORY_MESSAGES:], f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("History save error:", e)
+
+def load_messages():
+    global messages
+
+    if not os.path.exists(HISTORY_FILE):
+        return
+
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            messages = json.load(f)
+            messages[:] = messages[-MAX_HISTORY_MESSAGES:]
+    except Exception as e:
+        print("History load error:", e)
+        messages = []
+
 def add_message(kind, sender, text):
     messages.append({
         "kind": kind,
@@ -290,7 +320,9 @@ def add_message(kind, sender, text):
         "text": text,
         "time": now()
     })
-    messages[:] = messages[-300:]
+
+    messages[:] = messages[-MAX_HISTORY_MESSAGES:]
+    save_messages()
 
 def extract_packet_id(line):
     m = re.search(r"'id':\s*(\d+)", line)
@@ -361,33 +393,31 @@ def extract_snr(line):
 
     return None
 
+def node_status_icon(last_seen):
+    age = time.time() - last_seen
+
+    if age < 120:
+        return "🟢"
+    if age < 900:
+        return "🟡"
+    return "🔴"
+
 def update_node(line, sender, text):
     node_id = extract_node_id(line) or sender
     rssi = extract_rssi(line)
     snr = extract_snr(line)
 
     name = KNOWN_NODES.get(node_id, sender)
-
-    meta_parts = []
-    meta_parts.append("last: " + now())
-
-    if rssi:
-        meta_parts.append("RSSI " + rssi + " dBm")
-
-    if snr:
-        meta_parts.append("SNR " + snr + " dB")
-
-    if text:
-        short_text = text
-        if len(short_text) > 28:
-            short_text = short_text[:28] + "..."
-        meta_parts.append(short_text)
+    last_seen = time.time()
 
     nodes[node_id] = {
         "name": name,
         "node_id": node_id,
-        "last_seen": time.time(),
-        "meta": " | ".join(meta_parts)
+        "last_seen": last_seen,
+        "last_time": now(),
+        "rssi": rssi,
+        "snr": snr,
+        "last_text": text or ""
     }
 
 def get_nodes_list():
@@ -398,11 +428,30 @@ def get_nodes_list():
     )
 
     result = []
+
     for n in sorted_nodes:
+        last_seen = n.get("last_seen", 0)
+        icon = node_status_icon(last_seen)
+
+        rssi = n.get("rssi")
+        snr = n.get("snr")
+        last_text = n.get("last_text", "")
+
+        meta_parts = []
+
+        meta_parts.append("Last: " + n.get("last_time", "--:--:--"))
+
+        if rssi:
+            meta_parts.append("RSSI: " + rssi + " dBm")
+
+        if snr:
+            meta_parts.append("SNR: " + snr + " dB")
+
         result.append({
-            "name": n["name"],
+            "name": icon + " " + n["name"],
             "node_id": n["node_id"],
-            "meta": n["meta"]
+            "meta": " | ".join(meta_parts),
+            "last_text": last_text
         })
 
     return result
@@ -561,6 +610,9 @@ def api_send():
             pause_listen.clear()
 
 if __name__ == "__main__":
+    load_messages()
+
     t = threading.Thread(target=listen_meshtastic, daemon=True)
     t.start()
+
     app.run(host=APP_HOST, port=APP_PORT)

@@ -2,4 +2,4 @@ messages.log
 venv/
 __pycache__/
 *.pyc
-.vscode/
+.vscode/messages.json

@@ -11,6 +11,7 @@ APP_PORT = 5000
 MESHTASTIC_CMD = "/home/flint/.local/bin/meshtastic"
 LOCAL_NODE_NAME = "Flint Base"
 HISTORY_FILE = "/home/flint/mesh_web/messages.json"
+NODES_FILE = "/home/flint/mesh_web/nodes.json"
 MAX_HISTORY_MESSAGES = 300
 
 KNOWN_NODES = {
@@ -324,6 +325,26 @@ def add_message(kind, sender, text):
     messages[:] = messages[-MAX_HISTORY_MESSAGES:]
     save_messages()
 
+def save_nodes():
+    try:
+        with open(NODES_FILE, "w", encoding="utf-8") as f:
+            json.dump(nodes, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("Nodes save error:", e)
+
+def load_nodes():
+    global nodes
+
+    if not os.path.exists(NODES_FILE):
+        return
+
+    try:
+        with open(NODES_FILE, "r", encoding="utf-8") as f:
+            nodes = json.load(f)
+    except Exception as e:
+        print("Nodes load error:", e)
+        nodes = {}
+
 def extract_packet_id(line):
     m = re.search(r"'id':\s*(\d+)", line)
     if m:
@@ -419,6 +440,7 @@ def update_node(line, sender, text):
         "snr": snr,
         "last_text": text or ""
     }
+    save_nodes()
 
 def get_nodes_list():
     sorted_nodes = sorted(
@@ -594,6 +616,7 @@ def api_send():
                     "last_seen": time.time(),
                     "meta": "last sent: " + now()
                 }
+                save_nodes()
 
                 return jsonify({"ok": True})
 
@@ -611,6 +634,7 @@ def api_send():
 
 if __name__ == "__main__":
     load_messages()
+    load_nodes()
 
     t = threading.Thread(target=listen_meshtastic, daemon=True)
     t.start()

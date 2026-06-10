@@ -92,8 +92,8 @@ body {
     background: #eeeeee;
 }
 #nodes {
-    width: 300px;
-    flex: 0 0 300px;
+    width: 320px;
+    flex: 0 0 320px;
     overflow-y: auto;
     background: #f8f8f8;
     border-left: 1px solid #ccc;
@@ -110,6 +110,7 @@ body {
     border-radius: 10px;
     padding: 8px;
     margin-bottom: 8px;
+    cursor: pointer;
 }
 .node-card.selected {
     border: 2px solid #4caf50;
@@ -249,6 +250,7 @@ function renderNodeDetails(node) {
         '<div>Short: ' + esc(node.short_name || '-') + '</div>' +
         '<div>Hardware: ' + esc(node.hw_model || '-') + '</div>' +
         '<div>Last seen: ' + esc(node.age) + '</div>' +
+        '<div>Signal: ' + esc(node.signal_quality || '-') + '</div>' +
         '<div>RSSI: ' + esc(node.rssi || '-') + '</div>' +
         '<div>SNR: ' + esc(node.snr || '-') + '</div>' +
         '<div>Hops: ' + esc(node.hop_start || '-') + '</div>' +
@@ -487,6 +489,12 @@ def get_node_name(node_id):
 
     return node_id
 
+def resolve_sender_name(sender):
+    if sender.startswith("!"):
+        return get_node_name(sender)
+
+    return sender
+
 def extract_sender(line):
     node_id = extract_node_id(line)
     if node_id:
@@ -635,17 +643,37 @@ def node_status_icon(last_seen):
 
 def age_text(last_seen):
     if not last_seen:
-        return "Waiting..."
+        return "not heard yet"
 
     age = int(time.time() - last_seen)
 
     if age < 60:
-        return f"{age} sec ago"
+        return f"seen {age} sec ago"
 
     if age < 3600:
-        return f"{age // 60} min ago"
+        return f"seen {age // 60} min ago"
 
-    return f"{age // 3600} h ago"
+    if age < 86400:
+        return f"seen {age // 3600} h ago"
+
+    return f"seen {age // 86400} d ago"
+
+def signal_quality(rssi):
+    if rssi is None or rssi == "":
+        return ""
+
+    try:
+        value = int(float(rssi))
+    except ValueError:
+        return ""
+
+    if value >= -90:
+        return "good"
+
+    if value >= -105:
+        return "medium"
+
+    return "weak"
 
 def update_node(line, sender, text):
     node_id = extract_node_id(line) or sender
@@ -693,9 +721,12 @@ def get_nodes_list():
         last_text = n.get("last_text", "")
         short_name = n.get("short_name", "")
         hw_model = n.get("hw_model", "")
+        quality = signal_quality(rssi)
 
         meta_parts = [age_text(last_seen)]
 
+        if quality:
+            meta_parts.append("signal: " + quality)
         if rssi:
             meta_parts.append("RSSI: " + str(rssi) + " dBm")
         if snr:
@@ -721,6 +752,7 @@ def get_nodes_list():
             "snr": snr,
             "hop_start": hop_start,
             "relay_node": relay_node,
+            "signal_quality": quality,
             "age": age_text(last_seen)
         })
 
@@ -861,11 +893,7 @@ def api_messages():
 
     for m in messages:
         msg = dict(m)
-        sender = msg.get("sender", "")
-
-        if sender.startswith("!"):
-            msg["sender"] = get_node_name(sender)
-
+        msg["sender"] = resolve_sender_name(msg.get("sender", ""))
         visible_messages.append(msg)
 
     return jsonify({

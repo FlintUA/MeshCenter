@@ -9,7 +9,10 @@ import os
 APP_HOST = "0.0.0.0"
 APP_PORT = 5000
 MESHTASTIC_CMD = "/home/flint/.local/bin/meshtastic"
+
+LOCAL_NODE_ID = "!067a40fa"
 LOCAL_NODE_NAME = "Flint Base"
+
 HISTORY_FILE = "/home/flint/mesh_web/messages.json"
 NODES_FILE = "/home/flint/mesh_web/nodes.json"
 MAX_HISTORY_MESSAGES = 300
@@ -18,6 +21,8 @@ KNOWN_NODES = {
     "!1fa065f0": "Elektroniker",
     "!067a40fa": "Flint Base",
     "!756f9960": "Flint TAP2",
+    "!1300faf0": "Orion9 mobil",
+    "!f68f9e94": "ThinkNode M5",
 }
 
 app = Flask(__name__)
@@ -77,8 +82,8 @@ body {
     background: #eeeeee;
 }
 #nodes {
-    width: 260px;
-    flex: 0 0 260px;
+    width: 280px;
+    flex: 0 0 280px;
     overflow-y: auto;
     background: #f8f8f8;
     border-left: 1px solid #ccc;
@@ -179,7 +184,7 @@ button {
 <div class="main">
     <div id="chat"></div>
     <div id="nodes">
-        <div class="nodes-title">Nodes</div>
+        <div class="nodes-title" id="nodesTitle">Nodes</div>
         <div id="nodesList"></div>
     </div>
 </div>
@@ -233,6 +238,9 @@ async function loadMessages() {
 
     const nodesList = document.getElementById('nodesList');
     nodesList.innerHTML = '';
+
+    document.getElementById('nodesTitle').textContent =
+        'Nodes (' + data.nodes.length + ')';
 
     data.nodes.forEach(n => {
         const card = document.createElement('div');
@@ -345,6 +353,21 @@ def load_nodes():
         print("Nodes load error:", e)
         nodes = {}
 
+def ensure_known_nodes():
+    for node_id, name in KNOWN_NODES.items():
+        if node_id not in nodes:
+            nodes[node_id] = {
+                "name": name,
+                "node_id": node_id,
+                "last_seen": 0,
+                "last_time": "never",
+                "rssi": None,
+                "snr": None,
+                "last_text": ""
+            }
+
+    save_nodes()
+
 def extract_packet_id(line):
     m = re.search(r"'id':\s*(\d+)", line)
     if m:
@@ -415,6 +438,9 @@ def extract_snr(line):
     return None
 
 def node_status_icon(last_seen):
+    if not last_seen:
+        return "⚪"
+
     age = time.time() - last_seen
 
     if age < 120:
@@ -422,6 +448,20 @@ def node_status_icon(last_seen):
     if age < 900:
         return "🟡"
     return "🔴"
+
+def age_text(last_seen):
+    if not last_seen:
+        return "Waiting..."
+
+    age = int(time.time() - last_seen)
+
+    if age < 60:
+        return f"{age} sec ago"
+
+    if age < 3600:
+        return f"{age // 60} min ago"
+
+    return f"{age // 3600} h ago"
 
 def update_node(line, sender, text):
     node_id = extract_node_id(line) or sender
@@ -440,6 +480,7 @@ def update_node(line, sender, text):
         "snr": snr,
         "last_text": text or ""
     }
+
     save_nodes()
 
 def get_nodes_list():
@@ -460,14 +501,13 @@ def get_nodes_list():
         last_text = n.get("last_text", "")
 
         meta_parts = []
-
-        meta_parts.append("Last: " + n.get("last_time", "--:--:--"))
+        meta_parts.append(age_text(last_seen))
 
         if rssi:
-            meta_parts.append("RSSI: " + rssi + " dBm")
+            meta_parts.append("RSSI: " + str(rssi) + " dBm")
 
         if snr:
-            meta_parts.append("SNR: " + snr + " dB")
+            meta_parts.append("SNR: " + str(snr) + " dB")
 
         result.append({
             "name": icon + " " + n["name"],
@@ -610,12 +650,16 @@ def api_send():
             if result.returncode == 0:
                 add_message("me", LOCAL_NODE_NAME, text)
 
-                nodes["local"] = {
+                nodes[LOCAL_NODE_ID] = {
                     "name": LOCAL_NODE_NAME,
-                    "node_id": "local",
+                    "node_id": LOCAL_NODE_ID,
                     "last_seen": time.time(),
-                    "meta": "last sent: " + now()
+                    "last_time": now(),
+                    "rssi": None,
+                    "snr": None,
+                    "last_text": "sent: " + text
                 }
+
                 save_nodes()
 
                 return jsonify({"ok": True})
@@ -635,6 +679,7 @@ def api_send():
 if __name__ == "__main__":
     load_messages()
     load_nodes()
+    ensure_known_nodes()
 
     t = threading.Thread(target=listen_meshtastic, daemon=True)
     t.start()

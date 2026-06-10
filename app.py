@@ -23,6 +23,7 @@ KNOWN_NODES = {
     "!756f9960": "Flint TAP2",
     "!1300faf0": "Orion9 mobil",
     "!f68f9e94": "ThinkNode M5",
+    "!04c67058": "HardTekkER",
 }
 
 app = Flask(__name__)
@@ -363,7 +364,8 @@ def ensure_known_nodes():
                 "last_time": "never",
                 "rssi": None,
                 "snr": None,
-                "last_text": ""
+                "last_text": "",
+                "short_name": ""
             }
 
     save_nodes()
@@ -384,12 +386,28 @@ def extract_node_id(line):
     if m:
         return m.group(1)
 
+    m = re.search(r'"fromId":\s*"([^"]+)"', line)
+    if m:
+        return m.group(1)
+
+    m = re.search(r"\bid:\s*(![0-9a-fA-F]+)", line)
+    if m:
+        return m.group(1)
+
+    m = re.search(r"'id':\s*'(![0-9a-fA-F]+)'", line)
+    if m:
+        return m.group(1)
+
+    m = re.search(r'"id":\s*"(![0-9a-fA-F]+)"', line)
+    if m:
+        return m.group(1)
+
     return None
 
 def extract_sender(line):
     node_id = extract_node_id(line)
     if node_id:
-        return KNOWN_NODES.get(node_id, node_id)
+        return get_node_name(node_id)
 
     m = re.search(r"'from':\s*(\d+)", line)
     if m:
@@ -400,6 +418,15 @@ def extract_sender(line):
         return "node " + m.group(1)
 
     return "RX"
+
+def get_node_name(node_id):
+    if node_id in KNOWN_NODES:
+        return KNOWN_NODES[node_id]
+
+    if node_id in nodes:
+        return nodes[node_id].get("name", node_id)
+
+    return node_id
 
 def extract_text_message(line):
     if "TEXT_MESSAGE_APP" not in line and "'text':" not in line and '"text":' not in line:
@@ -437,6 +464,69 @@ def extract_snr(line):
 
     return None
 
+def extract_field(line, names):
+    for name in names:
+        patterns = [
+            rf"'{name}':\s*'([^']*)'",
+            rf'"{name}":\s*"([^"]*)"',
+            rf"\b{name}:\s*\"([^\"]*)\"",
+            rf"\b{name}:\s*([^\s,}}]+)"
+        ]
+
+        for pattern in patterns:
+            m = re.search(pattern, line)
+            if m:
+                return m.group(1).strip()
+
+    return None
+
+def process_nodeinfo(line):
+    if (
+        "NODEINFO_APP" not in line
+        and "longName" not in line
+        and "long_name" not in line
+        and "shortName" not in line
+        and "short_name" not in line
+        and "hwModel" not in line
+        and "hw_model" not in line
+    ):
+        return False
+
+    node_id = extract_node_id(line)
+    if not node_id:
+        return False
+
+    long_name = extract_field(line, ["longName", "long_name", "longname"])
+    short_name = extract_field(line, ["shortName", "short_name", "shortname"])
+    hw_model = extract_field(line, ["hwModel", "hw_model"])
+
+    name = KNOWN_NODES.get(node_id)
+
+    if not name:
+        if long_name:
+            name = long_name
+        elif short_name:
+            name = short_name
+        else:
+            name = node_id
+
+    old = nodes.get(node_id, {})
+
+    nodes[node_id] = {
+        "name": name,
+        "node_id": node_id,
+        "last_seen": old.get("last_seen", 0),
+        "last_time": old.get("last_time", "never"),
+        "rssi": old.get("rssi"),
+        "snr": old.get("snr"),
+        "last_text": old.get("last_text", ""),
+        "short_name": short_name or old.get("short_name", ""),
+        "hw_model": hw_model or old.get("hw_model", "")
+    }
+
+    save_nodes()
+    return True
+
 def node_status_icon(last_seen):
     if not last_seen:
         return "⚪"
@@ -468,8 +558,10 @@ def update_node(line, sender, text):
     rssi = extract_rssi(line)
     snr = extract_snr(line)
 
-    name = KNOWN_NODES.get(node_id, sender)
+    name = get_node_name(node_id)
     last_seen = time.time()
+
+    old = nodes.get(node_id, {})
 
     nodes[node_id] = {
         "name": name,
@@ -478,7 +570,9 @@ def update_node(line, sender, text):
         "last_time": now(),
         "rssi": rssi,
         "snr": snr,
-        "last_text": text or ""
+        "last_text": text or "",
+        "short_name": old.get("short_name", ""),
+        "hw_model": old.get("hw_model", "")
     }
 
     save_nodes()
@@ -499,6 +593,8 @@ def get_nodes_list():
         rssi = n.get("rssi")
         snr = n.get("snr")
         last_text = n.get("last_text", "")
+        short_name = n.get("short_name", "")
+        hw_model = n.get("hw_model", "")
 
         meta_parts = []
         meta_parts.append(age_text(last_seen))
@@ -508,6 +604,12 @@ def get_nodes_list():
 
         if snr:
             meta_parts.append("SNR: " + str(snr) + " dB")
+
+        if short_name:
+            meta_parts.append("short: " + short_name)
+
+        if hw_model:
+            meta_parts.append("hw: " + hw_model)
 
         result.append({
             "name": icon + " " + n["name"],
@@ -589,6 +691,9 @@ def listen_meshtastic():
                 if not line:
                     continue
 
+                if process_nodeinfo(line):
+                    continue
+
                 text = extract_text_message(line)
                 if not text:
                     continue
@@ -650,14 +755,18 @@ def api_send():
             if result.returncode == 0:
                 add_message("me", LOCAL_NODE_NAME, text)
 
+                old = nodes.get(LOCAL_NODE_ID, {})
+
                 nodes[LOCAL_NODE_ID] = {
                     "name": LOCAL_NODE_NAME,
                     "node_id": LOCAL_NODE_ID,
                     "last_seen": time.time(),
                     "last_time": now(),
-                    "rssi": None,
-                    "snr": None,
-                    "last_text": "sent: " + text
+                    "rssi": old.get("rssi"),
+                    "snr": old.get("snr"),
+                    "last_text": "sent: " + text,
+                    "short_name": old.get("short_name", ""),
+                    "hw_model": old.get("hw_model", "")
                 }
 
                 save_nodes()

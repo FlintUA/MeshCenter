@@ -83,8 +83,8 @@ body {
     background: #eeeeee;
 }
 #nodes {
-    width: 280px;
-    flex: 0 0 280px;
+    width: 300px;
+    flex: 0 0 300px;
     overflow-y: auto;
     background: #f8f8f8;
     border-left: 1px solid #ccc;
@@ -101,6 +101,22 @@ body {
     border-radius: 10px;
     padding: 8px;
     margin-bottom: 8px;
+}
+.node-card.selected {
+    border: 2px solid #4caf50;
+}
+.node-details {
+    background: #ffffff;
+    border: 1px solid #bbb;
+    border-radius: 10px;
+    padding: 8px;
+    margin-bottom: 10px;
+    font-size: 12px;
+}
+.node-details-title {
+    font-weight: bold;
+    font-size: 14px;
+    margin-bottom: 5px;
 }
 .node-name {
     font-weight: bold;
@@ -186,6 +202,7 @@ button {
     <div id="chat"></div>
     <div id="nodes">
         <div class="nodes-title" id="nodesTitle">Nodes</div>
+        <div id="nodeDetails"></div>
         <div id="nodesList"></div>
     </div>
 </div>
@@ -196,6 +213,32 @@ button {
 </form>
 
 <script>
+
+let selectedNodeId = null;
+
+function renderNodeDetails(node) {
+    const details = document.getElementById('nodeDetails');
+
+    if (!node) {
+        details.innerHTML = '';
+        return;
+    }
+
+    details.innerHTML =
+        '<div class="node-details">' +
+        '<div class="node-details-title">' + node.clean_name + '</div>' +
+        '<div>ID: ' + node.node_id + '</div>' +
+        '<div>Short: ' + (node.short_name || '-') + '</div>' +
+        '<div>Hardware: ' + (node.hw_model || '-') + '</div>' +
+        '<div>Last seen: ' + node.age + '</div>' +
+        '<div>RSSI: ' + (node.rssi || '-') + '</div>' +
+        '<div>SNR: ' + (node.snr || '-') + '</div>' +
+        '<div>Hops: ' + (node.hop_start || '-') + '</div>' +
+        '<div>Relay: ' + (node.relay_node || '-') + '</div>' +
+        '<div>Last message: ' + (node.last_text || '-') + '</div>' +
+        '</div>';
+}
+
 async function loadMessages() {
     const r = await fetch('/api/messages');
     const data = await r.json();
@@ -247,6 +290,16 @@ async function loadMessages() {
         const card = document.createElement('div');
         card.className = 'node-card';
 
+        if (selectedNodeId === n.node_id) {
+            card.className = 'node-card selected';
+        }
+
+        card.onclick = () => {
+        selectedNodeId = n.node_id;
+        renderNodeDetails(n);
+        loadMessages();
+        };
+
         const name = document.createElement('div');
         name.className = 'node-name';
         name.textContent = n.name;
@@ -269,6 +322,8 @@ async function loadMessages() {
         card.appendChild(lastText);
         nodesList.appendChild(card);
     });
+    const selectedNode = data.nodes.find(n => n.node_id === selectedNodeId);
+    renderNodeDetails(selectedNode);
 }
 
 document.getElementById('sendForm').addEventListener('submit', async (e) => {
@@ -364,8 +419,11 @@ def ensure_known_nodes():
                 "last_time": "never",
                 "rssi": None,
                 "snr": None,
+                "hop_start": "",
+                "relay_node": "",
                 "last_text": "",
-                "short_name": ""
+                "short_name": "",
+                "hw_model": ""
             }
 
     save_nodes()
@@ -390,10 +448,6 @@ def extract_node_id(line):
     if m:
         return m.group(1)
 
-    m = re.search(r"\bid:\s*(![0-9a-fA-F]+)", line)
-    if m:
-        return m.group(1)
-
     m = re.search(r"'id':\s*'(![0-9a-fA-F]+)'", line)
     if m:
         return m.group(1)
@@ -402,7 +456,24 @@ def extract_node_id(line):
     if m:
         return m.group(1)
 
+    m = re.search(r"\bid:\s*\"(![0-9a-fA-F]+)\"", line)
+    if m:
+        return m.group(1)
+
+    m = re.search(r"\bid:\s*(![0-9a-fA-F]+)", line)
+    if m:
+        return m.group(1)
+
     return None
+
+def get_node_name(node_id):
+    if node_id in KNOWN_NODES:
+        return KNOWN_NODES[node_id]
+
+    if node_id in nodes:
+        return nodes[node_id].get("name", node_id)
+
+    return node_id
 
 def extract_sender(line):
     node_id = extract_node_id(line)
@@ -418,15 +489,6 @@ def extract_sender(line):
         return "node " + m.group(1)
 
     return "RX"
-
-def get_node_name(node_id):
-    if node_id in KNOWN_NODES:
-        return KNOWN_NODES[node_id]
-
-    if node_id in nodes:
-        return nodes[node_id].get("name", node_id)
-
-    return node_id
 
 def extract_text_message(line):
     if "TEXT_MESSAGE_APP" not in line and "'text':" not in line and '"text":' not in line:
@@ -464,12 +526,35 @@ def extract_snr(line):
 
     return None
 
+def extract_hop_start(line):
+    m = re.search(r"'hopStart':\s*(\d+)", line)
+    if m:
+        return m.group(1)
+
+    m = re.search(r"\bhop_start:\s*(\d+)", line)
+    if m:
+        return m.group(1)
+
+    return None
+
+def extract_relay_node(line):
+    m = re.search(r"'relayNode':\s*(\d+)", line)
+    if m:
+        return m.group(1)
+
+    m = re.search(r"\brelay_node:\s*(\d+)", line)
+    if m:
+        return m.group(1)
+
+    return None
+
 def extract_field(line, names):
     for name in names:
         patterns = [
             rf"'{name}':\s*'([^']*)'",
             rf'"{name}":\s*"([^"]*)"',
             rf"\b{name}:\s*\"([^\"]*)\"",
+            rf"\b{name}:\s*'([^']*)'",
             rf"\b{name}:\s*([^\s,}}]+)"
         ]
 
@@ -480,25 +565,29 @@ def extract_field(line, names):
 
     return None
 
-def process_nodeinfo(line):
+def process_nodeinfo(block):
     if (
-        "NODEINFO_APP" not in line
-        and "longName" not in line
-        and "long_name" not in line
-        and "shortName" not in line
-        and "short_name" not in line
-        and "hwModel" not in line
-        and "hw_model" not in line
+        "NODEINFO_APP" not in block
+        and "longName" not in block
+        and "long_name" not in block
+        and "shortName" not in block
+        and "short_name" not in block
+        and "hwModel" not in block
+        and "hw_model" not in block
     ):
         return False
 
-    node_id = extract_node_id(line)
+    node_id = extract_node_id(block)
     if not node_id:
         return False
 
-    long_name = extract_field(line, ["longName", "long_name", "longname"])
-    short_name = extract_field(line, ["shortName", "short_name", "shortname"])
-    hw_model = extract_field(line, ["hwModel", "hw_model"])
+    long_name = extract_field(block, ["longName", "long_name", "longname"])
+    short_name = extract_field(block, ["shortName", "short_name", "shortname"])
+    hw_model = extract_field(block, ["hwModel", "hw_model"])
+    rssi = extract_rssi(block)
+    snr = extract_snr(block)
+    hop_start = extract_hop_start(block)
+    relay_node = extract_relay_node(block)
 
     name = KNOWN_NODES.get(node_id)
 
@@ -515,10 +604,12 @@ def process_nodeinfo(line):
     nodes[node_id] = {
         "name": name,
         "node_id": node_id,
-        "last_seen": old.get("last_seen", 0),
-        "last_time": old.get("last_time", "never"),
-        "rssi": old.get("rssi"),
-        "snr": old.get("snr"),
+        "last_seen": time.time(),
+        "last_time": now(),
+        "rssi": rssi or old.get("rssi"),
+        "snr": snr or old.get("snr"),
+        "hop_start": hop_start or old.get("hop_start", ""),
+        "relay_node": relay_node or old.get("relay_node", ""),
         "last_text": old.get("last_text", ""),
         "short_name": short_name or old.get("short_name", ""),
         "hw_model": hw_model or old.get("hw_model", "")
@@ -557,19 +648,21 @@ def update_node(line, sender, text):
     node_id = extract_node_id(line) or sender
     rssi = extract_rssi(line)
     snr = extract_snr(line)
+    hop_start = extract_hop_start(line)
+    relay_node = extract_relay_node(line)
 
     name = get_node_name(node_id)
-    last_seen = time.time()
-
     old = nodes.get(node_id, {})
 
     nodes[node_id] = {
         "name": name,
         "node_id": node_id,
-        "last_seen": last_seen,
+        "last_seen": time.time(),
         "last_time": now(),
-        "rssi": rssi,
-        "snr": snr,
+        "rssi": rssi or old.get("rssi"),
+        "snr": snr or old.get("snr"),
+        "hop_start": hop_start or old.get("hop_start", ""),
+        "relay_node": relay_node or old.get("relay_node", ""),
         "last_text": text or "",
         "short_name": old.get("short_name", ""),
         "hw_model": old.get("hw_model", "")
@@ -592,6 +685,8 @@ def get_nodes_list():
 
         rssi = n.get("rssi")
         snr = n.get("snr")
+        hop_start = n.get("hop_start", "")
+        relay_node = n.get("relay_node", "")
         last_text = n.get("last_text", "")
         short_name = n.get("short_name", "")
         hw_model = n.get("hw_model", "")
@@ -605,17 +700,31 @@ def get_nodes_list():
         if snr:
             meta_parts.append("SNR: " + str(snr) + " dB")
 
+        if hop_start:
+            meta_parts.append("hops: " + str(hop_start))
+
+        if relay_node:
+            meta_parts.append("relay: " + str(relay_node))
+
         if short_name:
-            meta_parts.append("short: " + short_name)
+            meta_parts.append("short: " + str(short_name))
 
         if hw_model:
-            meta_parts.append("hw: " + hw_model)
+            meta_parts.append("hw: " + str(hw_model))
 
         result.append({
-            "name": icon + " " + n["name"],
-            "node_id": n["node_id"],
-            "meta": " | ".join(meta_parts),
-            "last_text": last_text
+        "name": icon + " " + n["name"],
+        "clean_name": n["name"],
+        "node_id": n["node_id"],
+        "meta": " | ".join(meta_parts),
+        "last_text": last_text,
+        "short_name": short_name,
+        "hw_model": hw_model,
+        "rssi": rssi,
+        "snr": snr,
+        "hop_start": hop_start,
+        "relay_node": relay_node,
+        "age": age_text(last_seen)
         })
 
     return result
@@ -664,6 +773,9 @@ def stop_listener():
 def listen_meshtastic():
     global listen_process
 
+    nodeinfo_buffer = []
+    collecting_nodeinfo = False
+
     while True:
         if pause_listen.is_set():
             time.sleep(0.5)
@@ -691,7 +803,33 @@ def listen_meshtastic():
                 if not line:
                     continue
 
-                if process_nodeinfo(line):
+                if "NODEINFO_APP" in line or collecting_nodeinfo:
+                    collecting_nodeinfo = True
+                    nodeinfo_buffer.append(line)
+
+                    block = "\n".join(nodeinfo_buffer)
+
+                    if (
+                        "fromId" in block
+                        and (
+                            "longName" in block
+                            or "long_name" in block
+                            or "shortName" in block
+                            or "short_name" in block
+                            or "hwModel" in block
+                            or "hw_model" in block
+                        )
+                    ):
+                        process_nodeinfo(block)
+                        nodeinfo_buffer = []
+                        collecting_nodeinfo = False
+                        continue
+
+                    if len(nodeinfo_buffer) > 80:
+                        process_nodeinfo(block)
+                        nodeinfo_buffer = []
+                        collecting_nodeinfo = False
+
                     continue
 
                 text = extract_text_message(line)
@@ -764,6 +902,8 @@ def api_send():
                     "last_time": now(),
                     "rssi": old.get("rssi"),
                     "snr": old.get("snr"),
+                    "hop_start": old.get("hop_start", ""),
+                    "relay_node": old.get("relay_node", ""),
                     "last_text": "sent: " + text,
                     "short_name": old.get("short_name", ""),
                     "hw_model": old.get("hw_model", "")

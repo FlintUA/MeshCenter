@@ -79,6 +79,20 @@ body {
     color: #777;
     font-size: 12px;
 }
+.filterbar {
+    flex: 0 0 auto;
+    padding: 6px 18px;
+    background: #f7f7f7;
+    border-bottom: 1px solid #ddd;
+    font-size: 13px;
+    display: none;
+    align-items: center;
+    gap: 10px;
+}
+.filterbar button {
+    font-size: 12px;
+    padding: 3px 10px;
+}
 .main {
     flex: 1 1 auto;
     min-height: 0;
@@ -208,6 +222,11 @@ button {
 <div class="header">Meshnode Web Chat - LongFast Channel 0</div>
 <div class="status" id="status">loading...</div>
 
+<div class="filterbar" id="filterbar">
+    <span id="filterText"></span>
+    <button type="button" onclick="clearFilter()">Show all</button>
+</div>
+
 <div class="main">
     <div id="chat"></div>
     <div id="nodes">
@@ -224,6 +243,7 @@ button {
 
 <script>
 let selectedNodeId = null;
+let selectedNodeName = null;
 
 function esc(value) {
     if (value === null || value === undefined) return '';
@@ -235,11 +255,33 @@ function esc(value) {
         .replaceAll("'", '&#039;');
 }
 
+function clearFilter() {
+    selectedNodeId = null;
+    selectedNodeName = null;
+    renderNodeDetails(null);
+    loadMessages();
+}
+
+function updateFilterBar() {
+    const bar = document.getElementById('filterbar');
+    const text = document.getElementById('filterText');
+
+    if (!selectedNodeId) {
+        bar.style.display = 'none';
+        text.textContent = '';
+        return;
+    }
+
+    bar.style.display = 'flex';
+    text.textContent = 'Filter: ' + selectedNodeName + ' (' + selectedNodeId + ')';
+}
+
 function renderNodeDetails(node) {
     const details = document.getElementById('nodeDetails');
 
     if (!node) {
         details.innerHTML = '';
+        updateFilterBar();
         return;
     }
 
@@ -257,10 +299,18 @@ function renderNodeDetails(node) {
         '<div>Relay: ' + esc(node.relay_node || '-') + '</div>' +
         '<div>Last message: ' + esc(node.last_text || '-') + '</div>' +
         '</div>';
+
+    updateFilterBar();
 }
 
 async function loadMessages() {
-    const r = await fetch('/api/messages');
+    let url = '/api/messages';
+
+    if (selectedNodeId) {
+        url += '?node_id=' + encodeURIComponent(selectedNodeId);
+    }
+
+    const r = await fetch(url);
     const data = await r.json();
 
     document.getElementById('status').textContent = data.status;
@@ -311,7 +361,13 @@ async function loadMessages() {
         card.className = selectedNodeId === n.node_id ? 'node-card selected' : 'node-card';
 
         card.onclick = () => {
+            if (selectedNodeId === n.node_id) {
+                clearFilter();
+                return;
+            }
+
             selectedNodeId = n.node_id;
+            selectedNodeName = n.clean_name;
             renderNodeDetails(n);
             loadMessages();
         };
@@ -340,6 +396,11 @@ async function loadMessages() {
     });
 
     const selectedNode = data.nodes.find(n => n.node_id === selectedNodeId);
+
+    if (selectedNode) {
+        selectedNodeName = selectedNode.clean_name;
+    }
+
     renderNodeDetails(selectedNode);
 }
 
@@ -401,10 +462,31 @@ def load_messages():
         print("History load error:", e)
         messages = []
 
-def add_message(kind, sender, text):
+def infer_node_id_from_sender(sender):
+    if not sender:
+        return ""
+
+    if sender.startswith("!"):
+        return sender
+
+    for node_id, name in KNOWN_NODES.items():
+        if sender == name:
+            return node_id
+
+    for node_id, node in nodes.items():
+        if sender == node.get("name"):
+            return node_id
+
+    return ""
+
+def add_message(kind, sender, text, node_id=""):
+    if not node_id:
+        node_id = infer_node_id_from_sender(sender)
+
     messages.append({
         "kind": kind,
         "sender": sender,
+        "node_id": node_id,
         "text": text,
         "time": now()
     })
@@ -676,14 +758,17 @@ def signal_quality(rssi):
     return "weak"
 
 def update_node(line, sender, text):
-    node_id = extract_node_id(line) or sender
+    node_id = extract_node_id(line) or infer_node_id_from_sender(sender)
     rssi = extract_rssi(line)
     snr = extract_snr(line)
     hop_start = extract_hop_start(line)
     relay_node = extract_relay_node(line)
 
-    name = get_node_name(node_id)
-    old = nodes.get(node_id, {})
+    name = get_node_name(node_id) if node_id else sender
+    old = nodes.get(node_id, {}) if node_id else {}
+
+    if not node_id:
+        return ""
 
     nodes[node_id] = {
         "name": name,
@@ -700,6 +785,7 @@ def update_node(line, sender, text):
     }
 
     save_nodes()
+    return node_id
 
 def get_nodes_list():
     sorted_nodes = sorted(
@@ -873,11 +959,11 @@ def listen_meshtastic():
                 if is_duplicate_text(sender, text):
                     continue
 
-                update_node(line, sender, text)
-                add_message("rx", sender, text)
+                node_id = update_node(line, sender, text)
+                add_message("rx", sender, text, node_id)
 
         except Exception as e:
-            add_message("rx", "SYSTEM ERROR", "listen: " + str(e))
+            add_message("rx", "SYSTEM ERROR", "listen: " + str(e), "")
 
         time.sleep(2)
 
@@ -888,12 +974,25 @@ def index():
 @app.route("/api/messages")
 def api_messages():
     status = "radio: sending..." if pause_listen.is_set() else "radio: listening"
+    filter_node_id = request.args.get("node_id", "").strip()
 
     visible_messages = []
 
     for m in messages:
         msg = dict(m)
-        msg["sender"] = resolve_sender_name(msg.get("sender", ""))
+
+        sender = msg.get("sender", "")
+        node_id = msg.get("node_id", "")
+
+        if not node_id:
+            node_id = infer_node_id_from_sender(sender)
+            msg["node_id"] = node_id
+
+        msg["sender"] = resolve_sender_name(sender)
+
+        if filter_node_id and node_id != filter_node_id:
+            continue
+
         visible_messages.append(msg)
 
     return jsonify({
@@ -925,7 +1024,7 @@ def api_send():
             )
 
             if result.returncode == 0:
-                add_message("me", LOCAL_NODE_NAME, text)
+                add_message("me", LOCAL_NODE_NAME, text, LOCAL_NODE_ID)
 
                 old = nodes.get(LOCAL_NODE_ID, {})
 
@@ -948,11 +1047,11 @@ def api_send():
                 return jsonify({"ok": True})
 
             err = result.stderr.strip() or result.stdout.strip() or "unknown send error"
-            add_message("rx", "SYSTEM ERROR", "send: " + err)
+            add_message("rx", "SYSTEM ERROR", "send: " + err, "")
             return jsonify({"ok": False, "error": err}), 500
 
         except Exception as e:
-            add_message("rx", "SYSTEM ERROR", "send: " + str(e))
+            add_message("rx", "SYSTEM ERROR", "send: " + str(e), "")
             return jsonify({"ok": False, "error": str(e)}), 500
 
         finally:

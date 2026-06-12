@@ -1,6 +1,9 @@
+messages.json
+nodes.json
+radio.log
 messages.log
 venv/
 __pycache__/
 *.pyc
 .vscode/messages.json
-nodes.json
+

@@ -16,6 +16,8 @@ LOCAL_NODE_NAME = "Flint Base"
 HISTORY_FILE = "/home/flint/mesh_web/messages.json"
 NODES_FILE = "/home/flint/mesh_web/nodes.json"
 MAX_HISTORY_MESSAGES = 300
+INFO_REFRESH_SECS = 120
+
 
 KNOWN_NODES = {
     "!1fa065f0": "Elektroniker",
@@ -298,6 +300,15 @@ function renderNodeDetails(node) {
         '<div>Hops: ' + esc(node.hop_start || '-') + '</div>' +
         '<div>Relay: ' + esc(node.relay_node || '-') + '</div>' +
         '<div>Last message: ' + esc(node.last_text || '-') + '</div>' +
+        '<hr>' +
+        '<div><b>Power</b></div>' +
+        '<div>Battery: ' + esc(node.battery_level ? node.battery_level + ' %' : '-') + '</div>' +
+        '<div>Voltage: ' + esc(node.voltage ? node.voltage + ' V' : '-') + '</div>' +
+        '<div>Channel: ' + esc(node.channel_utilization ? node.channel_utilization + ' %' : '-') + '</div>' +
+        '<div>Air TX: ' + esc(node.air_util_tx ? node.air_util_tx + ' %' : '-') + '</div>' +
+        '<div>Uptime: ' + esc(node.uptime_text || '-') + '</div>' +
+        '<div>INA voltage: ' + esc(node.ina_voltage ? node.ina_voltage + ' V' : '-') + '</div>' +
+        '<div>INA current: ' + esc(node.ina_current ? node.ina_current + ' mA' : '-') + '</div>' +
         '</div>';
 
     updateFilterBar();
@@ -441,6 +452,95 @@ def fixed_short_name(node_id, fallback=""):
 def fixed_hw_model(node_id, fallback=""):
     return KNOWN_NODE_INFO.get(node_id, {}).get("hw_model") or fallback or ""
 
+def fmt_float(value, digits=2):
+    if value is None or value == "":
+        return ""
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+def fmt_int(value):
+    if value is None or value == "":
+        return ""
+    try:
+        return str(int(float(value)))
+    except (TypeError, ValueError):
+        return str(value)
+
+def uptime_text(seconds):
+    if seconds is None or seconds == "":
+        return ""
+
+    try:
+        seconds = int(float(seconds))
+    except (TypeError, ValueError):
+        return str(seconds)
+
+    if seconds < 60:
+        return f"{seconds} sec"
+
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} min"
+
+    hours = minutes // 60
+    if hours < 48:
+        return f"{hours} h"
+
+    days = hours // 24
+    return f"{days} d"
+
+def extract_json_object(text, marker):
+    start_marker = text.find(marker)
+    if start_marker < 0:
+        return ""
+
+    start = text.find("{", start_marker)
+    if start < 0:
+        return ""
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for i in range(start, len(text)):
+        ch = text[i]
+
+        if escape:
+            escape = False
+            continue
+
+        if ch == "\\":
+            escape = True
+            continue
+
+        if ch == '"':
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+
+    return ""
+
+def power_value(metrics, names):
+    if not isinstance(metrics, dict):
+        return ""
+
+    for name in names:
+        if name in metrics:
+            return metrics.get(name)
+
+    return ""
+
 def save_messages():
     try:
         with open(HISTORY_FILE, "w", encoding="utf-8") as f:
@@ -529,7 +629,15 @@ def ensure_known_nodes():
             "relay_node": old.get("relay_node", ""),
             "last_text": old.get("last_text", ""),
             "short_name": fixed_short_name(node_id, old.get("short_name", "")),
-            "hw_model": fixed_hw_model(node_id, old.get("hw_model", ""))
+            "hw_model": fixed_hw_model(node_id, old.get("hw_model", "")),
+            "battery_level": old.get("battery_level", ""),
+            "voltage": old.get("voltage", ""),
+            "channel_utilization": old.get("channel_utilization", ""),
+            "air_util_tx": old.get("air_util_tx", ""),
+            "uptime_seconds": old.get("uptime_seconds", ""),
+            "ina_voltage": old.get("ina_voltage", ""),
+            "ina_current": old.get("ina_current", ""),
+            "hops_away": old.get("hops_away", "")
         }
 
     save_nodes()
@@ -705,7 +813,15 @@ def process_nodeinfo(block):
         "relay_node": relay_node or old.get("relay_node", ""),
         "last_text": old.get("last_text", ""),
         "short_name": fixed_short_name(node_id, short_name or old.get("short_name", "")),
-        "hw_model": fixed_hw_model(node_id, hw_model or old.get("hw_model", ""))
+        "hw_model": fixed_hw_model(node_id, hw_model or old.get("hw_model", "")),
+        "battery_level": old.get("battery_level", ""),
+        "voltage": old.get("voltage", ""),
+        "channel_utilization": old.get("channel_utilization", ""),
+        "air_util_tx": old.get("air_util_tx", ""),
+        "uptime_seconds": old.get("uptime_seconds", ""),
+        "ina_voltage": old.get("ina_voltage", ""),
+        "ina_current": old.get("ina_current", ""),
+        "hops_away": old.get("hops_away", "")
     }
 
     save_nodes()
@@ -781,7 +897,15 @@ def update_node(line, sender, text):
         "relay_node": relay_node or old.get("relay_node", ""),
         "last_text": text or "",
         "short_name": fixed_short_name(node_id, old.get("short_name", "")),
-        "hw_model": fixed_hw_model(node_id, old.get("hw_model", ""))
+        "hw_model": fixed_hw_model(node_id, old.get("hw_model", "")),
+        "battery_level": old.get("battery_level", ""),
+        "voltage": old.get("voltage", ""),
+        "channel_utilization": old.get("channel_utilization", ""),
+        "air_util_tx": old.get("air_util_tx", ""),
+        "uptime_seconds": old.get("uptime_seconds", ""),
+        "ina_voltage": old.get("ina_voltage", ""),
+        "ina_current": old.get("ina_current", ""),
+        "hops_away": old.get("hops_away", "")
     }
 
     save_nodes()
@@ -808,6 +932,14 @@ def get_nodes_list():
         short_name = n.get("short_name", "")
         hw_model = n.get("hw_model", "")
         quality = signal_quality(rssi)
+        battery_level = n.get("battery_level", "")
+        voltage = n.get("voltage", "")
+        channel_utilization = n.get("channel_utilization", "")
+        air_util_tx = n.get("air_util_tx", "")
+        uptime_seconds = n.get("uptime_seconds", "")
+        ina_voltage = n.get("ina_voltage", "")
+        ina_current = n.get("ina_current", "")
+        hops_away = n.get("hops_away", "")
 
         meta_parts = [age_text(last_seen)]
 
@@ -825,6 +957,12 @@ def get_nodes_list():
             meta_parts.append("short: " + str(short_name))
         if hw_model:
             meta_parts.append("hw: " + str(hw_model))
+        if battery_level:
+            meta_parts.append("bat: " + str(battery_level) + "%")
+        if voltage:
+            meta_parts.append("V: " + str(voltage))
+        if hops_away != "":
+            meta_parts.append("hopsAway: " + str(hops_away))
 
         result.append({
             "name": icon + " " + n["name"],
@@ -839,7 +977,16 @@ def get_nodes_list():
             "hop_start": hop_start,
             "relay_node": relay_node,
             "signal_quality": quality,
-            "age": age_text(last_seen)
+            "age": age_text(last_seen),
+            "battery_level": battery_level,
+            "voltage": voltage,
+            "channel_utilization": channel_utilization,
+            "air_util_tx": air_util_tx,
+            "uptime_seconds": uptime_seconds,
+            "uptime_text": uptime_text(uptime_seconds),
+            "ina_voltage": ina_voltage,
+            "ina_current": ina_current,
+            "hops_away": hops_away
         })
 
     return result
@@ -865,6 +1012,120 @@ def is_duplicate_text(sender, text):
 
     seen_recent_texts[cleaned_text] = current_time
     return False
+
+def update_nodes_from_info_text(info_text):
+    nodes_json = extract_json_object(info_text, "Nodes in mesh:")
+    if not nodes_json:
+        return 0
+
+    try:
+        mesh_nodes = json.loads(nodes_json)
+    except Exception as e:
+        print("Info parse error:", e)
+        return 0
+
+    count = 0
+
+    for node_id, data in mesh_nodes.items():
+        if not isinstance(data, dict):
+            continue
+
+        user = data.get("user", {}) or {}
+        device_metrics = data.get("deviceMetrics", {}) or {}
+        power_metrics = data.get("powerMetrics", {}) or {}
+
+        long_name = user.get("longName") or user.get("long_name") or node_id
+        short_name = user.get("shortName") or user.get("short_name") or ""
+        hw_model = user.get("hwModel") or user.get("hw_model") or ""
+
+        old = nodes.get(node_id, {})
+
+        last_seen = data.get("lastHeard") or old.get("last_seen", 0)
+        try:
+            last_seen = float(last_seen)
+        except (TypeError, ValueError):
+            last_seen = old.get("last_seen", 0)
+
+        voltage = power_value(device_metrics, ["voltage", "batteryVoltage", "battery_voltage"])
+        battery_level = power_value(device_metrics, ["batteryLevel", "battery_level"])
+        channel_utilization = power_value(device_metrics, ["channelUtilization", "channel_utilization"])
+        air_util_tx = power_value(device_metrics, ["airUtilTx", "air_util_tx"])
+        uptime_seconds = power_value(device_metrics, ["uptimeSeconds", "uptime_seconds"])
+
+        ina_voltage = power_value(
+            power_metrics,
+            ["voltage", "inaVoltage", "ina_voltage", "busVoltage", "bus_voltage", "ch1Voltage", "ch1_voltage"]
+        )
+        ina_current = power_value(
+            power_metrics,
+            ["current", "inaCurrent", "ina_current", "busCurrent", "bus_current", "ch1Current", "ch1_current"]
+        )
+
+        nodes[node_id] = {
+            "name": KNOWN_NODES.get(node_id) or long_name,
+            "node_id": node_id,
+            "last_seen": last_seen,
+            "last_time": old.get("last_time", now()),
+            "rssi": old.get("rssi"),
+            "snr": data.get("snr", old.get("snr")),
+            "hop_start": old.get("hop_start", ""),
+            "relay_node": old.get("relay_node", ""),
+            "hops_away": data.get("hopsAway", old.get("hops_away", "")),
+            "last_text": old.get("last_text", ""),
+            "short_name": fixed_short_name(node_id, short_name or old.get("short_name", "")),
+            "hw_model": fixed_hw_model(node_id, hw_model or old.get("hw_model", "")),
+            "battery_level": fmt_int(battery_level) or old.get("battery_level", ""),
+            "voltage": fmt_float(voltage, 3) or old.get("voltage", ""),
+            "channel_utilization": fmt_float(channel_utilization, 2) or old.get("channel_utilization", ""),
+            "air_util_tx": fmt_float(air_util_tx, 3) or old.get("air_util_tx", ""),
+            "uptime_seconds": fmt_int(uptime_seconds) or old.get("uptime_seconds", ""),
+            "ina_voltage": fmt_float(ina_voltage, 3) or old.get("ina_voltage", ""),
+            "ina_current": fmt_float(ina_current, 2) or old.get("ina_current", "")
+        }
+
+        count += 1
+
+    if count:
+        save_nodes()
+
+    return count
+
+def refresh_nodes_from_info_once():
+    pause_listen.set()
+
+    with radio_lock:
+        try:
+            stop_listener()
+            time.sleep(1)
+
+            result = subprocess.run(
+                [MESHTASTIC_CMD, "--info"],
+                capture_output=True,
+                text=True,
+                timeout=90
+            )
+
+            if result.returncode != 0:
+                err = result.stderr.strip() or result.stdout.strip()
+                print("Info refresh error:", err)
+                return
+
+            count = update_nodes_from_info_text(result.stdout)
+            print("Info refresh nodes:", count)
+
+        except Exception as e:
+            print("Info refresh exception:", e)
+
+        finally:
+            time.sleep(1)
+            pause_listen.clear()
+
+def info_refresh_worker():
+    time.sleep(20)
+
+    while True:
+        refresh_nodes_from_info_once()
+        time.sleep(INFO_REFRESH_SECS)
 
 def stop_listener():
     global listen_process
@@ -1039,7 +1300,15 @@ def api_send():
                     "relay_node": old.get("relay_node", ""),
                     "last_text": "sent: " + text,
                     "short_name": fixed_short_name(LOCAL_NODE_ID, old.get("short_name", "")),
-                    "hw_model": fixed_hw_model(LOCAL_NODE_ID, old.get("hw_model", ""))
+                    "hw_model": fixed_hw_model(LOCAL_NODE_ID, old.get("hw_model", "")),
+                    "battery_level": old.get("battery_level", ""),
+                    "voltage": old.get("voltage", ""),
+                    "channel_utilization": old.get("channel_utilization", ""),
+                    "air_util_tx": old.get("air_util_tx", ""),
+                    "uptime_seconds": old.get("uptime_seconds", ""),
+                    "ina_voltage": old.get("ina_voltage", ""),
+                    "ina_current": old.get("ina_current", ""),
+                    "hops_away": old.get("hops_away", "")
                 }
 
                 save_nodes()
@@ -1066,4 +1335,8 @@ if __name__ == "__main__":
     t = threading.Thread(target=listen_meshtastic, daemon=True)
     t.start()
 
+    info_t = threading.Thread(target=info_refresh_worker, daemon=True)
+    info_t.start()
+
     app.run(host=APP_HOST, port=APP_PORT)
+    

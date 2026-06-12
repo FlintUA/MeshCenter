@@ -5,6 +5,7 @@ import time
 import re
 import json
 import os
+from datetime import datetime
 
 APP_HOST = "0.0.0.0"
 APP_PORT = 5000
@@ -15,9 +16,8 @@ LOCAL_NODE_NAME = "Flint Base"
 
 HISTORY_FILE = "/home/flint/mesh_web/messages.json"
 NODES_FILE = "/home/flint/mesh_web/nodes.json"
+SENSORS_FILE = "/home/flint/mesh_web/sensors.json"
 MAX_HISTORY_MESSAGES = 300
-INFO_REFRESH_SECS = 120
-
 
 KNOWN_NODES = {
     "!1fa065f0": "Elektroniker",
@@ -43,6 +43,17 @@ messages = []
 seen_ids = set()
 seen_recent_texts = {}
 nodes = {}
+sensor_data = {
+    "temperature": None,
+    "humidity": None,
+    "pressure": None,
+    "voltage": None,
+    "current": None,
+    "power": None,
+    "battery_percent": None,
+    "air_quality": None,
+    "last_update": None
+}
 
 listen_process = None
 radio_lock = threading.Lock()
@@ -50,395 +61,686 @@ pause_listen = threading.Event()
 
 HTML = """
 <!doctype html>
-<html>
+<html lang="ru">
 <head>
-<meta charset="utf-8">
-<title>Meshnode Web Chat</title>
-<style>
-html, body {
-    height: 100%;
-    margin: 0;
-    overflow: hidden;
-}
-body {
-    font-family: Arial, sans-serif;
-    background: #eeeeee;
-    display: flex;
-    flex-direction: column;
-}
-.header {
-    flex: 0 0 auto;
-    padding: 12px 18px;
-    background: white;
-    font-size: 24px;
-    font-weight: bold;
-    border-bottom: 1px solid #ddd;
-}
-.status {
-    flex: 0 0 auto;
-    padding: 4px 18px;
-    background: white;
-    color: #777;
-    font-size: 12px;
-}
-.filterbar {
-    flex: 0 0 auto;
-    padding: 6px 18px;
-    background: #f7f7f7;
-    border-bottom: 1px solid #ddd;
-    font-size: 13px;
-    display: none;
-    align-items: center;
-    gap: 10px;
-}
-.filterbar button {
-    font-size: 12px;
-    padding: 3px 10px;
-}
-.main {
-    flex: 1 1 auto;
-    min-height: 0;
-    display: flex;
-}
-#chat {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 12px;
-    background: #eeeeee;
-}
-#nodes {
-    width: 320px;
-    flex: 0 0 320px;
-    overflow-y: auto;
-    background: #f8f8f8;
-    border-left: 1px solid #ccc;
-    padding: 10px;
-    box-sizing: border-box;
-}
-.nodes-title {
-    font-weight: bold;
-    margin-bottom: 8px;
-}
-.node-card {
-    background: white;
-    border: 1px solid #ddd;
-    border-radius: 10px;
-    padding: 8px;
-    margin-bottom: 8px;
-    cursor: pointer;
-}
-.node-card.selected {
-    border: 2px solid #4caf50;
-}
-.node-details {
-    background: #ffffff;
-    border: 1px solid #bbb;
-    border-radius: 10px;
-    padding: 8px;
-    margin-bottom: 10px;
-    font-size: 12px;
-}
-.node-details-title {
-    font-weight: bold;
-    font-size: 14px;
-    margin-bottom: 5px;
-}
-.node-name {
-    font-weight: bold;
-    font-size: 14px;
-}
-.node-id {
-    color: #777;
-    font-size: 11px;
-}
-.node-meta {
-    color: #555;
-    font-size: 12px;
-    margin-top: 4px;
-}
-.row {
-    display: flex;
-    margin-bottom: 8px;
-}
-.row.me {
-    justify-content: flex-end;
-}
-.row.rx {
-    justify-content: flex-start;
-}
-.bubble {
-    max-width: 70%;
-    padding: 7px 11px;
-    border-radius: 12px;
-    background: white;
-    border: 1px solid #ddd;
-}
-.row.me .bubble {
-    background: #dcf8c6;
-}
-.sender {
-    font-size: 12px;
-    color: #555;
-    font-weight: bold;
-    margin-bottom: 2px;
-}
-.text {
-    font-size: 18px;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-.time {
-    font-size: 11px;
-    color: #777;
-    text-align: right;
-    margin-top: 3px;
-}
-form {
-    flex: 0 0 auto;
-    height: 54px;
-    display: flex;
-    gap: 8px;
-    padding: 8px;
-    background: white;
-    border-top: 1px solid #ddd;
-    box-sizing: border-box;
-}
-input {
-    flex: 1;
-    padding: 8px 10px;
-    font-size: 17px;
-}
-button {
-    padding: 8px 22px;
-    font-size: 17px;
-}
-@media (max-width: 900px) {
-    #nodes {
-        display: none;
-    }
-}
-</style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Meshtastic Mesh Network</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            height: 100vh;
+            overflow: hidden;
+            color: #333;
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        .app-container {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: rgba(255, 255, 255, 0.95);
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            padding: 16px 24px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-sub {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        .status-bar {
+            background: rgba(0,0,0,0.1);
+            padding: 6px 24px;
+            font-size: 12px;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .main-layout {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #f5f5f5;
+        }
+
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .message {
+            margin-bottom: 16px;
+            display: flex;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.me {
+            justify-content: flex-end;
+        }
+
+        .message.rx {
+            justify-content: flex-start;
+        }
+
+        .bubble {
+            max-width: 70%;
+            padding: 10px 14px;
+            border-radius: 18px;
+            position: relative;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+
+        .message.me .bubble {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+        }
+
+        .message.rx .bubble {
+            background: white;
+            color: #333;
+        }
+
+        .sender {
+            font-size: 11px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            opacity: 0.8;
+        }
+
+        .text {
+            font-size: 14px;
+            word-wrap: break-word;
+            line-height: 1.4;
+        }
+
+        .time {
+            font-size: 10px;
+            margin-top: 4px;
+            text-align: right;
+            opacity: 0.7;
+        }
+
+        .input-area {
+            background: white;
+            padding: 16px 20px;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .input-form {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .input-form input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 25px;
+            font-size: 14px;
+            transition: all 0.3s;
+            outline: none;
+        }
+
+        .input-form input:focus {
+            border-color: #1e3c72;
+        }
+
+        .input-form button {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            border: none;
+            padding: 12px 28px;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .input-form button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(30, 60, 114, 0.4);
+        }
+
+        .sidebar {
+            width: 380px;
+            background: white;
+            border-left: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.05);
+        }
+
+        .sensors-card {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            padding: 20px;
+            margin: 16px;
+            border-radius: 16px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .sensors-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sensors-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+
+        .sensor-item {
+            background: rgba(255,255,255,0.2);
+            padding: 10px;
+            border-radius: 12px;
+            text-align: center;
+            transition: transform 0.2s;
+        }
+
+        .sensor-item:hover {
+            transform: scale(1.05);
+            background: rgba(255,255,255,0.3);
+        }
+
+        .sensor-label {
+            font-size: 11px;
+            opacity: 0.9;
+            margin-bottom: 4px;
+        }
+
+        .sensor-value {
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .sensor-unit {
+            font-size: 12px;
+            opacity: 0.8;
+        }
+
+        .sensor-update {
+            font-size: 10px;
+            text-align: center;
+            margin-top: 12px;
+            opacity: 0.8;
+        }
+
+        .battery-indicator {
+            margin-top: 10px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 10px;
+            padding: 8px;
+            text-align: center;
+        }
+
+        .battery-bar {
+            height: 8px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+
+        .battery-fill {
+            height: 100%;
+            background: #4caf50;
+            transition: width 0.3s;
+            border-radius: 4px;
+        }
+
+        .nodes-section {
+            flex: 1;
+            padding: 0 16px 16px 16px;
+        }
+
+        .nodes-header {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #1e3c72;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .node-card {
+            background: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .node-card:hover {
+            transform: translateX(4px);
+            border-color: #1e3c72;
+            box-shadow: 0 2px 8px rgba(30, 60, 114, 0.2);
+        }
+
+        .node-card.selected {
+            background: linear-gradient(135deg, #1e3c7215 0%, #2a529815 100%);
+            border-color: #1e3c72;
+            border-width: 2px;
+        }
+
+        .node-name {
+            font-weight: 600;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 4px;
+        }
+
+        .node-id {
+            font-size: 10px;
+            color: #999;
+            font-family: monospace;
+            margin-bottom: 6px;
+        }
+
+        .node-meta {
+            font-size: 10px;
+            color: #666;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 6px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 6px;
+            font-size: 9px;
+            font-weight: 600;
+        }
+
+        .badge-online {
+            background: #4caf50;
+            color: white;
+        }
+
+        .badge-offline {
+            background: #9e9e9e;
+            color: white;
+        }
+
+        .filter-bar {
+            background: #fff3e0;
+            padding: 8px 20px;
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #ffe0b2;
+        }
+
+        .filter-bar.show {
+            display: flex;
+        }
+
+        .filter-text {
+            font-size: 13px;
+            color: #e65100;
+        }
+
+        .clear-filter {
+            background: #ff9800;
+            color: white;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                display: none;
+            }
+            .bubble {
+                max-width: 85%;
+            }
+        }
+    </style>
 </head>
 <body>
-<div class="header">Meshnode Web Chat - LongFast Channel 0</div>
-<div class="status" id="status">loading...</div>
-
-<div class="filterbar" id="filterbar">
-    <span id="filterText"></span>
-    <button type="button" onclick="clearFilter()">Show all</button>
-</div>
-
-<div class="main">
-    <div id="chat"></div>
-    <div id="nodes">
-        <div class="nodes-title" id="nodesTitle">Nodes</div>
-        <div id="nodeDetails"></div>
-        <div id="nodesList"></div>
+    <div class="app-container">
+        <div class="header">
+            <h1>
+                <span>📡</span> Meshtastic Mesh Network
+            </h1>
+            <div class="header-sub">LongFast Channel 0 | RAK4631 Base Station</div>
+        </div>
+        <div class="status-bar">
+            <span id="statusText">🟢 Connecting...</span>
+            <span id="nodeCount"></span>
+        </div>
+        <div class="filter-bar" id="filterBar">
+            <span class="filter-text" id="filterText"></span>
+            <button class="clear-filter" onclick="clearFilter()">✕ Clear filter</button>
+        </div>
+        <div class="main-layout">
+            <div class="chat-area">
+                <div class="messages-container" id="messagesContainer">
+                    <div class="loading">Loading messages...</div>
+                </div>
+                <div class="input-area">
+                    <form class="input-form" id="sendForm">
+                        <input type="text" id="messageInput" placeholder="Type your message..." autocomplete="off">
+                        <button type="submit">Send 📡</button>
+                    </form>
+                </div>
+            </div>
+            <div class="sidebar">
+                <div class="sensors-card" id="sensorsCard">
+                    <div class="sensors-title">
+                        <span>🌡️</span> Environment Sensors
+                    </div>
+                    <div class="sensors-grid">
+                        <div class="sensor-item">
+                            <div class="sensor-label">Temperature</div>
+                            <div class="sensor-value" id="tempValue">--</div>
+                            <div class="sensor-unit">°C</div>
+                        </div>
+                        <div class="sensor-item">
+                            <div class="sensor-label">Humidity</div>
+                            <div class="sensor-value" id="humValue">--</div>
+                            <div class="sensor-unit">%</div>
+                        </div>
+                        <div class="sensor-item">
+                            <div class="sensor-label">Pressure</div>
+                            <div class="sensor-value" id="presValue">--</div>
+                            <div class="sensor-unit">hPa</div>
+                        </div>
+                        <div class="sensor-item">
+                            <div class="sensor-label">Voltage</div>
+                            <div class="sensor-value" id="voltValue">--</div>
+                            <div class="sensor-unit">V</div>
+                        </div>
+                        <div class="sensor-item">
+                            <div class="sensor-label">Current</div>
+                            <div class="sensor-value" id="currValue">--</div>
+                            <div class="sensor-unit">mA</div>
+                        </div>
+                        <div class="sensor-item">
+                            <div class="sensor-label">Power</div>
+                            <div class="sensor-value" id="powValue">--</div>
+                            <div class="sensor-unit">mW</div>
+                        </div>
+                    </div>
+                    <div class="battery-indicator" id="batteryIndicator" style="display: none;">
+                        <div>🔋 Battery Level</div>
+                        <div class="battery-bar">
+                            <div class="battery-fill" id="batteryFill" style="width: 0%"></div>
+                        </div>
+                        <div id="batteryPercent">0%</div>
+                    </div>
+                    <div class="sensor-update" id="sensorUpdate">Last update: --</div>
+                </div>
+                <div class="nodes-section">
+                    <div class="nodes-header">
+                        <span>🖥️</span> Network Nodes
+                        <span id="nodesCountBadge" style="font-size: 12px; color: #999;"></span>
+                    </div>
+                    <div id="nodesList"></div>
+                </div>
+            </div>
+        </div>
     </div>
-</div>
 
-<form id="sendForm">
-<input id="text" autocomplete="off" placeholder="Введите сообщение..." />
-<button type="submit">Send</button>
-</form>
+    <script>
+        let selectedNodeId = null;
+        let selectedNodeName = null;
 
-<script>
-let selectedNodeId = null;
-let selectedNodeName = null;
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
 
-function esc(value) {
-    if (value === null || value === undefined) return '';
-    return String(value)
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#039;');
-}
+        function clearFilter() {
+            selectedNodeId = null;
+            selectedNodeName = null;
+            document.getElementById('filterBar').classList.remove('show');
+            loadMessages();
+        }
 
-function clearFilter() {
-    selectedNodeId = null;
-    selectedNodeName = null;
-    renderNodeDetails(null);
-    loadMessages();
-}
-
-function updateFilterBar() {
-    const bar = document.getElementById('filterbar');
-    const text = document.getElementById('filterText');
-
-    if (!selectedNodeId) {
-        bar.style.display = 'none';
-        text.textContent = '';
-        return;
-    }
-
-    bar.style.display = 'flex';
-    text.textContent = 'Filter: ' + selectedNodeName + ' (' + selectedNodeId + ')';
-}
-
-function renderNodeDetails(node) {
-    const details = document.getElementById('nodeDetails');
-
-    if (!node) {
-        details.innerHTML = '';
-        updateFilterBar();
-        return;
-    }
-
-    details.innerHTML =
-        '<div class="node-details">' +
-        '<div class="node-details-title">' + esc(node.clean_name) + '</div>' +
-        '<div>ID: ' + esc(node.node_id) + '</div>' +
-        '<div>Short: ' + esc(node.short_name || '-') + '</div>' +
-        '<div>Hardware: ' + esc(node.hw_model || '-') + '</div>' +
-        '<div>Last seen: ' + esc(node.age) + '</div>' +
-        '<div>Signal: ' + esc(node.signal_quality || '-') + '</div>' +
-        '<div>RSSI: ' + esc(node.rssi || '-') + '</div>' +
-        '<div>SNR: ' + esc(node.snr || '-') + '</div>' +
-        '<div>Hops: ' + esc(node.hop_start || '-') + '</div>' +
-        '<div>Relay: ' + esc(node.relay_node || '-') + '</div>' +
-        '<div>Last message: ' + esc(node.last_text || '-') + '</div>' +
-        '<hr>' +
-        '<div><b>Power</b></div>' +
-        '<div>Battery: ' + esc(node.battery_level ? node.battery_level + ' %' : '-') + '</div>' +
-        '<div>Voltage: ' + esc(node.voltage ? node.voltage + ' V' : '-') + '</div>' +
-        '<div>Channel: ' + esc(node.channel_utilization ? node.channel_utilization + ' %' : '-') + '</div>' +
-        '<div>Air TX: ' + esc(node.air_util_tx ? node.air_util_tx + ' %' : '-') + '</div>' +
-        '<div>Uptime: ' + esc(node.uptime_text || '-') + '</div>' +
-        '<div>INA voltage: ' + esc(node.ina_voltage ? node.ina_voltage + ' V' : '-') + '</div>' +
-        '<div>INA current: ' + esc(node.ina_current ? node.ina_current + ' mA' : '-') + '</div>' +
-        '</div>';
-
-    updateFilterBar();
-}
-
-async function loadMessages() {
-    let url = '/api/messages';
-
-    if (selectedNodeId) {
-        url += '?node_id=' + encodeURIComponent(selectedNodeId);
-    }
-
-    const r = await fetch(url);
-    const data = await r.json();
-
-    document.getElementById('status').textContent = data.status;
-
-    const chat = document.getElementById('chat');
-    const nearBottom = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 80;
-
-    chat.innerHTML = '';
-
-    data.messages.forEach(m => {
-        const row = document.createElement('div');
-        row.className = 'row ' + m.kind;
-
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble';
-
-        const sender = document.createElement('div');
-        sender.className = 'sender';
-        sender.textContent = m.sender;
-
-        const text = document.createElement('div');
-        text.className = 'text';
-        text.textContent = m.text;
-
-        const time = document.createElement('div');
-        time.className = 'time';
-        time.textContent = m.time;
-
-        bubble.appendChild(sender);
-        bubble.appendChild(text);
-        bubble.appendChild(time);
-        row.appendChild(bubble);
-        chat.appendChild(row);
-    });
-
-    if (nearBottom) {
-        chat.scrollTop = chat.scrollHeight;
-    }
-
-    const nodesList = document.getElementById('nodesList');
-    nodesList.innerHTML = '';
-
-    document.getElementById('nodesTitle').textContent =
-        'Nodes (' + data.nodes.length + ')';
-
-    data.nodes.forEach(n => {
-        const card = document.createElement('div');
-        card.className = selectedNodeId === n.node_id ? 'node-card selected' : 'node-card';
-
-        card.onclick = () => {
-            if (selectedNodeId === n.node_id) {
-                clearFilter();
+        function updateFilterBar() {
+            const bar = document.getElementById('filterBar');
+            const text = document.getElementById('filterText');
+            
+            if (!selectedNodeId) {
+                bar.classList.remove('show');
                 return;
             }
+            
+            bar.classList.add('show');
+            text.textContent = `💬 Filtered: ${selectedNodeName}`;
+        }
 
-            selectedNodeId = n.node_id;
-            selectedNodeName = n.clean_name;
-            renderNodeDetails(n);
+        async function loadSensors() {
+            try {
+                const response = await fetch('/api/sensors');
+                const data = await response.json();
+                
+                document.getElementById('tempValue').textContent = data.temperature !== null ? data.temperature.toFixed(1) : '--';
+                document.getElementById('humValue').textContent = data.humidity !== null ? data.humidity.toFixed(1) : '--';
+                document.getElementById('presValue').textContent = data.pressure !== null ? Math.round(data.pressure) : '--';
+                document.getElementById('voltValue').textContent = data.voltage !== null ? data.voltage.toFixed(2) : '--';
+                document.getElementById('currValue').textContent = data.current !== null ? Math.round(data.current) : '--';
+                document.getElementById('powValue').textContent = data.power !== null ? Math.round(data.power) : '--';
+                
+                if (data.battery_percent !== null) {
+                    const batteryIndicator = document.getElementById('batteryIndicator');
+                    batteryIndicator.style.display = 'block';
+                    const batteryFill = document.getElementById('batteryFill');
+                    const batteryPercent = document.getElementById('batteryPercent');
+                    batteryFill.style.width = data.battery_percent + '%';
+                    batteryPercent.textContent = data.battery_percent + '%';
+                    
+                    // Change color based on battery level
+                    if (data.battery_percent < 20) {
+                        batteryFill.style.background = '#f44336';
+                    } else if (data.battery_percent < 50) {
+                        batteryFill.style.background = '#ff9800';
+                    } else {
+                        batteryFill.style.background = '#4caf50';
+                    }
+                }
+                
+                if (data.last_update) {
+                    document.getElementById('sensorUpdate').textContent = `Last update: ${data.last_update}`;
+                }
+            } catch (error) {
+                console.error('Error loading sensors:', error);
+            }
+        }
+
+        async function loadMessages() {
+            let url = '/api/messages';
+            if (selectedNodeId) {
+                url += '?node_id=' + encodeURIComponent(selectedNodeId);
+            }
+            
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                document.getElementById('statusText').innerHTML = data.status === 'radio: listening' ? '🟢 Radio active' : '🟡 Sending...';
+                document.getElementById('nodeCount').innerHTML = `📡 ${data.nodes.length} nodes online`;
+                document.getElementById('nodesCountBadge').textContent = `(${data.nodes.length})`;
+                
+                const container = document.getElementById('messagesContainer');
+                const shouldScroll = container.scrollTop + container.clientHeight >= container.scrollHeight - 100;
+                
+                if (data.messages.length === 0) {
+                    container.innerHTML = '<div class="loading">💬 No messages yet. Be the first to send one!</div>';
+                } else {
+                    container.innerHTML = data.messages.map(msg => `
+                        <div class="message ${msg.kind}">
+                            <div class="bubble">
+                                <div class="sender">${escapeHtml(msg.sender)}</div>
+                                <div class="text">${escapeHtml(msg.text)}</div>
+                                <div class="time">${escapeHtml(msg.time)}</div>
+                            </div>
+                        </div>
+                    `).join('');
+                }
+                
+                if (shouldScroll) {
+                    container.scrollTop = container.scrollHeight;
+                }
+                
+                const nodesList = document.getElementById('nodesList');
+                nodesList.innerHTML = data.nodes.map(node => `
+                    <div class="node-card ${selectedNodeId === node.node_id ? 'selected' : ''}" onclick="selectNode('${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name)}')">
+                        <div class="node-name">
+                            ${node.name}
+                            <span class="badge ${node.signal_quality === 'good' ? 'badge-online' : 'badge-offline'}">${node.signal_quality === 'good' ? '●' : '○'}</span>
+                        </div>
+                        <div class="node-id">${escapeHtml(node.node_id)}</div>
+                        <div class="node-meta">${escapeHtml(node.meta)}</div>
+                        ${node.last_text ? `<div class="node-last-text" style="font-size: 11px; color: #1e3c72; margin-top: 6px; font-style: italic;">📝 ${escapeHtml(node.last_text.substring(0, 50))}${node.last_text.length > 50 ? '...' : ''}</div>` : ''}
+                    </div>
+                `).join('');
+                
+                updateFilterBar();
+            } catch (error) {
+                console.error('Error loading messages:', error);
+            }
+        }
+        
+        function selectNode(nodeId, nodeName) {
+            if (selectedNodeId === nodeId) {
+                clearFilter();
+            } else {
+                selectedNodeId = nodeId;
+                selectedNodeName = nodeName;
+                loadMessages();
+            }
+        }
+        
+        document.getElementById('sendForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const input = document.getElementById('messageInput');
+            const text = input.value.trim();
+            
+            if (!text) return;
+            
+            const button = e.target.querySelector('button');
+            button.disabled = true;
+            button.textContent = 'Sending...';
+            
+            try {
+                const response = await fetch('/api/send', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({text})
+                });
+                
+                if (response.ok) {
+                    input.value = '';
+                    loadMessages();
+                }
+            } catch (error) {
+                console.error('Error sending message:', error);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Send 📡';
+                input.focus();
+            }
+        });
+        
+        // Auto-refresh every 2 seconds for messages, 10 seconds for sensors
+        setInterval(() => {
             loadMessages();
-        };
-
-        const name = document.createElement('div');
-        name.className = 'node-name';
-        name.textContent = n.name;
-
-        const id = document.createElement('div');
-        id.className = 'node-id';
-        id.textContent = n.node_id;
-
-        const meta = document.createElement('div');
-        meta.className = 'node-meta';
-        meta.textContent = n.meta;
-
-        const lastText = document.createElement('div');
-        lastText.className = 'node-meta';
-        lastText.textContent = n.last_text ? "Msg: " + n.last_text : "";
-
-        card.appendChild(name);
-        card.appendChild(id);
-        card.appendChild(meta);
-        card.appendChild(lastText);
-        nodesList.appendChild(card);
-    });
-
-    const selectedNode = data.nodes.find(n => n.node_id === selectedNodeId);
-
-    if (selectedNode) {
-        selectedNodeName = selectedNode.clean_name;
-    }
-
-    renderNodeDetails(selectedNode);
-}
-
-document.getElementById('sendForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    const input = document.getElementById('text');
-    const text = input.value.trim();
-    if (!text) return;
-
-    input.disabled = true;
-
-    await fetch('/api/send', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({text})
-    });
-
-    input.value = '';
-    input.disabled = false;
-    input.focus();
-    loadMessages();
-});
-
-setInterval(loadMessages, 2000);
-loadMessages();
-</script>
+        }, 2000);
+        
+        setInterval(() => {
+            loadSensors();
+        }, 10000);
+        
+        // Initial load
+        loadMessages();
+        loadSensors();
+        
+        // Focus input on load
+        setTimeout(() => {
+            document.getElementById('messageInput').focus();
+        }, 100);
+    </script>
 </body>
 </html>
 """
@@ -451,95 +753,6 @@ def fixed_short_name(node_id, fallback=""):
 
 def fixed_hw_model(node_id, fallback=""):
     return KNOWN_NODE_INFO.get(node_id, {}).get("hw_model") or fallback or ""
-
-def fmt_float(value, digits=2):
-    if value is None or value == "":
-        return ""
-    try:
-        return f"{float(value):.{digits}f}"
-    except (TypeError, ValueError):
-        return str(value)
-
-def fmt_int(value):
-    if value is None or value == "":
-        return ""
-    try:
-        return str(int(float(value)))
-    except (TypeError, ValueError):
-        return str(value)
-
-def uptime_text(seconds):
-    if seconds is None or seconds == "":
-        return ""
-
-    try:
-        seconds = int(float(seconds))
-    except (TypeError, ValueError):
-        return str(seconds)
-
-    if seconds < 60:
-        return f"{seconds} sec"
-
-    minutes = seconds // 60
-    if minutes < 60:
-        return f"{minutes} min"
-
-    hours = minutes // 60
-    if hours < 48:
-        return f"{hours} h"
-
-    days = hours // 24
-    return f"{days} d"
-
-def extract_json_object(text, marker):
-    start_marker = text.find(marker)
-    if start_marker < 0:
-        return ""
-
-    start = text.find("{", start_marker)
-    if start < 0:
-        return ""
-
-    depth = 0
-    in_string = False
-    escape = False
-
-    for i in range(start, len(text)):
-        ch = text[i]
-
-        if escape:
-            escape = False
-            continue
-
-        if ch == "\\":
-            escape = True
-            continue
-
-        if ch == '"':
-            in_string = not in_string
-            continue
-
-        if in_string:
-            continue
-
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start:i + 1]
-
-    return ""
-
-def power_value(metrics, names):
-    if not isinstance(metrics, dict):
-        return ""
-
-    for name in names:
-        if name in metrics:
-            return metrics.get(name)
-
-    return ""
 
 def save_messages():
     try:
@@ -561,6 +774,97 @@ def load_messages():
     except Exception as e:
         print("History load error:", e)
         messages = []
+
+def save_sensors():
+    try:
+        with open(SENSORS_FILE, "w", encoding="utf-8") as f:
+            json.dump(sensor_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("Sensors save error:", e)
+
+def load_sensors_data():
+    global sensor_data
+    
+    if not os.path.exists(SENSORS_FILE):
+        return
+    
+    try:
+        with open(SENSORS_FILE, "r", encoding="utf-8") as f:
+            sensor_data = json.load(f)
+    except Exception as e:
+        print("Sensors load error:", e)
+        sensor_data = {
+            "temperature": None,
+            "humidity": None,
+            "pressure": None,
+            "voltage": None,
+            "current": None,
+            "power": None,
+            "battery_percent": None,
+            "air_quality": None,
+            "last_update": None
+        }
+
+def read_sensors_from_meshtastic():
+    """Read sensor data from RAK4631 via Meshtastic telemetry"""
+    try:
+        # Try to get telemetry data
+        result = subprocess.run(
+            [MESHTASTIC_CMD, "--get", "telemetry"],
+            capture_output=True,
+            text=True,
+            timeout=15
+        )
+        
+        output = result.stdout + result.stderr
+        print(f"Telemetry output: {output[:500]}")  # Debug output
+        
+        # Parse environment metrics (BME280)
+        # Look for various formats
+        temp_match = re.search(r'(?:temperature|temp)[:\s=]+(-?\d+\.?\d*)', output, re.IGNORECASE)
+        hum_match = re.search(r'(?:humidity|hum)[:\s=]+(\d+\.?\d*)', output, re.IGNORECASE)
+        press_match = re.search(r'(?:pressure)[:\s=]+(\d+\.?\d*)', output, re.IGNORECASE)
+        
+        # Parse power metrics (INA226)
+        volt_match = re.search(r'(?:voltage)[:\s=]+(\d+\.?\d*)', output, re.IGNORECASE)
+        curr_match = re.search(r'(?:current)[:\s=]+(\d+\.?\d*)', output, re.IGNORECASE)
+        
+        # Parse battery percentage if available
+        batt_match = re.search(r'(?:battery|bat)[:\s=]+(\d+\.?\d*)%?', output, re.IGNORECASE)
+        
+        if temp_match:
+            sensor_data["temperature"] = float(temp_match.group(1))
+            print(f"Temperature: {sensor_data['temperature']}°C")
+        if hum_match:
+            sensor_data["humidity"] = float(hum_match.group(1))
+            print(f"Humidity: {sensor_data['humidity']}%")
+        if press_match:
+            sensor_data["pressure"] = float(press_match.group(1))
+            print(f"Pressure: {sensor_data['pressure']} hPa")
+        if volt_match:
+            sensor_data["voltage"] = float(volt_match.group(1))
+            print(f"Voltage: {sensor_data['voltage']}V")
+        if curr_match:
+            sensor_data["current"] = float(curr_match.group(1))
+            print(f"Current: {sensor_data['current']}mA")
+        if batt_match:
+            sensor_data["battery_percent"] = float(batt_match.group(1))
+            print(f"Battery: {sensor_data['battery_percent']}%")
+        
+        # Calculate power (mW)
+        if sensor_data["voltage"] is not None and sensor_data["current"] is not None:
+            sensor_data["power"] = sensor_data["voltage"] * sensor_data["current"]
+        
+        # If we got any data, update the timestamp
+        if any([sensor_data["temperature"], sensor_data["humidity"], sensor_data["pressure"], 
+                sensor_data["voltage"], sensor_data["current"]]):
+            sensor_data["last_update"] = now()
+            save_sensors()
+        
+    except subprocess.TimeoutExpired:
+        print("Sensor read timeout")
+    except Exception as e:
+        print(f"Error reading sensors: {e}")
 
 def infer_node_id_from_sender(sender):
     if not sender:
@@ -629,15 +933,7 @@ def ensure_known_nodes():
             "relay_node": old.get("relay_node", ""),
             "last_text": old.get("last_text", ""),
             "short_name": fixed_short_name(node_id, old.get("short_name", "")),
-            "hw_model": fixed_hw_model(node_id, old.get("hw_model", "")),
-            "battery_level": old.get("battery_level", ""),
-            "voltage": old.get("voltage", ""),
-            "channel_utilization": old.get("channel_utilization", ""),
-            "air_util_tx": old.get("air_util_tx", ""),
-            "uptime_seconds": old.get("uptime_seconds", ""),
-            "ina_voltage": old.get("ina_voltage", ""),
-            "ina_current": old.get("ina_current", ""),
-            "hops_away": old.get("hops_away", "")
+            "hw_model": fixed_hw_model(node_id, old.get("hw_model", ""))
         }
 
     save_nodes()
@@ -813,15 +1109,7 @@ def process_nodeinfo(block):
         "relay_node": relay_node or old.get("relay_node", ""),
         "last_text": old.get("last_text", ""),
         "short_name": fixed_short_name(node_id, short_name or old.get("short_name", "")),
-        "hw_model": fixed_hw_model(node_id, hw_model or old.get("hw_model", "")),
-        "battery_level": old.get("battery_level", ""),
-        "voltage": old.get("voltage", ""),
-        "channel_utilization": old.get("channel_utilization", ""),
-        "air_util_tx": old.get("air_util_tx", ""),
-        "uptime_seconds": old.get("uptime_seconds", ""),
-        "ina_voltage": old.get("ina_voltage", ""),
-        "ina_current": old.get("ina_current", ""),
-        "hops_away": old.get("hops_away", "")
+        "hw_model": fixed_hw_model(node_id, hw_model or old.get("hw_model", ""))
     }
 
     save_nodes()
@@ -897,15 +1185,7 @@ def update_node(line, sender, text):
         "relay_node": relay_node or old.get("relay_node", ""),
         "last_text": text or "",
         "short_name": fixed_short_name(node_id, old.get("short_name", "")),
-        "hw_model": fixed_hw_model(node_id, old.get("hw_model", "")),
-        "battery_level": old.get("battery_level", ""),
-        "voltage": old.get("voltage", ""),
-        "channel_utilization": old.get("channel_utilization", ""),
-        "air_util_tx": old.get("air_util_tx", ""),
-        "uptime_seconds": old.get("uptime_seconds", ""),
-        "ina_voltage": old.get("ina_voltage", ""),
-        "ina_current": old.get("ina_current", ""),
-        "hops_away": old.get("hops_away", "")
+        "hw_model": fixed_hw_model(node_id, old.get("hw_model", ""))
     }
 
     save_nodes()
@@ -932,14 +1212,6 @@ def get_nodes_list():
         short_name = n.get("short_name", "")
         hw_model = n.get("hw_model", "")
         quality = signal_quality(rssi)
-        battery_level = n.get("battery_level", "")
-        voltage = n.get("voltage", "")
-        channel_utilization = n.get("channel_utilization", "")
-        air_util_tx = n.get("air_util_tx", "")
-        uptime_seconds = n.get("uptime_seconds", "")
-        ina_voltage = n.get("ina_voltage", "")
-        ina_current = n.get("ina_current", "")
-        hops_away = n.get("hops_away", "")
 
         meta_parts = [age_text(last_seen)]
 
@@ -957,12 +1229,6 @@ def get_nodes_list():
             meta_parts.append("short: " + str(short_name))
         if hw_model:
             meta_parts.append("hw: " + str(hw_model))
-        if battery_level:
-            meta_parts.append("bat: " + str(battery_level) + "%")
-        if voltage:
-            meta_parts.append("V: " + str(voltage))
-        if hops_away != "":
-            meta_parts.append("hopsAway: " + str(hops_away))
 
         result.append({
             "name": icon + " " + n["name"],
@@ -977,16 +1243,7 @@ def get_nodes_list():
             "hop_start": hop_start,
             "relay_node": relay_node,
             "signal_quality": quality,
-            "age": age_text(last_seen),
-            "battery_level": battery_level,
-            "voltage": voltage,
-            "channel_utilization": channel_utilization,
-            "air_util_tx": air_util_tx,
-            "uptime_seconds": uptime_seconds,
-            "uptime_text": uptime_text(uptime_seconds),
-            "ina_voltage": ina_voltage,
-            "ina_current": ina_current,
-            "hops_away": hops_away
+            "age": age_text(last_seen)
         })
 
     return result
@@ -1013,120 +1270,6 @@ def is_duplicate_text(sender, text):
     seen_recent_texts[cleaned_text] = current_time
     return False
 
-def update_nodes_from_info_text(info_text):
-    nodes_json = extract_json_object(info_text, "Nodes in mesh:")
-    if not nodes_json:
-        return 0
-
-    try:
-        mesh_nodes = json.loads(nodes_json)
-    except Exception as e:
-        print("Info parse error:", e)
-        return 0
-
-    count = 0
-
-    for node_id, data in mesh_nodes.items():
-        if not isinstance(data, dict):
-            continue
-
-        user = data.get("user", {}) or {}
-        device_metrics = data.get("deviceMetrics", {}) or {}
-        power_metrics = data.get("powerMetrics", {}) or {}
-
-        long_name = user.get("longName") or user.get("long_name") or node_id
-        short_name = user.get("shortName") or user.get("short_name") or ""
-        hw_model = user.get("hwModel") or user.get("hw_model") or ""
-
-        old = nodes.get(node_id, {})
-
-        last_seen = data.get("lastHeard") or old.get("last_seen", 0)
-        try:
-            last_seen = float(last_seen)
-        except (TypeError, ValueError):
-            last_seen = old.get("last_seen", 0)
-
-        voltage = power_value(device_metrics, ["voltage", "batteryVoltage", "battery_voltage"])
-        battery_level = power_value(device_metrics, ["batteryLevel", "battery_level"])
-        channel_utilization = power_value(device_metrics, ["channelUtilization", "channel_utilization"])
-        air_util_tx = power_value(device_metrics, ["airUtilTx", "air_util_tx"])
-        uptime_seconds = power_value(device_metrics, ["uptimeSeconds", "uptime_seconds"])
-
-        ina_voltage = power_value(
-            power_metrics,
-            ["voltage", "inaVoltage", "ina_voltage", "busVoltage", "bus_voltage", "ch1Voltage", "ch1_voltage"]
-        )
-        ina_current = power_value(
-            power_metrics,
-            ["current", "inaCurrent", "ina_current", "busCurrent", "bus_current", "ch1Current", "ch1_current"]
-        )
-
-        nodes[node_id] = {
-            "name": KNOWN_NODES.get(node_id) or long_name,
-            "node_id": node_id,
-            "last_seen": last_seen,
-            "last_time": old.get("last_time", now()),
-            "rssi": old.get("rssi"),
-            "snr": data.get("snr", old.get("snr")),
-            "hop_start": old.get("hop_start", ""),
-            "relay_node": old.get("relay_node", ""),
-            "hops_away": data.get("hopsAway", old.get("hops_away", "")),
-            "last_text": old.get("last_text", ""),
-            "short_name": fixed_short_name(node_id, short_name or old.get("short_name", "")),
-            "hw_model": fixed_hw_model(node_id, hw_model or old.get("hw_model", "")),
-            "battery_level": fmt_int(battery_level) or old.get("battery_level", ""),
-            "voltage": fmt_float(voltage, 3) or old.get("voltage", ""),
-            "channel_utilization": fmt_float(channel_utilization, 2) or old.get("channel_utilization", ""),
-            "air_util_tx": fmt_float(air_util_tx, 3) or old.get("air_util_tx", ""),
-            "uptime_seconds": fmt_int(uptime_seconds) or old.get("uptime_seconds", ""),
-            "ina_voltage": fmt_float(ina_voltage, 3) or old.get("ina_voltage", ""),
-            "ina_current": fmt_float(ina_current, 2) or old.get("ina_current", "")
-        }
-
-        count += 1
-
-    if count:
-        save_nodes()
-
-    return count
-
-def refresh_nodes_from_info_once():
-    pause_listen.set()
-
-    with radio_lock:
-        try:
-            stop_listener()
-            time.sleep(1)
-
-            result = subprocess.run(
-                [MESHTASTIC_CMD, "--info"],
-                capture_output=True,
-                text=True,
-                timeout=90
-            )
-
-            if result.returncode != 0:
-                err = result.stderr.strip() or result.stdout.strip()
-                print("Info refresh error:", err)
-                return
-
-            count = update_nodes_from_info_text(result.stdout)
-            print("Info refresh nodes:", count)
-
-        except Exception as e:
-            print("Info refresh exception:", e)
-
-        finally:
-            time.sleep(1)
-            pause_listen.clear()
-
-def info_refresh_worker():
-    time.sleep(20)
-
-    while True:
-        refresh_nodes_from_info_once()
-        time.sleep(INFO_REFRESH_SECS)
-
 def stop_listener():
     global listen_process
 
@@ -1148,11 +1291,20 @@ def listen_meshtastic():
 
     nodeinfo_buffer = []
     collecting_nodeinfo = False
+    
+    # Start periodic sensor reading every 10 seconds
+    last_sensor_read = 0
 
     while True:
         if pause_listen.is_set():
             time.sleep(0.5)
             continue
+            
+        # Read sensors every 10 seconds
+        current_time = time.time()
+        if current_time - last_sensor_read >= 10:
+            read_sensors_from_meshtastic()
+            last_sensor_read = current_time
 
         try:
             with radio_lock:
@@ -1262,6 +1414,10 @@ def api_messages():
         "nodes": get_nodes_list()
     })
 
+@app.route("/api/sensors")
+def api_sensors():
+    return jsonify(sensor_data)
+
 @app.route("/api/send", methods=["POST"])
 def api_send():
     data = request.get_json(force=True)
@@ -1300,15 +1456,7 @@ def api_send():
                     "relay_node": old.get("relay_node", ""),
                     "last_text": "sent: " + text,
                     "short_name": fixed_short_name(LOCAL_NODE_ID, old.get("short_name", "")),
-                    "hw_model": fixed_hw_model(LOCAL_NODE_ID, old.get("hw_model", "")),
-                    "battery_level": old.get("battery_level", ""),
-                    "voltage": old.get("voltage", ""),
-                    "channel_utilization": old.get("channel_utilization", ""),
-                    "air_util_tx": old.get("air_util_tx", ""),
-                    "uptime_seconds": old.get("uptime_seconds", ""),
-                    "ina_voltage": old.get("ina_voltage", ""),
-                    "ina_current": old.get("ina_current", ""),
-                    "hops_away": old.get("hops_away", "")
+                    "hw_model": fixed_hw_model(LOCAL_NODE_ID, old.get("hw_model", ""))
                 }
 
                 save_nodes()
@@ -1330,13 +1478,14 @@ def api_send():
 if __name__ == "__main__":
     load_messages()
     load_nodes()
+    load_sensors_data()
     ensure_known_nodes()
+    
+    # Start background sensor reading thread
+    sensor_thread = threading.Thread(target=read_sensors_from_meshtastic, daemon=True)
+    sensor_thread.start()
 
     t = threading.Thread(target=listen_meshtastic, daemon=True)
     t.start()
 
-    info_t = threading.Thread(target=info_refresh_worker, daemon=True)
-    info_t.start()
-
-    app.run(host=APP_HOST, port=APP_PORT)
-    
+    app.run(host=APP_HOST, port=APP_PORT, debug=False, threaded=True)

@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Meshnode Web Chat</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="header">Meshnode Web Chat - LongFast Channel 0</div>
+<div class="status" id="status">loading...</div>
+
+<div class="main">
+    <div id="chat"></div>
+    <div id="nodes">
+        <div class="nodes-title" id="nodesTitle">Nodes</div>
+        <div id="nodeDetails"></div>
+        <div id="nodesList"></div>
+    </div>
+</div>
+
+<form id="sendForm">
+<input id="text" autocomplete="off" placeholder="Введите сообщение..." />
+<button type="submit">Send</button>
+</form>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

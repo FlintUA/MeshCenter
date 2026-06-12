@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template
 import subprocess
 import threading
 import time
@@ -1382,7 +1382,7 @@ def listen_meshtastic():
 
 @app.route("/")
 def index():
-    return render_template_string(HTML)
+    return render_template("index.html")
 
 @app.route("/api/messages")
 def api_messages():

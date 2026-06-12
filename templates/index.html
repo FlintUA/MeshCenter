@@ -1,27 +1,54 @@
 <!doctype html>
-<html>
+<html lang="ru">
 <head>
-<meta charset="utf-8">
-<title>Meshnode Web Chat</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meshtastic Mesh Network</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-<div class="header">Meshnode Web Chat - LongFast Channel 0</div>
-<div class="status" id="status">loading...</div>
+<div class="app-container">
+    <div class="header">
+        <h1><span>📡</span> Meshtastic Mesh Network</h1>
+        <div class="header-sub">LongFast Channel 0 | Flint Base</div>
+    </div>
 
-<div class="main">
-    <div id="chat"></div>
-    <div id="nodes">
-        <div class="nodes-title" id="nodesTitle">Nodes</div>
-        <div id="nodeDetails"></div>
-        <div id="nodesList"></div>
+    <div class="status-bar">
+        <span id="statusText">🟢 Connecting...</span>
+        <span id="nodeCount"></span>
+    </div>
+
+    <div class="filter-bar" id="filterBar">
+        <span class="filter-text" id="filterText"></span>
+        <button class="clear-filter" type="button" onclick="clearFilter()">✕ Clear filter</button>
+    </div>
+
+    <div class="main-layout">
+        <div class="chat-area">
+            <div class="messages-container" id="messagesContainer">
+                <div class="loading">Loading messages...</div>
+            </div>
+
+            <div class="input-area">
+                <form class="input-form" id="sendForm">
+                    <input type="text" id="messageInput" placeholder="Введите сообщение..." autocomplete="off">
+                    <button type="submit">Send 📡</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="sidebar">
+            <div class="nodes-section">
+                <div class="nodes-header">
+                    <span>🖥️</span> Network Nodes
+                    <span id="nodesCountBadge"></span>
+                </div>
+                <div id="nodeDetails"></div>
+                <div id="nodesList"></div>
+            </div>
+        </div>
     </div>
 </div>
-
-<form id="sendForm">
-<input id="text" autocomplete="off" placeholder="Введите сообщение..." />
-<button type="submit">Send</button>
-</form>
 
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>

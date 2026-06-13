@@ -104,7 +104,7 @@ async function loadMessages() {
 
         document.getElementById('nodesCountBadge').textContent =
             '(' + data.nodes.length + ')';
-
+            
         const container = document.getElementById('messagesContainer');
         const shouldScroll = container.scrollTop + container.clientHeight >= container.scrollHeight - 100;
 
@@ -241,3 +241,61 @@ loadMessages();
 setTimeout(() => {
     document.getElementById('messageInput').focus();
 }, 100);
+
+async function loadBaseStatus() {
+    try {
+        const response = await fetch('/api/base_status');
+        const data = await response.json();
+
+        const card = document.getElementById('baseCard');
+        if (!card) return;
+
+        const battery = data.battery_level !== null && data.battery_level !== undefined
+            ? data.battery_level + ' %'
+            : '-';
+
+        const voltage = data.voltage !== null && data.voltage !== undefined
+            ? Number(data.voltage).toFixed(3) + ' V'
+            : '-';
+
+        const channel = data.channel_utilization !== null && data.channel_utilization !== undefined
+            ? Number(data.channel_utilization).toFixed(2) + ' %'
+            : '-';
+
+        const airTx = data.air_util_tx !== null && data.air_util_tx !== undefined
+            ? Number(data.air_util_tx).toFixed(2) + ' %'
+            : '-';
+
+        const uptime = data.uptime_seconds !== null && data.uptime_seconds !== undefined
+            ? formatUptime(data.uptime_seconds)
+            : '-';
+
+        card.innerHTML =
+            '<div class="base-card-title">📡 Flint Base</div>' +
+            '<div class="base-card-line">🔋 Battery: ' + escapeHtml(battery) + '</div>' +
+            '<div class="base-card-line">⚡ Voltage: ' + escapeHtml(voltage) + '</div>' +
+            '<div class="base-card-line">📶 Channel: ' + escapeHtml(channel) + '</div>' +
+            '<div class="base-card-line">📡 Air TX: ' + escapeHtml(airTx) + '</div>' +
+            '<div class="base-card-line">⏱ Uptime: ' + escapeHtml(uptime) + '</div>' +
+            '<div class="base-card-line">🕒 Update: ' + escapeHtml(data.last_update || '-') + '</div>';
+
+    } catch (error) {
+        console.error('Error loading base status:', error);
+    }
+}
+
+function formatUptime(seconds) {
+    seconds = Number(seconds);
+
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+
+    if (h > 0) {
+        return h + ' h ' + m + ' min';
+    }
+
+    return m + ' min';
+}
+
+setInterval(loadBaseStatus, 30000);
+loadBaseStatus();

@@ -55,6 +55,15 @@ sensor_data = {
     "last_update": None
 }
 
+base_status = {
+    "battery_level": None,
+    "voltage": None,
+    "channel_utilization": None,
+    "air_util_tx": None,
+    "uptime_seconds": None,
+    "last_update": None
+}
+
 listen_process = None
 radio_lock = threading.Lock()
 pause_listen = threading.Event()
@@ -805,6 +814,15 @@ def load_sensors_data():
             "last_update": None
         }
 
+        base_status = {
+            "battery_level": None,
+            "voltage": None,
+            "channel_utilization": None,
+            "air_util_tx": None,
+            "uptime_seconds": None,
+            "last_update": None
+        }
+
 def read_sensors_from_meshtastic():
     """Read sensor data from RAK4631 via Meshtastic telemetry"""
     try:
@@ -1286,6 +1304,52 @@ def stop_listener():
 
         listen_process = None
 
+def update_base_status_from_info():
+    global base_status
+
+    try:
+        result = subprocess.run(
+            [MESHTASTIC_CMD, "--info"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        output = result.stdout + result.stderr
+
+        metrics_pos = output.find('"deviceMetrics"')
+        if metrics_pos < 0:
+            print("Base status: deviceMetrics not found")
+            return
+
+        block_start = output.find("{", metrics_pos)
+        block_end = output.find("}", block_start)
+
+        if block_start < 0 or block_end < 0:
+            print("Base status: deviceMetrics block not found")
+            return
+
+        metrics_text = output[block_start:block_end + 1]
+        metrics = json.loads(metrics_text)
+
+        base_status = {
+            "battery_level": metrics.get("batteryLevel"),
+            "voltage": metrics.get("voltage"),
+            "channel_utilization": metrics.get("channelUtilization"),
+            "air_util_tx": metrics.get("airUtilTx"),
+            "uptime_seconds": metrics.get("uptimeSeconds"),
+            "last_update": now()
+        }
+
+        print("Base status updated:", base_status)
+
+    except Exception as e:
+        print("Base status update error:", e)
+def base_status_worker():
+    while True:
+        update_base_status_from_info()
+        time.sleep(120)        
+
 def listen_meshtastic():
     global listen_process
 
@@ -1418,6 +1482,10 @@ def api_messages():
 def api_sensors():
     return jsonify(sensor_data)
 
+@app.route("/api/base_status")
+def api_base_status():
+    return jsonify(base_status)
+
 @app.route("/api/send", methods=["POST"])
 def api_send():
     data = request.get_json(force=True)
@@ -1480,10 +1548,14 @@ if __name__ == "__main__":
     load_nodes()
     load_sensors_data()
     ensure_known_nodes()
+    update_base_status_from_info()
     
     # Start background sensor reading thread
     sensor_thread = threading.Thread(target=read_sensors_from_meshtastic, daemon=True)
     sensor_thread.start()
+
+    base_status_thread = threading.Thread(target=base_status_worker, daemon=True)
+    base_status_thread.start()
 
     t = threading.Thread(target=listen_meshtastic, daemon=True)
     t.start()

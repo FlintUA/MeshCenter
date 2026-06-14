@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Meshtastic Mesh Network</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
@@ -38,14 +38,67 @@
         </div>
 
         <div class="sidebar">
-            <div class="nodes-section">
-                <div class="base-card" id="baseCard">
-                    <div class="base-card-title">📡 Flint Base</div>
-                    <div class="base-card-line">Loading...</div>
+            <!-- Информационный блок Flint Base -->
+            <div class="base-card" id="baseCard">
+                <div class="base-card-title">📡 Flint Base</div>
+                <div class="base-card-line">Loading...</div>
+            </div>
+
+            <!-- Блок датчиков (скрыт, пока нет данных) -->
+            <div class="sensors-card" id="sensorsCard" style="display: none;">
+                <div class="sensors-title">
+                    <span>🌡️</span> Environment Sensors
                 </div>
+                <div class="sensors-grid">
+                    <div class="sensor-item">
+                        <div class="sensor-label">Temperature</div>
+                        <div class="sensor-value" id="tempValue">--</div>
+                        <div class="sensor-unit">°C</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Humidity</div>
+                        <div class="sensor-value" id="humValue">--</div>
+                        <div class="sensor-unit">%</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Pressure</div>
+                        <div class="sensor-value" id="presValue">--</div>
+                        <div class="sensor-unit">hPa</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Voltage</div>
+                        <div class="sensor-value" id="voltValue">--</div>
+                        <div class="sensor-unit">V</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Current</div>
+                        <div class="sensor-value" id="currValue">--</div>
+                        <div class="sensor-unit">mA</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Power</div>
+                        <div class="sensor-value" id="powValue">--</div>
+                        <div class="sensor-unit">mW</div>
+                    </div>
+                </div>
+                <div class="battery-indicator" id="batteryIndicator" style="display: none;">
+                    <div>🔋 Battery Level</div>
+                    <div class="battery-bar">
+                        <div class="battery-fill" id="batteryFill" style="width: 0%"></div>
+                    </div>
+                    <div id="batteryPercent" style="margin-top: 4px; font-size: 10px;">0%</div>
+                </div>
+                <div class="sensor-update" id="sensorUpdate">Last update: --</div>
+            </div>
+
+            <div class="nodes-section">
                 <div class="nodes-header">
                     <span>🖥️</span> Network Nodes
                     <span id="nodesCountBadge"></span>
+                </div>
+                <!-- Поиск по узлам - широкий и удобный -->
+                <div class="search-container">
+                    <input type="text" id="nodeSearchInput" class="search-input-wide" placeholder="🔍 Search nodes by name or ID...">
                 </div>
                 <div id="nodeDetails"></div>
                 <div id="nodesList"></div>

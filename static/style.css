@@ -16,6 +16,7 @@ body {
     color: #333;
 }
 
+/* Scrollbar */
 ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -35,6 +36,7 @@ body {
     background: #555;
 }
 
+/* App Container */
 .app-container {
     height: 100vh;
     display: flex;
@@ -42,6 +44,7 @@ body {
     background: rgba(255, 255, 255, 0.96);
 }
 
+/* Header */
 .header {
     background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
     color: white;
@@ -63,6 +66,7 @@ body {
     opacity: 0.9;
 }
 
+/* Status Bar */
 .status-bar {
     background: rgba(0,0,0,0.16);
     padding: 6px 24px;
@@ -73,6 +77,7 @@ body {
     align-items: center;
 }
 
+/* Filter Bar */
 .filter-bar {
     background: #fff3e0;
     padding: 8px 20px;
@@ -101,6 +106,7 @@ body {
     cursor: pointer;
 }
 
+/* Main Layout */
 .main-layout {
     display: flex;
     flex: 1;
@@ -108,6 +114,7 @@ body {
     overflow: hidden;
 }
 
+/* Chat Area */
 .chat-area {
     flex: 1;
     display: flex;
@@ -126,25 +133,14 @@ body {
     color: #777;
     font-size: 14px;
     padding: 10px;
+    text-align: center;
 }
 
+/* Messages */
 .message {
     margin-bottom: 16px;
     display: flex;
 }
-
-/*
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(8px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-*/
 
 .message.me {
     justify-content: flex-end;
@@ -193,6 +189,7 @@ body {
     opacity: 0.7;
 }
 
+/* Input Area */
 .input-area {
     background: white;
     padding: 16px 20px;
@@ -241,6 +238,7 @@ body {
     cursor: not-allowed;
 }
 
+/* Sidebar */
 .sidebar {
     width: 380px;
     background: white;
@@ -251,9 +249,155 @@ body {
     box-shadow: -2px 0 10px rgba(0,0,0,0.06);
 }
 
+/* Base Card (Flint Base Info) */
+.base-card {
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    color: white;
+    padding: 16px;
+    margin: 16px;
+    border-radius: 16px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+}
+
+.base-card-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.base-status-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.base-status-grid div {
+    background: rgba(255,255,255,0.15);
+    padding: 8px;
+    border-radius: 10px;
+    text-align: center;
+}
+
+.base-status-grid span {
+    display: block;
+    font-size: 20px;
+    margin-bottom: 4px;
+}
+
+.base-status-grid b {
+    font-size: 16px;
+    display: block;
+}
+
+.base-status-grid small {
+    font-size: 9px;
+    opacity: 0.8;
+}
+
+.base-card-footer {
+    font-size: 10px;
+    text-align: center;
+    opacity: 0.8;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.2);
+}
+
+/* Sensors Card */
+.sensors-card {
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    color: white;
+    padding: 16px;
+    margin: 0 16px 16px 16px;
+    border-radius: 16px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+.sensors-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sensors-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.sensor-item {
+    background: rgba(255,255,255,0.15);
+    padding: 8px;
+    border-radius: 10px;
+    text-align: center;
+    transition: transform 0.2s;
+}
+
+.sensor-item:hover {
+    transform: scale(1.02);
+    background: rgba(255,255,255,0.25);
+}
+
+.sensor-label {
+    font-size: 10px;
+    opacity: 0.9;
+    margin-bottom: 3px;
+}
+
+.sensor-value {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.sensor-unit {
+    font-size: 10px;
+    opacity: 0.8;
+    margin-left: 2px;
+}
+
+.sensor-update {
+    font-size: 9px;
+    text-align: center;
+    opacity: 0.8;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.2);
+}
+
+/* Battery Indicator */
+.battery-indicator {
+    margin-top: 12px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 8px;
+    text-align: center;
+}
+
+.battery-bar {
+    height: 6px;
+    background: rgba(255,255,255,0.3);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 6px;
+}
+
+.battery-fill {
+    height: 100%;
+    background: #4caf50;
+    transition: width 0.3s, background 0.3s;
+    border-radius: 3px;
+}
+
+/* Nodes Section */
 .nodes-section {
     flex: 1;
-    padding: 16px;
+    padding: 0 16px 16px 16px;
 }
 
 .nodes-header {
@@ -271,6 +415,31 @@ body {
     color: #999;
 }
 
+/* Search Container */
+.search-container {
+    margin-bottom: 16px;
+    width: 100%;
+}
+
+.search-input-wide {
+    width: 100%;
+    padding: 12px 16px;
+    border: 2px solid #e0e0e0;
+    border-radius: 12px;
+    font-size: 16px;
+    outline: none;
+    transition: all 0.3s;
+    box-sizing: border-box;
+    background: #f8f9fa;
+}
+
+.search-input-wide:focus {
+    border-color: #1e3c72;
+    background: white;
+    box-shadow: 0 0 0 3px rgba(30, 60, 114, 0.1);
+}
+
+/* Node Details */
 .node-details {
     background: linear-gradient(135deg, #1e3c7215 0%, #2a529815 100%);
     border: 1px solid #1e3c72;
@@ -287,6 +456,7 @@ body {
     margin-bottom: 6px;
 }
 
+/* Node Cards */
 .node-card {
     background: #f8f9fa;
     border: 1px solid #e0e0e0;
@@ -323,6 +493,7 @@ body {
     color: #999;
     font-family: monospace;
     margin-bottom: 6px;
+    word-break: break-all;
 }
 
 .node-meta {
@@ -330,6 +501,7 @@ body {
     color: #666;
     line-height: 1.45;
     margin-top: 6px;
+    word-break: break-word;
 }
 
 .node-last-text {
@@ -337,8 +509,12 @@ body {
     color: #1e3c72;
     margin-top: 6px;
     font-style: italic;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
+/* Badges */
 .badge {
     display: inline-block;
     padding: 2px 6px;
@@ -362,6 +538,7 @@ body {
     color: white;
 }
 
+/* Responsive */
 @media (max-width: 900px) {
     .sidebar {
         display: none;
@@ -374,4 +551,34 @@ body {
     .header h1 {
         font-size: 20px;
     }
+}
+
+/* Force wide search field in sidebar */
+.nodes-section .search-container {
+    display: block !important;
+    width: 100% !important;
+    margin: 0 0 14px 0 !important;
+    padding: 0 !important;
+}
+
+.nodes-section #nodeSearchInput.search-input-wide {
+    display: block !important;
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    height: 44px !important;
+    padding: 10px 14px !important;
+    font-size: 14px !important;
+    line-height: 20px !important;
+    border: 1px solid #bfc7d1 !important;
+    border-radius: 10px !important;
+    background: #ffffff !important;
+    color: #333 !important;
+    box-sizing: border-box !important;
+    outline: none !important;
+}
+
+.nodes-section #nodeSearchInput.search-input-wide:focus {
+    border-color: #2a5298 !important;
+    box-shadow: 0 0 0 3px rgba(42, 82, 152, 0.14) !important;
 }

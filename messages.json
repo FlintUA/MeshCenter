@@ -287,5 +287,215 @@
     "node_id": "!067a40fa",
     "text": "Test3",
     "time": "22:39:50"
+  },
+  {
+    "kind": "rx",
+    "sender": "FMG Kalchreuth-Bayern 🕊",
+    "node_id": "!3b46b984",
+    "text": "👍🏻",
+    "time": "22:41:41"
+  },
+  {
+    "kind": "rx",
+    "sender": "FMG Kalchreuth-Bayern 🕊",
+    "node_id": "!3b46b984",
+    "text": "👍🏻",
+    "time": "22:41:58"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test",
+    "time": "15:43:05"
+  },
+  {
+    "kind": "rx",
+    "sender": "Meshtastic 8668",
+    "node_id": "!1ba58668",
+    "text": "Test",
+    "time": "16:02:39"
+  },
+  {
+    "kind": "rx",
+    "sender": "Meshtastic 8668",
+    "node_id": "!1ba58668",
+    "text": "Hey, ich bin auch neu zu dem ganzen Lora Ding",
+    "time": "16:08:10"
+  },
+  {
+    "kind": "rx",
+    "sender": "Elektroniker",
+    "node_id": "!1fa065f0",
+    "text": "👍",
+    "time": "16:16:00"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test",
+    "time": "16:31:28"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test1",
+    "time": "17:25:15"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test2",
+    "time": "17:49:29"
+  },
+  {
+    "kind": "rx",
+    "sender": "Elektroniker",
+    "node_id": "!1fa065f0",
+    "text": "Test",
+    "time": "17:49:58"
+  },
+  {
+    "kind": "rx",
+    "sender": "Orion9 mobil",
+    "node_id": "!1300faf0",
+    "text": "3️⃣",
+    "time": "19:13:28"
+  },
+  {
+    "kind": "rx",
+    "sender": "node 4140639624",
+    "node_id": "",
+    "text": "guten Abend",
+    "time": "19:30:35"
+  },
+  {
+    "kind": "rx",
+    "sender": "!f6cd2588",
+    "node_id": "!f6cd2588",
+    "text": "test",
+    "time": "21:05:50"
+  },
+  {
+    "kind": "rx",
+    "sender": "SYSTEM ERROR",
+    "node_id": "",
+    "text": "send: No Serial Meshtastic device detected, attempting TCP connection on localhost.\nError connecting to localhost:[Errno 111] Connection refused",
+    "time": "21:13:19"
+  },
+  {
+    "kind": "rx",
+    "sender": "SYSTEM ERROR",
+    "node_id": "",
+    "text": "send: Command '['/home/flint/.local/bin/meshtastic', '--ch-index', '0', '--sendtext', 'Test1']' timed out after 60 seconds",
+    "time": "13:03:20"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test1",
+    "time": "13:05:26"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test2",
+    "time": "13:05:50"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test2",
+    "time": "13:08:01"
+  },
+  {
+    "kind": "rx",
+    "sender": "Orion9 mobil",
+    "node_id": "!1300faf0",
+    "text": "3️⃣",
+    "time": "13:08:39"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test4",
+    "time": "13:10:22"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test5",
+    "time": "13:13:28"
+  },
+  {
+    "kind": "rx",
+    "sender": "Elektroniker",
+    "node_id": "!1fa065f0",
+    "text": "Test00",
+    "time": "13:54:25"
+  },
+  {
+    "kind": "rx",
+    "sender": "Meshtastic 2588",
+    "node_id": "!f6cd2588",
+    "text": "sehr frisch hier oben und sehr windig",
+    "time": "15:23:29"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test2",
+    "time": "16:16:26"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test3",
+    "time": "16:20:47"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test",
+    "time": "22:03:44"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test1",
+    "time": "23:07:50"
+  },
+  {
+    "kind": "rx",
+    "sender": "Elektroniker",
+    "node_id": "!1fa065f0",
+    "text": "Test 2",
+    "time": "23:08:28"
+  },
+  {
+    "kind": "rx",
+    "sender": "Flint TAP2",
+    "node_id": "!756f9960",
+    "text": "Test",
+    "time": "23:11:27"
+  },
+  {
+    "kind": "rx",
+    "sender": "Orion9 mobil",
+    "node_id": "!1300faf0",
+    "text": "1️⃣",
+    "time": "23:12:36"
   }
 ]

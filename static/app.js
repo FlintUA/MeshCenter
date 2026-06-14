@@ -37,10 +37,12 @@ function renderNodeDetails(node) {
     if (!details) return;
 
     if (!node) {
-        details.innerHTML = '';
+        details.className = 'node-details-placeholder';
+        details.innerHTML = 'Select a node below';
         return;
     }
 
+    details.className = '';
     details.innerHTML =
         '<div class="node-details">' +
         '<div class="node-details-title">' + escapeHtml(node.clean_name) + '</div>' +
@@ -68,6 +70,16 @@ function selectNode(nodeId, nodeName) {
     updateFilterBar();
     lastChatKey = '';
     lastNodesSignature = '';
+
+    if (document.activeElement) {
+        document.activeElement.blur();
+    }
+
+    const selection = window.getSelection();
+    if (selection) {
+        selection.removeAllRanges();
+    }
+
     loadMessages();
 }
 
@@ -143,6 +155,36 @@ function formatUptime(seconds) {
     if (days > 0) return `${days}d ${hours}h`;
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
+}
+
+function clearNodeSelection() {
+
+    selectedNodeId = null;
+
+    document.querySelectorAll('.node-card').forEach(card => {
+        card.classList.remove('selected');
+    });
+
+    const details = document.getElementById('nodeDetails');
+
+    if (details) {
+        details.className = 'node-details-placeholder';
+        details.innerHTML = 'Select a node below';
+    }
+
+    clearFilter();
+}
+
+function clearNodeSearch() {
+    nodeSearchTerm = '';
+
+    const searchInput = document.getElementById('nodeSearchInput');
+    if (searchInput) {
+        searchInput.value = '';
+    }
+
+    lastNodesSignature = '';
+    loadMessages();
 }
 
 // Sensors data (card is hidden, but we can still load data for future use)
@@ -266,7 +308,7 @@ async function loadMessages() {
                         : '';
 
                     return `
-                        <div class="node-card ${selected}" onclick="selectNode('${nodeId}', '${cleanName}')">
+                            <div class="node-card ${selected}" tabindex="-1" onclick="selectNode('${nodeId}', '${cleanName}')">
                             <div class="node-name">
                                 ${escapeHtml(node.name)}
                                 <span class="badge ${badgeClass}" title="Signal quality: ${node.signal_quality || 'unknown'}">${badgeText}</span>

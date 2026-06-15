@@ -18,13 +18,14 @@
         <span id="nodeCount"></span>
     </div>
 
-    <div class="filter-bar" id="filterBar">
-        <span class="filter-text" id="filterText"></span>
-        <button class="clear-filter" type="button" onclick="clearFilter()">✕ Clear filter</button>
-    </div>
-
     <div class="main-layout">
         <div class="chat-area">
+
+            <div class="filter-bar" id="filterBar">
+                <span class="filter-text" id="filterText"></span>
+                <button class="clear-filter" type="button" onclick="clearFilter()">✕ Clear filter</button>
+            </div>
+
             <div class="messages-container" id="messagesContainer">
                 <div class="loading">Loading messages...</div>
             </div>
@@ -37,77 +38,79 @@
             </div>
         </div>
 
-<div class="sidebar">
-    <div class="sidebar-fixed">
-        <div class="base-card" id="baseCard">
-            <div class="base-card-title">📡 Flint Base</div>
-            <div class="base-card-line">Loading...</div>
-        </div>
-
-        <div class="sensors-card" id="sensorsCard" style="display: none;">
-            <div class="sensors-title">
-                <span>🌡️</span> Environment Sensors
-            </div>
-            <div class="sensors-grid">
-                <div class="sensor-item">
-                    <div class="sensor-label">Temperature</div>
-                    <div class="sensor-value" id="tempValue">--</div>
-                    <div class="sensor-unit">°C</div>
-                </div>
-                <div class="sensor-item">
-                    <div class="sensor-label">Humidity</div>
-                    <div class="sensor-value" id="humValue">--</div>
-                    <div class="sensor-unit">%</div>
-                </div>
-                <div class="sensor-item">
-                    <div class="sensor-label">Pressure</div>
-                    <div class="sensor-value" id="presValue">--</div>
-                    <div class="sensor-unit">hPa</div>
-                </div>
-                <div class="sensor-item">
-                    <div class="sensor-label">Voltage</div>
-                    <div class="sensor-value" id="voltValue">--</div>
-                    <div class="sensor-unit">V</div>
-                </div>
-                <div class="sensor-item">
-                    <div class="sensor-label">Current</div>
-                    <div class="sensor-value" id="currValue">--</div>
-                    <div class="sensor-unit">mA</div>
-                </div>
-                <div class="sensor-item">
-                    <div class="sensor-label">Power</div>
-                    <div class="sensor-value" id="powValue">--</div>
-                    <div class="sensor-unit">mW</div>
-                </div>
-            </div>
-            <div class="sensor-update" id="sensorUpdate">Last update: --</div>
-        </div>
-
-        <div class="node-info-fixed">
-            <div class="node-info-header">
-                <div class="node-info-title">ℹ️ Selected Node</div>
+        <div class="sidebar">
+            <!-- Информационный блок Flint Base -->
+            <div class="base-card" id="baseCard">
+                <div class="base-card-title">📡 Flint Base</div>
+                <div class="base-card-line">Loading...</div>
             </div>
 
-            <div id="nodeDetails" class="node-details-placeholder">
-                Select a node below
+            <!-- Блок датчиков (скрыт, пока нет данных) -->
+            <div class="sensors-card" id="sensorsCard" style="display: none;">
+                <div class="sensors-title">
+                    <span>🌡️</span> Environment Sensors
+                </div>
+                <div class="sensors-grid">
+                    <div class="sensor-item">
+                        <div class="sensor-label">Temperature</div>
+                        <div class="sensor-value" id="tempValue">--</div>
+                        <div class="sensor-unit">°C</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Humidity</div>
+                        <div class="sensor-value" id="humValue">--</div>
+                        <div class="sensor-unit">%</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Pressure</div>
+                        <div class="sensor-value" id="presValue">--</div>
+                        <div class="sensor-unit">hPa</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Voltage</div>
+                        <div class="sensor-value" id="voltValue">--</div>
+                        <div class="sensor-unit">V</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Current</div>
+                        <div class="sensor-value" id="currValue">--</div>
+                        <div class="sensor-unit">mA</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Power</div>
+                        <div class="sensor-value" id="powValue">--</div>
+                        <div class="sensor-unit">mW</div>
+                    </div>
+                </div>
+                <div class="battery-indicator" id="batteryIndicator" style="display: none;">
+                    <div>🔋 Battery Level</div>
+                    <div class="battery-bar">
+                        <div class="battery-fill" id="batteryFill" style="width: 0%"></div>
+                    </div>
+                    <div id="batteryPercent" style="margin-top: 4px; font-size: 10px;">0%</div>
+                </div>
+                <div class="sensor-update" id="sensorUpdate">Last update: --</div>
+            </div>
+
+            <div class="nodes-section">
+                
+                <!-- Поиск по узлам - широкий и удобный -->
+                <div class="search-container search-row">
+                    <input type="text" id="nodeSearchInput" class="search-input-wide" placeholder="🔍 Search nodes by name or ID...">
+
+                    <button type="button"
+                            id="clearSearchBtn"
+                            class="clear-search-btn"
+                            onclick="clearNodeSearch()">✕</button>
+                </div>
+                <div id="nodeDetails"></div>
+
+                <div class="nodes-scroll">
+                    <div id="nodesList"></div>
+                </div>            
             </div>
         </div>
-
-        <div class="nodes-header">
-            <span>🖥️</span> Network Nodes
-            <span id="nodesCountBadge"></span>
-        </div>
-
-        <div class="search-container search-row">
-            <input type="text" id="nodeSearchInput" class="search-input-wide" placeholder="🔍 Search nodes by name or ID...">
-            <button type="button" id="clearSearchBtn" class="clear-search-btn" onclick="clearNodeSearch()">✕</button>
-        </div>        
     </div>
-
-    <div class="nodes-scroll">
-        <div id="nodesList"></div>
-    </div>
-</div>    </div>
 </div>
 
 <script src="{{ url_for('static', filename='app.js') }}"></script>

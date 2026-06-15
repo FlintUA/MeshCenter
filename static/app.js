@@ -238,7 +238,7 @@ async function loadMessages() {
         const nodesCountBadge = document.getElementById('nodesCountBadge');
 
         if (statusEl) statusEl.innerHTML = data.status === 'radio: listening' ? '🟢 Mesh online' : '🟡 Sending...';
-        if (nodeCountEl) nodeCountEl.innerHTML = '🖥️ Network Nodes (' + data.nodes.length + ')';
+        if (nodeCountEl) nodeCountEl.innerHTML = '🖥️ Network Nodes [' + data.nodes.length + ']';
 
         const container = document.getElementById('messagesContainer');
         if (!container) return;
@@ -310,8 +310,9 @@ async function loadMessages() {
                         
                         <div class="node-name">
                             ${escapeHtml(node.name)}
-                            <span class="badge ${badgeClass}" title="Signal quality: ${node.signal_quality || 'unknown'}">${badgeText}</span>
                             <span class="node-inline-id">[ ${nodeId} ]</span>
+                            <span class="badge ${badgeClass}" title="Signal quality: ${node.signal_quality || 'unknown'}">${badgeText}</span>
+                            
                         </div>                            
                         
                         <div class="node-meta">${escapeHtml(node.meta)}</div>

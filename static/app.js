@@ -307,12 +307,14 @@ async function loadMessages() {
 
                     return `
                         <div class="node-card ${selected}" tabindex="-1" onclick="selectNode('${nodeId}', '${cleanName}')">
-                            <div class="node-name">
-                                ${escapeHtml(node.name)}
-                                <span class="badge ${badgeClass}" title="Signal quality: ${node.signal_quality || 'unknown'}">${badgeText}</span>
-                            </div>
-                            <div class="node-id">${nodeId}</div>
-                            <div class="node-meta">${escapeHtml(node.meta)}</div>
+                        
+                        <div class="node-name">
+                            ${escapeHtml(node.name)}
+                            <span class="badge ${badgeClass}" title="Signal quality: ${node.signal_quality || 'unknown'}">${badgeText}</span>
+                            <span class="node-inline-id">[ ${nodeId} ]</span>
+                        </div>                            
+                        
+                        <div class="node-meta">${escapeHtml(node.meta)}</div>
                             ${lastText}
                         </div>
                     `;

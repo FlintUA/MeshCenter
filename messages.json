@@ -553,5 +553,68 @@
     "node_id": "!756f9960",
     "text": "Guten Morgen",
     "time": "09:06:00"
+  },
+  {
+    "kind": "rx",
+    "sender": "SYSTEM ERROR",
+    "node_id": "",
+    "text": "send timeout after 30 seconds",
+    "time": "15:53:25"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test",
+    "time": "16:20:52"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test2",
+    "time": "16:37:09"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test",
+    "time": "17:25:29"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test2",
+    "time": "21:30:51"
+  },
+  {
+    "kind": "rx",
+    "sender": "Meshtastic c644",
+    "node_id": "!02eac644",
+    "text": "👋",
+    "time": "21:31:37"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Guten Abend",
+    "time": "20:41:32"
+  },
+  {
+    "kind": "rx",
+    "sender": "Meshtastic be33",
+    "node_id": "!0a23be33",
+    "text": "Ping 🏓 ICE 803 Berlin-Augsburg",
+    "time": "20:45:03"
+  },
+  {
+    "kind": "rx",
+    "sender": "Meshtastic be33",
+    "node_id": "!0a23be33",
+    "text": "Ping 🏓 ICE 803 Berlin-Augsburg",
+    "time": "20:45:41"
   }
 ]

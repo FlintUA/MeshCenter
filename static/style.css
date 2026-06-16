@@ -57,13 +57,18 @@ body {
 }
 
 .header h1 {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     margin: 0;
-    font-size: 22px;
+    font-size: 16px;
+    font-weight: 400;
 }
 
 .header-sub {
-    margin: 0;
-    font-size: 14px;
+    margin-left: 20px;
+    font-size: 16px;
+    font-weight: 400;
     opacity: 0.9;
     text-align: right;
     white-space: nowrap;
@@ -267,10 +272,8 @@ body {
     display:flex;
     justify-content:space-between;
     align-items:center;
-
-    font-size:15px;
-    font-weight:500;
-
+    font-size:16px;
+    font-weight:400;
     margin-bottom:10px;
 }
 
@@ -562,7 +565,8 @@ body {
     }
 
     .header h1 {
-        font-size: 20px;
+        font-size: 14px;
+        font-weight: 200;
     }
 }
 
@@ -911,3 +915,4 @@ body {
     margin-left: 6px !important;
     white-space: nowrap !important;
 }
+

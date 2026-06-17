@@ -1,0 +1,82 @@
+[
+  {
+    "kind": "rx",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Hello",
+    "time": "11:36",
+    "chat_id": "!067a40fa",
+    "chat_type": "dm",
+    "chat_name": "Flint Base"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test message",
+    "time": "11:37",
+    "chat_id": "channel",
+    "chat_type": "channel",
+    "chat_name": "LongFast Channel 0"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base → Elektroniker",
+    "node_id": "!067a40fa",
+    "text": "Test Direct",
+    "time": "12:20:48",
+    "chat_id": "!1fa065f0",
+    "chat_type": "dm",
+    "chat_name": "Elektroniker"
+  },
+  {
+    "kind": "rx",
+    "sender": "SYSTEM ERROR",
+    "node_id": "",
+    "text": "send: OS Error:\n  The serial device couldn't be opened, it might be in use by another process.\n  Please close any applications or webpages that may be using the device and try again.\n\nOriginal error: [Errno 11] Could not exclusively lock port /dev/ttyACM0: [Errno 11] Resource temporarily unavailable",
+    "time": "12:34:55",
+    "chat_id": "channel",
+    "chat_type": "channel",
+    "chat_name": "LongFast Channel 0"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base",
+    "node_id": "!067a40fa",
+    "text": "Test1",
+    "time": "12:35:23",
+    "chat_id": "channel",
+    "chat_type": "channel",
+    "chat_name": "LongFast Channel 0"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base → Flint_Echo",
+    "node_id": "!067a40fa",
+    "text": "Test 1",
+    "time": "12:47:37",
+    "chat_id": "!b0f14d2a",
+    "chat_type": "dm",
+    "chat_name": "Flint_Echo"
+  },
+  {
+    "kind": "rx",
+    "sender": "Orion9 mobil",
+    "node_id": "!1300faf0",
+    "text": "17. Juni, 12:28\\nKanalauslastung: 26.1%",
+    "time": "12:54:03",
+    "chat_id": "!1300faf0",
+    "chat_type": "dm",
+    "chat_name": "Orion9 mobil"
+  },
+  {
+    "kind": "me",
+    "sender": "Flint Base → Flint_Echo",
+    "node_id": "!067a40fa",
+    "text": "Test2",
+    "time": "13:18:51",
+    "chat_id": "!b0f14d2a",
+    "chat_type": "dm",
+    "chat_name": "Flint_Echo"
+  }
+]

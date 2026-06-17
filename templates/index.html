@@ -9,43 +9,73 @@
 </head>
 <body>
 <div class="app-container">
+    <!-- Header -->
     <div class="header">
-        <h1><span>📡</span> Meshtastic Mesh Network [ LongFast Channel 0 ]</h1>
+        <h1><span>📡</span> Meshtastic Mesh</h1>
+        <div class="header-actions">
+            <button class="header-btn" id="toggleSidebarBtn" title="Toggle nodes sidebar">
+                <svg viewBox="0 0 24 24" width="20" height="20">
+                    <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" fill="currentColor"/>
+                </svg>
+            </button>
+        </div>
     </div>
 
+    <!-- Status Bar -->
     <div class="status-bar">
         <span id="statusText">🟢 Connecting...</span>
         <span id="nodeCount"></span>
     </div>
 
+    <!-- Main Layout -->
     <div class="main-layout">
+        <!-- Chat Area -->
         <div class="chat-area">
-
-            <div class="filter-bar" id="filterBar">
-                <span class="filter-text" id="filterText"></span>
-                <button class="clear-filter" type="button" onclick="clearFilter()">✕ Clear filter</button>
+            <!-- Chat Header -->
+            <div class="chat-header" id="chatHeader">
+                <button class="back-btn" id="backToChatsBtn" style="display: none;" onclick="showChatList()">
+                    ←
+                </button>
+                <div class="chat-header-info">
+                    <span class="chat-title" id="chatTitle">💬 Chats</span>
+                    <span class="chat-subtitle" id="chatSubtitle"></span>
+                </div>
+                <button class="chat-actions-btn" id="chatActionsBtn" style="display: none;" onclick="showChatActions()">
+                    ⋮
+                </button>
             </div>
 
-            <div class="messages-container" id="messagesContainer">
-                <div class="loading">Loading messages...</div>
+            <!-- Chat List View -->
+            <div class="chat-list-container" id="chatListContainer">
+                <div class="chat-list" id="chatList">
+                    <div class="loading">Loading chats...</div>
+                </div>
             </div>
 
-            <div class="input-area">
-                <form class="input-form" id="sendForm">
-                    <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
-                    <button type="submit">Send</button>
-                </form>
+            <!-- Messages View -->
+            <div class="messages-view" id="messagesView" style="display: none;">
+                <div class="messages-container" id="messagesContainer">
+                    <div class="loading">Loading messages...</div>
+                </div>
+
+                <div class="input-area">
+                    <form class="input-form" id="sendForm">
+                        <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
+                        <button type="submit">Send</button>
+                    </form>
+                </div>
             </div>
         </div>
 
-        <div class="sidebar">
-            <!-- Информационный блок Flint Base -->
+        <!-- Sidebar (Nodes) -->
+        <div class="sidebar" id="sidebar">
+            <!-- Base Card -->
             <div class="base-card" id="baseCard">
                 <div class="base-card-title">📡 Flint Base</div>
                 <div class="base-card-line">Loading...</div>
             </div>
 
-            <!-- Блок датчиков (скрыт, пока нет данных) -->
+            <!-- Sensors Card -->
             <div class="sensors-card" id="sensorsCard" style="display: none;">
                 <div class="sensors-title">
                     <span>🌡️</span> Environment Sensors
@@ -92,18 +122,86 @@
                 <div class="sensor-update" id="sensorUpdate">Last update: --</div>
             </div>
 
+            <!-- Nodes Section -->
             <div class="nodes-section">
-                
-                <!-- Поиск по узлам -->
-                <div class="search-container search-row">
-                    <input type="text" id="nodeSearchInput" class="search-input-wide" placeholder="🔍 Search nodes by name or ID...">
-                    <button type="button" id="clearSearchBtn" class="clear-search-btn" onclick="clearNodeSearch()">✕</button>
+                <div class="nodes-controls">
+                    <div class="search-container search-row">
+                        <input type="text" id="nodeSearchInput" class="search-input-wide" placeholder="🔍 Search nodes...">
+                        <button type="button" id="clearSearchBtn" class="clear-search-btn" onclick="clearNodeSearch()">✕</button>
+                    </div>
+                    <div class="nodes-filter-row">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="showFavoritesToggle" onchange="toggleShowFavorites()">
+                            <span class="toggle-slider favorite-slider"></span>
+                            <span class="toggle-text">⭐ Show favorites only</span>
+                        </label>
+                        <span class="favorites-count" id="favoritesCount">0 favorites</span>
+                    </div>
+                    <div class="nodes-filter-row">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="showIgnoredToggle" onchange="toggleShowIgnored()">
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-text">🚫 Show ignored only</span>
+                        </label>
+                        <span class="ignored-count" id="ignoredCount">0 ignored</span>
+                    </div>
                 </div>
                 <div id="nodeDetails"></div>
-
                 <div class="nodes-scroll">
                     <div id="nodesList"></div>
-                </div>            
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Chat Actions Modal -->
+<div class="modal-overlay" id="chatActionsModal" style="display: none;" onclick="closeChatActions()">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span>Chat Actions</span>
+            <button class="modal-close" onclick="closeChatActions()">✕</button>
+        </div>
+        <div class="modal-body">
+            <button class="modal-action-btn danger" id="deleteChatBtn" onclick="deleteCurrentChat()">
+                🗑️ Delete Chat
+            </button>
+            <button class="modal-action-btn" id="clearChatBtn" onclick="clearCurrentChat()" style="margin-top: 8px;">
+                🧹 Clear Messages
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Confirm Delete Modal -->
+<div class="modal-overlay" id="confirmDeleteModal" style="display: none;" onclick="closeConfirmDelete()">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span>⚠️ Confirm Delete</span>
+            <button class="modal-close" onclick="closeConfirmDelete()">✕</button>
+        </div>
+        <div class="modal-body">
+            <p class="confirm-text" id="confirmDeleteText">Delete this chat?</p>
+            <div class="confirm-actions">
+                <button class="confirm-btn confirm-cancel" onclick="closeConfirmDelete()">Cancel</button>
+                <button class="confirm-btn confirm-danger" id="confirmDeleteBtn" onclick="executeDeleteChat()">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Confirm Clear Modal -->
+<div class="modal-overlay" id="confirmClearModal" style="display: none;" onclick="closeConfirmClear()">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span>🧹 Clear Messages</span>
+            <button class="modal-close" onclick="closeConfirmClear()">✕</button>
+        </div>
+        <div class="modal-body">
+            <p class="confirm-text" id="confirmClearText">Clear all messages in this chat?</p>
+            <div class="confirm-actions">
+                <button class="confirm-btn confirm-cancel" onclick="closeConfirmClear()">Cancel</button>
+                <button class="confirm-btn confirm-danger" id="confirmClearBtn" onclick="executeClearChat()">Clear</button>
             </div>
         </div>
     </div>

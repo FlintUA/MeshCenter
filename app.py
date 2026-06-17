@@ -18,22 +18,47 @@ NODES_FILE = "/home/flint/mesh_web/nodes.json"
 SENSORS_FILE = "/home/flint/mesh_web/sensors.json"
 MAX_HISTORY_MESSAGES = 300
 
+# ⚠️ ОБНОВЛЕННЫЙ СПИСОК ИЗВЕСТНЫХ УЗЛОВ (из Android-приложения)
 KNOWN_NODES = {
-    "!1fa065f0": "Elektroniker",
+    # Основные узлы
     "!067a40fa": "Flint Base",
+    "!b0f14d2a": "Flint_Echo",
     "!756f9960": "Flint TAP2",
+    "!1fa065f0": "Elektroniker",
     "!1300faf0": "Orion9 mobil",
+    
+    # Новые узлы из скриншотов
+    "!0e8b3cf6": "StS_Erl_fix",
+    "!51fbf9c": "Uttenreuth-MGS13-B",
+    "!1paa51c": "Meshtastic a51c",
+    "!0a809218": "RetroMobil",
+    "!9ea0c0fc": "BirgitsPaperMesh",
+    "!7e9f4f33": "Meshstatic 4f33",
+    
+    # Существующие узлы
     "!f68f9e94": "ThinkNode M5",
     "!04c67058": "HardTekkER",
     "!f6cd2588": "Meshtastic 2588",
 }
 
+# Единая информация об узлах (синхронизирована с KNOWN_NODES)
 KNOWN_NODE_INFO = {
-    "!1fa065f0": {"short_name": "Elek", "hw_model": "TBEAM"},
+    # Основные узлы
     "!067a40fa": {"short_name": "FLTB", "hw_model": "RAK4631"},
+    "!b0f14d2a": {"short_name": "FLIE", "hw_model": "T-Echo Plus"},
     "!756f9960": {"short_name": "FLT2", "hw_model": "RAK3312"},
-    "!b0f14d2a": {"short_name": "FLTE", "hw_model": "T-Echo Plus"},
+    "!1fa065f0": {"short_name": "Elek", "hw_model": "TBEAM"},
     "!1300faf0": {"short_name": "ori9", "hw_model": "T_DECK"},
+    
+    # Новые узлы из скриншотов
+    "!0e8b3cf6": {"short_name": "3cf6", "hw_model": "RAK4631"},
+    "!51fbf9c": {"short_name": "AR76", "hw_model": "TLORA_V2_1_1P6"},
+    "!1paa51c": {"short_name": "a51c", "hw_model": "UNSET"},
+    "!0a809218": {"short_name": "RKM", "hw_model": "TLORA_T3_S3"},
+    "!9ea0c0fc": {"short_name": "BPM", "hw_model": "HELTEC_WIRELESS_PAPER"},
+    "!7e9f4f33": {"short_name": "4f33", "hw_model": "RAK4631"},
+    
+    # Существующие узлы
     "!f68f9e94": {"short_name": "AB4", "hw_model": "THINKNODE_M5"},
     "!04c67058": {"short_name": "TeKK", "hw_model": "HELTEC_V4"},
     "!f6cd2588": {"short_name": "2588", "hw_model": "HELTEC_V4"},
@@ -112,24 +137,72 @@ def voltage_to_percent(voltage):
 
 def node_num_to_id(num):
     try:
-        return "!" + format(int(num) & 0xFFFFFFFF, "08x")
+        hex_str = format(int(num) & 0xFFFFFFFF, "08x")
+        return "!" + hex_str
     except Exception:
         return ""
 
+def normalize_node_id(node_id):
+    """Нормализовать ID узла к стандартному формату !xxxxxxxx"""
+    if not node_id:
+        return None
+    
+    # Если уже в правильном формате
+    if node_id.startswith("!") and len(node_id) == 9:
+        return node_id
+    
+    # Если ID начинается с "!1p" (как в скриншоте)
+    if node_id.startswith("!1p"):
+        hex_part = node_id[3:]
+        if len(hex_part) == 8:
+            return "!" + hex_part
+    
+    # Если ID без префикса
+    if re.match(r'^[0-9a-fA-F]{8}$', node_id):
+        return "!" + node_id
+    
+    # Если ID начинается с "!" но неправильной длины
+    if node_id.startswith("!") and len(node_id) != 9:
+        hex_part = re.search(r'[0-9a-fA-F]{8}', node_id)
+        if hex_part:
+            return "!" + hex_part.group(0)
+    
+    return node_id
 
 def friendly_unknown_node_name(node_id):
     if node_id and node_id.startswith("!") and len(node_id) >= 5:
         return "Meshtastic " + node_id[-4:]
     return node_id or "Unknown"
 
-
 def fixed_short_name(node_id, fallback=""):
     return KNOWN_NODE_INFO.get(node_id, {}).get("short_name") or fallback or ""
-
 
 def fixed_hw_model(node_id, fallback=""):
     return KNOWN_NODE_INFO.get(node_id, {}).get("hw_model") or fallback or ""
 
+def get_node_name(node_id):
+    """Получить имя узла с правильным приоритетом"""
+    if not node_id:
+        return "Unknown"
+    
+    # 1. Проверяем KNOWN_NODES
+    if node_id in KNOWN_NODES:
+        return KNOWN_NODES[node_id]
+    
+    # 2. Проверяем nodes (если узел уже сохранен)
+    if node_id in nodes:
+        name = nodes[node_id].get("name", "")
+        if name and name != node_id and not name.startswith("node "):
+            return name
+    
+    # 3. Генерируем дружественное имя
+    return friendly_unknown_node_name(node_id)
+
+def get_node_info(node_id):
+    """Получить информацию об узле (short_name, hw_model)"""
+    if node_id in KNOWN_NODE_INFO:
+        return KNOWN_NODE_INFO[node_id]
+    return {"short_name": "", "hw_model": ""}
 
 def save_messages():
     try:
@@ -137,7 +210,6 @@ def save_messages():
             json.dump(messages[-MAX_HISTORY_MESSAGES:], f, ensure_ascii=False, indent=2)
     except Exception as e:
         print("History save error:", e)
-
 
 def load_messages():
     global messages
@@ -151,14 +223,12 @@ def load_messages():
         print("History load error:", e)
         messages = []
 
-
 def save_sensors():
     try:
         with open(SENSORS_FILE, "w", encoding="utf-8") as f:
             json.dump(sensor_data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print("Sensors save error:", e)
-
 
 def load_sensors_data():
     global sensor_data
@@ -175,14 +245,12 @@ def load_sensors_data():
             "battery_percent": None, "air_quality": None, "last_update": None
         }
 
-
 def save_nodes():
     try:
         with open(NODES_FILE, "w", encoding="utf-8") as f:
             json.dump(nodes, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print("Nodes save error:", e)
-
 
 def load_nodes():
     global nodes
@@ -195,10 +263,11 @@ def load_nodes():
         print("Nodes load error:", e)
         nodes = {}
 
-
 def ensure_known_nodes():
+    """Гарантировать наличие всех известных узлов в базе"""
     for node_id, name in KNOWN_NODES.items():
         old = nodes.get(node_id, {})
+        info = get_node_info(node_id)
         nodes[node_id] = {
             "name": name,
             "node_id": node_id,
@@ -209,55 +278,103 @@ def ensure_known_nodes():
             "hop_start": old.get("hop_start", ""),
             "relay_node": old.get("relay_node", ""),
             "last_text": old.get("last_text", ""),
-            "short_name": fixed_short_name(node_id, old.get("short_name", "")),
-            "hw_model": fixed_hw_model(node_id, old.get("hw_model", ""))
+            "short_name": info.get("short_name", old.get("short_name", "")),
+            "hw_model": info.get("hw_model", old.get("hw_model", "")),
+            "role": old.get("role", "CLIENT")
         }
     save_nodes()
 
-
 def normalize_unknown_nodes():
+    """Нормализовать неизвестные узлы"""
     changed = False
     for node_id, node in nodes.items():
         name = node.get("name", "")
         if not name or name == node_id or name.startswith("node "):
-            node["name"] = friendly_unknown_node_name(node_id)
+            node["name"] = get_node_name(node_id)
             changed = True
         if not node.get("short_name") and node_id.startswith("!"):
             node["short_name"] = node_id[-4:]
             changed = True
+        if not node.get("role"):
+            node["role"] = "CLIENT"
+            changed = True
     if changed:
         save_nodes()
 
+def extract_node_id(line):
+    """Извлечь node_id из строки с нормализацией"""
+    patterns = [
+        r"'fromId':\s*'([^']+)'",
+        r'"fromId":\s*"([^"]+)"',
+        r"'id':\s*'(![0-9a-fA-F]+)'",
+        r'"id":\s*"(![0-9a-fA-F]+)"',
+        r'\bid:\s*"(![0-9a-fA-F]+)"',
+        r'\bid:\s*(![0-9a-fA-F]+)',
+        r"'from':\s*'([^']*)'",
+        r'"from":\s*"([^"]*)"',
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, line)
+        if m:
+            node_id = m.group(1)
+            if not node_id:
+                continue
+                
+            # Если это числовой ID
+            if node_id.isdigit():
+                return normalize_node_id(node_num_to_id(node_id))
+            
+            # Если это уже !hex формат
+            if node_id.startswith("!"):
+                return normalize_node_id(node_id)
+            
+            # Если это просто hex
+            if re.match(r'^[0-9a-fA-F]{8}$', node_id):
+                return "!" + node_id
+    
+    # Пробуем найти числовой from
+    m = re.search(r"'from':\s*(\d+)", line)
+    if m:
+        return normalize_node_id(node_num_to_id(m.group(1)))
+    m = re.search(r'\bfrom:\s*(\d+)', line)
+    if m:
+        return normalize_node_id(node_num_to_id(m.group(1)))
+    
+    return None
+
+def extract_sender(line):
+    """Извлечь имя отправителя из строки"""
+    node_id = extract_node_id(line)
+    if node_id:
+        return get_node_name(node_id)
+    
+    # Пробуем найти имя напрямую
+    m = re.search(r"'from':\s*'([^']*)'", line)
+    if m:
+        name = m.group(1).strip()
+        if name:
+            return name
+    
+    return "RX"
 
 def infer_node_id_from_sender(sender):
+    """Определить node_id по имени отправителя"""
     if not sender:
         return ""
     if sender.startswith("!"):
         return sender
+    
+    # Проверяем в KNOWN_NODES
     for node_id, name in KNOWN_NODES.items():
         if sender == name:
             return node_id
+    
+    # Проверяем в nodes
     for node_id, node in nodes.items():
         if sender == node.get("name"):
             return node_id
+    
     return ""
-
-
-def get_node_name(node_id):
-    if node_id in KNOWN_NODES:
-        return KNOWN_NODES[node_id]
-    if node_id in nodes:
-        name = nodes[node_id].get("name", "")
-        if name and name != node_id and not name.startswith("node "):
-            return name
-    return friendly_unknown_node_name(node_id)
-
-
-def resolve_sender_name(sender):
-    if sender.startswith("!"):
-        return get_node_name(sender)
-    return sender
-
 
 def add_message(kind, sender, text, node_id=""):
     if not node_id:
@@ -272,103 +389,83 @@ def add_message(kind, sender, text, node_id=""):
     messages[:] = messages[-MAX_HISTORY_MESSAGES:]
     save_messages()
 
+def process_nodeinfo(block):
+    """Обработка блока NODEINFO"""
+    if ("NODEINFO_APP" not in block and "longName" not in block and "long_name" not in block and
+        "shortName" not in block and "short_name" not in block and "hwModel" not in block and "hw_model" not in block):
+        return False
+    
+    node_id = extract_node_id(block)
+    if not node_id:
+        return False
+    
+    long_name = extract_field(block, ["longName", "long_name", "longname"])
+    short_name = extract_field(block, ["shortName", "short_name", "shortname"])
+    hw_model = extract_field(block, ["hwModel", "hw_model"])
+    role = extract_field(block, ["role", "Role"])
+    rssi = extract_rssi(block)
+    snr = extract_snr(block)
+    hop_start = extract_hop_start(block)
+    relay_node = extract_relay_node(block)
+    
+    # Приоритет имени: KNOWN_NODES > long_name > short_name > friendly
+    name = KNOWN_NODES.get(node_id)
+    if not name:
+        name = long_name or short_name or friendly_unknown_node_name(node_id)
+    
+    old = nodes.get(node_id, {})
+    info = get_node_info(node_id)
+    
+    nodes[node_id] = {
+        "name": name,
+        "node_id": node_id,
+        "last_seen": time.time(),
+        "last_time": now(),
+        "rssi": rssi or old.get("rssi"),
+        "snr": snr or old.get("snr"),
+        "hop_start": hop_start or old.get("hop_start", ""),
+        "relay_node": relay_node or old.get("relay_node", ""),
+        "last_text": old.get("last_text", ""),
+        "short_name": info.get("short_name") or short_name or old.get("short_name", "") or node_id[-4:],
+        "hw_model": info.get("hw_model") or hw_model or old.get("hw_model", ""),
+        "role": role or old.get("role", "CLIENT")
+    }
+    save_nodes()
+    return True
 
-def extract_packet_id(line):
-    m = re.search(r"'id':\s*(\d+)", line)
-    if m:
-        return m.group(1)
-    m = re.search(r"\bid:\s*(\d+)", line)
-    if m:
-        return m.group(1)
-    return None
-
-
-def extract_node_id(line):
-    patterns = [
-        r"'fromId':\s*'([^']+)'",
-        r'"fromId":\s*"([^"]+)"',
-        r"'id':\s*'(![0-9a-fA-F]+)'",
-        r'"id":\s*"(![0-9a-fA-F]+)"',
-        r"\bid:\s*\"(![0-9a-fA-F]+)\"",
-        r"\bid:\s*(![0-9a-fA-F]+)",
-    ]
-    for pattern in patterns:
-        m = re.search(pattern, line)
-        if m:
-            return m.group(1)
-    m = re.search(r"'from':\s*(\d+)", line)
-    if m:
-        return node_num_to_id(m.group(1))
-    m = re.search(r"\bfrom:\s*(\d+)", line)
-    if m:
-        return node_num_to_id(m.group(1))
-    return None
-
-
-def extract_sender(line):
-    node_id = extract_node_id(line)
-    if node_id:
-        return get_node_name(node_id)
-    m = re.search(r"'from':\s*(\d+)", line)
-    if m:
-        return friendly_unknown_node_name(node_num_to_id(m.group(1)))
-    m = re.search(r"\bfrom:\s*(\d+)", line)
-    if m:
-        return friendly_unknown_node_name(node_num_to_id(m.group(1)))
-    return "RX"
-
-
-def extract_text_message(line):
-    if "TEXT_MESSAGE_APP" not in line and "'text':" not in line and '"text":' not in line:
-        return None
-    m = re.search(r"'text':\s*'([^']*)'", line)
-    if m:
-        return m.group(1).strip()
-    m = re.search(r'"text":\s*"([^"]*)"', line)
-    if m:
-        return m.group(1).strip()
-    return None
-
-
-def extract_rssi(line):
-    m = re.search(r"'rxRssi':\s*(-?\d+)", line)
-    if m:
-        return m.group(1)
-    m = re.search(r"\brx_rssi:\s*(-?\d+)", line)
-    if m:
-        return m.group(1)
-    return None
-
-
-def extract_snr(line):
-    m = re.search(r"'rxSnr':\s*(-?\d+(?:\.\d+)?)", line)
-    if m:
-        return m.group(1)
-    m = re.search(r"\brx_snr:\s*(-?\d+(?:\.\d+)?)", line)
-    if m:
-        return m.group(1)
-    return None
-
-
-def extract_hop_start(line):
-    m = re.search(r"'hopStart':\s*(\d+)", line)
-    if m:
-        return m.group(1)
-    m = re.search(r"\bhop_start:\s*(\d+)", line)
-    if m:
-        return m.group(1)
-    return None
-
-
-def extract_relay_node(line):
-    m = re.search(r"'relayNode':\s*(\d+)", line)
-    if m:
-        return m.group(1)
-    m = re.search(r"\brelay_node:\s*(\d+)", line)
-    if m:
-        return m.group(1)
-    return None
-
+def update_node(line, sender, text):
+    """Обновить информацию об узле"""
+    node_id = extract_node_id(line) or infer_node_id_from_sender(sender)
+    if not node_id:
+        return ""
+    
+    rssi = extract_rssi(line)
+    snr = extract_snr(line)
+    hop_start = extract_hop_start(line)
+    relay_node = extract_relay_node(line)
+    role = extract_field(line, ["role", "Role"])
+    
+    # Получаем правильное имя
+    name = get_node_name(node_id)
+    info = get_node_info(node_id)
+    
+    old = nodes.get(node_id, {})
+    nodes[node_id] = {
+        "name": name,
+        "node_id": node_id,
+        "last_seen": time.time(),
+        "last_time": now(),
+        "rssi": rssi or old.get("rssi"),
+        "snr": snr or old.get("snr"),
+        "hop_start": hop_start or old.get("hop_start", ""),
+        "relay_node": relay_node or old.get("relay_node", ""),
+        "last_text": text or old.get("last_text", ""),
+        "short_name": info.get("short_name") or old.get("short_name", "") or node_id[-4:],
+        "hw_model": info.get("hw_model") or old.get("hw_model", ""),
+        "role": role or old.get("role", "CLIENT")
+    }
+    save_nodes()
+    return node_id
 
 def extract_field(line, names):
     for name in names:
@@ -385,39 +482,61 @@ def extract_field(line, names):
                 return m.group(1).strip()
     return None
 
+def extract_packet_id(line):
+    m = re.search(r"'id':\s*(\d+)", line)
+    if m:
+        return m.group(1)
+    m = re.search(r"\bid:\s*(\d+)", line)
+    if m:
+        return m.group(1)
+    return None
 
-def process_nodeinfo(block):
-    if ("NODEINFO_APP" not in block and "longName" not in block and "long_name" not in block and
-        "shortName" not in block and "short_name" not in block and "hwModel" not in block and "hw_model" not in block):
-        return False
-    node_id = extract_node_id(block)
-    if not node_id:
-        return False
-    long_name = extract_field(block, ["longName", "long_name", "longname"])
-    short_name = extract_field(block, ["shortName", "short_name", "shortname"])
-    hw_model = extract_field(block, ["hwModel", "hw_model"])
-    rssi = extract_rssi(block)
-    snr = extract_snr(block)
-    hop_start = extract_hop_start(block)
-    relay_node = extract_relay_node(block)
-    name = KNOWN_NODES.get(node_id) or long_name or short_name or friendly_unknown_node_name(node_id)
-    old = nodes.get(node_id, {})
-    nodes[node_id] = {
-        "name": name,
-        "node_id": node_id,
-        "last_seen": time.time(),
-        "last_time": now(),
-        "rssi": rssi or old.get("rssi"),
-        "snr": snr or old.get("snr"),
-        "hop_start": hop_start or old.get("hop_start", ""),
-        "relay_node": relay_node or old.get("relay_node", ""),
-        "last_text": old.get("last_text", ""),
-        "short_name": fixed_short_name(node_id, short_name or old.get("short_name", "") or node_id[-4:]),
-        "hw_model": fixed_hw_model(node_id, hw_model or old.get("hw_model", ""))
-    }
-    save_nodes()
-    return True
+def extract_text_message(line):
+    if "TEXT_MESSAGE_APP" not in line and "'text':" not in line and '"text":' not in line:
+        return None
+    m = re.search(r"'text':\s*'([^']*)'", line)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r'"text":\s*"([^"]*)"', line)
+    if m:
+        return m.group(1).strip()
+    return None
 
+def extract_rssi(line):
+    m = re.search(r"'rxRssi':\s*(-?\d+)", line)
+    if m:
+        return m.group(1)
+    m = re.search(r"\brx_rssi:\s*(-?\d+)", line)
+    if m:
+        return m.group(1)
+    return None
+
+def extract_snr(line):
+    m = re.search(r"'rxSnr':\s*(-?\d+(?:\.\d+)?)", line)
+    if m:
+        return m.group(1)
+    m = re.search(r"\brx_snr:\s*(-?\d+(?:\.\d+)?)", line)
+    if m:
+        return m.group(1)
+    return None
+
+def extract_hop_start(line):
+    m = re.search(r"'hopStart':\s*(\d+)", line)
+    if m:
+        return m.group(1)
+    m = re.search(r"\bhop_start:\s*(\d+)", line)
+    if m:
+        return m.group(1)
+    return None
+
+def extract_relay_node(line):
+    m = re.search(r"'relayNode':\s*(\d+)", line)
+    if m:
+        return m.group(1)
+    m = re.search(r"\brelay_node:\s*(\d+)", line)
+    if m:
+        return m.group(1)
+    return None
 
 def node_status_icon(last_seen):
     if not last_seen:
@@ -428,7 +547,6 @@ def node_status_icon(last_seen):
     if age < 900:
         return "🟡"
     return "🔴"
-
 
 def age_text(last_seen):
     if not last_seen:
@@ -441,7 +559,6 @@ def age_text(last_seen):
     if age < 86400:
         return f"seen {age // 3600} h ago"
     return f"seen {age // 86400} d ago"
-
 
 def signal_quality(rssi):
     if rssi is None or rssi == "":
@@ -456,34 +573,6 @@ def signal_quality(rssi):
         return "medium"
     return "weak"
 
-
-def update_node(line, sender, text):
-    node_id = extract_node_id(line) or infer_node_id_from_sender(sender)
-    if not node_id:
-        return ""
-    rssi = extract_rssi(line)
-    snr = extract_snr(line)
-    hop_start = extract_hop_start(line)
-    relay_node = extract_relay_node(line)
-    name = get_node_name(node_id)
-    old = nodes.get(node_id, {})
-    nodes[node_id] = {
-        "name": name,
-        "node_id": node_id,
-        "last_seen": time.time(),
-        "last_time": now(),
-        "rssi": rssi or old.get("rssi"),
-        "snr": snr or old.get("snr"),
-        "hop_start": hop_start or old.get("hop_start", ""),
-        "relay_node": relay_node or old.get("relay_node", ""),
-        "last_text": text or "",
-        "short_name": fixed_short_name(node_id, old.get("short_name", "") or node_id[-4:]),
-        "hw_model": fixed_hw_model(node_id, old.get("hw_model", ""))
-    }
-    save_nodes()
-    return node_id
-
-
 def get_nodes_list():
     sorted_nodes = sorted(nodes.values(), key=lambda n: n.get("last_seen", 0), reverse=True)
     result = []
@@ -497,6 +586,7 @@ def get_nodes_list():
         last_text = n.get("last_text", "")
         short_name = n.get("short_name", "")
         hw_model = n.get("hw_model", "")
+        role = n.get("role", "CLIENT")
         quality = signal_quality(rssi)
         meta_parts = [age_text(last_seen)]
         if quality:
@@ -513,6 +603,8 @@ def get_nodes_list():
             meta_parts.append("short: " + str(short_name))
         if hw_model:
             meta_parts.append("hw: " + str(hw_model))
+        if role:
+            meta_parts.append("role: " + str(role))
         result.append({
             "name": icon + " " + n["name"],
             "clean_name": n["name"],
@@ -521,6 +613,7 @@ def get_nodes_list():
             "last_text": last_text,
             "short_name": short_name,
             "hw_model": hw_model,
+            "role": role,
             "rssi": rssi,
             "snr": snr,
             "hop_start": hop_start,
@@ -529,7 +622,6 @@ def get_nodes_list():
             "age": age_text(last_seen)
         })
     return result
-
 
 def is_duplicate_text(sender, text):
     cleaned_text = text.strip()
@@ -548,7 +640,6 @@ def is_duplicate_text(sender, text):
     seen_recent_texts[cleaned_text] = current_time
     return False
 
-
 def stop_listener():
     global listen_process
     if listen_process is not None:
@@ -560,7 +651,6 @@ def stop_listener():
         except Exception:
             pass
         listen_process = None
-
 
 def update_base_status_from_info():
     global base_status
@@ -633,12 +723,9 @@ def read_sensors_from_meshtastic():
         )
         output = result.stdout + result.stderr
         
-        # Parse environment metrics (BME280)
         temp_match = re.search(r'(?:temperature|temp)[:\s=]+(-?\d+\.?\d*)', output, re.IGNORECASE)
         hum_match = re.search(r'(?:humidity|hum)[:\s=]+(\d+\.?\d*)', output, re.IGNORECASE)
         press_match = re.search(r'(?:pressure)[:\s=]+(\d+\.?\d*)', output, re.IGNORECASE)
-        
-        # Parse power metrics (INA226)
         volt_match = re.search(r'(?:voltage|batteryVoltage)[:\s=]+(\d+\.?\d*)', output, re.IGNORECASE)
         curr_match = re.search(r'(?:current)[:\s=]+(\d+\.?\d*)', output, re.IGNORECASE)
         batt_match = re.search(r'(?:battery)[:\s=]+(\d+\.?\d*)%?', output, re.IGNORECASE)
@@ -668,18 +755,15 @@ def read_sensors_from_meshtastic():
     except Exception as e:
         print(f"Error reading sensors: {e}")
 
-
 def base_status_worker():
     while True:
         update_base_status_from_info()
         time.sleep(120)
 
-
 def sensor_reader_worker():
     while True:
         read_sensors_from_meshtastic()
         time.sleep(10)
-
 
 def listen_meshtastic():
     global listen_process
@@ -707,6 +791,8 @@ def listen_meshtastic():
                 line = line.strip()
                 if not line:
                     continue
+                
+                # Обработка NODEINFO
                 if "NODEINFO_APP" in line or collecting_nodeinfo:
                     collecting_nodeinfo = True
                     nodeinfo_buffer.append(line)
@@ -722,61 +808,75 @@ def listen_meshtastic():
                         nodeinfo_buffer = []
                         collecting_nodeinfo = False
                     continue
+                
+                # Обработка текстовых сообщений
                 text = extract_text_message(line)
                 if not text:
                     continue
+                
                 pid = extract_packet_id(line)
                 if pid:
                     if pid in seen_ids:
                         continue
                     seen_ids.add(pid)
+                
                 sender = extract_sender(line)
                 if is_duplicate_text(sender, text):
                     continue
+                
                 node_id = update_node(line, sender, text)
                 add_message("rx", sender, text, node_id)
+                
         except Exception as e:
             add_message("rx", "SYSTEM ERROR", "listen: " + str(e), "")
         time.sleep(2)
-
 
 @app.route("/")
 def index():
     return render_template("index.html")
 
-
 @app.route("/api/messages")
 def api_messages():
     status = "radio: sending..." if pause_listen.is_set() else "radio: listening"
     filter_node_id = request.args.get("node_id", "").strip()
+
     visible_messages = []
+
     for m in messages:
         msg = dict(m)
+
         sender = msg.get("sender", "")
-        node_id = msg.get("node_id", "")
+        original_node_id = msg.get("node_id", "")
+        node_id = original_node_id
+
         if not node_id:
             node_id = infer_node_id_from_sender(sender)
             msg["node_id"] = node_id
-        msg["sender"] = resolve_sender_name(sender)
+
+        # Всегда обновляем имя отправителя из базы нод
+        if node_id:
+            msg["sender"] = get_node_name(node_id)
+        else:
+            msg["sender"] = sender
+
         if filter_node_id and node_id != filter_node_id:
             continue
+
         visible_messages.append(msg)
+
     return jsonify({
         "status": status,
         "messages": visible_messages,
         "nodes": get_nodes_list()
     })
 
-
 @app.route("/api/sensors")
 def api_sensors():
     return jsonify(sensor_data)
 
-
 @app.route("/api/base_status")
 def api_base_status():
     return jsonify(base_status)
-
 
 @app.route("/api/send", methods=["POST"])
 def api_send():
@@ -789,7 +889,6 @@ def api_send():
         try:
             stop_listener()
             time.sleep(1)
-            # Уменьшаем таймаут до 30 секунд
             result = subprocess.run(
                 [MESHTASTIC_CMD, "--ch-index", "0", "--sendtext", text],
                 capture_output=True,
@@ -799,6 +898,7 @@ def api_send():
             if result.returncode == 0:
                 add_message("me", LOCAL_NODE_NAME, text, LOCAL_NODE_ID)
                 old = nodes.get(LOCAL_NODE_ID, {})
+                info = get_node_info(LOCAL_NODE_ID)
                 nodes[LOCAL_NODE_ID] = {
                     "name": LOCAL_NODE_NAME,
                     "node_id": LOCAL_NODE_ID,
@@ -809,8 +909,9 @@ def api_send():
                     "hop_start": old.get("hop_start", ""),
                     "relay_node": old.get("relay_node", ""),
                     "last_text": "sent: " + text,
-                    "short_name": fixed_short_name(LOCAL_NODE_ID, old.get("short_name", "")),
-                    "hw_model": fixed_hw_model(LOCAL_NODE_ID, old.get("hw_model", ""))
+                    "short_name": info.get("short_name", old.get("short_name", "")),
+                    "hw_model": info.get("hw_model", old.get("hw_model", "")),
+                    "role": old.get("role", "CLIENT_BASE")
                 }
                 save_nodes()
                 return jsonify({"ok": True})
@@ -826,7 +927,6 @@ def api_send():
         finally:
             time.sleep(1)
             pause_listen.clear()
-
 
 if __name__ == "__main__":
     load_messages()

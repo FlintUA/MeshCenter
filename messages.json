@@ -623,5 +623,26 @@
     "node_id": "!067a40fa",
     "text": "Test",
     "time": "07:35:21"
+  },
+  {
+    "kind": "rx",
+    "sender": "EKT VME290",
+    "node_id": "!b0f14d2a",
+    "text": "Test",
+    "time": "08:05:02"
+  },
+  {
+    "kind": "rx",
+    "sender": "EKT VME290",
+    "node_id": "!b0f14d2a",
+    "text": "Test2",
+    "time": "08:05:53"
+  },
+  {
+    "kind": "rx",
+    "sender": "Orion9 mobil",
+    "node_id": "!1300faf0",
+    "text": "1️⃣",
+    "time": "08:11:42"
   }
 ]

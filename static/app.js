@@ -51,6 +51,7 @@ function renderNodeDetails(node) {
                 <div><span>ID:</span> <b>${escapeHtml(node.node_id)}</b></div>
                 <div><span>Short:</span> <b>${escapeHtml(node.short_name || '-')}</b></div>
                 <div><span>Hardware:</span> <b>${escapeHtml(node.hw_model || '-')}</b></div>
+                <div><span>Role:</span> <b>${escapeHtml(node.role || 'CLIENT')}</b></div>
                 <div><span>Last seen:</span> <b>${escapeHtml(node.age || '-')}</b></div>
                 <div><span>Signal:</span> <b>${escapeHtml(node.signal_quality || '-')}</b></div>
                 <div><span>RSSI:</span> <b>${escapeHtml(node.rssi || '-')} dBm</b></div>

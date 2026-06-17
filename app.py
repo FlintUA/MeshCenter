@@ -32,6 +32,7 @@ KNOWN_NODE_INFO = {
     "!1fa065f0": {"short_name": "Elek", "hw_model": "TBEAM"},
     "!067a40fa": {"short_name": "FLTB", "hw_model": "RAK4631"},
     "!756f9960": {"short_name": "FLT2", "hw_model": "RAK3312"},
+    "!b0f14d2a": {"short_name": "FLTE", "hw_model": "T-Echo Plus"},
     "!1300faf0": {"short_name": "ori9", "hw_model": "T_DECK"},
     "!f68f9e94": {"short_name": "AB4", "hw_model": "THINKNODE_M5"},
     "!04c67058": {"short_name": "TeKK", "hw_model": "HELTEC_V4"},
@@ -563,6 +564,7 @@ def stop_listener():
 
 def update_base_status_from_info():
     global base_status
+
     try:
         result = subprocess.run(
             [MESHTASTIC_CMD, "--info"],
@@ -570,29 +572,54 @@ def update_base_status_from_info():
             text=True,
             timeout=15
         )
+
         output = result.stdout + result.stderr
-        metrics_pos = output.find('"deviceMetrics"')
+
+        node_pos = output.find(f'"{LOCAL_NODE_ID}"')
+        if node_pos < 0:
+            print("Base status: local node id not found")
+            return
+
+        next_node_pos = output.find('\n  "!', node_pos + 1)
+        if next_node_pos < 0:
+            node_block = output[node_pos:]
+        else:
+            node_block = output[node_pos:next_node_pos]
+
+        metrics_pos = node_block.find('"deviceMetrics"')
         if metrics_pos < 0:
+            print("Base status: deviceMetrics not found")
             return
-        block_start = output.find("{", metrics_pos)
-        block_end = output.find("}", block_start)
+
+        block_start = node_block.find("{", metrics_pos)
+        block_end = node_block.find("}", block_start)
+
         if block_start < 0 or block_end < 0:
+            print("Base status: metrics block not found")
             return
-        metrics_text = output[block_start:block_end + 1]
+
+        metrics_text = node_block[block_start:block_end + 1]
         metrics = json.loads(metrics_text)
+
         voltage = metrics.get("voltage")
+        battery_level = metrics.get("batteryLevel")
+
+        real_battery = voltage_to_percent(voltage)
+
         base_status = {
-            "battery_level": metrics.get("batteryLevel"),
-            "real_battery": voltage_to_percent(voltage),
+            "battery_level": battery_level,
+            "real_battery": real_battery,
             "voltage": voltage,
             "channel_utilization": metrics.get("channelUtilization"),
             "air_util_tx": metrics.get("airUtilTx"),
             "uptime_seconds": metrics.get("uptimeSeconds"),
             "last_update": now()
         }
+
+        print("Base status updated:", base_status)
+
     except Exception as e:
         print("Base status update error:", e)
-
 
 def read_sensors_from_meshtastic():
     """Read sensor data from RAK4631 via Meshtastic telemetry"""

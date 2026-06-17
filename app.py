@@ -37,6 +37,7 @@ KNOWN_NODES = {
     "!f68f9e94": "ThinkNode M5",
     "!04c67058": "HardTekkER",
     "!f6cd2588": "Meshtastic 2588",
+    "!1dd2a0bc": "daa792-a0bc",
 }
 
 KNOWN_NODE_INFO = {
@@ -55,6 +56,7 @@ KNOWN_NODE_INFO = {
     "!f68f9e94": {"short_name": "AB4", "hw_model": "THINKNODE_M5"},
     "!04c67058": {"short_name": "TeKK", "hw_model": "HELTEC_V4"},
     "!f6cd2588": {"short_name": "2588", "hw_model": "HELTEC_V4"},
+    "!1dd2a0bc": {"short_name": "a0bc", "hw_model": "SEEED_XIAO_S3"},
 }
 
 app = Flask(__name__)
@@ -472,6 +474,14 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None):
     
     if not node_id:
         node_id = infer_node_id_from_sender(sender)
+    
+    # Если node_id это ID ноды - автоматически создаем чат
+    if node_id and node_id.startswith("!") and node_id != LOCAL_NODE_ID:
+        if node_id not in KNOWN_NODES:
+            KNOWN_NODES[node_id] = sender
+            print(f"[AUTO] Added new node: {node_id} -> {sender}")
+        if node_id not in chats:
+            ensure_chat(node_id, sender or get_node_name(node_id))
     
     # Если chat_id не передан, определяем автоматически
     if chat_id is None:
@@ -1024,49 +1034,51 @@ def listen_meshtastic():
                 if node_id and nodes.get(node_id, {}).get("ignored", False):
                     continue
                 
-                # ========== ОПРЕДЕЛЯЕМ ТИП СООБЩЕНИЯ ПО ПОЛЮ "to" ==========
+                # ========== ОПРЕДЕЛЯЕМ ТИП СООБЩЕНИЯ ==========
                 is_channel = False
+                chat_id = CHANNEL_CHAT_ID  # По умолчанию канал
                 to_value = None
                 
-                # Ищем числовое поле 'to' (как в логах: to: 4294967295)
-                to_match = re.search(r"'to':\s*(\d+)", line)
-                if to_match:
-                    to_value = int(to_match.group(1))
-                    # 4294967295 = 0xFFFFFFFF = broadcast
-                    if to_value == 4294967295:
-                        is_channel = True
-                else:
-                    # Ищем строковое 'toId': '^all' или 'to': '"^all"'
-                    to_match = re.search(r"'toId':\s*'([^']+)'", line)
+                # 1. Проверяем числовое 'to': 4294967295 (broadcast)
+                if "'to': 4294967295" in line or '"to": 4294967295' in line:
+                    is_channel = True
+                    to_value = "4294967295"
+                # 2. Проверяем строковое 'to': '^all'
+                elif "'to': '^all'" in line or '"to": "^all"' in line:
+                    is_channel = True
+                    to_value = "^all"
+                # 3. Проверяем 'toId': '^all'
+                elif "'toId': '^all'" in line or '"toId": "^all"' in line:
+                    is_channel = True
+                    to_value = "^all"
+                # 4. Проверяем 'broadcast'
+                elif 'broadcast' in line.lower():
+                    is_channel = True
+                    to_value = "broadcast"
+                # 5. Проверяем, есть ли 'to' с конкретным ID (DM)
+                elif "'to': '!" in line or '"to": "!"' in line:
+                    is_channel = False
+                    # Пытаемся извлечь ID получателя
+                    to_match = re.search(r"'to':\s*'(![0-9a-f]+)'", line)
+                    if not to_match:
+                        to_match = re.search(r'"to":\s*"(![0-9a-f]+)"', line)
                     if to_match:
                         to_value = to_match.group(1)
-                        if to_value.lower() in ['^all', 'all', 'broadcast']:
-                            is_channel = True
-                    else:
-                        to_match = re.search(r'"toId":\s*"([^"]+)"', line)
-                        if to_match:
-                            to_value = to_match.group(1)
-                            if to_value.lower() in ['^all', 'all', 'broadcast']:
-                                is_channel = True
                 
-                # Если не нашли, проверяем строковый 'to': '^all'
-                if not to_match:
-                    to_match = re.search(r"'to':\s*'([^']+)'", line)
-                    if to_match:
-                        to_value = to_match.group(1)
-                        if to_value.lower() in ['^all', 'all', 'broadcast']:
-                            is_channel = True
+                # 6. Если есть 'dest' - это DM
+                if "'dest'" in line.lower() or '"dest"' in line.lower():
+                    is_channel = False
                 
-                # Определяем chat_id
                 if is_channel:
                     chat_id = CHANNEL_CHAT_ID
-                    print(f"[DEBUG] CHANNEL: from={sender}, to={to_value}")
+                    print(f"[DEBUG] CHANNEL: from={sender}, to={to_value}, text={text[:30]}")
                 else:
                     chat_id = node_id if node_id and node_id.startswith("!") else CHANNEL_CHAT_ID
-                    print(f"[DEBUG] DM: from={sender}, to={to_value if to_match else 'unknown'}")
+                    print(f"[DEBUG] DM: from={sender}, to={to_value}, text={text[:30]}")
                 
                 add_message("rx", sender, text, node_id, chat_id)
         except Exception as e:
+            print(f"[ERROR] listen_meshtastic: {e}")
             add_message("rx", "SYSTEM ERROR", "listen: " + str(e), "", CHANNEL_CHAT_ID)
         time.sleep(2)
 

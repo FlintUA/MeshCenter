@@ -57,7 +57,8 @@ http://192.168.2.103:5000
 * Raspberry Pi Zero 2W
 * RAK4631 (Flint Base)
 * LILYGO T-Beam
-* Meshtastic EU868
+* LILYGO T-Echo Plus
+* RAK WisMesh TAP V2
 
 ## Current Status
 

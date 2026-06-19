@@ -290,13 +290,18 @@ async function loadChatMessages(chatId) {
         const shouldScroll = container.scrollTop + container.clientHeight >= container.scrollHeight - 100;
         const messages = data.messages || [];
 
-        const signature = messages.map(m => 
+        // ===== ФИКС: Добавляем chatId в сигнатуру =====
+        const signature = chatId + '||' + messages.map(m => 
             [m.kind, m.sender, m.text, m.time].join('|')
         ).join('||');
 
+        // ===== ФИКС: Обновляем только если изменилось =====
         if (signature !== lastMessagesSignature) {
+            lastMessagesSignature = signature;
+            
             if (messages.length === 0) {
-                container.innerHTML = '<div class="loading">💬 No messages yet. Send the first one!</div>';
+                const chatName = currentChatName || chatId;
+                container.innerHTML = `<div class="loading">💬 No messages yet with ${escapeHtml(chatName)}. Send the first one!</div>`;
             } else {
                 container.innerHTML = messages.map(msg => {
                     const isMe = msg.kind === 'me';
@@ -328,7 +333,6 @@ async function loadChatMessages(chatId) {
                 }).join('');
             }
 
-            lastMessagesSignature = signature;
             if (shouldScroll) {
                 container.scrollTop = container.scrollHeight;
             }

@@ -32,3 +32,18 @@ Thumbs.db
 .env
 config.local.py
 
+# Virtual environment
+venv/
+
+# Local configuration
+config.py
+
+# Runtime data
+data/messages.json
+data/nodes.json
+data/chats.json
+data/sensors.json
+
+# VS Code
+.vscode/
+

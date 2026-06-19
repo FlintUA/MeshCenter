@@ -1,76 +1,123 @@
-# Meshtastic Web Chat
+# 🚀 Meshtastic Web UI v1.0.0
 
-Simple web chat interface for Meshtastic nodes.
+## First Stable Release
 
-Designed and tested on Raspberry Pi Zero 2W.
+A modern web interface for Meshtastic nodes designed for Raspberry Pi Zero 2W and other Linux-based systems.
 
-## Features
+### ✨ Highlights
 
-* Send messages to LongFast channel 0
-* Direct messages to specific nodes
-* Receive messages in real time
-* Node discovery and status monitoring
-* Mobile-friendly responsive interface
-* Lightweight and suitable for Raspberry Pi Zero 2W
-* Message history with persistent storage
-* Emoji support with category picker (384 emojis)
-* Sensor data display (temperature, humidity, pressure, battery)
-* GitHub version control support
-* Works through Meshtastic CLI
+- Real-time Meshtastic chat interface
+- Public channel messaging (LongFast)
+- Node discovery and monitoring
+- Device status dashboard
+- Sensor telemetry display
+- Emoji picker support
+- Responsive desktop and mobile layout
+- Persistent JSON-based storage
+- Systemd service support
+- Optimized for low-power hardware
 
+---
 
-## Requirements
+## 🎯 Features
 
-* Raspberry Pi OS
-* Python 3
-* Meshtastic CLI
-* Flask
+### Messaging
+- Send and receive messages in LongFast channel
+- Chat history persistence
+- Message timestamps
+- Emoji support with popup picker
 
-## Installation
+### Node Management
+- Automatic node discovery
+- Live node list
+- Signal quality indicators
+- RSSI and SNR display
+- Hardware identification
+- Last seen tracking
+- Node filtering and search
+
+### Device Dashboard
+- Voltage monitoring
+- Battery level estimation
+- Channel utilization
+- Air utilization statistics
+- Uptime display
+
+### Sensor Support
+- Temperature
+- Humidity
+- Pressure
+- Voltage
+- Current
+- Power
+
+### User Interface
+- Clean modern layout
+- Desktop optimized
+- Mobile friendly
+- Fast updates
+- Lightweight design
+
+---
+
+## 🧪 Tested Hardware
+
+- ✅ Raspberry Pi Zero 2W
+- ✅ RAK4631 (Flint Base)
+- ✅ LILYGO T-Beam
+- ✅ LILYGO T-Echo Plus
+- ✅ RAK WisMesh TAP V2
+
+---
+
+## 📦 Installation
 
 ```bash
-git clone https://github.com/FlintUA/meshtastic-web-ui.git
-cd meshtastic-web-ui
+git clone https://github.com/FlintUA/meshnode-web-chat.git
+cd meshnode-web-chat
+
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+```
 
-## Open browser:
+---
+
+## 🚀 Start
+
+### Development
+
+```bash
+python3 app.py
+```
+
+### Production (systemd)
+
+```bash
+sudo systemctl enable meshweb
+sudo systemctl start meshweb
+```
+
+Open:
 
 ```text
 http://RASPBERRY_IP:5000
 ```
 
-Example:
+---
 
-```text
-http://192.168.2.103:5000
-```
+## 👨‍💻 Author
 
-## Tested Hardware
+**Kostiantyn Vynohradov (FlintUA)**
 
-* Raspberry Pi Zero 2W
-* RAK4631 (Flint Base)
-* LILYGO T-Beam
-* LILYGO T-Echo Plus
-* RAK WisMesh TAP V2
+GitHub: https://github.com/FlintUA
 
-## Current Status
+Project: https://github.com/FlintUA/meshnode-web-chat
 
-Project is under active development.
+---
 
-Planned features:
+## ❤️ Support
 
-* Node name detection
-* Private messages
-* Known nodes list
-* Message history
-* Better mobile interface
-* Telemetry support
+If you find this project useful, please give it a ⭐ on GitHub.
 
-## Author
-
-Kostiantyn Vynohradov (FlintUA)
-
-GitHub:
-https://github.com/FlintUA
+**Made for the Meshtastic community**

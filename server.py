@@ -761,19 +761,27 @@ def stop_listener():
     global listen_process
     if listen_process is not None:
         try:
+            # Отправить SIGTERM
             listen_process.terminate()
-            for _ in range(30):
+            
+            # Ждать до 5 секунд
+            for _ in range(50):
                 if listen_process.poll() is not None:
                     break
                 time.sleep(0.1)
             
+            # Если не завершился — убить
             if listen_process.poll() is None:
-                print("[WARN] Listener didn't stop gracefully, killing...")
+                print("[WARN] Listener didn't stop, killing...")
                 listen_process.kill()
-                time.sleep(0.5)
+                time.sleep(1.0)
             
-            print(f"[DEBUG] Listener stopped (exit code: {listen_process.returncode})")
+            # Дополнительная пауза для освобождения порта
+            time.sleep(0.5)
+            
             listen_process = None
+            print("[DEBUG] Listener stopped successfully")
+            
         except Exception as e:
             print(f"[WARN] Error stopping listener: {e}")
             listen_process = None
@@ -1148,23 +1156,25 @@ def api_send():
     if target_node and target_node not in nodes:
         return jsonify({"ok": False, "error": "Target node not found"}), 404
     
+    # ===== УВЕЛИЧЕННАЯ ЗАДЕРЖКА =====
     pause_listen.set()
-    time.sleep(0.5)
+    time.sleep(1.5)  # Было 0.5
     
     with radio_lock:
         try:
             stop_listener()
-            time.sleep(1.5)
+            time.sleep(2.0)  # Было 1.5
             
-            # Проверяем порт
+            # ===== ПРИНУДИТЕЛЬНОЕ ОСВОБОЖДЕНИЕ ПОРТА =====
             try:
                 result = subprocess.run(["lsof", "/dev/ttyACM0"], capture_output=True, text=True, timeout=2)
                 if result.stdout.strip():
                     print(f"[WARN] Port in use: {result.stdout.strip()}")
                     subprocess.run(["fuser", "-k", "/dev/ttyACM0"], capture_output=True, timeout=2)
-                    time.sleep(1)
+                    time.sleep(1.0)
             except:
                 pass
+            # =============================================
             
             cmd = [MESHTASTIC_CMD, "--ch-index", "0"]
             

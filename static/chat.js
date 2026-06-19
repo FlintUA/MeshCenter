@@ -709,7 +709,7 @@ function renderNodeDetails(node) {
                 <div class="node-details-col">
                     <div class="node-details-item">
                         <span class="label">ID:</span>
-                        <span class="value">${escapeHtml(node.node_id)}</span>
+                        <span class="value" style="font-size:10px;word-break:break-all;">${escapeHtml(node.node_id)}</span>
                     </div>
                     <div class="node-details-item">
                         <span class="label">HW:</span>

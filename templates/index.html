@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Meshtastic Mesh Network</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
@@ -40,9 +40,11 @@
                     <span class="chat-title" id="chatTitle">💬 Chats</span>
                     <span class="chat-subtitle" id="chatSubtitle"></span>
                 </div>
-                <button class="chat-actions-btn" id="chatActionsBtn" style="display: none;" onclick="showChatActions()">
-                    ⋮
-                </button>
+                <div class="chat-header-actions">
+                    <button class="chat-actions-btn" id="chatActionsBtn" style="display: none;" onclick="showChatActions()">
+                        ⋮
+                    </button>
+                </div>
             </div>
 
             <!-- Chat List View -->
@@ -58,11 +60,37 @@
                     <div class="loading">Loading messages...</div>
                 </div>
 
+                <!-- Input Area -->
                 <div class="input-area">
                     <form class="input-form" id="sendForm">
                         <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
-                        <button type="submit">Send</button>
+                        
+                        <!-- Кнопка эмодзи -->
+                        <button type="button" id="emojiBtn" class="emoji-btn" title="Insert emoji">
+                            😊
+                        </button>
+                        
+                        <button type="submit" id="sendBtn">Send</button>
                     </form>
+                    
+                    <!-- Popup эмодзи -->
+                    <div id="emojiPicker" class="emoji-picker" style="display: none;">
+                        <div class="emoji-picker-header">
+                            <span>😊 Emojis</span>
+                            <button type="button" id="emojiCloseBtn" class="emoji-close-btn">✕</button>
+                        </div>
+                        <div class="emoji-categories">
+                            <button class="emoji-cat-btn active" data-cat="smileys">😊</button>
+                            <button class="emoji-cat-btn" data-cat="gestures">👋</button>
+                            <button class="emoji-cat-btn" data-cat="food">🍕</button>
+                            <button class="emoji-cat-btn" data-cat="activities">🎉</button>
+                            <button class="emoji-cat-btn" data-cat="travel">🚗</button>
+                            <button class="emoji-cat-btn" data-cat="objects">💡</button>
+                            <button class="emoji-cat-btn" data-cat="symbols">❤️</button>
+                            <button class="emoji-cat-btn" data-cat="flags">🏳️</button>
+                        </div>
+                        <div class="emoji-grid" id="emojiGrid"></div>
+                    </div>
                 </div>
             </div>
         </div>

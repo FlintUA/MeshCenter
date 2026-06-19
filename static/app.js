@@ -81,13 +81,17 @@ async function loadChatList() {
         const container = document.getElementById('chatList');
         if (!container) return;
 
-        const chatTitle = document.getElementById('chatTitle');
-        if (chatTitle) {
-            if (totalUnreadCount > 0) {
-                chatTitle.textContent = `💬 Chats (${totalUnreadCount})`;
-            } else {
-                chatTitle.textContent = '💬 Chats';
+        if (!currentChatId) {
+            const chatTitle = document.getElementById('chatTitle');
+            if (chatTitle) {
+                if (totalUnreadCount > 0) {
+                    chatTitle.textContent = `💬 Chats (${totalUnreadCount})`;
+                } else {
+                    chatTitle.textContent = '💬 Chats';
+                }
             }
+            const subtitleEl = document.getElementById('chatSubtitle');
+            if (subtitleEl) subtitleEl.textContent = '';
         }
 
         if (chatListCache.length === 0) {
@@ -105,7 +109,7 @@ async function loadChatList() {
         }
 
         if (dmChats.length > 0) {
-            html += `<div class="chat-section-title">💬 Chats</div>`;
+            html += `<div class="chat-section-title">💬 Direct Messages</div>`;
             html += dmChats.map(chat => renderChatItem(chat)).join('');
         } else if (!channelChat) {
             html = '<div class="loading">💬 No chats yet</div>';
@@ -159,6 +163,36 @@ function hideIgnoredBanner() {
     if (banner) banner.remove();
 }
 
+function updateChatHeaderStatus() {
+    if (!currentChatId || currentChatType === 'channel') return;
+    
+    const node = nodeCache.find(n => n.node_id === currentChatId);
+    const titleEl = document.getElementById('chatTitle');
+    const subtitleEl = document.getElementById('chatSubtitle');
+    
+    if (!titleEl || !subtitleEl) return;
+    
+    let statusIcon = '🟢';
+    let statusText = 'Online';
+    
+    if (node && node.age) {
+        const age = node.age;
+        if (age.includes('h') || age.includes('day') || (age.includes('min') && parseInt(age) > 10)) {
+            statusIcon = '🟡';
+            statusText = 'Away';
+        }
+        if (age.includes('day') || (age.includes('h') && parseInt(age) > 24)) {
+            statusIcon = '🔴';
+            statusText = 'Offline';
+        }
+    }
+    
+    const shortId = currentChatId ? currentChatId.slice(-4) : '';
+    titleEl.innerHTML = `${statusIcon} ${currentChatName} <span style="font-size:12px;font-weight:400;color:#888;margin-left:6px;">${shortId}</span>`;
+    subtitleEl.textContent = `Direct Message • ${statusText}`;
+    subtitleEl.style.color = statusIcon === '🟢' ? '#2e7d32' : (statusIcon === '🟡' ? '#f57c00' : '#c62828');
+}
+
 function openChat(chatId, chatName, chatType) {
     currentChatId = chatId;
     currentChatName = chatName || chatId;
@@ -169,8 +203,16 @@ function openChat(chatId, chatName, chatType) {
     document.getElementById('backToChatsBtn').style.display = 'block';
     document.getElementById('chatActionsBtn').style.display = 'block';
 
-    document.getElementById('chatTitle').textContent = chatName;
-    document.getElementById('chatSubtitle').textContent = chatType === 'channel' ? '' : '';
+    const titleEl = document.getElementById('chatTitle');
+    const subtitleEl = document.getElementById('chatSubtitle');
+    
+    if (chatType === 'channel') {
+        titleEl.textContent = '📡 ' + chatName;
+        subtitleEl.textContent = 'Channel • All messages are broadcast';
+        subtitleEl.style.color = '#1a73e8';
+    } else {
+        updateChatHeaderStatus();
+    }
 
     const input = document.getElementById('messageInput');
     if (input) {
@@ -207,7 +249,6 @@ function openChat(chatId, chatName, chatType) {
         renderNodeDetails(null);
     }
     
-    // Обновляем список чатов для сброса счетчика
     loadChatList();
 }
 
@@ -220,6 +261,17 @@ function showChatList() {
     document.getElementById('messagesView').style.display = 'none';
     document.getElementById('backToChatsBtn').style.display = 'none';
     document.getElementById('chatActionsBtn').style.display = 'none';
+
+    const titleEl = document.getElementById('chatTitle');
+    const subtitleEl = document.getElementById('chatSubtitle');
+    
+    const totalUnread = chatListCache.reduce((sum, c) => sum + (c.unread || 0), 0);
+    if (totalUnread > 0) {
+        titleEl.textContent = `💬 Chats (${totalUnread})`;
+    } else {
+        titleEl.textContent = '💬 Chats';
+    }
+    subtitleEl.textContent = '';
 
     stopMessagePolling();
     loadChatList();
@@ -282,7 +334,6 @@ async function loadChatMessages(chatId) {
             }
         }
 
-        // Обновляем список чатов для обновления счетчика непрочитанных
         loadChatList();
 
     } catch (error) {
@@ -312,6 +363,7 @@ function stopMessagePolling() {
     }
 }
 
+// ===== ОТПРАВКА СООБЩЕНИЙ С АНИМИРОВАННЫМИ ТОЧКАМИ =====
 const sendForm = document.getElementById('sendForm');
 if (sendForm) {
     sendForm.addEventListener('submit', async (e) => {
@@ -330,12 +382,15 @@ if (sendForm) {
             }
         }
 
-        const button = e.target.querySelector('button');
-        const originalText = button ? button.textContent : 'Send';
+        const button = e.target.querySelector('button[type="submit"]');
+        const originalHtml = button ? button.innerHTML : 'Send';
 
         if (button) {
             button.disabled = true;
-            button.textContent = '📡 Sending...';
+            const currentWidth = button.offsetWidth;
+            button.style.width = currentWidth + 'px';
+            button.innerHTML = `<span style="display:inline-block;min-width:75px;text-align:left;">Sending<span class="dots"></span></span>`;
+            button.style.animation = 'pulse 1s ease-in-out infinite';
         }
 
         try {
@@ -359,20 +414,41 @@ if (sendForm) {
                 lastMessagesSignature = '';
                 loadChatMessages(currentChatId);
                 loadChatList();
+                
+                if (button) {
+                    button.innerHTML = '✓ Sent!';
+                    button.style.background = '#4caf50';
+                    button.style.borderColor = '#4caf50';
+                    button.style.animation = '';
+                    setTimeout(() => {
+                        button.disabled = false;
+                        button.style.width = '';
+                        button.style.background = '';
+                        button.style.borderColor = '';
+                        button.innerHTML = originalHtml;
+                    }, 1200);
+                }
             } else {
                 const error = await response.json();
                 alert('Failed to send: ' + (error.error || 'Unknown error'));
+                if (button) {
+                    button.disabled = false;
+                    button.style.width = '';
+                    button.style.animation = '';
+                    button.innerHTML = originalHtml;
+                }
             }
 
         } catch (error) {
             console.error('Error sending message:', error);
             alert('Network error');
-
-        } finally {
             if (button) {
                 button.disabled = false;
-                button.textContent = originalText;
+                button.style.width = '';
+                button.style.animation = '';
+                button.innerHTML = originalHtml;
             }
+        } finally {
             if (input) input.focus();
         }
     });
@@ -398,7 +474,6 @@ function closeChatActions() {
     if (modal) modal.style.display = 'none';
 }
 
-// ===== УДАЛЕНИЕ ЧАТА =====
 function showConfirmDelete(chatName, chatId) {
     deleteTargetChatId = chatId;
     const modal = document.getElementById('confirmDeleteModal');
@@ -445,7 +520,6 @@ async function deleteCurrentChat() {
     showConfirmDelete(currentChatName, currentChatId);
 }
 
-// ===== ОЧИСТКА ЧАТА =====
 function showConfirmClear(chatName, chatId) {
     clearTargetChatId = chatId;
     const modal = document.getElementById('confirmClearModal');
@@ -475,13 +549,9 @@ async function executeClearChat() {
         closeConfirmClear();
 
         if (response.ok) {
-            // Сбрасываем кэш сообщений
             lastMessagesSignature = '';
-            // Принудительно обновляем сообщения в чате
             loadChatMessages(clearTargetChatId);
-            // Обновляем список чатов
             loadChatList();
-            // Обновляем список узлов
             loadMessages();
         } else {
             const error = await response.json();
@@ -711,6 +781,10 @@ async function loadMessages() {
         const data = await response.json();
 
         nodeCache = data.nodes || [];
+        
+        if (currentChatId && currentChatType === 'dm') {
+            updateChatHeaderStatus();
+        }
 
         const statusEl = document.getElementById('statusText');
         const nodeCountEl = document.getElementById('nodeCount');
@@ -923,6 +997,9 @@ document.addEventListener('keydown', (e) => {
         closeChatActions();
         closeConfirmDelete();
         closeConfirmClear();
+        if (isEmojiPickerOpen) {
+            closeEmojiPicker();
+        }
         if (currentChatId) {
             showChatList();
         }
@@ -945,6 +1022,191 @@ document.getElementById('confirmClearModal')?.addEventListener('click', (e) => {
     if (e.target === e.currentTarget) {
         closeConfirmClear();
     }
+});
+
+// ===== ЭМОДЗИ =====
+const EMOJI_DATA = {
+    smileys: [
+        '😊', '😂', '❤️', '🔥', '👍', '💯', '🎉', '✨',
+        '🤔', '😎', '💪', '🙏', '🥰', '😍', '🤗', '🫶',
+        '😘', '😗', '😙', '🥲', '😅', '😆', '🤣', '🥹',
+        '😌', '😏', '😒', '😔', '😕', '🙃', '🤑', '😲',
+        '😳', '😱', '🤯', '🥳', '🤩', '😇', '🥺', '🤪',
+        '😜', '😝', '🫠', '🤭', '🫣', '🤫', '🤥', '😶'
+    ],
+    gestures: [
+        '👋', '🤚', '🖐️', '✋', '🖖', '👌', '🤌', '🤏',
+        '✌️', '🤞', '🫰', '🤟', '🤘', '👈', '👉', '👆',
+        '👇', '☝️', '👍', '👎', '👊', '✊', '🤛', '🤜',
+        '👏', '🙌', '🫶', '🤲', '🤝', '🙏', '✍️', '💅'
+    ],
+    food: [
+        '🍕', '🍔', '🌮', '🌯', '🥗', '🍣', '🍱', '🍜',
+        '🍲', '🍛', '🍙', '🍚', '🍘', '🥟', '🍤', '🍗',
+        '🥩', '🍖', '🥓', '🧀', '🥚', '🍳', '🥞', '🧇',
+        '🥐', '🥖', '🍞', '🧈', '🧂', '🍿', '🧁', '🍰',
+        '🎂', '🍪', '🍩', '🍫', '🍬', '🍭', '🍮', '☕',
+        '🍵', '🧃', '🥤', '🧋', '🍺', '🍷', '🥂', '🍾'
+    ],
+    activities: [
+        '🎉', '🎊', '🎁', '🎈', '🎀', '🎂', '🎆', '🎇',
+        '✨', '🌟', '⭐', '🌈', '☀️', '🌙', '🌟', '💫',
+        '🎵', '🎶', '🎤', '🎧', '🎼', '🎹', '🥁', '🎸',
+        '🎺', '🎻', '🪕', '🎯', '🎳', '🎮', '🎲', '♟️',
+        '🏆', '🏅', '🥇', '🥈', '🥉', '⚽', '🏀', '🏈',
+        '⚾', '🥎', '🎾', '🏐', '🏉', '🥏', '🎱', '🪀'
+    ],
+    travel: [
+        '🚗', '🚕', '🚙', '🚌', '🚎', '🏎️', '🚓', '🚑',
+        '🚒', '🚐', '🛻', '🚚', '🚛', '🚜', '🏍️', '🛵',
+        '🚲', '🛴', '🛹', '🛼', '🚁', '✈️', '🛩️', '🛫',
+        '🛬', '🪂', '💺', '🚀', '🛸', '🚢', '🛳️', '⛵',
+        '🚤', '🛥️', '🛶', '🚂', '🚆', '🚇', '🚉', '🚊',
+        '🚝', '🚞', '🚋', '🚃', '🚄', '🚅', '🚈', '🚍'
+    ],
+    objects: [
+        '💡', '🔦', '🕯️', '🧯', '🪣', '🧹', '🧺', '🪥',
+        '🧽', '🪒', '💈', '🧴', '🧵', '🧶', '👓', '🕶️',
+        '🥽', '🥼', '🦺', '👔', '👕', '👖', '🧣', '🧤',
+        '🧥', '🧦', '👗', '👘', '🥻', '🩱', '🩲', '🩳',
+        '👙', '👚', '👛', '👜', '👝', '🛍️', '🎒', '👞',
+        '👟', '🥾', '🥿', '👠', '👡', '👢', '👑', '🎩'
+    ],
+    symbols: [
+        '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍',
+        '🤎', '💔', '❤️‍🔥', '❤️‍🩹', '💕', '💞', '💓', '💗',
+        '💖', '💘', '💝', '💟', '☮️', '✝️', '☪️', '🕉️',
+        '☸️', '✡️', '🔯', '🕎', '☯️', '☦️', '🛐', '⛎',
+        '♈', '♉', '♊', '♋', '♌', '♍', '♎', '♏',
+        '♐', '♑', '♒', '♓', '🆔', '⚛️', '🉑', '☢️'
+    ],
+    flags: [
+        '🏳️', '🏴', '🏁', '🚩', '🎌', '🇺🇳', '🇪🇺', '🏴‍☠️',
+        '🇦🇫', '🇦🇱', '🇩🇿', '🇦🇩', '🇦🇴', '🇦🇬', '🇦🇷', '🇦🇲',
+        '🇦🇺', '🇦🇹', '🇦🇿', '🇧🇸', '🇧🇭', '🇧🇩', '🇧🇧', '🇧🇾',
+        '🇧🇪', '🇧🇿', '🇧🇯', '🇧🇹', '🇧🇴', '🇧🇦', '🇧🇼', '🇧🇷',
+        '🇧🇳', '🇧🇬', '🇧🇫', '🇧🇮', '🇰🇭', '🇨🇲', '🇨🇦', '🇨🇻',
+        '🇨🇫', '🇹🇩', '🇨🇱', '🇨🇳', '🇨🇴', '🇰🇲', '🇨🇬', '🇨🇩'
+    ]
+};
+
+let currentEmojiCategory = 'smileys';
+let isEmojiPickerOpen = false;
+
+function openEmojiPicker() {
+    const picker = document.getElementById('emojiPicker');
+    if (!picker) return;
+    
+    isEmojiPickerOpen = true;
+    picker.style.display = 'flex';
+    renderEmojiCategory(currentEmojiCategory);
+    
+    document.querySelectorAll('.emoji-cat-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.cat === currentEmojiCategory);
+    });
+}
+
+function closeEmojiPicker() {
+    const picker = document.getElementById('emojiPicker');
+    if (picker) {
+        picker.style.display = 'none';
+    }
+    isEmojiPickerOpen = false;
+}
+
+function toggleEmojiPicker() {
+    if (isEmojiPickerOpen) {
+        closeEmojiPicker();
+    } else {
+        openEmojiPicker();
+    }
+}
+
+function renderEmojiCategory(category) {
+    const grid = document.getElementById('emojiGrid');
+    if (!grid) return;
+    
+    const emojis = EMOJI_DATA[category] || EMOJI_DATA.smileys;
+    grid.innerHTML = emojis.map(emoji => 
+        `<button class="emoji-item" data-emoji="${emoji}">${emoji}</button>`
+    ).join('');
+}
+
+function insertEmoji(emoji) {
+    const input = document.getElementById('messageInput');
+    if (!input) return;
+    
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    const text = input.value;
+    
+    input.value = text.substring(0, start) + emoji + text.substring(end);
+    const newPos = start + emoji.length;
+    input.selectionStart = input.selectionEnd = newPos;
+    
+    input.focus();
+    closeEmojiPicker();
+}
+
+// ===== ОБРАБОТЧИКИ ЭМОДЗИ =====
+document.addEventListener('DOMContentLoaded', function() {
+    const emojiBtn = document.getElementById('emojiBtn');
+    if (emojiBtn) {
+        emojiBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleEmojiPicker();
+        });
+    }
+    
+    const closeBtn = document.getElementById('emojiCloseBtn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', function() {
+            closeEmojiPicker();
+        });
+    }
+    
+    document.querySelectorAll('.emoji-cat-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const cat = this.dataset.cat;
+            currentEmojiCategory = cat;
+            document.querySelectorAll('.emoji-cat-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            renderEmojiCategory(cat);
+        });
+    });
+    
+    document.getElementById('emojiGrid')?.addEventListener('click', function(e) {
+        const item = e.target.closest('.emoji-item');
+        if (item) {
+            const emoji = item.dataset.emoji;
+            if (emoji) {
+                insertEmoji(emoji);
+            }
+        }
+    });
+    
+    document.addEventListener('click', function(e) {
+        const picker = document.getElementById('emojiPicker');
+        const btn = document.getElementById('emojiBtn');
+        if (isEmojiPickerOpen && picker && btn) {
+            if (!picker.contains(e.target) && !btn.contains(e.target)) {
+                closeEmojiPicker();
+            }
+        }
+    });
+    
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && isEmojiPickerOpen) {
+            closeEmojiPicker();
+        }
+    });
+    
+    document.querySelector('.messages-container')?.addEventListener('scroll', function() {
+        if (isEmojiPickerOpen) {
+            closeEmojiPicker();
+        }
+    });
 });
 
 async function init() {

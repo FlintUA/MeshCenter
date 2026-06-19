@@ -74,8 +74,8 @@ A modern web interface for Meshtastic nodes designed for Raspberry Pi Zero 2W an
 ## 📦 Installation
 
 ```bash
-git clone https://github.com/FlintUA/meshnode-web-chat.git
-cd meshnode-web-chat
+git clone https://github.com/FlintUA/meshtastic-web-ui.git
+cd meshtastic-web-ui
 
 python3 -m venv venv
 source venv/bin/activate
@@ -95,8 +95,8 @@ python3 app.py
 ### Production (systemd)
 
 ```bash
-sudo systemctl enable meshweb
-sudo systemctl start meshweb
+sudo systemctl enable mesh-web.service
+sudo systemctl start mesh-web.service
 ```
 
 Open:
@@ -113,7 +113,7 @@ http://RASPBERRY_IP:5000
 
 GitHub: https://github.com/FlintUA
 
-Project: https://github.com/FlintUA/meshnode-web-chat
+Project: https://github.com/FlintUA/meshtastic-web-ui
 
 ---
 

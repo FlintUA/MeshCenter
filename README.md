@@ -307,6 +307,8 @@ https://github.com/FlintUA
 Project:
 https://github.com/FlintUA/flint-meshtastic-web-ui
 
+Approximately 3,800 lines of custom code.
+Built as a personal learning project by an electronics engineer using AI-assisted development.
 ---
 
 ## ❤️ Support

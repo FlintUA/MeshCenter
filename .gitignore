@@ -11,7 +11,12 @@ __pycache__/
 dist/
 build/
 
-# Project data
+# Local configuration
+config.py
+config.local.py
+.env
+
+# Runtime data
 data/*.json
 !data/.gitkeep
 
@@ -27,23 +32,3 @@ data/*.json
 # OS
 .DS_Store
 Thumbs.db
-
-# Sensitive
-.env
-config.local.py
-
-# Virtual environment
-venv/
-
-# Local configuration
-config.py
-
-# Runtime data
-data/messages.json
-data/nodes.json
-data/chats.json
-data/sensors.json
-
-# VS Code
-.vscode/
-

@@ -7,65 +7,24 @@ import json
 import os
 from collections import defaultdict
 
-# ===== КОНФИГУРАЦИЯ =====
-APP_HOST = "0.0.0.0"
-APP_PORT = 5000
-MESHTASTIC_CMD = "/home/flint/.local/bin/meshtastic"
+# ===== ИМПОРТ НАСТРОЕК =====
+try:
+    from config import *
+except ImportError:
+    print("ERROR: config.py not found!")
+    print("Please copy config.example.py to config.py and edit your settings.")
+    exit(1)
 
-LOCAL_NODE_ID = "!067a40fa"
-LOCAL_NODE_NAME = "Flint Base"
+# ===== ИНИЦИАЛИЗАЦИЯ FLASK =====
+app = Flask(__name__)
 
-# Создаем папку для данных
-DATA_DIR = "/home/flint/mesh_web/data"
+# ===== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ =====
+messages = []
+seen_ids = set()
+seen_recent_texts = {}
+nodes = {}
+chats = {}
 
-HISTORY_FILE = os.path.join(DATA_DIR, "messages.json")
-NODES_FILE = os.path.join(DATA_DIR, "nodes.json")
-SENSORS_FILE = os.path.join(DATA_DIR, "sensors.json")
-CHATS_FILE = os.path.join(DATA_DIR, "chats.json")
-
-MAX_HISTORY_MESSAGES = 1000
-
-CHANNEL_CHAT_ID = "channel"
-CHANNEL_CHAT_NAME = "LongFast Channel 0"
-
-# ===== ИЗВЕСТНЫЕ УЗЛЫ =====
-KNOWN_NODES = {
-    "!067a40fa": "Flint Base",
-    "!b0f14d2a": "Flint_Echo",
-    "!756f9960": "Flint TAP2",
-    "!1fa065f0": "Elektroniker",
-    "!1300faf0": "Orion9 mobil",
-    "!0e8b3cf6": "StS_Erl_fix",
-    "!51fbf9c": "Uttenreuth-MGS13-B",
-    "!1paa51c": "Meshtastic a51c",
-    "!0a809218": "RetroMobil",
-    "!9ea0c0fc": "BirgitsPaperMesh",
-    "!7e9f4f33": "Meshstatic 4f33",
-    "!19ee6b8fc": "Erlangen WOK1",
-    "!f68f9e94": "ThinkNode M5",
-    "!04c67058": "HardTekkER",
-    "!f6cd2588": "Meshtastic 2588",
-    "!1dd2a0bc": "daa792-a0bc",
-}
-
-KNOWN_NODE_INFO = {
-    "!067a40fa": {"short_name": "FLTB", "hw_model": "RAK4631"},
-    "!b0f14d2a": {"short_name": "FLIE", "hw_model": "T-Echo Plus"},
-    "!756f9960": {"short_name": "FLT2", "hw_model": "RAK3312"},
-    "!1fa065f0": {"short_name": "Elek", "hw_model": "TBEAM"},
-    "!1300faf0": {"short_name": "ori9", "hw_model": "T_DECK"},
-    "!0e8b3cf6": {"short_name": "3cf6", "hw_model": "RAK4631"},
-    "!51fbf9c": {"short_name": "AR76", "hw_model": "TLORA_V2_1_1P6"},
-    "!1paa51c": {"short_name": "a51c", "hw_model": "UNSET"},
-    "!0a809218": {"short_name": "RKM", "hw_model": "TLORA_T3_S3"},
-    "!9ea0c0fc": {"short_name": "BPM", "hw_model": "HELTEC_WIRELESS_PAPER"},
-    "!7e9f4f33": {"short_name": "4f33", "hw_model": "RAK4631"},
-    "!19ee6b8fc": {"short_name": "WOK1", "hw_model": "HELTEC_V3"},
-    "!f68f9e94": {"short_name": "AB4", "hw_model": "THINKNODE_M5"},
-    "!04c67058": {"short_name": "TeKK", "hw_model": "HELTEC_V4"},
-    "!f6cd2588": {"short_name": "2588", "hw_model": "HELTEC_V4"},
-    "!1dd2a0bc": {"short_name": "a0bc", "hw_model": "SEEED_XIAO_S3"},
-}
 
 # ===== ИНИЦИАЛИЗАЦИЯ FLASK =====
 app = Flask(__name__)
@@ -265,13 +224,21 @@ def save_sensors():
 def load_sensors_data():
     global sensor_data
     if not os.path.exists(SENSORS_FILE):
+        save_sensors()
         return
     try:
         with open(SENSORS_FILE, "r", encoding="utf-8") as f:
-            sensor_data = json.load(f)
+            content = f.read().strip()
+            if not content:
+                save_sensors()
+                return
+            sensor_data = json.loads(content)
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"Sensors load error: {e}, creating new")
+        save_sensors()
     except Exception as e:
-        print("Sensors load error:", e)
-
+        print(f"Sensors load error: {e}")
+        
 def ensure_chat(node_id, node_name=None):
     if node_id == CHANNEL_CHAT_ID or not node_id or not node_id.startswith("!"):
         return

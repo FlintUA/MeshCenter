@@ -6,6 +6,14 @@
 
 A modern web interface for Meshtastic nodes designed for Raspberry Pi Zero 2W and other Linux-based systems.
 
+## 📸 Screenshots
+
+### Main Interface
+
+![Main Interface](docs/images/main-ui.png)
+
+---
+
 ### ✨ Highlights
 
 - Real-time Meshtastic chat interface

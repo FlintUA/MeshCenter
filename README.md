@@ -89,7 +89,7 @@ pip install -r requirements.txt
 ### Development
 
 ```bash
-python3 app.py
+python3 server.py
 ```
 
 ### Production (systemd)

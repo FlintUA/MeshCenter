@@ -1,9 +1,34 @@
-messages.json
-nodes.json
-radio.log
-messages.log
+# Python
 venv/
 __pycache__/
 *.pyc
-.vscode/messages.json
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Project data
+data/*.json
+!data/.gitkeep
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sensitive
+.env
+config.local.py
 

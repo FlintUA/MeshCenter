@@ -7,11 +7,17 @@ Designed and tested on Raspberry Pi Zero 2W.
 ## Features
 
 * Send messages to LongFast channel 0
+* Direct messages to specific nodes
 * Receive messages in real time
-* Mobile-friendly interface
-* Works through Meshtastic CLI
+* Node discovery and status monitoring
+* Mobile-friendly responsive interface
 * Lightweight and suitable for Raspberry Pi Zero 2W
+* Message history with persistent storage
+* Emoji support with category picker (384 emojis)
+* Sensor data display (temperature, humidity, pressure, battery)
 * GitHub version control support
+* Works through Meshtastic CLI
+
 
 ## Requirements
 
@@ -23,24 +29,13 @@ Designed and tested on Raspberry Pi Zero 2W.
 ## Installation
 
 ```bash
-git clone https://github.com/FlintUA/meshnode-web-chat.git
-
-cd meshnode-web-chat
-
+git clone https://github.com/FlintUA/meshtastic-web-ui.git
+cd meshtastic-web-ui
 python3 -m venv venv
-
 source venv/bin/activate
-
 pip install -r requirements.txt
-```
 
-## Run
-
-```bash
-python3 app.py
-```
-
-Open browser:
+## Open browser:
 
 ```text
 http://RASPBERRY_IP:5000

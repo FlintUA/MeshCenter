@@ -15,10 +15,14 @@ MESHTASTIC_CMD = "/home/flint/.local/bin/meshtastic"
 LOCAL_NODE_ID = "!067a40fa"
 LOCAL_NODE_NAME = "Flint Base"
 
-HISTORY_FILE = "/home/flint/mesh_web/messages.json"
-NODES_FILE = "/home/flint/mesh_web/nodes.json"
-SENSORS_FILE = "/home/flint/mesh_web/sensors.json"
-CHATS_FILE = "/home/flint/mesh_web/chats.json"
+# Создаем папку для данных
+DATA_DIR = "/home/flint/mesh_web/data"
+
+HISTORY_FILE = os.path.join(DATA_DIR, "messages.json")
+NODES_FILE = os.path.join(DATA_DIR, "nodes.json")
+SENSORS_FILE = os.path.join(DATA_DIR, "sensors.json")
+CHATS_FILE = os.path.join(DATA_DIR, "chats.json")
+
 MAX_HISTORY_MESSAGES = 1000
 
 CHANNEL_CHAT_ID = "channel"

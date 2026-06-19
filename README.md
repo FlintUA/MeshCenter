@@ -1,4 +1,5 @@
-# 🚀 Meshtastic Web UI v1.0.0
+# <img width="128" height="128" alt="meshnode_light_full_2 копия" src="https://github.com/user-attachments/assets/ce14d260-51b2-414a-9354-56e01f40e959" />
+ Meshtastic Web UI v1.0.0
 
 ## First Stable Release
 

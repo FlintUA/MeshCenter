@@ -1,4 +1,4 @@
-# <img width="128" height="128" alt="meshnode_light_full_2 копия" src="https://github.com/user-attachments/assets/ce14d260-51b2-414a-9354-56e01f40e959" />
+<img width="512" height="512" alt="meshtastic-powered" src="https://github.com/user-attachments/assets/8c1f201d-2463-4ef9-9a88-694be88b2571" />
 
 # Meshtastic Web UI v1.0.0
 

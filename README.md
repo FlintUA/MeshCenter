@@ -1,4 +1,4 @@
-<img width="512" height="512" alt="meshtastic-powered" src="https://github.com/user-attachments/assets/8c1f201d-2463-4ef9-9a88-694be88b2571" />
+<img width="256" height="256" alt="meshtastic-powered-001" src="https://github.com/user-attachments/assets/0847ebce-bf96-4b5d-8b3e-3b92bbd3d440" />
 
 # Meshtastic Web UI v1.0.0
 

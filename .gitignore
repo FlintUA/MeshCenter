@@ -15,6 +15,7 @@ build/
 config.py
 config.local.py
 .env
+chats.json
 
 # Runtime data
 data/*.json
@@ -32,3 +33,4 @@ data/*.json
 # OS
 .DS_Store
 Thumbs.db
+

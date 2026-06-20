@@ -114,8 +114,8 @@ nano config.py
 Set your local Meshtastic node ID and node name:
 
 ```python
-LOCAL_NODE_ID = "!067a40fa"
-LOCAL_NODE_NAME = "Flint Base"
+LOCAL_NODE_ID = "!your_node_id"
+LOCAL_NODE_NAME = "Your Node Name"
 ```
 
 Find your node ID using:

@@ -1,6 +1,6 @@
 <img width="256" height="256" alt="meshtastic-powered-001" src="https://github.com/user-attachments/assets/0847ebce-bf96-4b5d-8b3e-3b92bbd3d440" />
 
-# Meshtastic Web UI v1.0.0
+# Flint Meshtastic Web UI v1.0.0
 
 ## First Stable Release
 

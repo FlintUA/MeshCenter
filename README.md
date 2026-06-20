@@ -4,7 +4,7 @@
 
 ## First Stable Release
 
-A custom web dashboard for Meshtastic nodes. Powered by Meshtastic.
+## A custom web dashboard for Meshtastic nodes. Powered by Meshtastic.
 A modern web interface for Meshtastic nodes designed for Raspberry Pi Zero 2W and other Linux-based systems.
 
 ## 📸 Screenshots

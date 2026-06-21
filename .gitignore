@@ -34,3 +34,4 @@ data/*.json
 .DS_Store
 Thumbs.db
 
+config.py

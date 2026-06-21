@@ -7,24 +7,77 @@ import json
 import os
 from collections import defaultdict
 
-# ===== ИМПОРТ НАСТРОЕК =====
+# ===== ПРОВЕРКА НАЛИЧИЯ КОНФИГА =====
 try:
     from config import *
 except ImportError:
-    print("ERROR: config.py not found!")
-    print("Please copy config.example.py to config.py and edit your settings.")
+    print("=" * 60)
+    print("❌ ERROR: config.py not found!")
+    print("=" * 60)
+    print("Please create config.py from config.example.py:")
+    print("")
+    print("  cp config.example.py config.py")
+    print("  nano config.py")
+    print("")
+    print("Then edit these required settings:")
+    print("  - LOCAL_NODE_ID     → Your Meshtastic node ID")
+    print("  - LOCAL_NODE_NAME   → Your node display name")
+    print("  - MESHTASTIC_CMD    → Path to meshtastic CLI")
+    print("=" * 60)
     exit(1)
 
-# ===== ИНИЦИАЛИЗАЦИЯ FLASK =====
-app = Flask(__name__)
+# ===== ПРОВЕРКА ОБЯЗАТЕЛЬНЫХ ПЕРЕМЕННЫХ =====
+required_vars = [
+    "APP_HOST",
+    "APP_PORT",
+    "MESHTASTIC_CMD",
+    "LOCAL_NODE_ID",
+    "LOCAL_NODE_NAME",
+    "DATA_DIR",
+    "HISTORY_FILE",
+    "NODES_FILE",
+    "SENSORS_FILE",
+    "CHATS_FILE",
+    "MAX_HISTORY_MESSAGES",
+    "CHANNEL_CHAT_ID",
+    "CHANNEL_CHAT_NAME",
+    "KNOWN_NODES",
+    "KNOWN_NODE_INFO"
+]
 
-# ===== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ =====
-messages = []
-seen_ids = set()
-seen_recent_texts = {}
-nodes = {}
-chats = {}
+missing_vars = []
+for var in required_vars:
+    if var not in dir():
+        missing_vars.append(var)
 
+if missing_vars:
+    print("=" * 60)
+    print("❌ ERROR: config.py is missing required variables!")
+    print("=" * 60)
+    print("Missing variables:")
+    for var in missing_vars:
+        print(f"  - {var}")
+    print("")
+    print("Please check your config.py and add the missing variables.")
+    print("You can copy them from config.example.py")
+    print("=" * 60)
+    exit(1)
+
+# ===== ПРОВЕРКА ПУТИ К MESHTASTIC =====
+if not os.path.exists(MESHTASTIC_CMD):
+    print("=" * 60)
+    print(f"⚠️  WARNING: meshtastic not found at: {MESHTASTIC_CMD}")
+    print("=" * 60)
+    print("Please check your MESHTASTIC_CMD path in config.py")
+    print("")
+    print("Find the correct path with:")
+    print("  which meshtastic")
+    print("=" * 60)
+
+# ===== ПРОВЕРКА DATA_DIR =====
+if not os.path.exists(DATA_DIR):
+    print(f"[INFO] Creating data directory: {DATA_DIR}")
+    os.makedirs(DATA_DIR, exist_ok=True)
 
 # ===== ИНИЦИАЛИЗАЦИЯ FLASK =====
 app = Flask(__name__)
@@ -238,7 +291,7 @@ def load_sensors_data():
         save_sensors()
     except Exception as e:
         print(f"Sensors load error: {e}")
-        
+
 def ensure_chat(node_id, node_name=None):
     if node_id == CHANNEL_CHAT_ID or not node_id or not node_id.startswith("!"):
         return
@@ -761,18 +814,14 @@ def stop_listener():
     global listen_process
     if listen_process is not None:
         try:
-            # Отправить SIGTERM
             listen_process.terminate()
-            
-            # Ждать до 5 секунд
             for _ in range(50):
                 if listen_process.poll() is not None:
                     break
                 time.sleep(0.1)
             
-            # Если не завершился — убить
             if listen_process.poll() is None:
-                print("[WARN] Listener didn't stop, killing...")
+                print("[WARN] Listener didn't stop gracefully, killing...")
                 listen_process.kill()
                 time.sleep(1.0)
             
@@ -1156,16 +1205,16 @@ def api_send():
     if target_node and target_node not in nodes:
         return jsonify({"ok": False, "error": "Target node not found"}), 404
     
-    # ===== УВЕЛИЧЕННАЯ ЗАДЕРЖКА =====
+    # Увеличенная задержка для освобождения порта
     pause_listen.set()
-    time.sleep(1.5)  # Было 0.5
+    time.sleep(1.0)
     
     with radio_lock:
         try:
             stop_listener()
-            time.sleep(2.0)  # Было 1.5
+            time.sleep(2.5)
             
-            # ===== ПРИНУДИТЕЛЬНОЕ ОСВОБОЖДЕНИЕ ПОРТА =====
+            # Принудительное освобождение порта
             try:
                 result = subprocess.run(["lsof", "/dev/ttyACM0"], capture_output=True, text=True, timeout=2)
                 if result.stdout.strip():
@@ -1174,7 +1223,6 @@ def api_send():
                     time.sleep(1.0)
             except:
                 pass
-            # =============================================
             
             cmd = [MESHTASTIC_CMD, "--ch-index", "0"]
             

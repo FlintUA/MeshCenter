@@ -292,9 +292,20 @@ def load_sensors_data():
     except Exception as e:
         print(f"Sensors load error: {e}")
 
-def ensure_chat(node_id, node_name=None):
+def ensure_chat(node_id, node_name=None, force=False):
     if node_id == CHANNEL_CHAT_ID or not node_id or not node_id.startswith("!"):
         return
+    
+    deleted_file = os.path.join(DATA_DIR, "deleted_dm.json")
+    if not force and os.path.exists(deleted_file):
+        try:
+            with open(deleted_file, "r") as f:
+                deleted_data = json.load(f)
+                if node_id in deleted_data.get("deleted", []):
+                    return
+        except:
+            pass
+    
     if node_id not in chats:
         name = node_name or get_node_name(node_id)
         chats[node_id] = {"id": node_id, "name": name, "type": "dm", "last_message": "", "last_time": "", "unread": 0}
@@ -315,30 +326,24 @@ def reset_unread(chat_id):
 def deduplicate_nodes():
     global nodes
     changed = False
-    unique_nodes = {}
+    seen_ids = {}
     duplicates = []
     
     for node_id, node in nodes.items():
-        node_name = node.get("name", "")
-        if not node_name:
-            continue
-        found = False
-        for existing_id, existing_node in unique_nodes.items():
-            if existing_node.get("name") == node_name:
-                if node.get("last_seen", 0) > existing_node.get("last_seen", 0):
-                    unique_nodes[existing_id] = node
-                    duplicates.append(existing_id)
-                else:
-                    duplicates.append(node_id)
-                found = True
-                break
-        if not found:
-            unique_nodes[node_id] = node
+        if node_id in seen_ids:
+            if node.get("last_seen", 0) > seen_ids[node_id].get("last_seen", 0):
+                duplicates.append(node_id)
+            else:
+                duplicates.append(seen_ids[node_id]["node_id"])
+                seen_ids[node_id] = node
+        else:
+            seen_ids[node_id] = node
     
     for dup_id in duplicates:
         if dup_id in nodes:
             if dup_id in chats:
                 del chats[dup_id]
+                save_chats()
             del nodes[dup_id]
             changed = True
     
@@ -348,6 +353,111 @@ def deduplicate_nodes():
         print(f"Deduplicated nodes: removed {len(duplicates)} duplicates")
     return changed
 
+def parse_nodes_from_info():
+    """Парсит ноды из вывода meshtastic --info"""
+    global nodes
+    try:
+        result = subprocess.run([MESHTASTIC_CMD, "--info"], capture_output=True, text=True, timeout=30)
+        output = result.stdout + result.stderr
+        
+        # ===== ИСПРАВЛЕНИЕ: ищем без кавычек =====
+        mesh_pos = output.find("Nodes in mesh: {")
+        if mesh_pos < 0:
+            # Пробуем альтернативный вариант
+            mesh_pos = output.find("Nodes in mesh:")
+            if mesh_pos < 0:
+                print("[PARSE] Nodes in mesh not found")
+                return False
+        
+        # Находим начало JSON
+        brace_start = output.find("{", mesh_pos)
+        if brace_start < 0:
+            print("[PARSE] No JSON start found")
+            return False
+        
+        # Ищем конец JSON
+        brace_count = 0
+        brace_end = -1
+        for i in range(brace_start, len(output)):
+            if output[i] == '{':
+                brace_count += 1
+            elif output[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    brace_end = i
+                    break
+        
+        if brace_end < 0:
+            print("[PARSE] No JSON end found")
+            return False
+        
+        json_str = output[brace_start:brace_end + 1]
+        data = json.loads(json_str)
+        
+        imported = 0
+        updated = 0
+        
+        for node_id, node_data in data.items():
+            if node_id == LOCAL_NODE_ID:
+                continue
+            
+            user = node_data.get("user", {})
+            long_name = user.get("longName", "")
+            short_name = user.get("shortName", "")
+            hw_model = user.get("hwModel", "")
+            role = user.get("role", "CLIENT")
+            snr = node_data.get("snr")
+            last_heard = node_data.get("lastHeard")
+            hops_away = node_data.get("hopsAway", 0)
+            
+            if not long_name or long_name == "Unknown":
+                continue
+            
+            old = nodes.get(node_id, {})
+            old_name = old.get("name", "")
+            
+            nodes[node_id] = {
+                "name": long_name,
+                "node_id": node_id,
+                "last_seen": last_heard or old.get("last_seen", 0),
+                "last_time": time.strftime("%H:%M:%S", time.localtime(last_heard)) if last_heard else old.get("last_time", "never"),
+                "rssi": old.get("rssi"),
+                "snr": snr or old.get("snr"),
+                "hop_start": str(hops_away) if hops_away > 0 else old.get("hop_start", ""),
+                "relay_node": old.get("relay_node", ""),
+                "last_text": old.get("last_text", ""),
+                "short_name": short_name or old.get("short_name", "") or node_id[-4:],
+                "hw_model": hw_model or old.get("hw_model", ""),
+                "role": role or old.get("role", "CLIENT"),
+                "ignored": old.get("ignored", False),
+                "favorite": old.get("favorite", False)
+            }
+            
+            if old_name and old_name != long_name:
+                updated += 1
+                print(f"[PARSE] Node {node_id} name changed: {old_name} → {long_name}")
+            else:
+                imported += 1
+            
+            if node_id not in chats:
+                ensure_chat(node_id, long_name, force=True)
+        
+        if imported > 0 or updated > 0:
+            save_nodes()
+            save_chats()
+            print(f"[PARSE] Imported {imported} new nodes, updated {updated} existing nodes")
+            return True
+        
+        print("[PARSE] No new nodes found")
+        return False
+        
+    except json.JSONDecodeError as e:
+        print(f"[PARSE] JSON error: {e}")
+        return False
+    except Exception as e:
+        print(f"[PARSE] Error: {e}")
+        return False
+    
 def ensure_known_nodes():
     for node_id, name in KNOWN_NODES.items():
         old = nodes.get(node_id, {})
@@ -368,7 +478,7 @@ def ensure_known_nodes():
             "ignored": old.get("ignored", False),
             "favorite": old.get("favorite", False)
         }
-        ensure_chat(node_id, name)
+        ensure_chat(node_id, name, force=True)
     deduplicate_nodes()
     save_nodes()
 
@@ -395,7 +505,7 @@ def normalize_unknown_nodes():
             node["favorite"] = False
             changed = True
         if node_id.startswith("!") and node_id not in chats:
-            ensure_chat(node_id, node.get("name"))
+            ensure_chat(node_id, node.get("name"), force=True)
     
     if changed:
         save_nodes()
@@ -526,10 +636,28 @@ def update_node(line, sender, text):
     
     name = get_node_name(node_id)
     info = get_node_info(node_id)
+    
     old = nodes.get(node_id, {})
     
+    new_name = None
+    long_name_match = re.search(r"'longName':\s*'([^']*)'", line) or re.search(r'"longName":\s*"([^"]*)"', line)
+    if long_name_match:
+        new_name = long_name_match.group(1).strip()
+    
+    if not new_name:
+        if sender and sender != "RX" and not sender.startswith("!"):
+            new_name = sender
+    
+    if new_name and old.get("name") != new_name:
+        print(f"[DEBUG] Node {node_id} changed name: {old.get('name')} → {new_name}")
+        if node_id in KNOWN_NODES:
+            KNOWN_NODES[node_id] = new_name
+        if node_id in chats:
+            chats[node_id]["name"] = new_name
+            save_chats()
+    
     nodes[node_id] = {
-        "name": name,
+        "name": new_name or name,
         "node_id": node_id,
         "last_seen": time.time(),
         "last_time": now(),
@@ -546,7 +674,8 @@ def update_node(line, sender, text):
     }
     
     if node_id.startswith("!"):
-        ensure_chat(node_id, name)
+        ensure_chat(node_id, new_name or name, force=True)
+    
     save_nodes()
     return node_id
 
@@ -590,7 +719,7 @@ def process_nodeinfo(block):
     }
     
     if node_id.startswith("!"):
-        ensure_chat(node_id, name)
+        ensure_chat(node_id, name, force=True)
     save_nodes()
     return True
 
@@ -605,7 +734,7 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None):
             KNOWN_NODES[node_id] = sender
             print(f"[AUTO] Added new node: {node_id} -> {sender}")
         if node_id not in chats:
-            ensure_chat(node_id, sender or get_node_name(node_id))
+            ensure_chat(node_id, sender or get_node_name(node_id), force=True)
     
     if chat_id is None:
         if kind == "system" or "SYSTEM" in sender:
@@ -633,7 +762,7 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None):
         chat_name = get_node_name(chat_id) if chat_type == "dm" else CHANNEL_CHAT_NAME
     
     if chat_type == "dm" and chat_id not in chats:
-        ensure_chat(chat_id, chat_name)
+        ensure_chat(chat_id, chat_name, force=True)
     
     msg = {
         "kind": kind,
@@ -782,16 +911,34 @@ def get_chats_list():
         unread = chat.get("unread", 0)
         total_unread += unread
         
+        last_msg = chat.get("last_message", "")
+        last_sender = ""
+        last_sender_id = ""
+        sender_display = ""
+        
+        for msg in reversed(messages):
+            if msg.get("chat_id") == chat_id:
+                last_sender = msg.get("sender", "")
+                last_sender_id = msg.get("node_id", "")
+                break
+        
+        if chat_id == CHANNEL_CHAT_ID and last_sender:
+            if last_sender_id:
+                sender_display = f"{last_sender} [{last_sender_id}]"
+            else:
+                sender_display = last_sender
+        
         chat_list.append({
             "id": chat_id,
             "name": chat.get("name", chat_id),
             "type": chat.get("type", "dm"),
-            "last_message": chat.get("last_message", ""),
+            "last_message": last_msg,
             "last_time": chat.get("last_time", ""),
             "unread": unread,
             "is_channel": chat_id == CHANNEL_CHAT_ID,
             "ignored": chat_id.startswith("!") and nodes.get(chat_id, {}).get("ignored", False),
-            "favorite": is_favorite
+            "favorite": is_favorite,
+            "last_sender": sender_display
         })
     
     def sort_key(c):
@@ -825,9 +972,7 @@ def stop_listener():
                 listen_process.kill()
                 time.sleep(1.0)
             
-            # Дополнительная пауза для освобождения порта
             time.sleep(0.5)
-            
             listen_process = None
             print("[DEBUG] Listener stopped successfully")
             
@@ -840,31 +985,52 @@ def update_base_status_from_info():
     try:
         result = subprocess.run([MESHTASTIC_CMD, "--info"], capture_output=True, text=True, timeout=15)
         output = result.stdout + result.stderr
+        
         node_pos = output.find(f'"{LOCAL_NODE_ID}"')
         if node_pos < 0:
+            print("Base status: local node id not found")
             return
-        next_node_pos = output.find('\n  "!', node_pos + 1)
-        node_block = output[node_pos:next_node_pos] if next_node_pos >= 0 else output[node_pos:]
         
-        metrics_pos = node_block.find('"deviceMetrics"')
+        metrics_pos = output.find('"deviceMetrics"', node_pos)
         if metrics_pos < 0:
-            return
-        block_start = node_block.find("{", metrics_pos)
-        block_end = node_block.find("}", block_start)
-        if block_start < 0 or block_end < 0:
+            print("Base status: deviceMetrics not found")
             return
         
-        metrics = json.loads(node_block[block_start:block_end + 1])
+        block_start = output.find("{", metrics_pos)
+        brace_count = 0
+        block_end = -1
+        for i in range(block_start, len(output)):
+            if output[i] == '{':
+                brace_count += 1
+            elif output[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    block_end = i
+                    break
+        
+        if block_start < 0 or block_end < 0:
+            print("Base status: metrics block not found")
+            return
+        
+        metrics_text = output[block_start:block_end + 1]
+        metrics = json.loads(metrics_text)
+        
         voltage = metrics.get("voltage")
+        battery_level = metrics.get("batteryLevel")
+        if battery_level == 101:
+            battery_level = 100
+        real_battery = voltage_to_percent(voltage)
+        
         base_status = {
-            "battery_level": metrics.get("batteryLevel"),
-            "real_battery": voltage_to_percent(voltage),
+            "battery_level": battery_level,
+            "real_battery": real_battery if real_battery is not None else battery_level,
             "voltage": voltage,
             "channel_utilization": metrics.get("channelUtilization"),
             "air_util_tx": metrics.get("airUtilTx"),
             "uptime_seconds": metrics.get("uptimeSeconds"),
             "last_update": now()
         }
+        print("Base status updated:", base_status)
     except Exception as e:
         print("Base status update error:", e)
 
@@ -1001,11 +1167,9 @@ def listen_meshtastic():
                 if node_id and nodes.get(node_id, {}).get("ignored", False):
                     continue
                 
-                # ========== ОПРЕДЕЛЯЕМ ТИП СООБЩЕНИЯ ==========
                 chat_id = CHANNEL_CHAT_ID
                 is_channel = False
                 
-                # 1. Проверяем broadcast (канал)
                 if ("'to': 4294967295" in line or '"to": 4294967295' in line or
                     "'to': '^all'" in line or '"to": "^all"' in line or
                     "'toId': '^all'" in line or '"toId": "^all"' in line or
@@ -1013,36 +1177,29 @@ def listen_meshtastic():
                     is_channel = True
                     print(f"[DEBUG] CHANNEL (broadcast): from={sender}, text={text[:30]}")
                 
-                # 2. Проверяем наличие 'dest' - это всегда DM
                 elif "'dest'" in line.lower() or '"dest"' in line.lower():
                     is_channel = False
                     print(f"[DEBUG] DM (dest field): from={sender}, text={text[:30]}")
                 
-                # 3. Проверяем 'to' с конкретным ID - это DM
                 elif ("'to': '!" in line or '"to": "!"' in line):
                     is_channel = False
                     print(f"[DEBUG] DM (to with !): from={sender}, text={text[:30]}")
                 
-                # 4. Если есть 'to' с числовым ID, но не 4294967295 - это DM
                 elif re.search(r"'to':\s*[0-9]+,", line) or re.search(r'"to":\s*[0-9]+,', line):
                     if "4294967295" not in line:
                         is_channel = False
                         print(f"[DEBUG] DM (numeric to): from={sender}, text={text[:30]}")
                 
-                # 5. Если ничего не определили - считаем каналом
                 else:
                     is_channel = True
                     print(f"[DEBUG] CHANNEL (default): from={sender}, text={text[:30]}")
                 
-                # Определяем chat_id
                 if is_channel:
                     chat_id = CHANNEL_CHAT_ID
                 else:
-                    # Для DM используем node_id отправителя
                     if node_id and node_id.startswith("!") and node_id != LOCAL_NODE_ID:
                         chat_id = node_id
                     else:
-                        # Если node_id не определен, пытаемся извлечь из 'from'
                         from_match = re.search(r"'from':\s*'(![0-9a-f]+)'", line)
                         if not from_match:
                             from_match = re.search(r'"from":\s*"(![0-9a-f]+)"', line)
@@ -1051,9 +1208,8 @@ def listen_meshtastic():
                         else:
                             chat_id = CHANNEL_CHAT_ID
                 
-                # Создаем чат если нужно
                 if chat_id.startswith("!") and chat_id != LOCAL_NODE_ID:
-                    ensure_chat(chat_id, sender)
+                    ensure_chat(chat_id, sender, force=True)
                 
                 print(f"[DEBUG] FINAL: chat_id={chat_id}, is_channel={is_channel}")
                 add_message("rx", sender, text, node_id, chat_id)
@@ -1164,8 +1320,32 @@ def api_cleanup_nodes():
         deduplicate_nodes()
         for node_id, node in nodes.items():
             if node_id.startswith("!") and node_id not in chats:
-                ensure_chat(node_id, node.get("name"))
+                ensure_chat(node_id, node.get("name"), force=True)
         return jsonify({"ok": True, "message": "Nodes cleaned up", "node_count": len(nodes)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/rescan_nodes", methods=["POST"])
+def api_rescan_nodes():
+    """Принудительное переобнаружение нод (перезапуск listener + парсинг --info)"""
+    try:
+        global listen_process
+        
+        if listen_process is not None:
+            try:
+                listen_process.terminate()
+                time.sleep(1)
+                if listen_process.poll() is None:
+                    listen_process.kill()
+                listen_process = None
+            except:
+                pass
+        
+        parse_nodes_from_info()
+        
+        threading.Thread(target=listen_meshtastic, daemon=True).start()
+        
+        return jsonify({"ok": True, "message": "Network rescan started"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -1205,7 +1385,6 @@ def api_send():
     if target_node and target_node not in nodes:
         return jsonify({"ok": False, "error": "Target node not found"}), 404
     
-    # Увеличенная задержка для освобождения порта
     pause_listen.set()
     time.sleep(1.0)
     
@@ -1214,7 +1393,6 @@ def api_send():
             stop_listener()
             time.sleep(2.5)
             
-            # Принудительное освобождение порта
             try:
                 result = subprocess.run(["lsof", "/dev/ttyACM0"], capture_output=True, text=True, timeout=2)
                 if result.stdout.strip():
@@ -1251,7 +1429,7 @@ def api_send():
             
             if result.returncode == 0:
                 if chat_type == "dm" and final_chat_id not in chats:
-                    ensure_chat(final_chat_id, chat_name)
+                    ensure_chat(final_chat_id, chat_name, force=True)
                 
                 sender_name = f"{LOCAL_NODE_NAME} → {receiver_name}" if chat_type == "dm" else LOCAL_NODE_NAME
                 add_message("me", sender_name, text, LOCAL_NODE_ID, final_chat_id, chat_name)
@@ -1319,6 +1497,187 @@ def api_delete_chat():
     
     return jsonify({"ok": True})
 
+# ===== МАРШРУТЫ УПРАВЛЕНИЯ НОДАМИ =====
+@app.route("/api/nodes_management", methods=["GET"])
+def api_nodes_management():
+    nodes_list = []
+    for node_id, node in nodes.items():
+        nodes_list.append({
+            "name": node.get("name", "Unknown"),
+            "node_id": node_id,
+            "ignored": node.get("ignored", False),
+            "favorite": node.get("favorite", False),
+            "last_seen": node.get("last_seen", 0)
+        })
+    nodes_list.sort(key=lambda x: x.get("name", "").lower())
+    return jsonify({"nodes": nodes_list, "total": len(nodes_list)})
+
+@app.route("/api/cleanup_all_nodes", methods=["POST"])
+def api_cleanup_all_nodes():
+    global nodes, chats, current_active_chat
+    
+    try:
+        deleted_count = len(nodes)
+        
+        dm_chat_ids = [c for c in chats.keys() if c != CHANNEL_CHAT_ID and c.startswith("!")]
+        for chat_id in dm_chat_ids:
+            if chat_id in chats:
+                del chats[chat_id]
+        
+        nodes = {}
+        
+        save_nodes()
+        save_chats()
+        
+        if current_active_chat in dm_chat_ids:
+            current_active_chat = CHANNEL_CHAT_ID
+        
+        return jsonify({"ok": True, "deleted_count": deleted_count})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/nodes_export", methods=["GET"])
+def api_nodes_export():
+    nodes_list = []
+    for node_id, node in nodes.items():
+        nodes_list.append({
+            "name": node.get("name", ""),
+            "node_id": node_id,
+            "last_time": node.get("last_time", ""),
+            "rssi": node.get("rssi", ""),
+            "snr": node.get("snr", ""),
+            "role": node.get("role", "CLIENT"),
+            "short_name": node.get("short_name", ""),
+            "hw_model": node.get("hw_model", "")
+        })
+    return jsonify({"nodes": nodes_list})
+
+@app.route("/api/nodes_import", methods=["POST"])
+def api_nodes_import():
+    data = request.get_json()
+    imported_nodes = data.get("nodes", [])
+    imported_count = 0
+    
+    for node_data in imported_nodes:
+        node_id = node_data.get("node_id")
+        if not node_id:
+            continue
+        
+        old = nodes.get(node_id, {})
+        name = node_data.get("name") or old.get("name") or friendly_unknown_node_name(node_id)
+        nodes[node_id] = {
+            "name": name,
+            "node_id": node_id,
+            "last_seen": old.get("last_seen", time.time()),
+            "last_time": node_data.get("last_time", old.get("last_time", now())),
+            "rssi": node_data.get("rssi", old.get("rssi")),
+            "snr": node_data.get("snr", old.get("snr")),
+            "hop_start": old.get("hop_start", ""),
+            "relay_node": old.get("relay_node", ""),
+            "last_text": old.get("last_text", ""),
+            "short_name": node_data.get("short_name", old.get("short_name", "") or node_id[-4:]),
+            "hw_model": node_data.get("hw_model", old.get("hw_model", "")),
+            "role": node_data.get("role", old.get("role", "CLIENT")),
+            "ignored": old.get("ignored", False),
+            "favorite": old.get("favorite", False)
+        }
+        ensure_chat(node_id, name, force=True)
+        imported_count += 1
+    
+    save_nodes()
+    save_chats()
+    return jsonify({"ok": True, "imported_count": imported_count})
+
+@app.route("/api/nodes_merge_duplicates", methods=["POST"])
+def api_nodes_merge_duplicates():
+    merged = 0
+    name_map = {}
+    duplicates = []
+    
+    for node_id, node in nodes.items():
+        name = node.get("name", "")
+        if not name:
+            continue
+        if name in name_map:
+            duplicates.append((name, node_id, name_map[name]))
+        else:
+            name_map[name] = node_id
+    
+    for name, dup_id, main_id in duplicates:
+        dup = nodes.get(dup_id, {})
+        main = nodes.get(main_id, {})
+        
+        if dup.get("last_seen", 0) > main.get("last_seen", 0):
+            nodes[main_id] = dup
+            nodes[main_id]["node_id"] = main_id
+        
+        if dup_id in chats:
+            del chats[dup_id]
+        del nodes[dup_id]
+        merged += 1
+    
+    if merged:
+        save_nodes()
+        save_chats()
+    
+    return jsonify({"ok": True, "merged_count": merged})
+
+# ===== УДАЛЕНИЕ ВСЕХ DM ЧАТОВ =====
+@app.route("/api/delete_all_dm", methods=["POST"])
+def api_delete_all_dm():
+    global messages, chats, current_active_chat
+    
+    try:
+        deleted_count = 0
+        dm_chat_ids = []
+        
+        for chat_id in list(chats.keys()):
+            if chat_id != CHANNEL_CHAT_ID and chat_id.startswith("!"):
+                dm_chat_ids.append(chat_id)
+                deleted_count += 1
+        
+        for chat_id in dm_chat_ids:
+            if chat_id in chats:
+                del chats[chat_id]
+        
+        deleted_file = os.path.join(DATA_DIR, "deleted_dm.json")
+        try:
+            with open(deleted_file, "w") as f:
+                json.dump({"deleted": dm_chat_ids}, f)
+        except:
+            pass
+        
+        messages = [m for m in messages if m.get("chat_id") == CHANNEL_CHAT_ID]
+        save_chats()
+        save_messages()
+        
+        if current_active_chat in dm_chat_ids:
+            current_active_chat = CHANNEL_CHAT_ID
+        
+        return jsonify({
+            "ok": True,
+            "deleted_count": deleted_count,
+            "message": f"Deleted {deleted_count} DM chats"
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+# ===== ВОССТАНОВЛЕНИЕ УДАЛЕННЫХ DM =====
+@app.route("/api/restore_deleted_dm", methods=["POST"])
+def api_restore_deleted_dm():
+    try:
+        deleted_file = os.path.join(DATA_DIR, "deleted_dm.json")
+        if os.path.exists(deleted_file):
+            os.remove(deleted_file)
+            for node_id in nodes:
+                if node_id.startswith("!"):
+                    ensure_chat(node_id, nodes[node_id].get("name"), force=True)
+            save_chats()
+            return jsonify({"ok": True, "message": "Restored deleted DM chats"})
+        return jsonify({"ok": True, "message": "No deleted chats to restore"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 # ===== ЗАПУСК =====
 if __name__ == "__main__":
     load_messages()
@@ -1327,11 +1686,14 @@ if __name__ == "__main__":
     load_chats()
     ensure_known_nodes()
     normalize_unknown_nodes()
+    
+    parse_nodes_from_info()
+    
     update_base_status_from_info()
     
     for node_id in KNOWN_NODES:
         if node_id not in chats:
-            ensure_chat(node_id, KNOWN_NODES[node_id])
+            ensure_chat(node_id, KNOWN_NODES[node_id], force=True)
     save_chats()
     
     threading.Thread(target=sensor_reader_worker, daemon=True).start()

@@ -41,6 +41,12 @@
                     <span class="chat-subtitle" id="chatSubtitle"></span>
                 </div>
                 <div class="chat-header-actions">
+                    <button class="chat-actions-btn" id="restoreDeletedDmBtn" onclick="restoreDeletedDm()" title="Restore deleted DM chats">
+                        🔄
+                    </button>
+                    <button class="chat-actions-btn" id="deleteAllDmHeaderBtn" onclick="deleteAllDmChats()" title="Delete all DM chats">
+                        🗑️
+                    </button>
                     <button class="chat-actions-btn" id="chatActionsBtn" style="display: none;" onclick="showChatActions()">
                         ⋮
                     </button>
@@ -65,7 +71,6 @@
                     <form class="input-form" id="sendForm">
                         <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
                         
-                        <!-- Кнопка эмодзи -->
                         <button type="button" id="emojiBtn" class="emoji-btn" title="Insert emoji">
                             😊
                         </button>
@@ -73,7 +78,6 @@
                         <button type="submit" id="sendBtn">Send</button>
                     </form>
                     
-                    <!-- Popup эмодзи -->
                     <div id="emojiPicker" class="emoji-picker" style="display: none;">
                         <div class="emoji-picker-header">
                             <span>😊 Emojis</span>
@@ -95,7 +99,7 @@
             </div>
         </div>
 
-        <!-- Sidebar (Nodes) -->
+        <!-- Sidebar -->
         <div class="sidebar" id="sidebar">
             <!-- Base Card -->
             <div class="base-card" id="baseCard">
@@ -150,14 +154,85 @@
                 <div class="sensor-update" id="sensorUpdate">Last update: --</div>
             </div>
 
-            <!-- Nodes Section -->
-            <div class="nodes-section">
-                <div class="nodes-controls">
-                    <div class="search-container search-row">
-                        <input type="text" id="nodeSearchInput" class="search-input-wide" placeholder="🔍 Search nodes...">
-                        <button type="button" id="clearSearchBtn" class="clear-search-btn" onclick="clearNodeSearch()">✕</button>
+            <!-- ===== ВКЛАДКИ ===== -->
+            <div class="sidebar-tabs">
+                <button class="sidebar-tab active" data-tab="nodes" onclick="switchSidebarTab('nodes')">
+                    📡 Nodes
+                </button>
+                <button class="sidebar-tab" data-tab="tools" onclick="switchSidebarTab('tools')">
+                    🔧 Tools
+                </button>
+            </div>
+
+            <!-- ===== ВКЛАДКА NODES ===== -->
+            <div class="sidebar-tab-content active" id="tab-nodes">
+                <div class="nodes-section">
+                    <div class="nodes-controls">
+                        <div class="search-container search-row">
+                            <input type="text" id="nodeSearchInput" class="search-input-wide" placeholder="🔍 Search nodes...">
+                            <button type="button" id="clearSearchBtn" class="clear-search-btn" onclick="clearNodeSearch()">✕</button>
+                        </div>
+                        
+                        <div class="nodes-actions-row">
+                            <button id="rescanNodesBtn" class="rescan-nodes-btn" onclick="rescanNodes()" style="flex:1;">
+                                📡 Rescan Network
+                            </button>
+                        </div>
                     </div>
-                    <div class="nodes-filter-row">
+                    <div id="nodeDetails"></div>
+                    <div class="nodes-scroll">
+                        <div id="nodesList"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== ВКЛАДКА TOOLS ===== -->
+            <div class="sidebar-tab-content" id="tab-tools" style="display:none;">
+                <div class="nodes-tools">
+                    <div class="nodes-tools-title">🔧 Management Tools</div>
+                    
+                    <div class="nodes-tools-grid">
+                        <button class="nodes-tool-btn export" onclick="showExportOptions()">
+                            📤 Export
+                        </button>
+                        <button class="nodes-tool-btn import" onclick="showImportOptions()">
+                            📥 Import
+                        </button>
+                        <button class="nodes-tool-btn merge" onclick="mergeDuplicates()">
+                            🔄 Merge Duplicates
+                        </button>
+                        <button class="nodes-tool-btn show" onclick="toggleShowDuplicates()">
+                            📋 Show Duplicates
+                        </button>
+                        <button class="nodes-tool-btn cleanup" onclick="cleanupAllNodes()" style="grid-column: span 2;">
+                            🗑️ Cleanup All
+                        </button>
+                    </div>
+                    
+                    <!-- Меню выбора формата -->
+                    <div id="exportOptionsMenu" class="format-menu" style="display:none;">
+                        <div class="format-menu-content">
+                            <span>Export as:</span>
+                            <button class="format-menu-btn" onclick="exportNodesCSV(); closeFormatMenus();">📄 CSV (Android)</button>
+                            <button class="format-menu-btn" onclick="exportNodesJSON(); closeFormatMenus();">📄 JSON (Backup)</button>
+                            <button class="format-menu-btn cancel" onclick="closeFormatMenus();">Cancel</button>
+                        </div>
+                    </div>
+                    
+                    <div id="importOptionsMenu" class="format-menu" style="display:none;">
+                        <div class="format-menu-content">
+                            <span>Import from:</span>
+                            <button class="format-menu-btn" onclick="document.getElementById('importFileCSV').click(); closeFormatMenus();">📄 CSV (Android)</button>
+                            <button class="format-menu-btn" onclick="document.getElementById('importFileJSON').click(); closeFormatMenus();">📄 JSON (Backup)</button>
+                            <button class="format-menu-btn cancel" onclick="closeFormatMenus();">Cancel</button>
+                        </div>
+                    </div>
+                    
+                    <input type="file" id="importFileCSV" accept=".csv" style="display:none;" onchange="importNodesCSV(event)">
+                    <input type="file" id="importFileJSON" accept=".json" style="display:none;" onchange="importNodesJSON(event)">
+                    
+                    <!-- Фильтры -->
+                    <div class="nodes-filter-row" style="margin-top:8px; padding-top:8px; border-top:1px solid #f0f0f0;">
                         <label class="toggle-label">
                             <input type="checkbox" id="showFavoritesToggle" onchange="toggleShowFavorites()">
                             <span class="toggle-slider favorite-slider"></span>
@@ -173,10 +248,13 @@
                         </label>
                         <span class="ignored-count" id="ignoredCount">0 ignored</span>
                     </div>
+                    
+                    <div class="nodes-stats" id="nodesStats">
+                        Total: <span id="totalNodesCount">0</span> nodes
+                    </div>
                 </div>
-                <div id="nodeDetails"></div>
-                <div class="nodes-scroll">
-                    <div id="nodesList"></div>
+                <div class="nodes-scroll" id="nodesManagementList">
+                    <div class="loading">Loading nodes...</div>
                 </div>
             </div>
         </div>
@@ -230,6 +308,23 @@
             <div class="confirm-actions">
                 <button class="confirm-btn confirm-cancel" onclick="closeConfirmClear()">Cancel</button>
                 <button class="confirm-btn confirm-danger" id="confirmClearBtn" onclick="executeClearChat()">Clear</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Confirm Delete All DM Modal -->
+<div class="modal-overlay" id="confirmDeleteAllDmModal" style="display: none;" onclick="closeDeleteAllDmModal()">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span>⚠️ Confirm Delete All DM Chats</span>
+            <button class="modal-close" onclick="closeDeleteAllDmModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <p class="confirm-text" id="deleteAllDmText">Delete ALL Direct Message chats?</p>
+            <div class="confirm-actions">
+                <button class="confirm-btn confirm-cancel" onclick="closeDeleteAllDmModal()">Cancel</button>
+                <button class="confirm-btn confirm-danger" id="confirmDeleteAllDmBtn" onclick="executeDeleteAllDm()">Delete All</button>
             </div>
         </div>
     </div>

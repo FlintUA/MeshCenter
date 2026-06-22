@@ -14,6 +14,14 @@ let clearTargetChatId = null;
 let totalUnreadCount = 0;
 let showDuplicatesOnly = false;
 
+// ===== КЕШ СООБЩЕНИЙ =====
+let messageCache = {};
+let currentLoadRequest = null;
+const CACHE_TTL = 30000; // 30 секунд
+
+// ===== ХРАНЕНИЕ СИГНАТУР ДЛЯ ОПТИМИЗАЦИИ РЕНДЕРИНГА =====
+let lastRenderedSignature = {};
+
 function escapeHtml(value) {
     if (value === null || value === undefined) return '';
     const div = document.createElement('div');
@@ -254,6 +262,15 @@ function openChat(chatId, chatName, chatType) {
         hideIgnoredBanner();
     }
 
+    // Очищаем контейнер СРАЗУ при открытии чата
+    const container = document.getElementById('messagesContainer');
+    if (container) {
+        container.innerHTML = '<div class="loading">⏳ Loading messages...</div>';
+        container.scrollTop = 0;
+    }
+
+    // Сбрасываем сигнатуру для этого чата
+    lastRenderedSignature[chatId] = null;
     lastMessagesSignature = '';
     loadChatMessages(chatId);
     startMessagePolling(chatId);
@@ -295,73 +312,141 @@ function showChatList() {
     loadChatList();
 }
 
+// ===== ФУНКЦИЯ РЕНДЕРИНГА СООБЩЕНИЙ (С ОПТИМИЗАЦИЕЙ) =====
+function renderMessages(container, messages, chatId) {
+    if (!container) return;
+    
+    // Создаем сигнатуру сообщений для сравнения
+    const signature = messages.map(m => 
+        [m.kind, m.sender, m.text, m.time].join('|')
+    ).join('||');
+    
+    // Проверяем, изменились ли сообщения
+    if (lastRenderedSignature[chatId] === signature) {
+        // Сообщения не изменились — пропускаем перерисовку
+        console.log(`[RENDER] No changes for chat: ${chatId}, skipping render`);
+        return;
+    }
+    
+    // Сохраняем новую сигнатуру
+    lastRenderedSignature[chatId] = signature;
+    
+    if (messages.length === 0) {
+        const chatName = currentChatName || chatId;
+        container.innerHTML = `<div class="loading">💬 No messages yet with ${escapeHtml(chatName)}. Send the first one!</div>`;
+    } else {
+        container.innerHTML = messages.map(msg => {
+            const isMe = msg.kind === 'me';
+            const isSystem = msg.kind === 'system' || msg.sender === 'SYSTEM ERROR';
+            const sender = escapeHtml(msg.sender || 'Unknown');
+            const text = escapeHtml(msg.text || '');
+            const time = escapeHtml(msg.time || '');
+
+            if (isSystem) {
+                return `
+                    <div class="message system">
+                        <div class="bubble">
+                            <div class="text">${text}</div>
+                            <div class="time">${time}</div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="message ${isMe ? 'me' : 'rx'}">
+                    <div class="bubble">
+                        <div class="sender">${sender}</div>
+                        <div class="text">${text}</div>
+                        <div class="time">${time}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+    
+    // Прокрутка вниз только если были новые сообщения
+    setTimeout(() => {
+        container.scrollTop = container.scrollHeight;
+    }, 50);
+}
+
+// ===== ФУНКЦИЯ ОЧИСТКИ КЕША =====
+function invalidateCache(chatId) {
+    if (messageCache[chatId]) {
+        delete messageCache[chatId];
+        console.log(`[CACHE] Invalidated cache for chat: ${chatId}`);
+    }
+    // Также сбрасываем сигнатуру
+    if (lastRenderedSignature[chatId]) {
+        lastRenderedSignature[chatId] = null;
+    }
+}
+
+// ===== ЗАГРУЗКА СООБЩЕНИЙ =====
 async function loadChatMessages(chatId) {
     if (!chatId) return;
+
+    const container = document.getElementById('messagesContainer');
+    if (!container) return;
+    
+    // Отменяем предыдущий запрос
+    if (currentLoadRequest) {
+        currentLoadRequest = null;
+    }
+    
+    // Создаем новый запрос с уникальным ID
+    const requestId = Date.now() + '_' + chatId;
+    currentLoadRequest = requestId;
+    
+    // Проверяем кеш
+    if (messageCache[chatId]) {
+        const cached = messageCache[chatId];
+        const isFresh = (Date.now() - cached.timestamp) < CACHE_TTL;
+        
+        if (isFresh && currentChatId === chatId) {
+            console.log(`[CACHE] Using cached messages for: ${chatId} (${cached.messages.length} messages)`);
+            renderMessages(container, cached.messages, chatId);
+            currentLoadRequest = null;
+            return;
+        }
+    }
 
     try {
         const response = await fetch(`/api/messages?chat_id=${encodeURIComponent(chatId)}`);
         const data = await response.json();
 
-        const container = document.getElementById('messagesContainer');
-        if (!container) return;
-
-        const shouldScroll = container.scrollTop + container.clientHeight >= container.scrollHeight - 100;
-        const messages = data.messages || [];
-
-        const signature = chatId + '||' + messages.map(m => 
-            [m.kind, m.sender, m.text, m.time].join('|')
-        ).join('||');
-
-        if (signature !== lastMessagesSignature) {
-            lastMessagesSignature = signature;
-            
-            if (messages.length === 0) {
-                const chatName = currentChatName || chatId;
-                container.innerHTML = `<div class="loading">💬 No messages yet with ${escapeHtml(chatName)}. Send the first one!</div>`;
-            } else {
-                container.innerHTML = messages.map(msg => {
-                    const isMe = msg.kind === 'me';
-                    const isSystem = msg.kind === 'system' || msg.sender === 'SYSTEM ERROR';
-                    const sender = escapeHtml(msg.sender || 'Unknown');
-                    const text = escapeHtml(msg.text || '');
-                    const time = escapeHtml(msg.time || '');
-
-                    if (isSystem) {
-                        return `
-                            <div class="message system">
-                                <div class="bubble">
-                                    <div class="text">${text}</div>
-                                    <div class="time">${time}</div>
-                                </div>
-                            </div>
-                        `;
-                    }
-
-                    return `
-                        <div class="message ${isMe ? 'me' : 'rx'}">
-                            <div class="bubble">
-                                <div class="sender">${sender}</div>
-                                <div class="text">${text}</div>
-                                <div class="time">${time}</div>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-            }
-
-            if (shouldScroll) {
-                container.scrollTop = container.scrollHeight;
-            }
+        // Проверяем, что чат не изменился за время загрузки
+        if (currentChatId !== chatId || currentLoadRequest !== requestId) {
+            console.log(`[DEBUG] Chat changed or request cancelled: ${chatId} → ${currentChatId}`);
+            currentLoadRequest = null;
+            return;
         }
 
-        loadChatList();
+        const messages = data.messages || [];
+        
+        // Сохраняем в кеш
+        messageCache[chatId] = {
+            messages: messages,
+            timestamp: Date.now()
+        };
+        
+        // Ограничиваем размер кеша (максимум 20 чатов)
+        const keys = Object.keys(messageCache);
+        if (keys.length > 20) {
+            delete messageCache[keys[0]];
+            console.log(`[CACHE] Cache size limit reached, removed oldest entry`);
+        }
+
+        renderMessages(container, messages, chatId);
+        currentLoadRequest = null;
 
     } catch (error) {
         console.error('Error loading messages:', error);
-        const container = document.getElementById('messagesContainer');
-        if (container) {
+        if (currentChatId === chatId && currentLoadRequest === requestId) {
             container.innerHTML = '<div class="loading">⚠️ Error loading messages</div>';
         }
+        currentLoadRequest = null;
     }
 }
 
@@ -369,11 +454,12 @@ let messagePollingInterval = null;
 
 function startMessagePolling(chatId) {
     stopMessagePolling();
+    // Увеличиваем интервал до 5 секунд для уменьшения мерцания
     messagePollingInterval = setInterval(() => {
         if (currentChatId === chatId) {
             loadChatMessages(chatId);
         }
-    }, 3000);
+    }, 5000); // 5 секунд вместо 3
 }
 
 function stopMessagePolling() {
@@ -407,8 +493,10 @@ if (sendForm) {
         if (button) {
             button.disabled = true;
             const currentWidth = button.offsetWidth;
+            button.style.minWidth = '100px';
             button.style.width = currentWidth + 'px';
-            button.innerHTML = `<span style="display:inline-block;min-width:75px;text-align:left;">Sending<span class="dots"></span></span>`;
+            button.classList.add('sending');
+            button.innerHTML = `<span style="display:inline-block;min-width:80px;text-align:left;">Sending<span class="dots"></span></span>`;
             button.style.animation = 'pulse 1s ease-in-out infinite';
         }
 
@@ -430,8 +518,11 @@ if (sendForm) {
 
             if (response.ok) {
                 if (input) input.value = '';
+                
+                // Инвалидируем кеш и перезагружаем
+                invalidateCache(currentChatId);
                 lastMessagesSignature = '';
-                loadChatMessages(currentChatId);
+                await loadChatMessages(currentChatId);
                 loadChatList();
                 
                 if (button) {
@@ -439,12 +530,15 @@ if (sendForm) {
                     button.style.background = '#4caf50';
                     button.style.borderColor = '#4caf50';
                     button.style.animation = '';
+                    button.classList.remove('sending');
                     setTimeout(() => {
                         button.disabled = false;
                         button.style.width = '';
+                        button.style.minWidth = '';
                         button.style.background = '';
                         button.style.borderColor = '';
                         button.innerHTML = originalHtml;
+                        button.classList.remove('sending');
                     }, 1200);
                 }
             } else {
@@ -453,7 +547,9 @@ if (sendForm) {
                 if (button) {
                     button.disabled = false;
                     button.style.width = '';
+                    button.style.minWidth = '';
                     button.style.animation = '';
+                    button.classList.remove('sending');
                     button.innerHTML = originalHtml;
                 }
             }
@@ -464,7 +560,9 @@ if (sendForm) {
             if (button) {
                 button.disabled = false;
                 button.style.width = '';
+                button.style.minWidth = '';
                 button.style.animation = '';
+                button.classList.remove('sending');
                 button.innerHTML = originalHtml;
             }
         } finally {
@@ -522,6 +620,8 @@ async function executeDeleteChat() {
         closeConfirmDelete();
 
         if (response.ok) {
+            // Удаляем из кеша
+            invalidateCache(deleteTargetChatId);
             showChatList();
         } else {
             const error = await response.json();
@@ -568,8 +668,10 @@ async function executeClearChat() {
         closeConfirmClear();
 
         if (response.ok) {
+            // Инвалидируем кеш
+            invalidateCache(clearTargetChatId);
             lastMessagesSignature = '';
-            loadChatMessages(clearTargetChatId);
+            await loadChatMessages(clearTargetChatId);
             loadChatList();
             loadMessages();
         } else {
@@ -635,8 +737,9 @@ async function toggleIgnore(nodeId) {
                 } else {
                     hideIgnoredBanner();
                 }
+                invalidateCache(nodeId);
                 lastMessagesSignature = '';
-                loadChatMessages(nodeId);
+                await loadChatMessages(nodeId);
             }
         } else {
             const error = await response.json();
@@ -1105,14 +1208,6 @@ const EMOJI_DATA = {
         '☸️', '✡️', '🔯', '🕎', '☯️', '☦️', '🛐', '⛎',
         '♈', '♉', '♊', '♋', '♌', '♍', '♎', '♏',
         '♐', '♑', '♒', '♓', '🆔', '⚛️', '🉑', '☢️'
-    ],
-    flags: [
-        '🏳️', '🏴', '🏁', '🚩', '🎌', '🇺🇳', '🇪🇺', '🏴‍☠️',
-        '🇦🇫', '🇦🇱', '🇩🇿', '🇦🇩', '🇦🇴', '🇦🇬', '🇦🇷', '🇦🇲',
-        '🇦🇺', '🇦🇹', '🇦🇿', '🇧🇸', '🇧🇭', '🇧🇩', '🇧🇧', '🇧🇾',
-        '🇧🇪', '🇧🇿', '🇧🇯', '🇧🇹', '🇧🇴', '🇧🇦', '🇧🇼', '🇧🇷',
-        '🇧🇳', '🇧🇬', '🇧🇫', '🇧🇮', '🇰🇭', '🇨🇲', '🇨🇦', '🇨🇻',
-        '🇨🇫', '🇹🇩', '🇨🇱', '🇨🇳', '🇨🇴', '🇰🇲', '🇨🇬', '🇨🇩'
     ]
 };
 
@@ -1293,7 +1388,7 @@ async function loadNodesManagement() {
             
             return `
                 <div class="nodes-management-item">
-                    <div>
+                    <div class="name-wrapper">
                         <span class="name">${escapeHtml(node.name)}</span>
                         <span class="id">${escapeHtml(node.node_id)}</span>
                     </div>

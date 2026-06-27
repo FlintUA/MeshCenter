@@ -1,320 +1,341 @@
-<img width="256" height="256" alt="meshtastic-powered-001" src="https://github.com/user-attachments/assets/0847ebce-bf96-4b5d-8b3e-3b92bbd3d440" />
+# Flint Meshtastic Web UI
 
-# Flint Meshtastic Web UI v1.0.0
+<p align="center">
 
-## First Stable Release
+<img src="https://github.com/user-attachments/assets/0847ebce-bf96-4b5d-8b3e-3b92bbd3d440" width="170">
 
-A custom web dashboard for Meshtastic nodes. Powered by Meshtastic.
-A modern web interface for Meshtastic nodes designed for Raspberry Pi Zero 2W and other Linux-based systems.
+</p>
 
-## 📸 Screenshots
+<p align="center">
 
-### Main Interface
+A lightweight and modern web interface for Meshtastic nodes running on Raspberry Pi.
+
+</p>
+
+<p align="center">
+
+![Version](https://img.shields.io/badge/version-v1.1.0--dev-blue)
+![Python](https://img.shields.io/badge/python-3.11-blue)
+![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-success)
+![Meshtastic](https://img.shields.io/badge/Meshtastic-Compatible-green)
+![License](https://img.shields.io/badge/license-MIT-orange)
+
+</p>
+
+---
+
+# Features
+
+## Messaging
+
+* Public LongFast chat
+* Direct node-to-node messaging
+* Automatic chat history
+* Emoji picker
+* Message timestamps
+* Automatic updates
+
+---
+
+## Node Management
+
+* Automatic node discovery
+* Live node list
+* RSSI / SNR display
+* Last seen timer
+* Hardware model detection
+* Favorites
+* Node search
+
+---
+
+## Telemetry
+
+Supports both Meshtastic telemetry and external sensors.
+
+### Meshtastic
+
+* Battery level
+* Voltage
+* Channel utilization
+* Air utilization
+* Uptime
+
+### External Sensors
+
+* BME280
+
+  * Temperature
+  * Humidity
+  * Pressure
+
+* INA226
+
+  * Voltage
+  * Current
+  * Power
+
+Telemetry history is automatically stored and displayed.
+
+---
+
+# Camera Support
+
+Built-in Raspberry Pi Camera support using **Picamera2**.
+
+Features:
+
+* Live MJPEG video
+* Adjustable resolution
+* Adjustable FPS
+* JPEG quality control
+* High-resolution photo capture
+* Live preview
+* Gallery
+* Download captured images
+
+The application automatically switches between optimized video mode and full-resolution photo mode.
+
+---
+
+# Screenshots
+
+## Main Interface
 
 ![Main Interface](docs/images/main-ui.png)
 
 ---
 
-### ✨ Highlights
+# Tested Hardware
 
-- Real-time Meshtastic chat interface
-- Public channel messaging (LongFast)
-- Direct node-to-node messaging
-- Node discovery and monitoring
-- Device status dashboard
-- Sensor telemetry display
-- Emoji picker support
-- Responsive desktop and mobile layout
-- Persistent JSON-based storage
-- Systemd service support
-- Optimized for low-power hardware
-- Live video streaming with MJPEG support
+### Raspberry Pi
 
----
+* Raspberry Pi Zero 2W
 
-## 🎯 Features
+### Meshtastic Devices
 
-### Messaging
-- Send and receive messages in LongFast channel
-- Direct messages between nodes
-- Chat history persistence
-- Message timestamps
-- Emoji support with popup picker
-- Automatic message updates
+* RAK4631
+* RAK WisMesh TAP V2
+* LILYGO T-Beam
+* LILYGO T-Echo Plus
 
-### Node Management
-- Automatic node discovery
-- Live node list
-- Signal quality indicators
-- RSSI and SNR display
-- Hardware identification
-- Last seen tracking
-- Node filtering and search
-- Favorite node support
+### Sensors
 
-### Device Dashboard
-- Voltage monitoring
-- Battery level estimation
-- Channel utilization
-- Air utilization statistics
-- Uptime display
-- Local node status monitoring
+* BME280
+* INA226
 
-### Sensor Support
-- Temperature
-- Humidity
-- Pressure
-- Voltage
-- Current
-- Power
+### Camera
 
-### User Interface
-- Clean modern layout
-- Desktop optimized
-- Mobile friendly
-- Fast updates
-- Lightweight design
-- Sidebar node management
-- Responsive chat interface
+* Raspberry Pi Camera OV5647
 
 ---
 
-## 🧪 Tested Hardware
-
-- ✅ Raspberry Pi Zero 2W
-- ✅ RAK4631 (Flint Base)
-- ✅ LILYGO T-Beam
-- ✅ LILYGO T-Echo Plus
-- ✅ RAK WisMesh TAP V2
-
----
-
-## 📦 Installation
+# Installation
 
 ```bash
 git clone https://github.com/FlintUA/flint-meshtastic-web-ui.git
+
 cd flint-meshtastic-web-ui
 
 python3 -m venv venv
+
 source venv/bin/activate
+
 pip install -r requirements.txt
 ```
 
 ---
 
-## ⚙️ Configuration
+# Configuration
 
-Before starting the application, edit the configuration file:
+Edit:
 
 ```bash
-nano config.py
+config.py
 ```
 
-### Local Node Settings
-
-Set your local Meshtastic node ID and node name:
+Example:
 
 ```python
-LOCAL_NODE_ID = "!your_node_id"
-LOCAL_NODE_NAME = "Your Node Name"
+LOCAL_NODE_ID = "!067a40fa"
+
+LOCAL_NODE_NAME = "Flint Base"
+
+MESHTASTIC_CMD = "/home/flint/.local/bin/meshtastic"
+
+DATA_DIR = "/home/flint/mesh_web/data"
 ```
 
-Find your node ID using:
+Find your Node ID:
 
 ```bash
 meshtastic --info
 ```
 
-Look for an entry similar to:
-
-```text
-"!067a40fa"
-```
-
-and use that value as `LOCAL_NODE_ID`.
-
-### Meshtastic CLI Path
-
-If Meshtastic CLI is installed in a different location, update:
-
-```python
-MESHTASTIC_CMD = "/home/flint/.local/bin/meshtastic"
-```
-
-Verify the path:
-
-```bash
-which meshtastic
-```
-
-### Data Storage
-
-Default data directory:
-
-```python
-DATA_DIR = "/home/flint/mesh_web/data"
-```
-
-Application files:
-
-```text
-messages.json   - chat history
-nodes.json      - discovered mesh nodes
-sensors.json    - sensor telemetry
-chats.json      - direct message history
-```
-
-### Optional: Known Nodes
-
-You can predefine frequently used nodes for friendly display names:
-
-```python
-KNOWN_NODES = {
-    "!067a40fa": "Flint Base",
-    "!b0f14d2a": "Flint_Echo",
-    "!756f9960": "Flint TAP2",
-    "!1fa065f0": "Elektroniker"
-}
-```
-
-Additional node information:
-
-```python
-KNOWN_NODE_INFO = {
-    "!067a40fa": {
-        "short_name": "FLTB",
-        "hw_model": "RAK4631"
-    }
-}
-```
-
-This is optional but improves node identification and display.
-
 ---
 
-## 🚀 Start
+# Run
 
-### Development
+Development:
 
 ```bash
 python3 server.py
 ```
 
-### Production (systemd)
-
-Enable automatic startup:
+Production:
 
 ```bash
-sudo systemctl enable mesh-web.service
-sudo systemctl start mesh-web.service
+sudo systemctl enable mesh-web
+
+sudo systemctl start mesh-web
 ```
 
-Check status:
+Restart:
 
 ```bash
-sudo systemctl status mesh-web.service
+sudo systemctl restart mesh-web
 ```
 
-Restart service:
+Status:
 
 ```bash
-sudo systemctl restart mesh-web.service
+sudo systemctl status mesh-web
 ```
 
 ---
 
-## 🌐 Access Web Interface
-
-Open in browser:
-
-```text
-http://RASPBERRY_IP:5000
-```
-
-Example:
-
-```text
-http://192.168.2.103:5000
-```
-
----
-
-## 📂 Project Structure
+# Project Structure
 
 ```text
 flint-meshtastic-web-ui/
-│
-├── server.py              # Flask server
-├── config.py              # Configuration
-├── wsgi.py                # WSGI entry point
+
+├── server.py
+├── config.py
 ├── requirements.txt
 ├── README.md
-│
-├── static/
-│   ├── app.js             # Client-side logic
-│   └── style.css          # Styles
+├── wsgi.py
 │
 ├── templates/
-│   └── index.html         # Main page
+│     └── index.html
+│
+├── static/
+│     ├── chat.js
+│     ├── style.css
+│     └── chart.umd.min.js
+│
+├── docs/
+│     └── images/
 │
 └── data/
-    ├── messages.json
-    ├── nodes.json
-    ├── chats.json
-    └── sensors.json
+      ├── chats.json
+      ├── messages.json
+      ├── nodes.json
+      ├── sensors.json
+      ├── telemetry_history.json
+      └── screenshots/
 ```
 
 ---
 
-## 📋 Requirements
+# Architecture
 
-- Raspberry Pi OS (or any Linux)
-- Python 3.8+
-- Meshtastic CLI
-- Flask
-
-Install Meshtastic CLI:
-
-```bash
-pip install meshtastic
+```text
+                    Browser
+                       │
+                       ▼
+               Flask Web Server
+                       │
+      ┌────────────────┼────────────────┐
+      │                │                │
+      ▼                ▼                ▼
+ Meshtastic CLI     Picamera2      JSON Storage
+      │                │                │
+      ▼                ▼                ▼
+   RAK4631         OV5647 Camera     History
 ```
 
 ---
 
-## 🤝 Contributing
+# Current Status
 
-Contributions are welcome.
+Implemented:
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push your branch
-5. Open a Pull Request
+* Live chat
+* Direct messages
+* Sensor dashboard
+* Node management
+* Live camera
+* Photo capture
+* Gallery
+* Persistent storage
+* Automatic telemetry updates
+* Responsive web interface
 
 ---
 
-## 📄 License
+# Roadmap
+
+### In Progress
+
+* Improve camera stability
+* Better telemetry synchronization
+* Internal code refactoring
+* Performance optimization
+
+### Planned
+
+* WebSocket updates
+* File manager
+* OTA configuration
+* Plugin support
+* Multiple camera support
+* Weather dashboard
+* Dark theme
+
+---
+
+# Requirements
+
+* Raspberry Pi OS
+* Python 3.11+
+* Meshtastic CLI
+* Flask
+* Picamera2
+
+---
+
+# Contributing
+
+Contributions, suggestions and pull requests are always welcome.
+
+---
+
+# License
 
 MIT License
 
 ---
 
-## 👨‍💻 Author
+# Author
 
 **Kostiantyn Vynohradov (FlintUA)**
 
-GitHub:
+GitHub
+
 https://github.com/FlintUA
 
-Project:
+Project
+
 https://github.com/FlintUA/flint-meshtastic-web-ui
 
-Approximately 6,700 lines of custom code.
-Built as a personal learning project by an electronic engineer using AI-assisted development.
+---
+
+# Support
+
+If this project helps you, please consider giving it a ⭐ on GitHub.
+
+Every star helps the project become more visible to the Meshtastic community.
 
 ---
-## ❤️ Support
 
-If you find this project useful, please give it a ⭐ on GitHub.
-
-**Made with ❤️ for the Meshtastic community**
+Made with ❤️ for the Meshtastic community.

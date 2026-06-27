@@ -13,14 +13,78 @@ let deleteTargetChatId = null;
 let clearTargetChatId = null;
 let totalUnreadCount = 0;
 let showDuplicatesOnly = false;
+let currentMainTab = 'chats';
+let currentPhotoData = null;
+let cameraActive = false;
+
+// ===== ТЕЛЕМЕТРИЯ =====
+let telemetryData = {
+    temperature: null,
+    humidity: null,
+    pressure: null,
+    voltage: null,
+    current: null,
+    last_update: null
+};
+let telemetryHistory = [];
+let telemetryChart = null;
+let telemetryInterval = 900;
+let telemetryUpdateInterval = null;
+let telemetryTimeRange = 60;
+let telemetryFullHistory = [];
 
 // ===== КЕШ СООБЩЕНИЙ =====
 let messageCache = {};
 let currentLoadRequest = null;
-const CACHE_TTL = 30000; // 30 секунд
+const CACHE_TTL = 30000;
 
 // ===== ХРАНЕНИЕ СИГНАТУР ДЛЯ ОПТИМИЗАЦИИ РЕНДЕРИНГА =====
 let lastRenderedSignature = {};
+
+// ===== TOAST ФУНКЦИЯ =====
+function showToast(message, type = 'info') {
+    const oldToast = document.getElementById('toast');
+    if (oldToast) oldToast.remove();
+    
+    const toast = document.createElement('div');
+    toast.id = 'toast';
+    toast.className = `toast ${type}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    
+    setTimeout(() => toast.classList.add('show'), 10);
+    
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+// ===== ПРИНУДИТЕЛЬНАЯ ПЕРЕЗАГРУЗКА ПО КЛИКУ НА ЗАГОЛОВОК =====
+document.addEventListener('DOMContentLoaded', function() {
+    const title = document.getElementById('appTitle');
+    if (title) {
+        title.addEventListener('click', function(e) {
+            const icon = this.querySelector('span');
+            if (icon) {
+                icon.style.display = 'inline-block';
+                icon.style.transition = 'transform 0.4s ease';
+                icon.style.transform = 'rotate(720deg) scale(1.3)';
+                setTimeout(() => {
+                    icon.style.transform = 'rotate(0deg) scale(1)';
+                }, 400);
+            }
+            
+            this.innerHTML = '🔄 Reloading...';
+            this.style.opacity = '0.6';
+            this.style.cursor = 'default';
+            
+            setTimeout(() => {
+                window.location.reload(true);
+            }, 500);
+        });
+    }
+});
 
 function escapeHtml(value) {
     if (value === null || value === undefined) return '';
@@ -224,7 +288,6 @@ function openChat(chatId, chatName, chatType) {
     document.getElementById('chatActionsBtn').style.display = 'block';
     
     document.getElementById('deleteAllDmHeaderBtn').style.display = 'none';
-    document.getElementById('restoreDeletedDmBtn').style.display = 'none';
 
     const titleEl = document.getElementById('chatTitle');
     const subtitleEl = document.getElementById('chatSubtitle');
@@ -262,14 +325,12 @@ function openChat(chatId, chatName, chatType) {
         hideIgnoredBanner();
     }
 
-    // Очищаем контейнер СРАЗУ при открытии чата
     const container = document.getElementById('messagesContainer');
     if (container) {
         container.innerHTML = '<div class="loading">⏳ Loading messages...</div>';
         container.scrollTop = 0;
     }
 
-    // Сбрасываем сигнатуру для этого чата
     lastRenderedSignature[chatId] = null;
     lastMessagesSignature = '';
     loadChatMessages(chatId);
@@ -295,7 +356,6 @@ function showChatList() {
     document.getElementById('chatActionsBtn').style.display = 'none';
     
     document.getElementById('deleteAllDmHeaderBtn').style.display = 'block';
-    document.getElementById('restoreDeletedDmBtn').style.display = 'block';
 
     const titleEl = document.getElementById('chatTitle');
     const subtitleEl = document.getElementById('chatSubtitle');
@@ -312,23 +372,18 @@ function showChatList() {
     loadChatList();
 }
 
-// ===== ФУНКЦИЯ РЕНДЕРИНГА СООБЩЕНИЙ (С ОПТИМИЗАЦИЕЙ) =====
 function renderMessages(container, messages, chatId) {
     if (!container) return;
     
-    // Создаем сигнатуру сообщений для сравнения
     const signature = messages.map(m => 
         [m.kind, m.sender, m.text, m.time].join('|')
     ).join('||');
     
-    // Проверяем, изменились ли сообщения
     if (lastRenderedSignature[chatId] === signature) {
-        // Сообщения не изменились — пропускаем перерисовку
         console.log(`[RENDER] No changes for chat: ${chatId}, skipping render`);
         return;
     }
     
-    // Сохраняем новую сигнатуру
     lastRenderedSignature[chatId] = signature;
     
     if (messages.length === 0) {
@@ -365,41 +420,34 @@ function renderMessages(container, messages, chatId) {
         }).join('');
     }
     
-    // Прокрутка вниз только если были новые сообщения
     setTimeout(() => {
         container.scrollTop = container.scrollHeight;
     }, 50);
 }
 
-// ===== ФУНКЦИЯ ОЧИСТКИ КЕША =====
 function invalidateCache(chatId) {
     if (messageCache[chatId]) {
         delete messageCache[chatId];
         console.log(`[CACHE] Invalidated cache for chat: ${chatId}`);
     }
-    // Также сбрасываем сигнатуру
     if (lastRenderedSignature[chatId]) {
         lastRenderedSignature[chatId] = null;
     }
 }
 
-// ===== ЗАГРУЗКА СООБЩЕНИЙ =====
 async function loadChatMessages(chatId) {
     if (!chatId) return;
 
     const container = document.getElementById('messagesContainer');
     if (!container) return;
     
-    // Отменяем предыдущий запрос
     if (currentLoadRequest) {
         currentLoadRequest = null;
     }
     
-    // Создаем новый запрос с уникальным ID
     const requestId = Date.now() + '_' + chatId;
     currentLoadRequest = requestId;
     
-    // Проверяем кеш
     if (messageCache[chatId]) {
         const cached = messageCache[chatId];
         const isFresh = (Date.now() - cached.timestamp) < CACHE_TTL;
@@ -416,7 +464,6 @@ async function loadChatMessages(chatId) {
         const response = await fetch(`/api/messages?chat_id=${encodeURIComponent(chatId)}`);
         const data = await response.json();
 
-        // Проверяем, что чат не изменился за время загрузки
         if (currentChatId !== chatId || currentLoadRequest !== requestId) {
             console.log(`[DEBUG] Chat changed or request cancelled: ${chatId} → ${currentChatId}`);
             currentLoadRequest = null;
@@ -425,17 +472,18 @@ async function loadChatMessages(chatId) {
 
         const messages = data.messages || [];
         
-        // Сохраняем в кеш
         messageCache[chatId] = {
             messages: messages,
             timestamp: Date.now()
         };
         
-        // Ограничиваем размер кеша (максимум 20 чатов)
         const keys = Object.keys(messageCache);
         if (keys.length > 20) {
-            delete messageCache[keys[0]];
-            console.log(`[CACHE] Cache size limit reached, removed oldest entry`);
+            const sortedKeys = keys.sort((a, b) => {
+                return (messageCache[a].timestamp || 0) - (messageCache[b].timestamp || 0);
+            });
+            delete messageCache[sortedKeys[0]];
+            console.log(`[CACHE] Removed oldest entry: ${sortedKeys[0]}`);
         }
 
         renderMessages(container, messages, chatId);
@@ -454,12 +502,11 @@ let messagePollingInterval = null;
 
 function startMessagePolling(chatId) {
     stopMessagePolling();
-    // Увеличиваем интервал до 5 секунд для уменьшения мерцания
     messagePollingInterval = setInterval(() => {
         if (currentChatId === chatId) {
             loadChatMessages(chatId);
         }
-    }, 5000); // 5 секунд вместо 3
+    }, 5000);
 }
 
 function stopMessagePolling() {
@@ -519,7 +566,6 @@ if (sendForm) {
             if (response.ok) {
                 if (input) input.value = '';
                 
-                // Инвалидируем кеш и перезагружаем
                 invalidateCache(currentChatId);
                 lastMessagesSignature = '';
                 await loadChatMessages(currentChatId);
@@ -620,7 +666,6 @@ async function executeDeleteChat() {
         closeConfirmDelete();
 
         if (response.ok) {
-            // Удаляем из кеша
             invalidateCache(deleteTargetChatId);
             showChatList();
         } else {
@@ -668,7 +713,6 @@ async function executeClearChat() {
         closeConfirmClear();
 
         if (response.ok) {
-            // Инвалидируем кеш
             invalidateCache(clearTargetChatId);
             lastMessagesSignature = '';
             await loadChatMessages(clearTargetChatId);
@@ -691,7 +735,7 @@ function clearCurrentChat() {
 }
 
 function setDirectMessage(nodeId, nodeName) {
-    if (directMessageTarget === nodeName) {
+    if (directMessageTarget === nodeId) {
         directMessageTarget = null;
         document.querySelectorAll('.node-title-btn').forEach(btn => {
             btn.style.background = 'linear-gradient(135deg, #4a5a7a 0%, #3a4a6a 100%)';
@@ -701,7 +745,7 @@ function setDirectMessage(nodeId, nodeName) {
         return;
     }
 
-    directMessageTarget = nodeName;
+    directMessageTarget = nodeId;
     document.querySelectorAll('.node-title-btn').forEach(btn => {
         if (btn.dataset.nodeId === nodeId) {
             btn.style.background = '#ff9800';
@@ -813,7 +857,7 @@ function renderNodeDetails(node) {
     const ignoreBtnClass = isIgnored ? 'ignore-btn active' : 'ignore-btn';
     const ignoreBtnText = isIgnored ? 'Ignored' : 'Ignore';
     const favoriteBtnClass = isFavorite ? 'favorite-btn active' : 'favorite-btn';
-    const isActive = directMessageTarget === node.clean_name;
+    const isActive = directMessageTarget === node.node_id;
 
     details.className = '';
     details.innerHTML = `
@@ -877,7 +921,7 @@ function renderNodeDetails(node) {
                             data-node-id="${escapeHtml(node.node_id)}"
                             onclick="toggleFavorite('${escapeHtml(node.node_id)}')"
                             title="${isFavorite ? 'Remove from favorites' : 'Add to favorites'}">
-                        ${isFavorite ? 'Favorite' : 'Favorite'}
+                        ${isFavorite ? '⭐ Unstar' : '☆ Favorite'}
                     </button>
                     <button class="${ignoreBtnClass}" 
                             data-node-id="${escapeHtml(node.node_id)}"
@@ -1065,6 +1109,8 @@ async function loadBaseStatus() {
 
         const card = document.getElementById('baseCard');
         if (!card) return;
+        
+        const nodeName = data.node_name || 'Flint Base';
 
         const battery = data.real_battery !== null ? '~' + data.real_battery + '%' :
                        data.battery_level !== null ? data.battery_level + '%' : '--%';
@@ -1075,7 +1121,7 @@ async function loadBaseStatus() {
 
         card.innerHTML = `
             <div class="base-card-title">
-                <span>📡 Flint Base</span>
+                <span>📡 ${escapeHtml(nodeName)}</span>
                 <span style="font-size:11px;opacity:0.8;">⏱ ${escapeHtml(uptime)}</span>
             </div>
             <div class="base-status-line">
@@ -1683,24 +1729,6 @@ async function rescanNodes() {
     }
 }
 
-function showToast(message, type = 'info') {
-    const oldToast = document.getElementById('toast');
-    if (oldToast) oldToast.remove();
-    
-    const toast = document.createElement('div');
-    toast.id = 'toast';
-    toast.className = `toast ${type}`;
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    
-    setTimeout(() => toast.classList.add('show'), 10);
-    
-    setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
-}
-
 // ===== УДАЛЕНИЕ ВСЕХ DM ЧАТОВ =====
 let deleteAllDmState = 'first';
 
@@ -1769,41 +1797,6 @@ function executeDeleteAllDm() {
     });
 }
 
-// ===== ВОССТАНОВЛЕНИЕ УДАЛЕННЫХ DM =====
-async function restoreDeletedDm() {
-    if (!confirm('Restore all previously deleted DM chats?')) {
-        return;
-    }
-    
-    const btn = document.getElementById('restoreDeletedDmBtn');
-    const originalText = btn.textContent;
-    
-    try {
-        btn.disabled = true;
-        btn.textContent = '⏳ Restoring...';
-        
-        const response = await fetch('/api/restore_deleted_dm', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        
-        const data = await response.json();
-        
-        if (data.ok) {
-            await loadChatList();
-            showToast('✅ Deleted DM chats restored', 'success');
-        } else {
-            showToast('❌ Error: ' + (data.error || 'Unknown error'), 'error');
-        }
-    } catch (error) {
-        console.error('Restore error:', error);
-        showToast('❌ Network error', 'error');
-    } finally {
-        btn.disabled = false;
-        btn.textContent = originalText;
-    }
-}
-
 // ===== УПРАВЛЕНИЕ МЕНЮ ЭКСПОРТА/ИМПОРТА =====
 function showExportOptions() {
     closeFormatMenus();
@@ -1824,7 +1817,6 @@ function closeFormatMenus() {
     if (importMenu) importMenu.style.display = 'none';
 }
 
-// Закрытие при клике вне
 document.addEventListener('click', function(e) {
     const exportMenu = document.getElementById('exportOptionsMenu');
     const importMenu = document.getElementById('importOptionsMenu');
@@ -1839,6 +1831,1036 @@ document.addEventListener('click', function(e) {
     }
 });
 
+// ===== ФУНКЦИИ ТЕЛЕМЕТРИИ =====
+async function loadTelemetry() {
+    console.log('[TELEMETRY] loadTelemetry called');
+    try {
+        const response = await fetch('/api/telemetry');
+        console.log('[TELEMETRY] Response status:', response.status);
+        const data = await response.json();
+        console.log('[TELEMETRY] Received data:', data);
+        telemetryData = data;
+        updateTelemetryUI();
+        
+        const historyResponse = await fetch('/api/telemetry/history?limit=5000');
+        const historyData = await historyResponse.json();
+        telemetryFullHistory = historyData.history || [];
+        telemetryHistory = telemetryFullHistory;
+        console.log('[TELEMETRY] History records:', telemetryHistory.length);
+        
+        if (historyData.config) {
+            telemetryInterval = historyData.config.interval || 900;
+            const select = document.getElementById('telemetryInterval');
+            if (select) {
+                select.value = telemetryInterval;
+            }
+        }
+        
+    } catch (error) {
+        console.error('[TELEMETRY] Error loading telemetry:', error);
+    }
+}
+
+function updateTelemetryUI() {
+    const data = telemetryData;
+    
+    const envValue = document.getElementById('telemetryEnvValue');
+    const envUpdate = document.getElementById('telemetryEnvUpdate');
+    if (envValue) {
+        let parts = [];
+        if (data.temperature !== null && data.temperature !== undefined) {
+            parts.push(`${data.temperature.toFixed(1)}°C`);
+        }
+        if (data.humidity !== null && data.humidity !== undefined) {
+            parts.push(`${data.humidity.toFixed(1)}%`);
+        }
+        if (data.pressure !== null && data.pressure !== undefined) {
+            parts.push(`${data.pressure.toFixed(1)}hPa`);
+        }
+        envValue.textContent = parts.length > 0 ? parts.join('  ') : '—';
+    }
+    if (envUpdate) {
+        envUpdate.textContent = data.last_update ? `⏱${data.last_update}` : '';
+    }
+    
+    const powerValue = document.getElementById('telemetryPowerValue');
+    const powerUpdate = document.getElementById('telemetryPowerUpdate');
+    if (powerValue) {
+        let parts = [];
+        if (data.voltage !== null && data.voltage !== undefined) {
+            parts.push(`${data.voltage.toFixed(3)}V`);
+        }
+        if (data.current !== null && data.current !== undefined && data.current > 0) {
+            parts.push(`${data.current.toFixed(0)}mA`);
+        }
+        powerValue.textContent = parts.length > 0 ? parts.join('  ') : '—';
+    }
+    if (powerUpdate) {
+        powerUpdate.textContent = data.last_update ? `⏱${data.last_update}` : '';
+    }
+    
+    const statusEl = document.getElementById('telemetryStatus');
+    if (statusEl) {
+        if (data.last_update) {
+            statusEl.textContent = `🟢 ${data.last_update}`;
+        } else {
+            statusEl.textContent = '⚪ No data';
+        }
+    }
+}
+
+async function updateTelemetryConfig() {
+    const select = document.getElementById('telemetryInterval');
+    const interval = parseInt(select.value);
+    
+    try {
+        const response = await fetch('/api/telemetry/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ interval: interval })
+        });
+        
+        const data = await response.json();
+        if (data.ok) {
+            telemetryInterval = interval;
+            showToast(`✅ Interval set to ${interval/60} minutes`, 'success');
+        } else {
+            showToast('❌ Failed to update interval', 'error');
+        }
+    } catch (error) {
+        console.error('Error updating telemetry config:', error);
+        showToast('❌ Network error', 'error');
+    }
+}
+
+async function refreshTelemetry() {
+    const btn = document.getElementById('telemetryRefreshBtn');
+    const originalText = btn.textContent;
+    
+    try {
+        btn.disabled = true;
+        btn.textContent = '⏳...';
+        
+        const response = await fetch('/api/telemetry/refresh', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok) {
+            await loadTelemetry();
+            showToast('✅ Telemetry updated', 'success');
+        } else {
+            showToast('❌ Failed: ' + (data.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        console.error('Error refreshing telemetry:', error);
+        showToast('❌ Network error', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+function openTelemetryModal(type) {
+    const modal = document.getElementById('telemetryModal');
+    const title = document.getElementById('telemetryModalTitle');
+    const container = document.getElementById('telemetryChartContainer');
+    
+    if (!modal || !title || !container) {
+        console.error('Modal elements not found');
+        return;
+    }
+    
+    modal.dataset.type = type;
+    modal.style.display = 'flex';
+    container.innerHTML = '<div class="loading">⏳ Loading telemetry data...</div>';
+    
+    const labels = {
+        'environment': '🌡️ Environment Sensors',
+        'power': '⚡ Power Sensors'
+    };
+    title.textContent = labels[type] || '📊 Telemetry';
+    
+    const footer = document.getElementById('telemetryFooter');
+    if (footer) {
+        footer.innerHTML = `
+            <div class="telemetry-time-controls">
+                <button class="time-btn active" data-range="60" onclick="setTelemetryRange(60)">1h</button>
+                <button class="time-btn" data-range="720" onclick="setTelemetryRange(720)">12h</button>
+                <button class="time-btn" data-range="1440" onclick="setTelemetryRange(1440)">24h</button>
+                <button class="time-btn" data-range="10080" onclick="setTelemetryRange(10080)">7d</button>
+                <button class="time-btn" data-range="43200" onclick="setTelemetryRange(43200)">30d</button>
+            </div>
+            <span class="telemetry-records-count" id="telemetryRecordsCount">📊 0 records</span>
+        `;
+    }
+    
+    fetch('/api/telemetry/history?limit=5000')
+        .then(response => response.json())
+        .then(data => {
+            telemetryFullHistory = data.history || [];
+            telemetryHistory = telemetryFullHistory;
+            renderTelemetryWithRange(type, telemetryTimeRange);
+        })
+        .catch(error => {
+            console.error('Error loading history:', error);
+            container.innerHTML = '<div class="loading">⚠️ Error loading telemetry data</div>';
+        });
+}
+
+function setTelemetryRange(minutes) {
+    telemetryTimeRange = minutes;
+    
+    document.querySelectorAll('.time-btn').forEach(btn => {
+        btn.classList.toggle('active', parseInt(btn.dataset.range) === minutes);
+    });
+    
+    const modal = document.getElementById('telemetryModal');
+    const type = modal ? modal.dataset.type : 'environment';
+    renderTelemetryWithRange(type, minutes);
+}
+
+function renderTelemetryWithRange(type, minutes) {
+    const container = document.getElementById('telemetryChartContainer');
+    const recordsCount = document.getElementById('telemetryRecordsCount');
+    
+    if (!container) return;
+    
+    const now = Date.now() / 1000;
+    const cutoff = now - (minutes * 60);
+    
+    const filteredRecords = telemetryFullHistory.filter(r => r.timestamp >= cutoff);
+    
+    if (filteredRecords.length === 0) {
+        container.innerHTML = `<div class="loading">📊 No data for this period (${minutes/60}h). Try a longer range.</div>`;
+        if (recordsCount) recordsCount.textContent = '📊 0 records';
+        return;
+    }
+    
+    if (recordsCount) {
+        recordsCount.textContent = `📊 ${filteredRecords.length} records (${minutes/60}h)`;
+    }
+    
+    renderTelemetryChart(container, filteredRecords, type);
+    updateTelemetryCards(filteredRecords, type);
+}
+
+function renderTelemetryChart(container, records, type) {
+    container.innerHTML = '<canvas id="telemetryChartCanvas"></canvas>';
+    
+    const canvas = document.getElementById('telemetryChartCanvas');
+    if (!canvas) {
+        console.error('Canvas element not found');
+        return;
+    }
+    
+    const ctx = canvas.getContext('2d');
+    
+    const labels = records.map(r => {
+        const t = new Date(r.timestamp * 1000);
+        return t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    });
+    
+    let datasets = [];
+    let hasPressure = false;
+    let hasCurrent = false;
+    
+    if (type === 'environment') {
+        const tempData = records.map(r => r.temperature).filter(v => v !== null && v !== undefined);
+        if (tempData.length > 0) {
+            datasets.push({
+                label: 'Temperature °C',
+                data: records.map(r => r.temperature),
+                borderColor: '#ff6b35',
+                backgroundColor: 'rgba(255, 107, 53, 0.1)',
+                fill: true,
+                tension: 0.3,
+                spanGaps: true,
+                yAxisID: 'y'
+            });
+        }
+        
+        const humData = records.map(r => r.humidity).filter(v => v !== null && v !== undefined);
+        if (humData.length > 0) {
+            datasets.push({
+                label: 'Humidity %',
+                data: records.map(r => r.humidity),
+                borderColor: '#4a9eff',
+                backgroundColor: 'rgba(74, 158, 255, 0.1)',
+                fill: true,
+                tension: 0.3,
+                spanGaps: true,
+                yAxisID: 'y'
+            });
+        }
+        
+        const pressData = records
+            .map(r => r.pressure)
+            .filter(v => v !== null && v !== undefined && !isNaN(v));
+        
+        if (pressData.length > 0) {
+            hasPressure = true;
+            datasets.push({
+                label: 'Pressure hPa',
+                data: records.map(r => r.pressure),
+                borderColor: '#2ecc71',
+                backgroundColor: 'rgba(46, 204, 113, 0.1)',
+                fill: true,
+                tension: 0.3,
+                spanGaps: true,
+                yAxisID: 'y1'
+            });
+        }
+    } else if (type === 'power') {
+        const voltData = records.map(r => r.voltage).filter(v => v !== null && v !== undefined);
+        if (voltData.length > 0) {
+            datasets.push({
+                label: 'Voltage V',
+                data: records.map(r => r.voltage),
+                borderColor: '#f1c40f',
+                backgroundColor: 'rgba(241, 196, 15, 0.1)',
+                fill: true,
+                tension: 0.3,
+                spanGaps: true,
+                yAxisID: 'y'
+            });
+        }
+        
+        const currData = records.map(r => r.current).filter(v => v !== null && v !== undefined);
+        if (currData.length > 0) {
+            hasCurrent = true;
+            datasets.push({
+                label: 'Current mA',
+                data: records.map(r => r.current),
+                borderColor: '#3498db',
+                backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                fill: true,
+                tension: 0.3,
+                spanGaps: true,
+                yAxisID: 'y1'
+            });
+        }
+    }
+    
+    if (telemetryChart) {
+        telemetryChart.destroy();
+        telemetryChart = null;
+    }
+    
+    if (datasets.length === 0) {
+        container.innerHTML = '<div class="loading">📊 No data available for this sensor type</div>';
+        return;
+    }
+    
+    if (typeof Chart === 'undefined') {
+        container.innerHTML = '<div class="loading">⚠️ Chart library not loaded. Please refresh the page.</div>';
+        console.error('Chart.js not loaded');
+        return;
+    }
+    
+    let yConfig = {
+        position: 'left',
+        grid: { color: 'rgba(0,0,0,0.08)', drawBorder: true },
+        ticks: { font: { size: 9 }, color: '#666' }
+    };
+    
+    let y1Config = {
+        position: 'right',
+        grid: { drawOnChartArea: false, drawBorder: true },
+        ticks: { font: { size: 9 }, color: '#666' }
+    };
+    
+    if (type === 'environment') {
+        yConfig.min = -5;
+        yConfig.max = 100;
+        
+        if (hasPressure) {
+            y1Config.min = 700;
+            y1Config.max = 1000;
+            y1Config.ticks.callback = function(value) {
+                return value.toFixed(0);
+            };
+        } else {
+            y1Config.min = -5;
+            y1Config.max = 100;
+            y1Config.ticks.callback = function(value) {
+                return value.toFixed(0);
+            };
+            y1Config.title = { display: false };
+        }
+    }
+    
+    if (type === 'power') {
+        yConfig.min = 3.40;
+        yConfig.max = 4.25;
+        
+        if (hasCurrent) {
+            y1Config.min = 250;
+            y1Config.max = 800;
+            y1Config.ticks.callback = function(value) {
+                return value.toFixed(0);
+            };
+        } else {
+            y1Config.min = 3.40;
+            y1Config.max = 4.25;
+            y1Config.ticks.callback = function(value) {
+                return value.toFixed(2);
+            };
+            y1Config.title = { display: false };
+        }
+    }
+    
+    try {
+        telemetryChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels: labels, datasets: datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: { usePointStyle: true, padding: 15, font: { size: 11 }, color: '#333' }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(255,255,255,0.95)',
+                        titleColor: '#333',
+                        bodyColor: '#666',
+                        borderColor: 'rgba(0,0,0,0.1)',
+                        borderWidth: 1,
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.dataset.label || '';
+                                let value = context.parsed.y;
+                                if (value !== null && value !== undefined && !isNaN(value)) {
+                                    label += ': ' + value.toFixed(2);
+                                } else {
+                                    label += ': —';
+                                }
+                                return label;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(0,0,0,0.06)', drawBorder: true },
+                        ticks: { maxTicksLimit: 20, font: { size: 9 }, color: '#666' }
+                    },
+                    y: yConfig,
+                    y1: y1Config
+                }
+            }
+        });
+        
+        canvas.style.background = '#f0f2f5';
+        canvas.style.borderRadius = '8px';
+        canvas.style.border = '1px solid #e5e8ec';
+        
+    } catch (error) {
+        console.error('Chart creation error:', error);
+        container.innerHTML = '<div class="loading">⚠️ Error creating chart: ' + error.message + '</div>';
+    }
+}
+
+function updateTelemetryCards(records, type) {
+    if (type === 'environment') {
+        const last = records[records.length - 1] || {};
+        const tempValues = records.map(r => r.temperature).filter(v => v !== null && v !== undefined);
+        const humValues = records.map(r => r.humidity).filter(v => v !== null && v !== undefined);
+        const pressValues = records.map(r => r.pressure).filter(v => v !== null && v !== undefined);
+        
+        const card1 = document.getElementById('cardTemp').parentElement;
+        card1.querySelector('.card-label').textContent = '🌡️ Temperature';
+        document.getElementById('cardTemp').textContent = last.temperature !== null && last.temperature !== undefined ? 
+            last.temperature.toFixed(1) + '°C' : '--';
+        if (tempValues.length > 0) {
+            document.getElementById('cardTempMin').textContent = Math.min(...tempValues).toFixed(1) + '°C';
+            document.getElementById('cardTempMax').textContent = Math.max(...tempValues).toFixed(1) + '°C';
+        }
+        card1.querySelector('.card-range').style.display = 'flex';
+        
+        const card2 = document.getElementById('cardHum').parentElement;
+        card2.querySelector('.card-label').textContent = '💧 Humidity';
+        document.getElementById('cardHum').textContent = last.humidity !== null && last.humidity !== undefined ? 
+            last.humidity.toFixed(1) + '%' : '--';
+        if (humValues.length > 0) {
+            document.getElementById('cardHumMin').textContent = Math.min(...humValues).toFixed(1) + '%';
+            document.getElementById('cardHumMax').textContent = Math.max(...humValues).toFixed(1) + '%';
+        }
+        card2.querySelector('.card-range').style.display = 'flex';
+        
+        const card3 = document.getElementById('cardPress').parentElement;
+        card3.querySelector('.card-label').textContent = '📊 Pressure';
+        document.getElementById('cardPress').textContent = last.pressure !== null && last.pressure !== undefined ? 
+            last.pressure.toFixed(1) + ' hPa' : '--';
+        if (pressValues.length > 0) {
+            document.getElementById('cardPressMin').textContent = Math.min(...pressValues).toFixed(1) + ' hPa';
+            document.getElementById('cardPressMax').textContent = Math.max(...pressValues).toFixed(1) + ' hPa';
+        }
+        card3.querySelector('.card-range').style.display = 'flex';
+        
+    } else if (type === 'power') {
+        const last = records[records.length - 1] || {};
+        const voltValues = records.map(r => r.voltage).filter(v => v !== null && v !== undefined);
+        const currValues = records.map(r => r.current).filter(v => v !== null && v !== undefined);
+        
+        const card1 = document.getElementById('cardTemp').parentElement;
+        card1.querySelector('.card-label').textContent = '⚡ Voltage';
+        document.getElementById('cardTemp').textContent = last.voltage !== null && last.voltage !== undefined ? 
+            last.voltage.toFixed(3) + ' V' : '--';
+        if (voltValues.length > 0) {
+            document.getElementById('cardTempMin').textContent = Math.min(...voltValues).toFixed(3) + ' V';
+            document.getElementById('cardTempMax').textContent = Math.max(...voltValues).toFixed(3) + ' V';
+        }
+        card1.querySelector('.card-range').style.display = 'flex';
+        
+        const card2 = document.getElementById('cardHum').parentElement;
+        card2.querySelector('.card-label').textContent = '🔌 Current';
+        document.getElementById('cardHum').textContent = last.current !== null && last.current !== undefined ? 
+            last.current.toFixed(1) + ' mA' : '--';
+        if (currValues.length > 0) {
+            document.getElementById('cardHumMin').textContent = Math.min(...currValues).toFixed(1) + ' mA';
+            document.getElementById('cardHumMax').textContent = Math.max(...currValues).toFixed(1) + ' mA';
+        }
+        card2.querySelector('.card-range').style.display = 'flex';
+        
+        const card3 = document.getElementById('cardPress').parentElement;
+        card3.querySelector('.card-label').textContent = '⚡ Power';
+        const power = last.voltage !== null && last.voltage !== undefined && last.current !== null && last.current !== undefined ?
+            (last.voltage * last.current).toFixed(1) + ' mW' : '--';
+        document.getElementById('cardPress').textContent = power;
+        document.getElementById('cardPressMin').textContent = '--';
+        document.getElementById('cardPressMax').textContent = '--';
+        card3.querySelector('.card-range').style.display = 'none';
+    }
+}
+
+function closeTelemetryModal() {
+    const modal = document.getElementById('telemetryModal');
+    if (modal) {
+        modal.style.display = 'none';
+        modal.dataset.type = '';
+    }
+    if (telemetryChart) {
+        telemetryChart.destroy();
+        telemetryChart = null;
+    }
+    telemetryTimeRange = 60;
+}
+
+// ============================================================
+// УПРАВЛЕНИЕ КАМЕРОЙ
+// ============================================================
+
+async function startCameraStream() {
+    if (cameraActive) return;
+    cameraActive = true;
+    
+    console.log('[CAMERA] Starting stream...');
+    const img = document.getElementById('videoFeed');
+    if (img) {
+        img.src = '/video_feed?t=' + Date.now();
+        img.style.display = 'block';
+    }
+    
+    const status = document.getElementById('videoStatus');
+    if (status) {
+        status.textContent = '🔄 Starting...';
+        status.style.color = '#ff9800';
+    }
+}
+
+function stopCameraStream() {
+    if (!cameraActive) return;
+    cameraActive = false;
+    
+    console.log('[CAMERA] Stopping stream...');
+    const img = document.getElementById('videoFeed');
+    if (img) {
+        img.src = '';
+        img.style.display = 'none';
+    }
+    
+    const status = document.getElementById('videoStatus');
+    if (status) {
+        status.textContent = '⏸️ Paused';
+        status.style.color = '#888';
+    }
+}
+
+// ============================================================
+// ВИДЕО ФУНКЦИИ
+// ============================================================
+
+let currentVideoSettings = {};
+
+async function loadVideoSettings() {
+    try {
+        const response = await fetch('/api/camera/settings');
+        const data = await response.json();
+        
+        if (data.ok) {
+            currentVideoSettings = data.config;
+            
+            const resSelect = document.getElementById('videoResolution');
+            const fpsSelect = document.getElementById('videoFps');
+            const qualitySlider = document.getElementById('videoQuality');
+            const qualityLabel = document.getElementById('videoQualityLabel');
+            
+            if (resSelect) resSelect.value = data.config.resolution || '640x480';
+            if (fpsSelect) fpsSelect.value = data.config.fps || 12;
+            if (qualitySlider) {
+                qualitySlider.value = data.config.quality || 75;
+                if (qualityLabel) qualityLabel.textContent = (data.config.quality || 75) + '%';
+            }
+            
+            const liveInfo = document.getElementById('videoLiveInfo');
+            if (liveInfo) {
+                liveInfo.textContent = `Live: ${data.config.resolution || '640×480'} @ ${data.config.fps || 12} FPS`;
+            }
+            
+            const statusEl = document.getElementById('videoStatus');
+            if (statusEl) {
+                statusEl.textContent = cameraActive ? '🟢 Online' : '⏸️ Paused';
+                statusEl.style.color = cameraActive ? '#4caf50' : '#888';
+            }
+            
+            const controls = document.getElementById('videoControls');
+            if (controls) {
+                controls.style.display = 'block';
+                controls.style.visibility = 'visible';
+                controls.style.opacity = '1';
+            }
+        }
+    } catch (error) {
+        console.error('Error loading video settings:', error);
+    }
+}
+
+async function updateVideoSettings() {
+    const resolution = document.getElementById('videoResolution').value;
+    const fps = parseInt(document.getElementById('videoFps').value);
+    const quality = parseInt(document.getElementById('videoQuality').value);
+    
+    const qualityLabel = document.getElementById('videoQualityLabel');
+    const liveInfo = document.getElementById('videoLiveInfo');
+    
+    if (qualityLabel) qualityLabel.textContent = quality + '%';
+    if (liveInfo) liveInfo.textContent = `Live: ${resolution.replace('x', '×')} @ ${fps} FPS`;
+    
+    try {
+        const response = await fetch('/api/camera/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ resolution, fps, quality })
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok) {
+            showToast('✅ Video settings updated', 'success');
+            if (cameraActive) {
+                refreshVideoFeed();
+            }
+        } else {
+            showToast('❌ Failed: ' + (data.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        console.error('Error updating video settings:', error);
+        showToast('❌ Network error', 'error');
+    }
+}
+
+async function takeScreenshot(source = 'video') {
+    const btn = document.querySelector('.screenshot-btn');
+    const originalText = btn.textContent;
+    
+    try {
+        btn.disabled = true;
+        btn.textContent = '⏳ Capturing...';
+        
+        const response = await fetch('/api/camera/screenshot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source: source })
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok) {
+            showToast(`✅ Screenshot saved: ${data.filename} (${(data.size/1024).toFixed(1)} KB)`, 'success');
+            setTimeout(() => showScreenshots(), 500);
+        } else {
+            showToast('❌ Failed: ' + (data.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        console.error('Error taking screenshot:', error);
+        showToast('❌ Network error', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+function stopVideoFeed() {
+    const img = document.getElementById('videoFeed');
+    if (img) {
+        img.removeAttribute('src');
+    }
+}
+
+function refreshVideoFeed() {
+    const img = document.getElementById('videoFeed');
+    const status = document.getElementById('videoStatus');
+
+    if (status) {
+        status.textContent = '🔄 Refreshing...';
+        status.style.color = '#ff9800';
+    }
+
+    if (img) {
+        img.src = '/video_feed?t=' + Date.now();
+
+        img.onload = function() {
+            if (status) {
+                status.textContent = '🟢 Online';
+                status.style.color = '#4caf50';
+            }
+        };
+
+        img.onerror = function() {
+            if (status) {
+                status.textContent = '🔴 Camera unavailable';
+                status.style.color = '#c62828';
+            }
+        };
+    }
+}
+
+// ============================================================
+// ФУНКЦИИ ФОТО
+// ============================================================
+
+async function loadPhotoSettings() {
+    try {
+        const response = await fetch('/api/photo/settings');
+        const data = await response.json();
+        
+        if (data.ok) {
+            const resSelect = document.getElementById('photoResolution');
+            const qualitySlider = document.getElementById('photoQuality');
+            const qualityLabel = document.getElementById('photoQualityLabel');
+            
+            if (resSelect) resSelect.value = data.config.resolution || '2592x1944';
+            if (qualitySlider) {
+                qualitySlider.value = data.config.quality || 95;
+                if (qualityLabel) qualityLabel.textContent = (data.config.quality || 95) + '%';
+            }
+            
+            const photoInfo = document.getElementById('photoInfo');
+            if (photoInfo) {
+                photoInfo.textContent = `Resolution: ${data.config.resolution || '2592×1944'} (${data.config.quality || 95}%)`;
+            }
+        }
+    } catch (error) {
+        console.error('Error loading photo settings:', error);
+    }
+}
+
+async function capturePhotoPreview() {
+    const display = document.getElementById('photoDisplay');
+    const placeholder = document.getElementById('photoPlaceholder');
+    const status = document.getElementById('photoStatus');
+    const saveBtn = document.getElementById('photoSaveBtn');
+    
+    try {
+        if (status) status.textContent = '⏳ Capturing...';
+        if (saveBtn) saveBtn.disabled = true;
+        
+        console.log('[PHOTO] Sending capture request...');
+        const response = await fetch('/api/photo/capture', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const data = await response.json();
+        console.log('[PHOTO] Response:', data);
+        
+        if (data.ok && data.image_data) {
+            if (display) {
+                display.src = 'data:image/jpeg;base64,' + data.image_data;
+                display.style.display = 'block';
+                console.log('[PHOTO] Image displayed');
+            }
+            if (placeholder) placeholder.style.display = 'none';
+            if (status) status.textContent = '📷 Preview ready';
+            if (saveBtn) saveBtn.disabled = false;
+        } else {
+            console.error('[PHOTO] Failed:', data.error);
+            if (status) status.textContent = '❌ Failed: ' + (data.error || 'Unknown error');
+            if (saveBtn) saveBtn.disabled = true;
+        }
+    } catch (error) {
+        console.error('[PHOTO] Error:', error);
+        if (status) status.textContent = '❌ Network error';
+        if (saveBtn) saveBtn.disabled = true;
+    }
+}
+
+async function savePhoto() {
+    const display = document.getElementById('photoDisplay');
+    const status = document.getElementById('photoStatus');
+    const saveBtn = document.getElementById('photoSaveBtn');
+    
+    if (!display || display.style.display === 'none') {
+        showToast('❌ No photo to save. Capture first!', 'error');
+        return;
+    }
+    
+    try {
+        if (status) status.textContent = '⏳ Saving...';
+        if (saveBtn) saveBtn.disabled = true;
+        
+        const response = await fetch('/api/photo/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok) {
+            if (status) status.textContent = '✅ Saved!';
+            showToast(`✅ Photo saved: ${data.filename} (${(data.size/1024).toFixed(1)} KB)`, 'success');
+            setTimeout(() => {
+                if (status) status.textContent = '📷 Preview ready';
+                if (saveBtn) saveBtn.disabled = false;
+            }, 2000);
+        } else {
+            if (status) status.textContent = '❌ Save failed';
+            showToast('❌ Failed to save: ' + (data.error || 'Unknown error'), 'error');
+            if (saveBtn) saveBtn.disabled = false;
+        }
+    } catch (error) {
+        console.error('Error saving photo:', error);
+        if (status) status.textContent = '❌ Network error';
+        if (saveBtn) saveBtn.disabled = false;
+        showToast('❌ Network error', 'error');
+    }
+}
+
+function refreshPhoto() {
+    const status = document.getElementById('photoStatus');
+    if (status) status.textContent = '⏳ Capturing...';
+    capturePhotoPreview();
+}
+
+// ===== ГАЛЕРЕЯ СКРИНШОТОВ =====
+async function showScreenshots() {
+    const modal = document.getElementById('screenshotsModal');
+    const grid = document.getElementById('screenshotsGrid');
+    
+    if (!modal || !grid) return;
+    
+    modal.style.display = 'flex';
+    grid.innerHTML = '<div class="loading">🖼️ Loading screenshots...</div>';
+    
+    try {
+        const response = await fetch('/api/camera/screenshots');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        
+        if (data.screenshots && data.screenshots.length > 0) {
+            grid.innerHTML = `
+                <div class="gallery-toolbar">
+                    <button class="gallery-delete-all-btn" onclick="deleteAllScreenshots()">
+                        🗑️ Delete All
+                    </button>
+                    <span class="gallery-count">${data.screenshots.length} images</span>
+                </div>
+                ${data.screenshots.map(item => `
+                    <div class="screenshot-item" id="screenshot-${item.filename}">
+                        <img src="${item.url}" alt="${item.filename}" loading="lazy" 
+                             onclick="window.open('${item.url}', '_blank')"
+                             onerror="this.style.display='none'; this.parentElement.querySelector('.screenshot-error').style.display='block'">
+                        <div class="screenshot-error" style="display:none;padding:20px;text-align:center;color:#999;">
+                            ⚠️ Cannot load image
+                        </div>
+                        <div class="screenshot-info">
+                            <span class="screenshot-time">${item.modified}</span>
+                            <div class="screenshot-actions">
+                                <span class="screenshot-size">${(item.size/1024).toFixed(1)} KB</span>
+                                <button class="screenshot-delete-btn" onclick="deleteScreenshot('${item.filename}', event)">
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            `;
+        } else {
+            grid.innerHTML = '<div class="loading">📭 No screenshots yet</div>';
+        }
+    } catch (error) {
+        console.error('Error loading screenshots:', error);
+        grid.innerHTML = `
+            <div class="loading" style="color:#c62828;">
+                ⚠️ Network error loading screenshots<br>
+                <small style="font-size:12px;color:#999;">${error.message}</small>
+            </div>
+        `;
+    }
+}
+
+async function deleteScreenshot(filename, event) {
+    if (event) {
+        event.stopPropagation();
+    }
+    
+    if (!confirm(`Delete screenshot "${filename}"?`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/camera/screenshot/${filename}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            showToast('✅ Screenshot deleted', 'success');
+            const item = document.getElementById(`screenshot-${filename}`);
+            if (item) {
+                item.style.transition = 'opacity 0.3s';
+                item.style.opacity = '0';
+                setTimeout(() => {
+                    item.remove();
+                    const count = document.querySelector('.gallery-count');
+                    if (count) {
+                        const num = parseInt(count.textContent) - 1;
+                        count.textContent = num + ' images';
+                    }
+                    const remaining = document.querySelectorAll('.screenshot-item');
+                    if (remaining.length === 0) {
+                        const grid = document.getElementById('screenshotsGrid');
+                        if (grid) {
+                            grid.innerHTML = '<div class="loading">📭 No screenshots yet</div>';
+                        }
+                    }
+                }, 300);
+            }
+        } else {
+            const data = await response.json();
+            showToast('❌ Failed to delete: ' + (data.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        console.error('Error deleting screenshot:', error);
+        showToast('❌ Network error', 'error');
+    }
+}
+
+async function deleteAllScreenshots() {
+    if (!confirm('⚠️ Delete ALL screenshots?\n\nThis action cannot be undone!')) {
+        return;
+    }
+    
+    if (!confirm('Are you sure? All screenshots will be permanently deleted!')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/camera/screenshots', {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            showToast('✅ All screenshots deleted', 'success');
+            const grid = document.getElementById('screenshotsGrid');
+            if (grid) {
+                grid.innerHTML = '<div class="loading">📭 No screenshots yet</div>';
+            }
+        } else {
+            const data = await response.json();
+            showToast('❌ Failed: ' + (data.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        console.error('Error deleting all screenshots:', error);
+        showToast('❌ Network error', 'error');
+    }
+}
+
+function closeScreenshots() {
+    const modal = document.getElementById('screenshotsModal');
+    if (modal) modal.style.display = 'none';
+}
+
+// ===== ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК =====
+function switchMainTab(tab) {
+    currentMainTab = tab;
+
+    document.querySelectorAll('.main-content-tab').forEach(btn => {
+        btn.classList.toggle(
+            'active',
+            btn.id === 'mainTab' + tab.charAt(0).toUpperCase() + tab.slice(1)
+        );
+    });
+
+    const messagesView = document.getElementById('messagesView');
+    const videoView = document.getElementById('videoView');
+    const photoView = document.getElementById('photoView');
+    const chatHeader = document.getElementById('chatHeader');
+    const chatListContainer = document.getElementById('chatListContainer');
+
+    if (messagesView) messagesView.style.display = 'none';
+    if (videoView) videoView.style.display = 'none';
+    if (photoView) photoView.style.display = 'none';
+
+    if (tab !== 'video') {
+        stopVideoFeed();
+    }
+
+    if (tab === 'chats') {
+        if (chatHeader) chatHeader.style.display = 'flex';
+
+        if (currentChatId) {
+            if (chatListContainer) chatListContainer.style.display = 'none';
+            if (messagesView) messagesView.style.display = 'flex';
+            startMessagePolling(currentChatId);
+        } else {
+            if (chatListContainer) chatListContainer.style.display = 'block';
+            if (messagesView) messagesView.style.display = 'none';
+            stopMessagePolling();
+        }
+
+        loadChatList();
+        loadMessages();
+
+    } else if (tab === 'video') {
+        if (chatHeader) chatHeader.style.display = 'none';
+        if (chatListContainer) chatListContainer.style.display = 'none';
+        if (messagesView) messagesView.style.display = 'none';
+        if (videoView) videoView.style.display = 'flex';
+
+        stopMessagePolling();
+        setTimeout(() => loadVideoSettings(), 100);
+        setTimeout(() => refreshVideoFeed(), 200);
+
+    } else if (tab === 'photo') {
+        if (chatHeader) chatHeader.style.display = 'none';
+        if (chatListContainer) chatListContainer.style.display = 'none';
+        if (messagesView) messagesView.style.display = 'none';
+        if (photoView) photoView.style.display = 'flex';
+
+        stopMessagePolling();
+        setTimeout(() => loadPhotoSettings(), 100);
+        setTimeout(() => capturePhotoPreview(), 300);
+    }
+}
+
+// ===== INIT =====
 async function init() {
     const savedShowIgnored = localStorage.getItem('mesh_show_ignored');
     if (savedShowIgnored === 'true') {
@@ -1854,16 +2876,38 @@ async function init() {
         if (checkbox) checkbox.checked = true;
     }
     
+    await loadTelemetry();
+    
+    setTimeout(() => {
+        console.log('[TELEMETRY] Forced update after 2s');
+        updateTelemetryUI();
+    }, 2000);
+    
+    setTimeout(() => {
+        console.log('[TELEMETRY] Forced update after 5s');
+        updateTelemetryUI();
+    }, 5000);
+    
     await loadBaseStatus();
     await loadSensors();
     await loadMessages();
     await loadChatList();
-    showChatList();
+    switchMainTab('chats');
 
-    setInterval(loadMessages, 10000);
-    setInterval(loadChatList, 5000);
-    setInterval(loadBaseStatus, 30000);
-    setInterval(loadSensors, 10000);
+    setInterval(async () => {
+        try {
+            await Promise.all([
+                loadMessages(),
+                loadChatList(),
+                loadSensors(),
+                loadBaseStatus()
+            ]);
+        } catch (e) {
+            console.error('Polling error:', e);
+        }
+    }, 10000);
+    
+    setInterval(loadTelemetry, 30000);
 
     const input = document.getElementById('messageInput');
     if (input) input.focus();

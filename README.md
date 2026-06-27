@@ -28,6 +28,7 @@ A modern web interface for Meshtastic nodes designed for Raspberry Pi Zero 2W an
 - Persistent JSON-based storage
 - Systemd service support
 - Optimized for low-power hardware
+- Live video streaming with MJPEG support
 
 ---
 

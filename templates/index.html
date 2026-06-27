@@ -11,7 +11,9 @@
 <div class="app-container">
     <!-- Header -->
     <div class="header">
-        <h1><span>📡</span> Meshtastic Mesh</h1>
+        <h1 id="appTitle" style="cursor: pointer;" title="Click to refresh page (Ctrl+F5)">
+            <span>📡</span> Meshtastic Mesh
+        </h1>
         <div class="header-actions">
             <button class="header-btn" id="toggleSidebarBtn" title="Toggle nodes sidebar">
                 <svg viewBox="0 0 24 24" width="20" height="20">
@@ -31,6 +33,19 @@
     <div class="main-layout">
         <!-- Chat Area -->
         <div class="chat-area">
+            <!-- Main Tabs -->
+            <div class="main-content-tabs">
+                <button class="main-content-tab active" id="mainTabChats" onclick="switchMainTab('chats')">
+                    💬 Chats
+                </button>
+                <button class="main-content-tab" id="mainTabVideo" onclick="switchMainTab('video')">
+                    🎥 Video
+                </button>
+                <button class="main-content-tab" id="mainTabPhoto" onclick="switchMainTab('photo')">
+                    📸 Photo
+                </button>
+            </div>
+
             <!-- Chat Header -->
             <div class="chat-header" id="chatHeader">
                 <button class="back-btn" id="backToChatsBtn" style="display: none;" onclick="showChatList()">
@@ -41,9 +56,6 @@
                     <span class="chat-subtitle" id="chatSubtitle"></span>
                 </div>
                 <div class="chat-header-actions">
-                    <button class="chat-actions-btn" id="restoreDeletedDmBtn" onclick="restoreDeletedDm()" title="Restore deleted DM chats">
-                        🔄
-                    </button>
                     <button class="chat-actions-btn" id="deleteAllDmHeaderBtn" onclick="deleteAllDmChats()" title="Delete all DM chats">
                         🗑️
                     </button>
@@ -70,11 +82,7 @@
                 <div class="input-area">
                     <form class="input-form" id="sendForm">
                         <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
-                        
-                        <button type="button" id="emojiBtn" class="emoji-btn" title="Insert emoji">
-                            😊
-                        </button>
-                        
+                        <button type="button" id="emojiBtn" class="emoji-btn" title="Insert emoji">😊</button>
                         <button type="submit" id="sendBtn">Send</button>
                     </form>
                     
@@ -96,21 +104,146 @@
                     </div>
                 </div>
             </div>
+
+            <!-- ===== VIDEO VIEW ===== -->
+            <div class="video-view" id="videoView" style="display: none;">
+                <div class="video-panel">
+                    <div class="video-header">
+                        <div>
+                            <div class="video-title">🎥 Live Video</div>
+                            <div class="video-subtitle">Streaming from Raspberry Pi</div>
+                        </div>
+                        <button class="video-refresh-btn" onclick="refreshVideoFeed()">🔄 Refresh</button>
+                    </div>
+
+                    <div class="video-frame-wrap">
+                        <img id="videoFeed" class="camera-stream" alt="Camera stream">
+                    </div>
+
+                    <div class="video-info-bar">
+                        <span id="videoStatus">⏸️ Paused</span>
+                        <span id="videoLiveInfo">Live: 640×480 @ 12 FPS</span>
+                    </div>
+
+                    <div class="video-controls" id="videoControls">
+                        <div class="video-controls-grid">
+                            <div class="control-group">
+                                <label>Resolution</label>
+                                <select id="videoResolution" onchange="updateVideoSettings()">
+                                    <option value="320x240">320×240</option>
+                                    <option value="480x320">480×320</option>
+                                    <option value="640x480" selected>640×480</option>
+                                    <option value="800x600">800×600</option>
+                                    <option value="1024x768">1024×768</option>
+                                    <option value="1280x720">1280×720 (HD)</option>
+                                    <option value="1280x960">1280×960</option>
+                                    <option value="1920x1080">1920×1080 (FHD)</option>
+                                </select>
+                            </div>
+                            
+                            <div class="control-group">
+                                <label>FPS</label>
+                                <select id="videoFps" onchange="updateVideoSettings()">
+                                    <option value="5">5</option>
+                                    <option value="8">8</option>
+                                    <option value="10">10</option>
+                                    <option value="12" selected>12</option>
+                                    <option value="15">15</option>
+                                    <option value="20">20</option>
+                                    <option value="24">24</option>
+                                    <option value="30">30</option>
+                                </select>
+                            </div>
+                            
+                            <div class="control-group">
+                                <label>Quality</label>
+                                <div class="quality-control">
+                                    <input type="range" id="videoQuality" min="40" max="90" value="75" 
+                                           oninput="updateVideoSettings()">
+                                    <span id="videoQualityLabel">75%</span>
+                                </div>
+                            </div>
+                            
+                            <div class="control-group">
+                                <button class="screenshot-btn" onclick="takeScreenshot('video')">📸 Screenshot</button>
+                                <button class="screenshots-btn" onclick="showScreenshots()">🖼️ Gallery</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== PHOTO VIEW ===== -->
+            <div class="photo-view" id="photoView" style="display: none;">
+                <div class="photo-panel">
+                    <div class="photo-header">
+                        <div>
+                            <div class="photo-title">📸 Photo Mode</div>
+                            <div class="photo-subtitle">Preview and capture high-quality images</div>
+                        </div>
+                        <button class="video-refresh-btn" onclick="refreshPhoto()">🔄 Refresh</button>
+                    </div>
+
+                    <div class="photo-frame-wrap">
+                        <img id="photoDisplay" class="photo-display" src="" alt="Photo preview" style="display:none;">
+                        <div class="photo-placeholder" id="photoPlaceholder">
+                            <span class="photo-placeholder-icon">📸</span>
+                            <span class="photo-placeholder-text">No photo captured yet</span>
+                            <span class="photo-placeholder-hint">Click "Refresh" to capture a preview</span>
+                        </div>
+                    </div>
+
+                    <div class="photo-info-bar">
+                        <span id="photoStatus">📷 Ready</span>
+                        <span id="photoInfo">Resolution: 2592×1944 (5MP)</span>
+                    </div>
+
+                    <div class="photo-controls">
+                        <div class="photo-controls-grid">
+                            <div class="control-group">
+                                <label>Resolution</label>
+                                <select id="photoResolution" onchange="updatePhotoSettings()">
+                                    <option value="2592x1944" selected>2592×1944 (5MP)</option>
+                                    <option value="1920x1080">1920×1080 (FHD)</option>
+                                    <option value="1280x720">1280×720 (HD)</option>
+                                    <option value="640x480">640×480</option>
+                                </select>
+                            </div>
+                            
+                            <div class="control-group">
+                                <label>Quality</label>
+                                <div class="quality-control">
+                                    <input type="range" id="photoQuality" min="70" max="100" value="95" 
+                                           oninput="updatePhotoSettings()">
+                                    <span id="photoQualityLabel">95%</span>
+                                </div>
+                            </div>
+                            
+                            <div class="control-group">
+                                <button class="photo-refresh-btn" onclick="refreshPhoto()">📷 Refresh</button>
+                            </div>
+                            
+                            <div class="control-group">
+                                <button class="photo-save-btn" id="photoSaveBtn" onclick="savePhoto()">💾 Save</button>
+                                <button class="screenshots-btn" onclick="showScreenshots()">🖼️ Gallery</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Sidebar -->
         <div class="sidebar" id="sidebar">
             <!-- Base Card -->
             <div class="base-card" id="baseCard">
-                <div class="base-card-title">📡 Flint Base</div>
-                <div class="base-card-line">Loading...</div>
+                <div class="base-card-title">📡 <span id="baseNodeName">Loading...</span></div>
+                <div class="base-status-line" id="baseStatusLine">Loading...</div>
             </div>
-
+            
             <!-- Sensors Card -->
             <div class="sensors-card" id="sensorsCard" style="display: none;">
-                <div class="sensors-title">
-                    <span>🌡️</span> Environment Sensors
-                </div>
+                <div class="sensors-title"><span>🌡️</span> Environment Sensors</div>
                 <div class="sensors-grid">
                     <div class="sensor-item">
                         <div class="sensor-label">Temperature</div>
@@ -153,17 +286,49 @@
                 <div class="sensor-update" id="sensorUpdate">Last update: --</div>
             </div>
 
-            <!-- ===== ВКЛАДКИ ===== -->
-            <div class="sidebar-tabs">
-                <button class="sidebar-tab active" data-tab="nodes" onclick="switchSidebarTab('nodes')">
-                    📡 Nodes
-                </button>
-                <button class="sidebar-tab" data-tab="tools" onclick="switchSidebarTab('tools')">
-                    🔧 Tools
-                </button>
+            <!-- Telemetry -->
+            <div class="telemetry-section" id="telemetrySection">
+                <div class="telemetry-header">
+                    <span class="telemetry-title">📊 Sensors</span>
+                    <span class="telemetry-status" id="telemetryStatus">⚪ No data yet</span>
+                </div>
+                <div class="telemetry-buttons">
+                    <button class="telemetry-btn environment" onclick="openTelemetryModal('environment')">
+                        <div class="telemetry-top">
+                            <span class="telemetry-icon">🌡️</span>
+                            <span class="telemetry-label">Environment</span>
+                            <span class="telemetry-update" id="telemetryEnvUpdate"></span>
+                        </div>
+                        <span class="telemetry-value" id="telemetryEnvValue">—</span>
+                    </button>
+                    <button class="telemetry-btn power" onclick="openTelemetryModal('power')">
+                        <div class="telemetry-top">
+                            <span class="telemetry-icon">⚡</span>
+                            <span class="telemetry-label">Power</span>
+                            <span class="telemetry-update" id="telemetryPowerUpdate"></span>
+                        </div>
+                        <span class="telemetry-value" id="telemetryPowerValue">—</span>
+                    </button>
+                </div>
+                <div class="telemetry-config-row">
+                    <span>📊 Interval:</span>
+                    <select id="telemetryInterval" onchange="updateTelemetryConfig()">
+                        <option value="300">5 min</option>
+                        <option value="900" selected>15 min</option>
+                        <option value="1800">30 min</option>
+                        <option value="3600">1 hour</option>
+                    </select>
+                    <button class="telemetry-refresh-btn" id="telemetryRefreshBtn" onclick="refreshTelemetry()">🔄 Refresh now</button>
+                </div>
             </div>
 
-            <!-- ===== ВКЛАДКА NODES ===== -->
+            <!-- Sidebar Tabs -->
+            <div class="sidebar-tabs">
+                <button class="sidebar-tab active" data-tab="nodes" onclick="switchSidebarTab('nodes')">📡 Nodes</button>
+                <button class="sidebar-tab" data-tab="tools" onclick="switchSidebarTab('tools')">🔧 Tools</button>
+            </div>
+
+            <!-- Nodes Tab -->
             <div class="sidebar-tab-content active" id="tab-nodes">
                 <div class="nodes-section">
                     <div class="nodes-controls">
@@ -171,49 +336,32 @@
                             <input type="text" id="nodeSearchInput" class="search-input-wide" placeholder="🔍 Search nodes...">
                             <button type="button" id="clearSearchBtn" class="clear-search-btn" onclick="clearNodeSearch()">✕</button>
                         </div>
-                        
                         <div class="nodes-actions-row">
-                            <button id="rescanNodesBtn" class="rescan-nodes-btn" onclick="rescanNodes()" style="flex:1;">
-                                📡 Rescan Network
-                            </button>
+                            <button id="rescanNodesBtn" class="rescan-nodes-btn" onclick="rescanNodes()" style="flex:1;">📡 Rescan Network</button>
                         </div>
                     </div>
                     <div id="nodeDetails"></div>
-                    <div class="nodes-scroll">
-                        <div id="nodesList"></div>
-                    </div>
+                    <div class="nodes-scroll"><div id="nodesList"></div></div>
                 </div>
             </div>
 
-            <!-- ===== ВКЛАДКА TOOLS ===== -->
+            <!-- Tools Tab -->
             <div class="sidebar-tab-content" id="tab-tools" style="display:none;">
                 <div class="nodes-tools">
                     <div class="nodes-tools-title">🔧 Management Tools</div>
-                    
                     <div class="nodes-tools-grid">
-                        <button class="nodes-tool-btn export" onclick="showExportOptions()">
-                            📤 Export
-                        </button>
-                        <button class="nodes-tool-btn import" onclick="showImportOptions()">
-                            📥 Import
-                        </button>
-                        <button class="nodes-tool-btn merge" onclick="mergeDuplicates()">
-                            🔄 Merge Duplicates
-                        </button>
-                        <button class="nodes-tool-btn show" onclick="toggleShowDuplicates()">
-                            📋 Show Duplicates
-                        </button>
-                        <button class="nodes-tool-btn cleanup" onclick="cleanupAllNodes()" style="grid-column: span 2;">
-                            🗑️ Cleanup All
-                        </button>
+                        <button class="nodes-tool-btn export" onclick="showExportOptions()">📤 Export</button>
+                        <button class="nodes-tool-btn import" onclick="showImportOptions()">📥 Import</button>
+                        <button class="nodes-tool-btn merge" onclick="mergeDuplicates()">🔄 Merge Duplicates</button>
+                        <button class="nodes-tool-btn show" onclick="toggleShowDuplicates()">📋 Show Duplicates</button>
+                        <button class="nodes-tool-btn cleanup" onclick="cleanupAllNodes()" style="grid-column: span 2;">🗑️ Cleanup All</button>
                     </div>
                     
-                    <!-- Меню выбора формата -->
                     <div id="exportOptionsMenu" class="format-menu" style="display:none;">
                         <div class="format-menu-content">
                             <span>Export as:</span>
-                            <button class="format-menu-btn" onclick="exportNodesCSV(); closeFormatMenus();">📄 CSV (Android)</button>
-                            <button class="format-menu-btn" onclick="exportNodesJSON(); closeFormatMenus();">📄 JSON (Backup)</button>
+                            <button class="format-menu-btn" onclick="exportNodesCSV(); closeFormatMenus();">📄 CSV</button>
+                            <button class="format-menu-btn" onclick="exportNodesJSON(); closeFormatMenus();">📄 JSON</button>
                             <button class="format-menu-btn cancel" onclick="closeFormatMenus();">Cancel</button>
                         </div>
                     </div>
@@ -221,8 +369,8 @@
                     <div id="importOptionsMenu" class="format-menu" style="display:none;">
                         <div class="format-menu-content">
                             <span>Import from:</span>
-                            <button class="format-menu-btn" onclick="document.getElementById('importFileCSV').click(); closeFormatMenus();">📄 CSV (Android)</button>
-                            <button class="format-menu-btn" onclick="document.getElementById('importFileJSON').click(); closeFormatMenus();">📄 JSON (Backup)</button>
+                            <button class="format-menu-btn" onclick="document.getElementById('importFileCSV').click(); closeFormatMenus();">📄 CSV</button>
+                            <button class="format-menu-btn" onclick="document.getElementById('importFileJSON').click(); closeFormatMenus();">📄 JSON</button>
                             <button class="format-menu-btn cancel" onclick="closeFormatMenus();">Cancel</button>
                         </div>
                     </div>
@@ -230,7 +378,6 @@
                     <input type="file" id="importFileCSV" accept=".csv" style="display:none;" onchange="importNodesCSV(event)">
                     <input type="file" id="importFileJSON" accept=".json" style="display:none;" onchange="importNodesJSON(event)">
                     
-                    <!-- Фильтры -->
                     <div class="nodes-filter-row" style="margin-top:8px; padding-top:8px; border-top:1px solid #f0f0f0;">
                         <label class="toggle-label">
                             <input type="checkbox" id="showFavoritesToggle" onchange="toggleShowFavorites()">
@@ -260,7 +407,7 @@
     </div>
 </div>
 
-<!-- Chat Actions Modal -->
+<!-- Modals -->
 <div class="modal-overlay" id="chatActionsModal" style="display: none;" onclick="closeChatActions()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
@@ -268,17 +415,12 @@
             <button class="modal-close" onclick="closeChatActions()">✕</button>
         </div>
         <div class="modal-body">
-            <button class="modal-action-btn danger" id="deleteChatBtn" onclick="deleteCurrentChat()">
-                🗑️ Delete Chat
-            </button>
-            <button class="modal-action-btn" id="clearChatBtn" onclick="clearCurrentChat()" style="margin-top: 8px;">
-                🧹 Clear Messages
-            </button>
+            <button class="modal-action-btn danger" id="deleteChatBtn" onclick="deleteCurrentChat()">🗑️ Delete Chat</button>
+            <button class="modal-action-btn" id="clearChatBtn" onclick="clearCurrentChat()" style="margin-top: 8px;">🧹 Clear Messages</button>
         </div>
     </div>
 </div>
 
-<!-- Confirm Delete Modal -->
 <div class="modal-overlay" id="confirmDeleteModal" style="display: none;" onclick="closeConfirmDelete()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
@@ -295,7 +437,6 @@
     </div>
 </div>
 
-<!-- Confirm Clear Modal -->
 <div class="modal-overlay" id="confirmClearModal" style="display: none;" onclick="closeConfirmClear()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
@@ -312,7 +453,6 @@
     </div>
 </div>
 
-<!-- Confirm Delete All DM Modal -->
 <div class="modal-overlay" id="confirmDeleteAllDmModal" style="display: none;" onclick="closeDeleteAllDmModal()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
@@ -329,6 +469,70 @@
     </div>
 </div>
 
+<div class="modal-overlay telemetry-modal" id="telemetryModal" style="display: none;" onclick="closeTelemetryModal()">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span id="telemetryModalTitle">📊 Telemetry</span>
+            <button class="modal-close" onclick="closeTelemetryModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="telemetry-cards" id="telemetryCards">
+                <div class="telemetry-card">
+                    <div class="card-label">🌡️ Temperature</div>
+                    <div class="card-value" id="cardTemp">--</div>
+                    <div class="card-range">
+                        <span class="range-min" id="cardTempMin">--</span>
+                        <span class="range-sep">—</span>
+                        <span class="range-max" id="cardTempMax">--</span>
+                    </div>
+                </div>
+                <div class="telemetry-card">
+                    <div class="card-label">💧 Humidity</div>
+                    <div class="card-value" id="cardHum">--</div>
+                    <div class="card-range">
+                        <span class="range-min" id="cardHumMin">--</span>
+                        <span class="range-sep">—</span>
+                        <span class="range-max" id="cardHumMax">--</span>
+                    </div>
+                </div>
+                <div class="telemetry-card">
+                    <div class="card-label">📊 Pressure</div>
+                    <div class="card-value" id="cardPress">--</div>
+                    <div class="card-range">
+                        <span class="range-min" id="cardPressMin">--</span>
+                        <span class="range-sep">—</span>
+                        <span class="range-max" id="cardPressMax">--</span>
+                    </div>
+                </div>
+            </div>
+            <div class="telemetry-chart-container" id="telemetryChartContainer"><div class="loading">Loading...</div></div>
+            <div class="telemetry-footer" id="telemetryFooter">
+                <div class="telemetry-time-controls">
+                    <button class="time-btn active" data-range="60" onclick="setTelemetryRange(60)">1h</button>
+                    <button class="time-btn" data-range="720" onclick="setTelemetryRange(720)">12h</button>
+                    <button class="time-btn" data-range="1440" onclick="setTelemetryRange(1440)">24h</button>
+                    <button class="time-btn" data-range="10080" onclick="setTelemetryRange(10080)">7d</button>
+                    <button class="time-btn" data-range="43200" onclick="setTelemetryRange(43200)">30d</button>
+                </div>
+                <span class="telemetry-records-count" id="telemetryRecordsCount">📊 0 records</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="screenshotsModal" style="display: none;" onclick="closeScreenshots()">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span>🖼️ Screenshots Gallery</span>
+            <button class="modal-close" onclick="closeScreenshots()">✕</button>
+        </div>
+        <div class="modal-body" id="screenshotsGrid">
+            <div class="loading">Loading screenshots...</div>
+        </div>
+    </div>
+</div>
+
+<script src="/static/chart.umd.min.js"></script>
 <script src="/static/chat.js"></script>
 </body>
 </html>

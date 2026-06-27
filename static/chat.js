@@ -1,10 +1,13 @@
+// ============================================================
+// ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
+// ============================================================
 let currentChatId = null;
 let currentChatName = null;
 let currentChatType = null;
 let lastMessagesSignature = '';
 let nodeSearchTerm = '';
 let directMessageTarget = null;
-let chatListCache = [];
+let chatListCache = [];              // <-- ЭТО ОБЯЗАТЕЛЬНО!
 let messagePollInterval = null;
 let showIgnored = false;
 let showFavorites = false;
@@ -14,10 +17,10 @@ let clearTargetChatId = null;
 let totalUnreadCount = 0;
 let showDuplicatesOnly = false;
 let currentMainTab = 'chats';
-let currentPhotoData = null;
 let cameraActive = false;
+let isInitialized = false;
 
-// ===== ТЕЛЕМЕТРИЯ =====
+// ===== TELEMETRY =====
 let telemetryData = {
     temperature: null,
     humidity: null,
@@ -33,15 +36,23 @@ let telemetryUpdateInterval = null;
 let telemetryTimeRange = 60;
 let telemetryFullHistory = [];
 
-// ===== КЕШ СООБЩЕНИЙ =====
+// ===== PHOTO =====
+let photoPreviewResolution = '640x480';
+let photoSaveResolution = '2592x1944';
+let currentPhotoQuality = 85;
+let currentPhotoData = null;
+
+// ===== MESSAGE CACHE =====
 let messageCache = {};
 let currentLoadRequest = null;
 const CACHE_TTL = 30000;
 
-// ===== ХРАНЕНИЕ СИГНАТУР ДЛЯ ОПТИМИЗАЦИИ РЕНДЕРИНГА =====
+// ===== RENDER SIGNATURES =====
 let lastRenderedSignature = {};
 
-// ===== TOAST ФУНКЦИЯ =====
+// ============================================================
+// TOAST FUNCTION
+// ============================================================
 function showToast(message, type = 'info') {
     const oldToast = document.getElementById('toast');
     if (oldToast) oldToast.remove();
@@ -60,7 +71,9 @@ function showToast(message, type = 'info') {
     }, 3000);
 }
 
-// ===== ПРИНУДИТЕЛЬНАЯ ПЕРЕЗАГРУЗКА ПО КЛИКУ НА ЗАГОЛОВОК =====
+// ============================================================
+// UTILITY FUNCTIONS
+// ============================================================
 document.addEventListener('DOMContentLoaded', function() {
     const title = document.getElementById('appTitle');
     if (title) {
@@ -118,6 +131,9 @@ function toggleShowFavorites() {
     loadMessages();
 }
 
+// ============================================================
+// RENDER CHAT ITEM
+// ============================================================
 function renderChatItem(chat) {
     const icon = chat.is_channel ? '📡' : '👤';
     const iconClass = chat.is_channel ? 'channel' : 'dm';
@@ -155,15 +171,51 @@ function renderChatItem(chat) {
     `;
 }
 
+// ============================================================
+// LOAD CHAT LIST
+// ============================================================
 async function loadChatList() {
+    console.log('[CHAT] loadChatList called');
+    
+    // Скрываем индикатор загрузки
+    const initialLoading = document.getElementById('initialLoading');
+    if (initialLoading) {
+        initialLoading.style.display = 'none';
+        console.log('[CHAT] Hidden loading indicator');
+    }
+    
     try {
-        const response = await fetch('/api/chats');
+        console.log('[CHAT] Fetching /api/chats...');
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => {
+            console.log('[CHAT] Request timeout, aborting...');
+            controller.abort();
+        }, 10000);
+        
+        const response = await fetch('/api/chats', {
+            signal: controller.signal,
+            headers: { 'Cache-Control': 'no-cache' }
+        });
+        clearTimeout(timeoutId);
+        
+        console.log('[CHAT] Response status:', response.status);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
         const data = await response.json();
+        console.log('[CHAT] Received data:', data.chats ? data.chats.length : 0, 'chats');
+        
         chatListCache = data.chats || [];
         totalUnreadCount = data.total_unread || 0;
 
         const container = document.getElementById('chatList');
-        if (!container) return;
+        if (!container) {
+            console.error('[CHAT] Container #chatList not found');
+            return;
+        }
 
         if (!currentChatId) {
             const chatTitle = document.getElementById('chatTitle');
@@ -180,6 +232,7 @@ async function loadChatList() {
 
         if (chatListCache.length === 0) {
             container.innerHTML = '<div class="loading">💬 No chats yet</div>';
+            console.log('[CHAT] No chats found');
             return;
         }
 
@@ -200,21 +253,197 @@ async function loadChatList() {
         }
 
         container.innerHTML = html;
+        console.log('[CHAT] Chat list rendered successfully');
 
     } catch (error) {
-        console.error('Error loading chats:', error);
+        console.error('[CHAT] Error:', error);
         const container = document.getElementById('chatList');
+        
         if (container) {
-            container.innerHTML = '<div class="loading">⚠️ Error loading chats</div>';
+            if (error.name === 'AbortError') {
+                container.innerHTML = `
+                    <div class="loading" style="color:#ff9800;">
+                        ⏳ Request timeout - retrying...<br>
+                        <button onclick="loadChatList()" style="margin-top:8px;padding:4px 12px;border:none;border-radius:4px;background:#1a73e8;color:white;cursor:pointer;">
+                            🔄 Retry
+                        </button>
+                    </div>
+                `;
+                setTimeout(() => loadChatList(), 3000);
+            } else {
+                container.innerHTML = `
+                    <div class="loading" style="color:#c62828;">
+                        ⚠️ Error loading chats<br>
+                        <small style="font-size:12px;color:#999;">${error.message}</small>
+                        <br><br>
+                        <button onclick="loadChatList()" style="padding:6px 16px;border:none;border-radius:6px;background:#1a73e8;color:white;cursor:pointer;">
+                            🔄 Retry
+                        </button>
+                    </div>
+                `;
+            }
         }
     }
 }
 
-async function checkNodeIgnored(nodeId) {
+// ============================================================
+// LOAD MESSAGES
+// ============================================================
+async function loadMessages() {
     try {
-        const response = await fetch(`/api/node_status?node_id=${encodeURIComponent(nodeId)}`);
+        console.log('[MESSAGES] Loading messages...');
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => {
+            console.log('[MESSAGES] Request timeout, aborting...');
+            controller.abort();
+        }, 8000);
+        
+        const response = await fetch('/api/messages', {
+            signal: controller.signal,
+            headers: { 'Cache-Control': 'no-cache' }
+        });
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
         const data = await response.json();
-        return data.ignored || false;
+        console.log('[MESSAGES] Received', data.nodes ? data.nodes.length : 0, 'nodes');
+
+        nodeCache = data.nodes || [];
+        
+        if (currentChatId && currentChatType === 'dm') {
+            updateChatHeaderStatus();
+        }
+
+        const statusEl = document.getElementById('statusText');
+        const nodeCountEl = document.getElementById('nodeCount');
+
+        if (statusEl && statusEl.innerHTML !== '🔴 Error loading - refresh page') {
+            statusEl.innerHTML = '🟢 Mesh online';
+        }
+        
+        const allNodes = data.nodes || [];
+        const ignoredNodes = allNodes.filter(n => n.ignored);
+        const favoriteNodes = allNodes.filter(n => n.favorite);
+        
+        const ignoredCountEl = document.getElementById('ignoredCount');
+        if (ignoredCountEl) {
+            ignoredCountEl.textContent = ignoredNodes.length + ' ignored';
+        }
+        
+        const favoritesCountEl = document.getElementById('favoritesCount');
+        if (favoritesCountEl) {
+            favoritesCountEl.textContent = favoriteNodes.length + ' favorites';
+        }
+        
+        let displayNodes = [];
+        
+        if (showFavorites && showIgnored) {
+            displayNodes = allNodes.filter(n => n.favorite && n.ignored);
+        } else if (showFavorites) {
+            displayNodes = allNodes.filter(n => n.favorite && !n.ignored);
+        } else if (showIgnored) {
+            displayNodes = allNodes.filter(n => n.ignored);
+        } else {
+            displayNodes = allNodes.filter(n => !n.ignored);
+        }
+        
+        if (nodeCountEl) {
+            const totalDisplay = displayNodes.length;
+            nodeCountEl.innerHTML = '🖥️ Nodes [' + totalDisplay + ']';
+        }
+
+        const nodesList = document.getElementById('nodesList');
+        if (!nodesList) return;
+
+        let filteredNodes = displayNodes;
+        if (nodeSearchTerm) {
+            filteredNodes = filteredNodes.filter(node =>
+                node.clean_name.toLowerCase().includes(nodeSearchTerm.toLowerCase()) ||
+                node.node_id.toLowerCase().includes(nodeSearchTerm.toLowerCase())
+            );
+        }
+
+        if (filteredNodes.length === 0) {
+            let message = '🔍 No nodes found';
+            if (showFavorites && showIgnored) {
+                message = '⭐ No favorite ignored nodes found';
+            } else if (showFavorites) {
+                message = '⭐ No favorite nodes found';
+            } else if (showIgnored) {
+                message = '🚫 No ignored nodes found';
+            }
+            nodesList.innerHTML = `<div class="loading" style="padding: 16px;">${message}</div>`;
+        } else {
+            nodesList.innerHTML = filteredNodes.map(node => {
+                const badgeClass = signalBadgeClass(node.signal_quality);
+                const badgeText = signalBadgeText(node.signal_quality);
+                const isIgnored = node.ignored || false;
+                const isFavorite = node.favorite || false;
+                const cardClass = isIgnored ? 'node-card ignored' : (isFavorite ? 'node-card favorite' : 'node-card');
+                const lastText = node.last_text ? 
+                    `<div class="node-last-text">📝 ${escapeHtml(truncateText(node.last_text, 60))}</div>` : '';
+                const ignoreStatus = isIgnored ? '🚫 ' : '';
+                const favoriteStatus = isFavorite ? '⭐ ' : '';
+
+                const unignoreBtn = isIgnored ? 
+                    `<button class="unignore-btn-mini" onclick="event.stopPropagation(); toggleIgnore('${escapeHtml(node.node_id)}')">Unignore</button>` : '';
+
+                return `
+                    <div class="${cardClass}" onclick="selectNode('${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name)}')">
+                        <div class="node-name" style="display:flex;align-items:center;gap:4px;">
+                            ${ignoreStatus}${favoriteStatus}${escapeHtml(node.name)}
+                            <span class="node-inline-id">[${escapeHtml(node.node_id)}]</span>
+                            <span class="badge ${badgeClass}">${badgeText}</span>
+                            ${unignoreBtn}
+                        </div>
+                        <div class="node-meta">${escapeHtml(node.meta)}</div>
+                        ${lastText}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        const selectedNode = allNodes.find(n => n.node_id === currentChatId);
+        if (selectedNode) {
+            renderNodeDetails(selectedNode);
+        } else {
+            renderNodeDetails(null);
+        }
+
+    } catch (error) {
+        console.error('[MESSAGES] Error:', error);
+        const statusEl = document.getElementById('statusText');
+        if (statusEl && error.name !== 'AbortError') {
+            statusEl.innerHTML = '🔴 Connection error';
+        }
+        if (error.name !== 'AbortError') {
+            setTimeout(() => loadMessages(), 5000);
+        }
+    }
+}
+
+function signalBadgeClass(signalQuality) {
+    if (signalQuality === 'good') return 'badge-online';
+    if (signalQuality === 'medium') return 'badge-medium';
+    return 'badge-offline';
+}
+
+function signalBadgeText(signalQuality) {
+    if (signalQuality === 'good') return '●';
+    if (signalQuality === 'medium') return '○';
+    return '○';
+}
+
+function checkNodeIgnored(nodeId) {
+    try {
+        return fetch(`/api/node_status?node_id=${encodeURIComponent(nodeId)}`)
+            .then(response => response.json())
+            .then(data => data.ignored || false)
+            .catch(() => false);
     } catch (error) {
         console.error('Error checking ignore status:', error);
         return false;
@@ -516,6 +745,9 @@ function stopMessagePolling() {
     }
 }
 
+// ============================================================
+// SEND FORM
+// ============================================================
 const sendForm = document.getElementById('sendForm');
 if (sendForm) {
     sendForm.addEventListener('submit', async (e) => {
@@ -617,6 +849,9 @@ if (sendForm) {
     });
 }
 
+// ============================================================
+// CHAT ACTIONS
+// ============================================================
 function showChatActions() {
     const modal = document.getElementById('chatActionsModal');
     if (modal) {
@@ -734,6 +969,9 @@ function clearCurrentChat() {
     showConfirmClear(currentChatName, currentChatId);
 }
 
+// ============================================================
+// NODE OPERATIONS
+// ============================================================
 function setDirectMessage(nodeId, nodeName) {
     if (directMessageTarget === nodeId) {
         directMessageTarget = null;
@@ -941,136 +1179,15 @@ function clearNodeSearch() {
     loadMessages();
 }
 
-async function loadMessages() {
-    try {
-        const response = await fetch('/api/messages');
-        const data = await response.json();
-
-        nodeCache = data.nodes || [];
-        
-        if (currentChatId && currentChatType === 'dm') {
-            updateChatHeaderStatus();
-        }
-
-        const statusEl = document.getElementById('statusText');
-        const nodeCountEl = document.getElementById('nodeCount');
-
-        if (statusEl) statusEl.innerHTML = '🟢 Mesh online';
-        
-        const allNodes = data.nodes || [];
-        const ignoredNodes = allNodes.filter(n => n.ignored);
-        const favoriteNodes = allNodes.filter(n => n.favorite);
-        
-        const ignoredCountEl = document.getElementById('ignoredCount');
-        if (ignoredCountEl) {
-            ignoredCountEl.textContent = ignoredNodes.length + ' ignored';
-        }
-        
-        const favoritesCountEl = document.getElementById('favoritesCount');
-        if (favoritesCountEl) {
-            favoritesCountEl.textContent = favoriteNodes.length + ' favorites';
-        }
-        
-        let displayNodes = [];
-        
-        if (showFavorites && showIgnored) {
-            displayNodes = allNodes.filter(n => n.favorite && n.ignored);
-        } else if (showFavorites) {
-            displayNodes = allNodes.filter(n => n.favorite && !n.ignored);
-        } else if (showIgnored) {
-            displayNodes = allNodes.filter(n => n.ignored);
-        } else {
-            displayNodes = allNodes.filter(n => !n.ignored);
-        }
-        
-        if (nodeCountEl) {
-            const totalDisplay = displayNodes.length;
-            nodeCountEl.innerHTML = '🖥️ Nodes [' + totalDisplay + ']';
-        }
-
-        const nodesList = document.getElementById('nodesList');
-        if (!nodesList) return;
-
-        let filteredNodes = displayNodes;
-        if (nodeSearchTerm) {
-            filteredNodes = filteredNodes.filter(node =>
-                node.clean_name.toLowerCase().includes(nodeSearchTerm.toLowerCase()) ||
-                node.node_id.toLowerCase().includes(nodeSearchTerm.toLowerCase())
-            );
-        }
-
-        if (filteredNodes.length === 0) {
-            let message = '🔍 No nodes found';
-            if (showFavorites && showIgnored) {
-                message = '⭐ No favorite ignored nodes found';
-            } else if (showFavorites) {
-                message = '⭐ No favorite nodes found';
-            } else if (showIgnored) {
-                message = '🚫 No ignored nodes found';
-            }
-            nodesList.innerHTML = `<div class="loading" style="padding: 16px;">${message}</div>`;
-        } else {
-            nodesList.innerHTML = filteredNodes.map(node => {
-                const badgeClass = signalBadgeClass(node.signal_quality);
-                const badgeText = signalBadgeText(node.signal_quality);
-                const isIgnored = node.ignored || false;
-                const isFavorite = node.favorite || false;
-                const cardClass = isIgnored ? 'node-card ignored' : (isFavorite ? 'node-card favorite' : 'node-card');
-                const lastText = node.last_text ? 
-                    `<div class="node-last-text">📝 ${escapeHtml(truncateText(node.last_text, 60))}</div>` : '';
-                const ignoreStatus = isIgnored ? '🚫 ' : '';
-                const favoriteStatus = isFavorite ? '⭐ ' : '';
-
-                const unignoreBtn = isIgnored ? 
-                    `<button class="unignore-btn-mini" onclick="event.stopPropagation(); toggleIgnore('${escapeHtml(node.node_id)}')">Unignore</button>` : '';
-
-                return `
-                    <div class="${cardClass}" onclick="selectNode('${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name)}')">
-                        <div class="node-name" style="display:flex;align-items:center;gap:4px;">
-                            ${ignoreStatus}${favoriteStatus}${escapeHtml(node.name)}
-                            <span class="node-inline-id">[${escapeHtml(node.node_id)}]</span>
-                            <span class="badge ${badgeClass}">${badgeText}</span>
-                            ${unignoreBtn}
-                        </div>
-                        <div class="node-meta">${escapeHtml(node.meta)}</div>
-                        ${lastText}
-                    </div>
-                `;
-            }).join('');
-        }
-
-        const selectedNode = allNodes.find(n => n.node_id === currentChatId);
-        if (selectedNode) {
-            renderNodeDetails(selectedNode);
-        } else {
-            renderNodeDetails(null);
-        }
-
-    } catch (error) {
-        console.error('Error loading messages:', error);
-        const statusEl = document.getElementById('statusText');
-        if (statusEl) statusEl.innerHTML = '🔴 Connection error';
-    }
-}
-
-function signalBadgeClass(signalQuality) {
-    if (signalQuality === 'good') return 'badge-online';
-    if (signalQuality === 'medium') return 'badge-medium';
-    return 'badge-offline';
-}
-
-function signalBadgeText(signalQuality) {
-    if (signalQuality === 'good') return '●';
-    if (signalQuality === 'medium') return '○';
-    return '○';
-}
-
 function selectNode(nodeId, nodeName) {
     if (currentChatId === nodeId) return;
     openChat(nodeId, nodeName, 'dm');
     updateNodeDetails(nodeId);
 }
 
+// ============================================================
+// SENSORS & BASE STATUS
+// ============================================================
 async function loadSensors() {
     try {
         const response = await fetch('/api/sensors');
@@ -1148,6 +1265,9 @@ function formatUptime(seconds) {
     return `${minutes}m`;
 }
 
+// ============================================================
+// EVENT LISTENERS
+// ============================================================
 document.getElementById('toggleSidebarBtn')?.addEventListener('click', () => {
     const sidebar = document.getElementById('sidebar');
     if (sidebar) {
@@ -1199,7 +1319,9 @@ document.getElementById('confirmDeleteAllDmModal')?.addEventListener('click', (e
     }
 });
 
-// ===== ЭМОДЗИ =====
+// ============================================================
+// EMOJI
+// ============================================================
 const EMOJI_DATA = {
     smileys: [
         '😊', '😂', '❤️', '🔥', '👍', '💯', '🎉', '✨',
@@ -1375,7 +1497,9 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// ===== ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК =====
+// ============================================================
+// SWITCH SIDEBAR TAB
+// ============================================================
 function switchSidebarTab(tab) {
     document.querySelectorAll('.sidebar-tab').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tab);
@@ -1396,7 +1520,9 @@ function switchSidebarTab(tab) {
     }
 }
 
-// ===== УПРАВЛЕНИЕ НОДАМИ =====
+// ============================================================
+// NODE MANAGEMENT
+// ============================================================
 async function loadNodesManagement() {
     const container = document.getElementById('nodesManagementList');
     if (!container) return;
@@ -1448,7 +1574,9 @@ async function loadNodesManagement() {
     }
 }
 
-// ===== ЭКСПОРТ CSV =====
+// ============================================================
+// EXPORT/IMPORT
+// ============================================================
 async function exportNodesCSV() {
     try {
         const response = await fetch('/api/nodes_export');
@@ -1480,7 +1608,6 @@ async function exportNodesCSV() {
     }
 }
 
-// ===== ЭКСПОРТ JSON =====
 async function exportNodesJSON() {
     try {
         const response = await fetch('/api/nodes_export');
@@ -1506,7 +1633,6 @@ async function exportNodesJSON() {
     }
 }
 
-// ===== ИМПОРТ CSV =====
 async function importNodesCSV(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -1570,7 +1696,6 @@ async function importNodesCSV(event) {
     event.target.value = '';
 }
 
-// ===== ИМПОРТ JSON =====
 async function importNodesJSON(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -1607,7 +1732,6 @@ async function importNodesJSON(event) {
     event.target.value = '';
 }
 
-// ===== ОБЪЕДИНЕНИЕ ДУБЛЕЙ =====
 async function mergeDuplicates() {
     if (!confirm('⚠️ Merge duplicate nodes?\n\nThis will merge nodes with the same name, keeping the most recent one.\n\nThis action cannot be undone!')) {
         return;
@@ -1634,7 +1758,6 @@ async function mergeDuplicates() {
     }
 }
 
-// ===== ПОКАЗАТЬ ДУБЛИ =====
 function toggleShowDuplicates() {
     showDuplicatesOnly = !showDuplicatesOnly;
     const btn = document.querySelector('.nodes-tool-btn.show');
@@ -1645,7 +1768,6 @@ function toggleShowDuplicates() {
     loadNodesManagement();
 }
 
-// ===== ОЧИСТКА ВСЕХ НОД =====
 async function cleanupAllNodes() {
     if (!confirm('⚠️ Delete ALL nodes?\n\nThis will delete all nodes and their chats.\nThe LongFast channel will remain.\n\nThis action cannot be undone!')) {
         return;
@@ -1680,13 +1802,11 @@ async function cleanupAllNodes() {
     }
 }
 
-// ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
 function escapeCsv(value) {
     if (value === null || value === undefined) return '';
     return String(value).replace(/"/g, '""');
 }
 
-// ===== RESCAN NETWORK =====
 async function rescanNodes() {
     const btn = document.getElementById('rescanNodesBtn');
     const originalText = btn.textContent;
@@ -1729,7 +1849,9 @@ async function rescanNodes() {
     }
 }
 
-// ===== УДАЛЕНИЕ ВСЕХ DM ЧАТОВ =====
+// ============================================================
+// DELETE ALL DM CHATS
+// ============================================================
 let deleteAllDmState = 'first';
 
 function deleteAllDmChats() {
@@ -1797,7 +1919,9 @@ function executeDeleteAllDm() {
     });
 }
 
-// ===== УПРАВЛЕНИЕ МЕНЮ ЭКСПОРТА/ИМПОРТА =====
+// ============================================================
+// EXPORT/IMPORT MENUS
+// ============================================================
 function showExportOptions() {
     closeFormatMenus();
     const menu = document.getElementById('exportOptionsMenu');
@@ -1831,7 +1955,9 @@ document.addEventListener('click', function(e) {
     }
 });
 
-// ===== ФУНКЦИИ ТЕЛЕМЕТРИИ =====
+// ============================================================
+// TELEMETRY FUNCTIONS
+// ============================================================
 async function loadTelemetry() {
     console.log('[TELEMETRY] loadTelemetry called');
     try {
@@ -1930,36 +2056,6 @@ async function updateTelemetryConfig() {
     } catch (error) {
         console.error('Error updating telemetry config:', error);
         showToast('❌ Network error', 'error');
-    }
-}
-
-async function refreshTelemetry() {
-    const btn = document.getElementById('telemetryRefreshBtn');
-    const originalText = btn.textContent;
-    
-    try {
-        btn.disabled = true;
-        btn.textContent = '⏳...';
-        
-        const response = await fetch('/api/telemetry/refresh', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'}
-        });
-        
-        const data = await response.json();
-        
-        if (data.ok) {
-            await loadTelemetry();
-            showToast('✅ Telemetry updated', 'success');
-        } else {
-            showToast('❌ Failed: ' + (data.error || 'Unknown error'), 'error');
-        }
-    } catch (error) {
-        console.error('Error refreshing telemetry:', error);
-        showToast('❌ Network error', 'error');
-    } finally {
-        btn.disabled = false;
-        btn.textContent = originalText;
     }
 }
 
@@ -2353,9 +2449,8 @@ function closeTelemetryModal() {
 }
 
 // ============================================================
-// УПРАВЛЕНИЕ КАМЕРОЙ
+// CAMERA CONTROL
 // ============================================================
-
 async function startCameraStream() {
     if (cameraActive) return;
     cameraActive = true;
@@ -2393,9 +2488,8 @@ function stopCameraStream() {
 }
 
 // ============================================================
-// ВИДЕО ФУНКЦИИ
+// VIDEO FUNCTIONS
 // ============================================================
-
 let currentVideoSettings = {};
 
 async function loadVideoSettings() {
@@ -2542,32 +2636,106 @@ function refreshVideoFeed() {
 }
 
 // ============================================================
-// ФУНКЦИИ ФОТО
+// SWITCH CAMERA MODE
 // ============================================================
+async function switchCameraMode(mode) {
+    try {
+        console.log(`[CAMERA] Switching to ${mode} mode...`);
+        const response = await fetch('/api/camera/switch_mode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: mode })
+        });
+        
+        const data = await response.json();
+        if (data.ok) {
+            console.log(`[CAMERA] Switched to ${mode} mode: ${data.resolution}`);
+            return true;
+        } else {
+            console.error(`[CAMERA] Failed to switch to ${mode}:`, data.error);
+            return false;
+        }
+    } catch (error) {
+        console.error(`[CAMERA] Error switching to ${mode}:`, error);
+        return false;
+    }
+}
 
+// ============================================================
+// PHOTO FUNCTIONS
+// ============================================================
 async function loadPhotoSettings() {
     try {
         const response = await fetch('/api/photo/settings');
         const data = await response.json();
         
         if (data.ok) {
+            photoPreviewResolution = data.config.resolution || '640x480';
+            photoSaveResolution = data.save_resolution || '2592x1944';
+            currentPhotoQuality = data.config.quality || 85;
+            
             const resSelect = document.getElementById('photoResolution');
             const qualitySlider = document.getElementById('photoQuality');
             const qualityLabel = document.getElementById('photoQualityLabel');
             
-            if (resSelect) resSelect.value = data.config.resolution || '2592x1944';
+            if (resSelect) resSelect.value = photoPreviewResolution;
             if (qualitySlider) {
-                qualitySlider.value = data.config.quality || 95;
-                if (qualityLabel) qualityLabel.textContent = (data.config.quality || 95) + '%';
+                qualitySlider.value = currentPhotoQuality;
+                if (qualityLabel) qualityLabel.textContent = currentPhotoQuality + '%';
             }
             
             const photoInfo = document.getElementById('photoInfo');
             if (photoInfo) {
-                photoInfo.textContent = `Resolution: ${data.config.resolution || '2592×1944'} (${data.config.quality || 95}%)`;
+                const res = photoPreviewResolution.replace('x', '×');
+                photoInfo.textContent = `Preview: ${res} (${currentPhotoQuality}%) • Save: ${photoSaveResolution.replace('x', '×')}`;
             }
+            
+            console.log('[PHOTO] Settings loaded:', { preview: photoPreviewResolution, quality: currentPhotoQuality });
         }
     } catch (error) {
         console.error('Error loading photo settings:', error);
+    }
+}
+
+async function updatePhotoSettings() {
+    const resolution = document.getElementById('photoResolution').value;
+    const quality = parseInt(document.getElementById('photoQuality').value);
+    
+    console.log('[PHOTO] Updating settings:', { resolution, quality });
+    
+    const qualityLabel = document.getElementById('photoQualityLabel');
+    const photoInfo = document.getElementById('photoInfo');
+    
+    if (qualityLabel) qualityLabel.textContent = quality + '%';
+    if (photoInfo) {
+        const res = resolution.replace('x', '×');
+        photoInfo.textContent = `Preview: ${res} (${quality}%) • Save: ${photoSaveResolution.replace('x', '×')}`;
+    }
+    
+    currentPhotoQuality = quality;
+    photoPreviewResolution = resolution;
+    
+    try {
+        const response = await fetch('/api/photo/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ resolution, quality })
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok) {
+            console.log('[PHOTO] Settings saved:', data.config);
+            showToast(`✅ Quality set to ${quality}%`, 'success');
+            setTimeout(() => capturePhotoPreview(), 300);
+        } else {
+            console.error('[PHOTO] Settings error:', data.error);
+            showToast('❌ Failed: ' + (data.error || 'Unknown error'), 'error');
+            if (qualityLabel) qualityLabel.textContent = currentPhotoQuality + '%';
+        }
+    } catch (error) {
+        console.error('Error updating photo settings:', error);
+        showToast('❌ Network error', 'error');
     }
 }
 
@@ -2578,10 +2746,18 @@ async function capturePhotoPreview() {
     const saveBtn = document.getElementById('photoSaveBtn');
     
     try {
-        if (status) status.textContent = '⏳ Capturing...';
-        if (saveBtn) saveBtn.disabled = true;
+        if (status) {
+            status.textContent = '⏳ Capturing preview...';
+            status.style.color = '#ff9800';
+        }
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.textContent = '⏳...';
+        }
+        if (display) display.style.display = 'none';
+        if (placeholder) placeholder.style.display = 'flex';
         
-        console.log('[PHOTO] Sending capture request...');
+        console.log('[PHOTO] Capturing preview with quality:', currentPhotoQuality);
         const response = await fetch('/api/photo/capture', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
@@ -2594,20 +2770,42 @@ async function capturePhotoPreview() {
             if (display) {
                 display.src = 'data:image/jpeg;base64,' + data.image_data;
                 display.style.display = 'block';
-                console.log('[PHOTO] Image displayed');
             }
             if (placeholder) placeholder.style.display = 'none';
-            if (status) status.textContent = '📷 Preview ready';
-            if (saveBtn) saveBtn.disabled = false;
+            if (status) {
+                const res = data.preview_resolution || photoPreviewResolution;
+                const quality = data.quality || currentPhotoQuality;
+                status.textContent = `📷 Preview ready (${res.replace('x', '×')}, ${quality}%)`;
+                status.style.color = '#2e7d32';
+            }
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = '💾 Save';
+            }
+            currentPhotoData = data.image_data;
         } else {
             console.error('[PHOTO] Failed:', data.error);
-            if (status) status.textContent = '❌ Failed: ' + (data.error || 'Unknown error');
-            if (saveBtn) saveBtn.disabled = true;
+            if (status) {
+                status.textContent = '❌ Failed: ' + (data.error || 'Unknown error');
+                status.style.color = '#c62828';
+            }
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.textContent = '💾 Save';
+            }
+            if (placeholder) placeholder.style.display = 'flex';
         }
     } catch (error) {
         console.error('[PHOTO] Error:', error);
-        if (status) status.textContent = '❌ Network error';
-        if (saveBtn) saveBtn.disabled = true;
+        if (status) {
+            status.textContent = '❌ Network error';
+            status.style.color = '#c62828';
+        }
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.textContent = '💾 Save';
+        }
+        if (placeholder) placeholder.style.display = 'flex';
     }
 }
 
@@ -2616,14 +2814,20 @@ async function savePhoto() {
     const status = document.getElementById('photoStatus');
     const saveBtn = document.getElementById('photoSaveBtn');
     
-    if (!display || display.style.display === 'none') {
-        showToast('❌ No photo to save. Capture first!', 'error');
+    if (!display || display.style.display === 'none' || !currentPhotoData) {
+        showToast('❌ No photo to save. Capture preview first!', 'error');
         return;
     }
     
     try {
-        if (status) status.textContent = '⏳ Saving...';
-        if (saveBtn) saveBtn.disabled = true;
+        if (status) {
+            status.textContent = '⏳ Capturing high-res photo...';
+            status.style.color = '#ff9800';
+        }
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.textContent = '⏳...';
+        }
         
         const response = await fetch('/api/photo/save', {
             method: 'POST',
@@ -2633,32 +2837,72 @@ async function savePhoto() {
         const data = await response.json();
         
         if (data.ok) {
-            if (status) status.textContent = '✅ Saved!';
+            if (data.preview_data && display) {
+                display.src = 'data:image/jpeg;base64,' + data.preview_data;
+            }
+            
+            if (status) {
+                status.textContent = '✅ Saved!';
+                status.style.color = '#2e7d32';
+            }
             showToast(`✅ Photo saved: ${data.filename} (${(data.size/1024).toFixed(1)} KB)`, 'success');
+            
             setTimeout(() => {
-                if (status) status.textContent = '📷 Preview ready';
-                if (saveBtn) saveBtn.disabled = false;
+                if (status) {
+                    const res = photoPreviewResolution.replace('x', '×');
+                    status.textContent = `📷 Preview ready (${res}, ${currentPhotoQuality}%)`;
+                    status.style.color = '#2e7d32';
+                }
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = '💾 Save';
+                }
             }, 2000);
         } else {
-            if (status) status.textContent = '❌ Save failed';
+            if (status) {
+                status.textContent = '❌ Save failed';
+                status.style.color = '#c62828';
+            }
             showToast('❌ Failed to save: ' + (data.error || 'Unknown error'), 'error');
-            if (saveBtn) saveBtn.disabled = false;
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = '💾 Save';
+            }
         }
     } catch (error) {
         console.error('Error saving photo:', error);
-        if (status) status.textContent = '❌ Network error';
-        if (saveBtn) saveBtn.disabled = false;
+        if (status) {
+            status.textContent = '❌ Network error';
+            status.style.color = '#c62828';
+        }
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = '💾 Save';
+        }
         showToast('❌ Network error', 'error');
     }
 }
 
 function refreshPhoto() {
     const status = document.getElementById('photoStatus');
-    if (status) status.textContent = '⏳ Capturing...';
-    capturePhotoPreview();
+    const display = document.getElementById('photoDisplay');
+    const placeholder = document.getElementById('photoPlaceholder');
+    
+    if (status) {
+        status.textContent = '⏳ Capturing...';
+        status.style.color = '#ff9800';
+    }
+    if (display) display.style.display = 'none';
+    if (placeholder) placeholder.style.display = 'flex';
+    
+    switchCameraMode('photo').then(() => {
+        setTimeout(() => capturePhotoPreview(), 300);
+    });
 }
 
-// ===== ГАЛЕРЕЯ СКРИНШОТОВ =====
+// ============================================================
+// SCREENSHOTS GALLERY
+// ============================================================
 async function showScreenshots() {
     const modal = document.getElementById('screenshotsModal');
     const grid = document.getElementById('screenshotsGrid');
@@ -2797,7 +3041,9 @@ function closeScreenshots() {
     if (modal) modal.style.display = 'none';
 }
 
-// ===== ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК =====
+// ============================================================
+// SWITCH MAIN TAB
+// ============================================================
 function switchMainTab(tab) {
     currentMainTab = tab;
 
@@ -2837,6 +3083,11 @@ function switchMainTab(tab) {
 
         loadChatList();
         loadMessages();
+        
+        // Переключаем камеру в видео режим если не в чатах
+        if (!isInitialized) {
+            switchCameraMode('video');
+        }
 
     } else if (tab === 'video') {
         if (chatHeader) chatHeader.style.display = 'none';
@@ -2845,8 +3096,11 @@ function switchMainTab(tab) {
         if (videoView) videoView.style.display = 'flex';
 
         stopMessagePolling();
-        setTimeout(() => loadVideoSettings(), 100);
-        setTimeout(() => refreshVideoFeed(), 200);
+        
+        switchCameraMode('video').then(() => {
+            setTimeout(() => loadVideoSettings(), 100);
+            setTimeout(() => refreshVideoFeed(), 200);
+        });
 
     } else if (tab === 'photo') {
         if (chatHeader) chatHeader.style.display = 'none';
@@ -2855,45 +3109,94 @@ function switchMainTab(tab) {
         if (photoView) photoView.style.display = 'flex';
 
         stopMessagePolling();
-        setTimeout(() => loadPhotoSettings(), 100);
-        setTimeout(() => capturePhotoPreview(), 300);
+        
+        switchCameraMode('photo').then(() => {
+            setTimeout(() => loadPhotoSettings(), 100);
+            setTimeout(() => capturePhotoPreview(), 300);
+        });
     }
 }
 
-// ===== INIT =====
+// ============================================================
+// INIT
+// ============================================================
 async function init() {
-    const savedShowIgnored = localStorage.getItem('mesh_show_ignored');
-    if (savedShowIgnored === 'true') {
-        showIgnored = true;
-        const checkbox = document.getElementById('showIgnoredToggle');
-        if (checkbox) checkbox.checked = true;
+    if (isInitialized) return;
+    isInitialized = true;
+    
+    console.log('[INIT] Starting application...');
+    
+    const statusEl = document.getElementById('statusText');
+    if (statusEl) statusEl.innerHTML = '⏳ Loading...';
+    
+    try {
+        // Загружаем настройки из localStorage
+        const savedShowIgnored = localStorage.getItem('mesh_show_ignored');
+        if (savedShowIgnored === 'true') {
+            showIgnored = true;
+            const checkbox = document.getElementById('showIgnoredToggle');
+            if (checkbox) checkbox.checked = true;
+        }
+        
+        const savedShowFavorites = localStorage.getItem('mesh_show_favorites');
+        if (savedShowFavorites === 'true') {
+            showFavorites = true;
+            const checkbox = document.getElementById('showFavoritesToggle');
+            if (checkbox) checkbox.checked = true;
+        }
+        
+        // Загружаем все данные параллельно с таймаутами
+        console.log('[INIT] Loading data in parallel...');
+        
+        // Загружаем чаты в первую очередь (самое важное)
+        await loadChatList();
+        
+        // Остальное загружаем параллельно
+        await Promise.allSettled([
+            loadTelemetry(),
+            loadBaseStatus(),
+            loadSensors(),
+            loadMessages()
+        ]).then(results => {
+            const names = ['Telemetry', 'BaseStatus', 'Sensors', 'Messages'];
+            results.forEach((result, index) => {
+                if (result.status === 'fulfilled') {
+                    console.log(`[INIT] ${names[index]} loaded`);
+                } else {
+                    console.warn(`[INIT] ${names[index]} failed:`, result.reason);
+                }
+            });
+        });
+        
+        // Переключаемся на вкладку чатов
+        console.log('[INIT] Switching to chats tab...');
+        switchMainTab('chats');
+        
+        if (statusEl) statusEl.innerHTML = '🟢 Mesh online';
+        
+        console.log('[INIT] Application ready');
+        
+    } catch (error) {
+        console.error('[INIT] Critical error:', error);
+        const statusEl = document.getElementById('statusText');
+        if (statusEl) statusEl.innerHTML = '🔴 Error loading - refresh page';
+        
+        const chatList = document.getElementById('chatList');
+        if (chatList) {
+            chatList.innerHTML = `
+                <div class="loading" style="color:#c62828;">
+                    ⚠️ Failed to load data<br>
+                    <small style="font-size:12px;color:#999;">${error.message || 'Unknown error'}</small>
+                    <br><br>
+                    <button onclick="window.location.reload()" style="padding:8px 20px;border:none;border-radius:8px;background:#1a73e8;color:white;cursor:pointer;">
+                        🔄 Refresh Page
+                    </button>
+                </div>
+            `;
+        }
     }
     
-    const savedShowFavorites = localStorage.getItem('mesh_show_favorites');
-    if (savedShowFavorites === 'true') {
-        showFavorites = true;
-        const checkbox = document.getElementById('showFavoritesToggle');
-        if (checkbox) checkbox.checked = true;
-    }
-    
-    await loadTelemetry();
-    
-    setTimeout(() => {
-        console.log('[TELEMETRY] Forced update after 2s');
-        updateTelemetryUI();
-    }, 2000);
-    
-    setTimeout(() => {
-        console.log('[TELEMETRY] Forced update after 5s');
-        updateTelemetryUI();
-    }, 5000);
-    
-    await loadBaseStatus();
-    await loadSensors();
-    await loadMessages();
-    await loadChatList();
-    switchMainTab('chats');
-
+    // Периодические обновления
     setInterval(async () => {
         try {
             await Promise.all([
@@ -2913,4 +3216,73 @@ async function init() {
     if (input) input.focus();
 }
 
+// ============================================================
+// ЭКСПОРТ В ГЛОБАЛЬНУЮ ОБЛАСТЬ
+// ============================================================
+window.loadChatList = loadChatList;
+window.loadMessages = loadMessages;
+window.openChat = openChat;
+window.showChatList = showChatList;
+window.toggleIgnore = toggleIgnore;
+window.toggleFavorite = toggleFavorite;
+window.selectNode = selectNode;
+window.clearNodeSearch = clearNodeSearch;
+window.rescanNodes = rescanNodes;
+window.mergeDuplicates = mergeDuplicates;
+window.cleanupAllNodes = cleanupAllNodes;
+window.toggleShowDuplicates = toggleShowDuplicates;
+window.showExportOptions = showExportOptions;
+window.showImportOptions = showImportOptions;
+window.closeFormatMenus = closeFormatMenus;
+window.exportNodesCSV = exportNodesCSV;
+window.exportNodesJSON = exportNodesJSON;
+window.importNodesCSV = importNodesCSV;
+window.importNodesJSON = importNodesJSON;
+window.showScreenshots = showScreenshots;
+window.deleteScreenshot = deleteScreenshot;
+window.deleteAllScreenshots = deleteAllScreenshots;
+window.closeScreenshots = closeScreenshots;
+window.switchMainTab = switchMainTab;
+window.switchSidebarTab = switchSidebarTab;
+window.refreshVideoFeed = refreshVideoFeed;
+window.updateVideoSettings = updateVideoSettings;
+window.takeScreenshot = takeScreenshot;
+window.loadPhotoSettings = loadPhotoSettings;
+window.updatePhotoSettings = updatePhotoSettings;
+window.capturePhotoPreview = capturePhotoPreview;
+window.savePhoto = savePhoto;
+window.refreshPhoto = refreshPhoto;
+window.showChatActions = showChatActions;
+window.deleteCurrentChat = deleteCurrentChat;
+window.clearCurrentChat = clearCurrentChat;
+window.deleteAllDmChats = deleteAllDmChats;
+window.executeDeleteChat = executeDeleteChat;
+window.executeClearChat = executeClearChat;
+window.executeDeleteAllDm = executeDeleteAllDm;
+window.closeChatActions = closeChatActions;
+window.closeConfirmDelete = closeConfirmDelete;
+window.closeConfirmClear = closeConfirmClear;
+window.closeDeleteAllDmModal = closeDeleteAllDmModal;
+window.openTelemetryModal = openTelemetryModal;
+window.closeTelemetryModal = closeTelemetryModal;
+window.setTelemetryRange = setTelemetryRange;
+window.updateTelemetryConfig = updateTelemetryConfig;
+window.switchCameraMode = switchCameraMode;
+window.startCameraStream = startCameraStream;
+window.stopCameraStream = stopCameraStream;
+window.loadSensors = loadSensors;
+window.loadBaseStatus = loadBaseStatus;
+window.loadTelemetry = loadTelemetry;
+
+// Экспортируем переменные
+window.chatListCache = chatListCache;
+window.currentChatId = currentChatId;
+window.nodeCache = nodeCache;
+
+console.log('[EXPORT] Все функции экспортированы в window');
+
+// ============================================================
+// ЗАПУСК
+// ============================================================
+console.log('[CHAT] Script loaded, calling init()...');
 init();

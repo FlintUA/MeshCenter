@@ -1,4 +1,10 @@
+#!/usr/bin/env python3
+"""
+Meshtastic Web Interface with Camera Support for Raspberry Pi Zero 2W
+"""
+
 from flask import Flask, request, jsonify, render_template, Response, send_from_directory
+from functools import wraps
 import subprocess
 import threading
 import time
@@ -89,6 +95,25 @@ RESOLUTIONS = [
 # Расширенные FPS
 FPS_OPTIONS = [5, 8, 10, 12, 15, 20, 24, 30]
 
+# Настройки для превью фото (быстрое)
+PHOTO_PREVIEW_CONFIG = {
+    "resolution": "640x480",
+    "quality": 85
+}
+
+# Настройки для сохранения фото (максимальное качество)
+PHOTO_SAVE_CONFIG = {
+    "resolution": "2592x1944",
+    "quality": 95
+}
+
+# Текущие настройки фото (используются для превью)
+PHOTO_CONFIG = PHOTO_PREVIEW_CONFIG.copy()
+
+# Доступные разрешения для превью
+PHOTO_PREVIEW_RESOLUTIONS = ["640x480", "1280x720", "1920x1080", "2592x1944"]
+PHOTO_SAVE_RESOLUTION = "2592x1944"
+
 # Глобальные переменные
 CAMERA_AVAILABLE = False
 picam2 = None
@@ -96,6 +121,128 @@ camera_started = False
 camera_lock = threading.RLock()
 last_frame = None
 last_frame_time = 0
+CAMERA_MODE = "video"  # "video" or "photo"
+CAMERA_ACTIVE = False
+CAMERA_CONFIG_FILE = os.path.join(DATA_DIR, "camera_config.json")
+
+# ============================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ============================================================
+
+def fix_camera_colors(frame):
+    """Конвертирует BGR в RGB если необходимо"""
+    if frame is not None and frame.ndim == 3 and frame.shape[2] == 3:
+        return frame[:, :, ::-1]  # BGR -> RGB
+    return frame
+
+def safe_read_json(filepath, default=None):
+    """Безопасное чтение JSON с проверкой временных файлов"""
+    if default is None:
+        default = {}
+    
+    tmp_file = filepath + ".tmp"
+    if os.path.exists(tmp_file):
+        try:
+            os.remove(tmp_file)
+            print(f"[JSON] Removed stale tmp file: {tmp_file}", flush=True)
+        except Exception as e:
+            print(f"[JSON] Could not remove tmp file: {e}", flush=True)
+    
+    if not os.path.exists(filepath):
+        return default
+    
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"[JSON] Read error: {e}, using default", flush=True)
+        return default
+
+def safe_write_json(filepath, data):
+    """Безопасная атомарная запись JSON"""
+    tmp_file = filepath + ".tmp"
+    try:
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_file, filepath)
+        return True
+    except Exception as e:
+        print(f"[JSON] Write error: {e}", flush=True)
+        try:
+            if os.path.exists(tmp_file):
+                os.remove(tmp_file)
+        except:
+            pass
+        return False
+
+def atomic_write_json(filepath, data):
+    return safe_write_json(filepath, data)
+
+def extract_json_block(text, start_pos):
+    """Извлекает JSON блок из текста начиная с указанной позиции"""
+    brace_start = text.find("{", start_pos)
+    if brace_start < 0:
+        return None
+    brace_count = 0
+    brace_end = -1
+    for i in range(brace_start, len(text)):
+        if text[i] == '{':
+            brace_count += 1
+        elif text[i] == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                brace_end = i
+                break
+    if brace_end < 0:
+        return None
+    return text[brace_start:brace_end + 1]
+
+def load_camera_settings():
+    """Загрузка настроек камеры из файла"""
+    global VIDEO_CONFIG, PHOTO_CONFIG, PHOTO_SAVE_CONFIG
+    
+    data = safe_read_json(CAMERA_CONFIG_FILE, {})
+    if data:
+        if "video" in data:
+            VIDEO_CONFIG.update(data["video"])
+        if "photo_preview" in data:
+            PHOTO_CONFIG.update(data["photo_preview"])
+        if "photo_save" in data:
+            PHOTO_SAVE_CONFIG.update(data["photo_save"])
+        print(f"[CAMERA] Loaded settings: preview={PHOTO_CONFIG['resolution']}@{PHOTO_CONFIG['quality']}%, save={PHOTO_SAVE_CONFIG['resolution']}", flush=True)
+
+def save_camera_settings():
+    """Сохранение настроек камеры в файл"""
+    data = {
+        "video": VIDEO_CONFIG,
+        "photo_preview": PHOTO_CONFIG,
+        "photo_save": PHOTO_SAVE_CONFIG
+    }
+    safe_write_json(CAMERA_CONFIG_FILE, data)
+    print(f"[CAMERA] Saved settings", flush=True)
+
+def handle_errors(f):
+    """Декоратор для обработки ошибок в API"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except Exception as e:
+            print(f"[ERROR] {f.__name__}: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return jsonify({
+                "ok": False,
+                "error": str(e),
+                "traceback": traceback.format_exc() if app.debug else None
+            }), 500
+    return decorated_function
+
+# ============================================================
+# КАМЕРА - ОСНОВНЫЕ ФУНКЦИИ
+# ============================================================
 
 def init_camera():
     """Инициализация камеры через Picamera2"""
@@ -122,40 +269,80 @@ def init_camera():
         print(f"[CAMERA] ❌ Init error: {e}", flush=True)
         return False
 
-def start_camera():
-    """Запуск камеры"""
-    global picam2, camera_started, CAMERA_AVAILABLE
-    
-    if not CAMERA_AVAILABLE:
-        return False
+def stop_camera():
+    """Безопасная остановка камеры"""
+    global picam2, camera_started, CAMERA_ACTIVE
     
     with camera_lock:
         if camera_started:
+            try:
+                picam2.stop()
+                print("[CAMERA] Stopped", flush=True)
+            except Exception as e:
+                print(f"[CAMERA] Stop error: {e}", flush=True)
+            camera_started = False
+            CAMERA_ACTIVE = False
+        return True
+
+def switch_camera_mode(mode, resolution=None, fps=None):
+    """Переключение режима камеры"""
+    global picam2, camera_started, CAMERA_MODE
+    
+    if mode not in ["video", "photo"]:
+        return False
+    
+    stop_camera()
+    
+    try:
+        if mode == "video":
+            w, h = map(int, resolution or VIDEO_CONFIG["resolution"].split('x'))
+            fps_val = fps or VIDEO_CONFIG["fps"]
+            
+            config = picam2.create_preview_configuration(
+                main={"size": (w, h), "format": "RGB888"},
+                controls={"FrameRate": fps_val}
+            )
+            picam2.configure(config)
+            picam2.start()
+            camera_started = True
+            CAMERA_MODE = "video"
+            CAMERA_ACTIVE = True
+            print(f"[CAMERA] Video mode: {w}x{h} @ {fps_val} fps", flush=True)
             return True
-        
-        try:
-            w, h = map(int, VIDEO_CONFIG["resolution"].split('x'))
-            fps = VIDEO_CONFIG["fps"]
             
-            print(f"[CAMERA] Starting: {w}x{h} @ {fps} fps", flush=True)
+        elif mode == "photo":
+            w, h = map(int, resolution or PHOTO_CONFIG["resolution"].split('x'))
             
-            config = picam2.create_video_configuration(
+            config = picam2.create_still_configuration(
                 main={"size": (w, h), "format": "RGB888"}
             )
             picam2.configure(config)
             picam2.start()
-            
             camera_started = True
-            print(f"[CAMERA] ✅ Started: {w}x{h} @ {fps} fps", flush=True)
+            CAMERA_MODE = "photo"
+            CAMERA_ACTIVE = True
+            print(f"[CAMERA] Photo mode: {w}x{h}", flush=True)
             return True
             
-        except Exception as e:
-            print(f"[CAMERA] ❌ Start error: {e}", flush=True)
-            camera_started = False
-            return False
+    except Exception as e:
+        print(f"[CAMERA] Switch mode error: {e}", flush=True)
+        camera_started = False
+        CAMERA_ACTIVE = False
+        return False
+
+def start_camera():
+    """Запуск камеры в видео режиме"""
+    if not CAMERA_AVAILABLE:
+        return False
+    
+    with camera_lock:
+        if camera_started and CAMERA_MODE == "video":
+            return True
+        
+        return switch_camera_mode("video")
 
 def get_camera_frame():
-    """Получение кадра"""
+    """Получение кадра с исправлением цветов"""
     global last_frame, last_frame_time, camera_started, picam2
     
     if not camera_started:
@@ -170,6 +357,7 @@ def get_camera_frame():
             frame = picam2.capture_array()
             
             if frame is not None and frame.size > 0:
+                frame = fix_camera_colors(frame)
                 last_frame = frame
                 last_frame_time = time.time()
                 return frame
@@ -240,6 +428,7 @@ def capture_screenshot():
         if frame is None:
             return {"success": False, "error": "Failed to capture frame"}
         
+        frame = fix_camera_colors(frame)
         img = Image.fromarray(frame)
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -285,6 +474,7 @@ def api_camera_status():
     return jsonify({
         "ok": CAMERA_AVAILABLE,
         "started": camera_started,
+        "mode": CAMERA_MODE,
         "resolution": VIDEO_CONFIG["resolution"],
         "fps": VIDEO_CONFIG["fps"],
         "quality": VIDEO_CONFIG["quality"],
@@ -293,9 +483,59 @@ def api_camera_status():
         "video_modes": VIDEO_MODES
     })
 
+@app.route("/api/camera/switch_mode", methods=["POST"])
+@handle_errors
+def api_camera_switch_mode():
+    """Переключение режима камеры (video/photo)"""
+    global camera_started, CAMERA_MODE, picam2
+    
+    data = request.get_json(force=True)
+    mode = data.get("mode", "video")
+    
+    if mode not in ["video", "photo"]:
+        return jsonify({"ok": False, "error": "Invalid mode"}), 400
+    
+    with camera_lock:
+        # Останавливаем текущий режим
+        if camera_started:
+            try:
+                picam2.stop()
+            except:
+                pass
+            camera_started = False
+        
+        if mode == "video":
+            # Запускаем видео режим
+            w, h = map(int, VIDEO_CONFIG["resolution"].split('x'))
+            fps = VIDEO_CONFIG["fps"]
+            
+            config = picam2.create_preview_configuration(
+                main={"size": (w, h), "format": "RGB888"},
+                controls={"FrameRate": fps}
+            )
+            picam2.configure(config)
+            picam2.start()
+            camera_started = True
+            CAMERA_MODE = "video"
+            print(f"[CAMERA] Switched to video: {w}x{h} @ {fps}fps", flush=True)
+            return jsonify({"ok": True, "mode": "video", "resolution": VIDEO_CONFIG["resolution"]})
+        else:
+            # Запускаем фото режим
+            w, h = map(int, PHOTO_CONFIG["resolution"].split('x'))
+            
+            config = picam2.create_still_configuration(
+                main={"size": (w, h), "format": "RGB888"}
+            )
+            picam2.configure(config)
+            picam2.start()
+            camera_started = True
+            CAMERA_MODE = "photo"
+            print(f"[CAMERA] Switched to photo: {w}x{h}", flush=True)
+            return jsonify({"ok": True, "mode": "photo", "resolution": PHOTO_CONFIG["resolution"]})
+
 @app.route("/api/camera/settings", methods=["GET"])
 def api_camera_settings():
-    """Получить текущие настройки"""
+    """Получить текущие настройки видео"""
     return jsonify({
         "ok": True,
         "config": VIDEO_CONFIG,
@@ -305,6 +545,7 @@ def api_camera_settings():
     })
 
 @app.route("/api/camera/settings", methods=["POST"])
+@handle_errors
 def api_camera_update_settings():
     """Обновить настройки камеры"""
     global VIDEO_CONFIG, camera_started
@@ -342,6 +583,7 @@ def api_camera_update_settings():
                 except:
                     pass
             VIDEO_CONFIG.update(changes)
+            save_camera_settings()
             start_camera()
         
         print(f"[CAMERA] ✅ Settings updated: {changes}", flush=True)
@@ -370,6 +612,7 @@ def api_camera_set_mode(mode):
                 pass
         
         VIDEO_CONFIG.update(config)
+        save_camera_settings()
         start_camera()
     
     print(f"[CAMERA] ✅ Switched to mode: {mode} ({config['resolution']} @ {config['fps']} fps)", flush=True)
@@ -379,6 +622,16 @@ def api_camera_set_mode(mode):
         "mode": mode,
         "config": VIDEO_CONFIG
     })
+
+@app.route("/api/camera/screenshot", methods=["POST"])
+@handle_errors
+def api_camera_screenshot():
+    """Создать скриншот"""
+    result = capture_screenshot()
+    if result["success"]:
+        return jsonify(result)
+    else:
+        return jsonify({"ok": False, "error": result["error"]}), 500
 
 @app.route("/api/camera/screenshot/<filename>")
 def api_camera_screenshot_file(filename):
@@ -414,6 +667,257 @@ def api_camera_screenshots_list():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
+@app.route("/api/camera/screenshot/<filename>", methods=["DELETE"])
+@handle_errors
+def api_camera_screenshot_delete(filename):
+    """Удалить скриншот"""
+    filepath = os.path.join(SCREENSHOTS_DIR, filename)
+    if not os.path.exists(filepath):
+        return jsonify({"ok": False, "error": "File not found"}), 404
+    
+    os.remove(filepath)
+    return jsonify({"ok": True, "message": f"Deleted {filename}"})
+
+@app.route("/api/camera/screenshots", methods=["DELETE"])
+@handle_errors
+def api_camera_screenshots_delete_all():
+    """Удалить все скриншоты"""
+    if not os.path.exists(SCREENSHOTS_DIR):
+        return jsonify({"ok": True, "message": "No screenshots to delete"})
+    
+    count = 0
+    for f in os.listdir(SCREENSHOTS_DIR):
+        if f.endswith('.jpg'):
+            os.remove(os.path.join(SCREENSHOTS_DIR, f))
+            count += 1
+    
+    return jsonify({"ok": True, "deleted_count": count})
+
+# ============================================================
+# API ФОТО
+# ============================================================
+
+@app.route("/api/photo/settings", methods=["GET"])
+def api_photo_settings():
+    """Получить настройки фото"""
+    return jsonify({
+        "ok": True,
+        "config": PHOTO_CONFIG,
+        "save_config": PHOTO_SAVE_CONFIG,
+        "available_resolutions": PHOTO_PREVIEW_RESOLUTIONS,
+        "save_resolution": PHOTO_SAVE_RESOLUTION
+    })
+
+@app.route("/api/photo/settings", methods=["POST"])
+@handle_errors
+def api_photo_update_settings():
+    """Обновить настройки фото (только для превью)"""
+    global PHOTO_CONFIG
+    
+    data = request.get_json(force=True)
+    changes = {}
+    
+    if "resolution" in data:
+        res = data["resolution"]
+        if res in PHOTO_PREVIEW_RESOLUTIONS:
+            changes["resolution"] = res
+        else:
+            return jsonify({"ok": False, "error": f"Invalid resolution. Available: {PHOTO_PREVIEW_RESOLUTIONS}"}), 400
+    
+    if "quality" in data:
+        quality = int(data["quality"])
+        if 70 <= quality <= 100:
+            changes["quality"] = quality
+        else:
+            return jsonify({"ok": False, "error": "Quality must be between 70 and 100"}), 400
+    
+    if changes:
+        PHOTO_CONFIG.update(changes)
+        save_camera_settings()
+        print(f"[PHOTO] ✅ Settings updated: {changes}", flush=True)
+    
+    return jsonify({
+        "ok": True,
+        "config": PHOTO_CONFIG,
+        "changes": changes
+    })
+
+@app.route("/api/photo/capture", methods=["POST"])
+@handle_errors
+def api_photo_capture():
+    """Захват фото для превью (использует настройки превью)"""
+    global picam2, camera_started
+    
+    if not CAMERA_AVAILABLE:
+        return jsonify({"ok": False, "error": "Camera not available"}), 503
+    
+    try:
+        from PIL import Image
+        import base64
+        
+        # Используем настройки превью
+        w, h = map(int, PHOTO_CONFIG["resolution"].split('x'))
+        quality = PHOTO_CONFIG.get("quality", 85)
+        
+        print(f"[PHOTO] Capturing preview: {w}x{h}, quality={quality}%", flush=True)
+        
+        # ВСЕГДА переключаемся в фото режим (останавливаем видео)
+        with camera_lock:
+            if camera_started:
+                try:
+                    picam2.stop()
+                    print("[PHOTO] Stopped current mode", flush=True)
+                except Exception as e:
+                    print(f"[PHOTO] Stop error: {e}", flush=True)
+                camera_started = False
+            
+            # Переключаемся в фото режим
+            w_photo, h_photo = map(int, PHOTO_CONFIG["resolution"].split('x'))
+            config = picam2.create_still_configuration(
+                main={"size": (w_photo, h_photo), "format": "RGB888"}
+            )
+            picam2.configure(config)
+            picam2.start()
+            camera_started = True
+            CAMERA_MODE = "photo"
+            print(f"[PHOTO] Started photo mode: {w_photo}x{h_photo}", flush=True)
+        
+        time.sleep(0.5)
+        
+        # Захват
+        frame = picam2.capture_array()
+        frame = fix_camera_colors(frame)
+        
+        # Конвертация
+        img = Image.fromarray(frame)
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=quality)
+        jpeg_data = base64.b64encode(buf.getvalue()).decode('utf-8')
+        
+        # НЕ ВОЗВРАЩАЕМСЯ В ВИДЕО РЕЖИМ - остаемся в фото режиме
+        # Это позволяет быстро делать несколько фото подряд
+        
+        return jsonify({
+            "ok": True,
+            "image_data": jpeg_data,
+            "width": w,
+            "height": h,
+            "preview_resolution": PHOTO_CONFIG["resolution"],
+            "quality": quality,
+            "mode": "photo"
+        })
+        
+    except Exception as e:
+        print(f"[PHOTO] ❌ Capture error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        # При ошибке пробуем восстановить камеру
+        try:
+            with camera_lock:
+                if camera_started:
+                    picam2.stop()
+                    camera_started = False
+                # Пытаемся запустить видео режим как fallback
+                start_camera()
+        except:
+            pass
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/photo/save", methods=["POST"])
+@handle_errors
+def api_photo_save():
+    """Сохранить фото в максимальном качестве"""
+    global picam2, camera_started
+    
+    if not CAMERA_AVAILABLE:
+        return jsonify({"ok": False, "error": "Camera not available"}), 503
+    
+    try:
+        from PIL import Image
+        import base64
+        
+        # Используем максимальное разрешение для сохранения
+        w, h = map(int, PHOTO_SAVE_CONFIG["resolution"].split('x'))
+        quality = PHOTO_SAVE_CONFIG["quality"]
+        
+        print(f"[PHOTO] Saving high-res: {w}x{h}, quality={quality}%", flush=True)
+        
+        # Переключаемся в фото режим с максимальным разрешением
+        with camera_lock:
+            if camera_started:
+                try:
+                    picam2.stop()
+                    print("[PHOTO] Stopped current mode for save", flush=True)
+                except Exception as e:
+                    print(f"[PHOTO] Stop error: {e}", flush=True)
+                camera_started = False
+            
+            config = picam2.create_still_configuration(
+                main={"size": (w, h), "format": "RGB888"}
+            )
+            picam2.configure(config)
+            picam2.start()
+            camera_started = True
+            CAMERA_MODE = "photo"
+            print(f"[PHOTO] Started photo mode for save: {w}x{h}", flush=True)
+        
+        time.sleep(0.5)
+        
+        # Захват
+        frame = picam2.capture_array()
+        frame = fix_camera_colors(frame)
+        
+        # Сохранение
+        img = Image.fromarray(frame)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"photo_{timestamp}.jpg"
+        filepath = os.path.join(SCREENSHOTS_DIR, filename)
+        img.save(filepath, 'JPEG', quality=quality)
+        
+        # Создаем превью для отображения
+        preview_img = img.copy()
+        preview_img.thumbnail((640, 480), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        preview_img.save(buf, format='JPEG', quality=85)
+        preview_data = base64.b64encode(buf.getvalue()).decode('utf-8')
+        
+        # Переключаемся обратно на разрешение превью для следующего кадра
+        # Это делает следующий Refresh быстрее
+        try:
+            with camera_lock:
+                if camera_started:
+                    picam2.stop()
+                    camera_started = False
+                
+                # Возвращаемся к разрешению превью
+                pw, ph = map(int, PHOTO_CONFIG["resolution"].split('x'))
+                config = picam2.create_still_configuration(
+                    main={"size": (pw, ph), "format": "RGB888"}
+                )
+                picam2.configure(config)
+                picam2.start()
+                camera_started = True
+                CAMERA_MODE = "photo"
+                print(f"[PHOTO] Returned to preview mode: {pw}x{ph}", flush=True)
+        except Exception as e:
+            print(f"[PHOTO] Could not return to preview mode: {e}", flush=True)
+        
+        return jsonify({
+            "ok": True,
+            "filename": filename,
+            "filepath": filepath,
+            "size": os.path.getsize(filepath),
+            "url": f"/api/camera/screenshot/{filename}",
+            "preview_data": preview_data,
+            "resolution": PHOTO_SAVE_CONFIG["resolution"]
+        })
+        
+    except Exception as e:
+        print(f"[PHOTO] ❌ Save error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 # ============================================================
 # ВСЕ ОСТАЛЬНЫЕ ФУНКЦИИ (Meshtastic, чаты, телеметрия и т.д.)
 # ============================================================
@@ -442,7 +946,6 @@ base_status = {
 
 listen_process = None
 pause_listen = threading.Event()
-current_active_chat = CHANNEL_CHAT_ID
 
 # ===== TELEMETRY =====
 TELEMETRY_FILE = os.path.join(DATA_DIR, "telemetry_history.json")
@@ -457,36 +960,7 @@ telemetry_current = {
 telemetry_last_save_time = 0
 
 # ===== АТОМАРНАЯ ЗАПИСЬ JSON =====
-def atomic_write_json(filepath, data):
-    tmp_file = filepath + ".tmp"
-    try:
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_file, filepath)
-        return True
-    except Exception as e:
-        print(f"[ATOMIC] Write error: {e}")
-        return False
-
-def extract_json_block(text, start_pos):
-    brace_start = text.find("{", start_pos)
-    if brace_start < 0:
-        return None
-    brace_count = 0
-    brace_end = -1
-    for i in range(brace_start, len(text)):
-        if text[i] == '{':
-            brace_count += 1
-        elif text[i] == '}':
-            brace_count -= 1
-            if brace_count == 0:
-                brace_end = i
-                break
-    if brace_end < 0:
-        return None
-    return text[brace_start:brace_end + 1]
+# Используем safe_read_json и safe_write_json
 
 def now():
     return time.strftime("%H:%M:%S")
@@ -570,80 +1044,67 @@ def get_node_info(node_id):
 
 def save_messages():
     with state_lock:
-        atomic_write_json(HISTORY_FILE, messages[-MAX_HISTORY_MESSAGES:])
+        safe_write_json(HISTORY_FILE, messages[-MAX_HISTORY_MESSAGES:])
 
 def load_messages():
     global messages
-    if not os.path.exists(HISTORY_FILE): return
-    try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            messages = json.load(f)
-            messages[:] = messages[-MAX_HISTORY_MESSAGES:]
-    except Exception as e:
-        print(f"History load error: {e}")
+    data = safe_read_json(HISTORY_FILE, [])
+    if data:
+        messages = data[-MAX_HISTORY_MESSAGES:]
+    else:
         messages = []
 
 def save_chats():
     with state_lock:
-        atomic_write_json(CHATS_FILE, chats)
+        safe_write_json(CHATS_FILE, chats)
 
 def load_chats():
     global chats
-    if not os.path.exists(CHATS_FILE):
-        chats = {CHANNEL_CHAT_ID: {"id": CHANNEL_CHAT_ID, "name": CHANNEL_CHAT_NAME, "type": "channel", "last_message": "", "last_time": "", "unread": 0}}
-        save_chats()
-        return
-    try:
-        with open(CHATS_FILE, "r", encoding="utf-8") as f:
-            content = f.read()
-            if not content.strip():
-                raise ValueError("Empty file")
-            chats = json.loads(content)
-            if CHANNEL_CHAT_ID not in chats:
-                chats[CHANNEL_CHAT_ID] = {"id": CHANNEL_CHAT_ID, "name": CHANNEL_CHAT_NAME, "type": "channel", "last_message": "", "last_time": "", "unread": 0}
-                save_chats()
-    except Exception as e:
-        print(f"Chats load error: {e}, creating new")
-        chats = {CHANNEL_CHAT_ID: {"id": CHANNEL_CHAT_ID, "name": CHANNEL_CHAT_NAME, "type": "channel", "last_message": "", "last_time": "", "unread": 0}}
+    data = safe_read_json(CHATS_FILE, {})
+    if data:
+        chats = data
+    else:
+        chats = {}
+    
+    if CHANNEL_CHAT_ID not in chats:
+        chats[CHANNEL_CHAT_ID] = {
+            "id": CHANNEL_CHAT_ID,
+            "name": CHANNEL_CHAT_NAME,
+            "type": "channel",
+            "last_message": "",
+            "last_time": "",
+            "unread": 0
+        }
         save_chats()
 
 def save_nodes():
     with state_lock:
-        atomic_write_json(NODES_FILE, nodes)
+        safe_write_json(NODES_FILE, nodes)
 
 def load_nodes():
     global nodes
-    if not os.path.exists(NODES_FILE): return
-    try:
-        with open(NODES_FILE, "r", encoding="utf-8") as f:
-            nodes = json.load(f)
-    except Exception as e:
-        print(f"Nodes load error: {e}")
+    data = safe_read_json(NODES_FILE, {})
+    if data:
+        nodes = data
+    else:
         nodes = {}
 
 def save_sensors():
     with state_lock:
-        atomic_write_json(SENSORS_FILE, sensor_data)
+        safe_write_json(SENSORS_FILE, sensor_data)
 
 def load_sensors_data():
     global sensor_data
-    if not os.path.exists(SENSORS_FILE):
-        save_sensors()
-        return
-    try:
-        with open(SENSORS_FILE, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            if not content:
-                save_sensors()
-                return
-            sensor_data = json.loads(content)
-    except Exception as e:
-        print(f"Sensors load error: {e}")
+    data = safe_read_json(SENSORS_FILE, {})
+    if data:
+        sensor_data = data
+    else:
         save_sensors()
 
 def ensure_chat(node_id, node_name=None, force=False):
     if node_id == CHANNEL_CHAT_ID or not node_id or not node_id.startswith("!"):
         return
+    
     deleted_file = os.path.join(DATA_DIR, "deleted_dm.json")
     if not force and os.path.exists(deleted_file):
         try:
@@ -651,11 +1112,19 @@ def ensure_chat(node_id, node_name=None, force=False):
                 deleted_data = json.load(f)
                 if node_id in deleted_data.get("deleted", []):
                     return
-        except Exception as e:
+        except (json.JSONDecodeError, IOError) as e:
             print(f"[WARN] Could not read deleted_dm.json: {e}")
+    
     if node_id not in chats:
         name = node_name or get_node_name(node_id)
-        chats[node_id] = {"id": node_id, "name": name, "type": "dm", "last_message": "", "last_time": "", "unread": 0}
+        chats[node_id] = {
+            "id": node_id,
+            "name": name,
+            "type": "dm",
+            "last_message": "",
+            "last_time": "",
+            "unread": 0
+        }
         save_chats()
 
 def update_chat_last_message(chat_id, text, time_str):
@@ -672,30 +1141,21 @@ def reset_unread(chat_id):
 # ===== TELEMETRY FUNCTIONS =====
 def load_telemetry():
     global telemetry_history, telemetry_config
-    if not os.path.exists(TELEMETRY_FILE):
-        save_telemetry()
-        return
-    try:
-        with open(TELEMETRY_FILE, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            if not content:
-                save_telemetry()
-                return
-            data = json.loads(content)
-            telemetry_history = data.get("history", [])
-            telemetry_config = data.get("config", {"interval": 300, "enabled": True})
-            max_records = 26000
-            if len(telemetry_history) > max_records:
-                telemetry_history = telemetry_history[-max_records:]
-                save_telemetry()
-    except Exception as e:
-        print(f"[TELEMETRY] Load error: {e}")
+    data = safe_read_json(TELEMETRY_FILE, {})
+    if data:
+        telemetry_history = data.get("history", [])
+        telemetry_config = data.get("config", {"interval": 300, "enabled": True})
+        max_records = 26000
+        if len(telemetry_history) > max_records:
+            telemetry_history = telemetry_history[-max_records:]
+            save_telemetry()
+    else:
         save_telemetry()
 
 def save_telemetry():
     with state_lock:
         data = {"config": telemetry_config, "history": telemetry_history}
-        atomic_write_json(TELEMETRY_FILE, data)
+        safe_write_json(TELEMETRY_FILE, data)
 
 def add_telemetry_record(temp, humidity, pressure, voltage, current):
     global telemetry_history, telemetry_current, telemetry_last_save_time
@@ -1286,7 +1746,6 @@ def process_nodeinfo(block):
     return True
 
 def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None):
-    global current_active_chat
     with state_lock:
         if not node_id:
             node_id = infer_node_id_from_sender(sender)
@@ -1324,7 +1783,7 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None):
         messages.append(msg)
         messages[:] = messages[-MAX_HISTORY_MESSAGES:]
         update_chat_last_message(chat_id, text, msg["time"])
-        if kind == "rx" and chat_id in chats and chat_id != current_active_chat:
+        if kind == "rx" and chat_id in chats:
             chats[chat_id]["unread"] = chats[chat_id].get("unread", 0) + 1
             save_chats()
         save_messages()
@@ -1545,11 +2004,12 @@ def cleanup_seen_ids():
             del seen_recent_texts[key]
 
 def listen_meshtastic():
-    global listen_process, current_active_chat, telemetry_current, base_status
+    global listen_process, telemetry_current, base_status
 
     nodeinfo_buffer = []
     collecting_nodeinfo = False
     consecutive_errors = 0
+    max_consecutive_errors = 10
 
     while True:
         if pause_listen.is_set():
@@ -1577,6 +2037,7 @@ def listen_meshtastic():
                 )
 
                 print(f"[DEBUG] Listener started with PID: {listen_process.pid}")
+                consecutive_errors = 0
 
             for line in listen_process.stdout:
                 if pause_listen.is_set():
@@ -1587,125 +2048,130 @@ def listen_meshtastic():
                 if not line:
                     continue
 
-                if (
-                    "WARNING" in line
-                    or "ERROR" in line
-                    or "disconnected" in line.lower()
-                    or "multiple access" in line.lower()
-                ):
-                    print(f"[LISTEN WARN] {line}", flush=True)
-
-                if (
-                    "TELEMETRY_APP" in line
-                    or "environmentMetrics" in line
-                    or "powerMetrics" in line
-                    or "deviceMetrics" in line
-                ):
-                    try:
-                        with state_lock:
-                            process_telemetry_line(line)
-                    except Exception as e:
-                        print(f"[TELEMETRY] Parse error: {e}", flush=True)
-
-                if "TEXT_MESSAGE_APP" in line or "'text':" in line or '"text":' in line:
-                    print(f"[RAW] {line[:200]}...", flush=True)
-
-                if "NODEINFO_APP" in line or collecting_nodeinfo:
-                    collecting_nodeinfo = True
-                    nodeinfo_buffer.append(line)
-                    block = "\n".join(nodeinfo_buffer)
+                try:
+                    if (
+                        "WARNING" in line
+                        or "ERROR" in line
+                        or "disconnected" in line.lower()
+                        or "multiple access" in line.lower()
+                    ):
+                        print(f"[LISTEN WARN] {line}", flush=True)
 
                     if (
-                        "fromId" in block
-                        and (
-                            "longName" in block
-                            or "long_name" in block
-                            or "shortName" in block
-                            or "short_name" in block
-                            or "hwModel" in block
-                            or "hw_model" in block
-                        )
+                        "TELEMETRY_APP" in line
+                        or "environmentMetrics" in line
+                        or "powerMetrics" in line
+                        or "deviceMetrics" in line
                     ):
-                        with state_lock:
-                            process_nodeinfo(block)
-                        nodeinfo_buffer = []
-                        collecting_nodeinfo = False
+                        try:
+                            with state_lock:
+                                process_telemetry_line(line)
+                        except Exception as e:
+                            print(f"[TELEMETRY] Parse error: {e}", flush=True)
+
+                    if "TEXT_MESSAGE_APP" in line or "'text':" in line or '"text":' in line:
+                        print(f"[RAW] {line[:200]}...", flush=True)
+
+                    if "NODEINFO_APP" in line or collecting_nodeinfo:
+                        collecting_nodeinfo = True
+                        nodeinfo_buffer.append(line)
+                        block = "\n".join(nodeinfo_buffer)
+
+                        if (
+                            "fromId" in block
+                            and (
+                                "longName" in block
+                                or "long_name" in block
+                                or "shortName" in block
+                                or "short_name" in block
+                                or "hwModel" in block
+                                or "hw_model" in block
+                            )
+                        ):
+                            with state_lock:
+                                process_nodeinfo(block)
+                            nodeinfo_buffer = []
+                            collecting_nodeinfo = False
+                            continue
+
+                        if len(nodeinfo_buffer) > 80:
+                            with state_lock:
+                                process_nodeinfo(block)
+                            nodeinfo_buffer = []
+                            collecting_nodeinfo = False
+
                         continue
 
-                    if len(nodeinfo_buffer) > 80:
-                        with state_lock:
-                            process_nodeinfo(block)
-                        nodeinfo_buffer = []
-                        collecting_nodeinfo = False
+                    text = extract_text_message(line)
 
-                    continue
-
-                text = extract_text_message(line)
-
-                if not text:
-                    continue
-
-                pid = extract_packet_id(line)
-
-                if pid:
-                    if pid in seen_ids:
+                    if not text:
                         continue
-                    seen_ids.add(pid)
 
-                sender = extract_sender(line)
-                node_id = update_node(line, sender, text)
+                    pid = extract_packet_id(line)
 
-                if is_duplicate_text(sender, text, node_id):
-                    continue
+                    if pid:
+                        if pid in seen_ids:
+                            continue
+                        seen_ids.add(pid)
 
-                if node_id and nodes.get(node_id, {}).get("ignored", False):
-                    continue
+                    sender = extract_sender(line)
+                    node_id = update_node(line, sender, text)
 
-                chat_id = CHANNEL_CHAT_ID
-                is_channel = False
+                    if is_duplicate_text(sender, text, node_id):
+                        continue
 
-                if (
-                    "'to': 4294967295" in line
-                    or '"to": 4294967295' in line
-                    or "'to': '^all'" in line
-                    or '"to": "^all"' in line
-                    or "'toId': '^all'" in line
-                    or '"toId": "^all"' in line
-                    or "broadcast" in line.lower()
-                ):
-                    is_channel = True
-                elif "'dest'" in line.lower() or '"dest"' in line.lower():
-                    is_channel = False
-                elif "'to': '!" in line or '"to": "!"' in line:
-                    is_channel = False
-                elif re.search(r"'to':\s*[0-9]+,", line) or re.search(r'"to":\s*[0-9]+,', line):
-                    if "4294967295" not in line:
-                        is_channel = False
-                else:
-                    is_channel = True
+                    if node_id and nodes.get(node_id, {}).get("ignored", False):
+                        continue
 
-                if is_channel:
                     chat_id = CHANNEL_CHAT_ID
-                else:
-                    if node_id and node_id.startswith("!") and node_id != LOCAL_NODE_ID:
-                        chat_id = node_id
+                    is_channel = False
+
+                    if (
+                        "'to': 4294967295" in line
+                        or '"to": 4294967295' in line
+                        or "'to': '^all'" in line
+                        or '"to": "^all"' in line
+                        or "'toId': '^all'" in line
+                        or '"toId": "^all"' in line
+                        or "broadcast" in line.lower()
+                    ):
+                        is_channel = True
+                    elif "'dest'" in line.lower() or '"dest"' in line.lower():
+                        is_channel = False
+                    elif "'to': '!" in line or '"to": "!"' in line:
+                        is_channel = False
+                    elif re.search(r"'to':\s*[0-9]+,", line) or re.search(r'"to":\s*[0-9]+,', line):
+                        if "4294967295" not in line:
+                            is_channel = False
                     else:
-                        from_match = re.search(r"'from':\s*'(![0-9a-f]+)'", line)
+                        is_channel = True
 
-                        if not from_match:
-                            from_match = re.search(r'"from":\s*"(![0-9a-f]+)"', line)
-
-                        if from_match:
-                            chat_id = from_match.group(1)
+                    if is_channel:
+                        chat_id = CHANNEL_CHAT_ID
+                    else:
+                        if node_id and node_id.startswith("!") and node_id != LOCAL_NODE_ID:
+                            chat_id = node_id
                         else:
-                            chat_id = CHANNEL_CHAT_ID
+                            from_match = re.search(r"'from':\s*'(![0-9a-f]+)'", line)
 
-                if chat_id.startswith("!") and chat_id != LOCAL_NODE_ID:
+                            if not from_match:
+                                from_match = re.search(r'"from":\s*"(![0-9a-f]+)"', line)
+
+                            if from_match:
+                                chat_id = from_match.group(1)
+                            else:
+                                chat_id = CHANNEL_CHAT_ID
+
+                    if chat_id.startswith("!") and chat_id != LOCAL_NODE_ID:
+                        with state_lock:
+                            ensure_chat(chat_id, sender, force=True)
+
                     with state_lock:
-                        ensure_chat(chat_id, sender, force=True)
+                        add_message("rx", sender, text, node_id, chat_id)
 
-                with state_lock:
-                    add_message("rx", sender, text, node_id, chat_id)
+                except Exception as e:
+                    print(f"[LISTEN] Error processing line: {e}", flush=True)
+                    continue
 
             return_code = listen_process.poll()
 
@@ -1734,11 +2200,14 @@ def listen_meshtastic():
         except Exception as e:
             consecutive_errors += 1
             print(f"[ERROR] listen_meshtastic (attempt {consecutive_errors}): {e}", flush=True)
+            delay = min(consecutive_errors * 2, 30)
+            print(f"[ERROR] Waiting {delay}s before restart...", flush=True)
+            time.sleep(delay)
 
-        if consecutive_errors > 5:
-            print("[FATAL] Too many listener errors, waiting before restart...", flush=True)
+        if consecutive_errors > max_consecutive_errors:
+            print("[FATAL] Too many listener errors, restarting process...", flush=True)
             consecutive_errors = 0
-            time.sleep(10)
+            time.sleep(5)
         else:
             time.sleep(2)
 
@@ -1776,7 +2245,6 @@ def api_chats():
 
 @app.route("/api/messages")
 def api_messages():
-    global current_active_chat
     chat_id = request.args.get("chat_id", "").strip()
     if chat_id and not is_valid_node_id(chat_id):
         return jsonify({"ok": False, "error": "Invalid chat_id"}), 400
@@ -1788,7 +2256,6 @@ def api_messages():
             if chat_id in chats:
                 chats[chat_id]["unread"] = 0
                 save_chats()
-            current_active_chat = chat_id
             chat_info = chats.get(chat_id, {})
         return jsonify({"chat_id": chat_id, "messages": chat_messages, "chat_info": chat_info})
     else:
@@ -1815,6 +2282,7 @@ def api_node_status():
     return jsonify({"ok": True, "node_id": node_id, "ignored": node.get("ignored", False), "favorite": node.get("favorite", False), "name": node.get("name", "Unknown")})
 
 @app.route("/api/toggle_ignore", methods=["POST"])
+@handle_errors
 def api_toggle_ignore():
     data = request.get_json(force=True)
     node_id = data.get("node_id", "").strip()
@@ -1826,6 +2294,7 @@ def api_toggle_ignore():
     return jsonify({"ok": True, "ignored": nodes[node_id]["ignored"]})
 
 @app.route("/api/toggle_favorite", methods=["POST"])
+@handle_errors
 def api_toggle_favorite():
     data = request.get_json(force=True)
     node_id = data.get("node_id", "").strip()
@@ -1837,38 +2306,34 @@ def api_toggle_favorite():
     return jsonify({"ok": True, "favorite": nodes[node_id]["favorite"]})
 
 @app.route("/api/cleanup_nodes", methods=["POST"])
+@handle_errors
 def api_cleanup_nodes():
-    try:
-        with state_lock:
-            for node_id, node in nodes.items():
-                if node_id.startswith("!") and node_id not in chats:
-                    ensure_chat(node_id, node.get("name"), force=True)
-            save_chats()
-        return jsonify({"ok": True, "message": "Nodes cleaned up", "node_count": len(nodes)})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    with state_lock:
+        for node_id, node in nodes.items():
+            if node_id.startswith("!") and node_id not in chats:
+                ensure_chat(node_id, node.get("name"), force=True)
+        save_chats()
+    return jsonify({"ok": True, "message": "Nodes cleaned up", "node_count": len(nodes)})
 
 @app.route("/api/rescan_nodes", methods=["POST"])
+@handle_errors
 def api_rescan_nodes():
-    try:
-        global listen_process
-        if listen_process is not None:
-            try:
-                listen_process.terminate()
-                time.sleep(1)
-                if listen_process.poll() is None:
-                    listen_process.kill()
-                listen_process = None
-            except Exception as e:
-                print(f"[WARN] Error stopping listener: {e}")
-        parse_nodes_from_info()
-        threading.Thread(target=listen_meshtastic, daemon=True).start()
-        return jsonify({"ok": True, "message": "Network rescan started"})
-    except Exception as e:
-        print(f"[ERROR] Rescan failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+    global listen_process
+    if listen_process is not None:
+        try:
+            listen_process.terminate()
+            time.sleep(1)
+            if listen_process.poll() is None:
+                listen_process.kill()
+            listen_process = None
+        except Exception as e:
+            print(f"[WARN] Error stopping listener: {e}")
+    parse_nodes_from_info()
+    threading.Thread(target=listen_meshtastic, daemon=True).start()
+    return jsonify({"ok": True, "message": "Network rescan started"})
 
 @app.route("/api/clear_chat", methods=["POST"])
+@handle_errors
 def api_clear_chat():
     data = request.get_json(force=True)
     chat_id = data.get("chat_id", "").strip()
@@ -1886,9 +2351,8 @@ def api_clear_chat():
     return jsonify({"ok": True})
 
 @app.route("/api/send", methods=["POST"])
+@handle_errors
 def api_send():
-    global current_active_chat
-
     data = request.get_json(force=True)
 
     text = sanitize_text(data.get("text", "").strip())
@@ -1989,7 +2453,6 @@ def api_send():
 
         with state_lock:
             add_message("me", sender_name, text, LOCAL_NODE_ID, final_chat_id, chat_name)
-            current_active_chat = final_chat_id
 
             if final_chat_id in chats:
                 reset_unread(final_chat_id)
@@ -2041,8 +2504,8 @@ def api_send():
         print("[SEND] Listener resumed", flush=True)
                     
 @app.route("/api/delete_chat", methods=["POST"])
+@handle_errors
 def api_delete_chat():
-    global current_active_chat
     data = request.get_json(force=True)
     chat_id = data.get("chat_id", "").strip()
     if not chat_id or chat_id == CHANNEL_CHAT_ID or not is_valid_node_id(chat_id):
@@ -2054,8 +2517,6 @@ def api_delete_chat():
         global messages
         messages = [m for m in messages if m.get("chat_id") != chat_id]
         save_messages()
-        if current_active_chat == chat_id:
-            current_active_chat = CHANNEL_CHAT_ID
     return jsonify({"ok": True})
 
 # ===== TELEMETRY API =====
@@ -2071,6 +2532,7 @@ def api_telemetry_history():
     return jsonify({"history": history, "total": len(telemetry_history), "config": telemetry_config})
 
 @app.route("/api/telemetry/config", methods=["POST"])
+@handle_errors
 def api_telemetry_config():
     global telemetry_config
     data = request.get_json(force=True)
@@ -2090,17 +2552,6 @@ def api_telemetry_config():
             save_telemetry()
     return jsonify({"ok": True, "config": telemetry_config})
 
-@app.route("/api/telemetry/refresh", methods=["POST"])
-def api_telemetry_refresh():
-    try:
-        if listen_process is not None and listen_process.poll() is None:
-            return jsonify({"ok": False, "error": "Listener is running, cannot refresh via --info"}), 409
-        get_telemetry_from_info()
-        return jsonify({"ok": True, "message": "Telemetry refreshed"})
-    except Exception as e:
-        print(f"[ERROR] Telemetry refresh: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
-
 # ===== NODE MANAGEMENT ROUTES =====
 @app.route("/api/nodes_management", methods=["GET"])
 def api_nodes_management():
@@ -2117,8 +2568,9 @@ def api_nodes_management():
     return jsonify({"nodes": nodes_list, "total": len(nodes_list)})
 
 @app.route("/api/cleanup_all_nodes", methods=["POST"])
+@handle_errors
 def api_cleanup_all_nodes():
-    global nodes, chats, current_active_chat
+    global nodes, chats
     try:
         with state_lock:
             deleted_count = len(nodes)
@@ -2129,8 +2581,6 @@ def api_cleanup_all_nodes():
             nodes = {}
             save_nodes()
             save_chats()
-            if current_active_chat in dm_chat_ids:
-                current_active_chat = CHANNEL_CHAT_ID
         return jsonify({"ok": True, "deleted_count": deleted_count})
     except Exception as e:
         print(f"[ERROR] Cleanup all nodes: {e}")
@@ -2152,6 +2602,7 @@ def api_nodes_export():
     return jsonify({"nodes": nodes_list})
 
 @app.route("/api/nodes_import", methods=["POST"])
+@handle_errors
 def api_nodes_import():
     data = request.get_json()
     imported_nodes = data.get("nodes", [])
@@ -2185,6 +2636,7 @@ def api_nodes_import():
     return jsonify({"ok": True, "imported_count": imported_count})
 
 @app.route("/api/nodes_merge_duplicates", methods=["POST"])
+@handle_errors
 def api_nodes_merge_duplicates():
     merged = 0
     with state_lock:
@@ -2214,8 +2666,9 @@ def api_nodes_merge_duplicates():
     return jsonify({"ok": True, "merged_count": merged})
 
 @app.route("/api/delete_all_dm", methods=["POST"])
+@handle_errors
 def api_delete_all_dm():
-    global messages, chats, current_active_chat
+    global messages, chats
     try:
         with state_lock:
             deleted_count = 0
@@ -2236,256 +2689,25 @@ def api_delete_all_dm():
             messages = [m for m in messages if m.get("chat_id") == CHANNEL_CHAT_ID]
             save_chats()
             save_messages()
-            if current_active_chat in dm_chat_ids:
-                current_active_chat = CHANNEL_CHAT_ID
         return jsonify({"ok": True, "deleted_count": deleted_count, "message": f"Deleted {deleted_count} DM chats"})
     except Exception as e:
         print(f"[ERROR] Delete all DM: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/restore_deleted_dm", methods=["POST"])
+@handle_errors
 def api_restore_deleted_dm():
-    try:
-        deleted_file = os.path.join(DATA_DIR, "deleted_dm.json")
-        if os.path.exists(deleted_file):
-            os.remove(deleted_file)
-            with state_lock:
-                for node_id in nodes:
-                    if node_id.startswith("!"):
-                        ensure_chat(node_id, nodes[node_id].get("name"), force=True)
-                save_chats()
-            return jsonify({"ok": True, "message": "Restored deleted DM chats"})
-        return jsonify({"ok": True, "message": "No deleted chats to restore"})
-    except Exception as e:
-        print(f"[ERROR] Restore deleted DM: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
-    
-@app.route("/api/camera/screenshot/<filename>", methods=["DELETE"])
-def api_camera_screenshot_delete(filename):
-    """Удалить скриншот"""
-    try:
-        filepath = os.path.join(SCREENSHOTS_DIR, filename)
-        if not os.path.exists(filepath):
-            return jsonify({"ok": False, "error": "File not found"}), 404
-        
-        os.remove(filepath)
-        return jsonify({"ok": True, "message": f"Deleted {filename}"})
-        
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    deleted_file = os.path.join(DATA_DIR, "deleted_dm.json")
+    if os.path.exists(deleted_file):
+        os.remove(deleted_file)
+        with state_lock:
+            for node_id in nodes:
+                if node_id.startswith("!"):
+                    ensure_chat(node_id, nodes[node_id].get("name"), force=True)
+            save_chats()
+        return jsonify({"ok": True, "message": "Restored deleted DM chats"})
+    return jsonify({"ok": True, "message": "No deleted chats to restore"})
 
-@app.route("/api/camera/screenshots", methods=["DELETE"])
-def api_camera_screenshots_delete_all():
-    """Удалить все скриншоты"""
-    try:
-        if not os.path.exists(SCREENSHOTS_DIR):
-            return jsonify({"ok": True, "message": "No screenshots to delete"})
-        
-        count = 0
-        for f in os.listdir(SCREENSHOTS_DIR):
-            if f.endswith('.jpg'):
-                os.remove(os.path.join(SCREENSHOTS_DIR, f))
-                count += 1
-        
-        return jsonify({"ok": True, "deleted_count": count})
-        
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-    
-# ===== PHOTO API =====
-
-PHOTO_CONFIG = {
-    "resolution": "2592x1944",
-    "quality": 95
-}
-
-PHOTO_RESOLUTIONS = ["2592x1944", "1920x1080", "1280x720", "640x480"]
-
-@app.route("/api/photo/settings", methods=["GET"])
-def api_photo_settings():
-    """Получить настройки фото"""
-    return jsonify({
-        "ok": True,
-        "config": PHOTO_CONFIG,
-        "available_resolutions": PHOTO_RESOLUTIONS
-    })
-
-@app.route("/api/photo/settings", methods=["POST"])
-def api_photo_update_settings():
-    """Обновить настройки фото"""
-    global PHOTO_CONFIG
-    
-    data = request.get_json(force=True)
-    changes = {}
-    
-    if "resolution" in data:
-        res = data["resolution"]
-        if res in PHOTO_RESOLUTIONS:
-            changes["resolution"] = res
-        else:
-            return jsonify({"ok": False, "error": f"Invalid resolution. Available: {PHOTO_RESOLUTIONS}"}), 400
-    
-    if "quality" in data:
-        quality = int(data["quality"])
-        if 70 <= quality <= 100:
-            changes["quality"] = quality
-        else:
-            return jsonify({"ok": False, "error": "Quality must be between 70 and 100"}), 400
-    
-    if changes:
-        PHOTO_CONFIG.update(changes)
-        print(f"[PHOTO] ✅ Settings updated: {changes}", flush=True)
-    
-    return jsonify({
-        "ok": True,
-        "config": PHOTO_CONFIG,
-        "changes": changes
-    })
-
-@app.route("/api/photo/capture", methods=["POST"])
-def api_photo_capture():
-    """Захват фото (без сохранения) - возвращает только для превью"""
-    global picam2, camera_started
-    
-    if not CAMERA_AVAILABLE:
-        return jsonify({"ok": False, "error": "Camera not available"}), 503
-    
-    try:
-        from PIL import Image
-        import base64
-        
-        w, h = map(int, PHOTO_CONFIG["resolution"].split('x'))
-        
-        # === БЕЗОПАСНАЯ ОСТАНОВКА КАМЕРЫ ===
-        with camera_lock:
-            if camera_started:
-                try:
-                    picam2.stop()
-                except Exception as e:
-                    print(f"[PHOTO] Stop error (ignored): {e}", flush=True)
-                camera_started = False
-                time.sleep(0.3)  # Даем время остановиться
-        
-        # === КОНФИГУРАЦИЯ ДЛЯ ФОТО ===
-        config = picam2.create_still_configuration(
-            main={"size": (w, h), "format": "RGB888"}
-        )
-        picam2.configure(config)
-        picam2.start()
-        time.sleep(0.5)  # Даем камере стабилизироваться
-        
-        # === ЗАХВАТ ФОТО ===
-        frame = picam2.capture_array()
-        
-        # === ОСТАНАВЛИВАЕМ КАМЕРУ ===
-        with camera_lock:
-            try:
-                picam2.stop()
-            except Exception as e:
-                print(f"[PHOTO] Stop after capture error (ignored): {e}", flush=True)
-            camera_started = False
-        
-        # === КОНВЕРТАЦИЯ В JPEG ===
-        img = Image.fromarray(frame)
-        buf = io.BytesIO()
-        quality = PHOTO_CONFIG.get("quality", 95)
-        img.save(buf, format='JPEG', quality=quality)
-        jpeg_data = base64.b64encode(buf.getvalue()).decode('utf-8')
-        
-        # === ВОССТАНАВЛИВАЕМ ВИДЕО РЕЖИМ ===
-        # Запускаем видео с текущими настройками
-        # start_camera()
-        
-        return jsonify({
-            "ok": True,
-            "image_data": jpeg_data,
-            "width": w,
-            "height": h
-        })
-        
-    except Exception as e:
-        print(f"[PHOTO] ❌ Capture error: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-        # Восстанавливаем видео режим
-      #  try:
-      #      start_camera()
-      #  except:
-      #      pass
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-@app.route("/api/photo/save", methods=["POST"])
-def api_photo_save():
-    """Сохранить текущее фото в галерею"""
-    global picam2, camera_started
-    
-    if not CAMERA_AVAILABLE:
-        return jsonify({"ok": False, "error": "Camera not available"}), 503
-    
-    try:
-        from PIL import Image
-        
-        w, h = map(int, PHOTO_CONFIG["resolution"].split('x'))
-        quality = PHOTO_CONFIG["quality"]
-        
-        # === БЕЗОПАСНАЯ ОСТАНОВКА КАМЕРЫ ===
-        with camera_lock:
-            if camera_started:
-                try:
-                    picam2.stop()
-                except Exception as e:
-                    print(f"[PHOTO] Stop error (ignored): {e}", flush=True)
-                camera_started = False
-                time.sleep(0.3)
-        
-        # === КОНФИГУРАЦИЯ ДЛЯ ФОТО ===
-        config = picam2.create_still_configuration(
-            main={"size": (w, h), "format": "RGB888"}
-        )
-        picam2.configure(config)
-        picam2.start()
-        time.sleep(0.5)
-        
-        # === ЗАХВАТ ФОТО ===
-        frame = picam2.capture_array()
-        
-        # === ОСТАНАВЛИВАЕМ КАМЕРУ ===
-        with camera_lock:
-            try:
-                picam2.stop()
-            except Exception as e:
-                print(f"[PHOTO] Stop after capture error (ignored): {e}", flush=True)
-            camera_started = False
-        
-        # === СОХРАНЕНИЕ ===
-        img = Image.fromarray(frame)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"photo_{timestamp}.jpg"
-        filepath = os.path.join(SCREENSHOTS_DIR, filename)
-        
-        img.save(filepath, 'JPEG', quality=quality)
-        
-        # === ВОССТАНАВЛИВАЕМ ВИДЕО РЕЖИМ ===
-        #start_camera()
-        
-        return jsonify({
-            "ok": True,
-            "filename": filename,
-            "filepath": filepath,
-            "size": os.path.getsize(filepath),
-            "url": f"/api/camera/screenshot/{filename}"
-        })
-        
-    except Exception as e:
-        print(f"[PHOTO] ❌ Save error: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-        try:
-            start_camera()
-        except:
-            pass
-        return jsonify({"ok": False, "error": str(e)}), 500
-    
 # ============================================================
 # ЗАПУСК
 # ============================================================
@@ -2506,6 +2728,8 @@ if __name__ == "__main__":
         print(f"[WARN] Base status update failed: {e}")
     
     load_telemetry()
+    load_camera_settings()
+    
     for node_id in KNOWN_NODES:
         if node_id not in chats:
             ensure_chat(node_id, KNOWN_NODES[node_id], force=True)
@@ -2534,9 +2758,8 @@ if __name__ == "__main__":
     ║  Node: {LOCAL_NODE_NAME}                     ║
     ║  Port: {MESHTASTIC_PORT}                    ║
     ║  Camera: {'✅' if CAMERA_AVAILABLE else '❌'} Available        ║
-    ║  Resolution: {VIDEO_CONFIG['resolution']}   ║
-    ║  FPS: {VIDEO_CONFIG['fps']}                   ║
-    ║  Quality: {VIDEO_CONFIG['quality']}%         ║
+    ║  Video: {VIDEO_CONFIG['resolution']} @ {VIDEO_CONFIG['fps']}fps {VIDEO_CONFIG['quality']}% ║
+    ║  Photo: {PHOTO_CONFIG['resolution']} preview, {PHOTO_SAVE_CONFIG['resolution']} save ║
     ╚══════════════════════════════════════════════╝
     """)
     

@@ -1684,7 +1684,6 @@ body {
     color: #555;
     flex-shrink: 0;
     letter-spacing: 0.3px;
-/*    text-transform: uppercase; */
 }
 
 .telemetry-btn .telemetry-update {
@@ -2424,7 +2423,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #e8eaed !important;  /* Светло-серый фон */
+    background: #e8eaed !important;
     padding: 12px;
 }
 
@@ -2703,10 +2702,23 @@ body {
     transform: none;
 }
 
+.photo-save-info {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid #eee;
+    font-size: 11px;
+    color: #888;
+    text-align: center;
+}
+
 /* ===== АДАПТАЦИЯ PHOTO ===== */
 @media (max-width: 768px) {
     .photo-controls-grid {
         grid-template-columns: 1fr 1fr;
+    }
+    
+    .photo-save-info {
+        font-size: 10px;
     }
 }
 
@@ -2725,6 +2737,10 @@ body {
     
     .photo-placeholder-hint {
         font-size: 12px;
+    }
+    
+    .photo-save-info {
+        font-size: 9px;
     }
 }
 
@@ -2762,195 +2778,4 @@ body {
     background: #fafbfc;
     min-height: 0;
     height: 100%;
-}
-
-/* ===== PHOTO VIEW ===== */
-.photo-view {
-    flex: 1;
-    min-height: 0;
-    background: #fafbfc;
-    padding: 14px;
-    overflow: auto;
-    flex-direction: column;
-}
-
-.photo-panel {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    background: white;
-    border: 1px solid #e5e8ec;
-    border-radius: 12px;
-    overflow: hidden;
-}
-
-.photo-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
-    background: #f5f7fa;
-    border-bottom: 1px solid #e5e8ec;
-    flex-shrink: 0;
-}
-
-.photo-title {
-    font-size: 16px;
-    font-weight: 700;
-    color: #1a2a4a;
-}
-
-.photo-subtitle {
-    font-size: 12px;
-    color: #777;
-    margin-top: 2px;
-}
-
-.photo-frame-wrap {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #e8eaed !important;
-    padding: 12px;
-}
-
-.photo-display {
-    max-width: 100%;
-    max-height: 100%;
-    width: auto;
-    height: auto;
-    border-radius: 8px;
-    background: #000;
-    object-fit: contain;
-}
-
-.photo-placeholder {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    color: #999;
-    gap: 8px;
-}
-
-.photo-placeholder-icon {
-    font-size: 48px;
-}
-
-.photo-placeholder-text {
-    font-size: 18px;
-    font-weight: 500;
-}
-
-.photo-placeholder-hint {
-    font-size: 14px;
-    color: #bbb;
-}
-
-.photo-info-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 6px 14px;
-    background: #f0f2f5;
-    font-size: 13px;
-    color: #333;
-    border-bottom: 1px solid #e5e8ec;
-    flex-shrink: 0;
-}
-
-#photoStatus {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-weight: 600;
-}
-
-#photoInfo {
-    color: #555;
-    font-weight: 500;
-}
-
-.photo-controls {
-    padding: 10px 14px;
-    background: #f5f7fa;
-    border-top: 1px solid #e5e8ec;
-}
-
-.photo-controls-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 10px;
-    align-items: end;
-}
-
-.photo-refresh-btn {
-    padding: 6px 12px;
-    border: none;
-    border-radius: 6px;
-    background: #d8e4f0;
-    color: #2a5a8a;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    white-space: nowrap;
-}
-
-.photo-refresh-btn:hover {
-    background: #c0d4e8;
-    transform: translateY(-1px);
-}
-
-.photo-save-btn {
-    padding: 6px 12px;
-    border: none;
-    border-radius: 6px;
-    background: #4caf50;
-    color: white;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    white-space: nowrap;
-}
-
-.photo-save-btn:hover {
-    background: #43a047;
-    transform: translateY(-1px);
-}
-
-.photo-save-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    transform: none;
-}
-
-/* ===== АДАПТАЦИЯ PHOTO ===== */
-@media (max-width: 768px) {
-    .photo-controls-grid {
-        grid-template-columns: 1fr 1fr;
-    }
-}
-
-@media (max-width: 480px) {
-    .photo-controls-grid {
-        grid-template-columns: 1fr;
-    }
-    
-    .photo-placeholder-icon {
-        font-size: 32px;
-    }
-    
-    .photo-placeholder-text {
-        font-size: 14px;
-    }
-    
-    .photo-placeholder-hint {
-        font-size: 12px;
-    }
 }

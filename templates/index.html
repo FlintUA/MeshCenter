@@ -68,10 +68,22 @@
             <!-- Chat List View -->
             <div class="chat-list-container" id="chatListContainer">
                 <div class="chat-list" id="chatList">
-                    <div class="loading">Loading chats...</div>
+                    <div class="loading" id="initialLoading">
+                        <div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:30px 0;">
+                            <div style="width:40px;height:40px;border:4px solid #e0e0e0;border-top:4px solid #1a73e8;border-radius:50%;animation:spin 1s linear infinite;"></div>
+                            <span style="color:#888;font-size:14px;">Loading chats and nodes...</span>
+                            <span style="color:#bbb;font-size:12px;">Please wait</span>
+                        </div>
+                    </div>
+                    <style>
+                        @keyframes spin {
+                            0% { transform: rotate(0deg); }
+                            100% { transform: rotate(360deg); }
+                        }
+                    </style>
                 </div>
             </div>
-
+            
             <!-- Messages View -->
             <div class="messages-view" id="messagesView" style="display: none;">
                 <div class="messages-container" id="messagesContainer">
@@ -195,27 +207,27 @@
 
                     <div class="photo-info-bar">
                         <span id="photoStatus">📷 Ready</span>
-                        <span id="photoInfo">Resolution: 2592×1944 (5MP)</span>
+                        <span id="photoInfo">Preview: 640×480 (85%) • Save: 2592×1944</span>
                     </div>
 
                     <div class="photo-controls">
                         <div class="photo-controls-grid">
                             <div class="control-group">
-                                <label>Resolution</label>
+                                <label>Preview Resolution</label>
                                 <select id="photoResolution" onchange="updatePhotoSettings()">
-                                    <option value="2592x1944" selected>2592×1944 (5MP)</option>
-                                    <option value="1920x1080">1920×1080 (FHD)</option>
+                                    <option value="640x480" selected>640×480 (fast)</option>
                                     <option value="1280x720">1280×720 (HD)</option>
-                                    <option value="640x480">640×480</option>
+                                    <option value="1920x1080">1920×1080 (FHD)</option>
+                                    <option value="2592x1944">2592×1944 (5MP - for saving)</option>
                                 </select>
                             </div>
                             
                             <div class="control-group">
                                 <label>Quality</label>
                                 <div class="quality-control">
-                                    <input type="range" id="photoQuality" min="70" max="100" value="95" 
+                                    <input type="range" id="photoQuality" min="70" max="100" value="85" 
                                            oninput="updatePhotoSettings()">
-                                    <span id="photoQualityLabel">95%</span>
+                                    <span id="photoQualityLabel">85%</span>
                                 </div>
                             </div>
                             
@@ -227,6 +239,10 @@
                                 <button class="photo-save-btn" id="photoSaveBtn" onclick="savePhoto()">💾 Save</button>
                                 <button class="screenshots-btn" onclick="showScreenshots()">🖼️ Gallery</button>
                             </div>
+                        </div>
+                        
+                        <div class="photo-save-info">
+                            💡 Preview uses selected resolution. Save always uses maximum 2592×1944 for best quality.
                         </div>
                     </div>
                 </div>
@@ -318,7 +334,7 @@
                         <option value="1800">30 min</option>
                         <option value="3600">1 hour</option>
                     </select>
-                    <button class="telemetry-refresh-btn" id="telemetryRefreshBtn" onclick="refreshTelemetry()">🔄 Refresh now</button>
+                    <span style="font-size:9px;color:#999;margin-left:4px;">(auto-updates from listener)</span>
                 </div>
             </div>
 

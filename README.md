@@ -1,33 +1,13 @@
 # Flint Meshtastic Web UI
 
-```{=html}
-<p align="center">
-```
-`<img src="https://github.com/user-attachments/assets/0847ebce-bf96-4b5d-8b3e-3b92bbd3d440" width="170">`{=html}
-```{=html}
-</p>
-```
-```{=html}
-<p align="center">
-```
+<img src="https://github.com/user-attachments/assets/0847ebce-bf96-4b5d-8b3e-3b92bbd3d440" width="170">`{=html}
 A lightweight and modern web interface for Meshtastic nodes running on
 Raspberry Pi.
-```{=html}
-</p>
-```
-```{=html}
-<p align="center">
-```
 ![Version](https://img.shields.io/badge/version-v1.1.0--dev-blue)
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-success)
 ![Meshtastic](https://img.shields.io/badge/Meshtastic-Compatible-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
-
-```{=html}
-</p>
-```
-
 ------------------------------------------------------------------------
 
 # ✨ Highlights

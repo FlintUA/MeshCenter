@@ -16,6 +16,7 @@ from collections import defaultdict
 from datetime import datetime
 from camera import camera
 from telemetry import telemetry
+from meshsrv import meshsrv
 
 try:
     from config import *
@@ -709,12 +710,7 @@ def get_telemetry_from_info():
     global base_status
 
     try:
-        result = subprocess.run(
-            [MESHTASTIC_CMD, "--info"],
-            capture_output=True,
-            text=True,
-            timeout=15
-        )
+        result = meshsrv.get_info(MESHTASTIC_CMD, timeout=15)
         output = result.stdout + result.stderr
 
         node_pos = output.find(f'"{LOCAL_NODE_ID}"')
@@ -1271,7 +1267,7 @@ def stop_listener():
 def update_base_status_from_info():
     global base_status
     try:
-        result = subprocess.run([MESHTASTIC_CMD, "--info"], capture_output=True, text=True, timeout=15)
+        result = meshsrv.get_info(MESHTASTIC_CMD, timeout=15)
         output = result.stdout + result.stderr
         node_pos = output.find(f'"{LOCAL_NODE_ID}"')
         if node_pos < 0:

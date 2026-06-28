@@ -14,6 +14,8 @@ import os
 import io
 from collections import defaultdict
 from datetime import datetime
+from camera import camera
+from telemetry import telemetry
 
 try:
     from config import *
@@ -62,78 +64,146 @@ if not os.path.exists(SCREENSHOTS_DIR):
 
 app = Flask(__name__)
 
+def handle_errors(f):
+    """Декоратор для обработки ошибок в API"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except Exception as e:
+            print(f"[ERROR] {f.__name__}: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return jsonify({
+                "ok": False,
+                "error": str(e),
+                "traceback": traceback.format_exc() if app.debug else None
+            }), 500
+    return decorated_function
+
 # ===== STATIC FILES =====
 @app.route('/static/<path:filename>')
 def static_files(filename):
     return send_from_directory('static', filename)
 
-# ============================================================
-# КАМЕРА / ВИДЕО ДЛЯ PI ZERO 2W
-# ============================================================
+@app.route('/video_feed')
+def video_feed():
+    """MJPEG видео поток"""
+    if not camera.CAMERA_AVAILABLE:
+        print("[CAMERA] ❌ Camera not available", flush=True)
+        return "Camera not available", 503
+    return Response(
+        camera.generate_mjpeg_stream(),
+        mimetype='multipart/x-mixed-replace; boundary=frame'
+    )
 
-# Настройки видео
-VIDEO_CONFIG = {
-    "resolution": "640x480",
-    "fps": 12,
-    "quality": 75
-}
+@app.route("/api/camera/status")
+def api_camera_status():
+    """Статус камеры"""
+    return jsonify(camera.get_camera_status())
 
-VIDEO_MODES = {
-    "low": {"resolution": "320x240", "fps": 8, "quality": 60},
-    "medium": {"resolution": "480x320", "fps": 10, "quality": 70},
-    "high": {"resolution": "640x480", "fps": 12, "quality": 75},
-    "hd": {"resolution": "1280x720", "fps": 15, "quality": 70}
-}
+@app.route("/api/camera/stop", methods=["POST"])
+@handle_errors
+def api_camera_stop():
+    """Полностью остановить камеру"""
+    camera.stop_camera()
+    return jsonify({"ok": True, "mode": camera.CAMERA_MODE, "started": camera.camera_started})
 
-# Расширенные разрешения для видео
-RESOLUTIONS = [
-    "320x240", "480x320", "640x480", 
-    "800x600", "1024x768", "1280x720", 
-    "1280x960", "1920x1080"
-]
+@app.route("/api/camera/switch_mode", methods=["POST"])
+@handle_errors
+def api_camera_switch_mode():
+    """Переключение режима камеры (video/photo)"""
+    data = request.get_json(force=True)
+    result, status = camera.api_switch_mode(data)
+    return jsonify(result), status
 
-# Расширенные FPS
-FPS_OPTIONS = [5, 8, 10, 12, 15, 20, 24, 30]
+@app.route("/api/camera/settings", methods=["GET"])
+def api_camera_settings():
+    """Получить текущие настройки видео"""
+    return jsonify(camera.get_camera_settings())
 
-# Настройки для превью фото (быстрое)
-PHOTO_PREVIEW_CONFIG = {
-    "resolution": "640x480",
-    "quality": 85
-}
+@app.route("/api/camera/settings", methods=["POST"])
+@handle_errors
+def api_camera_update_settings():
+    """Обновить настройки камеры"""
+    data = request.get_json(force=True)
+    result, status = camera.update_camera_settings(data)
+    return jsonify(result), status
 
-# Настройки для сохранения фото (максимальное качество)
-PHOTO_SAVE_CONFIG = {
-    "resolution": "2592x1944",
-    "quality": 95
-}
+@app.route("/api/camera/mode/<mode>", methods=["POST"])
+def api_camera_set_mode(mode):
+    """Переключить предустановленный режим"""
+    result, status = camera.set_video_mode(mode)
+    return jsonify(result), status
 
-# Текущие настройки фото (используются для превью)
-PHOTO_CONFIG = PHOTO_PREVIEW_CONFIG.copy()
+@app.route("/api/camera/screenshot", methods=["POST"])
+@handle_errors
+def api_camera_screenshot():
+    """Создать скриншот"""
+    result = camera.capture_screenshot()
 
-# Доступные разрешения для превью
-PHOTO_PREVIEW_RESOLUTIONS = ["640x480", "1280x720", "1920x1080", "2592x1944"]
-PHOTO_SAVE_RESOLUTION = "2592x1944"
+    if result.get("success") or result.get("ok"):
+        result["ok"] = True
+        return jsonify(result)
 
-# Глобальные переменные
-CAMERA_AVAILABLE = False
-picam2 = None
-camera_started = False
-camera_lock = threading.RLock()
-last_frame = None
-last_frame_time = 0
-CAMERA_MODE = "video"  # "video" or "photo"
-CAMERA_ACTIVE = False
-CAMERA_CONFIG_FILE = os.path.join(DATA_DIR, "camera_config.json")
+    return jsonify({
+        "ok": False,
+        "error": result.get("error", "Unknown error")
+    }), 500
 
-# ============================================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# ============================================================
+@app.route("/api/camera/screenshot/<filename>")
+def api_camera_screenshot_file(filename):
+    """Получить скриншот"""
+    if not camera.screenshot_exists(filename):
+        return jsonify({"ok": False, "error": "File not found"}), 404
+    return send_from_directory(camera.SCREENSHOTS_DIR, filename, mimetype='image/jpeg')
 
-def fix_camera_colors(frame):
-    """Конвертирует BGR в RGB если необходимо"""
-    if frame is not None and frame.ndim == 3 and frame.shape[2] == 3:
-        return frame[:, :, ::-1]  # BGR -> RGB
-    return frame
+@app.route("/api/camera/screenshots", methods=["GET"])
+def api_camera_screenshots_list():
+    """Список всех скриншотов"""
+    result, status = camera.list_screenshots()
+    return jsonify(result), status
+
+@app.route("/api/camera/screenshot/<filename>", methods=["DELETE"])
+@handle_errors
+def api_camera_screenshot_delete(filename):
+    """Удалить скриншот"""
+    result, status = camera.delete_screenshot(filename)
+    return jsonify(result), status
+
+@app.route("/api/camera/screenshots", methods=["DELETE"])
+@handle_errors
+def api_camera_screenshots_delete_all():
+    """Удалить все скриншоты"""
+    result, status = camera.delete_all_screenshots()
+    return jsonify(result), status
+
+@app.route("/api/photo/settings", methods=["GET"])
+def api_photo_settings():
+    """Получить настройки фото"""
+    return jsonify(camera.get_photo_settings())
+
+@app.route("/api/photo/settings", methods=["POST"])
+@handle_errors
+def api_photo_update_settings():
+    """Обновить настройки фото"""
+    data = request.get_json(force=True)
+    result, status = camera.update_photo_settings(data)
+    return jsonify(result), status
+
+@app.route("/api/photo/capture", methods=["POST"])
+@handle_errors
+def api_photo_capture():
+    """Захват фото для превью"""
+    result, status = camera.capture_photo_preview()
+    return jsonify(result), status
+
+@app.route("/api/photo/save", methods=["POST"])
+@handle_errors
+def api_photo_save():
+    """Сохранить фото в максимальном качестве"""
+    result, status = camera.save_highres_photo()
+    return jsonify(result), status
 
 def safe_read_json(filepath, default=None):
     """Безопасное чтение JSON с проверкой временных файлов"""
@@ -199,725 +269,6 @@ def extract_json_block(text, start_pos):
         return None
     return text[brace_start:brace_end + 1]
 
-def load_camera_settings():
-    """Загрузка настроек камеры из файла"""
-    global VIDEO_CONFIG, PHOTO_CONFIG, PHOTO_SAVE_CONFIG
-    
-    data = safe_read_json(CAMERA_CONFIG_FILE, {})
-    if data:
-        if "video" in data:
-            VIDEO_CONFIG.update(data["video"])
-        if "photo_preview" in data:
-            PHOTO_CONFIG.update(data["photo_preview"])
-        if "photo_save" in data:
-            PHOTO_SAVE_CONFIG.update(data["photo_save"])
-        print(f"[CAMERA] Loaded settings: preview={PHOTO_CONFIG['resolution']}@{PHOTO_CONFIG['quality']}%, save={PHOTO_SAVE_CONFIG['resolution']}", flush=True)
-
-def save_camera_settings():
-    """Сохранение настроек камеры в файл"""
-    data = {
-        "video": VIDEO_CONFIG,
-        "photo_preview": PHOTO_CONFIG,
-        "photo_save": PHOTO_SAVE_CONFIG
-    }
-    safe_write_json(CAMERA_CONFIG_FILE, data)
-    print(f"[CAMERA] Saved settings", flush=True)
-
-def handle_errors(f):
-    """Декоратор для обработки ошибок в API"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        try:
-            return f(*args, **kwargs)
-        except Exception as e:
-            print(f"[ERROR] {f.__name__}: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
-            return jsonify({
-                "ok": False,
-                "error": str(e),
-                "traceback": traceback.format_exc() if app.debug else None
-            }), 500
-    return decorated_function
-
-# ============================================================
-# КАМЕРА - ОСНОВНЫЕ ФУНКЦИИ
-# ============================================================
-
-def init_camera():
-    """Инициализация камеры через Picamera2"""
-    global CAMERA_AVAILABLE, picam2
-    
-    print("[CAMERA] 🔍 Initializing OV5647...", flush=True)
-    
-    try:
-        from picamera2 import Picamera2
-        
-        print("[CAMERA] ✅ Picamera2 imported", flush=True)
-        picam2 = Picamera2()
-        
-        props = picam2.camera_properties
-        if props:
-            print(f"[CAMERA] ✅ Camera found: OV5647", flush=True)
-            CAMERA_AVAILABLE = True
-            return True
-        else:
-            print("[CAMERA] ❌ No camera properties", flush=True)
-            return False
-            
-    except Exception as e:
-        print(f"[CAMERA] ❌ Init error: {e}", flush=True)
-        return False
-
-def stop_camera():
-    """Безопасная остановка камеры"""
-    global picam2, camera_started, CAMERA_ACTIVE
-    
-    with camera_lock:
-        if camera_started:
-            try:
-                picam2.stop()
-                print("[CAMERA] Stopped", flush=True)
-            except Exception as e:
-                print(f"[CAMERA] Stop error: {e}", flush=True)
-            camera_started = False
-            CAMERA_ACTIVE = False
-        return True
-
-def switch_camera_mode(mode, resolution=None, fps=None):
-    """Переключение режима камеры"""
-    global picam2, camera_started, CAMERA_MODE
-    
-    if mode not in ["video", "photo"]:
-        return False
-    
-    stop_camera()
-    
-    try:
-        if mode == "video":
-            w, h = map(int, resolution or VIDEO_CONFIG["resolution"].split('x'))
-            fps_val = fps or VIDEO_CONFIG["fps"]
-            
-            config = picam2.create_preview_configuration(
-                main={"size": (w, h), "format": "RGB888"},
-                controls={"FrameRate": fps_val}
-            )
-            picam2.configure(config)
-            picam2.start()
-            camera_started = True
-            CAMERA_MODE = "video"
-            CAMERA_ACTIVE = True
-            print(f"[CAMERA] Video mode: {w}x{h} @ {fps_val} fps", flush=True)
-            return True
-            
-        elif mode == "photo":
-            w, h = map(int, resolution or PHOTO_CONFIG["resolution"].split('x'))
-            
-            config = picam2.create_still_configuration(
-                main={"size": (w, h), "format": "RGB888"}
-            )
-            picam2.configure(config)
-            picam2.start()
-            camera_started = True
-            CAMERA_MODE = "photo"
-            CAMERA_ACTIVE = True
-            print(f"[CAMERA] Photo mode: {w}x{h}", flush=True)
-            return True
-            
-    except Exception as e:
-        print(f"[CAMERA] Switch mode error: {e}", flush=True)
-        camera_started = False
-        CAMERA_ACTIVE = False
-        return False
-
-def start_camera():
-    """Запуск камеры в видео режиме"""
-    if not CAMERA_AVAILABLE:
-        return False
-    
-    with camera_lock:
-        if camera_started and CAMERA_MODE == "video":
-            return True
-        
-        return switch_camera_mode("video")
-
-def get_camera_frame():
-    """Получение кадра с исправлением цветов"""
-    global last_frame, last_frame_time, camera_started, picam2
-    
-    if not camera_started:
-        if not start_camera():
-            return None
-    
-    with camera_lock:
-        try:
-            if picam2 is None:
-                return last_frame
-            
-            frame = picam2.capture_array()
-            
-            if frame is not None and frame.size > 0:
-                frame = fix_camera_colors(frame)
-                last_frame = frame
-                last_frame_time = time.time()
-                return frame
-            
-            return last_frame
-                
-        except Exception as e:
-            print(f"[CAMERA] Frame error: {e}", flush=True)
-            camera_started = False
-            return last_frame
-
-def generate_mjpeg_stream():
-    """MJPEG поток через PIL (без OpenCV)"""
-    if not start_camera():
-        print("[CAMERA] ❌ Cannot start camera", flush=True)
-        return
-    
-    from PIL import Image
-    
-    frame_interval = 1.0 / VIDEO_CONFIG["fps"]
-    last_send_time = 0
-    quality = VIDEO_CONFIG["quality"]
-    
-    print(f"[CAMERA] 🎥 MJPEG stream started: {VIDEO_CONFIG['resolution']} @ {VIDEO_CONFIG['fps']} fps", flush=True)
-    
-    while True:
-        try:
-            current_time = time.time()
-            
-            if current_time - last_send_time < frame_interval:
-                time.sleep(0.01)
-                continue
-            
-            frame = get_camera_frame()
-            if frame is None:
-                time.sleep(0.05)
-                continue
-            
-            img = Image.fromarray(frame)
-            buf = io.BytesIO()
-            img.save(buf, format='JPEG', quality=quality)
-            jpeg_data = buf.getvalue()
-            
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n"
-                b"Cache-Control: no-cache\r\n\r\n" + 
-                jpeg_data + b"\r\n"
-            )
-            last_send_time = current_time
-            
-        except GeneratorExit:
-            break
-        except Exception as e:
-            print(f"[CAMERA] Stream error: {e}", flush=True)
-            time.sleep(1)
-
-def capture_screenshot():
-    """Создание скриншота"""
-    if not camera_started:
-        if not start_camera():
-            return {"success": False, "error": "Camera not ready"}
-    
-    try:
-        from PIL import Image
-        
-        frame = get_camera_frame()
-        if frame is None:
-            return {"success": False, "error": "Failed to capture frame"}
-        
-        frame = fix_camera_colors(frame)
-        img = Image.fromarray(frame)
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"screenshot_{timestamp}.jpg"
-        filepath = os.path.join(SCREENSHOTS_DIR, filename)
-        
-        quality = VIDEO_CONFIG.get("quality", 90)
-        img.save(filepath, 'JPEG', quality=quality)
-        
-        return {
-            "success": True,
-            "filename": filename,
-            "filepath": filepath,
-            "size": os.path.getsize(filepath)
-        }
-        
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-# ============================================================
-# API ВИДЕО
-# ============================================================
-
-@app.route('/video_feed')
-def video_feed():
-    """MJPEG видео поток"""
-    if not CAMERA_AVAILABLE:
-        print("[CAMERA] ❌ Camera not available", flush=True)
-        return "Camera not available", 503
-    
-    try:
-        return Response(
-            generate_mjpeg_stream(),
-            mimetype='multipart/x-mixed-replace; boundary=frame'
-        )
-    except Exception as e:
-        print(f"[CAMERA] ❌ Video feed error: {e}", flush=True)
-        return "Camera error", 503
-
-@app.route("/api/camera/status")
-def api_camera_status():
-    """Статус камеры"""
-    return jsonify({
-        "ok": CAMERA_AVAILABLE,
-        "started": camera_started,
-        "mode": CAMERA_MODE,
-        "resolution": VIDEO_CONFIG["resolution"],
-        "fps": VIDEO_CONFIG["fps"],
-        "quality": VIDEO_CONFIG["quality"],
-        "available_resolutions": RESOLUTIONS,
-        "available_fps": FPS_OPTIONS,
-        "video_modes": VIDEO_MODES
-    })
-
-@app.route("/api/camera/switch_mode", methods=["POST"])
-@handle_errors
-def api_camera_switch_mode():
-    """Переключение режима камеры (video/photo)"""
-    global camera_started, CAMERA_MODE, picam2
-    
-    data = request.get_json(force=True)
-    mode = data.get("mode", "video")
-    
-    if mode not in ["video", "photo"]:
-        return jsonify({"ok": False, "error": "Invalid mode"}), 400
-    
-    with camera_lock:
-        # Останавливаем текущий режим
-        if camera_started:
-            try:
-                picam2.stop()
-            except:
-                pass
-            camera_started = False
-        
-        if mode == "video":
-            # Запускаем видео режим
-            w, h = map(int, VIDEO_CONFIG["resolution"].split('x'))
-            fps = VIDEO_CONFIG["fps"]
-            
-            config = picam2.create_preview_configuration(
-                main={"size": (w, h), "format": "RGB888"},
-                controls={"FrameRate": fps}
-            )
-            picam2.configure(config)
-            picam2.start()
-            camera_started = True
-            CAMERA_MODE = "video"
-            print(f"[CAMERA] Switched to video: {w}x{h} @ {fps}fps", flush=True)
-            return jsonify({"ok": True, "mode": "video", "resolution": VIDEO_CONFIG["resolution"]})
-        else:
-            # Запускаем фото режим
-            w, h = map(int, PHOTO_CONFIG["resolution"].split('x'))
-            
-            config = picam2.create_still_configuration(
-                main={"size": (w, h), "format": "RGB888"}
-            )
-            picam2.configure(config)
-            picam2.start()
-            camera_started = True
-            CAMERA_MODE = "photo"
-            print(f"[CAMERA] Switched to photo: {w}x{h}", flush=True)
-            return jsonify({"ok": True, "mode": "photo", "resolution": PHOTO_CONFIG["resolution"]})
-
-@app.route("/api/camera/settings", methods=["GET"])
-def api_camera_settings():
-    """Получить текущие настройки видео"""
-    return jsonify({
-        "ok": True,
-        "config": VIDEO_CONFIG,
-        "available_resolutions": RESOLUTIONS,
-        "available_fps": FPS_OPTIONS,
-        "video_modes": VIDEO_MODES
-    })
-
-@app.route("/api/camera/settings", methods=["POST"])
-@handle_errors
-def api_camera_update_settings():
-    """Обновить настройки камеры"""
-    global VIDEO_CONFIG, camera_started
-    
-    data = request.get_json(force=True)
-    changes = {}
-    
-    if "resolution" in data:
-        res = data["resolution"]
-        if res in RESOLUTIONS:
-            changes["resolution"] = res
-        else:
-            return jsonify({"ok": False, "error": f"Invalid resolution. Available: {RESOLUTIONS}"}), 400
-    
-    if "fps" in data:
-        fps = int(data["fps"])
-        if fps in FPS_OPTIONS:
-            changes["fps"] = fps
-        else:
-            return jsonify({"ok": False, "error": f"Invalid FPS. Available: {FPS_OPTIONS}"}), 400
-    
-    if "quality" in data:
-        quality = int(data["quality"])
-        if 40 <= quality <= 90:
-            changes["quality"] = quality
-        else:
-            return jsonify({"ok": False, "error": "Quality must be between 40 and 90"}), 400
-    
-    if changes:
-        with camera_lock:
-            camera_started = False
-            if picam2 is not None:
-                try:
-                    picam2.stop()
-                except:
-                    pass
-            VIDEO_CONFIG.update(changes)
-            save_camera_settings()
-            start_camera()
-        
-        print(f"[CAMERA] ✅ Settings updated: {changes}", flush=True)
-    
-    return jsonify({
-        "ok": True,
-        "config": VIDEO_CONFIG,
-        "changes": changes
-    })
-
-@app.route("/api/camera/mode/<mode>", methods=["POST"])
-def api_camera_set_mode(mode):
-    """Переключить предустановленный режим"""
-    if mode not in VIDEO_MODES:
-        return jsonify({"ok": False, "error": f"Invalid mode. Available: {list(VIDEO_MODES.keys())}"}), 400
-    
-    config = VIDEO_MODES[mode]
-    
-    with camera_lock:
-        global VIDEO_CONFIG, camera_started
-        camera_started = False
-        if picam2 is not None:
-            try:
-                picam2.stop()
-            except:
-                pass
-        
-        VIDEO_CONFIG.update(config)
-        save_camera_settings()
-        start_camera()
-    
-    print(f"[CAMERA] ✅ Switched to mode: {mode} ({config['resolution']} @ {config['fps']} fps)", flush=True)
-    
-    return jsonify({
-        "ok": True,
-        "mode": mode,
-        "config": VIDEO_CONFIG
-    })
-
-@app.route("/api/camera/screenshot", methods=["POST"])
-@handle_errors
-def api_camera_screenshot():
-    """Создать скриншот"""
-    result = capture_screenshot()
-    if result["success"]:
-        return jsonify(result)
-    else:
-        return jsonify({"ok": False, "error": result["error"]}), 500
-
-@app.route("/api/camera/screenshot/<filename>")
-def api_camera_screenshot_file(filename):
-    """Получить скриншот"""
-    try:
-        filepath = os.path.join(SCREENSHOTS_DIR, filename)
-        if not os.path.exists(filepath):
-            return jsonify({"ok": False, "error": "File not found"}), 404
-        return send_from_directory(SCREENSHOTS_DIR, filename, mimetype='image/jpeg')
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-@app.route("/api/camera/screenshots", methods=["GET"])
-def api_camera_screenshots_list():
-    """Список всех скриншотов"""
-    try:
-        if not os.path.exists(SCREENSHOTS_DIR):
-            return jsonify({"screenshots": []})
-        
-        files = []
-        for f in sorted(os.listdir(SCREENSHOTS_DIR), reverse=True):
-            if f.endswith('.jpg'):
-                filepath = os.path.join(SCREENSHOTS_DIR, f)
-                stat = os.stat(filepath)
-                files.append({
-                    "filename": f,
-                    "size": stat.st_size,
-                    "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
-                    "url": f"/api/camera/screenshot/{f}"
-                })
-        
-        return jsonify({"screenshots": files})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-@app.route("/api/camera/screenshot/<filename>", methods=["DELETE"])
-@handle_errors
-def api_camera_screenshot_delete(filename):
-    """Удалить скриншот"""
-    filepath = os.path.join(SCREENSHOTS_DIR, filename)
-    if not os.path.exists(filepath):
-        return jsonify({"ok": False, "error": "File not found"}), 404
-    
-    os.remove(filepath)
-    return jsonify({"ok": True, "message": f"Deleted {filename}"})
-
-@app.route("/api/camera/screenshots", methods=["DELETE"])
-@handle_errors
-def api_camera_screenshots_delete_all():
-    """Удалить все скриншоты"""
-    if not os.path.exists(SCREENSHOTS_DIR):
-        return jsonify({"ok": True, "message": "No screenshots to delete"})
-    
-    count = 0
-    for f in os.listdir(SCREENSHOTS_DIR):
-        if f.endswith('.jpg'):
-            os.remove(os.path.join(SCREENSHOTS_DIR, f))
-            count += 1
-    
-    return jsonify({"ok": True, "deleted_count": count})
-
-# ============================================================
-# API ФОТО
-# ============================================================
-
-@app.route("/api/photo/settings", methods=["GET"])
-def api_photo_settings():
-    """Получить настройки фото"""
-    return jsonify({
-        "ok": True,
-        "config": PHOTO_CONFIG,
-        "save_config": PHOTO_SAVE_CONFIG,
-        "available_resolutions": PHOTO_PREVIEW_RESOLUTIONS,
-        "save_resolution": PHOTO_SAVE_RESOLUTION
-    })
-
-@app.route("/api/photo/settings", methods=["POST"])
-@handle_errors
-def api_photo_update_settings():
-    """Обновить настройки фото (только для превью)"""
-    global PHOTO_CONFIG
-    
-    data = request.get_json(force=True)
-    changes = {}
-    
-    if "resolution" in data:
-        res = data["resolution"]
-        if res in PHOTO_PREVIEW_RESOLUTIONS:
-            changes["resolution"] = res
-        else:
-            return jsonify({"ok": False, "error": f"Invalid resolution. Available: {PHOTO_PREVIEW_RESOLUTIONS}"}), 400
-    
-    if "quality" in data:
-        quality = int(data["quality"])
-        if 70 <= quality <= 100:
-            changes["quality"] = quality
-        else:
-            return jsonify({"ok": False, "error": "Quality must be between 70 and 100"}), 400
-    
-    if changes:
-        PHOTO_CONFIG.update(changes)
-        save_camera_settings()
-        print(f"[PHOTO] ✅ Settings updated: {changes}", flush=True)
-    
-    return jsonify({
-        "ok": True,
-        "config": PHOTO_CONFIG,
-        "changes": changes
-    })
-
-@app.route("/api/photo/capture", methods=["POST"])
-@handle_errors
-def api_photo_capture():
-    """Захват фото для превью (использует настройки превью)"""
-    global picam2, camera_started
-    
-    if not CAMERA_AVAILABLE:
-        return jsonify({"ok": False, "error": "Camera not available"}), 503
-    
-    try:
-        from PIL import Image
-        import base64
-        
-        # Используем настройки превью
-        w, h = map(int, PHOTO_CONFIG["resolution"].split('x'))
-        quality = PHOTO_CONFIG.get("quality", 85)
-        
-        print(f"[PHOTO] Capturing preview: {w}x{h}, quality={quality}%", flush=True)
-        
-        # ВСЕГДА переключаемся в фото режим (останавливаем видео)
-        with camera_lock:
-            if camera_started:
-                try:
-                    picam2.stop()
-                    print("[PHOTO] Stopped current mode", flush=True)
-                except Exception as e:
-                    print(f"[PHOTO] Stop error: {e}", flush=True)
-                camera_started = False
-            
-            # Переключаемся в фото режим
-            w_photo, h_photo = map(int, PHOTO_CONFIG["resolution"].split('x'))
-            config = picam2.create_still_configuration(
-                main={"size": (w_photo, h_photo), "format": "RGB888"}
-            )
-            picam2.configure(config)
-            picam2.start()
-            camera_started = True
-            CAMERA_MODE = "photo"
-            print(f"[PHOTO] Started photo mode: {w_photo}x{h_photo}", flush=True)
-        
-        time.sleep(0.5)
-        
-        # Захват
-        frame = picam2.capture_array()
-        frame = fix_camera_colors(frame)
-        
-        # Конвертация
-        img = Image.fromarray(frame)
-        buf = io.BytesIO()
-        img.save(buf, format='JPEG', quality=quality)
-        jpeg_data = base64.b64encode(buf.getvalue()).decode('utf-8')
-        
-        # НЕ ВОЗВРАЩАЕМСЯ В ВИДЕО РЕЖИМ - остаемся в фото режиме
-        # Это позволяет быстро делать несколько фото подряд
-        
-        return jsonify({
-            "ok": True,
-            "image_data": jpeg_data,
-            "width": w,
-            "height": h,
-            "preview_resolution": PHOTO_CONFIG["resolution"],
-            "quality": quality,
-            "mode": "photo"
-        })
-        
-    except Exception as e:
-        print(f"[PHOTO] ❌ Capture error: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-        # При ошибке пробуем восстановить камеру
-        try:
-            with camera_lock:
-                if camera_started:
-                    picam2.stop()
-                    camera_started = False
-                # Пытаемся запустить видео режим как fallback
-                start_camera()
-        except:
-            pass
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-@app.route("/api/photo/save", methods=["POST"])
-@handle_errors
-def api_photo_save():
-    """Сохранить фото в максимальном качестве"""
-    global picam2, camera_started
-    
-    if not CAMERA_AVAILABLE:
-        return jsonify({"ok": False, "error": "Camera not available"}), 503
-    
-    try:
-        from PIL import Image
-        import base64
-        
-        # Используем максимальное разрешение для сохранения
-        w, h = map(int, PHOTO_SAVE_CONFIG["resolution"].split('x'))
-        quality = PHOTO_SAVE_CONFIG["quality"]
-        
-        print(f"[PHOTO] Saving high-res: {w}x{h}, quality={quality}%", flush=True)
-        
-        # Переключаемся в фото режим с максимальным разрешением
-        with camera_lock:
-            if camera_started:
-                try:
-                    picam2.stop()
-                    print("[PHOTO] Stopped current mode for save", flush=True)
-                except Exception as e:
-                    print(f"[PHOTO] Stop error: {e}", flush=True)
-                camera_started = False
-            
-            config = picam2.create_still_configuration(
-                main={"size": (w, h), "format": "RGB888"}
-            )
-            picam2.configure(config)
-            picam2.start()
-            camera_started = True
-            CAMERA_MODE = "photo"
-            print(f"[PHOTO] Started photo mode for save: {w}x{h}", flush=True)
-        
-        time.sleep(0.5)
-        
-        # Захват
-        frame = picam2.capture_array()
-        frame = fix_camera_colors(frame)
-        
-        # Сохранение
-        img = Image.fromarray(frame)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"photo_{timestamp}.jpg"
-        filepath = os.path.join(SCREENSHOTS_DIR, filename)
-        img.save(filepath, 'JPEG', quality=quality)
-        
-        # Создаем превью для отображения
-        preview_img = img.copy()
-        preview_img.thumbnail((640, 480), Image.Resampling.LANCZOS)
-        buf = io.BytesIO()
-        preview_img.save(buf, format='JPEG', quality=85)
-        preview_data = base64.b64encode(buf.getvalue()).decode('utf-8')
-        
-        # Переключаемся обратно на разрешение превью для следующего кадра
-        # Это делает следующий Refresh быстрее
-        try:
-            with camera_lock:
-                if camera_started:
-                    picam2.stop()
-                    camera_started = False
-                
-                # Возвращаемся к разрешению превью
-                pw, ph = map(int, PHOTO_CONFIG["resolution"].split('x'))
-                config = picam2.create_still_configuration(
-                    main={"size": (pw, ph), "format": "RGB888"}
-                )
-                picam2.configure(config)
-                picam2.start()
-                camera_started = True
-                CAMERA_MODE = "photo"
-                print(f"[PHOTO] Returned to preview mode: {pw}x{ph}", flush=True)
-        except Exception as e:
-            print(f"[PHOTO] Could not return to preview mode: {e}", flush=True)
-        
-        return jsonify({
-            "ok": True,
-            "filename": filename,
-            "filepath": filepath,
-            "size": os.path.getsize(filepath),
-            "url": f"/api/camera/screenshot/{filename}",
-            "preview_data": preview_data,
-            "resolution": PHOTO_SAVE_CONFIG["resolution"]
-        })
-        
-    except Exception as e:
-        print(f"[PHOTO] ❌ Save error: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-        return jsonify({"ok": False, "error": str(e)}), 500
-
 # ============================================================
 # ВСЕ ОСТАЛЬНЫЕ ФУНКЦИИ (Meshtastic, чаты, телеметрия и т.д.)
 # ============================================================
@@ -947,17 +298,13 @@ base_status = {
 listen_process = None
 pause_listen = threading.Event()
 
-# ===== TELEMETRY =====
-TELEMETRY_FILE = os.path.join(DATA_DIR, "telemetry_history.json")
-telemetry_history = []
-telemetry_config = {"interval": 300, "enabled": True}
-telemetry_last_request = 0
-telemetry_current = {
-    "temperature": None, "humidity": None, "pressure": None,
-    "voltage": None, "current": None, "last_update": None,
-    "timestamp": 0
-}
-telemetry_last_save_time = 0
+# ===== TELEMETRY BUFFER =====
+# Состояние и история телеметрии вынесены в telemetry/telemetry.py.
+# В server.py пока оставляем парсер и буфер, чтобы рефакторинг был безопасным.
+telemetry_buffer_lock = threading.RLock()
+telemetry_pending_values = {}
+telemetry_pending_time = 0
+TELEMETRY_DEBOUNCE_SECONDS = 1.5
 
 # ===== АТОМАРНАЯ ЗАПИСЬ JSON =====
 # Используем safe_read_json и safe_write_json
@@ -1139,85 +486,6 @@ def reset_unread(chat_id):
         save_chats()
 
 # ===== TELEMETRY FUNCTIONS =====
-def load_telemetry():
-    global telemetry_history, telemetry_config
-    data = safe_read_json(TELEMETRY_FILE, {})
-    if data:
-        telemetry_history = data.get("history", [])
-        telemetry_config = data.get("config", {"interval": 300, "enabled": True})
-        max_records = 26000
-        if len(telemetry_history) > max_records:
-            telemetry_history = telemetry_history[-max_records:]
-            save_telemetry()
-    else:
-        save_telemetry()
-
-def save_telemetry():
-    with state_lock:
-        data = {"config": telemetry_config, "history": telemetry_history}
-        safe_write_json(TELEMETRY_FILE, data)
-
-def add_telemetry_record(temp, humidity, pressure, voltage, current):
-    global telemetry_history, telemetry_current, telemetry_last_save_time
-    
-    current_time = time.time()
-    interval = telemetry_config.get("interval", 300)
-    
-    if current_time - telemetry_last_save_time < interval:
-        power = None
-        if voltage is not None and current is not None:
-            power = float(voltage) * float(current)
-        
-        telemetry_current.update({
-            "temperature": temp,
-            "humidity": humidity,
-            "pressure": pressure,
-            "voltage": voltage,
-            "current": current,
-            "power": power,
-            "last_update": now(),
-            "timestamp": current_time
-        })
-        return False
-
-    power = None
-    try:
-        if voltage is not None and current is not None:
-            power = float(voltage) * float(current)
-    except Exception:
-        power = None
-
-    record = {
-        "time": now(),
-        "timestamp": time.time(),
-        "temperature": temp,
-        "humidity": humidity,
-        "pressure": pressure,
-        "voltage": voltage,
-        "current": current,
-        "power": power
-    }
-
-    telemetry_current.update({
-        "temperature": temp,
-        "humidity": humidity,
-        "pressure": pressure,
-        "voltage": voltage,
-        "current": current,
-        "power": power,
-        "last_update": now(),
-        "timestamp": current_time
-    })
-
-    telemetry_history.append(record)
-    max_records = 26000
-    if len(telemetry_history) > max_records:
-        telemetry_history = telemetry_history[-max_records:]
-    
-    telemetry_last_save_time = current_time
-    save_telemetry()
-    return True
-
 def _float_or_none(value):
     try:
         if value is None or value == "":
@@ -1314,33 +582,35 @@ def parse_telemetry_from_listen_line(line):
         return None
     return values
 
-def apply_telemetry_values(values):
-    global telemetry_current, sensor_data, base_status
+def apply_telemetry_values(values, save_history=True):
+    global sensor_data, base_status
 
     if not values:
         return False
 
-    temp = values.get("temperature") if values.get("temperature") is not None else telemetry_current.get("temperature")
-    humidity = values.get("humidity") if values.get("humidity") is not None else telemetry_current.get("humidity")
-    pressure = values.get("pressure") if values.get("pressure") is not None else telemetry_current.get("pressure")
-    voltage = values.get("voltage") if values.get("voltage") is not None else telemetry_current.get("voltage")
-    current = values.get("current") if values.get("current") is not None else telemetry_current.get("current")
+    current = telemetry.telemetry_current
+
+    temp = values.get("temperature") if values.get("temperature") is not None else current.get("temperature")
+    humidity = values.get("humidity") if values.get("humidity") is not None else current.get("humidity")
+    pressure = values.get("pressure") if values.get("pressure") is not None else current.get("pressure")
+    voltage = values.get("voltage") if values.get("voltage") is not None else current.get("voltage")
+    current_ma = values.get("current") if values.get("current") is not None else current.get("current")
 
     power = None
     try:
-        if voltage is not None and current is not None:
-            power = float(voltage) * float(current)
+        if voltage is not None and current_ma is not None:
+            power = float(voltage) * float(current_ma)
     except Exception:
         power = None
 
     current_time = time.time()
 
-    telemetry_current.update({
+    telemetry.telemetry_current.update({
         "temperature": temp,
         "humidity": humidity,
         "pressure": pressure,
         "voltage": voltage,
-        "current": current,
+        "current": current_ma,
         "power": power,
         "last_update": now(),
         "timestamp": current_time
@@ -1351,7 +621,7 @@ def apply_telemetry_values(values):
         "humidity": humidity,
         "pressure": pressure,
         "voltage": voltage,
-        "current": current,
+        "current": current_ma,
         "power": power,
         "battery_percent": voltage_to_percent(voltage) if voltage is not None else sensor_data.get("battery_percent"),
         "last_update": now()
@@ -1373,19 +643,71 @@ def apply_telemetry_values(values):
         base_status["uptime_seconds"] = values.get("uptime_seconds")
     base_status["last_update"] = now()
 
-    add_telemetry_record(temp, humidity, pressure, voltage, current)
-    print(f"[TELEMETRY] saved: T={temp}, H={humidity}, P={pressure}, V={voltage}, I={current}, W={power}")
+    if save_history:
+        saved = telemetry.add_telemetry_record(temp, humidity, pressure, voltage, current_ma)
+
+        if saved:
+            print(f"[TELEMETRY] history saved: T={temp}, H={humidity}, P={pressure}, V={voltage}, I={current_ma}, W={power}", flush=True)
+        else:
+            print(f"[TELEMETRY] current updated: T={temp}, H={humidity}, P={pressure}, V={voltage}, I={current_ma}, W={power}", flush=True)
+    else:
+        print(f"[TELEMETRY] current updated only: T={temp}, H={humidity}, P={pressure}, V={voltage}, I={current_ma}, W={power}", flush=True)
+
     return True
+
+
+def queue_telemetry_values(values):
+    global telemetry_pending_values, telemetry_pending_time
+
+    if not values:
+        return False
+
+    with telemetry_buffer_lock:
+        for key, value in values.items():
+            if value is not None:
+                telemetry_pending_values[key] = value
+
+        telemetry_pending_time = time.time()
+
+    return True
+
+
+def telemetry_buffer_worker():
+    global telemetry_pending_values, telemetry_pending_time
+
+    print("[TELEMETRY] Buffer worker started", flush=True)
+
+    while True:
+        time.sleep(0.25)
+
+        try:
+            values_to_apply = None
+
+            with telemetry_buffer_lock:
+                if telemetry_pending_values:
+                    age = time.time() - telemetry_pending_time
+
+                    if age >= TELEMETRY_DEBOUNCE_SECONDS:
+                        values_to_apply = dict(telemetry_pending_values)
+                        telemetry_pending_values = {}
+                        telemetry_pending_time = 0
+
+            if values_to_apply:
+                with state_lock:
+                    apply_telemetry_values(values_to_apply)
+
+        except Exception as e:
+            print(f"[TELEMETRY] Buffer worker error: {e}", flush=True)
 
 def process_telemetry_line(line):
     values = parse_telemetry_from_listen_line(line)
     if values:
-        return apply_telemetry_values(values)
+        return queue_telemetry_values(values)
     return False
 
 def get_telemetry_from_info():
-    global telemetry_current, base_status
-    
+    global base_status
+
     try:
         result = subprocess.run(
             [MESHTASTIC_CMD, "--info"],
@@ -1394,14 +716,14 @@ def get_telemetry_from_info():
             timeout=15
         )
         output = result.stdout + result.stderr
-        
+
         node_pos = output.find(f'"{LOCAL_NODE_ID}"')
         if node_pos < 0:
             return
-        
+
         temp = humidity = pressure = voltage = current = None
         battery = None
-        
+
         env_pos = output.find('"environmentMetrics"', node_pos)
         if env_pos >= 0:
             block = extract_json_block(output, env_pos)
@@ -1411,10 +733,10 @@ def get_telemetry_from_info():
                     temp = env.get("temperature")
                     humidity = env.get("relativeHumidity")
                     pressure = env.get("barometricPressure")
-                    print(f"[INFO_TELEMETRY] Environment: temp={temp}, humidity={humidity}, pressure={pressure}")
+                    print(f"[INFO_TELEMETRY] Environment: temp={temp}, humidity={humidity}, pressure={pressure}", flush=True)
                 except Exception as e:
-                    print(f"[INFO_TELEMETRY] Error parsing environment: {e}")
-        
+                    print(f"[INFO_TELEMETRY] Error parsing environment: {e}", flush=True)
+
         power_pos = output.find('"powerMetrics"', node_pos)
         if power_pos >= 0:
             block = extract_json_block(output, power_pos)
@@ -1422,10 +744,10 @@ def get_telemetry_from_info():
                 try:
                     power_data = json.loads(block)
                     current = power_data.get("current")
-                    print(f"[INFO_TELEMETRY] Power: current={current}mA")
+                    print(f"[INFO_TELEMETRY] Power: current={current}mA", flush=True)
                 except Exception as e:
-                    print(f"[INFO_TELEMETRY] Error parsing power: {e}")
-        
+                    print(f"[INFO_TELEMETRY] Error parsing power: {e}", flush=True)
+
         metrics_pos = output.find('"deviceMetrics"', node_pos)
         if metrics_pos >= 0:
             block = extract_json_block(output, metrics_pos)
@@ -1434,37 +756,27 @@ def get_telemetry_from_info():
                     metrics = json.loads(block)
                     voltage = metrics.get("voltage")
                     battery = metrics.get("batteryLevel")
-                    print(f"[INFO_TELEMETRY] Device: voltage={voltage}V, battery={battery}%")
+                    print(f"[INFO_TELEMETRY] Device: voltage={voltage}V, battery={battery}%", flush=True)
                 except Exception as e:
-                    print(f"[INFO_TELEMETRY] Error parsing device: {e}")
-        
+                    print(f"[INFO_TELEMETRY] Error parsing device: {e}", flush=True)
+
         if voltage is not None or temp is not None or humidity is not None or pressure is not None or current is not None:
+            values = {
+                "temperature": temp,
+                "humidity": humidity,
+                "pressure": pressure,
+                "voltage": voltage,
+                "current": current,
+                "battery_level": battery
+            }
+
             with state_lock:
-                if voltage is not None:
-                    telemetry_current['voltage'] = voltage
-                    base_status['voltage'] = voltage
-                    base_status['real_battery'] = voltage_to_percent(voltage)
-                    if battery is not None and battery != 101:
-                        base_status['battery_level'] = battery
-                    base_status['last_update'] = now()
-                
-                if temp is not None:
-                    telemetry_current['temperature'] = temp
-                if humidity is not None:
-                    telemetry_current['humidity'] = humidity
-                if pressure is not None:
-                    telemetry_current['pressure'] = pressure
-                if current is not None:
-                    telemetry_current['current'] = current
-                
-                telemetry_current['last_update'] = now()
-                telemetry_current['timestamp'] = time.time()
-                
-                add_telemetry_record(temp, humidity, pressure, voltage, current)
-                print(f"[INFO_TELEMETRY] Saved combined record")
-                    
+                apply_telemetry_values(values, save_history=False)
+
+            print("[INFO_TELEMETRY] Applied telemetry from --info", flush=True)
+
     except Exception as e:
-        print(f"[INFO_TELEMETRY] Error: {e}")
+        print(f"[INFO_TELEMETRY] Error: {e}", flush=True)
 
 def parse_nodes_from_info():
     global nodes
@@ -2004,7 +1316,7 @@ def cleanup_seen_ids():
             del seen_recent_texts[key]
 
 def listen_meshtastic():
-    global listen_process, telemetry_current, base_status
+    global listen_process, base_status
 
     nodeinfo_buffer = []
     collecting_nodeinfo = False
@@ -2219,7 +1531,7 @@ def telemetry_worker():
 
         try:
             now_time = time.time()
-            last_ts = telemetry_current.get("timestamp", 0)
+            last_ts = telemetry.telemetry_current.get("timestamp", 0)
 
             if last_ts:
                 age = int(now_time - last_ts)
@@ -2522,35 +1834,42 @@ def api_delete_chat():
 # ===== TELEMETRY API =====
 @app.route("/api/telemetry")
 def api_telemetry():
-    return jsonify(telemetry_current)
+    return jsonify(telemetry.telemetry_current)
 
 @app.route("/api/telemetry/history")
 def api_telemetry_history():
     limit = request.args.get("limit", 100, type=int)
     with state_lock:
-        history = telemetry_history[-limit:] if limit > 0 else telemetry_history
-    return jsonify({"history": history, "total": len(telemetry_history), "config": telemetry_config})
+        history = telemetry.telemetry_history[-limit:] if limit > 0 else telemetry.telemetry_history
+
+    return jsonify({
+        "history": history,
+        "total": len(telemetry.telemetry_history),
+        "config": telemetry.telemetry_config
+    })
 
 @app.route("/api/telemetry/config", methods=["POST"])
 @handle_errors
 def api_telemetry_config():
-    global telemetry_config
     data = request.get_json(force=True)
     interval = data.get("interval")
     enabled = data.get("enabled")
+
     if interval is not None:
         allowed = [300, 900, 1800, 3600]
         if interval in allowed:
             with state_lock:
-                telemetry_config["interval"] = interval
-                save_telemetry()
+                telemetry.telemetry_config["interval"] = interval
+                telemetry.save_telemetry()
         else:
             return jsonify({"ok": False, "error": "Invalid interval"}), 400
+
     if enabled is not None:
         with state_lock:
-            telemetry_config["enabled"] = bool(enabled)
-            save_telemetry()
-    return jsonify({"ok": True, "config": telemetry_config})
+            telemetry.telemetry_config["enabled"] = bool(enabled)
+            telemetry.save_telemetry()
+
+    return jsonify({"ok": True, "config": telemetry.telemetry_config})
 
 # ===== NODE MANAGEMENT ROUTES =====
 @app.route("/api/nodes_management", methods=["GET"])
@@ -2727,8 +2046,8 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[WARN] Base status update failed: {e}")
     
-    load_telemetry()
-    load_camera_settings()
+    telemetry.load_telemetry()
+    camera.load_camera_settings()
     
     for node_id in KNOWN_NODES:
         if node_id not in chats:
@@ -2743,12 +2062,13 @@ if __name__ == "__main__":
     
     # Инициализация камеры
     print("[CAMERA] 🔍 Initializing...", flush=True)
-    init_camera()
+    camera.init_camera()
     
     # Запуск потоков
     threading.Thread(target=listen_meshtastic, daemon=True).start()
     threading.Thread(target=cleanup_seen_ids, daemon=True).start()
     threading.Thread(target=telemetry_worker, daemon=True).start()
+    threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
     
     print(f"""
     ╔══════════════════════════════════════════════╗
@@ -2757,9 +2077,9 @@ if __name__ == "__main__":
     ║  URL: http://{APP_HOST}:{APP_PORT}       ║
     ║  Node: {LOCAL_NODE_NAME}                     ║
     ║  Port: {MESHTASTIC_PORT}                    ║
-    ║  Camera: {'✅' if CAMERA_AVAILABLE else '❌'} Available        ║
-    ║  Video: {VIDEO_CONFIG['resolution']} @ {VIDEO_CONFIG['fps']}fps {VIDEO_CONFIG['quality']}% ║
-    ║  Photo: {PHOTO_CONFIG['resolution']} preview, {PHOTO_SAVE_CONFIG['resolution']} save ║
+    ║  Camera: {'✅' if camera.CAMERA_AVAILABLE else '❌'} Available        ║
+    ║  Video: {camera.VIDEO_CONFIG['resolution']} @ {camera.VIDEO_CONFIG['fps']}fps {camera.VIDEO_CONFIG['quality']}% ║
+    ║  Photo: {camera.PHOTO_CONFIG['resolution']} preview, {camera.PHOTO_SAVE_CONFIG['resolution']} save ║
     ╚══════════════════════════════════════════════╝
     """)
     

@@ -19,6 +19,21 @@ A lightweight web dashboard for Meshtastic nodes running on Raspberry Pi.
 </p>
 
 ---
+## 🚀 What can it do?
+
+✔ Public and Private Chat
+
+✔ Live Camera Streaming
+
+✔ High Resolution Photo Capture
+
+✔ BME280 & INA226 Telemetry
+
+✔ Node Management
+
+✔ Raspberry Pi Dashboard
+
+✔ Optimized for Raspberry Pi Zero 2W
 
 # Overview
 

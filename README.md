@@ -687,17 +687,17 @@ You are free to use, modify and distribute it in accordance with the license ter
 
 # 👨‍💻 Author
 
-**Kostiantyn Vynohradov (FlintUA)**
+**Kostiantyn Vynohradov (FlintUA aka Elektroniker)**
 
 Electronics engineer, embedded systems enthusiast and Meshtastic hobbyist.
 
-GitHub:
+More Meshtastic projects, electronics articles, Raspberry Pi experiments, 3D printing designs and repair tutorials:
 
-https://github.com/FlintUA
+🌐 **Website:** https://elektroniker.help
 
-Project:
+🔗 **GitHub:** https://github.com/FlintUA
 
-https://github.com/FlintUA/flint-meshtastic-web-ui
+📦 **Project:** https://github.com/FlintUA/flint-meshtastic-web-ui
 
 ---
 

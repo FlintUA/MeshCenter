@@ -1962,18 +1962,22 @@ async function loadTelemetry() {
     console.log('[TELEMETRY] loadTelemetry called');
     try {
         const response = await fetch('/api/telemetry');
-        console.log('[TELEMETRY] Response status:', response.status);
         const data = await response.json();
-        console.log('[TELEMETRY] Received data:', data);
         telemetryData = data;
         updateTelemetryUI();
-        
+    } catch (error) {
+        console.error('[TELEMETRY] Error loading telemetry:', error);
+    }
+}
+
+async function loadTelemetryHistory() {
+    try {
         const historyResponse = await fetch('/api/telemetry/history?limit=5000');
         const historyData = await historyResponse.json();
+
         telemetryFullHistory = historyData.history || [];
         telemetryHistory = telemetryFullHistory;
-        console.log('[TELEMETRY] History records:', telemetryHistory.length);
-        
+
         if (historyData.config) {
             telemetryInterval = historyData.config.interval || 900;
             const select = document.getElementById('telemetryInterval');
@@ -1981,9 +1985,10 @@ async function loadTelemetry() {
                 select.value = telemetryInterval;
             }
         }
-        
+
+        console.log('[TELEMETRY] History records:', telemetryHistory.length);
     } catch (error) {
-        console.error('[TELEMETRY] Error loading telemetry:', error);
+        console.error('[TELEMETRY] Error loading telemetry history:', error);
     }
 }
 
@@ -2059,26 +2064,26 @@ async function updateTelemetryConfig() {
     }
 }
 
-function openTelemetryModal(type) {
+async function openTelemetryModal(type) {
     const modal = document.getElementById('telemetryModal');
     const title = document.getElementById('telemetryModalTitle');
     const container = document.getElementById('telemetryChartContainer');
-    
+
     if (!modal || !title || !container) {
         console.error('Modal elements not found');
         return;
     }
-    
+
     modal.dataset.type = type;
     modal.style.display = 'flex';
     container.innerHTML = '<div class="loading">⏳ Loading telemetry data...</div>';
-    
+
     const labels = {
         'environment': '🌡️ Environment Sensors',
         'power': '⚡ Power Sensors'
     };
     title.textContent = labels[type] || '📊 Telemetry';
-    
+
     const footer = document.getElementById('telemetryFooter');
     if (footer) {
         footer.innerHTML = `
@@ -2092,18 +2097,15 @@ function openTelemetryModal(type) {
             <span class="telemetry-records-count" id="telemetryRecordsCount">📊 0 records</span>
         `;
     }
-    
-    fetch('/api/telemetry/history?limit=5000')
-        .then(response => response.json())
-        .then(data => {
-            telemetryFullHistory = data.history || [];
-            telemetryHistory = telemetryFullHistory;
-            renderTelemetryWithRange(type, telemetryTimeRange);
-        })
-        .catch(error => {
-            console.error('Error loading history:', error);
-            container.innerHTML = '<div class="loading">⚠️ Error loading telemetry data</div>';
-        });
+
+    try {
+        await loadTelemetry();
+        await loadTelemetryHistory();
+        renderTelemetryWithRange(type, telemetryTimeRange);    
+        } catch (error) {
+        console.error('Error loading telemetry modal:', error);
+        container.innerHTML = '<div class="loading">⚠️ Error loading telemetry data</div>';
+    }
 }
 
 function setTelemetryRange(minutes) {
@@ -2294,7 +2296,7 @@ function renderTelemetryChart(container, records, type) {
         
         if (hasCurrent) {
             y1Config.min = 250;
-            y1Config.max = 800;
+            y1Config.max = 1000;
             y1Config.ticks.callback = function(value) {
                 return value.toFixed(0);
             };
@@ -2364,7 +2366,12 @@ function renderTelemetryChart(container, records, type) {
 
 function updateTelemetryCards(records, type) {
     if (type === 'environment') {
-        const last = records[records.length - 1] || {};
+        const historyLast = records[records.length - 1] || {};
+        const last = {
+            temperature: telemetryData.temperature ?? historyLast.temperature,
+            humidity: telemetryData.humidity ?? historyLast.humidity,
+            pressure: telemetryData.pressure ?? historyLast.pressure
+        };
         const tempValues = records.map(r => r.temperature).filter(v => v !== null && v !== undefined);
         const humValues = records.map(r => r.humidity).filter(v => v !== null && v !== undefined);
         const pressValues = records.map(r => r.pressure).filter(v => v !== null && v !== undefined);
@@ -2400,7 +2407,12 @@ function updateTelemetryCards(records, type) {
         card3.querySelector('.card-range').style.display = 'flex';
         
     } else if (type === 'power') {
-        const last = records[records.length - 1] || {};
+        const historyLast = records[records.length - 1] || {};
+        const last = {
+            voltage: telemetryData.voltage ?? historyLast.voltage,
+            current: telemetryData.current ?? historyLast.current,
+            power: telemetryData.power ?? historyLast.power
+        };
         const voltValues = records.map(r => r.voltage).filter(v => v !== null && v !== undefined);
         const currValues = records.map(r => r.current).filter(v => v !== null && v !== undefined);
         

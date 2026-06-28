@@ -20,6 +20,7 @@ from meshsrv import meshsrv
 from api.api_camera import register_camera_routes
 from api.api_chat import register_chat_routes
 
+
 try:
     from config import *
 except ImportError:
@@ -264,8 +265,10 @@ def friendly_unknown_node_name(node_id):
     return node_id or "Unknown"
 
 def get_node_name(node_id):
-    if not node_id: return "Unknown"
-    if node_id in KNOWN_NODES: return KNOWN_NODES[node_id]
+    if not node_id:
+        return "Unknown"
+    if node_id in KNOWN_NODES:
+        return KNOWN_NODES[node_id]
     if node_id in nodes:
         name = nodes[node_id].get("name", "")
         if name and name != node_id and not name.startswith("node "):
@@ -280,52 +283,49 @@ def save_messages():
         safe_write_json(HISTORY_FILE, messages[-MAX_HISTORY_MESSAGES:])
 
 def load_messages():
-    global messages
     data = safe_read_json(HISTORY_FILE, [])
-    if data:
-        messages = data[-MAX_HISTORY_MESSAGES:]
-    else:
-        messages = []
+    with state_lock:
+        messages.clear()
+        if data:
+            messages.extend(data[-MAX_HISTORY_MESSAGES:])
 
 def save_chats():
     with state_lock:
         safe_write_json(CHATS_FILE, chats)
 
 def load_chats():
-    global chats
     data = safe_read_json(CHATS_FILE, {})
-    if data:
-        chats = data
-    else:
-        chats = {}
-    
-    if CHANNEL_CHAT_ID not in chats:
-        chats[CHANNEL_CHAT_ID] = {
-            "id": CHANNEL_CHAT_ID,
-            "name": CHANNEL_CHAT_NAME,
-            "type": "channel",
-            "last_message": "",
-            "last_time": "",
-            "unread": 0
-        }
-        save_chats()
+    with state_lock:
+        chats.clear()
+        if data:
+            chats.update(data)
+
+        if CHANNEL_CHAT_ID not in chats:
+            chats[CHANNEL_CHAT_ID] = {
+                "id": CHANNEL_CHAT_ID,
+                "name": CHANNEL_CHAT_NAME,
+                "type": "channel",
+                "last_message": "",
+                "last_time": "",
+                "unread": 0
+            }
+            save_chats()
 
 def save_nodes():
     with state_lock:
         safe_write_json(NODES_FILE, nodes)
 
 def load_nodes():
-    global nodes
     data = safe_read_json(NODES_FILE, {})
-    if data:
-        nodes = data
-    else:
-        nodes = {}
+    with state_lock:
+        nodes.clear()
+        if data:
+            nodes.update(data)
 
 def save_sensors():
     with state_lock:
         safe_write_json(SENSORS_FILE, sensor_data)
-
+        
 def load_sensors_data():
     global sensor_data
     data = safe_read_json(SENSORS_FILE, {})
@@ -1434,6 +1434,23 @@ register_chat_routes(
     get_chat_messages,
     get_nodes_list,
     is_valid_node_id,
+    handle_errors,
+    sanitize_text,
+    CHANNEL_CHAT_ID,
+    CHANNEL_CHAT_NAME,
+    MESHTASTIC_CMD,
+    LOCAL_NODE_ID,
+    LOCAL_NODE_NAME,
+    pause_listen,
+    radio_lock,
+    stop_listener,
+    get_node_name,
+    ensure_chat,
+    add_message,
+    reset_unread,
+    get_node_info,
+    save_nodes,
+    now,
 )
 
 # ============================================================
@@ -1533,159 +1550,6 @@ def api_clear_chat():
             save_chats()
     return jsonify({"ok": True})
 
-@app.route("/api/send", methods=["POST"])
-@handle_errors
-def api_send():
-    data = request.get_json(force=True)
-
-    text = sanitize_text(data.get("text", "").strip())
-    target_node = data.get("target_node", "")
-    chat_id = data.get("chat_id", "")
-
-    if not text:
-        return jsonify({"ok": False, "error": "empty or invalid message"}), 400
-
-    if chat_id and chat_id != CHANNEL_CHAT_ID and not is_valid_node_id(chat_id):
-        return jsonify({"ok": False, "error": "Invalid chat_id"}), 400
-
-    if target_node and not is_valid_node_id(target_node):
-        return jsonify({"ok": False, "error": "Invalid target_node"}), 400
-
-    if target_node and target_node not in nodes:
-        return jsonify({"ok": False, "error": "Target node not found"}), 404
-
-    final_chat_id = CHANNEL_CHAT_ID
-    receiver_name = "Broadcast"
-    chat_name = CHANNEL_CHAT_NAME
-    chat_type = "channel"
-
-    if chat_id and chat_id != CHANNEL_CHAT_ID and chat_id.startswith("!"):
-        final_chat_id = chat_id
-        receiver_name = get_node_name(chat_id)
-        chat_name = receiver_name
-        chat_type = "dm"
-    elif target_node and target_node.startswith("!"):
-        final_chat_id = target_node
-        receiver_name = get_node_name(target_node)
-        chat_name = receiver_name
-        chat_type = "dm"
-
-    cmd = [MESHTASTIC_CMD, "--ch-index", "0"]
-
-    if chat_type == "dm":
-        cmd.extend(["--dest", final_chat_id])
-
-    cmd.extend(["--sendtext", text])
-
-    try:
-        print("[SEND] Preparing to send message", flush=True)
-        print(f"[SEND] chat_type={chat_type}, final_chat_id={final_chat_id}, receiver={receiver_name}", flush=True)
-
-        pause_listen.set()
-        time.sleep(1.0)
-
-        stop_listener()
-
-        time.sleep(2.0)
-
-        with radio_lock:
-            print("[SEND CMD]", cmd, flush=True)
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=45
-            )
-
-            print("[SEND RETURN]", result.returncode, flush=True)
-            print("[SEND STDOUT]", result.stdout, flush=True)
-            print("[SEND STDERR]", result.stderr, flush=True)
-
-        if result.returncode != 0:
-            err = result.stderr.strip() or result.stdout.strip() or "unknown send error"
-
-            with state_lock:
-                add_message("rx", "SYSTEM ERROR", f"send: {err}", "", CHANNEL_CHAT_ID)
-
-            return jsonify({
-                "ok": False,
-                "error": err,
-                "returncode": result.returncode
-            }), 500
-
-        send_output = (result.stdout or "") + "\n" + (result.stderr or "")
-
-        if "Traceback" in send_output or "Error" in send_output or "ERROR" in send_output:
-            err = send_output.strip() or "send command returned error text"
-
-            with state_lock:
-                add_message("rx", "SYSTEM ERROR", f"send: {err}", "", CHANNEL_CHAT_ID)
-
-            return jsonify({
-                "ok": False,
-                "error": err,
-                "returncode": result.returncode
-            }), 500
-
-        if chat_type == "dm" and final_chat_id not in chats:
-            with state_lock:
-                ensure_chat(final_chat_id, chat_name, force=True)
-
-        sender_name = f"{LOCAL_NODE_NAME} → {receiver_name}" if chat_type == "dm" else LOCAL_NODE_NAME
-
-        with state_lock:
-            add_message("me", sender_name, text, LOCAL_NODE_ID, final_chat_id, chat_name)
-
-            if final_chat_id in chats:
-                reset_unread(final_chat_id)
-
-            old = nodes.get(LOCAL_NODE_ID, {})
-            info = get_node_info(LOCAL_NODE_ID)
-
-            nodes[LOCAL_NODE_ID] = {
-                "name": LOCAL_NODE_NAME,
-                "node_id": LOCAL_NODE_ID,
-                "last_seen": time.time(),
-                "last_time": now(),
-                "rssi": old.get("rssi"),
-                "snr": old.get("snr"),
-                "hop_start": old.get("hop_start", ""),
-                "relay_node": old.get("relay_node", ""),
-                "last_text": f"sent to {receiver_name}: {text}" if chat_type == "dm" else f"sent: {text}",
-                "short_name": info.get("short_name", old.get("short_name", "")),
-                "hw_model": info.get("hw_model", old.get("hw_model", "")),
-                "role": old.get("role", "CLIENT_BASE"),
-                "ignored": old.get("ignored", False),
-                "favorite": old.get("favorite", False)
-            }
-
-            save_nodes()
-
-        return jsonify({
-            "ok": True,
-            "chat_id": final_chat_id,
-            "chat_type": chat_type,
-            "returncode": result.returncode
-        })
-
-    except subprocess.TimeoutExpired:
-        with state_lock:
-            add_message("rx", "SYSTEM ERROR", "send timeout", "", CHANNEL_CHAT_ID)
-
-        return jsonify({"ok": False, "error": "timeout"}), 500
-
-    except Exception as e:
-        with state_lock:
-            add_message("rx", "SYSTEM ERROR", f"send: {str(e)}", "", CHANNEL_CHAT_ID)
-
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-    finally:
-        time.sleep(2.0)
-        pause_listen.clear()
-        print("[SEND] Listener resumed", flush=True)
-                    
 @app.route("/api/delete_chat", methods=["POST"])
 @handle_errors
 def api_delete_chat():

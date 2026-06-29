@@ -210,6 +210,18 @@ Features:
 
 - ✅ OV5647 Camera Zero V2.2
   
+# 📋 Requirements
+
+- Raspberry Pi Zero 2W (recommended)
+- Raspberry Pi OS Bookworm
+- Python 3.13+
+- Meshtastic CLI
+- Picamera2
+- Raspberry Pi Camera (optional)
+- A Meshtastic node connected via USB
+
+---
+
 # 📦 Installation
 
 ## Clone the Repository
@@ -222,7 +234,7 @@ cd meshcenter
 ## Create a Python Virtual Environment
 
 ```bash
-python3 -m venv venv
+python3 -m venv --system-site-packages venv
 source venv/bin/activate
 ```
 
@@ -412,31 +424,31 @@ python3 server.py
 Enable service:
 
 ```bash
-sudo systemctl enable mesh-web.service
+sudo systemctl enable meshcenter.service
 ```
 
 Start service:
 
 ```bash
-sudo systemctl start mesh-web.service
+sudo systemctl start meshcenter.service
 ```
 
 Restart service:
 
 ```bash
-sudo systemctl restart mesh-web.service
+sudo systemctl restart meshcenter.service
 ```
 
 Check service status:
 
 ```bash
-sudo systemctl status mesh-web.service
+sudo systemctl status meshcenter.service
 ```
 
 View live logs:
 
 ```bash
-journalctl -u mesh-web -f
+journalctl -u meshcenter -f
 ```
 
 ---
@@ -630,7 +642,7 @@ sudo systemctl status mesh-web
 ### View Live Logs
 
 ```bash
-journalctl -u mesh-web -f
+journalctl -u meshcenter -f
 ```
 
 ---

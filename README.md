@@ -244,13 +244,13 @@ Typical configuration options include:
 APP_HOST = "0.0.0.0"
 APP_PORT = 5000
 
-MESHTASTIC_CMD = "/home/flint/.local/bin/meshtastic"
+MESHTASTIC_CMD = "/home/_your_profile_directory_/.local/bin/meshtastic"
 MESHTASTIC_PORT = "/dev/ttyACM0"
 
 LOCAL_NODE_ID = "!xxxxxxxx"
 LOCAL_NODE_NAME = "My Base Station"
 
-DATA_DIR = "/home/flint/meshcenter/data"
+DATA_DIR = "/home/_your_profile_directory_/meshcenter/data"
 ```
 
 Adjust these values to match your installation.
@@ -312,14 +312,14 @@ After=network.target
 
 [Service]
 Type=simple
-User=flint
+User=your_user_name
 
-WorkingDirectory=/home/flint/meshcenter
+WorkingDirectory=/home/_your_profile_directory_/meshcenter
 
-Environment="PATH=/home/flint/meshcenter/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=/home/_your_profile_directory_/meshcenter/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONUNBUFFERED=1"
 
-ExecStart=/home/flint/meshcenter/venv/bin/python /home/flint/meshcenter/server.py
+ExecStart=/home/_your_profile_directory_/meshcenter/venv/bin/python /home/_your_profile_directory_/meshcenter/server.py
 
 Restart=always
 RestartSec=10

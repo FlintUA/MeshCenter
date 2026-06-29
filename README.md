@@ -1,6 +1,6 @@
 <p align="center">
   <!-- Project logo -->
-  <img src="docs/images/meshcenter001.png" width="720" alt="MeshCenter Logo">
+  <img src="docs/images/meshcenter001.png" width="600" alt="MeshCenter Logo">
 </p>
 
 <h1 align="center">MeshCenter</h1>

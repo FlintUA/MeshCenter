@@ -342,7 +342,7 @@ Application data are stored locally.
 Example:
 
 ```python
-DATA_DIR = "/home/flint/mesh_web/data"
+DATA_DIR = "/home/flint/meshcenter/data"
 ```
 
 Files created automatically:

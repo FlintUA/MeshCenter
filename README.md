@@ -1,6 +1,6 @@
 <p align="center">
   <!-- Project logo -->
-  <img src="docs/images/meshcenter001.png" width="180" alt="MeshCenter Logo">
+  <img src="docs/images/meshcenter001.png" width="360" alt="MeshCenter Logo">
 </p>
 
 <h1 align="center">MeshCenter</h1>
@@ -116,19 +116,19 @@ Special attention has been paid to:
 ---
 
 # Screenshots
+<img width="1407" height="1292" alt="main002" src="https://github.com/user-attachments/assets/92e09683-3cd7-4dad-9af5-edfa25a050ca" />
 
-> Screenshots will be added in future releases.
+<img width="1403" height="1265" alt="main003" src="https://github.com/user-attachments/assets/55839039-c167-489e-8122-616cfa56f1af" />
 
-Planned screenshots:
+<img width="370" height="815" alt="sidebar002" src="https://github.com/user-attachments/assets/84e56a8d-d65f-4877-a9e1-425c7da095cb" />
 
-- Main Dashboard
-- Chat
-- Camera
-- Photo Gallery
-- Telemetry
-- Node Management
+<img width="771" height="556" alt="environment002" src="https://github.com/user-attachments/assets/d3922ae4-0bb3-4a37-9757-af0a5572cf45" />
 
----
+<img width="783" height="568" alt="power003" src="https://github.com/user-attachments/assets/ac1bb3ec-21a7-498b-8279-a5735cfe59c8" />
+
+<img width="1398" height="1261" alt="video001" src="https://github.com/user-attachments/assets/7d9dedd0-9013-45c6-9aaa-fe3a59eef8ab" />
+
+<img width="1398" height="1254" alt="photo001" src="https://github.com/user-attachments/assets/b129ac36-40eb-4ca5-883f-918760f7d5be" />
 
 # Design Philosophy
 

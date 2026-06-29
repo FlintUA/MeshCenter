@@ -11,8 +11,8 @@ A complete browser-based control center for Meshtastic® base stations running o
 
 <p align="center">
 
-![Release](https://img.shields.io/github/v/release/FlintUA/meshcenter)
-![License](https://img.shields.io/github/license/FlintUA/meshcenter)
+![Release](https://img.shields.io/github/v/release/FlintUA/MeshCenter)
+![License](https://img.shields.io/github/license/FlintUA/MeshCenter)
 ![Python](https://img.shields.io/badge/Python-3.13+-blue)
 ![Platform](https://img.shields.io/badge/Raspberry%20Pi-Bookworm-C51A4A)
 ![Meshtastic](https://img.shields.io/badge/Meshtastic-Compatible-success)
@@ -192,7 +192,7 @@ Although it has been primarily developed and tested on Raspberry Pi Zero 2W, it 
 # Clone the Repository
 
 ```bash
-git clone https://github.com/FlintUA/meshcenter.git
+git clone https://github.com/FlintUA/MeshCenter.git
 cd meshcenter
 ```
 
@@ -1285,7 +1285,7 @@ https://github.com/FlintUA
 
 Project repository:
 
-https://github.com/FlintUA/meshcenter
+https://github.com/FlintUA/MeshCenter
 
 Website:
 

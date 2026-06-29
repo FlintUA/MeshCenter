@@ -16,7 +16,7 @@ config.py
 config.local.py
 .env
 chats.json
-
+backups/
 
 # Runtime data
 data/

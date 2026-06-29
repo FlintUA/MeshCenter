@@ -1,13 +1,18 @@
-<p align="center">
-  <!-- Project logo -->
-  <img src="docs/images/meshcenter001.png" width="600" alt="MeshCenter Logo">
-</p>
-
 <h1 align="center">MeshCenter</h1>
 
 <p align="center">
 A complete browser-based control center for Meshtastic® base stations running on Raspberry Pi.
 </p>
+
+<p align="center">
+  <!-- Project logo -->
+  <img src="docs/images/meshcenter001.png" width="480" alt="MeshCenter Logo">
+</p>
+
+<h1 align="center">Meshtastic Powered</h1>
+
+<p align="center">
+<img width="256" height="256" alt="meshtastic-powered-001" src="https://github.com/user-attachments/assets/42b4c3fe-396f-489e-82cf-fd710b235361" />
 
 <p align="center">
 

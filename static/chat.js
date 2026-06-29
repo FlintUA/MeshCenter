@@ -2275,13 +2275,13 @@ function renderTelemetryChart(container, records, type) {
         yConfig.max = 100;
         
         if (hasPressure) {
-            y1Config.min = 700;
-            y1Config.max = 1000;
+            y1Config.min = 900;
+            y1Config.max = 1200;
             y1Config.ticks.callback = function(value) {
                 return value.toFixed(0);
             };
         } else {
-            y1Config.min = -5;
+            y1Config.min = -10;
             y1Config.max = 100;
             y1Config.ticks.callback = function(value) {
                 return value.toFixed(0);

@@ -3,6 +3,9 @@
 <p align="center">
 A complete browser-based control center for Meshtastic® base stations running on Raspberry Pi.
 </p>
+<p align="center">
+Messaging | Telemetry | Camera | Photo Gallery | Raspberry Pi
+</p>
 
 <p align="center">
   <!-- Project logo -->

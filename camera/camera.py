@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Camera manager for Flint Meshtastic Web UI.
+Camera manager for MeshCenter.
 
 This module contains all Raspberry Pi camera, MJPEG video, photo capture,
 settings and screenshot gallery logic. Flask routes stay in server.py.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Configuration file for Meshtastic Web UI
+Configuration file for MeshCenter
 Copy this file to config.py and edit your settings
 """
 

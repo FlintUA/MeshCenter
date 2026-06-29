@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Meshtastic Web Interface with Camera Support for Raspberry Pi Zero 2W
+MeshCenter - Web Control Center for Meshtastic nodes on Raspberry Pi Zero 2W
 """
 
 from flask import Flask, request, jsonify, render_template, Response, send_from_directory
@@ -1807,7 +1807,7 @@ if __name__ == "__main__":
     
     print(f"""
     ╔══════════════════════════════════════════════╗
-    ║   Meshtastic Web Interface (Pi Zero 2W)      ║
+    ║   MeshCenter (Pi Zero 2W)                    ║
     ╠══════════════════════════════════════════════╣
     ║  URL: http://{APP_HOST}:{APP_PORT}       ║
     ║  Node: {LOCAL_NODE_NAME}                     ║

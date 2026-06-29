@@ -1,4 +1,4 @@
-"""General helper functions for Flint Meshtastic Web UI."""
+"""General helper functions for MeshCenter."""
 
 import re
 import time

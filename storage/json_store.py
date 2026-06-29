@@ -1,4 +1,4 @@
-"""JSON storage helpers for Flint Meshtastic Web UI."""
+"""JSON storage helpers for MeshCenter."""
 
 import json
 import os

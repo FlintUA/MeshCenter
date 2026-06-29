@@ -2,10 +2,10 @@
   <img src="https://github.com/user-attachments/assets/0847ebce-bf96-4b5d-8b3e-3b92bbd3d440" width="180" alt="Meshtastic Powered">
 </p>
 
-<h1 align="center">Flint Meshtastic Web UI</h1>
+<h1 align="center">MeshCenter</h1>
 
 <p align="center">
-A lightweight web dashboard for Meshtastic nodes running on Raspberry Pi.
+Modern Web Control Center for Meshtastic nodes running on Raspberry Pi.
 </p>
 
 <p align="center">
@@ -37,7 +37,9 @@ A lightweight web dashboard for Meshtastic nodes running on Raspberry Pi.
 
 # Overview
 
-Flint Meshtastic Web UI is a lightweight web interface designed for **Meshtastic** nodes running on **Raspberry Pi**.
+MeshCenter is a lightweight web interface designed for **Meshtastic** nodes running on **Raspberry Pi**.
+
+It provides messaging, telemetry, camera streaming, photo gallery, sensor monitoring and node management through a modern browser interface.
 
 The project provides a modern browser-based dashboard for messaging, node management, telemetry monitoring, live camera streaming and photo capture while remaining optimized for low-power hardware such as the Raspberry Pi Zero 2W.
 
@@ -213,8 +215,8 @@ Features:
 ## Clone the Repository
 
 ```bash
-git clone https://github.com/FlintUA/flint-meshtastic-web-ui.git
-cd flint-meshtastic-web-ui
+git clone https://github.com/FlintUA/meshcenter.git
+cd meshcenter
 ```
 
 ## Create a Python Virtual Environment
@@ -458,7 +460,7 @@ http://192.168.2.103:5000
 # 📁 Project Structure
 
 ```text
-flint-meshtastic-web-ui/
+meshcenter/
 
 │
 ├── server.py
@@ -697,7 +699,7 @@ More Meshtastic projects, electronics articles, Raspberry Pi experiments, 3D pri
 
 🔗 **GitHub:** https://github.com/FlintUA
 
-📦 **Project:** https://github.com/FlintUA/flint-meshtastic-web-ui
+📦 **Project:** https://github.com/FlintUA/meshcenter
 
 ---
 

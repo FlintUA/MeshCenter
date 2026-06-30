@@ -35,6 +35,114 @@ let telemetryInterval = 900;
 let telemetryUpdateInterval = null;
 let telemetryTimeRange = 60;
 let telemetryFullHistory = [];
+let appSettings = {
+    units: {
+        temperature: "c",
+        pressure: "hpa",
+        wind: "ms"
+    }
+};
+
+function celsiusToFahrenheit(c) {
+    return (c * 9 / 5) + 32;
+}
+
+function formatTemperature(value) {
+    if (value === null || value === undefined || isNaN(value)) {
+        return "--";
+    }
+
+    const unit = appSettings?.units?.temperature || "c";
+    const c = Number(value);
+
+    if (unit === "f") {
+        return celsiusToFahrenheit(c).toFixed(1) + "°F";
+    }
+
+    if (unit === "both") {
+        return c.toFixed(1) + "°C / " + celsiusToFahrenheit(c).toFixed(1) + "°F";
+    }
+
+    return c.toFixed(1) + "°C";
+}
+
+function temperatureChartUnit() {
+    const unit = appSettings?.units?.temperature || "c";
+    return unit === "f" ? "°F" : "°C";
+}
+
+function temperatureChartValue(value) {
+    if (value === null || value === undefined || isNaN(value)) {
+        return null;
+    }
+
+    const unit = appSettings?.units?.temperature || "c";
+    const c = Number(value);
+
+    if (unit === "f") {
+        return celsiusToFahrenheit(c);
+    }
+
+    return c;
+}
+
+function hPaToMmHg(hpa) {
+    return hpa * 0.750061683;
+}
+
+function formatPressure(value) {
+    if (value === null || value === undefined || isNaN(value)) {
+        return "--";
+    }
+
+    const unit = appSettings?.units?.pressure || "hpa";
+    const hpa = Number(value);
+    const mmhg = hPaToMmHg(hpa);
+
+    if (unit === "mmhg") {
+        return mmhg.toFixed(1) + " mmHg";
+    }
+
+    if (unit === "both") {
+        return hpa.toFixed(1) + " hPa / " + mmhg.toFixed(1) + " mmHg";
+    }
+
+    return hpa.toFixed(1) + " hPa";
+}
+
+function pressureChartUnit() {
+    const unit = appSettings?.units?.pressure || "hpa";
+    return unit === "mmhg" ? "mmHg" : "hPa";
+}
+
+function pressureChartValue(value) {
+    if (value === null || value === undefined || isNaN(value)) {
+        return null;
+    }
+
+    const unit = appSettings?.units?.pressure || "hpa";
+    const hpa = Number(value);
+
+    if (unit === "mmhg") {
+        return hPaToMmHg(hpa);
+    }
+
+    return hpa;
+}
+
+async function loadSettings() {
+    try {
+        const response = await fetch("/api/settings");
+        const data = await response.json();
+
+        if (data.ok && data.settings) {
+            appSettings = data.settings;
+            console.log("[SETTINGS] Loaded:", appSettings);
+        }
+    } catch (error) {
+        console.warn("[SETTINGS] Failed to load:", error);
+    }
+}
 
 // ===== PHOTO =====
 let photoPreviewResolution = '640x480';
@@ -74,7 +182,9 @@ function showToast(message, type = 'info') {
 // ============================================================
 // UTILITY FUNCTIONS
 // ============================================================
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
+    await loadSettings();
+
     const title = document.getElementById('appTitle');
     if (title) {
         title.addEventListener('click', function(e) {
@@ -87,11 +197,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     icon.style.transform = 'rotate(0deg) scale(1)';
                 }, 400);
             }
-            
+
             this.innerHTML = '🔄 Reloading...';
             this.style.opacity = '0.6';
             this.style.cursor = 'default';
-            
+
             setTimeout(() => {
                 window.location.reload(true);
             }, 500);
@@ -1197,9 +1307,12 @@ async function loadSensors() {
         if (sensorsCard && (data.temperature !== null || data.voltage !== null)) {
             sensorsCard.style.display = 'block';
 
-            document.getElementById('tempValue').textContent = data.temperature !== null ? data.temperature.toFixed(1) : '--';
+            console.log("Sensors API:", data);
+            console.log("Temperature:", data.temperature);
+
+            document.getElementById('tempValue').textContent = formatTemperature(data.temperature);
             document.getElementById('humValue').textContent = data.humidity !== null ? data.humidity.toFixed(1) : '--';
-            document.getElementById('presValue').textContent = data.pressure !== null ? Math.round(data.pressure) : '--';
+            document.getElementById('presValue').textContent = formatPressure(data.pressure);
             document.getElementById('voltValue').textContent = data.voltage !== null ? data.voltage.toFixed(2) : '--';
             document.getElementById('currValue').textContent = data.current !== null ? Math.round(data.current) : '--';
             document.getElementById('powValue').textContent = data.power !== null ? Math.round(data.power) : '--';
@@ -2000,13 +2113,13 @@ function updateTelemetryUI() {
     if (envValue) {
         let parts = [];
         if (data.temperature !== null && data.temperature !== undefined) {
-            parts.push(`${data.temperature.toFixed(1)}°C`);
+            parts.push(formatTemperature(data.temperature));
         }
         if (data.humidity !== null && data.humidity !== undefined) {
             parts.push(`${data.humidity.toFixed(1)}%`);
         }
         if (data.pressure !== null && data.pressure !== undefined) {
-            parts.push(`${data.pressure.toFixed(1)}hPa`);
+            parts.push(formatPressure(data.pressure));
         }
         envValue.textContent = parts.length > 0 ? parts.join('  ') : '—';
     }
@@ -2089,6 +2202,7 @@ async function openTelemetryModal(type) {
         footer.innerHTML = `
             <div class="telemetry-time-controls">
                 <button class="time-btn active" data-range="60" onclick="setTelemetryRange(60)">1h</button>
+                <button class="time-btn" data-range="360" onclick="setTelemetryRange(360)">6h</button>
                 <button class="time-btn" data-range="720" onclick="setTelemetryRange(720)">12h</button>
                 <button class="time-btn" data-range="1440" onclick="setTelemetryRange(1440)">24h</button>
                 <button class="time-btn" data-range="10080" onclick="setTelemetryRange(10080)">7d</button>
@@ -2131,16 +2245,20 @@ function renderTelemetryWithRange(type, minutes) {
     
     const filteredRecords = telemetryFullHistory.filter(r => r.timestamp >= cutoff);
     
-    if (filteredRecords.length === 0) {
-        container.innerHTML = `<div class="loading">📊 No data for this period (${minutes/60}h). Try a longer range.</div>`;
-        if (recordsCount) recordsCount.textContent = '📊 0 records';
-        return;
-    }
-    
-    if (recordsCount) {
-        recordsCount.textContent = `📊 ${filteredRecords.length} records (${minutes/60}h)`;
-    }
-    
+const rangeLabel = minutes < 1440
+    ? `${minutes / 60}h`
+    : `${minutes / 1440}d`;
+
+if (filteredRecords.length === 0) {
+    container.innerHTML = `<div class="loading">📊 No data for this period (${rangeLabel}). Try a longer range.</div>`;
+    if (recordsCount) recordsCount.textContent = '📊 0 records';
+    return;
+}
+
+if (recordsCount) {
+    recordsCount.textContent = `📊 ${filteredRecords.length} records (${rangeLabel})`;
+}
+
     renderTelemetryChart(container, filteredRecords, type);
     updateTelemetryCards(filteredRecords, type);
 }
@@ -2169,8 +2287,8 @@ function renderTelemetryChart(container, records, type) {
         const tempData = records.map(r => r.temperature).filter(v => v !== null && v !== undefined);
         if (tempData.length > 0) {
             datasets.push({
-                label: 'Temperature °C',
-                data: records.map(r => r.temperature),
+                label: 'Temperature ' + temperatureChartUnit(),
+                data: records.map(r => temperatureChartValue(r.temperature)),
                 borderColor: '#ff6b35',
                 backgroundColor: 'rgba(255, 107, 53, 0.1)',
                 fill: true,
@@ -2201,8 +2319,8 @@ function renderTelemetryChart(container, records, type) {
         if (pressData.length > 0) {
             hasPressure = true;
             datasets.push({
-                label: 'Pressure hPa',
-                data: records.map(r => r.pressure),
+                label: 'Pressure ' + pressureChartUnit(),
+                data: records.map(r => pressureChartValue(r.pressure)),
                 borderColor: '#2ecc71',
                 backgroundColor: 'rgba(46, 204, 113, 0.1)',
                 fill: true,
@@ -2270,13 +2388,25 @@ function renderTelemetryChart(container, records, type) {
         ticks: { font: { size: 9 }, color: '#666' }
     };
     
-    if (type === 'environment') {
-        yConfig.min = -5;
-        yConfig.max = 100;
-        
-        if (hasPressure) {
-            y1Config.min = 900;
-            y1Config.max = 1200;
+        if (type === 'environment') {
+            const tempUnit = appSettings?.units?.temperature || "c";
+
+            if (tempUnit === "f") {
+                yConfig.min = 20;
+                yConfig.max = 120;
+            } else {
+                yConfig.min = -5;
+                yConfig.max = 100;
+            }
+            if (hasPressure) {
+                const pressureUnit = appSettings?.units?.pressure || "hpa";
+                if (pressureUnit === "mmhg") {
+                    y1Config.min = 675;
+                    y1Config.max = 900;
+                } else {
+                    y1Config.min = 900;
+                    y1Config.max = 1200;
+                }            
             y1Config.ticks.callback = function(value) {
                 return value.toFixed(0);
             };
@@ -2333,12 +2463,32 @@ function renderTelemetryChart(container, records, type) {
                             label: function(context) {
                                 let label = context.dataset.label || '';
                                 let value = context.parsed.y;
-                                if (value !== null && value !== undefined && !isNaN(value)) {
-                                    label += ': ' + value.toFixed(2);
-                                } else {
-                                    label += ': —';
+
+                                if (value === null || value === undefined || isNaN(value)) {
+                                    return label + ': —';
                                 }
-                                return label;
+
+                                if (label.startsWith('Temperature')) {
+                                    return label + ': ' + value.toFixed(1) + temperatureChartUnit();
+                                }
+
+                                if (label.startsWith('Humidity')) {
+                                    return label + ': ' + value.toFixed(1) + '%';
+                                }
+
+                                if (label.startsWith('Pressure')) {
+                                    return label + ': ' + value.toFixed(1) + ' ' + pressureChartUnit();
+                                }
+
+                                if (label.startsWith('Voltage')) {
+                                    return label + ': ' + value.toFixed(3) + ' V';
+                                }
+
+                                if (label.startsWith('Current')) {
+                                    return label + ': ' + value.toFixed(1) + ' mA';
+                                }
+
+                                return label + ': ' + value.toFixed(2);
                             }
                         }
                     }
@@ -2378,12 +2528,14 @@ function updateTelemetryCards(records, type) {
         
         const card1 = document.getElementById('cardTemp').parentElement;
         card1.querySelector('.card-label').textContent = '🌡️ Temperature';
-        document.getElementById('cardTemp').textContent = last.temperature !== null && last.temperature !== undefined ? 
-            last.temperature.toFixed(1) + '°C' : '--';
+
+        document.getElementById('cardTemp').textContent = formatTemperature(last.temperature);
+
         if (tempValues.length > 0) {
-            document.getElementById('cardTempMin').textContent = Math.min(...tempValues).toFixed(1) + '°C';
-            document.getElementById('cardTempMax').textContent = Math.max(...tempValues).toFixed(1) + '°C';
-        }
+            document.getElementById('cardTempMin').textContent = formatTemperature(Math.min(...tempValues));
+            document.getElementById('cardTempMax').textContent = formatTemperature(Math.max(...tempValues));
+        }                
+
         card1.querySelector('.card-range').style.display = 'flex';
         
         const card2 = document.getElementById('cardHum').parentElement;
@@ -2398,11 +2550,11 @@ function updateTelemetryCards(records, type) {
         
         const card3 = document.getElementById('cardPress').parentElement;
         card3.querySelector('.card-label').textContent = '📊 Pressure';
-        document.getElementById('cardPress').textContent = last.pressure !== null && last.pressure !== undefined ? 
-            last.pressure.toFixed(1) + ' hPa' : '--';
+        document.getElementById('cardPress').textContent = formatPressure(last.pressure);
+
         if (pressValues.length > 0) {
-            document.getElementById('cardPressMin').textContent = Math.min(...pressValues).toFixed(1) + ' hPa';
-            document.getElementById('cardPressMax').textContent = Math.max(...pressValues).toFixed(1) + ' hPa';
+            document.getElementById('cardPressMin').textContent = formatPressure(Math.min(...pressValues));
+            document.getElementById('cardPressMax').textContent = formatPressure(Math.max(...pressValues));
         }
         card3.querySelector('.card-range').style.display = 'flex';
         
@@ -3138,6 +3290,8 @@ async function init() {
     
     console.log('[INIT] Starting application...');
     
+    await loadSettings();
+    
     const statusEl = document.getElementById('statusText');
     if (statusEl) statusEl.innerHTML = '⏳ Loading...';
     
@@ -3285,6 +3439,10 @@ window.stopCameraStream = stopCameraStream;
 window.loadSensors = loadSensors;
 window.loadBaseStatus = loadBaseStatus;
 window.loadTelemetry = loadTelemetry;
+window.loadSettings = loadSettings;
+window.getAppSettings = function() {
+    return appSettings;
+};
 
 // Экспортируем переменные
 window.chatListCache = chatListCache;

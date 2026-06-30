@@ -19,6 +19,7 @@ from telemetry import telemetry
 from meshsrv import meshsrv
 from api.api_camera import register_camera_routes
 from api.api_chat import register_chat_routes
+from api.api_settings import register_settings_routes
 
 
 try:
@@ -37,6 +38,10 @@ required_vars = [
     "MAX_HISTORY_MESSAGES", "CHANNEL_CHAT_ID", "CHANNEL_CHAT_NAME",
     "KNOWN_NODES", "KNOWN_NODE_INFO"
 ]
+
+SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
+
+
 
 try:
     MESHTASTIC_PORT
@@ -169,6 +174,7 @@ seen_ids = set()
 seen_recent_texts = {}
 nodes = {}
 chats = {}
+settings = {}
 
 sensor_data = {
     "temperature": None, "humidity": None, "pressure": None,
@@ -333,6 +339,40 @@ def load_sensors_data():
         sensor_data = data
     else:
         save_sensors()
+
+def default_settings():
+    return {
+        "units": {
+            "temperature": "c",
+            "pressure": "hpa",
+            "wind": "ms"
+        }
+    }
+
+def save_settings():
+    with state_lock:
+        safe_write_json(SETTINGS_FILE, settings)
+
+def load_settings():
+    global settings
+    data = safe_read_json(SETTINGS_FILE, default_settings())
+
+    if not isinstance(data, dict):
+        data = default_settings()
+
+    units = data.get("units", {})
+    if not isinstance(units, dict):
+        units = {}
+
+    settings = {
+        "units": {
+            "temperature": units.get("temperature", "c") if units.get("temperature", "c") in ("c", "f", "both") else "c",
+            "pressure": units.get("pressure", "hpa") if units.get("pressure", "hpa") in ("hpa", "mmhg", "both") else "hpa",
+            "wind": units.get("wind", "ms") if units.get("wind", "ms") in ("ms", "kmh", "mph") else "ms",
+        }
+    }
+
+    save_settings()        
 
 def ensure_chat(node_id, node_name=None, force=False):
     if node_id == CHANNEL_CHAT_ID or not node_id or not node_id.startswith("!"):
@@ -1453,6 +1493,14 @@ register_chat_routes(
     now,
 )
 
+register_settings_routes(
+    app,
+    state_lock,
+    settings,
+    save_settings,
+    handle_errors,
+)
+
 # ============================================================
 # API ROUTES
 # ============================================================
@@ -1775,7 +1823,8 @@ if __name__ == "__main__":
     ensure_known_nodes()
     normalize_unknown_nodes()
     parse_nodes_from_info()
-    
+    load_settings()
+
     try:
         update_base_status_from_info()
     except Exception as e:

@@ -1335,6 +1335,11 @@ def listen_meshtastic():
 
                         continue
 
+                    # Ignore duplicate onReceive() debug events.
+                    # They contain only decoded text and no sender information.
+                    if "onReceive()" in line:
+                        continue
+
                     text = extract_text_message(line)
 
                     if not text:

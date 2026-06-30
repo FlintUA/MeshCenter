@@ -354,7 +354,6 @@ def save_settings():
         safe_write_json(SETTINGS_FILE, settings)
 
 def load_settings():
-    global settings
     data = safe_read_json(SETTINGS_FILE, default_settings())
 
     if not isinstance(data, dict):
@@ -364,7 +363,7 @@ def load_settings():
     if not isinstance(units, dict):
         units = {}
 
-    settings = {
+    normalized_settings = {
         "units": {
             "temperature": units.get("temperature", "c") if units.get("temperature", "c") in ("c", "f", "both") else "c",
             "pressure": units.get("pressure", "hpa") if units.get("pressure", "hpa") in ("hpa", "mmhg", "both") else "hpa",
@@ -372,7 +371,10 @@ def load_settings():
         }
     }
 
-    save_settings()        
+    settings.clear()
+    settings.update(normalized_settings)
+
+    save_settings()
 
 def ensure_chat(node_id, node_name=None, force=False):
     if node_id == CHANNEL_CHAT_ID or not node_id or not node_id.startswith("!"):

@@ -11,8 +11,15 @@
 <div class="app-container">
     <!-- Header -->
     <div class="header">
-        <h1 id="appTitle" style="cursor: pointer;" title="Click to refresh page (Ctrl+F5)">
-            <span>📡</span> MeshCenter
+        <h1 id="appTitle" class="app-title" title="Click to refresh page (Ctrl+F5)">
+            <img src="{{ url_for('static', filename='meshcenter_logo.png') }}" class="header-logo" alt="MeshCenter">
+            <span class="app-name">MeshCenter</span>
+            <span class="header-status" id="headerStatusText">
+            <span class="status-dot"></span>
+            <span class="status-label">Online</span>
+        </span>
+
+            
         </h1>
         <div class="header-actions">
             <button class="header-btn" id="toggleSidebarBtn" title="Toggle nodes sidebar">
@@ -24,7 +31,7 @@
     </div>
 
     <!-- Status Bar -->
-    <div class="status-bar">
+    <div class="status-bar" style="display:none;">
         <span id="statusText">🟢 Connecting...</span>
         <span id="nodeCount"></span>
     </div>
@@ -39,10 +46,15 @@
                     💬 Chats
                 </button>
                 <button class="main-content-tab" id="mainTabVideo" onclick="switchMainTab('video')">
-                    🎥 Video
+                    🎥 Camera
                 </button>
+                <!--
                 <button class="main-content-tab" id="mainTabPhoto" onclick="switchMainTab('photo')">
                     📸 Photo
+                </button>
+                -->
+                <button class="main-content-tab" id="mainTabSettings" onclick="switchMainTab('settings')">
+                    ⚙️ Settings
                 </button>
             </div>
 
@@ -56,9 +68,13 @@
                     <span class="chat-subtitle" id="chatSubtitle"></span>
                 </div>
                 <div class="chat-header-actions">
-                    <button class="chat-actions-btn" id="deleteAllDmHeaderBtn" onclick="deleteAllDmChats()" title="Delete all DM chats">
+                    <button class="chat-actions-btn"
+                            id="deleteAllDmHeaderBtn"
+                            onclick="deleteAllDmChats()"
+                            title="Delete all DM chats"
+                            style="display:none;">
                         🗑️
-                    </button>
+                    </button>                    
                     <button class="chat-actions-btn" id="chatActionsBtn" style="display: none;" onclick="showChatActions()">
                         ⋮
                     </button>
@@ -122,10 +138,9 @@
                 <div class="video-panel">
                     <div class="video-header">
                         <div>
-                            <div class="video-title">🎥 Live Video</div>
-                            <div class="video-subtitle">Streaming from Raspberry Pi</div>
+                            <div class="video-title">📷 Live Camera</div>
                         </div>
-                        <button class="video-refresh-btn" onclick="refreshVideoFeed()">🔄 Refresh</button>
+                <!--        <button class="video-refresh-btn" onclick="refreshVideoFeed()">🔄 Refresh</button> -->
                     </div>
 
                     <div class="video-frame-wrap">
@@ -138,115 +153,164 @@
                     </div>
 
                     <div class="video-controls" id="videoControls">
-                        <div class="video-controls-grid">
-                            <div class="control-group">
-                                <label>Resolution</label>
-                                <select id="videoResolution" onchange="updateVideoSettings()">
-                                    <option value="320x240">320×240</option>
-                                    <option value="480x320">480×320</option>
-                                    <option value="640x480" selected>640×480</option>
-                                    <option value="800x600">800×600</option>
-                                    <option value="1024x768">1024×768</option>
-                                    <option value="1280x720">1280×720 (HD)</option>
-                                    <option value="1280x960">1280×960</option>
-                                    <option value="1920x1080">1920×1080 (FHD)</option>
-                                </select>
-                            </div>
-                            
-                            <div class="control-group">
-                                <label>FPS</label>
-                                <select id="videoFps" onchange="updateVideoSettings()">
-                                    <option value="5">5</option>
-                                    <option value="8">8</option>
-                                    <option value="10">10</option>
-                                    <option value="12" selected>12</option>
-                                    <option value="15">15</option>
-                                    <option value="20">20</option>
-                                    <option value="24">24</option>
-                                    <option value="30">30</option>
-                                </select>
-                            </div>
-                            
-                            <div class="control-group">
-                                <label>Quality</label>
-                                <div class="quality-control">
-                                    <input type="range" id="videoQuality" min="40" max="90" value="75" 
-                                           oninput="updateVideoSettings()">
-                                    <span id="videoQualityLabel">75%</span>
+                    <div class="video-controls-grid">
+
+                        <!-- VIDEO -->
+                        <div class="camera-settings-block">
+
+                            <div class="camera-settings-row">
+                                <div class="control-group video-resolution-group">
+                                    <label>VIDEO</label>
+                                    <select id="videoResolution" onchange="updateVideoSettings()">
+                                        <option value="320x240">320×240</option>
+                                        <option value="480x320">480×320</option>
+                                        <option value="640x480" selected>640×480</option>
+                                        <option value="800x600">800×600</option>
+                                        <option value="1024x768">1024×768</option>
+                                        <option value="1280x720">1280×720 (HD)</option>
+                                        <option value="1280x960">1280×960</option>
+                                        <option value="1920x1080">1920×1080 (FHD)</option>
+                                    </select>
+                                </div>
+
+                                <div class="control-group video-fps-group">
+                                    <label>FPS</label>
+                                    <select id="videoFps" onchange="updateVideoSettings()">
+                                        <option value="5">5</option>
+                                        <option value="8">8</option>
+                                        <option value="10">10</option>
+                                        <option value="12">12</option>
+                                        <option value="15">15</option>
+                                        <option value="20">20</option>
+                                        <option value="24">24</option>
+                                        <option value="30">30</option>
+                                    </select>
                                 </div>
                             </div>
-                            
-                            <div class="control-group">
-                                <button class="screenshot-btn" onclick="takeScreenshot('video')">📸 Screenshot</button>
-                                <button class="screenshots-btn" onclick="showScreenshots()">🖼️ Gallery</button>
+
+                            <div class="camera-settings-row">
+                                <div class="control-group video-quality-group">
+                                    <label>VIDEO QUALITY</label>
+                                    <div class="quality-control">
+                                        <input type="range"
+                                            id="videoQuality"
+                                            min="40"
+                                            max="90"
+                                            value="75"
+                                            oninput="updateVideoSettings()">
+                                        <span id="videoQualityLabel">75%</span>
+                                    </div>
+                                </div>
                             </div>
+
                         </div>
+
+
+                        <!-- PHOTO -->
+                        <div class="camera-settings-block">
+
+                            <div class="camera-settings-row">
+
+                                <div class="control-group capture-resolution-group">
+                                    <label>CAPTURE</label>
+                                    <select id="photoResolution"
+                                            onchange="updatePhotoSettings(false)">
+                                        <option value="640x480">640×480</option>
+                                        <option value="1280x720">1280×720</option>
+                                        <option value="1920x1080">1920×1080</option>
+                                        <option value="2592x1944">2592×1944</option>
+                                    </select>
+                                </div>
+
+                            </div>
+
+                            <div class="camera-settings-row">
+
+                                <div class="control-group capture-quality-group">
+                                    <label>PHOTO QUALITY</label>
+
+                                    <div class="quality-control">
+                                        <input type="range"
+                                            id="photoQuality"
+                                            min="40"
+                                            max="100"
+                                            value="95"
+                                            oninput="document.getElementById('photoQualityLabel').textContent=this.value+'%'"
+                                            onchange="updatePhotoSettings(true)">
+                                        <span id="photoQualityLabel">95%</span>
+                                    </div>
+
+                                </div>
+
+                            </div>
+
+                        </div>
+
+
+                        <!-- BUTTONS -->
+
+                        <div class="camera-actions-block">
+
+                            <button class="screenshot-btn" onclick="captureCameraPhoto()">
+                                📸 Capture
+                            </button>
+
+                            <button class="screenshots-btn"
+                                    onclick="showScreenshots()">
+                                🖼 Gallery
+                            </button>
+
+                        </div>
+
+                    </div>
                     </div>
                 </div>
             </div>
 
-            <!-- ===== PHOTO VIEW ===== -->
-            <div class="photo-view" id="photoView" style="display: none;">
-                <div class="photo-panel">
-                    <div class="photo-header">
+            <!-- ===== SETTINGS VIEW ===== -->
+            <div class="settings-view" id="settingsView" style="display: none;">
+                <div class="settings-panel">
+                    <div class="settings-header">
                         <div>
-                            <div class="photo-title">📸 Photo Mode</div>
-                            <div class="photo-subtitle">Preview and capture high-quality images</div>
-                        </div>
-                        <button class="video-refresh-btn" onclick="refreshPhoto()">🔄 Refresh</button>
-                    </div>
-
-                    <div class="photo-frame-wrap">
-                        <img id="photoDisplay" class="photo-display" src="" alt="Photo preview" style="display:none;">
-                        <div class="photo-placeholder" id="photoPlaceholder">
-                            <span class="photo-placeholder-icon">📸</span>
-                            <span class="photo-placeholder-text">No photo captured yet</span>
-                            <span class="photo-placeholder-hint">Click "Refresh" to capture a preview</span>
+                            <div class="settings-title">⚙️ Settings</div>
+                            <div class="settings-subtitle">Global MeshCenter preferences</div>
                         </div>
                     </div>
 
-                    <div class="photo-info-bar">
-                        <span id="photoStatus">📷 Ready</span>
-                        <span id="photoInfo">Preview: 640×480 (85%) • Save: 2592×1944</span>
-                    </div>
+                    <div class="settings-grid">
+                        <div class="settings-card">
+                            <div class="settings-card-title">🌍 General</div>
+                            <div class="settings-card-text">Basic interface preferences will be added here.</div>
+                        </div>
 
-                    <div class="photo-controls">
-                        <div class="photo-controls-grid">
-                            <div class="control-group">
-                                <label>Preview Resolution</label>
-                                <select id="photoResolution" onchange="updatePhotoSettings()">
-                                    <option value="640x480" selected>640×480 (fast)</option>
-                                    <option value="1280x720">1280×720 (HD)</option>
-                                    <option value="1920x1080">1920×1080 (FHD)</option>
-                                    <option value="2592x1944">2592×1944 (5MP - for saving)</option>
-                                </select>
-                            </div>
-                            
-                            <div class="control-group">
-                                <label>Quality</label>
-                                <div class="quality-control">
-                                    <input type="range" id="photoQuality" min="70" max="100" value="85" 
-                                           oninput="updatePhotoSettings()">
-                                    <span id="photoQualityLabel">85%</span>
+                        <div class="settings-card">
+                            <div class="settings-card-title">📏 Units</div>
+
+                            <div class="settings-option">
+                                <div class="settings-option-label">Temperature</div>
+                                <div class="settings-segmented">
+                                    <button id="unitTempC" onclick="setUnitSetting('temperature', 'c')">°C</button>
+                                    <button id="unitTempF" onclick="setUnitSetting('temperature', 'f')">°F</button>
                                 </div>
                             </div>
-                            
-                            <div class="control-group">
-                                <button class="photo-refresh-btn" onclick="refreshPhoto()">📷 Refresh</button>
-                            </div>
-                            
-                            <div class="control-group">
-                                <button class="photo-save-btn" id="photoSaveBtn" onclick="savePhoto()">💾 Save</button>
-                                <button class="screenshots-btn" onclick="showScreenshots()">🖼️ Gallery</button>
+
+                            <div class="settings-option">
+                                <div class="settings-option-label">Pressure</div>
+                                <div class="settings-segmented">
+                                    <button id="unitPressureHpa" onclick="setUnitSetting('pressure', 'hpa')">hPa</button>
+                                    <button id="unitPressureMmhg" onclick="setUnitSetting('pressure', 'mmhg')">mmHg</button>
+                                </div>
                             </div>
                         </div>
-                        
-                        <div class="photo-save-info">
-                            💡 Preview uses selected resolution. Save always uses maximum 2592×1944 for best quality.
+
+                        <div class="settings-card">
+                            <div class="settings-card-title">🧩 System</div>
+                            <div class="settings-card-text">System-level options and service information will be added later.</div>
                         </div>
                     </div>
                 </div>
             </div>
+
         </div>
 
         <!-- Sidebar -->
@@ -371,6 +435,9 @@
                         <button class="nodes-tool-btn merge" onclick="mergeDuplicates()">🔄 Merge Duplicates</button>
                         <button class="nodes-tool-btn show" onclick="toggleShowDuplicates()">📋 Show Duplicates</button>
                         <button class="nodes-tool-btn cleanup" onclick="cleanupAllNodes()" style="grid-column: span 2;">🗑️ Cleanup All</button>
+                        <button class="nodes-tool-btn" onclick="restartListener()" style="grid-column: span 2;">
+                            🔄 Restart Listener
+                        </button>
                     </div>
                     
                     <div id="exportOptionsMenu" class="format-menu" style="display:none;">
@@ -421,6 +488,27 @@
             </div>
         </div>
     </div>
+
+    <!-- Status Dock -->
+    <div class="status-dock" id="statusDock">
+        <div class="dock-main-row">
+            <div class="dock-section dock-left" id="dockLeft">
+                <span>Workspace</span>
+            </div>
+
+            <div class="dock-section dock-center" id="dockCenter">
+                <span class="dock-dot"></span>
+                <span>Ready</span>
+            </div>
+
+            <div class="dock-section dock-right" id="dockRight">
+                <span>Nodes</span>
+            </div>
+        </div>
+
+        <div class="dock-extra-row" id="dockExtraRow" style="display:none;"></div>
+    </div>
+
 </div>
 
 <!-- Modals -->
@@ -539,7 +627,7 @@
 <div class="modal-overlay" id="screenshotsModal" style="display: none;" onclick="closeScreenshots()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
-            <span>🖼️ Screenshots Gallery</span>
+            <span>🖼️ Media Gallery</span>
             <button class="modal-close" onclick="closeScreenshots()">✕</button>
         </div>
         <div class="modal-body" id="screenshotsGrid">

@@ -3,7 +3,7 @@
 MeshCenter - Web Control Center for Meshtastic nodes on Raspberry Pi Zero 2W
 """
 
-from flask import Flask, request, jsonify, render_template, Response, send_from_directory
+from flask import Flask, request, jsonify, render_template, Response, send_from_directory, make_response
 from functools import wraps
 import subprocess
 import threading
@@ -20,7 +20,8 @@ from meshsrv import meshsrv
 from api.api_camera import register_camera_routes
 from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes
-
+import csv
+import io
 
 try:
     from config import *
@@ -90,7 +91,7 @@ def handle_errors(f):
             }), 500
     return decorated_function
 
-register_camera_routes(app, camera, handle_errors)
+register_camera_routes(app, camera, handle_errors)   # <--- передаём модуль camera
 
 # ===== STATIC FILES =====
 @app.route('/static/<path:filename>')
@@ -701,6 +702,136 @@ def get_telemetry_from_info():
     except Exception as e:
         print(f"[INFO_TELEMETRY] Error: {e}", flush=True)
 
+def get_telemetry_export_records(
+    data_type="all",
+    range_minutes="all",
+    start_ts=None,
+    end_ts=None,
+    series=""
+    ):
+    data = safe_read_json(os.path.join(DATA_DIR, "telemetry_history.json"), {})
+    records = data.get("history", [])
+
+    if not isinstance(records, list):
+        records = []
+
+    now = time.time()
+
+    #
+    # Priority:
+    # 1. Custom start/end timestamps
+    # 2. Quick range buttons
+    #
+
+    if start_ts is not None and end_ts is not None:
+
+        try:
+            start_ts = float(start_ts)
+            end_ts = float(end_ts)
+
+            records = [
+                r for r in records
+                if isinstance(r, dict)
+                and start_ts <= float(r.get("timestamp", 0)) <= end_ts
+            ]
+
+        except Exception:
+            records = []
+
+    elif range_minutes != "all":
+
+        try:
+            minutes = int(range_minutes)
+            cutoff = now - minutes * 60
+
+            records = [
+                r for r in records
+                if isinstance(r, dict)
+                and float(r.get("timestamp", 0)) >= cutoff
+            ]
+
+        except Exception:
+            records = []
+
+    selected_series = set()
+
+    if series:
+        selected_series = {
+            s.strip().lower()
+            for s in series.split(",")
+            if s.strip()
+        }
+
+    clean = []
+
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+
+        item = {
+            "timestamp": r.get("timestamp"),
+            "datetime": datetime.fromtimestamp(float(r.get("timestamp", 0))).strftime("%Y-%m-%d %H:%M:%S") if r.get("timestamp") else "",
+            "temperature_c": r.get("temperature"),
+            "humidity_percent": r.get("humidity"),
+            "pressure_hpa": r.get("pressure"),
+            "voltage_v": r.get("voltage"),
+            "current_ma": r.get("current"),
+            "power_mw": r.get("power"),
+        }
+
+        if data_type == "environment":
+            row = {
+                "timestamp": item["timestamp"],
+                "datetime": item["datetime"],
+            }
+
+            if not selected_series or "temperature" in selected_series:
+                row["temperature_c"] = item["temperature_c"]
+
+            if not selected_series or "humidity" in selected_series:
+                row["humidity_percent"] = item["humidity_percent"]
+
+            if not selected_series or "pressure" in selected_series:
+                row["pressure_hpa"] = item["pressure_hpa"]
+
+            clean.append(row)
+
+        elif data_type == "power":
+            row = {
+                "timestamp": item["timestamp"],
+                "datetime": item["datetime"],
+            }
+
+            if not selected_series or "voltage" in selected_series:
+                row["voltage_v"] = item["voltage_v"]
+
+            if not selected_series or "current" in selected_series:
+                row["current_ma"] = item["current_ma"]
+
+            if not selected_series or "power" in selected_series:
+                row["power_w"] = (item["power_mw"] / 1000) if item["power_mw"] is not None else None
+
+            clean.append(row)
+
+        else:
+            clean.append(item)
+
+    return clean
+
+
+def records_to_csv(records):
+    output = io.StringIO()
+
+    if not records:
+        return ""
+
+    fieldnames = list(records[0].keys())
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(records)
+
+    return output.getvalue()
+
 def parse_nodes_from_info():
     global nodes
     try:
@@ -1299,8 +1430,8 @@ def listen_meshtastic():
                         or "deviceMetrics" in line
                     ):
                         try:
-                            with state_lock:
-                                process_telemetry_line(line)
+                            # ИСПРАВЛЕНИЕ: убрали with state_lock, чтобы избежать deadlock
+                            process_telemetry_line(line)
                         except Exception as e:
                             print(f"[TELEMETRY] Parse error: {e}", flush=True)
 
@@ -1570,6 +1701,28 @@ def api_cleanup_nodes():
         save_chats()
     return jsonify({"ok": True, "message": "Nodes cleaned up", "node_count": len(nodes)})
 
+@app.route("/api/restart_listener", methods=["POST"])
+@handle_errors
+def api_restart_listener():
+    global listen_process
+
+    try:
+        stop_listener()
+        time.sleep(1)
+
+        threading.Thread(target=listen_meshtastic, daemon=True).start()
+
+        return jsonify({
+            "ok": True,
+            "message": "Meshtastic listener restarted"
+        })
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
 @app.route("/api/rescan_nodes", methods=["POST"])
 @handle_errors
 def api_rescan_nodes():
@@ -1637,6 +1790,77 @@ def api_telemetry_history():
         "total": len(telemetry.telemetry_history),
         "config": telemetry.telemetry_config
     })
+
+@app.route("/api/export/telemetry", methods=["GET"])
+@handle_errors
+def api_export_telemetry():
+    data_type = request.args.get("type", "all").lower()
+    export_format = request.args.get("format", "csv").lower()
+    range_minutes = request.args.get("range", "all").lower()
+    start_ts = request.args.get("start")
+    end_ts = request.args.get("end")
+    series = request.args.get("series", "")
+
+    if data_type not in ("environment", "power", "all"):
+        return jsonify({"ok": False, "error": "Invalid type"}), 400
+
+    if export_format not in ("csv", "json"):
+        return jsonify({"ok": False, "error": "Invalid format"}), 400
+
+    records = get_telemetry_export_records(
+        data_type=data_type,
+        range_minutes=range_minutes,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        series=series
+    )
+
+    series_part = "-".join(
+        s.strip().lower()
+        for s in series.split(",")
+        if s.strip()
+    ) if series else "all"
+
+    def export_range_label(range_value):
+        labels = {
+            "60": "last_1h",
+            "360": "last_6h",
+            "720": "last_12h",
+            "1440": "last_24h",
+            "10080": "last_7d",
+            "43200": "last_30d",
+            "all": "all"
+        }
+        return labels.get(str(range_value), f"last_{range_value}min")
+
+    if start_ts and end_ts:
+        try:
+            dt1 = datetime.fromtimestamp(float(start_ts))
+            dt2 = datetime.fromtimestamp(float(end_ts))
+
+            if dt1.date() == dt2.date():
+                range_part = f"{dt1.strftime('%Y-%m-%d')}_{dt1.strftime('%H-%M')}_to_{dt2.strftime('%H-%M')}"
+            else:
+                range_part = f"{dt1.strftime('%Y-%m-%d_%H-%M')}_to_{dt2.strftime('%Y-%m-%d_%H-%M')}"
+
+        except Exception:
+            range_part = "custom"
+    else:
+        range_part = export_range_label(range_minutes)
+
+    filename = f"meshcenter_{data_type}_{series_part}_{range_part}.{export_format}"
+
+    if export_format == "json":
+        response = make_response(json.dumps(records, indent=2, ensure_ascii=False))
+        response.headers["Content-Type"] = "application/json; charset=utf-8"
+        response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+        return response
+
+    csv_data = records_to_csv(records)
+    response = make_response(csv_data)
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+    return response
 
 @app.route("/api/telemetry/config", methods=["POST"])
 @handle_errors
@@ -1838,7 +2062,7 @@ if __name__ == "__main__":
         print(f"[WARN] Base status update failed: {e}")
     
     telemetry.load_telemetry()
-    camera.load_camera_settings()
+    camera.load_camera_settings()    # <--- вызов через модуль
     
     for node_id in KNOWN_NODES:
         if node_id not in chats:
@@ -1853,7 +2077,7 @@ if __name__ == "__main__":
     
     # Инициализация камеры
     print("[CAMERA] 🔍 Initializing...", flush=True)
-    camera.init_camera()
+    camera.init_camera()   # <--- вызов через модуль
     
     # Запуск потоков
     threading.Thread(target=listen_meshtastic, daemon=True).start()

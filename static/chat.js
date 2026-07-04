@@ -43,6 +43,19 @@ let appSettings = {
     }
 };
 
+let telemetryVisibleSeries = {
+    environment: {
+        temperature: true,
+        humidity: true,
+        pressure: true
+    },
+    power: {
+        voltage: true,
+        current: true,
+        power: true
+    }
+};
+
 function celsiusToFahrenheit(c) {
     return (c * 9 / 5) + 32;
 }
@@ -141,6 +154,55 @@ async function loadSettings() {
         }
     } catch (error) {
         console.warn("[SETTINGS] Failed to load:", error);
+    }
+
+    updateSettingsUi();
+}
+
+function updateSettingsUi() {
+    const units = appSettings?.units || {};
+
+    document.getElementById('unitTempC')?.classList.toggle('active', units.temperature === 'c');
+    document.getElementById('unitTempF')?.classList.toggle('active', units.temperature === 'f');
+
+    document.getElementById('unitPressureHpa')?.classList.toggle('active', units.pressure === 'hpa');
+    document.getElementById('unitPressureMmhg')?.classList.toggle('active', units.pressure === 'mmhg');
+}
+
+async function setUnitSetting(name, value) {
+    const units = {
+        ...(appSettings?.units || {}),
+        [name]: value
+    };
+
+    try {
+        const response = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ units })
+        });
+
+        const data = await response.json();
+
+        if (!data.ok) {
+            alert('Unable to save settings: ' + (data.error || 'Unknown error'));
+            return;
+        }
+
+        appSettings = data.settings;
+        updateSettingsUi();
+
+        if (typeof loadSensors === 'function') loadSensors();
+        if (typeof loadTelemetry === 'function') loadTelemetry();
+
+        const modal = document.getElementById('telemetryModal');
+        if (modal && modal.style.display !== 'none') {
+            const type = modal.dataset.type || 'environment';
+            renderTelemetryWithRange(type, telemetryTimeRange);
+        }
+
+    } catch (error) {
+        alert('Unable to save settings: ' + error.message);
     }
 }
 
@@ -433,6 +495,10 @@ async function loadMessages() {
 
         if (statusEl && statusEl.innerHTML !== '🔴 Error loading - refresh page') {
             statusEl.innerHTML = '🟢 Mesh online';
+            const headerStatus = document.getElementById('headerStatusText');
+            if (headerStatus) {
+                headerStatus.innerHTML = '<span class="status-dot"></span><span class="status-label">Online</span>';
+            }
         }
         
         const allNodes = data.nodes || [];
@@ -623,6 +689,7 @@ function openChat(chatId, chatName, chatType) {
 
     document.getElementById('chatListContainer').style.display = 'none';
     document.getElementById('messagesView').style.display = 'flex';
+    document.getElementById('chatHeader').style.display = 'flex';
     document.getElementById('backToChatsBtn').style.display = 'block';
     document.getElementById('chatActionsBtn').style.display = 'block';
     
@@ -689,23 +756,19 @@ function showChatList() {
     currentChatName = null;
     currentChatType = null;
 
-    document.getElementById('chatListContainer').style.display = 'block';
-    document.getElementById('messagesView').style.display = 'none';
-    document.getElementById('backToChatsBtn').style.display = 'none';
-    document.getElementById('chatActionsBtn').style.display = 'none';
-    
-    document.getElementById('deleteAllDmHeaderBtn').style.display = 'block';
+    const chatHeader = document.getElementById('chatHeader');
+    const chatListContainer = document.getElementById('chatListContainer');
+    const messagesView = document.getElementById('messagesView');
+    const backBtn = document.getElementById('backToChatsBtn');
+    const actionsBtn = document.getElementById('chatActionsBtn');
+    const deleteDmBtn = document.getElementById('deleteAllDmHeaderBtn');
 
-    const titleEl = document.getElementById('chatTitle');
-    const subtitleEl = document.getElementById('chatSubtitle');
-    
-    const totalUnread = chatListCache.reduce((sum, c) => sum + (c.unread || 0), 0);
-    if (totalUnread > 0) {
-        titleEl.textContent = `💬 Chats (${totalUnread})`;
-    } else {
-        titleEl.textContent = '💬 Chats';
-    }
-    subtitleEl.textContent = '';
+    if (chatHeader) chatHeader.style.display = 'none';
+    if (chatListContainer) chatListContainer.style.display = 'block';
+    if (messagesView) messagesView.style.display = 'none';
+    if (backBtn) backBtn.style.display = 'none';
+    if (actionsBtn) actionsBtn.style.display = 'none';
+    if (deleteDmBtn) deleteDmBtn.style.display = 'none';
 
     stopMessagePolling();
     loadChatList();
@@ -1920,6 +1983,28 @@ function escapeCsv(value) {
     return String(value).replace(/"/g, '""');
 }
 
+async function restartListener() {
+    if (!confirm("Restart MeshCenter listener?\n\nCurrent reception will be interrupted for a few seconds.")) {
+        return;
+    }
+
+    try {
+        const response = await fetch("/api/restart_listener", {
+            method: "POST"
+        });
+
+        const data = await response.json();
+
+        if (data.ok) {
+            alert("✅ Meshtastic listener has been restarted.");
+        } else {
+            alert("❌ Unable to restart listener.\n\n" + (data.error || "Unknown error"));
+        }
+    } catch (error) {
+        alert("Restart failed: " + error.message);
+    }
+}
+
 async function rescanNodes() {
     const btn = document.getElementById('rescanNodesBtn');
     const originalText = btn.textContent;
@@ -2200,15 +2285,19 @@ async function openTelemetryModal(type) {
     const footer = document.getElementById('telemetryFooter');
     if (footer) {
         footer.innerHTML = `
-            <div class="telemetry-time-controls">
-                <button class="time-btn active" data-range="60" onclick="setTelemetryRange(60)">1h</button>
-                <button class="time-btn" data-range="360" onclick="setTelemetryRange(360)">6h</button>
-                <button class="time-btn" data-range="720" onclick="setTelemetryRange(720)">12h</button>
-                <button class="time-btn" data-range="1440" onclick="setTelemetryRange(1440)">24h</button>
-                <button class="time-btn" data-range="10080" onclick="setTelemetryRange(10080)">7d</button>
-                <button class="time-btn" data-range="43200" onclick="setTelemetryRange(43200)">30d</button>
-            </div>
+        <div class="telemetry-time-controls">
+            <button class="time-btn active" data-range="60" onclick="setTelemetryRange(60)">1h</button>
+            <button class="time-btn" data-range="360" onclick="setTelemetryRange(360)">6h</button>
+            <button class="time-btn" data-range="720" onclick="setTelemetryRange(720)">12h</button>
+            <button class="time-btn" data-range="1440" onclick="setTelemetryRange(1440)">24h</button>
+            <button class="time-btn" data-range="10080" onclick="setTelemetryRange(10080)">7d</button>
+            <button class="time-btn" data-range="43200" onclick="setTelemetryRange(43200)">30d</button>
+        </div>
+
+        <div class="telemetry-footer-actions">
+            <button class="telemetry-export-btn" onclick="exportTelemetryData()">⬇ Export</button>
             <span class="telemetry-records-count" id="telemetryRecordsCount">📊 0 records</span>
+        </div>
         `;
     }
 
@@ -2232,6 +2321,220 @@ function setTelemetryRange(minutes) {
     const modal = document.getElementById('telemetryModal');
     const type = modal ? modal.dataset.type : 'environment';
     renderTelemetryWithRange(type, minutes);
+}
+
+function toggleTelemetrySeries(seriesName) {
+    const modal = document.getElementById('telemetryModal');
+    const type = modal ? (modal.dataset.type || 'environment') : 'environment';
+
+    if (!telemetryVisibleSeries[type] || !(seriesName in telemetryVisibleSeries[type])) {
+        return;
+    }
+
+    telemetryVisibleSeries[type][seriesName] = !telemetryVisibleSeries[type][seriesName];
+
+    const activeCount = Object.values(telemetryVisibleSeries[type]).filter(Boolean).length;
+
+    if (activeCount === 0) {
+        telemetryVisibleSeries[type][seriesName] = true;
+    }
+
+    renderTelemetryWithRange(type, telemetryTimeRange);
+}
+
+function exportTelemetryData() {
+    openCustomTelemetryExport();
+}
+
+function closeTelemetryExportMenu() {
+    const menu = document.getElementById('telemetryExportMenu');
+    if (menu) menu.remove();
+}
+
+function openCustomTelemetryExport() {
+    closeTelemetryExportMenu();
+
+    const oldModal = document.getElementById('customTelemetryExportModal');
+    if (oldModal) oldModal.remove();
+
+    const modal = document.getElementById('telemetryModal');
+    const type = modal ? (modal.dataset.type || 'environment') : 'environment';
+
+    const now = new Date();
+    const rangeMinutes = telemetryTimeRange || 1440;
+    const from = new Date(now.getTime() - rangeMinutes * 60 * 1000);
+
+    const seriesText = getTelemetryVisibleSeriesText(type);
+    const rangeLabel = getTelemetryRangeLabel(rangeMinutes);
+
+    const overlay = document.createElement('div');
+    overlay.id = 'customTelemetryExportModal';
+    overlay.className = 'custom-export-overlay';
+
+    overlay.innerHTML = `
+        <div class="custom-export-dialog">
+            <div class="custom-export-header">
+                <div>
+                    <div class="custom-export-title">📤 Export telemetry</div>
+                    <div class="custom-export-subtitle">Export selected telemetry data</div>
+                </div>
+                <button class="custom-export-close" onclick="closeCustomTelemetryExport()">×</button>
+            </div>
+
+            <div class="custom-export-body">
+
+                <div class="export-section">
+                    <div class="export-section-title">Export source</div>
+
+                    <label class="export-radio-row">
+                        <input type="radio" name="exportRangeMode" value="visible" checked onchange="updateCustomExportMode()">
+                        <span>Current visible range (${rangeLabel})</span>
+                    </label>
+
+                    <label class="export-radio-row">
+                        <input type="radio" name="exportRangeMode" value="custom" onchange="updateCustomExportMode()">
+                        <span>Custom range</span>
+                    </label>
+                </div>
+
+                <div class="export-section custom-export-range" id="customExportRangeFields" style="display:none;">
+                    <div class="export-date-grid">
+                        <label>
+                            <span>From</span>
+                            <input type="datetime-local" id="exportStartDate" value="${datetimeLocalValue(from)}">
+                        </label>
+
+                        <label>
+                            <span>To</span>
+                            <input type="datetime-local" id="exportEndDate" value="${datetimeLocalValue(now)}">
+                        </label>
+                    </div>
+                </div>
+
+                <div class="export-section">
+                    <div class="export-section-title">Series</div>
+                    <div class="export-series-summary">${seriesText}</div>
+                </div>
+
+                <div class="export-section">
+                    <div class="export-section-title">Format</div>
+
+                    <div class="export-format-row">
+                        <label class="export-format-option">
+                            <input type="radio" name="exportFormat" value="csv" checked>
+                            <span>📄 CSV</span>
+                        </label>
+
+                        <label class="export-format-option">
+                            <input type="radio" name="exportFormat" value="json">
+                            <span>📄 JSON</span>
+                        </label>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="custom-export-footer">
+                <button class="custom-export-cancel" onclick="closeCustomTelemetryExport()">Cancel</button>
+                <button class="custom-export-primary" onclick="runCustomTelemetryExport()">⬇ Export</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+}
+
+function closeCustomTelemetryExport() {
+    const modal = document.getElementById('customTelemetryExportModal');
+    if (modal) modal.remove();
+}
+
+function updateCustomExportMode() {
+    const mode = document.querySelector('input[name="exportRangeMode"]:checked')?.value || 'visible';
+    const fields = document.getElementById('customExportRangeFields');
+
+    if (fields) {
+        fields.style.display = mode === 'custom' ? 'block' : 'none';
+    }
+}
+
+function datetimeLocalValue(date) {
+    const pad = n => String(n).padStart(2, '0');
+
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function getTelemetryRangeLabel(minutes) {
+    if (minutes < 1440) return `${minutes / 60}h`;
+    return `${minutes / 1440}d`;
+}
+
+function getTelemetryVisibleSeriesText(type) {
+    const visible = telemetryVisibleSeries[type] || {};
+    const labels = {
+        temperature: 'Temperature',
+        humidity: 'Humidity',
+        pressure: 'Pressure',
+        voltage: 'Voltage',
+        current: 'Current',
+        power: 'Power'
+    };
+
+    const active = Object.keys(visible)
+        .filter(key => visible[key])
+        .map(key => labels[key] || key);
+
+    return active.length > 0 ? active.join(' • ') : 'No series selected';
+}
+
+function runCustomTelemetryExport() {
+    const modal = document.getElementById('telemetryModal');
+    const type = modal ? (modal.dataset.type || 'environment') : 'environment';
+
+    const format = document.querySelector('input[name="exportFormat"]:checked')?.value || 'csv';
+    const mode = document.querySelector('input[name="exportRangeMode"]:checked')?.value || 'visible';
+
+    const series = Object.keys(telemetryVisibleSeries[type] || {})
+        .filter(key => telemetryVisibleSeries[type][key])
+        .join(',');
+
+    let url = `/api/export/telemetry?type=${encodeURIComponent(type)}&format=${encodeURIComponent(format)}&series=${encodeURIComponent(series)}`;
+
+    if (mode === 'custom') {
+        const startValue = document.getElementById('exportStartDate')?.value;
+        const endValue = document.getElementById('exportEndDate')?.value;
+
+        if (!startValue || !endValue) {
+            alert('Please select start and end date/time.');
+            return;
+        }
+
+        const startTs = Math.floor(new Date(startValue).getTime() / 1000);
+        const endTs = Math.floor(new Date(endValue).getTime() / 1000);
+
+        if (!startTs || !endTs || startTs >= endTs) {
+            alert('Invalid date range.');
+            return;
+        }
+
+        url += `&start=${encodeURIComponent(startTs)}&end=${encodeURIComponent(endTs)}`;
+    } else {
+        url += `&range=${encodeURIComponent(telemetryTimeRange || 1440)}`;
+    }
+
+    closeCustomTelemetryExport();
+    window.location.href = url;
+}
+
+function downloadTelemetryExport(format) {
+    closeTelemetryExportMenu();
+
+    const modal = document.getElementById('telemetryModal');
+    const type = modal ? (modal.dataset.type || 'environment') : 'environment';
+    const range = telemetryTimeRange || 1440;
+
+    const url = `/api/export/telemetry?type=${encodeURIComponent(type)}&range=${encodeURIComponent(range)}&format=${encodeURIComponent(format)}`;
+    window.location.href = url;
 }
 
 function renderTelemetryWithRange(type, minutes) {
@@ -2265,27 +2568,25 @@ if (recordsCount) {
 
 function renderTelemetryChart(container, records, type) {
     container.innerHTML = '<canvas id="telemetryChartCanvas"></canvas>';
-    
+
     const canvas = document.getElementById('telemetryChartCanvas');
-    if (!canvas) {
-        console.error('Canvas element not found');
-        return;
-    }
-    
+    if (!canvas) return;
+
     const ctx = canvas.getContext('2d');
-    
+
     const labels = records.map(r => {
         const t = new Date(r.timestamp * 1000);
         return t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     });
-    
+
     let datasets = [];
     let hasPressure = false;
     let hasCurrent = false;
-    
+    let hasPower = false;
+
     if (type === 'environment') {
         const tempData = records.map(r => r.temperature).filter(v => v !== null && v !== undefined);
-        if (tempData.length > 0) {
+        if (tempData.length > 0 && telemetryVisibleSeries.environment.temperature) {
             datasets.push({
                 label: 'Temperature ' + temperatureChartUnit(),
                 data: records.map(r => temperatureChartValue(r.temperature)),
@@ -2297,9 +2598,9 @@ function renderTelemetryChart(container, records, type) {
                 yAxisID: 'y'
             });
         }
-        
+
         const humData = records.map(r => r.humidity).filter(v => v !== null && v !== undefined);
-        if (humData.length > 0) {
+        if (humData.length > 0 && telemetryVisibleSeries.environment.humidity) {
             datasets.push({
                 label: 'Humidity %',
                 data: records.map(r => r.humidity),
@@ -2311,12 +2612,9 @@ function renderTelemetryChart(container, records, type) {
                 yAxisID: 'y'
             });
         }
-        
-        const pressData = records
-            .map(r => r.pressure)
-            .filter(v => v !== null && v !== undefined && !isNaN(v));
-        
-        if (pressData.length > 0) {
+
+        const pressData = records.map(r => r.pressure).filter(v => v !== null && v !== undefined && !isNaN(v));
+        if (pressData.length > 0 && telemetryVisibleSeries.environment.pressure) {
             hasPressure = true;
             datasets.push({
                 label: 'Pressure ' + pressureChartUnit(),
@@ -2329,9 +2627,10 @@ function renderTelemetryChart(container, records, type) {
                 yAxisID: 'y1'
             });
         }
+
     } else if (type === 'power') {
         const voltData = records.map(r => r.voltage).filter(v => v !== null && v !== undefined);
-        if (voltData.length > 0) {
+        if (voltData.length > 0 && telemetryVisibleSeries.power.voltage) {
             datasets.push({
                 label: 'Voltage V',
                 data: records.map(r => r.voltage),
@@ -2343,9 +2642,9 @@ function renderTelemetryChart(container, records, type) {
                 yAxisID: 'y'
             });
         }
-        
+
         const currData = records.map(r => r.current).filter(v => v !== null && v !== undefined);
-        if (currData.length > 0) {
+        if (currData.length > 0 && telemetryVisibleSeries.power.current) {
             hasCurrent = true;
             datasets.push({
                 label: 'Current mA',
@@ -2358,92 +2657,102 @@ function renderTelemetryChart(container, records, type) {
                 yAxisID: 'y1'
             });
         }
+
+        const powerSeries = records.map(r => {
+            if (r.power !== null && r.power !== undefined) return r.power / 1000;
+            if (r.voltage !== null && r.voltage !== undefined && r.current !== null && r.current !== undefined) {
+                return (r.voltage * r.current) / 1000;
+            }
+            return null;
+        });
+
+        const powerData = powerSeries.filter(v => v !== null && v !== undefined);
+        if (powerData.length > 0 && telemetryVisibleSeries.power.power) {
+            hasPower = true;
+            datasets.push({
+                label: 'Power W',
+                data: powerSeries,
+                borderColor: '#2ecc71',
+                backgroundColor: 'rgba(46, 204, 113, 0.1)',
+                fill: true,
+                tension: 0.3,
+                spanGaps: true,
+                yAxisID: 'y2'
+            });
+        }
     }
-    
+
     if (telemetryChart) {
         telemetryChart.destroy();
         telemetryChart = null;
     }
-    
+
     if (datasets.length === 0) {
         container.innerHTML = '<div class="loading">📊 No data available for this sensor type</div>';
         return;
     }
-    
-    if (typeof Chart === 'undefined') {
-        container.innerHTML = '<div class="loading">⚠️ Chart library not loaded. Please refresh the page.</div>';
-        console.error('Chart.js not loaded');
-        return;
-    }
-    
+
     let yConfig = {
         position: 'left',
         grid: { color: 'rgba(0,0,0,0.08)', drawBorder: true },
         ticks: { font: { size: 9 }, color: '#666' }
     };
-    
+
     let y1Config = {
         position: 'right',
         grid: { drawOnChartArea: false, drawBorder: true },
         ticks: { font: { size: 9 }, color: '#666' }
     };
-    
-        if (type === 'environment') {
-            const tempUnit = appSettings?.units?.temperature || "c";
 
-            if (tempUnit === "f") {
-                yConfig.min = 20;
-                yConfig.max = 120;
-            } else {
-                yConfig.min = -5;
-                yConfig.max = 100;
-            }
-            if (hasPressure) {
-                const pressureUnit = appSettings?.units?.pressure || "hpa";
-                if (pressureUnit === "mmhg") {
-                    y1Config.min = 675;
-                    y1Config.max = 900;
-                } else {
-                    y1Config.min = 900;
-                    y1Config.max = 1200;
-                }            
-            y1Config.ticks.callback = function(value) {
-                return value.toFixed(0);
-            };
+    let y2Config = {
+        position: 'right',
+        offset: true,
+        grid: { drawOnChartArea: false, drawBorder: true },
+        ticks: {
+            font: { size: 9 },
+            color: '#666',
+            callback: value => value.toFixed(1)
+        }
+    };
+
+    if (type === 'environment') {
+        const tempUnit = appSettings?.units?.temperature || "c";
+        yConfig.min = tempUnit === "f" ? 20 : -5;
+        yConfig.max = tempUnit === "f" ? 120 : 100;
+
+        if (hasPressure) {
+            const pressureUnit = appSettings?.units?.pressure || "hpa";
+            y1Config.min = pressureUnit === "mmhg" ? 675 : 900;
+            y1Config.max = pressureUnit === "mmhg" ? 900 : 1200;
         } else {
             y1Config.min = -10;
             y1Config.max = 100;
-            y1Config.ticks.callback = function(value) {
-                return value.toFixed(0);
-            };
-            y1Config.title = { display: false };
         }
     }
-    
+
     if (type === 'power') {
         yConfig.min = 3.40;
-        yConfig.max = 4.25;
-        
-        if (hasCurrent) {
-            y1Config.min = 250;
-            y1Config.max = 1000;
-            y1Config.ticks.callback = function(value) {
-                return value.toFixed(0);
-            };
-        } else {
-            y1Config.min = 3.40;
-            y1Config.max = 4.25;
-            y1Config.ticks.callback = function(value) {
-                return value.toFixed(2);
-            };
-            y1Config.title = { display: false };
+        yConfig.max = 4.30;
+
+        y1Config.min = 250;
+        y1Config.max = 1000;
+
+        if (hasPower) {
+            const powerValues = datasets
+                .filter(d => d.label === 'Power W')
+                .flatMap(d => d.data)
+                .filter(v => v !== null && v !== undefined && !isNaN(v));
+
+            const maxPower = powerValues.length > 0 ? Math.max(...powerValues) : 2;
+            y2Config.min = 0;
+            y2Config.max = Math.max(2, Math.ceil(maxPower * 1.2));
         }
     }
-    
+
     try {
         telemetryChart = new Chart(ctx, {
             type: 'line',
-            data: { labels: labels, datasets: datasets },
+            data: { labels, datasets },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
@@ -2460,33 +2769,29 @@ function renderTelemetryChart(container, records, type) {
                         borderColor: 'rgba(0,0,0,0.1)',
                         borderWidth: 1,
                         callbacks: {
+                            title: function(context) {
+                                if (!context || !context.length) return '';
+                                const record = records[context[0].dataIndex];
+                                if (!record || !record.timestamp) return '';
+                                return new Date(record.timestamp * 1000).toLocaleString([], {
+                                    year: 'numeric',
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                });
+                            },
                             label: function(context) {
-                                let label = context.dataset.label || '';
-                                let value = context.parsed.y;
+                                const label = context.dataset.label || '';
+                                const value = context.parsed.y;
 
-                                if (value === null || value === undefined || isNaN(value)) {
-                                    return label + ': —';
-                                }
-
-                                if (label.startsWith('Temperature')) {
-                                    return label + ': ' + value.toFixed(1) + temperatureChartUnit();
-                                }
-
-                                if (label.startsWith('Humidity')) {
-                                    return label + ': ' + value.toFixed(1) + '%';
-                                }
-
-                                if (label.startsWith('Pressure')) {
-                                    return label + ': ' + value.toFixed(1) + ' ' + pressureChartUnit();
-                                }
-
-                                if (label.startsWith('Voltage')) {
-                                    return label + ': ' + value.toFixed(3) + ' V';
-                                }
-
-                                if (label.startsWith('Current')) {
-                                    return label + ': ' + value.toFixed(1) + ' mA';
-                                }
+                                if (value === null || value === undefined || isNaN(value)) return label + ': —';
+                                if (label.startsWith('Temperature')) return label + ': ' + value.toFixed(1) + temperatureChartUnit();
+                                if (label.startsWith('Humidity')) return label + ': ' + value.toFixed(1) + '%';
+                                if (label.startsWith('Pressure')) return label + ': ' + value.toFixed(1) + ' ' + pressureChartUnit();
+                                if (label.startsWith('Voltage')) return label + ': ' + value.toFixed(3) + ' V';
+                                if (label.startsWith('Current')) return label + ': ' + value.toFixed(1) + ' mA';
+                                if (label.startsWith('Power')) return label + ': ' + value.toFixed(3) + ' W';
 
                                 return label + ': ' + value.toFixed(2);
                             }
@@ -2499,15 +2804,12 @@ function renderTelemetryChart(container, records, type) {
                         ticks: { maxTicksLimit: 20, font: { size: 9 }, color: '#666' }
                     },
                     y: yConfig,
-                    y1: y1Config
+                    y1: y1Config,
+                    ...(hasPower ? { y2: y2Config } : {})
                 }
             }
         });
-        
-        canvas.style.background = '#f0f2f5';
-        canvas.style.borderRadius = '8px';
-        canvas.style.border = '1px solid #e5e8ec';
-        
+
     } catch (error) {
         console.error('Chart creation error:', error);
         container.innerHTML = '<div class="loading">⚠️ Error creating chart: ' + error.message + '</div>';
@@ -2522,33 +2824,39 @@ function updateTelemetryCards(records, type) {
             humidity: telemetryData.humidity ?? historyLast.humidity,
             pressure: telemetryData.pressure ?? historyLast.pressure
         };
+
         const tempValues = records.map(r => r.temperature).filter(v => v !== null && v !== undefined);
         const humValues = records.map(r => r.humidity).filter(v => v !== null && v !== undefined);
         const pressValues = records.map(r => r.pressure).filter(v => v !== null && v !== undefined);
-        
-        const card1 = document.getElementById('cardTemp').parentElement;
-        card1.querySelector('.card-label').textContent = '🌡️ Temperature';
 
+        const card1 = document.getElementById('cardTemp').parentElement;
+        card1.onclick = () => toggleTelemetrySeries('temperature');
+        card1.classList.toggle('inactive', !telemetryVisibleSeries.environment.temperature);
+        card1.querySelector('.card-label').textContent = '🌡️ Temperature';
         document.getElementById('cardTemp').textContent = formatTemperature(last.temperature);
 
         if (tempValues.length > 0) {
             document.getElementById('cardTempMin').textContent = formatTemperature(Math.min(...tempValues));
             document.getElementById('cardTempMax').textContent = formatTemperature(Math.max(...tempValues));
-        }                
-
+        }
         card1.querySelector('.card-range').style.display = 'flex';
-        
+
         const card2 = document.getElementById('cardHum').parentElement;
+        card2.onclick = () => toggleTelemetrySeries('humidity');
+        card2.classList.toggle('inactive', !telemetryVisibleSeries.environment.humidity);
         card2.querySelector('.card-label').textContent = '💧 Humidity';
-        document.getElementById('cardHum').textContent = last.humidity !== null && last.humidity !== undefined ? 
-            last.humidity.toFixed(1) + '%' : '--';
+        document.getElementById('cardHum').textContent =
+            last.humidity !== null && last.humidity !== undefined ? last.humidity.toFixed(1) + '%' : '--';
+
         if (humValues.length > 0) {
             document.getElementById('cardHumMin').textContent = Math.min(...humValues).toFixed(1) + '%';
             document.getElementById('cardHumMax').textContent = Math.max(...humValues).toFixed(1) + '%';
         }
         card2.querySelector('.card-range').style.display = 'flex';
-        
+
         const card3 = document.getElementById('cardPress').parentElement;
+        card3.onclick = () => toggleTelemetrySeries('pressure');
+        card3.classList.toggle('inactive', !telemetryVisibleSeries.environment.pressure);
         card3.querySelector('.card-label').textContent = '📊 Pressure';
         document.getElementById('cardPress').textContent = formatPressure(last.pressure);
 
@@ -2557,7 +2865,7 @@ function updateTelemetryCards(records, type) {
             document.getElementById('cardPressMax').textContent = formatPressure(Math.max(...pressValues));
         }
         card3.querySelector('.card-range').style.display = 'flex';
-        
+
     } else if (type === 'power') {
         const historyLast = records[records.length - 1] || {};
         const last = {
@@ -2565,37 +2873,67 @@ function updateTelemetryCards(records, type) {
             current: telemetryData.current ?? historyLast.current,
             power: telemetryData.power ?? historyLast.power
         };
+
         const voltValues = records.map(r => r.voltage).filter(v => v !== null && v !== undefined);
         const currValues = records.map(r => r.current).filter(v => v !== null && v !== undefined);
-        
+        const powerValues = records.map(r => {
+            if (r.power !== null && r.power !== undefined) return r.power;
+            if (r.voltage !== null && r.voltage !== undefined && r.current !== null && r.current !== undefined) {
+                return r.voltage * r.current;
+            }
+            return null;
+        }).filter(v => v !== null && v !== undefined);
+
         const card1 = document.getElementById('cardTemp').parentElement;
+        card1.onclick = () => toggleTelemetrySeries('voltage');
+        card1.classList.toggle('inactive', !telemetryVisibleSeries.power.voltage);
         card1.querySelector('.card-label').textContent = '⚡ Voltage';
-        document.getElementById('cardTemp').textContent = last.voltage !== null && last.voltage !== undefined ? 
-            last.voltage.toFixed(3) + ' V' : '--';
+        document.getElementById('cardTemp').textContent =
+            last.voltage !== null && last.voltage !== undefined ? last.voltage.toFixed(3) + ' V' : '--';
+
         if (voltValues.length > 0) {
             document.getElementById('cardTempMin').textContent = Math.min(...voltValues).toFixed(3) + ' V';
             document.getElementById('cardTempMax').textContent = Math.max(...voltValues).toFixed(3) + ' V';
         }
         card1.querySelector('.card-range').style.display = 'flex';
-        
+
         const card2 = document.getElementById('cardHum').parentElement;
+        card2.onclick = () => toggleTelemetrySeries('current');
+        card2.classList.toggle('inactive', !telemetryVisibleSeries.power.current);
         card2.querySelector('.card-label').textContent = '🔌 Current';
-        document.getElementById('cardHum').textContent = last.current !== null && last.current !== undefined ? 
-            last.current.toFixed(1) + ' mA' : '--';
+        document.getElementById('cardHum').textContent =
+            last.current !== null && last.current !== undefined ? last.current.toFixed(1) + ' mA' : '--';
+
         if (currValues.length > 0) {
             document.getElementById('cardHumMin').textContent = Math.min(...currValues).toFixed(1) + ' mA';
             document.getElementById('cardHumMax').textContent = Math.max(...currValues).toFixed(1) + ' mA';
         }
         card2.querySelector('.card-range').style.display = 'flex';
-        
+
         const card3 = document.getElementById('cardPress').parentElement;
+        card3.onclick = () => toggleTelemetrySeries('power');
+        card3.classList.toggle('inactive', !telemetryVisibleSeries.power.power);
         card3.querySelector('.card-label').textContent = '⚡ Power';
-        const power = last.voltage !== null && last.voltage !== undefined && last.current !== null && last.current !== undefined ?
-            (last.voltage * last.current).toFixed(1) + ' mW' : '--';
-        document.getElementById('cardPress').textContent = power;
-        document.getElementById('cardPressMin').textContent = '--';
-        document.getElementById('cardPressMax').textContent = '--';
-        card3.querySelector('.card-range').style.display = 'none';
+
+        const powerValue =
+            last.power !== null && last.power !== undefined
+                ? last.power
+                : (last.voltage !== null && last.voltage !== undefined && last.current !== null && last.current !== undefined
+                    ? last.voltage * last.current
+                    : null);
+
+        document.getElementById('cardPress').textContent =
+            powerValue !== null && powerValue !== undefined ? (powerValue / 1000).toFixed(3) + ' W' : '--';
+
+        if (powerValues.length > 0) {
+            document.getElementById('cardPressMin').textContent = (Math.min(...powerValues) / 1000).toFixed(3) + ' W';
+            document.getElementById('cardPressMax').textContent = (Math.max(...powerValues) / 1000).toFixed(3) + ' W';
+            card3.querySelector('.card-range').style.display = 'flex';
+        } else {
+            document.getElementById('cardPressMin').textContent = '--';
+            document.getElementById('cardPressMax').textContent = '--';
+            card3.querySelector('.card-range').style.display = 'none';
+        }
     }
 }
 
@@ -2750,8 +3088,7 @@ async function takeScreenshot(source = 'video') {
         const data = await response.json();
         
         if (data.ok) {
-            showToast(`✅ Screenshot saved: ${data.filename} (${(data.size/1024).toFixed(1)} KB)`, 'success');
-            setTimeout(() => showScreenshots(), 500);
+            showToast('✅ Screenshot saved', 'success');
         } else {
             showToast('❌ Failed: ' + (data.error || 'Unknown error'), 'error');
         }
@@ -2861,42 +3198,34 @@ async function loadPhotoSettings() {
     }
 }
 
-async function updatePhotoSettings() {
-    const resolution = document.getElementById('photoResolution').value;
-    const quality = parseInt(document.getElementById('photoQuality').value);
-    
-    console.log('[PHOTO] Updating settings:', { resolution, quality });
-    
-    const qualityLabel = document.getElementById('photoQualityLabel');
-    const photoInfo = document.getElementById('photoInfo');
-    
-    if (qualityLabel) qualityLabel.textContent = quality + '%';
-    if (photoInfo) {
-        const res = resolution.replace('x', '×');
-        photoInfo.textContent = `Preview: ${res} (${quality}%) • Save: ${photoSaveResolution.replace('x', '×')}`;
-    }
-    
-    currentPhotoQuality = quality;
-    photoPreviewResolution = resolution;
-    
+async function updatePhotoSettings(showMessage = false) {
+    const resolution = document.getElementById('photoResolution')?.value;
+    const quality = parseInt(document.getElementById('photoQuality')?.value || '95');
+
+    const label = document.getElementById('photoQualityLabel');
+    if (label) label.textContent = `${quality}%`;
+
     try {
         const response = await fetch('/api/photo/settings', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ resolution, quality })
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                resolution: resolution,
+                quality: quality
+            })
         });
-        
+
         const data = await response.json();
-        
-        if (data.ok) {
-            console.log('[PHOTO] Settings saved:', data.config);
-            showToast(`✅ Quality set to ${quality}%`, 'success');
-            setTimeout(() => capturePhotoPreview(), 300);
-        } else {
-            console.error('[PHOTO] Settings error:', data.error);
-            showToast('❌ Failed: ' + (data.error || 'Unknown error'), 'error');
-            if (qualityLabel) qualityLabel.textContent = currentPhotoQuality + '%';
+
+        if (!data.ok) {
+            showToast('❌ Failed to update photo settings', 'error');
+            return;
         }
+
+        if (showMessage) {
+            showToast(`✅ Photo quality set to ${quality}%`, 'success');
+        }
+
     } catch (error) {
         console.error('Error updating photo settings:', error);
         showToast('❌ Network error', 'error');
@@ -2970,6 +3299,53 @@ async function capturePhotoPreview() {
             saveBtn.textContent = '💾 Save';
         }
         if (placeholder) placeholder.style.display = 'flex';
+    }
+}
+
+async function captureCameraPhoto() {
+    const btn = document.querySelector('.camera-actions-block .screenshot-btn');
+    const videoFeed = document.getElementById('videoFeed');
+
+    try {
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = '⏳ Capture...';
+        }
+
+        // Stop browser MJPEG request before camera reconfiguration
+        if (videoFeed) {
+            videoFeed.dataset.oldSrc = videoFeed.src || '';
+            videoFeed.removeAttribute('src');
+        }
+
+        await updatePhotoSettings(false);
+
+        const response = await fetch('/api/photo/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.ok) {
+            showToast(`✅ Captured: ${data.display_name || data.filename}`, 'success');
+        } else {
+            showToast('❌ Capture failed: ' + (data.error || 'Unknown error'), 'error');
+        }
+
+    } catch (error) {
+        console.error('Capture error:', error);
+        showToast('❌ Network error', 'error');
+
+    } finally {
+        setTimeout(() => {
+            refreshVideoFeed();
+        }, 1200);
+
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '📸 Capture';
+        }
     }
 }
 
@@ -3070,55 +3446,97 @@ function refreshPhoto() {
 async function showScreenshots() {
     const modal = document.getElementById('screenshotsModal');
     const grid = document.getElementById('screenshotsGrid');
-    
+
     if (!modal || !grid) return;
-    
+
     modal.style.display = 'flex';
-    grid.innerHTML = '<div class="loading">🖼️ Loading screenshots...</div>';
-    
+    grid.innerHTML = '<div class="loading">🖼️ Loading gallery...</div>';
+
     try {
         const response = await fetch('/api/camera/screenshots');
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
         const data = await response.json();
-        
-        if (data.screenshots && data.screenshots.length > 0) {
-            grid.innerHTML = `
-                <div class="gallery-toolbar">
-                    <button class="gallery-delete-all-btn" onclick="deleteAllScreenshots()">
-                        🗑️ Delete All
-                    </button>
-                    <span class="gallery-count">${data.screenshots.length} images</span>
+        const screenshots = data.screenshots || [];
+        const storage = data.storage || {};
+        const storageText = storage.free_gb !== undefined
+            ? `Storage: ${storage.images || screenshots.length} images • ${storage.used_mb || 0} MB used • ${storage.free_gb} GB free`
+            : `Storage: ${screenshots.length} images`;
+
+        if (screenshots.length === 0) {
+            grid.innerHTML = '<div class="loading">📭 No images yet</div>';
+            return;
+        }
+
+        grid.innerHTML = `
+
+            <div class="gallery-toolbar">
+
+                <div class="gallery-info">
+
+                    <div class="gallery-info-main">
+                        📷 ${screenshots.length} images
+                    </div>
+
+                    <div class="gallery-info-sub">
+                        💾 ${storage.used_mb || 0} MB used
+                        &nbsp;&nbsp;•&nbsp;&nbsp;
+                        🖥 ${storage.free_gb || 0} GB free
+                        &nbsp;&nbsp;•&nbsp;&nbsp;
+                        Newest first
+                    </div>
+
                 </div>
-                ${data.screenshots.map(item => `
-                    <div class="screenshot-item" id="screenshot-${item.filename}">
-                        <img src="${item.url}" alt="${item.filename}" loading="lazy" 
-                             onclick="window.open('${item.url}', '_blank')"
-                             onerror="this.style.display='none'; this.parentElement.querySelector('.screenshot-error').style.display='block'">
-                        <div class="screenshot-error" style="display:none;padding:20px;text-align:center;color:#999;">
-                            ⚠️ Cannot load image
+
+                <button class="gallery-delete-all-btn"
+                        onclick="deleteAllScreenshots()">
+                    🗑 Delete All
+                </button>
+
+            </div>
+
+            ${screenshots.map(item => `
+                <div class="screenshot-item" id="screenshot-${CSS.escape(item.filename)}">
+                    <a href="${item.url}" target="_blank" rel="noopener">
+                        <img src="${item.url}"
+                             alt="${item.display_name || item.filename}"
+                             title="${item.display_name || item.filename}"
+                             onerror="this.style.display='none'; this.parentElement.parentElement.querySelector('.screenshot-error').style.display='block'">
+                    </a>
+
+                    <div class="screenshot-error" style="display:none;padding:20px;text-align:center;color:#999;">
+                        ⚠️ Cannot load image
+                    </div>
+
+                    <div class="screenshot-info">
+                        <div>
+                            <div class="screenshot-time">${item.modified}</div>
+                            <div class="screenshot-name">${item.display_name || item.filename.split('/').pop()}</div>
                         </div>
-                        <div class="screenshot-info">
-                            <span class="screenshot-time">${item.modified}</span>
-                            <div class="screenshot-actions">
-                                <span class="screenshot-size">${(item.size/1024).toFixed(1)} KB</span>
-                                <button class="screenshot-delete-btn" onclick="deleteScreenshot('${item.filename}', event)">
-                                    ✕
-                                </button>
-                            </div>
+
+                        <div class="screenshot-actions">
+                            <a class="screenshot-download-btn"
+                            href="${item.url}"
+                            download="${item.display_name || item.filename.split('/').pop()}"
+                            title="Download">⬇</a>
+
+                            <span class="screenshot-size">${(item.size / 1024).toFixed(1)} KB</span>
+
+                            <button class="screenshot-delete-btn"
+                                    onclick="deleteScreenshot('${item.filename}', event)"
+                                    title="Delete">🗑</button>
                         </div>
                     </div>
-                `).join('')}
-            `;
-        } else {
-            grid.innerHTML = '<div class="loading">📭 No screenshots yet</div>';
-        }
+                </div>
+            `).join('')}
+        `;
+
     } catch (error) {
         console.error('Error loading screenshots:', error);
         grid.innerHTML = `
             <div class="loading" style="color:#c62828;">
-                ⚠️ Network error loading screenshots<br>
-                <small style="font-size:12px;color:#999;">${error.message}</small>
+                ⚠️ Network error loading gallery<br>
+                <button onclick="showScreenshots()" style="margin-top:8px;padding:6px 14px;border:none;border-radius:6px;background:#1a73e8;color:white;cursor:pointer;">
+                    🔄 Retry
+                </button>
             </div>
         `;
     }
@@ -3128,42 +3546,25 @@ async function deleteScreenshot(filename, event) {
     if (event) {
         event.stopPropagation();
     }
-    
+
     if (!confirm(`Delete screenshot "${filename}"?`)) {
         return;
     }
-    
+
     try {
         const response = await fetch(`/api/camera/screenshot/${filename}`, {
             method: 'DELETE'
         });
-        
-        if (response.ok) {
+
+        const data = await response.json();
+
+        if (response.ok && data.ok) {
             showToast('✅ Screenshot deleted', 'success');
-            const item = document.getElementById(`screenshot-${filename}`);
-            if (item) {
-                item.style.transition = 'opacity 0.3s';
-                item.style.opacity = '0';
-                setTimeout(() => {
-                    item.remove();
-                    const count = document.querySelector('.gallery-count');
-                    if (count) {
-                        const num = parseInt(count.textContent) - 1;
-                        count.textContent = num + ' images';
-                    }
-                    const remaining = document.querySelectorAll('.screenshot-item');
-                    if (remaining.length === 0) {
-                        const grid = document.getElementById('screenshotsGrid');
-                        if (grid) {
-                            grid.innerHTML = '<div class="loading">📭 No screenshots yet</div>';
-                        }
-                    }
-                }, 300);
-            }
+            await showScreenshots();
         } else {
-            const data = await response.json();
             showToast('❌ Failed to delete: ' + (data.error || 'Unknown error'), 'error');
         }
+
     } catch (error) {
         console.error('Error deleting screenshot:', error);
         showToast('❌ Network error', 'error');
@@ -3223,17 +3624,19 @@ function switchMainTab(tab) {
     const photoView = document.getElementById('photoView');
     const chatHeader = document.getElementById('chatHeader');
     const chatListContainer = document.getElementById('chatListContainer');
+    const settingsView = document.getElementById('settingsView');
 
     if (messagesView) messagesView.style.display = 'none';
     if (videoView) videoView.style.display = 'none';
     if (photoView) photoView.style.display = 'none';
+    if (settingsView) settingsView.style.display = 'none';
 
     if (tab !== 'video') {
         stopVideoFeed();
     }
 
     if (tab === 'chats') {
-        if (chatHeader) chatHeader.style.display = 'flex';
+        if (chatHeader) chatHeader.style.display = currentChatId ? 'flex' : 'none';
 
         if (currentChatId) {
             if (chatListContainer) chatListContainer.style.display = 'none';
@@ -3247,8 +3650,8 @@ function switchMainTab(tab) {
 
         loadChatList();
         loadMessages();
-        
-        // Переключаем камеру в видео режим если не в чатах
+        updateStatusDock('chats');
+
         if (!isInitialized) {
             switchCameraMode('video');
         }
@@ -3259,10 +3662,12 @@ function switchMainTab(tab) {
         if (messagesView) messagesView.style.display = 'none';
         if (videoView) videoView.style.display = 'flex';
 
+        updateStatusDock('video');
         stopMessagePolling();
-        
+
         switchCameraMode('video').then(() => {
             setTimeout(() => loadVideoSettings(), 100);
+            setTimeout(() => loadPhotoSettings(), 150);
             setTimeout(() => refreshVideoFeed(), 200);
         });
 
@@ -3272,13 +3677,106 @@ function switchMainTab(tab) {
         if (messagesView) messagesView.style.display = 'none';
         if (photoView) photoView.style.display = 'flex';
 
+        updateStatusDock('photo');
         stopMessagePolling();
-        
+
         switchCameraMode('photo').then(() => {
             setTimeout(() => loadPhotoSettings(), 100);
             setTimeout(() => capturePhotoPreview(), 300);
         });
+
+    } else if (tab === 'settings') {
+        const btn = document.getElementById('mainTabSettings');
+        if (btn) btn.classList.add('active');
+
+        if (settingsView) settingsView.style.display = 'flex';
+
+        if (chatHeader) chatHeader.style.display = 'none';
+        if (chatListContainer) chatListContainer.style.display = 'none';
+        if (messagesView) messagesView.style.display = 'none';
+
+        updateStatusDock('settings');
     }
+}
+
+function updateStatusDock(tab) {
+    const left = document.getElementById('dockLeft');
+    const center = document.getElementById('dockCenter');
+    const right = document.getElementById('dockRight');
+    const extra = document.getElementById('dockExtraRow');
+
+    if (!left || !center || !right) return;
+    if (extra) extra.style.display = 'none';
+
+    if (tab === 'video') {
+        left.innerHTML = `<span>🎥 Video</span>`;
+        center.innerHTML = `<span class="dock-dot"></span><span>Camera Online</span>`;
+        right.innerHTML = `<span id="dockVideoInfo">Live: 800×600 @ 15 FPS</span>`;
+        return;
+    }
+
+    if (tab === 'chats') {
+        left.innerHTML = `<span>💬 Chats</span>`;
+        center.innerHTML = `<span class="dock-dot"></span><span>Mesh Online</span>`;
+        right.innerHTML = `<span id="dockNodesInfo">Nodes</span>`;
+        return;
+    }
+
+    if (tab === 'photo') {
+        left.innerHTML = `<span>📸 Photo</span>`;
+        center.innerHTML = `<span class="dock-dot"></span><span>Camera Ready</span>`;
+        right.innerHTML = `<span>Preview mode</span>`;
+        return;
+    }
+
+    if (tab === 'settings') {
+        left.innerHTML = `<span>⚙️ Settings</span>`;
+        center.innerHTML = `<span class="dock-dot"></span><span>Ready</span>`;
+        right.innerHTML = `<span>MeshCenter</span>`;
+        return;
+    }
+
+    left.innerHTML = `<span>Workspace</span>`;
+    center.innerHTML = `<span class="dock-dot"></span><span>Ready</span>`;
+    right.innerHTML = `<span>Nodes</span>`;
+}
+
+function syncVideoControlsToDock() {
+    const srcRes = document.getElementById('videoResolution');
+    const srcFps = document.getElementById('videoFps');
+    const srcQuality = document.getElementById('videoQuality');
+
+    const dockRes = document.getElementById('dockVideoResolution');
+    const dockFps = document.getElementById('dockVideoFps');
+    const dockQuality = document.getElementById('dockVideoQuality');
+    const dockQualityLabel = document.getElementById('dockVideoQualityLabel');
+
+    if (srcRes && dockRes) dockRes.value = srcRes.value;
+    if (srcFps && dockFps) dockFps.value = srcFps.value;
+    if (srcQuality && dockQuality) {
+        dockQuality.value = srcQuality.value;
+        if (dockQualityLabel) dockQualityLabel.textContent = srcQuality.value + '%';
+    }
+}
+
+function syncDockVideoSettings() {
+    const dockRes = document.getElementById('dockVideoResolution');
+    const dockFps = document.getElementById('dockVideoFps');
+    const dockQuality = document.getElementById('dockVideoQuality');
+    const dockQualityLabel = document.getElementById('dockVideoQualityLabel');
+
+    const srcRes = document.getElementById('videoResolution');
+    const srcFps = document.getElementById('videoFps');
+    const srcQuality = document.getElementById('videoQuality');
+
+    if (dockRes && srcRes) srcRes.value = dockRes.value;
+    if (dockFps && srcFps) srcFps.value = dockFps.value;
+    if (dockQuality && srcQuality) {
+        srcQuality.value = dockQuality.value;
+        if (dockQualityLabel) dockQualityLabel.textContent = dockQuality.value + '%';
+    }
+
+    updateVideoSettings();
 }
 
 // ============================================================
@@ -3339,6 +3837,10 @@ async function init() {
         switchMainTab('chats');
         
         if (statusEl) statusEl.innerHTML = '🟢 Mesh online';
+        const headerStatus = document.getElementById('headerStatusText');
+        if (headerStatus) {
+            headerStatus.innerHTML = '<span class="status-dot"></span><span class="status-label">Online</span>';
+        }
         
         console.log('[INIT] Application ready');
         
@@ -3394,6 +3896,7 @@ window.toggleFavorite = toggleFavorite;
 window.selectNode = selectNode;
 window.clearNodeSearch = clearNodeSearch;
 window.rescanNodes = rescanNodes;
+window.restartListener = restartListener;
 window.mergeDuplicates = mergeDuplicates;
 window.cleanupAllNodes = cleanupAllNodes;
 window.toggleShowDuplicates = toggleShowDuplicates;
@@ -3440,6 +3943,17 @@ window.loadSensors = loadSensors;
 window.loadBaseStatus = loadBaseStatus;
 window.loadTelemetry = loadTelemetry;
 window.loadSettings = loadSettings;
+window.setUnitSetting = setUnitSetting;
+window.exportTelemetryData = exportTelemetryData;
+window.closeTelemetryExportMenu = closeTelemetryExportMenu;
+window.downloadTelemetryExport = downloadTelemetryExport;
+window.toggleTelemetrySeries = toggleTelemetrySeries;
+window.openCustomTelemetryExport = openCustomTelemetryExport;
+window.closeCustomTelemetryExport = closeCustomTelemetryExport;
+window.updateCustomExportMode = updateCustomExportMode;
+window.runCustomTelemetryExport = runCustomTelemetryExport;
+window.updateStatusDock = updateStatusDock;
+window.syncDockVideoSettings = syncDockVideoSettings;
 window.getAppSettings = function() {
     return appSettings;
 };

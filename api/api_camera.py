@@ -72,7 +72,7 @@ def register_camera_routes(app, camera, handle_errors):
             "error": result.get("error", "Unknown error")
         }), 500
 
-    @app.route("/api/camera/screenshot/<filename>")
+    @app.route("/api/camera/screenshot/<path:filename>")
     def api_camera_screenshot_file(filename):
         """Получить скриншот"""
         if not camera.screenshot_exists(filename):
@@ -90,7 +90,7 @@ def register_camera_routes(app, camera, handle_errors):
         result, status = camera.list_screenshots()
         return jsonify(result), status
 
-    @app.route("/api/camera/screenshot/<filename>", methods=["DELETE"])
+    @app.route("/api/camera/screenshot/<path:filename>", methods=["DELETE"])
     @handle_errors
     def api_camera_screenshot_delete(filename):
         """Удалить скриншот"""

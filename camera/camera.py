@@ -13,7 +13,7 @@ import os
 import threading
 import time
 from datetime import datetime
-from tkinter import Image
+from PIL import Image
 
 try:
     from config import DATA_DIR
@@ -76,6 +76,7 @@ PHOTO_SAVE_RESOLUTION = "2592x1944"
 CAMERA_AVAILABLE = False
 CAMERA_MODE = "video"
 CAMERA_ACTIVE = False
+CAMERA_CAPTURE_BUSY = False
 
 picam2 = None
 camera_started = False
@@ -277,7 +278,11 @@ def start_camera():
 
 def get_camera_frame():
     """Capture one camera frame."""
-    global last_frame, last_frame_time, camera_started
+    global last_frame, last_frame_time, camera_started, CAMERA_CAPTURE_BUSY
+
+    if CAMERA_CAPTURE_BUSY:
+        time.sleep(0.05)
+        return None
 
     if not camera_started:
         if not start_camera():
@@ -285,6 +290,9 @@ def get_camera_frame():
 
     with camera_lock:
         try:
+            if CAMERA_CAPTURE_BUSY:
+                return None
+
             if picam2 is None:
                 return last_frame
 
@@ -357,6 +365,95 @@ def generate_mjpeg_stream():
 # SCREENSHOTS / GALLERY
 # ============================================================
 
+def get_screenshot_day_dir(dt=None):
+    if dt is None:
+        dt = datetime.now()
+
+    day_dir = os.path.join(
+        SCREENSHOTS_DIR,
+        dt.strftime("%Y"),
+        dt.strftime("%m"),
+        dt.strftime("%d")
+    )
+    os.makedirs(day_dir, exist_ok=True)
+    return day_dir
+
+
+def make_screenshot_filename(dt=None, prefix="MC"):
+    if dt is None:
+        dt = datetime.now()
+    return f"{prefix}_{dt.strftime('%Y-%m-%d_%H-%M-%S')}.jpg"
+
+
+def iter_screenshot_files():
+    items = []
+
+    if not os.path.exists(SCREENSHOTS_DIR):
+        return items
+
+    for root, dirs, files in os.walk(SCREENSHOTS_DIR):
+        for filename in files:
+            if not filename.lower().endswith(".jpg"):
+                continue
+
+            full_path = os.path.join(root, filename)
+            rel_path = os.path.relpath(full_path, SCREENSHOTS_DIR).replace("\\", "/")
+
+            try:
+                stat = os.stat(full_path)
+                items.append((full_path, rel_path, stat))
+            except OSError:
+                pass
+
+    return items
+
+
+def safe_screenshot_path(filename):
+    filename = filename.replace("\\", "/")
+    base = os.path.abspath(SCREENSHOTS_DIR)
+    path = os.path.abspath(os.path.join(base, filename))
+
+    if not path.startswith(base + os.sep):
+        return None
+
+    return path
+
+
+def cleanup_old_screenshots(max_mb=500, keep_days=30):
+    files = iter_screenshot_files()
+    if not files:
+        return
+
+    now = time.time()
+    keep_seconds = keep_days * 86400
+    max_bytes = max_mb * 1024 * 1024
+
+    for full_path, rel_path, stat in files:
+        if now - stat.st_mtime > keep_seconds:
+            try:
+                os.remove(full_path)
+            except OSError:
+                pass
+
+    files = iter_screenshot_files()
+    total_size = sum(stat.st_size for _, _, stat in files)
+
+    if total_size <= max_bytes:
+        return
+
+    files.sort(key=lambda x: x[2].st_mtime)
+
+    for full_path, rel_path, stat in files:
+        if total_size <= max_bytes:
+            break
+
+        try:
+            os.remove(full_path)
+            total_size -= stat.st_size
+        except OSError:
+            pass
+
+
 def capture_screenshot():
     """Create screenshot from current video frame."""
     if not camera_started:
@@ -371,15 +468,23 @@ def capture_screenshot():
             return {"success": False, "error": "Failed to capture frame"}
 
         img = Image.fromarray(frame)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"screenshot_{timestamp}.jpg"
-        filepath = os.path.join(SCREENSHOTS_DIR, filename)
+
+        dt = datetime.now()
+        day_dir = get_screenshot_day_dir(dt)
+        filename = make_screenshot_filename(dt, prefix="MC")
+        filepath = os.path.join(day_dir, filename)
+
         quality = VIDEO_CONFIG.get("quality", 90)
         img.save(filepath, "JPEG", quality=quality)
 
+        rel_path = os.path.relpath(filepath, SCREENSHOTS_DIR).replace("\\", "/")
+
+        cleanup_old_screenshots(max_mb=500, keep_days=30)
+
         return {
             "success": True,
-            "filename": filename,
+            "filename": rel_path,
+            "display_name": filename,
             "filepath": filepath,
             "size": os.path.getsize(filepath),
         }
@@ -389,49 +494,87 @@ def capture_screenshot():
 
 
 def screenshot_exists(filename):
-    return os.path.exists(os.path.join(SCREENSHOTS_DIR, filename))
+    filepath = safe_screenshot_path(filename)
+    return filepath is not None and os.path.exists(filepath)
 
 
 def list_screenshots():
     try:
-        if not os.path.exists(SCREENSHOTS_DIR):
-            return {"screenshots": []}, 200
-
         files = []
-        for filename in sorted(os.listdir(SCREENSHOTS_DIR), reverse=True):
-            if not filename.endswith(".jpg"):
-                continue
-            filepath = os.path.join(SCREENSHOTS_DIR, filename)
-            stat = os.stat(filepath)
+
+        for full_path, rel_path, stat in iter_screenshot_files():
             files.append({
-                "filename": filename,
+                "filename": rel_path,
+                "display_name": os.path.basename(rel_path),
                 "size": stat.st_size,
+                "modified_ts": stat.st_mtime,
                 "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
-                "url": f"/api/camera/screenshot/{filename}",
+                "date": time.strftime("%Y-%m-%d", time.localtime(stat.st_mtime)),
+                "url": f"/api/camera/screenshot/{rel_path}",
             })
-        return {"screenshots": files}, 200
+
+        files.sort(key=lambda x: x["modified_ts"], reverse=True)
+
+        return {
+            "screenshots": files,
+            "storage": get_gallery_storage_info()
+        }, 200
+
     except Exception as e:
         return {"ok": False, "error": str(e)}, 500
 
 
 def delete_screenshot(filename):
-    filepath = os.path.join(SCREENSHOTS_DIR, filename)
-    if not os.path.exists(filepath):
+    filepath = safe_screenshot_path(filename)
+
+    if filepath is None or not os.path.exists(filepath):
         return {"ok": False, "error": "File not found"}, 404
+
     os.remove(filepath)
     return {"ok": True, "message": f"Deleted {filename}"}, 200
 
 
 def delete_all_screenshots():
-    if not os.path.exists(SCREENSHOTS_DIR):
-        return {"ok": True, "message": "No screenshots to delete"}, 200
-
     count = 0
-    for filename in os.listdir(SCREENSHOTS_DIR):
-        if filename.endswith(".jpg"):
-            os.remove(os.path.join(SCREENSHOTS_DIR, filename))
+
+    for full_path, rel_path, stat in iter_screenshot_files():
+        try:
+            os.remove(full_path)
             count += 1
+        except OSError as e:
+            print(f"[GALLERY] Could not delete {rel_path}: {e}", flush=True)
+
     return {"ok": True, "deleted_count": count}, 200
+
+def get_gallery_storage_info():
+    try:
+        files = iter_screenshot_files()
+        total_size = sum(stat.st_size for _, _, stat in files)
+
+        usage = os.statvfs(SCREENSHOTS_DIR)
+        free_bytes = usage.f_bavail * usage.f_frsize
+        total_bytes = usage.f_blocks * usage.f_frsize
+
+        return {
+            "images": len(files),
+            "used_bytes": total_size,
+            "free_bytes": free_bytes,
+            "total_bytes": total_bytes,
+            "used_mb": round(total_size / 1024 / 1024, 1),
+            "free_gb": round(free_bytes / 1024 / 1024 / 1024, 2),
+            "total_gb": round(total_bytes / 1024 / 1024 / 1024, 2),
+        }
+    except Exception as e:
+        return {
+            "images": 0,
+            "used_bytes": 0,
+            "free_bytes": 0,
+            "total_bytes": 0,
+            "used_mb": 0,
+            "free_gb": 0,
+            "total_gb": 0,
+            "error": str(e),
+        }
 
 # ============================================================
 # API-LIKE HELPERS FOR SERVER ROUTES
@@ -567,10 +710,24 @@ def _capture_still(resolution, quality, log_prefix="[PHOTO]"):
     if not ok:
         raise RuntimeError("Failed to switch camera to photo mode")
 
-    time.sleep(0.5)
-    frame = picam2.capture_array()
-    frame = fix_camera_colors(frame)
-    return Image.fromarray(frame), w, h
+    time.sleep(1.5)
+
+    last_size = None
+
+    for attempt in range(8):
+        frame = picam2.capture_array()
+        img = Image.fromarray(fix_camera_colors(frame))
+        real_w, real_h = img.size
+        last_size = (real_w, real_h)
+
+        print(f"{log_prefix} Attempt {attempt + 1}: {real_w}x{real_h}", flush=True)
+
+        if real_w == w and real_h == h:
+            return img, real_w, real_h
+
+        time.sleep(0.25)
+
+    raise RuntimeError(f"Wrong capture size. Expected {w}x{h}, got {last_size[0]}x{last_size[1]}")
 
 
 def capture_photo_preview():
@@ -607,50 +764,60 @@ def capture_photo_preview():
 
 
 def save_highres_photo():
+    global CAMERA_CAPTURE_BUSY
+
     if not CAMERA_AVAILABLE:
         return {"ok": False, "error": "Camera not available"}, 503
 
+    CAMERA_CAPTURE_BUSY = True
+
     try:
-        from PIL import Image
+        quality = PHOTO_CONFIG.get("quality", 95)
+        resolution = PHOTO_CONFIG.get(
+            "resolution",
+            PHOTO_SAVE_CONFIG.get("resolution", "2592x1944")
+        )
 
-        quality = PHOTO_SAVE_CONFIG["quality"]
-        resolution = PHOTO_SAVE_CONFIG["resolution"]
-        img, _w, _h = _capture_still(resolution, quality, "[PHOTO SAVE]")
+        img, real_w, real_h = _capture_still(resolution, quality, "[PHOTO SAVE]")
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"photo_{timestamp}.jpg"
-        filepath = os.path.join(SCREENSHOTS_DIR, filename)
+        dt = datetime.now()
+        day_dir = get_screenshot_day_dir(dt)
+        filename = make_screenshot_filename(dt, prefix="MC_PHOTO")
+        filepath = os.path.join(day_dir, filename)
+
         img.save(filepath, "JPEG", quality=quality)
 
-        preview_img = img.copy()
-        preview_img.thumbnail((640, 480), Image.Resampling.LANCZOS)
-        buf = io.BytesIO()
-        preview_img.save(buf, format="JPEG", quality=85)
-        preview_data = base64.b64encode(buf.getvalue()).decode("utf-8")
+        rel_path = os.path.relpath(filepath, SCREENSHOTS_DIR).replace("\\", "/")
+        cleanup_old_screenshots(max_mb=500, keep_days=30)
 
-        # Return to photo preview mode, not to video mode.
         try:
-            switch_camera_mode("photo", resolution=PHOTO_CONFIG["resolution"])
-            print(f"[PHOTO] Returned to preview mode: {PHOTO_CONFIG['resolution']}", flush=True)
+            switch_camera_mode("video", resolution=VIDEO_CONFIG["resolution"])
+            print(f"[PHOTO] Returned to video mode: {VIDEO_CONFIG['resolution']}", flush=True)
         except Exception as e:
-            print(f"[PHOTO] Could not return to preview mode: {e}", flush=True)
+            print(f"[PHOTO] Could not return to video mode: {e}", flush=True)
 
         return {
             "ok": True,
-            "filename": filename,
+            "success": True,
+            "filename": rel_path,
+            "display_name": filename,
             "filepath": filepath,
             "size": os.path.getsize(filepath),
-            "url": f"/api/camera/screenshot/{filename}",
-            "preview_data": preview_data,
-            "resolution": resolution,
+            "width": real_w,
+            "height": real_h,
         }, 200
 
     except Exception as e:
         print(f"[PHOTO] ❌ Save error: {e}", flush=True)
         import traceback
         traceback.print_exc()
+
         try:
-            stop_camera()
+            switch_camera_mode("video", resolution=VIDEO_CONFIG["resolution"])
         except Exception:
             pass
+
         return {"ok": False, "error": str(e)}, 500
+
+    finally:
+        CAMERA_CAPTURE_BUSY = False

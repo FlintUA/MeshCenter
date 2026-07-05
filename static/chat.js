@@ -43,6 +43,24 @@ let appSettings = {
     }
 };
 
+const SENSOR_COLORS = {
+    temperature: '#ef4444',
+    humidity: '#3b82f6',
+    pressure: '#facc15',
+    voltage: '#22c55e',
+    current: '#38bdf8',
+    power: '#f97316'
+};
+
+const SENSOR_BG_COLORS = {
+    temperature: 'rgba(239, 68, 68, 0.10)',
+    humidity: 'rgba(59, 130, 246, 0.10)',
+    pressure: 'rgba(250, 204, 21, 0.14)',
+    voltage: 'rgba(34, 197, 94, 0.10)',
+    current: 'rgba(56, 189, 248, 0.10)',
+    power: 'rgba(249, 115, 22, 0.10)'
+};
+
 let telemetryVisibleSeries = {
     environment: {
         temperature: true,
@@ -2590,8 +2608,8 @@ function renderTelemetryChart(container, records, type) {
             datasets.push({
                 label: 'Temperature ' + temperatureChartUnit(),
                 data: records.map(r => temperatureChartValue(r.temperature)),
-                borderColor: '#ff6b35',
-                backgroundColor: 'rgba(255, 107, 53, 0.1)',
+                borderColor: SENSOR_COLORS.temperature,
+                backgroundColor: SENSOR_BG_COLORS.temperature,
                 fill: true,
                 tension: 0.3,
                 spanGaps: true,
@@ -2604,8 +2622,8 @@ function renderTelemetryChart(container, records, type) {
             datasets.push({
                 label: 'Humidity %',
                 data: records.map(r => r.humidity),
-                borderColor: '#4a9eff',
-                backgroundColor: 'rgba(74, 158, 255, 0.1)',
+                borderColor: SENSOR_COLORS.humidity,
+                backgroundColor: SENSOR_BG_COLORS.humidity,
                 fill: true,
                 tension: 0.3,
                 spanGaps: true,
@@ -2619,8 +2637,8 @@ function renderTelemetryChart(container, records, type) {
             datasets.push({
                 label: 'Pressure ' + pressureChartUnit(),
                 data: records.map(r => pressureChartValue(r.pressure)),
-                borderColor: '#2ecc71',
-                backgroundColor: 'rgba(46, 204, 113, 0.1)',
+                borderColor: SENSOR_COLORS.pressure,
+                backgroundColor: SENSOR_BG_COLORS.pressure,
                 fill: true,
                 tension: 0.3,
                 spanGaps: true,
@@ -2634,8 +2652,8 @@ function renderTelemetryChart(container, records, type) {
             datasets.push({
                 label: 'Voltage V',
                 data: records.map(r => r.voltage),
-                borderColor: '#f1c40f',
-                backgroundColor: 'rgba(241, 196, 15, 0.1)',
+                borderColor: SENSOR_COLORS.voltage,
+                backgroundColor: SENSOR_BG_COLORS.voltage,
                 fill: true,
                 tension: 0.3,
                 spanGaps: true,
@@ -2649,8 +2667,8 @@ function renderTelemetryChart(container, records, type) {
             datasets.push({
                 label: 'Current mA',
                 data: records.map(r => r.current),
-                borderColor: '#3498db',
-                backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                borderColor: SENSOR_COLORS.current,
+                backgroundColor: SENSOR_BG_COLORS.current,
                 fill: true,
                 tension: 0.3,
                 spanGaps: true,
@@ -2672,8 +2690,8 @@ function renderTelemetryChart(container, records, type) {
             datasets.push({
                 label: 'Power W',
                 data: powerSeries,
-                borderColor: '#2ecc71',
-                backgroundColor: 'rgba(46, 204, 113, 0.1)',
+                borderColor: SENSOR_COLORS.power,
+                backgroundColor: SENSOR_BG_COLORS.power,
                 fill: true,
                 tension: 0.3,
                 spanGaps: true,
@@ -2834,6 +2852,7 @@ function updateTelemetryCards(records, type) {
         card1.classList.toggle('inactive', !telemetryVisibleSeries.environment.temperature);
         card1.querySelector('.card-label').textContent = '🌡️ Temperature';
         document.getElementById('cardTemp').textContent = formatTemperature(last.temperature);
+        document.getElementById('cardTemp').style.color = SENSOR_COLORS.temperature;
 
         if (tempValues.length > 0) {
             document.getElementById('cardTempMin').textContent = formatTemperature(Math.min(...tempValues));
@@ -2847,6 +2866,7 @@ function updateTelemetryCards(records, type) {
         card2.querySelector('.card-label').textContent = '💧 Humidity';
         document.getElementById('cardHum').textContent =
             last.humidity !== null && last.humidity !== undefined ? last.humidity.toFixed(1) + '%' : '--';
+        document.getElementById('cardHum').style.color = SENSOR_COLORS.humidity;
 
         if (humValues.length > 0) {
             document.getElementById('cardHumMin').textContent = Math.min(...humValues).toFixed(1) + '%';
@@ -2859,6 +2879,7 @@ function updateTelemetryCards(records, type) {
         card3.classList.toggle('inactive', !telemetryVisibleSeries.environment.pressure);
         card3.querySelector('.card-label').textContent = '📊 Pressure';
         document.getElementById('cardPress').textContent = formatPressure(last.pressure);
+        document.getElementById('cardPress').style.color = SENSOR_COLORS.pressure;
 
         if (pressValues.length > 0) {
             document.getElementById('cardPressMin').textContent = formatPressure(Math.min(...pressValues));
@@ -2890,6 +2911,7 @@ function updateTelemetryCards(records, type) {
         card1.querySelector('.card-label').textContent = '⚡ Voltage';
         document.getElementById('cardTemp').textContent =
             last.voltage !== null && last.voltage !== undefined ? last.voltage.toFixed(3) + ' V' : '--';
+        document.getElementById('cardTemp').style.color = SENSOR_COLORS.voltage;
 
         if (voltValues.length > 0) {
             document.getElementById('cardTempMin').textContent = Math.min(...voltValues).toFixed(3) + ' V';
@@ -2903,6 +2925,7 @@ function updateTelemetryCards(records, type) {
         card2.querySelector('.card-label').textContent = '🔌 Current';
         document.getElementById('cardHum').textContent =
             last.current !== null && last.current !== undefined ? last.current.toFixed(1) + ' mA' : '--';
+        document.getElementById('cardHum').style.color = SENSOR_COLORS.current;
 
         if (currValues.length > 0) {
             document.getElementById('cardHumMin').textContent = Math.min(...currValues).toFixed(1) + ' mA';
@@ -2924,6 +2947,7 @@ function updateTelemetryCards(records, type) {
 
         document.getElementById('cardPress').textContent =
             powerValue !== null && powerValue !== undefined ? (powerValue / 1000).toFixed(3) + ' W' : '--';
+        document.getElementById('cardPress').style.color = SENSOR_COLORS.power;
 
         if (powerValues.length > 0) {
             document.getElementById('cardPressMin').textContent = (Math.min(...powerValues) / 1000).toFixed(3) + ' W';
@@ -3312,11 +3336,10 @@ async function captureCameraPhoto() {
             btn.textContent = '⏳ Capture...';
         }
 
-        // Stop browser MJPEG request before camera reconfiguration
         if (videoFeed) {
-            videoFeed.dataset.oldSrc = videoFeed.src || '';
-            videoFeed.removeAttribute('src');
+            videoFeed.classList.add('camera-capturing');
         }
+
 
         await updatePhotoSettings(false);
 
@@ -3338,13 +3361,18 @@ async function captureCameraPhoto() {
         showToast('❌ Network error', 'error');
 
     } finally {
-        setTimeout(() => {
-            refreshVideoFeed();
-        }, 1200);
 
-        if (btn) {
-            btn.disabled = false;
-            btn.textContent = '📸 Capture';
+    if (videoFeed) {
+        videoFeed.classList.remove('camera-capturing');
+    }
+
+    setTimeout(() => {
+        refreshVideoFeed();
+    }, 1200);
+
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = '📸 Capture';
         }
     }
 }
@@ -3624,11 +3652,13 @@ function switchMainTab(tab) {
     const photoView = document.getElementById('photoView');
     const chatHeader = document.getElementById('chatHeader');
     const chatListContainer = document.getElementById('chatListContainer');
+    const systemView = document.getElementById('systemView');    
     const settingsView = document.getElementById('settingsView');
 
     if (messagesView) messagesView.style.display = 'none';
     if (videoView) videoView.style.display = 'none';
     if (photoView) photoView.style.display = 'none';
+    if (systemView) systemView.style.display = 'none';
     if (settingsView) settingsView.style.display = 'none';
 
     if (tab !== 'video') {
@@ -3685,6 +3715,16 @@ function switchMainTab(tab) {
             setTimeout(() => capturePhotoPreview(), 300);
         });
 
+    } else if (tab === 'system') {
+        if (chatHeader) chatHeader.style.display = 'none';
+        if (chatListContainer) chatListContainer.style.display = 'none';
+        if (messagesView) messagesView.style.display = 'none';
+        if (systemView) systemView.style.display = 'flex';
+
+        stopMessagePolling();
+        updateStatusDock('system');
+        loadSystemNetwork();
+
     } else if (tab === 'settings') {
         const btn = document.getElementById('mainTabSettings');
         if (btn) btn.classList.add('active');
@@ -3701,44 +3741,33 @@ function switchMainTab(tab) {
 
 function updateStatusDock(tab) {
     const left = document.getElementById('dockLeft');
-    const center = document.getElementById('dockCenter');
-    const right = document.getElementById('dockRight');
-    const extra = document.getElementById('dockExtraRow');
+    const centerText = document.getElementById('dockStatusText');
+    const right = document.getElementById('dockContextText');
 
-    if (!left || !center || !right) return;
-    if (extra) extra.style.display = 'none';
-
-    if (tab === 'video') {
-        left.innerHTML = `<span>🎥 Video</span>`;
-        center.innerHTML = `<span class="dock-dot"></span><span>Camera Online</span>`;
-        right.innerHTML = `<span id="dockVideoInfo">Live: 800×600 @ 15 FPS</span>`;
-        return;
-    }
+    if (!left || !centerText || !right) return;
 
     if (tab === 'chats') {
-        left.innerHTML = `<span>💬 Chats</span>`;
-        center.innerHTML = `<span class="dock-dot"></span><span>Mesh Online</span>`;
-        right.innerHTML = `<span id="dockNodesInfo">Nodes</span>`;
-        return;
+        left.innerHTML = '💬 Chats';
+        centerText.textContent = 'Mesh Online';
+        right.textContent = 'Nodes';
+    } else if (tab === 'video') {
+        left.innerHTML = '📷 Camera';
+        centerText.textContent = 'Camera Online';
+        right.textContent = getCurrentVideoInfoText();
+    } else if (tab === 'settings') {
+        left.innerHTML = '⚙️ Settings';
+        centerText.textContent = 'Ready';
+        right.textContent = 'MeshCenter';
+    } else {
+        left.innerHTML = 'Workspace';
+        centerText.textContent = 'Ready';
+        right.textContent = 'MeshCenter';
     }
+}
 
-    if (tab === 'photo') {
-        left.innerHTML = `<span>📸 Photo</span>`;
-        center.innerHTML = `<span class="dock-dot"></span><span>Camera Ready</span>`;
-        right.innerHTML = `<span>Preview mode</span>`;
-        return;
-    }
-
-    if (tab === 'settings') {
-        left.innerHTML = `<span>⚙️ Settings</span>`;
-        center.innerHTML = `<span class="dock-dot"></span><span>Ready</span>`;
-        right.innerHTML = `<span>MeshCenter</span>`;
-        return;
-    }
-
-    left.innerHTML = `<span>Workspace</span>`;
-    center.innerHTML = `<span class="dock-dot"></span><span>Ready</span>`;
-    right.innerHTML = `<span>Nodes</span>`;
+function getCurrentVideoInfoText() {
+    const info = document.getElementById('videoLiveInfo');
+    return info ? info.textContent.replace('Live: ', '') : 'Camera';
 }
 
 function syncVideoControlsToDock() {
@@ -3777,6 +3806,209 @@ function syncDockVideoSettings() {
     }
 
     updateVideoSettings();
+}
+
+async function loadSystemNetwork() {
+    try {
+        const response = await fetch('/api/system/network');
+        const data = await response.json();
+
+        document.getElementById('systemWifiSsid').textContent = data.ssid || '--';
+
+        document.getElementById('systemWifiSignal').textContent =
+            data.signal_percent !== null && data.signal_percent !== undefined
+                ? `${data.signal_percent}%`
+                : '--';
+
+        document.getElementById('systemWifiRssi').textContent =
+            data.rssi_dbm !== null && data.rssi_dbm !== undefined
+                ? `${data.rssi_dbm} dBm`
+                : '--';
+
+        // <<< ДОБАВИТЬ ЭТИ СТРОКИ >>>
+
+        document.getElementById('systemRxRate').textContent =
+            data.rx_bitrate || '--';
+
+        document.getElementById('systemTxRate').textContent =
+            data.tx_bitrate || '--';
+
+        // <<< ДО КОНЦА >>>
+
+        document.getElementById('systemWifiIp').textContent = data.ip || '--';
+        document.getElementById('systemWifiGateway').textContent = data.gateway || '--';
+
+        document.getElementById('systemInternet').textContent =
+            data.internet ? '🟢 Connected' : '🔴 Offline';
+
+    } catch (error) {
+        console.error('System network load error:', error);
+        showToast('❌ Failed to load system network info', 'error');
+    }
+}
+
+async function toggleWifiNetworks() {
+    const panel = document.getElementById("wifiNetworksPanel");
+
+    if (!panel) return;
+
+    if (panel.style.display === "none") {
+        panel.style.display = "block";
+        await loadWifiNetworks();
+    } else {
+        panel.style.display = "none";
+    }
+}
+
+async function loadWifiNetworks() {
+
+    const list = document.getElementById("wifiNetworksList");
+
+    list.innerHTML = "Scanning...";
+
+    try {
+
+        const response = await fetch("/api/system/wifi/scan");
+
+        const data = await response.json();
+
+        if (!data.ok) {
+            list.innerHTML = "Scan failed";
+            return;
+        }
+
+        if (data.networks.length === 0) {
+            list.innerHTML = "No networks found";
+            return;
+        }
+
+        list.innerHTML = "";
+
+        data.networks.forEach(net => {
+
+            const div = document.createElement("div");
+
+            div.className = "wifi-network-item";
+
+        const actionHtml = net.connected
+            ? '<span class="wifi-connected">Connected</span>'
+            : `
+                <div class="wifi-actions">
+                    <button class="wifi-connect-btn" data-ssid="${escapeHtml(net.ssid)}" data-saved="${net.saved ? '1' : '0'}">
+                        Connect
+                    </button>
+                    ${net.saved ? `<button class="wifi-forget-btn" data-ssid="${escapeHtml(net.ssid)}">Forget</button>` : ''}
+                </div>
+            `;
+
+        div.innerHTML = `
+            <div class="wifi-name">
+                ${net.connected ? "🟢" : "⚪"} ${net.ssid}
+                ${net.saved && !net.connected ? '<span class="wifi-saved-badge">Saved</span>' : ''}
+            </div>
+
+            <div class="wifi-info">
+                <span>${net.signal ?? '--'}%</span>
+                <span>${net.signal_dbm ?? '--'} dBm</span>
+                <span>${net.security || 'Open'}</span>
+                ${actionHtml}
+            </div>
+        `;
+
+            list.appendChild(div);
+
+        });
+
+        document.querySelectorAll('.wifi-connect-btn').forEach(btn => {
+            btn.onclick = () => {
+                const ssid = btn.dataset.ssid;
+                const saved = btn.dataset.saved === '1';
+
+                if (saved) {
+                    connectWifi(ssid, '');
+                } else {
+                    openWifiConnectModal(ssid);
+                }
+            };
+        });
+
+        document.querySelectorAll('.wifi-forget-btn').forEach(btn => {
+            btn.onclick = () => {
+                forgetWifi(btn.dataset.ssid);
+            };
+        });
+
+    } catch(e){
+
+        console.error(e);
+
+        list.innerHTML="Scan error";
+
+    }
+
+}
+
+async function connectWifi(ssid, password) {
+    try {
+        showToast(`📶 Connecting to ${ssid}...`, 'success');
+
+        const response = await fetch('/api/system/wifi/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ssid, password })
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.ok) {
+            showToast(`✅ Connected to ${ssid}`, 'success');
+
+            setTimeout(() => {
+                loadSystemNetwork();
+                loadWifiNetworks();
+            }, 2500);
+        } else {
+            showToast('❌ Wi-Fi connect failed: ' + (data.error || 'Unknown error'), 'error');
+        }
+
+    } catch (error) {
+        console.error('Wi-Fi connect error:', error);
+        showToast('❌ Wi-Fi connect network error', 'error');
+    }
+}
+
+async function forgetWifi(ssid) {
+    if (!confirm(`Forget Wi-Fi network "${ssid}"?`)) return;
+
+    try {
+        const response = await fetch('/api/system/wifi/forget', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ssid })
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.ok) {
+            showToast(`🗑️ Forgotten: ${ssid}`, 'success');
+            loadWifiNetworks();
+        } else {
+            showToast('❌ Forget failed: ' + (data.error || 'Unknown error'), 'error');
+        }
+
+    } catch (error) {
+        console.error('Wi-Fi forget error:', error);
+        showToast('❌ Wi-Fi forget network error', 'error');
+    }
+}
+
+function escapeHtml(text) {
+    return String(text)
+        .replaceAll('&', '&amp;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
 }
 
 // ============================================================
@@ -3884,6 +4116,43 @@ async function init() {
     if (input) input.focus();
 }
 
+let selectedWifiSsid = null;
+
+function openWifiConnectModal(ssid) {
+    selectedWifiSsid = ssid;
+
+    const modal = document.getElementById('wifiConnectModal');
+    const ssidEl = document.getElementById('wifiConnectSsid');
+    const passEl = document.getElementById('wifiConnectPassword');
+
+    if (ssidEl) ssidEl.textContent = ssid;
+    if (passEl) passEl.value = '';
+
+    if (modal) modal.style.display = 'flex';
+}
+
+function closeWifiConnectModal() {
+    const modal = document.getElementById('wifiConnectModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function toggleWifiPasswordVisible(cb) {
+    const input = document.getElementById('wifiConnectPassword');
+    if (input) input.type = cb.checked ? 'text' : 'password';
+}
+
+async function connectSelectedWifi() {
+    const password = document.getElementById('wifiConnectPassword')?.value || '';
+
+    if (!selectedWifiSsid) {
+        showToast('❌ No Wi-Fi selected', 'error');
+        return;
+    }
+
+    await connectWifi(selectedWifiSsid, password);
+    closeWifiConnectModal();
+}
+
 // ============================================================
 // ЭКСПОРТ В ГЛОБАЛЬНУЮ ОБЛАСТЬ
 // ============================================================
@@ -3954,6 +4223,13 @@ window.updateCustomExportMode = updateCustomExportMode;
 window.runCustomTelemetryExport = runCustomTelemetryExport;
 window.updateStatusDock = updateStatusDock;
 window.syncDockVideoSettings = syncDockVideoSettings;
+window.loadSystemNetwork = loadSystemNetwork;
+
+window.openWifiConnectModal = openWifiConnectModal;
+window.closeWifiConnectModal = closeWifiConnectModal;
+window.toggleWifiPasswordVisible = toggleWifiPasswordVisible;
+window.connectSelectedWifi = connectSelectedWifi;
+
 window.getAppSettings = function() {
     return appSettings;
 };

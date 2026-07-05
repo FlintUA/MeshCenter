@@ -12,6 +12,7 @@ import re
 import json
 import os
 import io
+import csv
 from collections import defaultdict
 from datetime import datetime
 from camera import camera
@@ -20,8 +21,7 @@ from meshsrv import meshsrv
 from api.api_camera import register_camera_routes
 from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes
-import csv
-import io
+from api.api_system import register_system_routes
 
 try:
     from config import *
@@ -91,7 +91,8 @@ def handle_errors(f):
             }), 500
     return decorated_function
 
-register_camera_routes(app, camera, handle_errors)   # <--- передаём модуль camera
+register_camera_routes(app, camera, handle_errors)
+register_system_routes(app)
 
 # ===== STATIC FILES =====
 @app.route('/static/<path:filename>')

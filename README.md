@@ -87,6 +87,26 @@ Typical use cases include:
 
 ---
 
+### Wi-Fi Manager
+
+MeshCenter includes a built-in Wi-Fi manager for Raspberry Pi.
+
+Features:
+
+- View current Wi-Fi connection
+- Signal strength (RSSI and %)
+- RX/TX link bitrate
+- IP address and gateway
+- Internet connectivity status
+- Scan nearby Wi-Fi networks
+- Connect to new networks
+- Automatically reuse saved Wi-Fi credentials
+- Forget saved Wi-Fi profiles
+
+All Wi-Fi configuration is handled through Raspberry Pi's NetworkManager. Passwords are not stored by MeshCenter itself.
+
+---
+
 ## 📈 Telemetry
 
 - Device telemetry

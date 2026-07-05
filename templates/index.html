@@ -48,11 +48,11 @@
                 <button class="main-content-tab" id="mainTabVideo" onclick="switchMainTab('video')">
                     🎥 Camera
                 </button>
-                <!--
-                <button class="main-content-tab" id="mainTabPhoto" onclick="switchMainTab('photo')">
-                    📸 Photo
+
+                <button class="main-content-tab" id="mainTabSystem" onclick="switchMainTab('system')">
+                    🖥️ System
                 </button>
-                -->
+
                 <button class="main-content-tab" id="mainTabSettings" onclick="switchMainTab('settings')">
                     ⚙️ Settings
                 </button>
@@ -251,18 +251,88 @@
 
                         <div class="camera-actions-block">
 
-                            <button class="screenshot-btn" onclick="captureCameraPhoto()">
-                                📸 Capture
-                            </button>
+                                <button class="screenshot-btn" onclick="captureCameraPhoto()">
+                                    📸 Capture
+                                </button>
 
-                            <button class="screenshots-btn"
-                                    onclick="showScreenshots()">
-                                🖼 Gallery
-                            </button>
-
+                                <button class="screenshots-btn"
+                                        onclick="showScreenshots()">
+                                    🖼 Gallery
+                                </button>
+                            </div>
                         </div>
-
                     </div>
+                </div>
+            </div>
+
+            <!-- ===== SYSTEM VIEW ===== -->
+            <div class="system-view" id="systemView" style="display: none;">
+                <div class="system-panel">
+                    <div class="system-header">
+                        <div>
+                            <h3>🖥️ System</h3>
+                            <div class="system-subtitle">Raspberry Pi and network status</div>
+                        </div>
+                        <button class="system-refresh-btn" onclick="loadSystemNetwork()">🔄 Refresh</button>
+                    </div>
+
+                    <div class="system-grid">
+                        <div class="system-card">
+                            <div class="system-card-title">🌐 Network</div>
+                                <div class="system-row">
+                                    <span>SSID</span>
+                                    <strong id="systemWifiSsid">--</strong>
+                                </div>
+                            <div class="system-row">
+                                <span>Signal</span>
+                                <strong id="systemWifiSignal">--</strong>
+                            </div>
+                            <div class="system-row">
+                                <span>RSSI</span>
+                                <strong id="systemWifiRssi">--</strong>
+                            </div>
+                            <div class="system-row">
+                                <span>RX bitrate</span>
+                                <span id="systemRxRate">--</span>
+                            </div>
+                            <div class="system-row">
+                                <span>TX bitrate</span>
+                                <span id="systemTxRate">--</span>
+                            </div>
+                            <div class="system-row">
+                                <span>IP address</span>
+                                <strong id="systemWifiIp">--</strong>
+                            </div>
+                            <div class="system-row">
+                                <span>Gateway</span>
+                                <strong id="systemWifiGateway">--</strong>
+                            </div>
+                            <div class="system-row">
+                                <span>Internet</span>
+                                <strong id="systemInternet">--</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="system-card">
+                    <div class="system-card-title">
+                        📶 Wi-Fi Manager
+                    </div>
+                        <div class="wifi-toolbar">
+                            <button class="wifi-toggle-btn" onclick="toggleWifiNetworks()">
+                                <span>▾ Available networks</span>
+                                <span id="wifiNetworksCount">Show</span>
+                            </button>
+
+                            <button class="wifi-scan-action" onclick="loadWifiNetworks()">
+                                🔄 Scan
+                            </button>
+                        </div>
+                        <div id="wifiNetworksPanel" style="display:none; margin-top:12px;">
+                            <div id="wifiNetworksList">
+                                <div class="loading">No scan yet</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -491,22 +561,18 @@
 
     <!-- Status Dock -->
     <div class="status-dock" id="statusDock">
-        <div class="dock-main-row">
-            <div class="dock-section dock-left" id="dockLeft">
-                <span>Workspace</span>
-            </div>
-
-            <div class="dock-section dock-center" id="dockCenter">
-                <span class="dock-dot"></span>
-                <span>Ready</span>
-            </div>
-
-            <div class="dock-section dock-right" id="dockRight">
-                <span>Nodes</span>
-            </div>
+        <div class="dock-section dock-left" id="dockLeft">
+            <span>Workspace</span>
         </div>
 
-        <div class="dock-extra-row" id="dockExtraRow" style="display:none;"></div>
+        <div class="dock-section dock-center" id="dockCenter">
+            <span class="dock-dot"></span>
+            <span id="dockStatusText">Ready</span>
+        </div>
+
+        <div class="dock-section dock-right" id="dockRight">
+            <span id="dockContextText">MeshCenter</span>
+        </div>
     </div>
 
 </div>
@@ -638,5 +704,32 @@
 
 <script src="/static/chart.umd.min.js"></script>
 <script src="/static/chat.js"></script>
+
+<div class="modal-overlay" id="wifiConnectModal" style="display:none;" onclick="closeWifiConnectModal()">
+    <div class="modal-content wifi-connect-modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span>📶 Connect to Wi-Fi</span>
+            <button class="modal-close" onclick="closeWifiConnectModal()">✕</button>
+        </div>
+
+        <div class="modal-body">
+            <div class="wifi-connect-ssid" id="wifiConnectSsid">--</div>
+
+            <label class="wifi-connect-label">Password</label>
+            <input type="password" id="wifiConnectPassword" class="wifi-connect-input" placeholder="Wi-Fi password">
+
+            <label class="wifi-show-password">
+                <input type="checkbox" onchange="toggleWifiPasswordVisible(this)">
+                Show password
+            </label>
+
+            <div class="confirm-actions">
+                <button class="confirm-btn confirm-cancel" onclick="closeWifiConnectModal()">Cancel</button>
+                <button class="confirm-btn confirm-danger" onclick="connectSelectedWifi()">Connect</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 </body>
 </html>

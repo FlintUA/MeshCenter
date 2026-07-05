@@ -3724,6 +3724,7 @@ function switchMainTab(tab) {
         stopMessagePolling();
         updateStatusDock('system');
         loadSystemNetwork();
+        loadSystemInfo();
 
     } else if (tab === 'settings') {
         const btn = document.getElementById('mainTabSettings');
@@ -4153,6 +4154,44 @@ async function connectSelectedWifi() {
     closeWifiConnectModal();
 }
 
+async function loadSystemInfo() {
+    try {
+        const response = await fetch('/api/system/info');
+        const data = await response.json();
+
+        document.getElementById('systemHostname').textContent = data.hostname || '--';
+        document.getElementById('systemUptime').textContent = data.uptime || '--';
+
+        document.getElementById('systemCpuTemp').textContent =
+            data.cpu_temp !== null && data.cpu_temp !== undefined
+                ? `${data.cpu_temp}°C`
+                : '--';
+
+        document.getElementById('systemCpuLoad').textContent =
+            data.load_avg !== null && data.load_avg !== undefined
+                ? data.load_avg.toFixed(2)
+                : '--';
+
+        document.getElementById('systemRam').textContent =
+            data.ram_used_mb !== null && data.ram_total_mb !== null
+                ? `${data.ram_used_mb} / ${data.ram_total_mb} MB`
+                : '--';
+
+        document.getElementById('systemDisk').textContent =
+            data.disk_used_gb !== null && data.disk_total_gb !== null
+                ? `${data.disk_used_gb} / ${data.disk_total_gb} GB`
+                : '--';
+
+        document.getElementById('systemModel').textContent = data.model || '--';
+        document.getElementById('systemOs').textContent = data.os || '--';
+        document.getElementById('systemKernel').textContent = data.kernel || '--';
+
+    } catch (error) {
+        console.error('System info load error:', error);
+        showToast('❌ Failed to load system info', 'error');
+    }
+}
+
 // ============================================================
 // ЭКСПОРТ В ГЛОБАЛЬНУЮ ОБЛАСТЬ
 // ============================================================
@@ -4224,12 +4263,11 @@ window.runCustomTelemetryExport = runCustomTelemetryExport;
 window.updateStatusDock = updateStatusDock;
 window.syncDockVideoSettings = syncDockVideoSettings;
 window.loadSystemNetwork = loadSystemNetwork;
-
 window.openWifiConnectModal = openWifiConnectModal;
 window.closeWifiConnectModal = closeWifiConnectModal;
 window.toggleWifiPasswordVisible = toggleWifiPasswordVisible;
 window.connectSelectedWifi = connectSelectedWifi;
-
+window.loadSystemInfo = loadSystemInfo;
 window.getAppSettings = function() {
     return appSettings;
 };

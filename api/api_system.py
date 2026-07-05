@@ -6,6 +6,97 @@ import subprocess
 
 def register_system_routes(app):
 
+    @app.route("/api/system/info")
+    def api_system_info():
+        import os
+        import time
+        import shutil
+        import platform
+
+        result = {
+            "hostname": None,
+            "uptime": None,
+            "cpu_temp": None,
+            "load_avg": None,
+            "ram_total_mb": None,
+            "ram_used_mb": None,
+            "ram_free_mb": None,
+            "disk_total_gb": None,
+            "disk_used_gb": None,
+            "disk_free_gb": None,
+            "model": None,
+            "os": None,
+            "kernel": platform.release(),
+        }
+
+        try:
+            result["hostname"] = platform.node()
+        except Exception:
+            pass
+
+        try:
+            with open("/proc/uptime", "r") as f:
+                seconds = int(float(f.read().split()[0]))
+                days = seconds // 86400
+                hours = (seconds % 86400) // 3600
+                minutes = (seconds % 3600) // 60
+                result["uptime"] = f"{days}d {hours}h {minutes}m"
+        except Exception:
+            pass
+
+        try:
+            with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+                result["cpu_temp"] = round(int(f.read().strip()) / 1000, 1)
+        except Exception:
+            pass
+
+        try:
+            result["load_avg"] = os.getloadavg()[0]
+        except Exception:
+            pass
+
+        try:
+            mem = {}
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    key, value = line.split(":", 1)
+                    mem[key] = int(value.strip().split()[0])
+
+            total = mem.get("MemTotal", 0)
+            available = mem.get("MemAvailable", 0)
+            used = total - available
+
+            result["ram_total_mb"] = round(total / 1024)
+            result["ram_used_mb"] = round(used / 1024)
+            result["ram_free_mb"] = round(available / 1024)
+        except Exception:
+            pass
+
+        try:
+            disk = shutil.disk_usage("/")
+            result["disk_total_gb"] = round(disk.total / (1024 ** 3), 1)
+            result["disk_used_gb"] = round(disk.used / (1024 ** 3), 1)
+            result["disk_free_gb"] = round(disk.free / (1024 ** 3), 1)
+        except Exception:
+            pass
+
+        try:
+            with open("/proc/device-tree/model", "r") as f:
+                result["model"] = f.read().replace("\x00", "").strip()
+        except Exception:
+            pass
+
+        try:
+            with open("/etc/os-release", "r") as f:
+                for line in f:
+                    if line.startswith("PRETTY_NAME="):
+                        result["os"] = line.split("=", 1)[1].strip().strip('"')
+                        break
+        except Exception:
+            pass
+
+        return jsonify(result)
+
     def get_saved_wifi_names():
         try:
             out = subprocess.check_output(

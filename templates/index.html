@@ -273,69 +273,157 @@
                             <h3>🖥️ System</h3>
                             <div class="system-subtitle">Raspberry Pi and network status</div>
                         </div>
-                        <button class="system-refresh-btn" onclick="loadSystemNetwork()">🔄 Refresh</button>
+                        <button class="system-refresh-btn" onclick="loadSystemNetwork(); loadSystemInfo();">🔄 Refresh</button>
                     </div>
 
                     <div class="system-grid">
-                        <div class="system-card">
-                            <div class="system-card-title">🌐 Network</div>
+
+                        <!-- ================= LEFT COLUMN ================= -->
+
+                        <div class="system-column">
+
+                            <!-- Network -->
+                            <div class="system-card">
+                                <div class="system-card-title">🌐 Network</div>
+
                                 <div class="system-row">
                                     <span>SSID</span>
                                     <strong id="systemWifiSsid">--</strong>
                                 </div>
-                            <div class="system-row">
-                                <span>Signal</span>
-                                <strong id="systemWifiSignal">--</strong>
-                            </div>
-                            <div class="system-row">
-                                <span>RSSI</span>
-                                <strong id="systemWifiRssi">--</strong>
-                            </div>
-                            <div class="system-row">
-                                <span>RX bitrate</span>
-                                <span id="systemRxRate">--</span>
-                            </div>
-                            <div class="system-row">
-                                <span>TX bitrate</span>
-                                <span id="systemTxRate">--</span>
-                            </div>
-                            <div class="system-row">
-                                <span>IP address</span>
-                                <strong id="systemWifiIp">--</strong>
-                            </div>
-                            <div class="system-row">
-                                <span>Gateway</span>
-                                <strong id="systemWifiGateway">--</strong>
-                            </div>
-                            <div class="system-row">
-                                <span>Internet</span>
-                                <strong id="systemInternet">--</strong>
-                            </div>
-                        </div>
-                    </div>
 
-                    <div class="system-card">
-                    <div class="system-card-title">
-                        📶 Wi-Fi Manager
-                    </div>
-                        <div class="wifi-toolbar">
-                            <button class="wifi-toggle-btn" onclick="toggleWifiNetworks()">
-                                <span>▾ Available networks</span>
-                                <span id="wifiNetworksCount">Show</span>
-                            </button>
+                                <div class="system-row">
+                                    <span>Signal</span>
+                                    <strong id="systemWifiSignal">--</strong>
+                                </div>
 
-                            <button class="wifi-scan-action" onclick="loadWifiNetworks()">
-                                🔄 Scan
-                            </button>
-                        </div>
-                        <div id="wifiNetworksPanel" style="display:none; margin-top:12px;">
-                            <div id="wifiNetworksList">
-                                <div class="loading">No scan yet</div>
+                                <div class="system-row">
+                                    <span>RSSI</span>
+                                    <strong id="systemWifiRssi">--</strong>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>RX bitrate</span>
+                                    <span id="systemRxRate">--</span>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>TX bitrate</span>
+                                    <span id="systemTxRate">--</span>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>IP address</span>
+                                    <strong id="systemWifiIp">--</strong>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>Gateway</span>
+                                    <strong id="systemWifiGateway">--</strong>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>Internet</span>
+                                    <strong id="systemInternet">--</strong>
+                                </div>
+
                             </div>
+
+                            <!-- Wi-Fi Manager -->
+
+                            <div class="system-card">
+
+                                <div class="system-card-title">
+                                    📶 Wi-Fi Manager
+                                </div>
+
+                                <div class="wifi-toolbar">
+                                    <button class="wifi-toggle-btn" onclick="toggleWifiNetworks()">
+                                        <span>▾ Available networks</span>
+                                        <span id="wifiNetworksCount">Show</span>
+                                    </button>
+
+                                    <button class="wifi-scan-action" onclick="loadWifiNetworks()">
+                                        🔄 Scan
+                                    </button>
+                                </div>
+
+                                <div id="wifiNetworksPanel" style="display:none;margin-top:12px;">
+                                    <div id="wifiNetworksList">
+                                        <div class="loading">No scan yet</div>
+                                    </div>
+                                </div>
+
+                            </div>
+
                         </div>
+
+                        <!-- ================= RIGHT COLUMN ================= -->
+
+                        <div class="system-column">
+
+                            <div class="system-card">
+
+                                <div class="system-card-title">
+                                    🖥️ System Information
+                                </div>
+
+                                <div class="system-row">
+                                    <span>Hostname</span>
+                                    <strong id="systemHostname">--</strong>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>Uptime</span>
+                                    <strong id="systemUptime">--</strong>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>CPU temp</span>
+                                    <strong id="systemCpuTemp">--</strong>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>CPU load</span>
+                                    <strong id="systemCpuLoad">--</strong>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>RAM</span>
+                                    <strong id="systemRam">--</strong>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>Disk</span>
+                                    <strong id="systemDisk">--</strong>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>Model</span>
+                                    <strong id="systemModel">--</strong>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>OS</span>
+                                    <strong id="systemOs">--</strong>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>Kernel</span>
+                                    <strong id="systemKernel">--</strong>
+                                </div>
+
+                            </div>
+
+                            <!-- Следующей карточкой здесь будет Diagnostics -->
+
+                        </div>
+
                     </div>
                 </div>
+
             </div>
+
+
 
             <!-- ===== SETTINGS VIEW ===== -->
             <div class="settings-view" id="settingsView" style="display: none;">

@@ -87,7 +87,7 @@ Typical use cases include:
 
 ---
 
-### Wi-Fi Manager
+### 📶 Wi-Fi Manager
 
 MeshCenter includes a built-in Wi-Fi manager for Raspberry Pi.
 

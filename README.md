@@ -254,7 +254,7 @@ Create the data directory:
 
 bash
 mkdir -p /home/pi/MeshCenter/data
-[!NOTE]
+> [!NOTE]
 config.py contains installation‑specific paths and should never be committed to version control.
 
 8. Optional camera test
@@ -288,7 +288,8 @@ text
 http://<raspberry-pi-ip>:5000
 Find the IP with hostname -I. Stop the manual server with Ctrl+C before creating the systemd service.
 
-Running as a systemd service (production daemon)
+
+## Running as a systemd service (production daemon)
 1. Create the service file
 bash
 sudo nano /etc/systemd/system/meshcenter.service
@@ -342,7 +343,8 @@ Check group membership:
 
 bash
 id pi
-Production deployment (advanced)
+
+## Production deployment (advanced)
 While the systemd service described above runs MeshCenter directly with Python’s built‑in server.py, for higher load or multiple concurrent users you can use a production WSGI server.
 
 Option A: Use Gunicorn (recommended)
@@ -381,7 +383,8 @@ location / {
 location /static/ {
     alias /home/pi/MeshCenter/static/;
 }
-Wi‑Fi Manager permissions
+
+## Wi‑Fi Manager permissions
 The Wi‑Fi Manager calls iw and nmcli via sudo without a password. Add the following sudoers rule:
 
 bash
@@ -400,10 +403,11 @@ Test the commands:
 bash
 sudo -n /usr/sbin/iw dev wlan0 link
 sudo -n /usr/bin/nmcli connection show
-[!NOTE]
+> [!NOTE]
 The code expects the wireless interface to be wlan0 and uses NetworkManager. Adjust if your interface has a different name.
 
-System action permissions
+
+## System action permissions
 The following actions require sudo:
 
 Restart MeshCenter service
@@ -433,7 +437,8 @@ Test only the restart command:
 bash
 sudo -n /usr/bin/systemctl restart meshcenter.service
 systemctl status meshcenter.service --no-pager
-First‑run verification checklist
+
+## First‑run verification checklist
 After installation, verify these items in order:
 
 meshtastic --port /dev/ttyACM0 --info reads the radio.
@@ -467,7 +472,8 @@ curl -s http://127.0.0.1:5000/api/system/info | python3 -m json.tool
 curl -s http://127.0.0.1:5000/api/system/network | python3 -m json.tool
 curl -s http://127.0.0.1:5000/api/radio_health | python3 -m json.tool
 curl -s http://127.0.0.1:5000/api/system/log | python3 -m json.tool
-Data and backups
+
+## Data and backups
 MeshCenter stores all persistent data under DATA_DIR (default /home/pi/MeshCenter/data). Important files:
 
 text
@@ -490,7 +496,8 @@ tar -czf "$HOME/meshcenter-data-$(date +%F).tar.gz" -C "$HOME/MeshCenter" data c
 sudo systemctl start meshcenter.service
 Restore only onto a compatible version and verify ownership.
 
-Updating MeshCenter
+
+## Updating MeshCenter
 Back up first:
 
 bash
@@ -510,7 +517,8 @@ python -m py_compile server.py api/*.py system_log.py
 sudo systemctl start meshcenter.service
 If the browser shows old interface files, do a hard refresh (Ctrl+F5) or clear the cache.
 
-Project structure
+
+## Project structure
 text
 MeshCenter/
 ├── api/                    # Flask route modules
@@ -540,7 +548,8 @@ MeshCenter/
 └── README.md
 The project is being refactored from a monolithic server.py into modular components.
 
-API Reference
+
+## API Reference
 The web interface uses a REST‑like API. Endpoints are not considered stable yet and may change.
 
 Chat & nodes
@@ -595,7 +604,8 @@ GET    /api/system/log
 POST   /api/system/action
 Supported action values: restart_meshcenter, reboot, shutdown.
 
-Troubleshooting
+
+## Troubleshooting
 config.py not found
 bash
 cd ~/MeshCenter
@@ -636,7 +646,8 @@ Verify radio connectivity, channel settings, and that meshtastic --info works. C
 Browser shows old interface
 Use Ctrl+F5 or clear browser cache.
 
-Security notes
+
+## Security notes
 MeshCenter is designed for trusted local networks.
 
 No built‑in authentication – anyone who can reach the service can use it.
@@ -663,7 +674,8 @@ Keep Raspberry Pi OS and Meshtastic CLI updated.
 
 Back up data/ and config.py before upgrades.
 
-Known limitations
+
+## Known limitations
 English‑first interface (more languages planned).
 
 No built‑in authentication.
@@ -678,7 +690,8 @@ Photos stay local and are not sent over LoRa.
 
 REST API is internal and may change without notice.
 
-Roadmap
+
+## Roadmap
 Near‑term priorities:
 
 Improve persistent system logging and filtering
@@ -711,7 +724,8 @@ Multilingual interface
 
 Multi‑radio support
 
-Contributing
+
+## Contributing
 Contributions, documentation corrections and tested installation notes are welcome.
 
 A useful issue report includes:
@@ -732,10 +746,12 @@ Relevant entries from data/system_events.jsonl
 
 Please remove private data, Wi‑Fi credentials and channel keys before posting logs.
 
-License
+
+## License
 MeshCenter is released under the MIT License. See LICENSE.
 
-Acknowledgements
+
+## Acknowledgements
 The Meshtastic team and community
 
 The Raspberry Pi Foundation and Picamera2 maintainers
@@ -744,7 +760,8 @@ Open‑source contributors and testers
 
 MeshCenter is an independent community project and is not affiliated with or endorsed by the official Meshtastic project. Meshtastic® is a trademark of its respective owners.
 
-Author
+
+## Author
 Konstantin Vynohradov – FlintUA
 
 GitHub: https://github.com/FlintUA
@@ -754,10 +771,12 @@ Project: https://github.com/FlintUA/MeshCenter
 Website: https://elektroniker.help
 
 <p align="center"><strong>Made for the Meshtastic community.</strong></p>
-For Developers – Architecture and Extension Guide
+
+## For Developers – Architecture and Extension Guide
 This section is intended for contributors and developers who want to understand the codebase and add new features.
 
-High‑level architecture
+
+## High‑level architecture
 MeshCenter is a Flask web application that runs on a Raspberry Pi. It consists of several layers:
 
 Web server – Flask serves the UI (static files + templates) and provides a REST API.
@@ -788,7 +807,8 @@ Helpers – helpers.py provides common functions (normalise node IDs, format tim
 
 CLI wrapper – meshsrv.py wraps meshtastic subprocess calls.
 
-Module overview
+
+## Module overview
 server.py
 The main entry point. It:
 
@@ -875,7 +895,8 @@ chat.js – main client‑side logic (chat, nodes, telemetry, camera, system, se
 
 chart.umd.min.js – Chart.js for telemetry graphs.
 
-Background threads
+
+## Background threads
 These are started in server.py after initialisation:
 
 listen_meshtastic() – runs the listener and processes incoming packets.
@@ -888,7 +909,8 @@ telemetry_buffer_worker() – debounces telemetry updates.
 
 radio_health_worker() – updates radio health status every 30 seconds.
 
-How to extend MeshCenter
+
+## How to extend MeshCenter
 Add a new API endpoint
 Decide which module it belongs to (or create a new one in api/).
 
@@ -935,14 +957,16 @@ The UI fetches events via /api/system/log; you can filter by level and source.
 
 The log is stored as JSONL – each line is a JSON object. Use get_system_events() to read it.
 
-Debugging
+
+## Debugging
 Use print() statements with flush=True – they appear in the systemd journal (journalctl -u meshcenter.service -f).
 
 For API debugging, inspect the response payloads in the browser’s DevTools (Network tab).
 
 For frontend debugging, use console.log() and browser DevTools.
 
-Coding style and conventions
+
+## Coding style and conventions
 Python: follow PEP 8. Use 4‑space indentation.
 
 JavaScript: semi‑colons, 2‑space indentation, const/let, avoid var.
@@ -955,7 +979,8 @@ Use with state_lock: when accessing or modifying shared dictionaries (messages, 
 
 Use atomic JSON writes (safe_write_json) for all data persistence.
 
-Testing
+
+## Testing
 Currently, there is no automated test suite. Manual testing is recommended:
 
 Run the app, perform actions, check the UI and logs.

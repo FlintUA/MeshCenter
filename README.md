@@ -154,9 +154,12 @@ Special attention has been paid to:
 
 <img width="783" height="568" alt="power003" src="https://github.com/user-attachments/assets/ac1bb3ec-21a7-498b-8279-a5735cfe59c8" />
 
-<img width="1398" height="1261" alt="video001" src="https://github.com/user-attachments/assets/7d9dedd0-9013-45c6-9aaa-fe3a59eef8ab" />
+<img width="1396" height="1293" alt="system001" src="https://github.com/user-attachments/assets/4a93ab95-4e42-4b98-8d63-d6dac167a6d4" />
 
-<img width="1398" height="1254" alt="photo001" src="https://github.com/user-attachments/assets/b129ac36-40eb-4ca5-883f-918760f7d5be" />
+<img width="1396" height="1295" alt="photo002" src="https://github.com/user-attachments/assets/bffc4beb-da6e-40ed-8d27-9b6c5005af86" />
+
+<img width="733" height="850" alt="media_gallery" src="https://github.com/user-attachments/assets/d02fc7cd-e2a7-4a41-936e-b0f6b72a0cf9" />
+
 
 # Design Philosophy
 

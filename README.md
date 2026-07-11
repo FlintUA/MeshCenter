@@ -1,7 +1,7 @@
 <h1 align="center">MeshCenter</h1>
 
 <p align="center">
-A complete browser-based control center for MeshtasticВ® base stations running on Raspberry Pi.
+A complete browser-based control center for Meshtastic® base stations running on Raspberry Pi.
 </p>
 <p align="center">
 Messaging | Telemetry | Camera | Photo Gallery | Raspberry Pi
@@ -64,7 +64,7 @@ Typical use cases include:
 
 # Highlights
 
-## рџ’¬ Messaging
+## 💬 Messaging
 
 - Public channel messaging
 - Direct messages
@@ -76,7 +76,7 @@ Typical use cases include:
 
 ---
 
-## рџ“· Camera
+## 📷 Camera
 
 - Live MJPEG video streaming
 - High-resolution photo capture
@@ -87,7 +87,7 @@ Typical use cases include:
 
 ---
 
-### рџ“¶ Wi-Fi Manager
+### 📶 Wi-Fi Manager
 
 MeshCenter includes a built-in Wi-Fi manager for Raspberry Pi.
 
@@ -107,7 +107,7 @@ All Wi-Fi configuration is handled through Raspberry Pi's NetworkManager. Passwo
 
 ---
 
-## рџ“€ Telemetry
+## 📈 Telemetry
 
 - Device telemetry
 - Environmental sensors
@@ -118,7 +118,7 @@ All Wi-Fi configuration is handled through Raspberry Pi's NetworkManager. Passwo
 
 ---
 
-## рџ“Ў Node Management
+## 📡 Node Management
 
 - Automatic node discovery
 - Hardware information
@@ -129,7 +129,7 @@ All Wi-Fi configuration is handled through Raspberry Pi's NetworkManager. Passwo
 
 ---
 
-## вљЎ Optimized for Raspberry Pi
+## ⚡ Optimized for Raspberry Pi
 
 MeshCenter has been developed with Raspberry Pi Zero 2W as the primary target platform.
 
@@ -436,24 +436,24 @@ A typical installation looks like this:
 ```text
 meshcenter/
 
-в”њв”Ђв”Ђ api/
-в”њв”Ђв”Ђ camera/
-в”њв”Ђв”Ђ meshsrv/
-в”њв”Ђв”Ђ static/
-в”њв”Ђв”Ђ storage/
-в”њв”Ђв”Ђ telemetry/
-в”њв”Ђв”Ђ templates/
-в”њв”Ђв”Ђ utils/
+├── api/
+├── camera/
+├── meshsrv/
+├── static/
+├── storage/
+├── telemetry/
+├── templates/
+├── utils/
 
-в”њв”Ђв”Ђ data/
-в”њв”Ђв”Ђ docs/
-в”њв”Ђв”Ђ venv/
+├── data/
+├── docs/
+├── venv/
 
-в”њв”Ђв”Ђ config.py
-в”њв”Ђв”Ђ config.example.py
-в”њв”Ђв”Ђ requirements.txt
-в”њв”Ђв”Ђ server.py
-в””в”Ђв”Ђ README.md
+├── config.py
+├── config.example.py
+├── requirements.txt
+├── server.py
+└── README.md
 ```
 
 The `data` directory stores persistent information such as messages, telemetry history and application settings.
@@ -464,7 +464,7 @@ MeshCenter combines several independent subsystems into one control center. Each
 
 ---
 
-## рџ’¬ Messaging
+## 💬 Messaging
 
 MeshCenter provides a browser-based chat interface for Meshtastic communication.
 
@@ -503,7 +503,7 @@ Direct messages are shown as separate chats, making it easier to work with multi
 
 ---
 
-## рџ“Ў Node Management
+## 📡 Node Management
 
 MeshCenter automatically discovers nodes from the Meshtastic mesh and stores them locally.
 
@@ -557,7 +557,7 @@ This is useful for:
 
 ---
 
-## рџ“€ Telemetry
+## 📈 Telemetry
 
 MeshCenter displays telemetry received from Meshtastic devices and stores historical telemetry locally.
 
@@ -613,7 +613,7 @@ This makes it possible to observe long-term changes such as:
 
 ---
 
-## рџ“· Camera
+## 📷 Camera
 
 MeshCenter includes camera support based on Raspberry Pi Camera and Picamera2.
 
@@ -662,7 +662,7 @@ The gallery is useful for:
 
 ---
 
-## рџ–јпёЏ Photo Gallery
+## 🖼️ Photo Gallery
 
 MeshCenter stores captured photos inside the local data directory.
 
@@ -679,7 +679,7 @@ Screenshots and captured photos are stored locally and are not transmitted throu
 
 ---
 
-## вљ™пёЏ Local Storage
+## ⚙️ Local Storage
 
 MeshCenter stores application data locally using JSON files.
 
@@ -707,7 +707,7 @@ Local storage is useful because:
 
 ---
 
-## рџ§© Modular Architecture
+## 🧩 Modular Architecture
 
 MeshCenter is gradually moving from a single large server file to a modular architecture.
 
@@ -770,11 +770,11 @@ For Raspberry Pi Zero 2W, conservative camera settings are recommended.
 
 | Setting | Recommended |
 |---|---|
-| Video Resolution | 640 Г— 480 or 800 Г— 600 |
+| Video Resolution | 640 × 480 or 800 × 600 |
 | FPS | 8-15 |
 | JPEG Quality | 70-85 |
-| Photo Preview | 640 Г— 480 |
-| Photo Capture | 2592 Г— 1944 |
+| Photo Preview | 640 × 480 |
+| Photo Capture | 2592 × 1944 |
 
 Higher settings may work, but they increase CPU usage, memory usage and heat.
 
@@ -802,24 +802,24 @@ MeshCenter has been designed as a modular application. Each subsystem has its ow
 
 ```
 meshcenter/
-в”‚
-в”њв”Ђв”Ђ api/                # REST API endpoints
-в”њв”Ђв”Ђ camera/             # Camera subsystem
-в”њв”Ђв”Ђ meshsrv/            # Meshtastic communication layer
-в”њв”Ђв”Ђ storage/            # JSON storage helpers
-в”њв”Ђв”Ђ telemetry/          # Telemetry processing
-в”њв”Ђв”Ђ utils/              # Shared utility functions
-в”‚
-в”њв”Ђв”Ђ static/             # CSS, JavaScript, icons
-в”њв”Ђв”Ђ templates/          # HTML templates
-в”њв”Ђв”Ђ data/               # Persistent application data
-в”њв”Ђв”Ђ docs/               # Documentation
-в”‚
-в”њв”Ђв”Ђ server.py           # Main application
-в”њв”Ђв”Ђ config.py           # Local configuration
-в”њв”Ђв”Ђ config.example.py   # Example configuration
-в”њв”Ђв”Ђ requirements.txt
-в””в”Ђв”Ђ README.md
+│
+├── api/                # REST API endpoints
+├── camera/             # Camera subsystem
+├── meshsrv/            # Meshtastic communication layer
+├── storage/            # JSON storage helpers
+├── telemetry/          # Telemetry processing
+├── utils/              # Shared utility functions
+│
+├── static/             # CSS, JavaScript, icons
+├── templates/          # HTML templates
+├── data/               # Persistent application data
+├── docs/               # Documentation
+│
+├── server.py           # Main application
+├── config.py           # Local configuration
+├── config.example.py   # Example configuration
+├── requirements.txt
+└── README.md
 ```
 
 ---
@@ -830,21 +830,21 @@ MeshCenter consists of several independent modules that work together.
 
 ```
                     Web Browser
-                          в”‚
-                          в”‚ HTTP
-                          в–ј
+                          │
+                          │ HTTP
+                          ▼
                    Flask Application
-                          в”‚
-     в”Њв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”¬в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”¬в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”ђ
-     в”‚              в”‚              в”‚              в”‚
-     в–ј              в–ј              в–ј              в–ј
+                          │
+     ┌──────────────┬──────────────┬──────────────┐
+     │              │              │              │
+     ▼              ▼              ▼              ▼
  Messaging      Camera        Telemetry      REST API
-     в”‚              в”‚              в”‚
-     в””в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”јв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”
-                    в–ј
+     │              │              │
+     └──────────────┼──────────────┘
+                    ▼
              Meshtastic CLI
-                    в”‚
-                    в–ј
+                    │
+                    ▼
              LoRa Radio Device
 ```
 
@@ -1116,7 +1116,7 @@ The roadmap is intentionally conservative. Features are added only after they ha
 
 The following improvements are currently planned:
 
-### рџЊ¦ Weather Integration
+### 🌦 Weather Integration
 
 Integrate current weather information using external weather APIs.
 
@@ -1133,7 +1133,7 @@ The weather widget is intended to complement environmental telemetry from local 
 
 ---
 
-### рџ“€ Improved Telemetry
+### 📈 Improved Telemetry
 
 Future versions will extend telemetry visualization with:
 
@@ -1145,7 +1145,7 @@ Future versions will extend telemetry visualization with:
 
 ---
 
-### вљ™пёЏ Settings Editor
+### ⚙️ Settings Editor
 
 Configure MeshCenter directly from the browser without manually editing configuration files.
 
@@ -1159,7 +1159,7 @@ Possible features:
 
 ---
 
-### рџљЂ Performance Improvements
+### 🚀 Performance Improvements
 
 Continuous optimization remains an important goal.
 
@@ -1179,7 +1179,7 @@ These ideas are being considered for future releases.
 
 Their implementation depends on project maturity and available development time.
 
-### рџ§© Plugin Support
+### 🧩 Plugin Support
 
 A plugin architecture could allow optional modules without increasing the complexity of the core application.
 
@@ -1194,7 +1194,7 @@ Possible plugins:
 
 ---
 
-### рџ—є Interactive Network Map
+### 🗺 Interactive Network Map
 
 Display nearby nodes on an interactive map.
 
@@ -1208,7 +1208,7 @@ Potential features:
 
 ---
 
-### рџЊЌ Multi-language Interface
+### 🌍 Multi-language Interface
 
 Support additional user interface languages.
 
@@ -1223,7 +1223,7 @@ English will remain the primary project language.
 
 ---
 
-### рџ“¦ Additional Integrations
+### 📦 Additional Integrations
 
 Possible future integrations include:
 
@@ -1291,7 +1291,7 @@ Their work and support make projects like this possible.
 
 If you enjoy the project, consider supporting it by:
 
-- в­ђ Starring the repository
+- ⭐ Starring the repository
 - Reporting bugs
 - Suggesting new features
 - Sharing the project with other Meshtastic users
@@ -1329,12 +1329,12 @@ MeshCenter is an independent open-source project created for the Meshtastic comm
 
 It is **not affiliated with or endorsed by the official Meshtastic project**.
 
-MeshtasticВ® is a trademark of its respective owners.
+Meshtastic® is a trademark of its respective owners.
 
 ---
 
 <p align="center">
 
-**Made with вќ¤пёЏ for the Meshtastic community**
+**Made with ❤️ for the Meshtastic community**
 
 </p>

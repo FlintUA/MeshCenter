@@ -11,16 +11,22 @@
 <div class="app-container">
     <!-- Header -->
     <div class="header">
-        <h1 id="appTitle" class="app-title" title="Click to refresh page (Ctrl+F5)">
-            <img src="{{ url_for('static', filename='meshcenter_logo.png') }}" class="header-logo" alt="MeshCenter">
-            <span class="app-name">MeshCenter</span>
-            <span class="header-status" id="headerStatusText">
-            <span class="status-dot"></span>
-            <span class="status-label">Online</span>  <!-- надпись Online-->  
-        </span>
+        <div class="header-brand">
+            <h1 id="appTitle" class="app-title" title="Click to refresh page (Ctrl+F5)">
+                <img src="{{ url_for('static', filename='meshcenter_logo.png') }}" class="header-logo" alt="MeshCenter">
+                <span class="app-name">MeshCenter</span>
+            </h1>
 
-            
-        </h1>
+            <button type="button"
+                    class="header-status status-connecting"
+                    id="headerStatusText"
+                    title="Checking Meshtastic node status..."
+                    aria-label="Open System status">
+                <span class="status-dot"></span>
+                <span class="status-label">Checking</span>
+            </button>
+        </div>
+
         <div class="header-actions">
             <button class="header-btn" id="toggleSidebarBtn" title="Toggle nodes sidebar">
                 <svg viewBox="0 0 24 24" width="20" height="20">

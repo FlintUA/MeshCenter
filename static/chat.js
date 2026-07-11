@@ -290,6 +290,25 @@ document.addEventListener('DOMContentLoaded', async function() {
             }, 500);
         });
     }
+
+    const headerStatus = document.getElementById('headerStatusText');
+
+    if (headerStatus) {
+        headerStatus.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            switchMainTab('system');
+
+            setTimeout(() => {
+                document.querySelector('.radio-health-card')?.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'start'
+                });
+            }, 100);
+        });
+    }
+
 });
 
 function escapeHtml(value) {
@@ -516,10 +535,6 @@ async function loadMessages() {
 
         if (statusEl && statusEl.innerHTML !== '🔴 Error loading - refresh page') {
             statusEl.innerHTML = '🟢 Mesh online';
-            const headerStatus = document.getElementById('headerStatusText');
-            if (headerStatus) {
-                headerStatus.innerHTML = '<span class="status-dot"></span><span class="status-label">Online</span>'; //надпись Online
-            }
         }
         
         const allNodes = data.nodes || [];
@@ -3682,10 +3697,10 @@ function closeScreenshots() {
 // ============================================================
 function switchMainTab(tab) {
 
-    if (radioHealthTimer) {
-        clearInterval(radioHealthTimer);
-        radioHealthTimer = null;
-    }
+//    if (radioHealthTimer) {
+//        clearInterval(radioHealthTimer);
+//        radioHealthTimer = null;
+//    }
 
     if (tab === 'chats' && contextChatMode) {
         contextChatMode = false;
@@ -3790,15 +3805,9 @@ function switchMainTab(tab) {
         if (messagesView) messagesView.style.display = 'none';
         if (systemView) systemView.style.display = 'flex';
 
-        stopMessagePolling();
-        updateStatusDock('system');
         loadSystemNetwork();
         loadSystemInfo();
         loadRadioHealth();
-    
-        if (!radioHealthTimer) {
-        radioHealthTimer = setInterval(loadRadioHealth, 5000);
-        }
 
     } else if (tab === 'settings') {
         const btn = document.getElementById('mainTabSettings');
@@ -4166,11 +4175,13 @@ async function init() {
         switchMainTab('chats');
         
         if (statusEl) statusEl.innerHTML = '🟢 Mesh online';
-        const headerStatus = document.getElementById('headerStatusText');
-        if (headerStatus) {
-            headerStatus.innerHTML = '<span class="status-dot"></span><span class="status-label">Online</span>';
+
+        await loadRadioHealth();
+
+        if (!radioHealthTimer) {
+            radioHealthTimer = setInterval(loadRadioHealth, 5000);
         }
-        
+
         console.log('[INIT] Application ready');
         
     } catch (error) {
@@ -4288,15 +4299,131 @@ async function loadSystemInfo() {
     }
 }
 
+function updateHeaderNodeStatus(data, reachable = true) {
+    const headerStatus = document.getElementById('headerStatusText');
+    if (!headerStatus) return;
+
+    const labelEl = headerStatus.querySelector('.status-label');
+
+    const status = String(data?.status || '').toUpperCase();
+    const level = String(data?.level || '').toUpperCase();
+    const listenerRunning = Boolean(data?.listener_running);
+
+    let label = 'Disconnected';
+    let stateClass = 'status-offline';
+
+    if (!reachable) {
+        label = 'Disconnected';
+        stateClass = 'status-offline';
+
+    } else if (!listenerRunning || status === 'LISTENER_DOWN') {
+        label = 'Offline';
+        stateClass = 'status-error';
+
+    } else if (status === 'STARTING') {
+        label = 'Starting';
+        stateClass = 'status-warning';
+
+    } else if (status === 'PAUSED') {
+        label = 'Paused';
+        stateClass = 'status-warning';
+
+    } else if (status === 'NO_PACKETS') {
+        label = 'No Signal';
+        stateClass = 'status-error';
+
+    } else if (status === 'IDLE' || level === 'WARNING') {
+        label = status === 'IDLE' ? 'Idle' : 'Warning';
+        stateClass = 'status-warning';
+
+    } else if (level === 'ERROR') {
+        label = 'Error';
+        stateClass = 'status-error';
+
+    } else if (level === 'OK' || status === 'OK') {
+        label = 'Online';
+        stateClass = 'status-ok';
+
+    } else {
+        label = status ? status.replaceAll('_', ' ') : 'Unknown';
+        stateClass = 'status-warning';
+    }
+
+    headerStatus.classList.remove(
+        'status-connecting',
+        'status-ok',
+        'status-warning',
+        'status-error',
+        'status-offline'
+    );
+
+    headerStatus.classList.add(stateClass);
+
+    if (labelEl) {
+        labelEl.textContent = label;
+    }
+
+    const packetText =
+        data?.packet_age == null
+            ? 'never'
+            : `${data.packet_age} s ago`;
+
+    const listenerText =
+        listenerRunning
+            ? 'running'
+            : 'stopped';
+
+    const reason =
+        data?.status_reason ||
+        data?.recommendation ||
+        '';
+
+    headerStatus.title = reachable
+        ? `Radio: ${label} | Listener: ${listenerText} | Last packet: ${packetText}${reason ? ` | ${reason}` : ''} | Click to open System`
+        : 'MeshCenter status API is unavailable. Click to open System';
+
+    headerStatus.setAttribute(
+        'aria-label',
+        `${label}. Open System status`
+    );
+}
+
 async function loadRadioHealth() {
     try {
-        const [healthResponse, logResponse] = await Promise.all([
-            fetch('/api/radio_health'),
-            fetch('/api/system/log?limit=100')
-        ]);
+        const healthResponse = await fetch('/api/radio_health', {
+            cache: 'no-store'
+        });
+
+        if (!healthResponse.ok) {
+            throw new Error(`Radio health HTTP ${healthResponse.status}`);
+        }
 
         const data = await healthResponse.json();
-        const logData = await logResponse.json();
+
+        updateHeaderNodeStatus(data, true);
+
+        let logData = {
+            events: []
+        };
+
+        try {
+            const logResponse = await fetch(
+                '/api/system/log?limit=100',
+                {
+                    cache: 'no-store'
+                }
+            );
+
+            if (logResponse.ok) {
+                logData = await logResponse.json();
+            }
+
+        } catch (logError) {
+            console.warn(
+                'System log load error:',
+                logError
+            );
+        }
 
         const statusEl = document.getElementById('radioHealthStatus');
         const levelEl = document.getElementById('radioHealthLevel');
@@ -4400,6 +4527,7 @@ async function loadRadioHealth() {
             }
         }
     } catch (error) {
+        updateHeaderNodeStatus(null, false);
         console.error('Radio health load error:', error);
     }
 }

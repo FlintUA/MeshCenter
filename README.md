@@ -774,7 +774,7 @@ For Raspberry Pi Zero 2W, conservative camera settings are recommended.
 | FPS | 8-15 |
 | JPEG Quality | 70-85 |
 | Photo Preview | 640 × 480 |
-| Photo Capture | 2592 × 1944 |
+| Photo Capture | 3280 × 2464 |
 
 Higher settings may work, but they increase CPU usage, memory usage and heat.
 

@@ -16,7 +16,7 @@ LOCAL_NODE_ID = "!xxxxxxxx"        # Your Meshtastic node ID
 LOCAL_NODE_NAME = "My Meshtastic"  # Your node display name
 
 # ===== DATA STORAGE =====
-DATA_DIR = "/home/pi/mesh_web/data"
+DATA_DIR = "/home/pi/meshtastic/data"
 
 # ===== FILE PATHS (auto-generated from DATA_DIR) =====
 HISTORY_FILE = f"{DATA_DIR}/messages.json"

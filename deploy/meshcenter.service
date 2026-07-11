@@ -1,0 +1,14 @@
+[Unit]
+Description=MeshCenter
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/MeshCenter
+ExecStart=/home/pi/MeshCenter/venv/bin/python server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -16,7 +16,7 @@
             <span class="app-name">MeshCenter</span>
             <span class="header-status" id="headerStatusText">
             <span class="status-dot"></span>
-            <span class="status-label">Online</span>
+            <span class="status-label">Online</span>  <!-- надпись Online-->  
         </span>
 
             
@@ -162,14 +162,11 @@
                                 <div class="control-group video-resolution-group">
                                     <label>VIDEO</label>
                                     <select id="videoResolution" onchange="updateVideoSettings()">
-                                        <option value="320x240">320×240</option>
-                                        <option value="480x320">480×320</option>
-                                        <option value="640x480" selected>640×480</option>
-                                        <option value="800x600">800×600</option>
-                                        <option value="1024x768">1024×768</option>
+                                        <option value="640x480">640×480 (VGA)</option>
+                                        <option value="800x600">800×600 (SVGA)</option>
                                         <option value="1280x720">1280×720 (HD)</option>
-                                        <option value="1280x960">1280×960</option>
-                                        <option value="1920x1080">1920×1080 (FHD)</option>
+                                        <option value="1640x1232">1640×1232 (Native)</option>
+                                        <option value="1920x1080">1920×1080 (Full HD)</option>
                                     </select>
                                 </div>
 
@@ -196,9 +193,9 @@
                                             id="videoQuality"
                                             min="40"
                                             max="90"
-                                            value="75"
+                                            value="80"
                                             oninput="updateVideoSettings()">
-                                        <span id="videoQualityLabel">75%</span>
+                                        <span id="videoQualityLabel">90%</span>
                                     </div>
                                 </div>
                             </div>
@@ -216,9 +213,13 @@
                                     <select id="photoResolution"
                                             onchange="updatePhotoSettings(false)">
                                         <option value="640x480">640×480</option>
-                                        <option value="1280x720">1280×720</option>
-                                        <option value="1920x1080">1920×1080</option>
+                                        <option value="800x600">800×600</option>
+                                        <option value="1024x768">1024×768</option>
+                                        <option value="1280x720">1280×720 (HD)</option>
+                                        <option value="1600x1200">1600×1200</option>
+                                        <option value="1920x1080">1920×1080 (Full HD)</option>
                                         <option value="2592x1944">2592×1944</option>
+                                        <option value="3280x2464">3280×2464</option>
                                     </select>
                                 </div>
 
@@ -276,11 +277,11 @@
                         <button class="system-refresh-btn" onclick="loadSystemNetwork(); loadSystemInfo();">🔄 Refresh</button>
                     </div>
 
-                    <div class="system-grid">
+                    <div class="system-layout">
 
                         <!-- ================= LEFT COLUMN ================= -->
 
-                        <div class="system-column">
+                        <div class="system-left-column">
 
                             <!-- Network -->
                             <div class="system-card">
@@ -359,7 +360,7 @@
 
                         <!-- ================= RIGHT COLUMN ================= -->
 
-                        <div class="system-column">
+                        <div class="system-right-column">
 
                             <div class="system-card">
 
@@ -414,7 +415,99 @@
 
                             </div>
 
-                            <!-- Следующей карточкой здесь будет Diagnostics -->
+                            <!-- Diagnostics -->
+                             <div class="system-card">
+
+                            <div class="system-card-title">
+                                📡 Radio Health
+                            </div>
+
+                            <div class="system-row">
+                                <span>Status</span>
+                                <strong id="radioHealthStatus">--</strong>
+                            </div>
+
+                            <div class="system-row">
+                                <span>Level</span>
+                                <strong id="radioHealthLevel">--</strong>
+                            </div>
+
+                            <div class="system-row">
+                                <span>Listener</span>
+                                <strong id="radioHealthListener">--</strong>
+                            </div>
+
+                            <div class="system-row">
+                                <span>Last packet</span>
+                                <strong id="radioHealthPacket">--</strong>
+                            </div>
+
+                            <div class="system-row">
+                                <span>Telemetry</span>
+                                <strong id="radioHealthTelemetry">--</strong>
+                            </div>
+
+                            <div class="system-row">
+                                <span>Last send</span>
+                                <strong id="radioHealthSend">--</strong>
+                            </div>
+
+                            <div class="system-row">
+                                <span>Restarts</span>
+                                <strong id="radioHealthRestart">0</strong>
+                            </div>
+
+                            <div
+                                id="radioHealthRecommendation"
+                                class="radio-health-recommendation">
+                                --
+                            </div>
+
+                            <div class="system-actions-section">
+                                <div class="system-actions-title">⚙️ Actions</div>
+                                <div class="system-actions-grid">
+                                    <button id="restartListenerBtn" class="system-action-btn" onclick="restartListener()">
+                                        🔄 Restart Listener
+                                    </button>
+                                    <button id="restartMeshCenterBtn" class="system-action-btn" onclick="runSystemAction('restart_meshcenter', this)">
+                                        ♻️ Restart MeshCenter
+                                    </button>
+                                    <button id="rebootSystemBtn" class="system-action-btn warning" onclick="runSystemAction('reboot', this)">
+                                        🔁 Restart Raspberry Pi
+                                    </button>
+                                    <button id="shutdownSystemBtn" class="system-action-btn danger" onclick="runSystemAction('shutdown', this)">
+                                        ⏻ Shutdown
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="radio-history-section">
+
+                                <button
+                                    type="button"
+                                    id="radioHistoryToggle"
+                                    class="radio-history-toggle"
+                                    onclick="toggleRadioHealthHistory()"
+                                    aria-expanded="false"
+                                    aria-controls="radioHealthHistoryPanel"
+                                >
+                                    <span>📋 System Log</span>
+                                    <span id="radioHistoryArrow">▾</span>
+                                </button>
+
+                                <div
+                                    id="radioHealthHistoryPanel"
+                                    class="radio-history-panel"
+                                    style="display:none;"
+                                >
+                                    <div id="radioHealthHistory">
+                                        <div class="radio-history-empty">No events yet</div>
+                                    </div>
+                                </div>
+
+                            </div>
+
+                        </div>
 
                         </div>
 

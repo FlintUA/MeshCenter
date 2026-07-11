@@ -121,7 +121,7 @@ All system actions are protected by narrowly scoped `sudo` permissions and requi
 
 | Chat & Nodes | Telemetry | Camera | System |
 |--------------|-----------|--------|--------|
-| <img width="300" src="https://github.com/user-attachments/assets/55839039-c167-489e-8122-616cfa56f1af" alt="Chat"> | <img width="300" src="https://github.com/user-attachments/assets/d3922ae4-0bb3-4a37-9757-af0a5572cf45" alt="Telemetry"> | <img width="300" src="https://github.com/user-attachments/assets/7d9dedd0-9013-45c6-9aaa-fe3a59eef8ab" alt="Camera"> | <img width="300" src="[https://github.com/user-attachments/assets/92e09683-3cd7-4dad-9af5-edfa25a050ca](https://github.com/user-attachments/assets/bfea66e7-7e27-425c-b5fe-05305a4d2431)" alt="System"> |
+| <img width="300" src="https://github.com/user-attachments/assets/55839039-c167-489e-8122-616cfa56f1af" alt="Chat"> | <img width="300" src="https://github.com/user-attachments/assets/d3922ae4-0bb3-4a37-9757-af0a5572cf45" alt="Telemetry"> | <img width="300" src="https://github.com/user-attachments/assets/7d9dedd0-9013-45c6-9aaa-fe3a59eef8ab" alt="Camera">
 
 More screenshots:  
 - [Main screen](https://github.com/user-attachments/assets/92e09683-3cd7-4dad-9af5-edfa25a050ca)  

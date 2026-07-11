@@ -708,7 +708,7 @@ function updateChatHeaderStatus() {
         }
         if (age.includes('day') || (age.includes('h') && parseInt(age) > 24)) {
             statusIcon = '🔴';
-            statusText = 'Offline';
+            statusText = 'Radio Offline';
         }
     }
     
@@ -3923,7 +3923,7 @@ async function loadSystemNetwork() {
         document.getElementById('systemWifiGateway').textContent = data.gateway || '--';
 
         document.getElementById('systemInternet').textContent =
-            data.internet ? '🟢 Connected' : '🔴 Offline';
+            data.internet ? '🟢 Connected' : '🔴 Radio Offline';
 
     } catch (error) {
         console.error('System network load error:', error);

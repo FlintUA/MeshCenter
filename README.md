@@ -155,7 +155,7 @@ The instructions below describe a clean installation on **Raspberry Pi OS Bookwo
 ### 2. Prepare Raspberry Pi OS
 
 Update the system:
-```bash
+
 sudo apt update
 sudo apt full-upgrade -y
 sudo reboot

@@ -1,10 +1,5 @@
 # MeshCenter
 
-> This document was converted to GitHub Markdown format.
-> Image links and emoji from the original README have been preserved where available.
-
-# MeshCenter
-
 <p align="center">
   <strong>Browser-based control center for a Meshtastic® base station running on Raspberry Pi</strong>
 </p>

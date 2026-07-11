@@ -3142,12 +3142,18 @@ body {
 /* ============================================================
    HEADER / BRAND
    ============================================================ */
+.header-brand {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
 
 .app-title {
     cursor: pointer;
     display: flex;
     align-items: center;
     gap: 8px;
+    margin: 0;
     font-size: 32px;
     font-weight: 600;
 }
@@ -3174,18 +3180,36 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    color: #3ddc84;
-    padding: 0;
     margin-left: 10px;
+    padding: 4px 6px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #b7c1d6;
+    font: inherit;
     white-space: nowrap;
+    cursor: pointer;
+    transition:
+        background-color .18s ease,
+        color .18s ease,
+        opacity .18s ease;
+}
+
+.header-status:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.header-status:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
 }
 
 .status-dot {
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: #3ddc84;
-    box-shadow: 0 0 10px rgba(61, 220, 132, 0.65);
+    background: currentColor;
+    box-shadow: 0 0 10px currentColor;
     flex: 0 0 auto;
 }
 
@@ -3195,6 +3219,42 @@ body {
     line-height: 1;
 }
 
+.header-status.status-ok {
+    color: #3ddc84;
+}
+
+.header-status.status-warning {
+    color: #f3b63f;
+}
+
+.header-status.status-error {
+    color: #ff6262;
+}
+
+.header-status.status-offline {
+    color: #9aa4b7;
+}
+
+.header-status.status-connecting {
+    color: #8fb8ff;
+}
+
+.header-status.status-connecting .status-dot {
+    animation: header-status-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes header-status-pulse {
+    0%,
+    100% {
+        opacity: .45;
+        transform: scale(.85);
+    }
+
+    50% {
+        opacity: 1;
+        transform: scale(1.05);
+    }
+}
 
 /* ============================================================
    STATUS DOCK

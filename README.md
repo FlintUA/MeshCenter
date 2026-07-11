@@ -131,8 +131,7 @@ More screenshots:
 - [Power telemetry](https://github.com/user-attachments/assets/ac1bb3ec-21a7-498b-8279-a5735cfe59c8)  
 - [Live camera](https://github.com/user-attachments/assets/de30ce3a-3c48-4c17-8d5c-515a4b50a087)
 - [Photo gallery](https://github.com/user-attachments/assets/b129ac36-40eb-4ca5-883f-918760f7d5be)
-- [System]([https://github.com/user-attachments/assets/92e09683-3cd7-4dad-9af5-edfa25a050ca](https://github.com/user-attachments/assets/bfea66e7-7e27-425c-b5fe-05305a4d2431))  
-
+- [System](https://github.com/user-attachments/assets/bfea66e7-7e27-425c-b5fe-05305a4d2431)
 
 ---
 

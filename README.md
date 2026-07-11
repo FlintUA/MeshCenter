@@ -1,7 +1,12 @@
 # MeshCenter
 
+> This document was converted to GitHub Markdown format.
+> Image links and emoji from the original README have been preserved where available.
+
+# MeshCenter
+
 <p align="center">
-  <strong>Browser-based control center for a Meshtastic® base station running on Raspberry Pi</strong>
+  <strong>Browser-based control center for a MeshtasticВ® base station running on Raspberry Pi</strong>
 </p>
 
 <p align="center">
@@ -9,11 +14,11 @@
 </p>
 
 <p align="center">
-  <a href="#features">Features</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#usage">Usage</a> •
-  <a href="#api">API</a> •
-  <a href="#development">Development</a> •
+  <a href="#features">Features</a> вЂў
+  <a href="#installation">Installation</a> вЂў
+  <a href="#usage">Usage</a> вЂў
+  <a href="#api">API</a> вЂў
+  <a href="#development">Development</a> вЂў
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
@@ -27,23 +32,23 @@
 </p>
 
 > [!IMPORTANT]
-> MeshCenter is under active development. It is intended for **trusted local networks** and currently has **no built‑in user authentication**. **Do not expose port `5000` directly to the Internet.**  
+> MeshCenter is under active development. It is intended for **trusted local networks** and currently has **no builtвЂ‘in user authentication**. **Do not expose port `5000` directly to the Internet.**  
 > If you need remote access, use a VPN (WireGuard, Tailscale) or an authenticated reverse proxy.
 
 ---
 
 ## Overview
 
-MeshCenter is a lightweight Flask web application that turns a Raspberry Pi into a permanent, browser‑accessible control center for a USB‑connected Meshtastic node.
+MeshCenter is a lightweight Flask web application that turns a Raspberry Pi into a permanent, browserвЂ‘accessible control center for a USBвЂ‘connected Meshtastic node.
 
-It complements the official Meshtastic applications – the official apps remain the recommended tools for firmware installation and full radio configuration. MeshCenter focuses on **day‑to‑day operation** of a fixed or portable station:
+It complements the official Meshtastic applications вЂ“ the official apps remain the recommended tools for firmware installation and full radio configuration. MeshCenter focuses on **dayвЂ‘toвЂ‘day operation** of a fixed or portable station:
 
-- Public‑channel and direct messaging
+- PublicвЂ‘channel and direct messaging
 - Automatic node discovery and node management
 - Device, environmental and power telemetry with historical charts and export
 - Raspberry Pi Camera live view, photo capture and local gallery
 - Raspberry Pi system and network information
-- Wi‑Fi scanning, connection and saved‑profile management
+- WiвЂ‘Fi scanning, connection and savedвЂ‘profile management
 - Radio health monitoring and persistent event logging
 - Controlled listener, service, reboot and shutdown actions
 
@@ -53,50 +58,50 @@ The primary target is Raspberry Pi Zero 2W, but Raspberry Pi 3, 4 and 5 also wor
 
 ## Features
 
-### 💬 Messaging
+### рџ’¬ Messaging
 - LongFast/channel messaging on channel index `0`
 - Direct messages to individual node IDs
 - Local chat history with unread counters
 - Emoji picker
-- Separate channel and direct‑message conversations
-- Ignored‑node handling
+- Separate channel and directвЂ‘message conversations
+- IgnoredвЂ‘node handling
 - Automatic refresh and local cache invalidation after sending
 
-### 📡 Nodes
+### рџ“Ў Nodes
 - Node discovery from Meshtastic listener output and `meshtastic --info`
 - Long name, short name, node ID, hardware model and role
-- Last‑seen time, RSSI, SNR, hop information and relay data when available
+- LastвЂ‘seen time, RSSI, SNR, hop information and relay data when available
 - Favourites and ignore list
 - CSV and JSON import/export
 - Duplicate detection and merge tools
 - Rescan and cleanup actions
 
-### 📊 Telemetry
+### рџ“Љ Telemetry
 - Temperature, relative humidity and barometric pressure
 - Voltage, current and calculated power
 - Battery estimate, channel utilisation, air utilisation and node uptime
 - Configurable history interval (5 min to 1 hour)
 - Historical charts for environment and power (with zoomable time ranges)
 - CSV/JSON telemetry export
-- Local history storage with bounded retention (up to 26 000 records)
+- Local history storage with bounded retention (up to 26вЂЇ000 records)
 
-Typical tested sensors include BME280‑class environmental telemetry and INA226‑class power telemetry when exposed by the Meshtastic node.
+Typical tested sensors include BME280вЂ‘class environmental telemetry and INA226вЂ‘class power telemetry when exposed by the Meshtastic node.
 
-### 🎥 Camera and Gallery
+### рџЋҐ Camera and Gallery
 - Raspberry Pi Camera support through Picamera2
-- Browser‑compatible MJPEG live stream with adjustable resolution, FPS and JPEG quality
-- Separate video and still‑photo settings
-- High‑resolution photo capture (up to 3280×2464)
+- BrowserвЂ‘compatible MJPEG live stream with adjustable resolution, FPS and JPEG quality
+- Separate video and stillвЂ‘photo settings
+- HighвЂ‘resolution photo capture (up to 3280Г—2464)
 - Local gallery with individual and bulk deletion
 - Dated screenshot directory structure (`YYYY/MM/DD/`)
 - Automatic gallery cleanup (size and age limits)
 
 Photos are stored locally on the Raspberry Pi. They are **not** transmitted over Meshtastic.
 
-### 🖥️ System Tab (new)
+### рџ–ҐпёЏ System Tab (new)
 - **System information**: hostname, uptime, CPU temperature, load average, RAM, disk usage, Raspberry Pi model, OS, kernel version
 - **Network information**: current SSID, RSSI, signal percentage, RX/TX bitrate, IP, gateway, Internet reachability
-- **Wi‑Fi Manager**:
+- **WiвЂ‘Fi Manager**:
   - Scan nearby networks (uses `iw` and `nmcli`)
   - Connect to a network with password (supports saved profiles)
   - Forget saved profiles
@@ -119,9 +124,9 @@ All system actions are protected by narrowly scoped `sudo` permissions and requi
 
 > Click to enlarge. The interface is continuously improving.
 
-| Chat & Nodes | Telemetry | Camera |
-|--------------|-----------|--------|
-| <img width="300" src="https://github.com/user-attachments/assets/55839039-c167-489e-8122-616cfa56f1af" alt="Chat"> | <img width="300" src="https://github.com/user-attachments/assets/d3922ae4-0bb3-4a37-9757-af0a5572cf45" alt="Telemetry"> | <img width="300" src="https://github.com/user-attachments/assets/de30ce3a-3c48-4c17-8d5c-515a4b50a087" alt="Camera">
+| Chat & Nodes | Telemetry | Camera | System |
+|--------------|-----------|--------|--------|
+| <img width="300" src="https://github.com/user-attachments/assets/55839039-c167-489e-8122-616cfa56f1af" alt="Chat"> | <img width="300" src="https://github.com/user-attachments/assets/d3922ae4-0bb3-4a37-9757-af0a5572cf45" alt="Telemetry"> | <img width="300" src="https://github.com/user-attachments/assets/7d9dedd0-9013-45c6-9aaa-fe3a59eef8ab" alt="Camera"> | <img width="300" src="https://github.com/user-attachments/assets/92e09683-3cd7-4dad-9af5-edfa25a050ca" alt="System"> |
 
 More screenshots:  
 - [Main screen](https://github.com/user-attachments/assets/92e09683-3cd7-4dad-9af5-edfa25a050ca)  
@@ -129,33 +134,32 @@ More screenshots:
 - [Sidebar](https://github.com/user-attachments/assets/84e56a8d-d65f-4877-a9e1-425c7da095cb)  
 - [Environment telemetry](https://github.com/user-attachments/assets/d3922ae4-0bb3-4a37-9757-af0a5572cf45)  
 - [Power telemetry](https://github.com/user-attachments/assets/ac1bb3ec-21a7-498b-8279-a5735cfe59c8)  
-- [Live camera](https://github.com/user-attachments/assets/de30ce3a-3c48-4c17-8d5c-515a4b50a087)
-- [Meida gallery](https://github.com/user-attachments/assets/4bdd9d8c-07d2-41e3-aeb3-c4ae18277b1e)
-- [System](https://github.com/user-attachments/assets/bfea66e7-7e27-425c-b5fe-05305a4d2431)
+- [Live camera](https://github.com/user-attachments/assets/7d9dedd0-9013-45c6-9aaa-fe3a59eef8ab)  
+- [Photo gallery](https://github.com/user-attachments/assets/b129ac36-40eb-4ca5-883f-918760f7d5be)
 
 ---
 
 ## Installation
 
-The instructions below describe a clean installation on **Raspberry Pi OS Bookworm** (32‑bit or 64‑bit). Commands use the example user `pi`. Replace `pi` and `/home/pi` with your actual Linux user and home directory.
+The instructions below describe a clean installation on **Raspberry Pi OS Bookworm** (32вЂ‘bit or 64вЂ‘bit). Commands use the example user `pi`. Replace `pi` and `/home/pi` with your actual Linux user and home directory.
 
 ### 1. Hardware requirements
 
 **Required:**
 - Raspberry Pi Zero 2W, 3, 4 or 5
-- Reliable microSD card (16 GB minimum, 32 GB recommended)
+- Reliable microSD card (16вЂЇGB minimum, 32вЂЇGB recommended)
 - Stable power supply
-- Wi‑Fi or Ethernet connection
-- Meshtastic‑compatible device connected by USB serial (tested with `/dev/ttyACM0`)
+- WiвЂ‘Fi or Ethernet connection
+- MeshtasticвЂ‘compatible device connected by USB serial (tested with `/dev/ttyACM0`)
 
 **Optional:**
-- Raspberry Pi Camera supported by Picamera2 (official or third‑party)
+- Raspberry Pi Camera supported by Picamera2 (official or thirdвЂ‘party)
 - Meshtastic environmental or power telemetry sensors
 
 ### 2. Prepare Raspberry Pi OS
 
 Update the system:
-
+```bash
 sudo apt update
 sudo apt full-upgrade -y
 sudo reboot
@@ -190,7 +194,7 @@ cd ~
 git clone https://github.com/FlintUA/MeshCenter.git
 cd MeshCenter
 5. Create a virtual environment
-Use --system-site-packages to allow access to the system‑installed Picamera2:
+Use --system-site-packages to allow access to the systemвЂ‘installed Picamera2:
 
 bash
 python3 -m venv --system-site-packages venv
@@ -211,7 +215,7 @@ With the virtual environment active, test communication:
 
 bash
 meshtastic --port /dev/ttyACM0 --info
-Record the local node ID (e.g. !067a40fa) and the long name from the output. Do not continue until this command works without permission or serial‑port errors.
+Record the local node ID (e.g. !067a40fa) and the long name from the output. Do not continue until this command works without permission or serialвЂ‘port errors.
 
 7. Create config.py
 bash
@@ -254,8 +258,8 @@ Create the data directory:
 
 bash
 mkdir -p /home/pi/MeshCenter/data
-> [!NOTE]
-config.py contains installation‑specific paths and should never be committed to version control.
+[!NOTE]
+config.py contains installationвЂ‘specific paths and should never be committed to version control.
 
 8. Optional camera test
 Check that the camera is detected:
@@ -288,8 +292,7 @@ text
 http://<raspberry-pi-ip>:5000
 Find the IP with hostname -I. Stop the manual server with Ctrl+C before creating the systemd service.
 
-
-## Running as a systemd service (production daemon)
+Running as a systemd service (production daemon)
 1. Create the service file
 bash
 sudo nano /etc/systemd/system/meshcenter.service
@@ -333,7 +336,7 @@ Own (or be able to write to) the data directory
 
 Belong to the dialout group for USB serial access
 
-Have the sudo permissions described below for Wi‑Fi and system actions
+Have the sudo permissions described below for WiвЂ‘Fi and system actions
 
 Set ownership:
 
@@ -343,9 +346,8 @@ Check group membership:
 
 bash
 id pi
-
-## Production deployment (advanced)
-While the systemd service described above runs MeshCenter directly with Python’s built‑in server.py, for higher load or multiple concurrent users you can use a production WSGI server.
+Production deployment (advanced)
+While the systemd service described above runs MeshCenter directly with PythonвЂ™s builtвЂ‘in server.py, for higher load or multiple concurrent users you can use a production WSGI server.
 
 Option A: Use Gunicorn (recommended)
 Install Gunicorn in the virtual environment:
@@ -353,7 +355,7 @@ Install Gunicorn in the virtual environment:
 bash
 source ~/MeshCenter/venv/bin/activate
 pip install gunicorn
-Create a WSGI entry point (e.g. wsgi.py – already present in the project root):
+Create a WSGI entry point (e.g. wsgi.py вЂ“ already present in the project root):
 
 python
 from server import app as application
@@ -383,9 +385,8 @@ location / {
 location /static/ {
     alias /home/pi/MeshCenter/static/;
 }
-
-## Wi‑Fi Manager permissions
-The Wi‑Fi Manager calls iw and nmcli via sudo without a password. Add the following sudoers rule:
+WiвЂ‘Fi Manager permissions
+The WiвЂ‘Fi Manager calls iw and nmcli via sudo without a password. Add the following sudoers rule:
 
 bash
 sudo visudo -f /etc/sudoers.d/meshcenter-wifi
@@ -403,11 +404,10 @@ Test the commands:
 bash
 sudo -n /usr/sbin/iw dev wlan0 link
 sudo -n /usr/bin/nmcli connection show
-> [!NOTE]
+[!NOTE]
 The code expects the wireless interface to be wlan0 and uses NetworkManager. Adjust if your interface has a different name.
 
-
-## System action permissions
+System action permissions
 The following actions require sudo:
 
 Restart MeshCenter service
@@ -437,8 +437,7 @@ Test only the restart command:
 bash
 sudo -n /usr/bin/systemctl restart meshcenter.service
 systemctl status meshcenter.service --no-pager
-
-## First‑run verification checklist
+FirstвЂ‘run verification checklist
 After installation, verify these items in order:
 
 meshtastic --port /dev/ttyACM0 --info reads the radio.
@@ -457,7 +456,7 @@ Telemetry updates appear when the local node transmits telemetry.
 
 The System tab shows Raspberry Pi and network information.
 
-Wi‑Fi scan works without a password prompt.
+WiвЂ‘Fi scan works without a password prompt.
 
 Restart Listener creates events in the System Log.
 
@@ -472,22 +471,21 @@ curl -s http://127.0.0.1:5000/api/system/info | python3 -m json.tool
 curl -s http://127.0.0.1:5000/api/system/network | python3 -m json.tool
 curl -s http://127.0.0.1:5000/api/radio_health | python3 -m json.tool
 curl -s http://127.0.0.1:5000/api/system/log | python3 -m json.tool
-
-## Data and backups
+Data and backups
 MeshCenter stores all persistent data under DATA_DIR (default /home/pi/MeshCenter/data). Important files:
 
 text
 data/
-├── camera_config.json      # Camera settings
-├── chats.json              # Chat metadata & unread counts
-├── deleted_dm.json         # List of deleted DM chats (soft deletion)
-├── messages.json           # Chat message history
-├── nodes.json              # Discovered and imported nodes
-├── sensors.json            # Latest sensor values
-├── settings.json           # User preferences (units)
-├── system_events.jsonl     # Persistent system log (JSONL)
-├── telemetry_history.json  # Historical telemetry data
-└── screenshots/            # Captured images (YYYY/MM/DD/...)
+в”њв”Ђв”Ђ camera_config.json      # Camera settings
+в”њв”Ђв”Ђ chats.json              # Chat metadata & unread counts
+в”њв”Ђв”Ђ deleted_dm.json         # List of deleted DM chats (soft deletion)
+в”њв”Ђв”Ђ messages.json           # Chat message history
+в”њв”Ђв”Ђ nodes.json              # Discovered and imported nodes
+в”њв”Ђв”Ђ sensors.json            # Latest sensor values
+в”њв”Ђв”Ђ settings.json           # User preferences (units)
+в”њв”Ђв”Ђ system_events.jsonl     # Persistent system log (JSONL)
+в”њв”Ђв”Ђ telemetry_history.json  # Historical telemetry data
+в””в”Ђв”Ђ screenshots/            # Captured images (YYYY/MM/DD/...)
 To back up:
 
 bash
@@ -496,8 +494,7 @@ tar -czf "$HOME/meshcenter-data-$(date +%F).tar.gz" -C "$HOME/MeshCenter" data c
 sudo systemctl start meshcenter.service
 Restore only onto a compatible version and verify ownership.
 
-
-## Updating MeshCenter
+Updating MeshCenter
 Back up first:
 
 bash
@@ -517,40 +514,38 @@ python -m py_compile server.py api/*.py system_log.py
 sudo systemctl start meshcenter.service
 If the browser shows old interface files, do a hard refresh (Ctrl+F5) or clear the cache.
 
-
-## Project structure
+Project structure
 text
 MeshCenter/
-├── api/                    # Flask route modules
-│   ├── api_camera.py       # Camera endpoints
-│   ├── api_chat.py         # Chat & send endpoints
-│   ├── api_settings.py     # Settings endpoints
-│   └── api_system.py       # System, Wi-Fi, logs, actions
-├── camera/                 # Picamera2, MJPEG, capture, gallery (if separate; here camera.py is in root)
-├── meshsrv/                # Meshtastic CLI process helpers
-├── storage/                # Atomic JSON storage helpers
-├── telemetry/              # Telemetry state and history management
-├── utils/                  # Shared helper functions (now helpers.py)
-├── static/                 # JavaScript, CSS, icons, Chart.js
-├── templates/              # HTML templates
-├── docs/                   # Documentation images
-├── data/                   # Runtime data (not committed)
-├── config.example.py       # Configuration template
-├── config.py               # Local configuration (create during installation)
-├── server.py               # Main Flask application and listener coordination
-├── system_log.py           # Persistent JSONL event log
-├── helpers.py              # General helper functions
-├── json_store.py           # JSON read/write helpers
-├── meshsrv.py              # CLI command wrappers
-├── telemetry.py            # Telemetry module
-├── camera.py               # Camera management module
-├── requirements.txt
-└── README.md
+в”њв”Ђв”Ђ api/                    # Flask route modules
+в”‚   в”њв”Ђв”Ђ api_camera.py       # Camera endpoints
+в”‚   в”њв”Ђв”Ђ api_chat.py         # Chat & send endpoints
+в”‚   в”њв”Ђв”Ђ api_settings.py     # Settings endpoints
+в”‚   в””в”Ђв”Ђ api_system.py       # System, Wi-Fi, logs, actions
+в”њв”Ђв”Ђ camera/                 # Picamera2, MJPEG, capture, gallery (if separate; here camera.py is in root)
+в”њв”Ђв”Ђ meshsrv/                # Meshtastic CLI process helpers
+в”њв”Ђв”Ђ storage/                # Atomic JSON storage helpers
+в”њв”Ђв”Ђ telemetry/              # Telemetry state and history management
+в”њв”Ђв”Ђ utils/                  # Shared helper functions (now helpers.py)
+в”њв”Ђв”Ђ static/                 # JavaScript, CSS, icons, Chart.js
+в”њв”Ђв”Ђ templates/              # HTML templates
+в”њв”Ђв”Ђ docs/                   # Documentation images
+в”њв”Ђв”Ђ data/                   # Runtime data (not committed)
+в”њв”Ђв”Ђ config.example.py       # Configuration template
+в”њв”Ђв”Ђ config.py               # Local configuration (create during installation)
+в”њв”Ђв”Ђ server.py               # Main Flask application and listener coordination
+в”њв”Ђв”Ђ system_log.py           # Persistent JSONL event log
+в”њв”Ђв”Ђ helpers.py              # General helper functions
+в”њв”Ђв”Ђ json_store.py           # JSON read/write helpers
+в”њв”Ђв”Ђ meshsrv.py              # CLI command wrappers
+в”њв”Ђв”Ђ telemetry.py            # Telemetry module
+в”њв”Ђв”Ђ camera.py               # Camera management module
+в”њв”Ђв”Ђ requirements.txt
+в””в”Ђв”Ђ README.md
 The project is being refactored from a monolithic server.py into modular components.
 
-
-## API Reference
-The web interface uses a REST‑like API. Endpoints are not considered stable yet and may change.
+API Reference
+The web interface uses a RESTвЂ‘like API. Endpoints are not considered stable yet and may change.
 
 Chat & nodes
 text
@@ -604,8 +599,7 @@ GET    /api/system/log
 POST   /api/system/action
 Supported action values: restart_meshcenter, reboot, shutdown.
 
-
-## Troubleshooting
+Troubleshooting
 config.py not found
 bash
 cd ~/MeshCenter
@@ -624,7 +618,7 @@ Stop other processes using the port and restart MeshCenter.
 Service fails to start
 Check logs: journalctl -u meshcenter.service -n 100 --no-pager. Verify paths in config.py and the service file.
 
-Wi‑Fi scan fails
+WiвЂ‘Fi scan fails
 Check NetworkManager and sudo permissions:
 
 bash
@@ -646,17 +640,16 @@ Verify radio connectivity, channel settings, and that meshtastic --info works. C
 Browser shows old interface
 Use Ctrl+F5 or clear browser cache.
 
-
-## Security notes
+Security notes
 MeshCenter is designed for trusted local networks.
 
-No built‑in authentication – anyone who can reach the service can use it.
+No builtвЂ‘in authentication вЂ“ anyone who can reach the service can use it.
 
 HTTP is unencrypted by default.
 
 System action endpoints can reboot or shut down the host when sudoers rules are enabled.
 
-Wi‑Fi management changes host network configuration.
+WiвЂ‘Fi management changes host network configuration.
 
 API endpoints are accessible to any client that can reach the service.
 
@@ -674,15 +667,14 @@ Keep Raspberry Pi OS and Meshtastic CLI updated.
 
 Back up data/ and config.py before upgrades.
 
+Known limitations
+EnglishвЂ‘first interface (more languages planned).
 
-## Known limitations
-English‑first interface (more languages planned).
+No builtвЂ‘in authentication.
 
-No built‑in authentication.
+Designed for one local USBвЂ‘connected Meshtastic radio.
 
-Designed for one local USB‑connected Meshtastic radio.
-
-Wi‑Fi management assumes NetworkManager and interface wlan0.
+WiвЂ‘Fi management assumes NetworkManager and interface wlan0.
 
 Serial handling primarily tested with /dev/ttyACM0.
 
@@ -690,9 +682,8 @@ Photos stay local and are not sent over LoRa.
 
 REST API is internal and may change without notice.
 
-
-## Roadmap
-Near‑term priorities:
+Roadmap
+NearвЂ‘term priorities:
 
 Improve persistent system logging and filtering
 
@@ -700,7 +691,7 @@ Expand diagnostics and health monitoring
 
 Better system action feedback and reconnect behaviour
 
-Refine telemetry export and long‑term statistics
+Refine telemetry export and longвЂ‘term statistics
 
 Improve installation automation and configuration validation
 
@@ -708,7 +699,7 @@ Add optional authentication
 
 Continue modularising the server
 
-Longer‑term ideas:
+LongerвЂ‘term ideas:
 
 Map and position display
 
@@ -722,10 +713,9 @@ Plugin architecture
 
 Multilingual interface
 
-Multi‑radio support
+MultiвЂ‘radio support
 
-
-## Contributing
+Contributing
 Contributions, documentation corrections and tested installation notes are welcome.
 
 A useful issue report includes:
@@ -744,25 +734,22 @@ Relevant journalctl output
 
 Relevant entries from data/system_events.jsonl
 
-Please remove private data, Wi‑Fi credentials and channel keys before posting logs.
+Please remove private data, WiвЂ‘Fi credentials and channel keys before posting logs.
 
-
-## License
+License
 MeshCenter is released under the MIT License. See LICENSE.
 
-
-## Acknowledgements
+Acknowledgements
 The Meshtastic team and community
 
 The Raspberry Pi Foundation and Picamera2 maintainers
 
-Open‑source contributors and testers
+OpenвЂ‘source contributors and testers
 
-MeshCenter is an independent community project and is not affiliated with or endorsed by the official Meshtastic project. Meshtastic® is a trademark of its respective owners.
+MeshCenter is an independent community project and is not affiliated with or endorsed by the official Meshtastic project. MeshtasticВ® is a trademark of its respective owners.
 
-
-## Author
-Konstantin Vynohradov – FlintUA
+Author
+Konstantin Vynohradov вЂ“ FlintUA
 
 GitHub: https://github.com/FlintUA
 
@@ -771,44 +758,41 @@ Project: https://github.com/FlintUA/MeshCenter
 Website: https://elektroniker.help
 
 <p align="center"><strong>Made for the Meshtastic community.</strong></p>
-
-## For Developers – Architecture and Extension Guide
+For Developers вЂ“ Architecture and Extension Guide
 This section is intended for contributors and developers who want to understand the codebase and add new features.
 
-
-## High‑level architecture
+HighвЂ‘level architecture
 MeshCenter is a Flask web application that runs on a Raspberry Pi. It consists of several layers:
 
-Web server – Flask serves the UI (static files + templates) and provides a REST API.
+Web server вЂ“ Flask serves the UI (static files + templates) and provides a REST API.
 
-Background workers – Threads run continuously:
+Background workers вЂ“ Threads run continuously:
 
-Meshtastic listener – reads from the serial port (meshtastic --listen), parses packets, updates nodes, messages, telemetry.
+Meshtastic listener вЂ“ reads from the serial port (meshtastic --listen), parses packets, updates nodes, messages, telemetry.
 
-Telemetry buffer worker – debounces telemetry updates and saves them to disk.
+Telemetry buffer worker вЂ“ debounces telemetry updates and saves them to disk.
 
-Telemetry worker – periodically checks for fresh data.
+Telemetry worker вЂ“ periodically checks for fresh data.
 
-Radio health worker – monitors listener status and packet ages.
+Radio health worker вЂ“ monitors listener status and packet ages.
 
-Seen IDs cleanup – prevents duplicate messages.
+Seen IDs cleanup вЂ“ prevents duplicate messages.
 
-Data storage – JSON files with atomic writes (via json_store.py).
+Data storage вЂ“ JSON files with atomic writes (via json_store.py).
 
-System log – JSONL file for persistent events (system_log.py).
+System log вЂ“ JSONL file for persistent events (system_log.py).
 
-Camera – managed by camera.py, using Picamera2.
+Camera вЂ“ managed by camera.py, using Picamera2.
 
-Telemetry – managed by telemetry.py, keeps history and configuration.
+Telemetry вЂ“ managed by telemetry.py, keeps history and configuration.
 
-API modules – each set of endpoints is in api/*.py, registered in server.py.
+API modules вЂ“ each set of endpoints is in api/*.py, registered in server.py.
 
-Helpers – helpers.py provides common functions (normalise node IDs, format timestamps, etc.).
+Helpers вЂ“ helpers.py provides common functions (normalise node IDs, format timestamps, etc.).
 
-CLI wrapper – meshsrv.py wraps meshtastic subprocess calls.
+CLI wrapper вЂ“ meshsrv.py wraps meshtastic subprocess calls.
 
-
-## Module overview
+Module overview
 server.py
 The main entry point. It:
 
@@ -822,7 +806,7 @@ Starts all background threads.
 
 Runs the Flask development server (in production, use a WSGI server like Gunicorn with systemd).
 
-config.py (user‑provided)
+config.py (userвЂ‘provided)
 Contains all configuration: paths, node IDs, known nodes, etc. See config.example.py for a template.
 
 helpers.py
@@ -840,27 +824,27 @@ Provides safe_read_json() and safe_write_json() for atomic file operations. Used
 system_log.py
 Manages the persistent event log (system_events.jsonl). Exports:
 
-log_system_event(title, level, details, source) – appends a JSON line.
+log_system_event(title, level, details, source) вЂ“ appends a JSON line.
 
-get_system_events(limit, level, source) – reads and filters events.
+get_system_events(limit, level, source) вЂ“ reads and filters events.
 
 meshsrv.py
 Thin wrapper around meshtastic CLI commands:
 
-get_info(meshtastic_cmd, timeout) → runs meshtastic --info
+get_info(meshtastic_cmd, timeout) в†’ runs meshtastic --info
 
-send_text(meshtastic_cmd, text, channel, dest, timeout) → sends a message
+send_text(meshtastic_cmd, text, channel, dest, timeout) в†’ sends a message
 
 telemetry.py
 Manages telemetry state and history. Provides:
 
-telemetry_current – latest values.
+telemetry_current вЂ“ latest values.
 
-telemetry_history – list of historical records.
+telemetry_history вЂ“ list of historical records.
 
-add_telemetry_record() – appends a record if the interval has elapsed.
+add_telemetry_record() вЂ“ appends a record if the interval has elapsed.
 
-load_telemetry() / save_telemetry() – persist to telemetry_history.json.
+load_telemetry() / save_telemetry() вЂ“ persist to telemetry_history.json.
 
 camera.py
 Handles all camera operations using Picamera2:
@@ -871,52 +855,50 @@ MJPEG stream generation.
 
 Screenshot capture and gallery management (list, delete, cleanup).
 
-Photo preview and high‑resolution save.
+Photo preview and highвЂ‘resolution save.
 
 API modules
 Each module registers its routes with the Flask app via a registration function:
 
-api_chat.py – chats, messages, send, node operations.
+api_chat.py вЂ“ chats, messages, send, node operations.
 
-api_camera.py – camera endpoints.
+api_camera.py вЂ“ camera endpoints.
 
-api_settings.py – user settings (units).
+api_settings.py вЂ“ user settings (units).
 
-api_system.py – system info, network, Wi‑Fi, radio health, system log, system actions.
+api_system.py вЂ“ system info, network, WiвЂ‘Fi, radio health, system log, system actions.
 
 All API functions are decorated with handle_errors (from server.py) to catch exceptions and return JSON errors.
 
 static/ and templates/
-index.html – single‑page application UI.
+index.html вЂ“ singleвЂ‘page application UI.
 
-style.css – all styles.
+style.css вЂ“ all styles.
 
-chat.js – main client‑side logic (chat, nodes, telemetry, camera, system, settings). Uses fetch() to call the API.
+chat.js вЂ“ main clientвЂ‘side logic (chat, nodes, telemetry, camera, system, settings). Uses fetch() to call the API.
 
-chart.umd.min.js – Chart.js for telemetry graphs.
+chart.umd.min.js вЂ“ Chart.js for telemetry graphs.
 
-
-## Background threads
+Background threads
 These are started in server.py after initialisation:
 
-listen_meshtastic() – runs the listener and processes incoming packets.
+listen_meshtastic() вЂ“ runs the listener and processes incoming packets.
 
-cleanup_seen_ids() – periodically prunes duplicate‑detection caches.
+cleanup_seen_ids() вЂ“ periodically prunes duplicateвЂ‘detection caches.
 
-telemetry_worker() – monitors telemetry freshness.
+telemetry_worker() вЂ“ monitors telemetry freshness.
 
-telemetry_buffer_worker() – debounces telemetry updates.
+telemetry_buffer_worker() вЂ“ debounces telemetry updates.
 
-radio_health_worker() – updates radio health status every 30 seconds.
+radio_health_worker() вЂ“ updates radio health status every 30 seconds.
 
-
-## How to extend MeshCenter
+How to extend MeshCenter
 Add a new API endpoint
 Decide which module it belongs to (or create a new one in api/).
 
 Define a route function with @app.route(...) and @handle_errors.
 
-Register the route in server.py using the module’s registration function (or if it’s a simple route, you can add it directly to server.py).
+Register the route in server.py using the moduleвЂ™s registration function (or if itвЂ™s a simple route, you can add it directly to server.py).
 
 Update the API reference in this README.
 
@@ -932,14 +914,14 @@ Add it to config.example.py with a comment.
 
 In server.py, include it in the required_vars list (or handle it with a default).
 
-Document it in the “Installation → Create config.py” section.
+Document it in the вЂњInstallation в†’ Create config.pyвЂќ section.
 
 Add a new UI tab or component
-Edit templates/index.html – add a new tab button and the corresponding view container.
+Edit templates/index.html вЂ“ add a new tab button and the corresponding view container.
 
 Add CSS rules in style.css.
 
-In chat.js, implement the JavaScript logic: switchMainTab() handles tab switching, and you can add data‑loading functions.
+In chat.js, implement the JavaScript logic: switchMainTab() handles tab switching, and you can add dataвЂ‘loading functions.
 
 Create API endpoints to serve the data needed by the new UI.
 
@@ -955,21 +937,19 @@ Use log_system_event() to record important events (errors, actions, state change
 
 The UI fetches events via /api/system/log; you can filter by level and source.
 
-The log is stored as JSONL – each line is a JSON object. Use get_system_events() to read it.
+The log is stored as JSONL вЂ“ each line is a JSON object. Use get_system_events() to read it.
 
+Debugging
+Use print() statements with flush=True вЂ“ they appear in the systemd journal (journalctl -u meshcenter.service -f).
 
-## Debugging
-Use print() statements with flush=True – they appear in the systemd journal (journalctl -u meshcenter.service -f).
-
-For API debugging, inspect the response payloads in the browser’s DevTools (Network tab).
+For API debugging, inspect the response payloads in the browserвЂ™s DevTools (Network tab).
 
 For frontend debugging, use console.log() and browser DevTools.
 
+Coding style and conventions
+Python: follow PEP 8. Use 4вЂ‘space indentation.
 
-## Coding style and conventions
-Python: follow PEP 8. Use 4‑space indentation.
-
-JavaScript: semi‑colons, 2‑space indentation, const/let, avoid var.
+JavaScript: semiвЂ‘colons, 2вЂ‘space indentation, const/let, avoid var.
 
 HTML/CSS: maintain consistency with existing classes and naming.
 
@@ -979,8 +959,7 @@ Use with state_lock: when accessing or modifying shared dictionaries (messages, 
 
 Use atomic JSON writes (safe_write_json) for all data persistence.
 
-
-## Testing
+Testing
 Currently, there is no automated test suite. Manual testing is recommended:
 
 Run the app, perform actions, check the UI and logs.
@@ -991,4 +970,4 @@ Verify data persistence (restart the service and check that data is reloaded).
 
 Contributions that include tests (unit or integration) are very welcome.
 
-Last updated: July 2026 – reflects the current state of the main branch.
+Last updated: July 2026 вЂ“ reflects the current state of the main branch.

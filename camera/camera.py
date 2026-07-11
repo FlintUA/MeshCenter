@@ -42,15 +42,15 @@ VIDEO_CONFIG = {
 
 VIDEO_MODES = {
     "low": {"resolution": "320x240", "fps": 8, "quality": 60},
-    "medium": {"resolution": "480x320", "fps": 10, "quality": 70},
+    "medium": {"resolution": "480x320", "fps": 10, "quality": 80},
     "high": {"resolution": "640x480", "fps": 12, "quality": 75},
-    "hd": {"resolution": "1280x720", "fps": 15, "quality": 70},
+    "hd": {"resolution": "1280x720", "fps": 15, "quality": 75},
 }
 
 RESOLUTIONS = [
     "320x240", "480x320", "640x480",
     "800x600", "1024x768", "1280x720",
-    "1280x960", "1920x1080",
+    "1280x960", "1640x1232", "1920x1080",
 ]
 
 FPS_OPTIONS = [5, 8, 10, 12, 15, 20, 24, 30]
@@ -61,13 +61,23 @@ PHOTO_PREVIEW_CONFIG = {
 }
 
 PHOTO_SAVE_CONFIG = {
-    "resolution": "2592x1944",
-    "quality": 95,
+    "resolution": "3280x2464",
+    "quality": 90,
 }
 
 PHOTO_CONFIG = PHOTO_PREVIEW_CONFIG.copy()
-PHOTO_PREVIEW_RESOLUTIONS = ["640x480", "1280x720", "1920x1080", "2592x1944"]
-PHOTO_SAVE_RESOLUTION = "2592x1944"
+PHOTO_PREVIEW_RESOLUTIONS = [
+    "640x480",
+    "800x600",
+    "1024x768",
+    "1280x720",
+    "1600x1200",
+    "1920x1080",
+    "2592x1944",
+    "3280x2464",
+]
+
+PHOTO_SAVE_RESOLUTION = "3280x2464"
 
 # ============================================================
 # CAMERA STATE
@@ -178,7 +188,7 @@ def init_camera():
     """Initialize camera through Picamera2."""
     global CAMERA_AVAILABLE, picam2
 
-    print("[CAMERA] 🔍 Initializing OV5647...", flush=True)
+    print("[CAMERA] 🔍 Initializing...", flush=True)
 
     try:
         from picamera2 import Picamera2
@@ -188,7 +198,7 @@ def init_camera():
 
         props = picam2.camera_properties
         if props:
-            print("[CAMERA] ✅ Camera found: OV5647", flush=True)
+            print("[CAMERA] ✅ Camera found", flush=True)
             CAMERA_AVAILABLE = True
             return True
 
@@ -772,10 +782,10 @@ def save_highres_photo():
     CAMERA_CAPTURE_BUSY = True
 
     try:
-        quality = PHOTO_CONFIG.get("quality", 95)
+        quality = PHOTO_CONFIG.get("quality", 90)
         resolution = PHOTO_CONFIG.get(
             "resolution",
-            PHOTO_SAVE_CONFIG.get("resolution", "2592x1944")
+            PHOTO_SAVE_CONFIG.get("resolution", "3280x2464")
         )
 
         img, real_w, real_h = _capture_still(resolution, quality, "[PHOTO SAVE]")

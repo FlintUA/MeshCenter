@@ -24,6 +24,7 @@ def register_chat_routes(
     pause_listen,
     radio_lock,
     stop_listener,
+    prepare_radio_command,
     get_node_name,
     ensure_chat,
     add_message,
@@ -31,6 +32,7 @@ def register_chat_routes(
     get_node_info,
     save_nodes,
     now,
+    radio_event,
 ):
     @app.route("/api/chats")
     def api_chats():
@@ -132,12 +134,11 @@ def register_chat_routes(
                 flush=True
             )
 
-            pause_listen.set()
-            time.sleep(1.0)
-
-            stop_listener()
-
-            time.sleep(2.0)
+            if not prepare_radio_command("/dev/ttyACM0", timeout=10):
+                return jsonify({
+                    "ok": False,
+                    "error": "serial port busy: /dev/ttyACM0"
+                }), 500
 
             with radio_lock:
                 print("[SEND CMD]", cmd, flush=True)
@@ -154,17 +155,29 @@ def register_chat_routes(
                 print("[SEND STDERR]", result.stderr, flush=True)
 
             if result.returncode != 0:
-                err = result.stderr.strip() or result.stdout.strip() or "unknown send error"
+                err = (
+                    result.stderr.strip()
+                    or result.stdout.strip()
+                    or "unknown send error"
+                )
+
+                radio_event("send_error", err)
 
                 with state_lock:
-                    add_message("rx", "SYSTEM ERROR", f"send: {err}", "", CHANNEL_CHAT_ID)
+                    add_message(
+                        "rx",
+                        "SYSTEM ERROR",
+                        f"send: {err}",
+                        "",
+                        CHANNEL_CHAT_ID
+                    )
 
                 return jsonify({
                     "ok": False,
                     "error": err,
                     "returncode": result.returncode
                 }), 500
-
+            
             send_output = (result.stdout or "") + "\n" + (result.stderr or "")
 
             known_nonfatal_warning = (
@@ -187,6 +200,8 @@ def register_chat_routes(
             ):
                 err = send_output.strip() or "send command returned error text"
 
+                radio_event("send_error", err)
+
                 with state_lock:
                     add_message("rx", "SYSTEM ERROR", f"send: {err}", "", CHANNEL_CHAT_ID)
 
@@ -195,6 +210,8 @@ def register_chat_routes(
                     "error": err,
                     "returncode": result.returncode
                 }), 500
+
+            radio_event("send")
 
             if chat_type == "dm" and final_chat_id not in chats:
                 with state_lock:
@@ -246,16 +263,44 @@ def register_chat_routes(
             })
 
         except subprocess.TimeoutExpired:
-            with state_lock:
-                add_message("rx", "SYSTEM ERROR", "send timeout", "", CHANNEL_CHAT_ID)
+            radio_event(
+                "send_error",
+                "Meshtastic send timeout"
+            )
 
-            return jsonify({"ok": False, "error": "timeout"}), 500
+            with state_lock:
+                add_message(
+                    "rx",
+                    "SYSTEM ERROR",
+                    "send timeout",
+                    "",
+                    CHANNEL_CHAT_ID
+                )
+
+            return jsonify({
+                "ok": False,
+                "error": "timeout"
+            }), 500
 
         except Exception as e:
-            with state_lock:
-                add_message("rx", "SYSTEM ERROR", f"send: {str(e)}", "", CHANNEL_CHAT_ID)
+            radio_event(
+                "send_error",
+                str(e)
+            )
 
-            return jsonify({"ok": False, "error": str(e)}), 500
+            with state_lock:
+                add_message(
+                    "rx",
+                    "SYSTEM ERROR",
+                    f"send: {str(e)}",
+                    "",
+                    CHANNEL_CHAT_ID
+                )
+
+            return jsonify({
+                "ok": False,
+                "error": str(e)
+            }), 500
 
         finally:
             time.sleep(2.0)

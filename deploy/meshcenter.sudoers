@@ -1,0 +1,3 @@
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl restart meshcenter.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl reboot
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff

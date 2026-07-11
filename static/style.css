@@ -3342,9 +3342,12 @@ body {
 .video-view,
 .photo-view,
 .settings-view,
-.chat-list-container,
-.messages-view {
+.chat-list-container {
     padding-bottom: 44px;
+}
+
+.messages-view {
+    padding-bottom: 0; 
 }
 
 .video-controls,
@@ -3942,21 +3945,299 @@ body {
     background: #fee2e2;
 }
 
-.system-grid{
-    display:grid;
-    grid-template-columns:420px 1fr;
-    gap:18px;
-    align-items:start;
+@media (max-width: 980px) {
+    .system-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
-.system-column {
+.system-layout {
+    display: flex;
+    gap: 18px;
+    align-items: flex-start;
+    width: 100%;
+}
+
+.system-left-column {
+    width: 420px;
+    flex: 0 0 420px;
     display: flex;
     flex-direction: column;
     gap: 18px;
 }
 
+.system-right-column {
+    flex: 1 1 auto;
+    min-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.system-layout .system-card {
+    margin-bottom: 0;
+}
+
 @media (max-width: 980px) {
-    .system-grid {
+    .system-layout {
+        flex-direction: column;
+    }
+
+    .system-left-column,
+    .system-right-column {
+        width: 100%;
+        flex: 0 0 auto;
+        min-width: 0;
+    }
+}
+
+.system-view {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    background: #f3f6fa;
+    padding: 14px;
+    flex-direction: column;
+}
+
+.system-panel {
+    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
+    background: #ffffff;
+    border: 1px solid #dfe5ee;
+    border-radius: 12px;
+    padding: 14px;
+}
+
+.system-layout {
+    display: flex;
+    gap: 18px;
+    align-items: flex-start;
+    width: 100%;
+    min-width: 0;
+}
+
+.system-left-column,
+.system-right-column {
+    flex: 1 1 0;
+    min-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.system-layout .system-card {
+    margin-bottom: 0;
+}
+
+@media (max-width: 980px) {
+    .system-layout {
+        flex-direction: column;
+    }
+
+    .system-left-column,
+    .system-right-column {
+        width: 100%;
+        flex: 0 0 auto;
+        min-width: 0;
+    }
+}
+
+body.context-chat-mode .messages-view {
+    flex: 0 0 37.5%;
+    min-height: 260px;
+    max-height: 42vh;
+}
+
+body.context-chat-mode .video-view,
+body.context-chat-mode .system-view,
+body.context-chat-mode .settings-view {
+    flex: 1 1 62.5%;
+    min-height: 0;
+}
+
+.video-controls-grid {
+    align-items: start;
+}
+
+.camera-settings-block,
+.camera-actions-block {
+    align-self: start;
+}
+
+.camera-actions-block {
+    padding-top: 16px;
+}
+
+.radio-history-section {
+    margin-top: 14px;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+    padding-top: 10px;
+}
+
+.radio-history-toggle {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 7px 2px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: #34445f;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+}
+
+.radio-history-toggle:hover {
+    color: #145fc6;
+}
+
+.radio-history-panel {
+    margin-top: 6px;
+    max-height: 190px;
+    overflow-y: auto;
+    border-radius: 7px;
+    background: rgba(0, 0, 0, 0.018);
+    padding: 4px 9px;
+}
+
+.radio-history-item {
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.radio-history-item:last-child {
+    border-bottom: none;
+}
+
+.radio-history-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+}
+
+.radio-history-time {
+    flex: 0 0 auto;
+    color: #8b94a3;
+    font-variant-numeric: tabular-nums;
+}
+
+.radio-history-event {
+    font-weight: 600;
+}
+
+.radio-history-details {
+    margin-top: 2px;
+    margin-left: 55px;
+    color: #7a8391;
+    overflow-wrap: anywhere;
+}
+
+.radio-history-empty {
+    padding: 10px 0;
+    color: #999;
+    font-size: 12px;
+}
+
+
+/* ===== SYSTEM ACTIONS AND PERSISTENT LOG ===== */
+.radio-health-recommendation {
+    font-size: 13px;
+    line-height: 1.4;
+    min-height: 30px;
+    padding-top: 9px;
+}
+
+.system-actions-section {
+    margin-top: 12px;
+    padding-top: 11px;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.system-actions-title {
+    margin-bottom: 8px;
+    color: #34445f;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.system-actions-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7px;
+}
+
+.system-action-btn {
+    min-height: 34px;
+    padding: 7px 9px;
+    border: 1px solid #bfd0e8;
+    border-radius: 7px;
+    background: #dceafb;
+    color: #1d5da8;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.18s, transform 0.18s, opacity 0.18s;
+}
+
+.system-action-btn:hover:not(:disabled) {
+    background: #cbdff7;
+    transform: translateY(-1px);
+}
+
+.system-action-btn.warning {
+    border-color: #e0c98b;
+    background: #f5edcf;
+    color: #7c641d;
+}
+
+.system-action-btn.danger {
+    border-color: #dfb3b3;
+    background: #f5dddd;
+    color: #9a3434;
+}
+
+.system-action-btn:disabled {
+    opacity: 0.55;
+    cursor: wait;
+}
+
+.radio-history-time {
+    min-width: 122px;
+    font-size: 10px;
+}
+
+.radio-history-source {
+    margin-left: auto;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: #e9edf3;
+    color: #7b8492;
+    font-size: 9px;
+    text-transform: uppercase;
+}
+
+.radio-history-details {
+    margin-left: 148px;
+}
+
+@media (max-width: 520px) {
+    .system-actions-grid {
         grid-template-columns: 1fr;
+    }
+
+    .radio-history-line {
+        flex-wrap: wrap;
+    }
+
+    .radio-history-details {
+        margin-left: 0;
     }
 }

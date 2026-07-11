@@ -19,6 +19,9 @@ let showDuplicatesOnly = false;
 let currentMainTab = 'chats';
 let cameraActive = false;
 let isInitialized = false;
+let contextChatMode = false;
+let contextBaseTab = null;
+let radioHealthTimer = null;
 
 // ===== TELEMETRY =====
 let telemetryData = {
@@ -226,7 +229,7 @@ async function setUnitSetting(name, value) {
 
 // ===== PHOTO =====
 let photoPreviewResolution = '640x480';
-let photoSaveResolution = '2592x1944';
+let photoSaveResolution = '3280x2464';
 let currentPhotoQuality = 85;
 let currentPhotoData = null;
 
@@ -515,7 +518,7 @@ async function loadMessages() {
             statusEl.innerHTML = '🟢 Mesh online';
             const headerStatus = document.getElementById('headerStatusText');
             if (headerStatus) {
-                headerStatus.innerHTML = '<span class="status-dot"></span><span class="status-label">Online</span>';
+                headerStatus.innerHTML = '<span class="status-dot"></span><span class="status-label">Online</span>'; //надпись Online
             }
         }
         
@@ -705,8 +708,20 @@ function openChat(chatId, chatName, chatType) {
     currentChatName = chatName || chatId;
     currentChatType = chatType || 'dm';
 
+    if (currentMainTab && currentMainTab !== 'chats') {
+        contextChatMode = true;
+        contextBaseTab = currentMainTab;
+        document.body.classList.add('context-chat-mode');
+    } else {
+        contextChatMode = false;
+        contextBaseTab = null;
+        document.body.classList.remove('context-chat-mode');
+    }
+
     document.getElementById('chatListContainer').style.display = 'none';
     document.getElementById('messagesView').style.display = 'flex';
+
+
     document.getElementById('chatHeader').style.display = 'flex';
     document.getElementById('backToChatsBtn').style.display = 'block';
     document.getElementById('chatActionsBtn').style.display = 'block';
@@ -780,6 +795,21 @@ function showChatList() {
     const backBtn = document.getElementById('backToChatsBtn');
     const actionsBtn = document.getElementById('chatActionsBtn');
     const deleteDmBtn = document.getElementById('deleteAllDmHeaderBtn');
+
+    if (contextChatMode && contextBaseTab && contextBaseTab !== 'chats') {
+        contextChatMode = false;
+        contextBaseTab = null;
+        document.body.classList.remove('context-chat-mode');
+
+        if (chatHeader) chatHeader.style.display = 'none';
+        if (messagesView) messagesView.style.display = 'none';
+        if (backBtn) backBtn.style.display = 'none';
+        if (actionsBtn) actionsBtn.style.display = 'none';
+        if (deleteDmBtn) deleteDmBtn.style.display = 'none';
+
+        stopMessagePolling();
+        return;
+    }
 
     if (chatHeader) chatHeader.style.display = 'none';
     if (chatListContainer) chatListContainer.style.display = 'block';
@@ -2006,20 +2036,33 @@ async function restartListener() {
         return;
     }
 
-    try {
-        const response = await fetch("/api/restart_listener", {
-            method: "POST"
-        });
+    const button = document.getElementById('restartListenerBtn');
+    const originalText = button?.textContent || '🔄 Restart Listener';
 
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Restarting Listener...';
+    }
+
+    try {
+        const response = await fetch('/api/restart_listener', { method: 'POST' });
         const data = await response.json();
 
-        if (data.ok) {
-            alert("✅ Meshtastic listener has been restarted.");
-        } else {
-            alert("❌ Unable to restart listener.\n\n" + (data.error || "Unknown error"));
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || `HTTP ${response.status}`);
         }
+
+        showToast('✅ Meshtastic listener restart requested', 'success');
+        setTimeout(loadRadioHealth, 1000);
     } catch (error) {
-        alert("Restart failed: " + error.message);
+        showToast('❌ Restart failed: ' + error.message, 'error');
+    } finally {
+        if (button) {
+            setTimeout(() => {
+                button.disabled = false;
+                button.textContent = originalText;
+            }, 1500);
+        }
     }
 }
 
@@ -3196,7 +3239,7 @@ async function loadPhotoSettings() {
         
         if (data.ok) {
             photoPreviewResolution = data.config.resolution || '640x480';
-            photoSaveResolution = data.save_resolution || '2592x1944';
+            photoSaveResolution = data.save_resolution || '3280x2464';
             currentPhotoQuality = data.config.quality || 85;
             
             const resSelect = document.getElementById('photoResolution');
@@ -3638,6 +3681,32 @@ function closeScreenshots() {
 // SWITCH MAIN TAB
 // ============================================================
 function switchMainTab(tab) {
+
+    if (radioHealthTimer) {
+        clearInterval(radioHealthTimer);
+        radioHealthTimer = null;
+    }
+
+    if (tab === 'chats' && contextChatMode) {
+        contextChatMode = false;
+        contextBaseTab = null;
+        document.body.classList.remove('context-chat-mode');
+
+        document.getElementById('videoView').style.display = 'none';
+        document.getElementById('systemView').style.display = 'none';
+        document.getElementById('settingsView').style.display = 'none';
+
+        document.getElementById('chatListContainer').style.display = currentChatId ? 'none' : 'block';
+        document.getElementById('messagesView').style.display = currentChatId ? 'flex' : 'none';
+        document.getElementById('chatHeader').style.display = currentChatId ? 'flex' : 'none';
+
+        document.querySelectorAll('.main-content-tab').forEach(t => t.classList.remove('active'));
+        document.getElementById('mainTabChats')?.classList.add('active');
+
+        updateDockForTab?.('chats');
+        return;
+    }
+
     currentMainTab = tab;
 
     document.querySelectorAll('.main-content-tab').forEach(btn => {
@@ -3725,6 +3794,11 @@ function switchMainTab(tab) {
         updateStatusDock('system');
         loadSystemNetwork();
         loadSystemInfo();
+        loadRadioHealth();
+    
+        if (!radioHealthTimer) {
+        radioHealthTimer = setInterval(loadRadioHealth, 5000);
+        }
 
     } else if (tab === 'settings') {
         const btn = document.getElementById('mainTabSettings');
@@ -4012,6 +4086,28 @@ function escapeHtml(text) {
         .replaceAll('>', '&gt;');
 }
 
+function exitSplitView() {
+    const chatList = document.getElementById('chatListContainer');
+    const messagesView = document.getElementById('messagesView');
+    const videoView = document.getElementById('videoView');
+    const systemView = document.getElementById('systemView');
+    const settingsView = document.getElementById('settingsView');
+
+    if (chatList) chatList.style.display = 'flex';
+    if (messagesView) messagesView.style.display = 'none';
+    if (videoView) videoView.style.display = 'none';
+    if (systemView) systemView.style.display = 'none';
+    if (settingsView) settingsView.style.display = 'none';
+
+    document.querySelectorAll('.main-content-tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+
+    document.getElementById('mainTabChats')?.classList.add('active');
+
+    updateDockForTab?.('chats');
+}
+
 // ============================================================
 // INIT
 // ============================================================
@@ -4192,6 +4288,193 @@ async function loadSystemInfo() {
     }
 }
 
+async function loadRadioHealth() {
+    try {
+        const [healthResponse, logResponse] = await Promise.all([
+            fetch('/api/radio_health'),
+            fetch('/api/system/log?limit=100')
+        ]);
+
+        const data = await healthResponse.json();
+        const logData = await logResponse.json();
+
+        const statusEl = document.getElementById('radioHealthStatus');
+        const levelEl = document.getElementById('radioHealthLevel');
+        const listenerEl = document.getElementById('radioHealthListener');
+        const packetEl = document.getElementById('radioHealthPacket');
+        const telemetryEl = document.getElementById('radioHealthTelemetry');
+        const sendEl = document.getElementById('radioHealthSend');
+        const restartEl = document.getElementById('radioHealthRestart');
+        const recommendationEl = document.getElementById('radioHealthRecommendation');
+        const restartBtn = document.getElementById('restartListenerBtn');
+        const historyEl = document.getElementById('radioHealthHistory');
+
+        if (statusEl) statusEl.textContent = data.status || '--';
+
+        const level = String(data.level || 'UNKNOWN').toUpperCase();
+        let levelIcon = '⚪';
+        let levelColor = '#777';
+
+        if (level === 'OK') {
+            levelIcon = '🟢';
+            levelColor = '#249448';
+        } else if (level === 'WARNING') {
+            levelIcon = '🟡';
+            levelColor = '#a66d00';
+        } else if (level === 'ERROR') {
+            levelIcon = '🔴';
+            levelColor = '#c62828';
+        }
+
+        if (levelEl) {
+            levelEl.textContent = `${levelIcon} ${level}`;
+            levelEl.style.color = levelColor;
+        }
+
+        if (listenerEl) {
+            listenerEl.textContent = data.listener_running ? '🟢 Running' : '🔴 Stopped';
+        }
+
+        if (packetEl) packetEl.textContent = data.packet_age == null ? 'Never' : `${data.packet_age} s ago`;
+        if (telemetryEl) telemetryEl.textContent = data.telemetry_age == null ? 'Never' : `${data.telemetry_age} s ago`;
+        if (sendEl) sendEl.textContent = data.send_age == null ? 'Never' : `${data.send_age} s ago`;
+        if (restartEl) restartEl.textContent = data.restart_count ?? 0;
+
+        if (recommendationEl) {
+            recommendationEl.textContent = data.recommendation || data.status_reason || '--';
+            recommendationEl.style.color = levelColor;
+        }
+
+        if (restartBtn) {
+            restartBtn.disabled = false;
+            restartBtn.textContent = '🔄 Restart Listener';
+        }
+
+        if (historyEl) {
+            const history = Array.isArray(logData.events) ? logData.events.slice().reverse() : [];
+
+            if (!history.length) {
+                historyEl.innerHTML = '<div class="radio-history-empty">No events yet</div>';
+            } else {
+                historyEl.innerHTML = history.map(item => {
+                    const itemLevel = String(item.level || 'INFO').toUpperCase();
+                    let icon = '🔵';
+                    let color = '#3974b9';
+
+                    if (itemLevel === 'OK') {
+                        icon = '🟢';
+                        color = '#249448';
+                    } else if (itemLevel === 'WARNING') {
+                        icon = '🟡';
+                        color = '#a66d00';
+                    } else if (itemLevel === 'ERROR') {
+                        icon = '🔴';
+                        color = '#c62828';
+                    } else if (itemLevel === 'ACTION') {
+                        icon = '🟣';
+                        color = '#7652a8';
+                    }
+
+                    const dateTime = item.date && item.time
+                        ? `${item.date} ${item.time}`
+                        : (item.datetime || item.time || '--');
+
+                    const details = item.details
+                        ? `<div class="radio-history-details">${escapeHtml(item.details)}</div>`
+                        : '';
+
+                    return `
+                        <div class="radio-history-item">
+                            <div class="radio-history-line">
+                                <span class="radio-history-time">${escapeHtml(dateTime)}</span>
+                                <span>${icon}</span>
+                                <span class="radio-history-event" style="color:${color};">
+                                    ${escapeHtml(item.event || 'Event')}
+                                </span>
+                                <span class="radio-history-source">${escapeHtml(item.source || 'system')}</span>
+                            </div>
+                            ${details}
+                        </div>
+                    `;
+                }).join('');
+            }
+        }
+    } catch (error) {
+        console.error('Radio health load error:', error);
+    }
+}
+
+async function runSystemAction(action, button) {
+    const config = {
+        restart_meshcenter: {
+            confirm: 'Restart MeshCenter service?\n\nThe web interface will be unavailable for a few seconds.',
+            pending: 'Restarting MeshCenter...',
+            success: 'MeshCenter restart requested.'
+        },
+        reboot: {
+            confirm: 'Restart Raspberry Pi?\n\nMeshCenter and the radio connection will be temporarily unavailable.',
+            pending: 'Restarting Raspberry Pi...',
+            success: 'Raspberry Pi restart requested.'
+        },
+        shutdown: {
+            confirm: 'Shut down Raspberry Pi?\n\nThe device must be powered on manually afterwards.',
+            pending: 'Shutting down Raspberry Pi...',
+            success: 'Raspberry Pi shutdown requested.'
+        }
+    };
+
+    const selected = config[action];
+    if (!selected || !confirm(selected.confirm)) return;
+
+    const originalText = button?.textContent || '';
+    if (button) {
+        button.disabled = true;
+        button.textContent = selected.pending;
+    }
+
+    try {
+        const response = await fetch('/api/system/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action })
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || `HTTP ${response.status}`);
+        }
+
+        showToast(`✅ ${selected.success}`, 'success');
+        setTimeout(loadRadioHealth, 500);
+    } catch (error) {
+        showToast(`❌ ${error.message}`, 'error');
+        if (button) {
+            button.disabled = false;
+            button.textContent = originalText;
+        }
+    }
+}
+
+function toggleRadioHealthHistory() {
+    const panel = document.getElementById('radioHealthHistoryPanel');
+    const arrow = document.getElementById('radioHistoryArrow');
+    const button = document.getElementById('radioHistoryToggle');
+
+    if (!panel) return;
+
+    const opening = panel.style.display === 'none';
+
+    panel.style.display = opening ? 'block' : 'none';
+
+    if (arrow) {
+        arrow.textContent = opening ? '▴' : '▾';
+    }
+
+    if (button) {
+        button.setAttribute('aria-expanded', opening ? 'true' : 'false');
+    }
+}
+
 // ============================================================
 // ЭКСПОРТ В ГЛОБАЛЬНУЮ ОБЛАСТЬ
 // ============================================================
@@ -4268,6 +4551,11 @@ window.closeWifiConnectModal = closeWifiConnectModal;
 window.toggleWifiPasswordVisible = toggleWifiPasswordVisible;
 window.connectSelectedWifi = connectSelectedWifi;
 window.loadSystemInfo = loadSystemInfo;
+window.loadSystemInfo = loadSystemInfo;
+window.exitSplitView = exitSplitView;
+window.toggleRadioHealthHistory = toggleRadioHealthHistory;
+window.runSystemAction = runSystemAction;
+window.restartListener = restartListener;
 window.getAppSettings = function() {
     return appSettings;
 };

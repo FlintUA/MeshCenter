@@ -1,0 +1,2 @@
+pi ALL=(root) NOPASSWD: /usr/sbin/iw
+pi ALL=(root) NOPASSWD: /usr/bin/nmcli

@@ -22,6 +22,7 @@ from api.api_camera import register_camera_routes
 from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes
 from api.api_system import register_system_routes
+from system_log import log_system_event
 
 try:
     from config import *
@@ -42,7 +43,7 @@ required_vars = [
 
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 
-
+NODE_DEBUG_LOG = os.path.join(DATA_DIR, "nodes_debug.log")
 
 try:
     MESHTASTIC_PORT
@@ -193,6 +194,31 @@ base_status = {
 listen_process = None
 pause_listen = threading.Event()
 
+radio_health = {
+    "status": "STARTING",
+    "status_reason": "Service is starting",
+
+    "listener_running": False,
+
+    "last_packet": 0,
+    "last_text": 0,
+    "last_telemetry": 0,
+    "last_send": 0,
+
+    "last_restart": 0,
+    "restart_count": 0,
+
+    "last_check": 0,
+    "last_check_time": None,
+
+    "last_ok": 0,
+    "last_ok_time": None,
+
+    "fail_count": 0,
+    "last_error": "",
+    "history": []
+}
+
 # ===== TELEMETRY BUFFER =====
 # Состояние и история телеметрии вынесены в telemetry/telemetry.py.
 # В server.py пока оставляем парсер и буфер, чтобы рефакторинг был безопасным.
@@ -200,6 +226,110 @@ telemetry_buffer_lock = threading.RLock()
 telemetry_pending_values = {}
 telemetry_pending_time = 0
 TELEMETRY_DEBOUNCE_SECONDS = 1.5
+
+def _radio_history_locked(event, level="INFO", details=""):
+    """Добавляет событие Radio Health в память и постоянный системный журнал."""
+    item = log_system_event(
+        title=event,
+        level=level,
+        details=details,
+        source="radio",
+    )
+
+    history = radio_health.setdefault("history", [])
+    history.append(item)
+
+    # Быстрый оперативный кэш. Полная история хранится в system_events.jsonl.
+    if len(history) > 50:
+        del history[:-50]
+
+
+def radio_event(event, error=""):
+    now_ts = time.time()
+
+    with state_lock:
+        if event == "listener_start":
+            was_running = bool(
+                radio_health.get("listener_running", False)
+            )
+
+            radio_health["listener_running"] = True
+
+            # Не создаём повторные записи, если состояние уже было True
+            if not was_running:
+                _radio_history_locked(
+                    "Listener started",
+                    "INFO",
+                    "Meshtastic listener is running"
+                )
+
+        elif event == "listener_stop":
+            was_running = bool(
+                radio_health.get("listener_running", False)
+            )
+
+            radio_health["listener_running"] = False
+
+            if was_running:
+                if pause_listen.is_set():
+                    _radio_history_locked(
+                        "Listener paused",
+                        "INFO",
+                        "Listener stopped temporarily for a radio command"
+                    )
+                else:
+                    _radio_history_locked(
+                        "Listener stopped",
+                        "ERROR",
+                        "Meshtastic listener exited unexpectedly"
+                    )
+
+        elif event == "packet":
+            radio_health["last_packet"] = now_ts
+
+        elif event == "telemetry":
+            radio_health["last_packet"] = now_ts
+            radio_health["last_telemetry"] = now_ts
+
+        elif event == "text":
+            radio_health["last_packet"] = now_ts
+            radio_health["last_text"] = now_ts
+
+        elif event == "send":
+            radio_health["last_send"] = now_ts
+            radio_health["last_error"] = ""
+
+            _radio_history_locked(
+                "Message sent",
+                "INFO",
+                "Meshtastic message sent successfully"
+            )
+
+        elif event == "send_error":
+            error_text = str(error or "Unknown send error")[:300]
+
+            radio_health["last_error"] = error_text
+            radio_health["fail_count"] = (
+                int(radio_health.get("fail_count", 0)) + 1
+            )
+
+            _radio_history_locked(
+                "Send error",
+                "ERROR",
+                error_text
+            )
+
+        elif event == "restart":
+            radio_health["last_restart"] = now_ts
+            radio_health["restart_count"] = (
+                int(radio_health.get("restart_count", 0)) + 1
+            )
+
+            _radio_history_locked(
+                "Listener restart requested",
+                "ACTION",
+                "Manual listener restart"
+            )
 
 # ===== АТОМАРНАЯ ЗАПИСЬ JSON =====
 # Используем safe_read_json и safe_write_json
@@ -330,6 +460,56 @@ def load_nodes():
         if data:
             nodes.update(data)
 
+def log_node_event(event, source, node_id, old=None, new=None, raw=None, extra=None):
+    try:
+        old = old or {}
+        new = new or {}
+        extra = extra or {}
+
+        changed = {}
+        keys = set(old.keys()) | set(new.keys())
+
+        for key in keys:
+            if old.get(key) != new.get(key):
+                changed[key] = {
+                    "old": old.get(key),
+                    "new": new.get(key)
+                }
+
+        if not changed and event not in ("SKIP_LOCAL_NODE", "ERROR"):
+            return
+
+        lines = [
+            "=" * 70,
+            f"TIME: {now()}",
+            f"EVENT: {event}",
+            f"SOURCE: {source}",
+            f"NODE_ID: {node_id}",
+        ]
+
+        if changed:
+            lines.append("CHANGED:")
+            for key, value in changed.items():
+                lines.append(f"  {key}: {value['old']} -> {value['new']}")
+
+        if extra:
+            lines.append("EXTRA:")
+            for key, value in extra.items():
+                lines.append(f"  {key}: {value}")
+
+        if raw:
+            lines.append("RAW:")
+            lines.append(str(raw)[:1200])
+
+        lines.append("=" * 70)
+        lines.append("")
+
+        with open(NODE_DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+    except Exception as e:
+        print(f"[NODE_LOG] Error: {e}", flush=True)            
+
 def save_sensors():
     with state_lock:
         safe_write_json(SENSORS_FILE, sensor_data)
@@ -381,8 +561,9 @@ def load_settings():
 def ensure_chat(node_id, node_name=None, force=False):
     if node_id == CHANNEL_CHAT_ID or not node_id or not node_id.startswith("!"):
         return
-    
+
     deleted_file = os.path.join(DATA_DIR, "deleted_dm.json")
+
     if not force and os.path.exists(deleted_file):
         try:
             with open(deleted_file, "r") as f:
@@ -391,18 +572,49 @@ def ensure_chat(node_id, node_name=None, force=False):
                     return
         except (json.JSONDecodeError, IOError) as e:
             print(f"[WARN] Could not read deleted_dm.json: {e}")
-    
-    if node_id not in chats:
-        name = node_name or get_node_name(node_id)
-        chats[node_id] = {
-            "id": node_id,
-            "name": name,
-            "type": "dm",
-            "last_message": "",
-            "last_time": "",
-            "unread": 0
-        }
-        save_chats()
+
+    name = node_name or get_node_name(node_id)
+
+    if node_id in chats:
+        old_name = chats[node_id].get("name", "")
+
+        if name and old_name != name:
+            chats[node_id]["name"] = name
+            save_chats()
+
+            try:
+                log_node_event(
+                    "CHAT_RENAME",
+                    "ENSURE_CHAT",
+                    node_id,
+                    old={"chat_name": old_name},
+                    new={"chat_name": name}
+                )
+            except Exception:
+                pass
+
+        return
+
+    chats[node_id] = {
+        "id": node_id,
+        "name": name,
+        "type": "dm",
+        "last_message": "",
+        "last_time": "",
+        "unread": 0
+    }
+
+    save_chats()
+
+    try:
+        log_node_event(
+            "CHAT_CREATE",
+            "ENSURE_CHAT",
+            node_id,
+            new={"chat_name": name}
+        )
+    except Exception:
+        pass
 
 def update_chat_last_message(chat_id, text, time_str):
     if chat_id in chats:
@@ -963,6 +1175,23 @@ def extract_node_id(line):
         return normalize_node_id_with_aliases(node_num_to_id(m.group(1)))
     return None
 
+def extract_nodeinfo_user_id(block):
+    patterns = [
+        r"'user':\s*\{[^}]*'id':\s*'(![0-9a-fA-F]+)'",
+        r'"user":\s*\{[^}]*"id":\s*"(![0-9a-fA-F]+)"',
+        r"\buser\s*\{[^}]*\bid:\s*\"(![0-9a-fA-F]+)\"",
+        r"\bid:\s*\"(![0-9a-fA-F]+)\"",
+        r"'id':\s*'(![0-9a-fA-F]+)'",
+        r'"id":\s*"(![0-9a-fA-F]+)"',
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, block, re.DOTALL)
+        if m:
+            return normalize_node_id_with_aliases(m.group(1))
+
+    return None
+
 def extract_sender(line):
     node_id = extract_node_id(line)
     if node_id:
@@ -1036,32 +1265,59 @@ def extract_relay_node(line):
 
 def update_node(line, sender, text):
     node_id = extract_node_id(line) or infer_node_id_from_sender(sender)
+
     if not node_id:
         return ""
+
+    if node_id == LOCAL_NODE_ID:
+        log_node_event(
+            "SKIP_LOCAL_NODE",
+            "TEXT_MESSAGE",
+            node_id,
+            extra={
+                "sender": sender,
+                "text": text
+            },
+            raw=line
+        )
+        return node_id
+
     rssi = extract_rssi(line)
     snr = extract_snr(line)
     hop_start = extract_hop_start(line)
     relay_node = extract_relay_node(line)
     role = extract_field(line, ["role", "Role"])
+
     name = get_node_name(node_id)
     info = get_node_info(node_id)
+
     with state_lock:
         old = nodes.get(node_id, {})
-        new_name = None
-        long_name_match = re.search(r"'longName':\s*'([^']*)'", line) or re.search(r'"longName":\s*"([^"]*)"', line)
-        if long_name_match:
-            new_name = long_name_match.group(1).strip()
-        if not new_name:
-            if sender and sender != "RX" and not sender.startswith("!"):
-                new_name = sender
-        if new_name and old.get("name") != new_name:
-            if node_id in chats:
-                chats[node_id]["name"] = new_name
-                save_chats()
+
+        old_snapshot = {
+            "name": old.get("name"),
+            "short_name": old.get("short_name"),
+            "hw_model": old.get("hw_model"),
+            "role": old.get("role"),
+            "rssi": old.get("rssi"),
+            "snr": old.get("snr"),
+            "hop_start": old.get("hop_start"),
+            "relay_node": old.get("relay_node"),
+            "last_text": old.get("last_text")
+        }
+
+        # ВАЖНО:
+        # TEXT_MESSAGE больше НЕ переименовывает ноду.
+        # Имя может менять только NODEINFO / parse_nodes_from_info.
+        stable_name = old.get("name") or name
+
         nodes[node_id] = {
-            "name": new_name or name, "node_id": node_id,
-            "last_seen": time.time(), "last_time": now(),
-            "rssi": rssi or old.get("rssi"), "snr": snr or old.get("snr"),
+            "name": stable_name,
+            "node_id": node_id,
+            "last_seen": time.time(),
+            "last_time": now(),
+            "rssi": rssi or old.get("rssi"),
+            "snr": snr or old.get("snr"),
             "hop_start": hop_start or old.get("hop_start", ""),
             "relay_node": relay_node or old.get("relay_node", ""),
             "last_text": text or old.get("last_text", ""),
@@ -1071,17 +1327,74 @@ def update_node(line, sender, text):
             "ignored": old.get("ignored", False),
             "favorite": old.get("favorite", False)
         }
+
+        new_snapshot = {
+            "name": nodes[node_id].get("name"),
+            "short_name": nodes[node_id].get("short_name"),
+            "hw_model": nodes[node_id].get("hw_model"),
+            "role": nodes[node_id].get("role"),
+            "rssi": nodes[node_id].get("rssi"),
+            "snr": nodes[node_id].get("snr"),
+            "hop_start": nodes[node_id].get("hop_start"),
+            "relay_node": nodes[node_id].get("relay_node"),
+            "last_text": nodes[node_id].get("last_text")
+        }
+
+        log_node_event(
+            "UPDATE_NODE",
+            "TEXT_MESSAGE",
+            node_id,
+            old=old_snapshot,
+            new=new_snapshot,
+            extra={
+                "sender": sender,
+                "text": text,
+                "line_has_longName": "longName" in line
+            },
+            raw=line
+        )
+
         if node_id.startswith("!"):
-            ensure_chat(node_id, new_name or name, force=True)
+            ensure_chat(node_id, nodes[node_id].get("name"), force=True)
+
         save_nodes()
+
     return node_id
 
 def process_nodeinfo(block):
     if ("NODEINFO_APP" not in block and "longName" not in block and "long_name" not in block and
         "shortName" not in block and "short_name" not in block and "hwModel" not in block and "hw_model" not in block):
         return False
-    node_id = extract_node_id(block)
-    if not node_id: return False
+    node_id = extract_nodeinfo_user_id(block)
+
+    if not node_id:
+        node_id = extract_node_id(block)
+
+    if not node_id:
+        return False
+    outer_node_id = extract_node_id(block)
+
+    if outer_node_id and outer_node_id != node_id:
+        log_node_event(
+            "NODEINFO_ID_MISMATCH",
+            "NODEINFO",
+            node_id,
+            extra={
+                "outer_node_id": outer_node_id,
+                "user_node_id": node_id
+            },
+            raw=block
+        )
+           
+    if node_id == LOCAL_NODE_ID:
+        log_node_event(
+            "SKIP_LOCAL_NODE",
+            "NODEINFO",
+            node_id,
+            raw=block
+        )
+        return True
+        
     long_name = extract_field(block, ["longName", "long_name", "longname"])
     short_name = extract_field(block, ["shortName", "short_name", "shortname"])
     hw_model = extract_field(block, ["hwModel", "hw_model"])
@@ -1093,6 +1406,14 @@ def process_nodeinfo(block):
     name = KNOWN_NODES.get(node_id) or long_name or short_name or friendly_unknown_node_name(node_id)
     with state_lock:
         old = nodes.get(node_id, {})
+        old_snapshot = {
+        "name": old.get("name"),
+        "short_name": old.get("short_name"),
+        "hw_model": old.get("hw_model"),
+        "role": old.get("role"),
+        "rssi": old.get("rssi"),
+        "snr": old.get("snr")
+        }
         info = get_node_info(node_id)
         nodes[node_id] = {
             "name": name, "node_id": node_id,
@@ -1109,6 +1430,29 @@ def process_nodeinfo(block):
         }
         if node_id.startswith("!"):
             ensure_chat(node_id, name, force=True)
+            new_snapshot = {
+            "name": nodes[node_id].get("name"),
+            "short_name": nodes[node_id].get("short_name"),
+            "hw_model": nodes[node_id].get("hw_model"),
+            "role": nodes[node_id].get("role"),
+            "rssi": nodes[node_id].get("rssi"),
+            "snr": nodes[node_id].get("snr")
+        }
+
+        log_node_event(
+            "UPDATE_NODE",
+            "NODEINFO",
+            node_id,
+            old=old_snapshot,
+            new=new_snapshot,
+            extra={
+                "long_name": long_name,
+                "short_name": short_name,
+                "hw_model": hw_model,
+                "role": role
+            },
+            raw=block
+        )
         save_nodes()
     return True
 
@@ -1323,6 +1667,41 @@ def stop_listener():
         listen_process = None
         time.sleep(1.0)
 
+def wait_serial_release(device="/dev/ttyACM0", timeout=8):
+    start = time.time()
+
+    while time.time() - start < timeout:
+        try:
+            result = subprocess.run(
+                ["lsof", device],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+
+            out = result.stdout or ""
+
+            if "meshtastic" not in out:
+                return True
+
+        except Exception as e:
+            print(f"[WARN] wait_serial_release error: {e}", flush=True)
+
+        time.sleep(0.2)
+
+    print(f"[WARN] Serial port still busy after {timeout}s: {device}", flush=True)
+    return False
+
+
+def prepare_radio_command(device="/dev/ttyACM0", timeout=8):
+    pause_listen.set()
+    stop_listener()
+
+    if not wait_serial_release(device=device, timeout=timeout):
+        return False
+
+    return True
+
 def update_base_status_from_info():
     global base_status
     try:
@@ -1404,6 +1783,7 @@ def listen_meshtastic():
                 )
 
                 print(f"[DEBUG] Listener started with PID: {listen_process.pid}")
+                radio_event("listener_start")
                 consecutive_errors = 0
 
             for line in listen_process.stdout:
@@ -1411,6 +1791,8 @@ def listen_meshtastic():
                     break
 
                 line = line.strip()
+
+                radio_event("packet")
 
                 if not line:
                     continue
@@ -1431,7 +1813,6 @@ def listen_meshtastic():
                         or "deviceMetrics" in line
                     ):
                         try:
-                            # ИСПРАВЛЕНИЕ: убрали with state_lock, чтобы избежать deadlock
                             process_telemetry_line(line)
                         except Exception as e:
                             print(f"[TELEMETRY] Parse error: {e}", flush=True)
@@ -1439,42 +1820,58 @@ def listen_meshtastic():
                     if "TEXT_MESSAGE_APP" in line or "'text':" in line or '"text":' in line:
                         print(f"[RAW] {line[:200]}...", flush=True)
 
+                    # ===== ИЗМЕНЕНИЕ №1: Новая логика сбора NODEINFO =====
                     if "NODEINFO_APP" in line or collecting_nodeinfo:
                         collecting_nodeinfo = True
                         nodeinfo_buffer.append(line)
                         block = "\n".join(nodeinfo_buffer)
 
-                        if (
-                            "fromId" in block
-                            and (
-                                "longName" in block
-                                or "long_name" in block
-                                or "shortName" in block
-                                or "short_name" in block
-                                or "hwModel" in block
-                                or "hw_model" in block
-                            )
-                        ):
+                        has_nodeinfo = (
+                            "longName" in block
+                            or "long_name" in block
+                            or "shortName" in block
+                            or "short_name" in block
+                            or "hwModel" in block
+                            or "hw_model" in block
+                            or "'user':" in block
+                            or '"user":' in block
+                        )
+
+                        nodeinfo_id = extract_nodeinfo_user_id(block)
+
+                        if has_nodeinfo and nodeinfo_id:
                             with state_lock:
                                 process_nodeinfo(block)
                             nodeinfo_buffer = []
                             collecting_nodeinfo = False
                             continue
 
+                        # ===== ИЗМЕНЕНИЕ №2: Не обрабатывать буфер при переполнении =====
                         if len(nodeinfo_buffer) > 80:
-                            with state_lock:
-                                process_nodeinfo(block)
+                            log_node_event(
+                                "DROP_NODEINFO_BUFFER",
+                                "LISTENER",
+                                nodeinfo_id or "",
+                                extra={
+                                    "buffer_lines": len(nodeinfo_buffer),
+                                    "has_nodeinfo": has_nodeinfo
+                                },
+                                raw=block
+                            )
+                            print(f"[NODEINFO] Dropping oversized buffer ({len(nodeinfo_buffer)} lines)", flush=True)
                             nodeinfo_buffer = []
                             collecting_nodeinfo = False
+                            continue
 
                         continue
 
                     # Ignore duplicate onReceive() debug events.
-                    # They contain only decoded text and no sender information.
                     if "onReceive()" in line:
                         continue
 
                     text = extract_text_message(line)
+
+                    radio_event("telemetry")
 
                     if not text:
                         continue
@@ -1488,6 +1885,10 @@ def listen_meshtastic():
 
                     sender = extract_sender(line)
                     node_id = update_node(line, sender, text)
+
+                    # ===== ИЗМЕНЕНИЕ №4: Обновить sender после update_node =====
+                    if node_id:
+                        sender = get_node_name(node_id)
 
                     if is_duplicate_text(sender, text, node_id):
                         continue
@@ -1534,9 +1935,14 @@ def listen_meshtastic():
                             else:
                                 chat_id = CHANNEL_CHAT_ID
 
+                    # ===== ИЗМЕНЕНИЕ №3: ensure_chat без force=True и с именем из базы =====
                     if chat_id.startswith("!") and chat_id != LOCAL_NODE_ID:
                         with state_lock:
-                            ensure_chat(chat_id, sender, force=True)
+                            ensure_chat(
+                                chat_id,
+                                get_node_name(chat_id),
+                                force=False
+                            )
 
                     with state_lock:
                         add_message("rx", sender, text, node_id, chat_id)
@@ -1557,6 +1963,9 @@ def listen_meshtastic():
                         listen_process.kill()
                     except Exception:
                         pass
+                
+                radio_event("listener_stop")
+                
                 listen_process = None
                 time.sleep(0.5)
                 continue
@@ -1566,6 +1975,8 @@ def listen_meshtastic():
                 consecutive_errors += 1
             else:
                 consecutive_errors = 0
+
+            radio_event("listener_stop")
 
             listen_process = None
 
@@ -1601,6 +2012,155 @@ def telemetry_worker():
 
         except Exception as e:
             print(f"[TELEMETRY] Worker error: {e}", flush=True)
+
+def radio_health_worker():
+    print("[RADIO] Passive health worker started", flush=True)
+
+    while True:
+        time.sleep(30)
+
+        try:
+            now_ts = time.time()
+
+            with state_lock:
+                listener_running = bool(
+                    radio_health.get("listener_running", False)
+                )
+
+                last_packet = float(
+                    radio_health.get("last_packet") or 0
+                )
+                last_telemetry = float(
+                    radio_health.get("last_telemetry") or 0
+                )
+                last_send = float(
+                    radio_health.get("last_send") or 0
+                )
+
+                packet_age = (
+                    max(0, int(now_ts - last_packet))
+                    if last_packet else None
+                )
+                telemetry_age = (
+                    max(0, int(now_ts - last_telemetry))
+                    if last_telemetry else None
+                )
+                send_age = (
+                    max(0, int(now_ts - last_send))
+                    if last_send else None
+                )
+
+                if pause_listen.is_set():
+                    status = "PAUSED"
+                    reason = "Listener temporarily paused for a radio command"
+                    level = "WARNING"
+                    recommendation = "Wait until the radio command is completed"
+
+                elif not listener_running:
+                    status = "LISTENER_DOWN"
+                    reason = "Meshtastic listener is not running"
+                    level = "ERROR"
+                    recommendation = "Restart the Meshtastic listener"
+
+                elif packet_age is None:
+                    status = "STARTING"
+                    reason = "Listener is running, waiting for the first packet"
+                    level = "WARNING"
+                    recommendation = "Wait for the first radio packet"
+
+                elif packet_age <= 180:
+                    status = "OK"
+                    reason = "Recent radio activity detected"
+                    level = "OK"
+                    recommendation = "No action required"
+
+                elif packet_age <= 600:
+                    status = "IDLE"
+                    reason = f"No packets received for {packet_age} seconds"
+                    level = "WARNING"
+                    recommendation = "No action required if the mesh is quiet"
+
+                else:
+                    status = "NO_PACKETS"
+                    reason = f"No packets received for {packet_age} seconds"
+                    level = "ERROR"
+                    recommendation = (
+                        "Check radio reception and try restarting the listener"
+                    )
+
+                previous_status = radio_health.get("status")
+
+                radio_health["status"] = status
+                radio_health["level"] = level
+                radio_health["status_reason"] = reason
+                radio_health["recommendation"] = recommendation
+
+                radio_health["last_check"] = now_ts
+                radio_health["last_check_time"] = now()
+
+                radio_health["packet_age"] = packet_age
+                radio_health["telemetry_age"] = telemetry_age
+                radio_health["send_age"] = send_age
+
+                if status == "OK":
+                    radio_health["last_ok"] = now_ts
+                    radio_health["last_ok_time"] = now()
+                    radio_health["fail_count"] = 0
+                    radio_health["last_error"] = ""
+
+                elif status in ("LISTENER_DOWN", "NO_PACKETS"):
+                    radio_health["fail_count"] = (
+                        int(radio_health.get("fail_count", 0)) + 1
+                    )
+
+                if previous_status != status:
+                    _radio_history_locked(
+                        f"Status changed: {previous_status or 'UNKNOWN'} -> {status}",
+                        level,
+                        reason
+                    )
+
+            print(
+                "[RADIO] "
+                f"status={status}, "
+                f"level={level}, "
+                f"listener={listener_running}, "
+                f"packet_age={packet_age}, "
+                f"telemetry_age={telemetry_age}, "
+                f"send_age={send_age}",
+                flush=True
+            )
+
+        except Exception as e:
+            error_text = str(e)
+
+            with state_lock:
+                previous_status = radio_health.get("status")
+
+                radio_health["status"] = "ERROR"
+                radio_health["level"] = "ERROR"
+                radio_health["status_reason"] = "Radio health worker failed"
+                radio_health["recommendation"] = (
+                    "Check the MeshCenter service log"
+                )
+                radio_health["last_error"] = error_text
+                radio_health["last_check"] = time.time()
+                radio_health["last_check_time"] = now()
+                radio_health["fail_count"] = (
+                    int(radio_health.get("fail_count", 0)) + 1
+                )
+
+                if previous_status != "ERROR":
+                    _radio_history_locked(
+                        f"Status changed: {previous_status or 'UNKNOWN'} -> ERROR",
+                        "ERROR",
+                        error_text
+                    )
+
+            print(
+                f"[RADIO] Health worker error: {error_text}",
+                flush=True
+            )
             
 register_chat_routes(
     app,
@@ -1623,6 +2183,7 @@ register_chat_routes(
     pause_listen,
     radio_lock,
     stop_listener,
+    prepare_radio_command,
     get_node_name,
     ensure_chat,
     add_message,
@@ -1630,6 +2191,7 @@ register_chat_routes(
     get_node_info,
     save_nodes,
     now,
+    radio_event,
 )
 
 register_settings_routes(
@@ -1710,12 +2272,13 @@ def api_restart_listener():
     try:
         stop_listener()
         time.sleep(1)
+        pause_listen.clear()
 
-        threading.Thread(target=listen_meshtastic, daemon=True).start()
+        radio_event("restart")
 
         return jsonify({
             "ok": True,
-            "message": "Meshtastic listener restarted"
+            "message": "Meshtastic listener restart requested"
         })
 
     except Exception as e:
@@ -1727,19 +2290,30 @@ def api_restart_listener():
 @app.route("/api/rescan_nodes", methods=["POST"])
 @handle_errors
 def api_rescan_nodes():
-    global listen_process
-    if listen_process is not None:
-        try:
-            listen_process.terminate()
-            time.sleep(1)
-            if listen_process.poll() is None:
-                listen_process.kill()
-            listen_process = None
-        except Exception as e:
-            print(f"[WARN] Error stopping listener: {e}")
-    parse_nodes_from_info()
-    threading.Thread(target=listen_meshtastic, daemon=True).start()
-    return jsonify({"ok": True, "message": "Network rescan started"})
+    try:
+        pause_listen.set()
+        stop_listener()
+
+        success = parse_nodes_from_info()
+
+        pause_listen.clear()
+
+        return jsonify({
+            "ok": bool(success),
+            "message": (
+                "Network rescan completed"
+                if success
+                else "Network rescan completed, no changes found"
+            )
+        })
+
+    except Exception as e:
+        pause_listen.clear()
+
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
 
 @app.route("/api/clear_chat", methods=["POST"])
 @handle_errors
@@ -2037,11 +2611,45 @@ def api_restore_deleted_dm():
         with state_lock:
             for node_id in nodes:
                 if node_id.startswith("!"):
-                    ensure_chat(node_id, nodes[node_id].get("name"), force=True)
+                    ensure_chat(node_id, nodes[node_id].get("name"), force=False)
             save_chats()
         return jsonify({"ok": True, "message": "Restored deleted DM chats"})
     return jsonify({"ok": True, "message": "No deleted chats to restore"})
 
+@app.route("/api/radio_health")
+def api_radio_health():
+    now_ts = time.time()
+
+    with state_lock:
+        status = dict(radio_health)
+
+    last_packet = float(status.get("last_packet") or 0)
+    last_telemetry = float(status.get("last_telemetry") or 0)
+    last_text = float(status.get("last_text") or 0)
+    last_send = float(status.get("last_send") or 0)
+
+    status["packet_age"] = (
+        max(0, int(now_ts - last_packet))
+        if last_packet else None
+    )
+
+    status["telemetry_age"] = (
+        max(0, int(now_ts - last_telemetry))
+        if last_telemetry else None
+    )
+
+    status["text_age"] = (
+        max(0, int(now_ts - last_text))
+        if last_text else None
+    )
+
+    status["send_age"] = (
+        max(0, int(now_ts - last_send))
+        if last_send else None
+    )
+
+    return jsonify(status)
+    
 # ============================================================
 # ЗАПУСК
 # ============================================================
@@ -2085,6 +2693,7 @@ if __name__ == "__main__":
     threading.Thread(target=cleanup_seen_ids, daemon=True).start()
     threading.Thread(target=telemetry_worker, daemon=True).start()
     threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
+    threading.Thread(target=radio_health_worker, daemon=True).start()
     
     print(f"""
     ╔══════════════════════════════════════════════╗

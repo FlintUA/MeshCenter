@@ -1,4 +1,4 @@
-<!doctype html>
+<div class="system-card-title"></div><!doctype html>
 <html lang="ru">
 <head>
     <meta charset="utf-8">
@@ -267,6 +267,106 @@
                                     🖼 Gallery
                                 </button>
                             </div>
+                            <!-- IMAGE CONTROLS -->
+
+                            <div class="camera-image-controls">
+
+                                <div class="camera-image-controls-header">
+                                    <span>🎛 Image</span>
+
+                                    <button type="button"
+                                            class="camera-defaults-btn"
+                                            onclick="restoreCameraImageDefaults()"
+                                            title="Restore neutral image settings">
+                                        Defaults
+                                    </button>
+                                </div>
+
+                                <div class="camera-image-controls-grid">
+
+                                    <div class="camera-control-slider">
+                                        <label for="cameraBrightness">
+                                            Brightness
+                                            <span id="cameraBrightnessValue">0.0</span>
+                                        </label>
+
+                                        <input type="range"
+                                            id="cameraBrightness"
+                                            min="-1"
+                                            max="1"
+                                            step="0.1"
+                                            value="0"
+                                            oninput="updateCameraControlLabels()"
+                                            onchange="updateCameraImageControls()">
+                                    </div>
+
+                                    <div class="camera-control-slider">
+                                        <label for="cameraContrast">
+                                            Contrast
+                                            <span id="cameraContrastValue">1.0</span>
+                                        </label>
+
+                                        <input type="range"
+                                            id="cameraContrast"
+                                            min="0"
+                                            max="2"
+                                            step="0.1"
+                                            value="1"
+                                            oninput="updateCameraControlLabels()"
+                                            onchange="updateCameraImageControls()">
+                                    </div>
+
+                                    <div class="camera-control-slider">
+                                        <label for="cameraSaturation">
+                                            Saturation
+                                            <span id="cameraSaturationValue">1.0</span>
+                                        </label>
+
+                                        <input type="range"
+                                            id="cameraSaturation"
+                                            min="0"
+                                            max="2"
+                                            step="0.1"
+                                            value="1"
+                                            oninput="updateCameraControlLabels()"
+                                            onchange="updateCameraImageControls()">
+                                    </div>
+
+                                    <div class="camera-control-slider">
+                                        <label for="cameraSharpness">
+                                            Sharpness
+                                            <span id="cameraSharpnessValue">1.0</span>
+                                        </label>
+
+                                        <input type="range"
+                                            id="cameraSharpness"
+                                            min="0"
+                                            max="4"
+                                            step="0.1"
+                                            value="1"
+                                            oninput="updateCameraControlLabels()"
+                                            onchange="updateCameraImageControls()">
+                                    </div>
+
+                                    <div class="camera-control-slider camera-exposure-slider">
+                                        <label for="cameraExposure">
+                                            Exposure
+                                            <span id="cameraExposureValue">0.0</span>
+                                        </label>
+
+                                        <input type="range"
+                                            id="cameraExposure"
+                                            min="-4"
+                                            max="4"
+                                            step="0.5"
+                                            value="0"
+                                            oninput="updateCameraControlLabels()"
+                                            onchange="updateCameraImageControls()">
+                                    </div>
+
+                                </div>
+
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -358,6 +458,57 @@
                                     <div id="wifiNetworksList">
                                         <div class="loading">No scan yet</div>
                                     </div>
+                                </div>
+
+                            </div>
+
+                            <div class="system-card">
+
+                                <div class="system-card-title">
+                                    ❤️ Listener Auto Recovery
+                                </div>
+
+                                <div class="system-row">
+                                    <span>Enabled</span>
+
+                                    <label class="switch">
+                                        <input
+                                            type="checkbox"
+                                            id="listenerRecoveryEnabled"
+                                            onchange="updateListenerRecoverySettings()">
+                                        <span class="slider round"></span>
+                                    </label>
+                                </div>
+
+                                <div class="system-row">
+                                    <span>Delay</span>
+
+                                    <select
+                                        id="listenerRecoveryDelay"
+                                        onchange="updateListenerRecoverySettings()">
+
+                                        <option value="30">30 seconds</option>
+                                        <option value="60">60 seconds</option>
+                                        <option value="90">90 seconds</option>
+                                        <option value="120">120 seconds</option>
+                                        <option value="180">180 seconds</option>
+                                        <option value="300">300 seconds</option>
+
+                                    </select>
+
+                                </div>
+
+                                <div
+                                    style="
+                                        margin-top:12px;
+                                        font-size:12px;
+                                        color:#888;
+                                        line-height:1.4;
+                                    ">
+
+                                    Automatically restarts the Meshtastic listener
+                                    if it remains offline longer than the selected delay.
+
                                 </div>
 
                             </div>

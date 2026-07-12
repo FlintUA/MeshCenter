@@ -188,6 +188,22 @@ function updateSettingsUi() {
 
     document.getElementById('unitPressureHpa')?.classList.toggle('active', units.pressure === 'hpa');
     document.getElementById('unitPressureMmhg')?.classList.toggle('active', units.pressure === 'mmhg');
+
+    const recovery = appSettings?.listener_autorecovery || {};
+
+    const enabled = !!recovery.enabled;
+    const delay = recovery.delay || 60;
+
+    const checkbox = document.getElementById("listenerRecoveryEnabled");
+    const select = document.getElementById("listenerRecoveryDelay");
+
+    if (checkbox)
+        checkbox.checked = enabled;
+
+    if (select) {
+        select.value = delay;
+        select.disabled = !enabled;
+    }
 }
 
 async function setUnitSetting(name, value) {
@@ -225,6 +241,68 @@ async function setUnitSetting(name, value) {
     } catch (error) {
         alert('Unable to save settings: ' + error.message);
     }
+}
+
+async function updateListenerRecoverySettings() {
+
+    const enabled =
+        document.getElementById("listenerRecoveryEnabled").checked;
+
+    const delay =
+        parseInt(
+            document.getElementById("listenerRecoveryDelay").value
+        );
+
+    document.getElementById("listenerRecoveryDelay").disabled =
+        !enabled;
+
+    const listener_autorecovery = {
+        enabled,
+        delay
+    };
+
+    try {
+
+        const response = await fetch("/api/settings", {
+
+            method: "POST",
+
+            headers: {
+                "Content-Type": "application/json"
+            },
+
+            body: JSON.stringify({
+                listener_autorecovery
+            })
+
+        });
+
+        const data = await response.json();
+
+        if (!data.ok) {
+
+            showToast("Unable to save settings", "error");
+            return;
+
+        }
+
+        appSettings = data.settings;
+
+        updateSettingsUi();
+
+        showToast(
+            "Listener Auto Recovery updated",
+            "success"
+        );
+
+    }
+
+    catch (e) {
+
+        showToast(e.message, "error");
+
+    }
+
 }
 
 // ===== PHOTO =====
@@ -3075,6 +3153,13 @@ function stopCameraStream() {
 // VIDEO FUNCTIONS
 // ============================================================
 let currentVideoSettings = {};
+let currentCameraControls = {};
+
+let cameraControlRequestInProgress = false;
+let cameraControlPending = false;
+let cameraControlShowMessage = false;
+let cameraFeedRefreshTimer = null;
+let cameraFeedRefreshSequence = 0;
 
 async function loadVideoSettings() {
     try {
@@ -3083,6 +3168,7 @@ async function loadVideoSettings() {
         
         if (data.ok) {
             currentVideoSettings = data.config;
+            currentCameraControls = data.controls || {};
             
             const resSelect = document.getElementById('videoResolution');
             const fpsSelect = document.getElementById('videoFps');
@@ -3091,10 +3177,22 @@ async function loadVideoSettings() {
             
             if (resSelect) resSelect.value = data.config.resolution || '640x480';
             if (fpsSelect) fpsSelect.value = data.config.fps || 12;
-            if (qualitySlider) {
-                qualitySlider.value = data.config.quality || 75;
-                if (qualityLabel) qualityLabel.textContent = (data.config.quality || 75) + '%';
-            }
+            const cameraControlValues = {
+                cameraBrightness: currentCameraControls.brightness ?? 0.0,
+                cameraContrast: currentCameraControls.contrast ?? 1.0,
+                cameraSaturation: currentCameraControls.saturation ?? 1.0,
+                cameraSharpness: currentCameraControls.sharpness ?? 1.0,
+                cameraExposure: currentCameraControls.exposure_compensation ?? 0.0
+            };
+
+            Object.entries(cameraControlValues).forEach(([id, value]) => {
+                const element = document.getElementById(id);
+                if (element) {
+                    element.value = value;
+                }
+            });
+
+            updateCameraControlLabels();
             
             const liveInfo = document.getElementById('videoLiveInfo');
             if (liveInfo) {
@@ -3153,6 +3251,162 @@ async function updateVideoSettings() {
     }
 }
 
+function formatCameraControlValue(value) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number)) {
+        return '0.0';
+    }
+
+    return number.toFixed(1);
+}
+
+
+function updateCameraControlLabels() {
+    const controls = [
+        ['cameraBrightness', 'cameraBrightnessValue'],
+        ['cameraContrast', 'cameraContrastValue'],
+        ['cameraSaturation', 'cameraSaturationValue'],
+        ['cameraSharpness', 'cameraSharpnessValue'],
+        ['cameraExposure', 'cameraExposureValue']
+    ];
+
+    controls.forEach(([inputId, labelId]) => {
+        const input = document.getElementById(inputId);
+        const label = document.getElementById(labelId);
+
+        if (input && label) {
+            label.textContent = formatCameraControlValue(input.value);
+        }
+    });
+}
+
+
+function readCameraImageControls() {
+    return {
+        brightness: parseFloat(
+            document.getElementById('cameraBrightness')?.value ?? 0
+        ),
+
+        contrast: parseFloat(
+            document.getElementById('cameraContrast')?.value ?? 1
+        ),
+
+        saturation: parseFloat(
+            document.getElementById('cameraSaturation')?.value ?? 1
+        ),
+
+        sharpness: parseFloat(
+            document.getElementById('cameraSharpness')?.value ?? 1
+        ),
+
+        exposure_compensation: parseFloat(
+            document.getElementById('cameraExposure')?.value ?? 0
+        )
+    };
+}
+
+
+async function updateCameraImageControls(showMessage = false) {
+    cameraControlPending = true;
+
+    if (showMessage) {
+        cameraControlShowMessage = true;
+    }
+
+    if (cameraControlRequestInProgress) {
+        return;
+    }
+
+    cameraControlRequestInProgress = true;
+
+    try {
+        while (cameraControlPending) {
+            cameraControlPending = false;
+
+            const controls = readCameraImageControls();
+
+            const response = await fetch('/api/camera/settings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    controls: controls
+                })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.ok) {
+                throw new Error(
+                    data.error || `HTTP ${response.status}`
+                );
+            }
+
+            currentCameraControls = data.controls || controls;
+            updateCameraControlLabels();
+
+            /*
+             * Image controls restart the Picamera2 pipeline.
+             * The browser must always reconnect to the new MJPEG stream.
+             */
+            if (data.restarted) {
+                await reconnectCameraFeed();
+            }
+        }
+
+        if (cameraControlShowMessage) {
+            showToast('✅ Image settings updated', 'success');
+        }
+
+    } catch (error) {
+        console.error(
+            'Error updating camera image controls:',
+            error
+        );
+
+        showToast(
+            '❌ Image settings failed: ' + error.message,
+            'error'
+        );
+
+    } finally {
+        cameraControlRequestInProgress = false;
+        cameraControlShowMessage = false;
+
+        if (cameraControlPending) {
+            updateCameraImageControls(false);
+        }
+    }
+}
+
+async function restoreCameraImageDefaults() {
+    const defaults = {
+        cameraBrightness: 0.0,
+        cameraContrast: 1.0,
+        cameraSaturation: 1.0,
+        cameraSharpness: 1.0,
+        cameraExposure: 0.0
+    };
+
+    Object.entries(defaults).forEach(([id, value]) => {
+        const element = document.getElementById(id);
+
+        if (element) {
+            element.value = value;
+        }
+    });
+
+    updateCameraControlLabels();
+    await updateCameraImageControls(false);
+
+    showToast(
+        '✅ Neutral image settings restored',
+        'success'
+    );
+}
+
 async function takeScreenshot(source = 'video') {
     const btn = document.querySelector('.screenshot-btn');
     const originalText = btn.textContent;
@@ -3190,32 +3444,164 @@ function stopVideoFeed() {
     }
 }
 
+function reconnectCameraFeed() {
+    return new Promise((resolve) => {
+        const img = document.getElementById('videoFeed');
+        const status = document.getElementById('videoStatus');
+        const frameWrap = img?.closest('.video-frame-wrap');
+
+        if (!img) {
+            resolve();
+            return;
+        }
+
+        const sequence = ++cameraFeedRefreshSequence;
+
+        if (cameraFeedRefreshTimer) {
+            clearTimeout(cameraFeedRefreshTimer);
+            cameraFeedRefreshTimer = null;
+        }
+
+        if (status) {
+            status.textContent = '🔄 Applying settings...';
+            status.style.color = '#ff9800';
+        }
+
+        let freezeFrame = null;
+
+        /*
+         * Preserve the latest visible camera frame while the
+         * Picamera2 pipeline and MJPEG connection are restarting.
+         */
+        if (
+            frameWrap &&
+            img.complete &&
+            img.naturalWidth > 0 &&
+            img.naturalHeight > 0
+        ) {
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+
+                const context = canvas.getContext('2d');
+
+                if (context) {
+                    context.drawImage(
+                        img,
+                        0,
+                        0,
+                        canvas.width,
+                        canvas.height
+                    );
+
+                freezeFrame = document.createElement('img');
+                freezeFrame.className = 'camera-freeze-frame';
+                freezeFrame.src = canvas.toDataURL(
+                    'image/jpeg',
+                    0.85
+                );
+
+                const imageRect = img.getBoundingClientRect();
+                const wrapRect = frameWrap.getBoundingClientRect();
+
+                freezeFrame.style.left =
+                    `${imageRect.left - wrapRect.left}px`;
+
+                freezeFrame.style.top =
+                    `${imageRect.top - wrapRect.top}px`;
+
+                freezeFrame.style.width =
+                    `${imageRect.width}px`;
+
+                freezeFrame.style.height =
+                    `${imageRect.height}px`;
+
+                frameWrap.appendChild(freezeFrame);
+                }
+
+            } catch (error) {
+                console.warn(
+                    '[CAMERA] Could not preserve current frame:',
+                    error
+                );
+            }
+        }
+
+        img.onload = null;
+        img.onerror = null;
+        img.style.visibility = 'hidden';
+        img.removeAttribute('src');
+
+        cameraFeedRefreshTimer = setTimeout(() => {
+            cameraFeedRefreshTimer = null;
+
+            if (sequence !== cameraFeedRefreshSequence) {
+                freezeFrame?.remove();
+                resolve();
+                return;
+            }
+
+            const finishReconnect = (online) => {
+                if (sequence !== cameraFeedRefreshSequence) {
+                    return;
+                }
+
+                img.style.visibility = 'visible';
+
+                if (status) {
+                    status.textContent = online
+                        ? '🟢 Online'
+                        : '🔴 Camera unavailable';
+
+                    status.style.color = online
+                        ? '#4caf50'
+                        : '#c62828';
+                }
+
+                if (freezeFrame) {
+                    freezeFrame.classList.add(
+                        'camera-freeze-frame-hide'
+                    );
+
+                    setTimeout(() => {
+                        freezeFrame.remove();
+                    }, 250);
+                }
+
+                resolve();
+            };
+
+            img.onload = function() {
+                finishReconnect(true);
+            };
+
+            img.onerror = function() {
+                finishReconnect(false);
+            };
+
+            img.src = '/video_feed?t=' + Date.now();
+
+            /*
+             * MJPEG load events can behave differently between
+             * browsers. Use a fallback after the new connection
+             * has had enough time to produce its first frame.
+             */
+            setTimeout(() => {
+                if (
+                    sequence === cameraFeedRefreshSequence &&
+                    img.naturalWidth > 0
+                ) {
+                    finishReconnect(true);
+                }
+            }, 1600);
+
+        }, 500);
+    });
+}
+
 function refreshVideoFeed() {
-    const img = document.getElementById('videoFeed');
-    const status = document.getElementById('videoStatus');
-
-    if (status) {
-        status.textContent = '🔄 Refreshing...';
-        status.style.color = '#ff9800';
-    }
-
-    if (img) {
-        img.src = '/video_feed?t=' + Date.now();
-
-        img.onload = function() {
-            if (status) {
-                status.textContent = '🟢 Online';
-                status.style.color = '#4caf50';
-            }
-        };
-
-        img.onerror = function() {
-            if (status) {
-                status.textContent = '🔴 Camera unavailable';
-                status.style.color = '#c62828';
-            }
-        };
-    }
+    reconnectCameraFeed();
 }
 
 // ============================================================
@@ -4684,6 +5070,9 @@ window.exitSplitView = exitSplitView;
 window.toggleRadioHealthHistory = toggleRadioHealthHistory;
 window.runSystemAction = runSystemAction;
 window.restartListener = restartListener;
+window.updateCameraControlLabels = updateCameraControlLabels;
+window.updateCameraImageControls = updateCameraImageControls;
+window.restoreCameraImageDefaults = restoreCameraImageDefaults;
 window.getAppSettings = function() {
     return appSettings;
 };

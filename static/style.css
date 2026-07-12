@@ -4301,3 +4301,198 @@ body.context-chat-mode .settings-view {
         margin-left: 0;
     }
 }
+
+/* ============================================================
+   CAMERA IMAGE CONTROLS
+   ============================================================ */
+
+.video-controls {
+    padding: 10px 14px 12px;
+}
+
+.video-controls-grid {
+    display: grid;
+    grid-template-columns:
+        285px
+        205px
+        120px
+        minmax(280px, 1fr);
+    gap: 14px;
+    align-items: stretch;
+}
+
+.camera-settings-block {
+    gap: 6px;
+}
+
+.camera-settings-row {
+    gap: 8px;
+}
+
+.camera-actions-block {
+    align-self: center;
+    justify-content: center;
+}
+
+.camera-image-controls {
+    min-width: 0;
+    padding-left: 14px;
+    border-left: 1px solid #d8dee8;
+}
+
+.camera-image-controls-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 7px;
+    color: #334155;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+}
+
+.camera-defaults-btn {
+    height: 25px;
+    padding: 0 9px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #f8fafc;
+    color: #475569;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.camera-defaults-btn:hover {
+    background: #eef3f8;
+    border-color: #aeb9c8;
+}
+
+.camera-image-controls-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+    column-gap: 14px;
+    row-gap: 6px;
+}
+
+.camera-control-slider {
+    min-width: 0;
+}
+
+.camera-control-slider label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 1px;
+    color: #526178;
+    font-size: 10px;
+    line-height: 1.2;
+    text-transform: uppercase;
+}
+
+.camera-control-slider label span {
+    color: #1265d6;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.camera-control-slider input[type="range"] {
+    display: block;
+    width: 100%;
+    height: 16px;
+    margin: 0;
+}
+
+.camera-exposure-slider {
+    grid-column: 1 / -1;
+}
+
+@media (max-width: 1250px) {
+    .video-controls-grid {
+        grid-template-columns:
+            270px
+            195px
+            115px
+            minmax(250px, 1fr);
+        gap: 10px;
+    }
+
+    .camera-image-controls {
+        padding-left: 10px;
+    }
+}
+
+@media (max-width: 1050px) {
+    .video-controls-grid {
+        grid-template-columns: 1fr 1fr 120px;
+    }
+
+    .camera-image-controls {
+        grid-column: 1 / -1;
+        padding-top: 9px;
+        padding-left: 0;
+        border-top: 1px solid #d8dee8;
+        border-left: 0;
+    }
+
+    .camera-image-controls-grid {
+        grid-template-columns: repeat(5, minmax(110px, 1fr));
+    }
+
+    .camera-exposure-slider {
+        grid-column: auto;
+    }
+}
+
+@media (max-width: 700px) {
+    .video-controls-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .camera-actions-block {
+        flex-direction: row;
+        justify-content: flex-start;
+    }
+
+    .camera-image-controls {
+        grid-column: auto;
+    }
+
+    .camera-image-controls-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .camera-exposure-slider {
+        grid-column: 1 / -1;
+    }
+}
+
+/* ============================================================
+   CAMERA STREAM RECONNECT OVERLAY
+   ============================================================ */
+
+.video-frame-wrap {
+    position: relative;
+}
+
+.camera-stream {
+    position: relative;
+    z-index: 1;
+}
+
+.camera-freeze-frame {
+    position: absolute;
+    z-index: 2;
+    object-fit: contain;
+    border-radius: 8px;
+    opacity: 1;
+    pointer-events: none;
+    transition: opacity .22s ease;
+}
+
+.camera-freeze-frame-hide {
+    opacity: 0;
+}
+

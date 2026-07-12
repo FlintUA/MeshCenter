@@ -14,6 +14,7 @@ import threading
 import time
 from datetime import datetime
 from PIL import Image
+from libcamera import Transform, controls as libcamera_controls
 
 try:
     from config import DATA_DIR
@@ -38,6 +39,33 @@ VIDEO_CONFIG = {
     "resolution": "640x480",
     "fps": 12,
     "quality": 75,
+}
+
+CAMERA_CONTROLS = {
+    # White balance
+    "awb_mode": "auto",
+    "red_gain": 1.0,
+    "blue_gain": 1.0,
+
+    # Image adjustment
+    "brightness": 0.0,
+    "contrast": 1.0,
+    "saturation": 1.0,
+    "sharpness": 1.0,
+
+    # Exposure
+    "exposure_compensation": 0.0,
+    "exposure_mode": "normal",
+
+    # Orientation
+    "hflip": False,
+    "vflip": False,
+
+    # Processing
+    "noise_reduction": "auto",
+
+    # Named profile shown in the UI
+    "profile": "custom",
 }
 
 VIDEO_MODES = {
@@ -66,6 +94,7 @@ PHOTO_SAVE_CONFIG = {
 }
 
 PHOTO_CONFIG = PHOTO_PREVIEW_CONFIG.copy()
+
 PHOTO_PREVIEW_RESOLUTIONS = [
     "640x480",
     "800x600",
@@ -93,6 +122,10 @@ camera_started = False
 camera_lock = threading.RLock()
 last_frame = None
 last_frame_time = 0
+
+# Incremented whenever the camera is stopped or reconfigured.
+# Old MJPEG generators exit when their generation becomes obsolete.
+stream_generation = 0
 
 # ============================================================
 # JSON HELPERS
@@ -154,8 +187,8 @@ def load_camera_settings():
         VIDEO_CONFIG.update(data["video"])
     if "photo_preview" in data:
         PHOTO_CONFIG.update(data["photo_preview"])
-    if "photo_save" in data:
-        PHOTO_SAVE_CONFIG.update(data["photo_save"])
+    if "controls" in data and isinstance(data["controls"], dict):
+        CAMERA_CONTROLS.update(data["controls"])
 
     print(
         f"[CAMERA] Loaded settings: preview={PHOTO_CONFIG['resolution']}@{PHOTO_CONFIG['quality']}%, "
@@ -169,6 +202,7 @@ def save_camera_settings():
         "video": VIDEO_CONFIG,
         "photo_preview": PHOTO_CONFIG,
         "photo_save": PHOTO_SAVE_CONFIG,
+        "controls": CAMERA_CONTROLS,
     }
     safe_write_json(CAMERA_CONFIG_FILE, data)
     print("[CAMERA] Saved settings", flush=True)
@@ -176,6 +210,120 @@ def save_camera_settings():
 # ============================================================
 # BASIC CAMERA CONTROL
 # ============================================================
+AWB_MODE_MAP = {
+    "auto": libcamera_controls.AwbModeEnum.Auto,
+    "daylight": libcamera_controls.AwbModeEnum.Daylight,
+    "cloudy": libcamera_controls.AwbModeEnum.Cloudy,
+    "indoor": libcamera_controls.AwbModeEnum.Indoor,
+    "tungsten": libcamera_controls.AwbModeEnum.Tungsten,
+    "fluorescent": libcamera_controls.AwbModeEnum.Fluorescent,
+    "incandescent": libcamera_controls.AwbModeEnum.Incandescent,
+}
+
+EXPOSURE_MODE_MAP = {
+    "normal": libcamera_controls.AeExposureModeEnum.Normal,
+    "short": libcamera_controls.AeExposureModeEnum.Short,
+    "long": libcamera_controls.AeExposureModeEnum.Long,
+}
+
+NOISE_REDUCTION_MAP = {
+    "off": libcamera_controls.draft.NoiseReductionModeEnum.Off,
+    "minimal": libcamera_controls.draft.NoiseReductionModeEnum.Minimal,
+    "fast": libcamera_controls.draft.NoiseReductionModeEnum.Fast,
+    "high_quality": libcamera_controls.draft.NoiseReductionModeEnum.HighQuality,
+    "zsl": libcamera_controls.draft.NoiseReductionModeEnum.ZSL,
+    "auto": libcamera_controls.draft.NoiseReductionModeEnum.Fast,
+}
+
+
+def get_camera_transform():
+    """Build orientation transform used by video and capture configurations."""
+    return Transform(
+        hflip=bool(CAMERA_CONTROLS.get("hflip", False)),
+        vflip=bool(CAMERA_CONTROLS.get("vflip", False)),
+    )
+
+
+def build_camera_controls():
+    """Convert saved MeshCenter settings to Picamera2/libcamera controls."""
+    awb_mode = str(CAMERA_CONTROLS.get("awb_mode", "auto")).lower()
+    exposure_mode = str(
+        CAMERA_CONTROLS.get("exposure_mode", "normal")
+    ).lower()
+    noise_reduction = str(
+        CAMERA_CONTROLS.get("noise_reduction", "auto")
+    ).lower()
+
+    result = {
+        "Brightness": float(CAMERA_CONTROLS.get("brightness", 0.0)),
+        "Contrast": float(CAMERA_CONTROLS.get("contrast", 1.0)),
+        "Saturation": float(CAMERA_CONTROLS.get("saturation", 1.0)),
+        "Sharpness": float(CAMERA_CONTROLS.get("sharpness", 1.0)),
+        "ExposureValue": float(
+            CAMERA_CONTROLS.get("exposure_compensation", 0.0)
+        ),
+        "AeExposureMode": EXPOSURE_MODE_MAP.get(
+            exposure_mode,
+            libcamera_controls.AeExposureModeEnum.Normal,
+        ),
+        "NoiseReductionMode": NOISE_REDUCTION_MAP.get(
+            noise_reduction,
+            libcamera_controls.draft.NoiseReductionModeEnum.Fast,
+        ),
+    }
+
+    if awb_mode == "manual":
+        result["AwbEnable"] = False
+        result["ColourGains"] = (
+            float(CAMERA_CONTROLS.get("red_gain", 1.0)),
+            float(CAMERA_CONTROLS.get("blue_gain", 1.0)),
+        )
+    else:
+        result["AwbEnable"] = True
+        result["AwbMode"] = AWB_MODE_MAP.get(
+            awb_mode,
+            libcamera_controls.AwbModeEnum.Auto,
+        )
+
+    return result
+
+
+def apply_camera_controls():
+    """Apply supported controls to the currently configured camera."""
+    if picam2 is None:
+        return False
+
+    requested = build_camera_controls()
+    available = getattr(picam2, "camera_controls", {}) or {}
+
+    supported = {
+        name: value
+        for name, value in requested.items()
+        if name in available
+    }
+
+    skipped = sorted(set(requested) - set(supported))
+    if skipped:
+        print(
+            f"[CAMERA] Unsupported controls skipped: {', '.join(skipped)}",
+            flush=True,
+        )
+
+    if not supported:
+        print("[CAMERA] No supported image controls to apply", flush=True)
+        return False
+
+    try:
+        picam2.set_controls(supported)
+        print(
+            f"[CAMERA] Controls applied: {list(supported.keys())}",
+            flush=True,
+        )
+        return True
+
+    except Exception as e:
+        print(f"[CAMERA] Control apply error: {e}", flush=True)
+        return False
 
 def fix_camera_colors(frame):
     """Convert BGR to RGB if needed."""
@@ -213,8 +361,9 @@ def init_camera():
 
 
 def stop_camera():
-    """Safely stop camera."""
+    """Safely stop camera and invalidate old MJPEG generators."""
     global camera_started, CAMERA_ACTIVE
+    global stream_generation, last_frame, last_frame_time
 
     with camera_lock:
         if camera_started and picam2 is not None:
@@ -225,6 +374,11 @@ def stop_camera():
                 print(f"[CAMERA] Stop error: {e}", flush=True)
         camera_started = False
         CAMERA_ACTIVE = False
+
+        stream_generation += 1
+        last_frame = None
+        last_frame_time = 0
+
         return True
 
 
@@ -234,46 +388,103 @@ def switch_camera_mode(mode, resolution=None, fps=None):
 
     if mode not in ["video", "photo"]:
         return False
+
     if not CAMERA_AVAILABLE or picam2 is None:
         return False
 
     with camera_lock:
         stop_camera()
+
         try:
             if mode == "video":
-                w, h = map(int, (resolution or VIDEO_CONFIG["resolution"]).split("x"))
+                w, h = map(
+                    int,
+                    (resolution or VIDEO_CONFIG["resolution"]).split("x")
+                )
                 fps_val = fps or VIDEO_CONFIG["fps"]
 
+                initial_controls = build_camera_controls()
+                initial_controls["FrameRate"] = fps_val
+
                 config = picam2.create_preview_configuration(
-                    main={"size": (w, h), "format": "RGB888"},
-                    controls={"FrameRate": fps_val},
+                    main={
+                        "size": (w, h),
+                        "format": "RGB888",
+                    },
+                    controls=initial_controls,
+                    transform=get_camera_transform(),
                 )
+
                 picam2.configure(config)
                 picam2.start()
+
                 camera_started = True
                 CAMERA_MODE = "video"
                 CAMERA_ACTIVE = True
-                print(f"[CAMERA] Video mode: {w}x{h} @ {fps_val} fps", flush=True)
+
+                print(
+                    f"[CAMERA] Initial video controls configured: "
+                    f"{list(initial_controls.keys())}",
+                    flush=True,
+                )
+
+                print(
+                    f"[CAMERA] Video mode: {w}x{h} @ {fps_val} fps",
+                    flush=True,
+                )
+
                 return True
 
-            w, h = map(int, (resolution or PHOTO_CONFIG["resolution"]).split("x"))
-            config = picam2.create_still_configuration(
-                main={"size": (w, h), "format": "RGB888"}
+            # ------------------------------------------------
+            # PHOTO MODE
+            # ------------------------------------------------
+
+            w, h = map(
+                int,
+                (resolution or PHOTO_CONFIG["resolution"]).split("x")
             )
+
+            initial_controls = build_camera_controls()
+
+            config = picam2.create_still_configuration(
+                main={
+                    "size": (w, h),
+                    "format": "RGB888",
+                },
+                controls=initial_controls,
+                transform=get_camera_transform(),
+            )
+
             picam2.configure(config)
             picam2.start()
+
             camera_started = True
             CAMERA_MODE = "photo"
             CAMERA_ACTIVE = True
-            print(f"[CAMERA] Photo mode: {w}x{h}", flush=True)
+
+            print(
+                f"[CAMERA] Initial photo controls configured: "
+                f"{list(initial_controls.keys())}",
+                flush=True,
+            )
+
+            print(
+                f"[CAMERA] Photo mode: {w}x{h}",
+                flush=True,
+            )
+
             return True
 
         except Exception as e:
-            print(f"[CAMERA] Switch mode error: {e}", flush=True)
+            print(
+                f"[CAMERA] Switch mode error: {e}",
+                flush=True,
+            )
+
             camera_started = False
             CAMERA_ACTIVE = False
-            return False
 
+            return False
 
 def start_camera():
     """Start camera in video mode."""
@@ -325,30 +536,38 @@ def get_camera_frame():
 # ============================================================
 
 def generate_mjpeg_stream():
-    """Generate MJPEG stream with PIL, no OpenCV."""
+    """Generate MJPEG frames for the current camera generation."""
+    global stream_generation
+
     if not start_camera():
         print("[CAMERA] ❌ Cannot start camera", flush=True)
         return
 
-    from PIL import Image
-
-    frame_interval = 1.0 / VIDEO_CONFIG["fps"]
+    generation = stream_generation
+    frame_interval = 1.0 / max(1, int(VIDEO_CONFIG["fps"]))
     last_send_time = 0
-    quality = VIDEO_CONFIG["quality"]
+    quality = int(VIDEO_CONFIG["quality"])
 
     print(
-        f"[CAMERA] 🎥 MJPEG stream started: {VIDEO_CONFIG['resolution']} @ {VIDEO_CONFIG['fps']} fps",
+        f"[CAMERA] 🎥 MJPEG stream started: "
+        f"{VIDEO_CONFIG['resolution']} @ {VIDEO_CONFIG['fps']} fps "
+        f"(generation {generation})",
         flush=True,
     )
 
-    while True:
+    while generation == stream_generation:
         try:
             current_time = time.time()
+
             if current_time - last_send_time < frame_interval:
                 time.sleep(0.01)
                 continue
 
             frame = get_camera_frame()
+
+            if generation != stream_generation:
+                break
+
             if frame is None:
                 time.sleep(0.05)
                 continue
@@ -361,15 +580,30 @@ def generate_mjpeg_stream():
             yield (
                 b"--frame\r\n"
                 b"Content-Type: image/jpeg\r\n"
-                b"Cache-Control: no-cache\r\n\r\n" + jpeg_data + b"\r\n"
+                b"Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                b"Pragma: no-cache\r\n"
+                b"Expires: 0\r\n\r\n"
+                + jpeg_data
+                + b"\r\n"
             )
+
             last_send_time = current_time
 
         except GeneratorExit:
             break
+
         except Exception as e:
+            if generation != stream_generation:
+                break
+
             print(f"[CAMERA] Stream error: {e}", flush=True)
-            time.sleep(1)
+            time.sleep(0.25)
+
+    print(
+        f"[CAMERA] MJPEG stream stopped "
+        f"(generation {generation})",
+        flush=True,
+    )
 
 # ============================================================
 # SCREENSHOTS / GALLERY
@@ -601,6 +835,7 @@ def get_camera_status():
         "available_resolutions": RESOLUTIONS,
         "available_fps": FPS_OPTIONS,
         "video_modes": VIDEO_MODES,
+        "controls": CAMERA_CONTROLS.copy(),
     }
 
 
@@ -620,7 +855,8 @@ def api_switch_mode(data):
 def get_camera_settings():
     return {
         "ok": True,
-        "config": VIDEO_CONFIG,
+        "config": VIDEO_CONFIG.copy(),
+        "controls": CAMERA_CONTROLS.copy(),
         "available_resolutions": RESOLUTIONS,
         "available_fps": FPS_OPTIONS,
         "video_modes": VIDEO_MODES,
@@ -628,35 +864,249 @@ def get_camera_settings():
 
 
 def update_camera_settings(data):
-    changes = {}
+    video_changes = {}
+    control_changes = {}
+
+    # --------------------------------------------------------
+    # VIDEO SETTINGS
+    # --------------------------------------------------------
 
     if "resolution" in data:
-        res = data["resolution"]
+        res = str(data["resolution"])
         if res not in RESOLUTIONS:
-            return {"ok": False, "error": f"Invalid resolution. Available: {RESOLUTIONS}"}, 400
-        changes["resolution"] = res
+            return {
+                "ok": False,
+                "error": f"Invalid resolution. Available: {RESOLUTIONS}"
+            }, 400
+        video_changes["resolution"] = res
 
     if "fps" in data:
-        fps = int(data["fps"])
+        try:
+            fps = int(data["fps"])
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "FPS must be an integer"}, 400
+
         if fps not in FPS_OPTIONS:
-            return {"ok": False, "error": f"Invalid FPS. Available: {FPS_OPTIONS}"}, 400
-        changes["fps"] = fps
+            return {
+                "ok": False,
+                "error": f"Invalid FPS. Available: {FPS_OPTIONS}"
+            }, 400
+
+        video_changes["fps"] = fps
 
     if "quality" in data:
-        quality = int(data["quality"])
+        try:
+            quality = int(data["quality"])
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Quality must be an integer"}, 400
+
         if not 40 <= quality <= 90:
-            return {"ok": False, "error": "Quality must be between 40 and 90"}, 400
-        changes["quality"] = quality
+            return {
+                "ok": False,
+                "error": "Quality must be between 40 and 90"
+            }, 400
 
-    if changes:
-        with camera_lock:
+        video_changes["quality"] = quality
+
+    # --------------------------------------------------------
+    # CAMERA CONTROLS
+    # --------------------------------------------------------
+
+    controls_data = data.get("controls")
+
+    if controls_data is not None:
+        if not isinstance(controls_data, dict):
+            return {
+                "ok": False,
+                "error": "controls must be an object"
+            }, 400
+
+        numeric_limits = {
+            "brightness": (-1.0, 1.0),
+            "contrast": (0.0, 32.0),
+            "saturation": (0.0, 32.0),
+            "sharpness": (0.0, 16.0),
+            "exposure_compensation": (-8.0, 8.0),
+            "red_gain": (0.0, 32.0),
+            "blue_gain": (0.0, 32.0),
+        }
+
+        for name, limits in numeric_limits.items():
+            if name not in controls_data:
+                continue
+
+            try:
+                value = float(controls_data[name])
+            except (TypeError, ValueError):
+                return {
+                    "ok": False,
+                    "error": f"{name} must be numeric"
+                }, 400
+
+            minimum, maximum = limits
+            if not minimum <= value <= maximum:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"{name} must be between "
+                        f"{minimum} and {maximum}"
+                    )
+                }, 400
+
+            control_changes[name] = value
+
+        if "awb_mode" in controls_data:
+            awb_mode = str(controls_data["awb_mode"]).lower()
+
+            allowed_awb_modes = {
+                "auto",
+                "daylight",
+                "cloudy",
+                "indoor",
+                "tungsten",
+                "fluorescent",
+                "incandescent",
+                "manual",
+            }
+
+            if awb_mode not in allowed_awb_modes:
+                return {
+                    "ok": False,
+                    "error": (
+                        "Invalid AWB mode. Available: "
+                        + ", ".join(sorted(allowed_awb_modes))
+                    )
+                }, 400
+
+            control_changes["awb_mode"] = awb_mode
+
+        if "exposure_mode" in controls_data:
+            exposure_mode = str(
+                controls_data["exposure_mode"]
+            ).lower()
+
+            allowed_exposure_modes = {
+                "normal",
+                "short",
+                "long",
+            }
+
+            if exposure_mode not in allowed_exposure_modes:
+                return {
+                    "ok": False,
+                    "error": (
+                        "Invalid exposure mode. Available: "
+                        + ", ".join(sorted(allowed_exposure_modes))
+                    )
+                }, 400
+
+            control_changes["exposure_mode"] = exposure_mode
+
+        if "noise_reduction" in controls_data:
+            noise_reduction = str(
+                controls_data["noise_reduction"]
+            ).lower()
+
+            allowed_noise_modes = {
+                "auto",
+                "off",
+                "minimal",
+                "fast",
+                "high_quality",
+                "zsl",
+            }
+
+            if noise_reduction not in allowed_noise_modes:
+                return {
+                    "ok": False,
+                    "error": (
+                        "Invalid noise reduction mode. Available: "
+                        + ", ".join(sorted(allowed_noise_modes))
+                    )
+                }, 400
+
+            control_changes["noise_reduction"] = noise_reduction
+
+        for name in ("hflip", "vflip"):
+            if name not in controls_data:
+                continue
+
+            value = controls_data[name]
+
+            if not isinstance(value, bool):
+                return {
+                    "ok": False,
+                    "error": f"{name} must be true or false"
+                }, 400
+
+            control_changes[name] = value
+
+    # --------------------------------------------------------
+    # APPLY SETTINGS
+    # --------------------------------------------------------
+
+    if not video_changes and not control_changes:
+        return {
+            "ok": True,
+            "config": VIDEO_CONFIG.copy(),
+            "controls": CAMERA_CONTROLS.copy(),
+            "video_changes": {},
+            "control_changes": {},
+        }, 200
+
+    # In the current Picamera2/libcamera combination, some ISP controls
+    # are not applied reliably through set_controls() after switching
+    # Video -> Photo -> Video. Reconfigure the active camera so all
+    # saved controls become part of the new pipeline configuration.
+    video_restart_required = bool(video_changes or control_changes)
+
+    with camera_lock:
+        was_started = camera_started
+        previous_mode = CAMERA_MODE
+
+        VIDEO_CONFIG.update(video_changes)
+        CAMERA_CONTROLS.update(control_changes)
+
+        if control_changes:
+            CAMERA_CONTROLS["profile"] = "custom"
+
+        save_camera_settings()
+
+        if was_started and video_restart_required:
             stop_camera()
-            VIDEO_CONFIG.update(changes)
-            save_camera_settings()
-            start_camera()
-        print(f"[CAMERA] ✅ Settings updated: {changes}", flush=True)
 
-    return {"ok": True, "config": VIDEO_CONFIG, "changes": changes}, 200
+            if previous_mode == "photo":
+                switch_camera_mode(
+                    "photo",
+                    resolution=PHOTO_CONFIG["resolution"]
+                )
+            else:
+                switch_camera_mode(
+                    "video",
+                    resolution=VIDEO_CONFIG["resolution"],
+                    fps=VIDEO_CONFIG["fps"]
+                )
+
+    if video_changes:
+        print(
+            f"[CAMERA] Video settings updated: {video_changes}",
+            flush=True,
+        )
+
+    if control_changes:
+        print(
+            f"[CAMERA] Image controls updated: {control_changes}",
+            flush=True,
+        )
+
+    return {
+        "ok": True,
+        "config": VIDEO_CONFIG.copy(),
+        "controls": CAMERA_CONTROLS.copy(),
+        "video_changes": video_changes,
+        "control_changes": control_changes,
+        "restarted": bool(was_started and video_restart_required),
+    }, 200
 
 
 def set_video_mode(mode):
@@ -680,8 +1130,9 @@ def set_video_mode(mode):
 def get_photo_settings():
     return {
         "ok": True,
-        "config": PHOTO_CONFIG,
-        "save_config": PHOTO_SAVE_CONFIG,
+        "config": PHOTO_CONFIG.copy(),
+        "save_config": PHOTO_SAVE_CONFIG.copy(),
+        "controls": CAMERA_CONTROLS.copy(),
         "available_resolutions": PHOTO_PREVIEW_RESOLUTIONS,
         "save_resolution": PHOTO_SAVE_RESOLUTION,
     }

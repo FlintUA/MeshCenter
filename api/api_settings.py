@@ -6,13 +6,21 @@ DEFAULT_SETTINGS = {
         "temperature": "c",
         "pressure": "hpa",
         "wind": "ms"
+    },
+
+    "listener_autorecovery": {
+        "enabled": False,
+        "delay": 60
     }
 }
 
 
 def normalize_settings(settings):
+
     if not isinstance(settings, dict):
         settings = {}
+
+    # ---------------- Units ----------------
 
     units = settings.get("units", {})
     if not isinstance(units, dict):
@@ -31,12 +39,33 @@ def normalize_settings(settings):
     if wind not in ("ms", "kmh", "mph"):
         wind = "ms"
 
+    # -------- Listener Auto Recovery --------
+
+    recovery = settings.get("listener_autorecovery", {})
+
+    if not isinstance(recovery, dict):
+        recovery = {}
+
+    enabled = bool(recovery.get("enabled", False))
+
+    delay = int(recovery.get("delay", 60))
+
+    if delay not in (30, 60, 90, 120, 180, 300):
+        delay = 60
+
     return {
+
         "units": {
             "temperature": temperature,
             "pressure": pressure,
             "wind": wind
+        },
+
+        "listener_autorecovery": {
+            "enabled": enabled,
+            "delay": delay
         }
+
     }
 
 

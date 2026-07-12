@@ -2013,6 +2013,255 @@ def telemetry_worker():
         except Exception as e:
             print(f"[TELEMETRY] Worker error: {e}", flush=True)
 
+# ============================================================
+# LISTENER AUTO RECOVERY
+# ============================================================
+
+LISTENER_RECOVERY_MAX_ATTEMPTS = 3
+LISTENER_RECOVERY_WINDOW = 30 * 60
+LISTENER_RECOVERY_RESULT_TIMEOUT = 60
+
+listener_recovery_state = {
+    "down_since": None,
+    "attempts": [],
+    "restart_pending": False,
+    "restart_requested_at": None,
+    "limit_logged": False,
+    "last_enabled": None,
+}
+
+
+def process_listener_autorecovery(status, listener_running, now_ts):
+    """
+    Restart the Meshtastic listener after a persistent LISTENER_DOWN state.
+
+    Safety limits:
+    - maximum 3 attempts in 30 minutes;
+    - PAUSED, STARTING, IDLE and NO_PACKETS never trigger recovery;
+    - recovery is cancelled if the listener returns before the delay expires.
+    """
+    state = listener_recovery_state
+
+    with state_lock:
+        recovery_settings = settings.get(
+            "listener_autorecovery",
+            {}
+        ).copy()
+
+    enabled = bool(
+        recovery_settings.get("enabled", False)
+    )
+
+    try:
+        delay = int(
+            recovery_settings.get("delay", 60)
+        )
+    except (TypeError, ValueError):
+        delay = 60
+
+    if delay not in (30, 60, 90, 120, 180, 300):
+        delay = 60
+
+    # --------------------------------------------------------
+    # ENABLE / DISABLE
+    # --------------------------------------------------------
+
+    if state["last_enabled"] is None:
+        state["last_enabled"] = enabled
+
+        if enabled:
+            log_system_event(
+                "INFO",
+                "recovery",
+                "Listener Auto Recovery enabled",
+                f"Recovery delay: {delay} seconds",
+            )
+
+    elif state["last_enabled"] != enabled:
+        state["last_enabled"] = enabled
+
+        log_system_event(
+            "INFO",
+            "recovery",
+            (
+                "Listener Auto Recovery enabled"
+                if enabled
+                else "Listener Auto Recovery disabled"
+            ),
+            (
+                f"Recovery delay: {delay} seconds"
+                if enabled
+                else "Automatic listener restart is disabled"
+            ),
+        )
+
+    if not enabled:
+        state["down_since"] = None
+        state["restart_pending"] = False
+        state["restart_requested_at"] = None
+        state["attempts"] = []
+        state["limit_logged"] = False
+        return
+
+    # Keep only attempts made inside the current 30-minute window.
+    state["attempts"] = [
+        timestamp
+        for timestamp in state["attempts"]
+        if now_ts - timestamp < LISTENER_RECOVERY_WINDOW
+    ]
+
+    if len(state["attempts"]) < LISTENER_RECOVERY_MAX_ATTEMPTS:
+        state["limit_logged"] = False
+
+    # --------------------------------------------------------
+    # CHECK RESULT OF A PREVIOUS AUTOMATIC RESTART
+    # --------------------------------------------------------
+
+    if state["restart_pending"]:
+        requested_at = state["restart_requested_at"] or now_ts
+
+        if listener_running and status != "LISTENER_DOWN":
+            log_system_event(
+                "OK",
+                "recovery",
+                "Listener recovered successfully",
+                "Automatic listener restart completed",
+            )
+
+            state["restart_pending"] = False
+            state["restart_requested_at"] = None
+            state["down_since"] = None
+            return
+
+        if (
+            now_ts - requested_at
+            >= LISTENER_RECOVERY_RESULT_TIMEOUT
+        ):
+            log_system_event(
+                "WARNING",
+                "recovery",
+                "Automatic listener recovery failed",
+                (
+                    "Listener is still unavailable "
+                    f"{LISTENER_RECOVERY_RESULT_TIMEOUT} seconds "
+                    "after restart"
+                ),
+            )
+
+            state["restart_pending"] = False
+            state["restart_requested_at"] = None
+            state["down_since"] = now_ts
+
+        return
+
+    # Only a real listener process failure triggers recovery.
+    if status != "LISTENER_DOWN":
+        if state["down_since"] is not None:
+            log_system_event(
+                "INFO",
+                "recovery",
+                "Automatic recovery cancelled",
+                "Listener recovered before automatic restart",
+            )
+
+        state["down_since"] = None
+        return
+
+    # --------------------------------------------------------
+    # START CONFIRMATION TIMER
+    # --------------------------------------------------------
+
+    if state["down_since"] is None:
+        state["down_since"] = now_ts
+
+        log_system_event(
+            "WARNING",
+            "recovery",
+            "Listener failure detected",
+            (
+                f"Waiting {delay} seconds before "
+                "automatic recovery"
+            ),
+        )
+        return
+
+    if now_ts - state["down_since"] < delay:
+        return
+
+    # --------------------------------------------------------
+    # SAFETY LIMIT
+    # --------------------------------------------------------
+
+    if (
+        len(state["attempts"])
+        >= LISTENER_RECOVERY_MAX_ATTEMPTS
+    ):
+        if not state["limit_logged"]:
+            log_system_event(
+                "ERROR",
+                "recovery",
+                "Automatic recovery limit reached",
+                (
+                    f"{LISTENER_RECOVERY_MAX_ATTEMPTS} attempts "
+                    "within 30 minutes. Manual action required."
+                ),
+            )
+            state["limit_logged"] = True
+
+        return
+
+    # --------------------------------------------------------
+    # RESTART LISTENER
+    # --------------------------------------------------------
+
+    attempt_number = len(state["attempts"]) + 1
+
+    log_system_event(
+        "ACTION",
+        "recovery",
+        "Automatic listener restart requested",
+        (
+            f"Attempt {attempt_number} of "
+            f"{LISTENER_RECOVERY_MAX_ATTEMPTS}"
+        ),
+    )
+
+    state["attempts"].append(now_ts)
+    state["restart_pending"] = True
+    state["restart_requested_at"] = now_ts
+    state["down_since"] = None
+
+    try:
+        stop_listener()
+        time.sleep(1)
+        pause_listen.clear()
+
+        radio_event("restart")
+
+        print(
+            "[RECOVERY] Automatic listener restart requested "
+            f"(attempt {attempt_number}/"
+            f"{LISTENER_RECOVERY_MAX_ATTEMPTS})",
+            flush=True,
+        )
+
+    except Exception as error:
+        state["restart_pending"] = False
+        state["restart_requested_at"] = None
+        state["down_since"] = now_ts
+
+        log_system_event(
+            "ERROR",
+            "recovery",
+            "Automatic listener restart failed",
+            str(error),
+        )
+
+        print(
+            f"[RECOVERY] Restart error: {error}",
+            flush=True,
+        )
+
 def radio_health_worker():
     print("[RADIO] Passive health worker started", flush=True)
 
@@ -2129,6 +2378,12 @@ def radio_health_worker():
                 f"telemetry_age={telemetry_age}, "
                 f"send_age={send_age}",
                 flush=True
+            )
+
+            process_listener_autorecovery(
+                status=status,
+                listener_running=listener_running,
+                now_ts=now_ts,
             )
 
         except Exception as e:

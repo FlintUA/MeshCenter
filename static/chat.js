@@ -22,6 +22,9 @@ let isInitialized = false;
 let contextChatMode = false;
 let contextBaseTab = null;
 let radioHealthTimer = null;
+let radioCommandRunning = false;
+let nodeToolResultTimer = null;
+let nodeToolResults = {};
 
 // ===== TELEMETRY =====
 let telemetryData = {
@@ -43,6 +46,9 @@ let appSettings = {
         temperature: "c",
         pressure: "hpa",
         wind: "ms"
+    },
+    maps: {
+        provider: "osm"
     }
 };
 
@@ -164,6 +170,221 @@ function pressureChartValue(value) {
     return hpa;
 }
 
+function updateReferenceLocationFields() {
+    const modeSelect =
+        document.getElementById('referenceLocationMode');
+
+    const manualFields =
+        document.getElementById('referenceLocationManualFields');
+
+    const nodeFields =
+        document.getElementById('referenceLocationNodeFields');
+
+    const mode = modeSelect?.value || 'disabled';
+
+    if (manualFields) {
+        manualFields.style.display =
+            mode === 'manual'
+                ? 'grid'
+                : 'none';
+    }
+
+    if (nodeFields) {
+        nodeFields.style.display =
+            mode === 'node'
+                ? 'grid'
+                : 'none';
+    }
+}
+
+function populateReferenceNodeSelect() {
+    const select =
+        document.getElementById('referenceNodeId');
+
+    if (!select) {
+        return;
+    }
+
+    const selectedValue = select.value;
+
+    const sortedNodes = [...nodeCache].sort((a, b) => {
+        const nameA =
+            a.clean_name || a.name || a.node_id || '';
+
+        const nameB =
+            b.clean_name || b.name || b.node_id || '';
+
+        return nameA.localeCompare(nameB);
+    });
+
+    select.innerHTML = `
+        <option value="">
+            Select node
+        </option>
+    `;
+
+    for (const node of sortedNodes) {
+        const nodeId = String(node.node_id || '');
+
+        if (!nodeId) {
+            continue;
+        }
+
+        const nodeName =
+            node.clean_name
+            || node.name
+            || nodeId;
+
+        const hasPosition =
+            Number.isFinite(Number(node?.position?.latitude))
+            && Number.isFinite(Number(node?.position?.longitude));
+
+        const option = document.createElement('option');
+
+        option.value = nodeId;
+        option.textContent = hasPosition
+            ? `[📍] ${nodeName}`
+            : `   ${nodeName}`;
+
+        select.appendChild(option);
+    }
+
+    if (
+        selectedValue
+        && [...select.options].some(
+            option => option.value === selectedValue
+        )
+    ) {
+        select.value = selectedValue;
+    }
+}
+
+function getReferenceLocation() {
+    const reference =
+        appSettings?.reference_location || {};
+
+    const mode =
+        reference.mode || 'disabled';
+
+    if (mode === 'manual') {
+        const latitude =
+            Number(reference?.manual?.latitude);
+
+        const longitude =
+            Number(reference?.manual?.longitude);
+
+        if (
+            Number.isFinite(latitude)
+            && Number.isFinite(longitude)
+        ) {
+            return {
+                mode: 'manual',
+                latitude,
+                longitude,
+                name: 'Manual position'
+            };
+        }
+
+        return null;
+    }
+
+    if (mode === 'node') {
+        const nodeId =
+            String(reference.node_id || '');
+
+        if (!nodeId) {
+            return null;
+        }
+
+        const referenceNode = nodeCache.find(
+            node => node.node_id === nodeId
+        );
+
+        if (!referenceNode) {
+            return {
+                mode: 'node',
+                node_id: nodeId,
+                name: nodeId,
+                latitude: null,
+                longitude: null
+            };
+        }
+
+        const latitude =
+            Number(referenceNode?.position?.latitude);
+
+        const longitude =
+            Number(referenceNode?.position?.longitude);
+
+        return {
+            mode: 'node',
+            node_id: nodeId,
+
+            name:
+                referenceNode.clean_name
+                || referenceNode.name
+                || nodeId,
+
+            latitude:
+                Number.isFinite(latitude)
+                    ? latitude
+                    : null,
+
+            longitude:
+                Number.isFinite(longitude)
+                    ? longitude
+                    : null
+        };
+    }
+
+    return null;
+}
+
+function updateReferenceLocationSummary() {
+    const element =
+        document.getElementById(
+            'baseReferenceLocation'
+        );
+
+    if (!element) {
+        return;
+    }
+
+    const reference =
+        getReferenceLocation();
+
+    if (!reference) {
+        element.style.display = 'none';
+        element.textContent = '';
+        return;
+    }
+
+    element.style.display = 'block';
+
+    const hasCoordinates =
+        Number.isFinite(reference.latitude)
+        && Number.isFinite(reference.longitude);
+
+    if (reference.mode === 'manual') {
+        element.textContent =
+            `📍 Reference: `
+            + `${reference.latitude.toFixed(5)}, `
+            + `${reference.longitude.toFixed(5)}`;
+
+        return;
+    }
+
+    if (hasCoordinates) {
+        element.textContent =
+            `📍 Reference: ${reference.name} - `
+            + `${reference.latitude.toFixed(5)}, `
+            + `${reference.longitude.toFixed(5)}`;
+    } else {
+        element.textContent =
+            `📍 Reference: ${reference.name} - no position`;
+    }
+}
+
 async function loadSettings() {
     try {
         const response = await fetch("/api/settings");
@@ -203,6 +424,473 @@ function updateSettingsUi() {
     if (select) {
         select.value = delay;
         select.disabled = !enabled;
+    }
+
+    const mapProvider =
+    appSettings?.maps?.provider || 'osm';
+
+    const mapProviderSelect =
+        document.getElementById('mapProvider');
+
+    if (mapProviderSelect) {
+        mapProviderSelect.value = mapProvider;
+    }
+
+    const referenceLocation =
+    appSettings?.reference_location || {};
+
+    const referenceMode =
+        referenceLocation.mode || 'disabled';
+
+    const referenceLocationMode =
+        document.getElementById('referenceLocationMode');
+
+    const referenceLatitude =
+        document.getElementById('referenceLatitude');
+
+    const referenceLongitude =
+        document.getElementById('referenceLongitude');
+
+    const referenceNodeId =
+        document.getElementById('referenceNodeId');
+
+    if (referenceLocationMode) {
+        referenceLocationMode.value = referenceMode;
+    }
+
+    const manualLocation =
+        referenceLocation.manual || {};
+
+    if (referenceLatitude) {
+        referenceLatitude.value =
+            manualLocation.latitude ?? '';
+    }
+
+    if (referenceLongitude) {
+        referenceLongitude.value =
+            manualLocation.longitude ?? '';
+    }
+
+    populateReferenceNodeSelect();
+
+    if (referenceNodeId) {
+        referenceNodeId.value =
+            referenceLocation.node_id || '';
+    }
+
+    updateReferenceLocationFields();
+    updateReferenceLocationSummary();
+}
+
+function degreesToRadians(value) {
+    return value * Math.PI / 180;
+}
+
+function calculateDistanceMeters(
+    latitude1,
+    longitude1,
+    latitude2,
+    longitude2
+) {
+    const earthRadius = 6371000;
+
+    const lat1 =
+        degreesToRadians(latitude1);
+
+    const lat2 =
+        degreesToRadians(latitude2);
+
+    const deltaLatitude =
+        degreesToRadians(latitude2 - latitude1);
+
+    const deltaLongitude =
+        degreesToRadians(longitude2 - longitude1);
+
+    const a =
+        Math.sin(deltaLatitude / 2) ** 2
+        + Math.cos(lat1)
+        * Math.cos(lat2)
+        * Math.sin(deltaLongitude / 2) ** 2;
+
+    const c =
+        2 * Math.atan2(
+            Math.sqrt(a),
+            Math.sqrt(1 - a)
+        );
+
+    return earthRadius * c;
+}
+
+function formatNodeDistance(distanceMeters) {
+    if (!Number.isFinite(distanceMeters)) {
+        return '--';
+    }
+
+    if (distanceMeters < 1000) {
+        return `${Math.round(distanceMeters)} m`;
+    }
+
+    if (distanceMeters < 10000) {
+        return `${(distanceMeters / 1000).toFixed(2)} km`;
+    }
+
+    return `${(distanceMeters / 1000).toFixed(1)} km`;
+}
+
+function calculateBearingDegrees(
+    latitude1,
+    longitude1,
+    latitude2,
+    longitude2
+) {
+    const lat1 =
+        degreesToRadians(latitude1);
+
+    const lat2 =
+        degreesToRadians(latitude2);
+
+    const deltaLongitude =
+        degreesToRadians(longitude2 - longitude1);
+
+    const y =
+        Math.sin(deltaLongitude)
+        * Math.cos(lat2);
+
+    const x =
+        Math.cos(lat1) * Math.sin(lat2)
+        - Math.sin(lat1)
+        * Math.cos(lat2)
+        * Math.cos(deltaLongitude);
+
+    const bearing =
+        Math.atan2(y, x) * 180 / Math.PI;
+
+    return (bearing + 360) % 360;
+}
+
+function getBearingDirection(bearing) {
+    if (!Number.isFinite(bearing)) {
+        return '--';
+    }
+
+    const directions = [
+        'N',
+        'NE',
+        'E',
+        'SE',
+        'S',
+        'SW',
+        'W',
+        'NW'
+    ];
+
+    const index =
+        Math.round(bearing / 45) % 8;
+
+    return directions[index];
+}
+
+function getNodeDistanceAndBearing(
+    latitude,
+    longitude
+) {
+    const reference =
+        getReferenceLocation();
+
+    if (
+        !reference
+        || !Number.isFinite(reference.latitude)
+        || !Number.isFinite(reference.longitude)
+    ) {
+        return {
+            distanceText: '--',
+            bearingText: '--'
+        };
+    }
+
+    const distanceMeters =
+        calculateDistanceMeters(
+            reference.latitude,
+            reference.longitude,
+            latitude,
+            longitude
+        );
+
+    if (distanceMeters < 1) {
+        return {
+            distanceText: '0 m',
+            bearingText: 'Reference'
+        };
+    }
+
+    const bearing =
+        calculateBearingDegrees(
+            reference.latitude,
+            reference.longitude,
+            latitude,
+            longitude
+        );
+
+    return {
+        distanceText:
+            formatNodeDistance(distanceMeters),
+
+        bearingText:
+            `${Math.round(bearing)}° `
+            + getBearingDirection(bearing)
+    };
+}
+
+async function saveReferenceLocation() {
+    const modeSelect =
+        document.getElementById('referenceLocationMode');
+
+    const latitudeInput =
+        document.getElementById('referenceLatitude');
+
+    const longitudeInput =
+        document.getElementById('referenceLongitude');
+
+    const nodeSelect =
+        document.getElementById('referenceNodeId');
+
+    const statusElement =
+        document.getElementById('referenceLocationStatus');
+
+    const mode =
+        modeSelect?.value || 'disabled';
+
+    const latitudeValue =
+        latitudeInput?.value?.trim() || '';
+
+    const longitudeValue =
+        longitudeInput?.value?.trim() || '';
+
+    const nodeId =
+        nodeSelect?.value || '';
+
+    /*
+     * Сохраняем ранее записанные ручные координаты,
+     * даже если выбран режим Node или Disabled.
+     */
+    const savedReference =
+        appSettings?.reference_location || {};
+
+    const savedManual =
+    savedReference.manual || {};
+
+    const parseSavedCoordinate = value => {
+        if (
+            value === null
+            || value === undefined
+            || value === ''
+        ) {
+            return null;
+        }
+
+        const parsed = Number.parseFloat(String(value));
+
+        return Number.isFinite(parsed)
+            ? parsed
+            : null;
+    };
+
+    const savedLatitude =
+        parseSavedCoordinate(savedManual.latitude);
+
+    const savedLongitude =
+        parseSavedCoordinate(savedManual.longitude);
+
+    const referenceLocation = {
+        mode,
+
+        manual: {
+            latitude: savedLatitude,
+            longitude: savedLongitude
+        },
+
+        node_id: savedReference.node_id || ''
+    };
+
+    if (mode === 'manual') {
+        if (
+            latitudeValue === ''
+            || longitudeValue === ''
+        ) {
+            showToast(
+                '❌ Enter both reference coordinates',
+                'error'
+            );
+
+            return;
+        }
+
+        const latitude =
+            Number.parseFloat(latitudeValue);
+
+        const longitude =
+            Number.parseFloat(longitudeValue);
+
+        if (
+            !Number.isFinite(latitude)
+            || latitude < -90
+            || latitude > 90
+        ) {
+            showToast(
+                '❌ Invalid reference latitude',
+                'error'
+            );
+
+            return;
+        }
+
+        if (
+            !Number.isFinite(longitude)
+            || longitude < -180
+            || longitude > 180
+        ) {
+            showToast(
+                '❌ Invalid reference longitude',
+                'error'
+            );
+
+            return;
+        }
+
+        referenceLocation.manual.latitude = latitude;
+        referenceLocation.manual.longitude = longitude;
+
+    }
+
+    if (mode === 'node') {
+        if (!nodeId) {
+            showToast(
+                '❌ Select a reference node',
+                'error'
+            );
+
+            return;
+        }
+
+        referenceLocation.node_id = nodeId;
+    }
+
+    if (mode === 'disabled') {
+        /*
+         * Координаты и выбранную ноду не удаляем.
+         * Они пригодятся после повторного включения.
+         */
+    }
+
+    try {
+        const response = await fetch('/api/settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                reference_location: referenceLocation
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(
+                data.error || `HTTP ${response.status}`
+            );
+        }
+
+        appSettings = data.settings;
+
+        /*
+         * Теперь безопасно обновить интерфейс:
+         * сервер вернёт сохранённые координаты.
+         */
+        updateSettingsUi();
+
+        if (statusElement) {
+            statusElement.textContent =
+                'Reference location saved';
+        }
+
+        const selectedNode = nodeCache.find(
+            node => node.node_id === currentChatId
+        );
+
+        if (selectedNode) {
+            renderNodeDetails(selectedNode);
+        }
+
+        showToast(
+            '✅ Reference location saved',
+            'success'
+        );
+
+    } catch (error) {
+        if (statusElement) {
+            statusElement.textContent =
+                `Save failed: ${error.message}`;
+        }
+
+        showToast(
+            `❌ Unable to save reference location: ${error.message}`,
+            'error'
+        );
+    }
+}
+
+async function setMapProvider(provider) {
+    const normalizedProvider =
+        provider === 'google'
+            ? 'google'
+            : 'osm';
+
+    const maps = {
+        ...(appSettings?.maps || {}),
+        provider: normalizedProvider
+    };
+
+    try {
+        const response = await fetch('/api/settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                maps
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(
+                data.error || `HTTP ${response.status}`
+            );
+        }
+
+        appSettings = data.settings;
+        updateSettingsUi();
+
+        const currentNode = nodeCache.find(
+            node => node.node_id === currentChatId
+        );
+
+        if (currentNode) {
+            renderNodeDetails(currentNode);
+        }
+
+        showToast(
+            `✅ Map provider: ${providerName}`,
+            'success'
+        );
+
+    } catch (error) {
+        showToast(
+            `❌ Unable to save map provider: ${error.message}`,
+            'error'
+        );
     }
 }
 
@@ -576,6 +1264,28 @@ async function loadChatList() {
     }
 }
 
+function mergeNodeCachePreservingPosition(newNodes) {
+    const oldNodesById = new Map(
+        nodeCache.map(node => [node.node_id, node])
+    );
+
+    return (newNodes || []).map(node => {
+        const oldNode = oldNodesById.get(node.node_id);
+
+        if (
+            !node.position &&
+            oldNode?.position
+        ) {
+            return {
+                ...node,
+                position: oldNode.position
+            };
+        }
+
+        return node;
+    });
+}
+
 // ============================================================
 // LOAD MESSAGES
 // ============================================================
@@ -602,7 +1312,11 @@ async function loadMessages() {
         const data = await response.json();
         console.log('[MESSAGES] Received', data.nodes ? data.nodes.length : 0, 'nodes');
 
-        nodeCache = data.nodes || [];
+        nodeCache = mergeNodeCachePreservingPosition(
+            data.nodes || []
+        );
+        
+        populateReferenceNodeSelect();
         
         if (currentChatId && currentChatType === 'dm') {
             updateChatHeaderStatus();
@@ -615,7 +1329,7 @@ async function loadMessages() {
             statusEl.innerHTML = '🟢 Mesh online';
         }
         
-        const allNodes = data.nodes || [];
+        const allNodes = nodeCache;
         const ignoredNodes = allNodes.filter(n => n.ignored);
         const favoriteNodes = allNodes.filter(n => n.favorite);
         
@@ -1380,8 +2094,11 @@ function updateNodeDetails(nodeId) {
     fetch('/api/messages')
         .then(response => response.json())
         .then(data => {
-            const allNodes = data.nodes || [];
-            nodeCache = allNodes;
+            nodeCache = mergeNodeCachePreservingPosition(
+                data.nodes || []
+            );
+
+            const allNodes = nodeCache;
             const selectedNode = allNodes.find(n => n.node_id === nodeId);
             if (selectedNode) {
                 renderNodeDetails(selectedNode);
@@ -1392,6 +2109,151 @@ function updateNodeDetails(nodeId) {
         .catch(error => {
             console.error('Error updating node details:', error);
         });
+}
+
+function formatNodePositionUpdated(position) {
+    if (!position || typeof position !== 'object') {
+        return '--';
+    }
+
+    const timestamp = Number(position.updated);
+
+    if (Number.isFinite(timestamp) && timestamp > 0) {
+        const updatedDate = new Date(timestamp * 1000);
+
+        return updatedDate.toLocaleString([], {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    return position.updated_time || '--';
+}
+
+function getMapProvider() {
+    const provider = String(
+        appSettings?.maps?.provider || 'osm'
+    ).toLowerCase();
+
+    return provider === 'google' ? 'google' : 'osm';
+}
+
+function buildNodeMapUrl(latitude, longitude) {
+    const lat = Number(latitude);
+    const lon = Number(longitude);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return null;
+    }
+
+    if (getMapProvider() === 'google') {
+        return `https://www.google.com/maps?q=${encodeURIComponent(`${lat},${lon}`)}`;
+    }
+
+    return (
+        'https://www.openstreetmap.org/' +
+        `?mlat=${encodeURIComponent(lat)}` +
+        `&mlon=${encodeURIComponent(lon)}` +
+        `#map=16/${encodeURIComponent(lat)}/${encodeURIComponent(lon)}`
+    );
+}
+
+function openNodeMap(latitude, longitude) {
+    const url = buildNodeMapUrl(latitude, longitude);
+
+    if (!url) {
+        showToast('Position coordinates are unavailable', 'error');
+        return;
+    }
+
+    window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+function renderNodePositionBlock(node) {
+    const position = node?.position;
+    const latitude = Number(position?.latitude);
+    const longitude = Number(position?.longitude);
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        return '';
+    }
+
+    const altitude = Number(position?.altitude);
+    const altitudeText = Number.isFinite(altitude)
+        ? `${Math.round(altitude)} m`
+        : '--';
+
+    const navigation =
+    getNodeDistanceAndBearing(
+        latitude,
+        longitude
+    );    
+
+    const precisionLabels = {
+        full: "Full",
+        medium: "Medium",
+        low: "Low"
+    };
+
+    const precisionKey = String(position?.precision_label || "").toLowerCase();
+
+    const precisionText =
+        precisionLabels[precisionKey]
+        || position?.precision_label
+        || position?.precision
+        || "--";
+
+    return `
+        <div class="node-position-card">
+            <div class="node-position-heading">
+                <span>📍 Last known position</span>
+                <span class="node-position-updated">
+                    ${escapeHtml(formatNodePositionUpdated(position))}
+                </span>
+            </div>
+
+            <div class="node-position-grid">
+                <div class="node-position-item">
+                    <span class="label">Latitude:</span>
+                    <span class="value">${escapeHtml(latitude.toFixed(6))}</span>
+                </div>
+
+                <div class="node-position-item">
+                    <span class="label">Longitude:</span>
+                    <span class="value">${escapeHtml(longitude.toFixed(6))}</span>
+                </div>
+
+                <div class="node-position-item">
+                    <span class="label">Altitude:</span>
+                    <span class="value">${escapeHtml(altitudeText)}</span>
+                </div>
+
+                <div class="node-position-item node-position-navigation">
+                    <span class="label">Distance:</span>
+                    <span class="value">
+                        ${escapeHtml(navigation.distanceText)}
+                    </span>
+
+                    <span class="node-position-bearing">
+                        ${escapeHtml(navigation.bearingText)}
+                    </span>
+                </div>
+            </div>
+
+            <div class="node-position-actions">
+                <button type="button"
+                        class="node-position-map-btn"
+                        onclick="openNodeMap(${latitude}, ${longitude})">
+                    🗺 Show on map
+                </button>
+
+                <div class="node-position-action-reserve"></div>
+            </div>
+        </div>
+    `;
 }
 
 function renderNodeDetails(node) {
@@ -1410,6 +2272,7 @@ function renderNodeDetails(node) {
     const ignoreBtnText = isIgnored ? 'Ignored' : 'Ignore';
     const favoriteBtnClass = isFavorite ? 'favorite-btn active' : 'favorite-btn';
     const isActive = directMessageTarget === node.node_id;
+    const positionBlock = renderNodePositionBlock(node);
 
     details.className = '';
     details.innerHTML = `
@@ -1469,21 +2332,709 @@ function renderNodeDetails(node) {
                     </div>
                 </div>
                 <div class="node-details-col node-details-col-actions">
-                    <button class="${favoriteBtnClass}" 
+                    <button class="${favoriteBtnClass}"
                             data-node-id="${escapeHtml(node.node_id)}"
                             onclick="toggleFavorite('${escapeHtml(node.node_id)}')"
                             title="${isFavorite ? 'Remove from favorites' : 'Add to favorites'}">
                         ${isFavorite ? '⭐ Unstar' : '☆ Favorite'}
                     </button>
-                    <button class="${ignoreBtnClass}" 
+
+                    <button class="${ignoreBtnClass}"
                             data-node-id="${escapeHtml(node.node_id)}"
                             onclick="toggleIgnore('${escapeHtml(node.node_id)}')"
                             title="${isIgnored ? 'Unignore this node' : 'Ignore this node'}">
                         ${ignoreBtnText}
                     </button>
+
+                    <div class="node-tools-wrap">
+                        <button type="button"
+                                class="node-tools-btn"
+                                id="nodeToolsBtn"
+                                onclick="event.stopPropagation(); toggleNodeToolsMenu()">
+                            🛠 Tools
+                            <span id="nodeToolsArrow">▾</span>
+                        </button>
+
+                        <div class="node-tools-menu"
+                             id="nodeToolsMenu"
+                             style="display:none;"
+                             onclick="event.stopPropagation();">
+
+                            <button type="button"
+                                    class="node-tools-menu-item"
+                                    onclick="runNodeTool(
+                                        'traceroute',
+                                        '${escapeHtml(node.node_id)}',
+                                        '${escapeHtml(node.clean_name || node.name || node.node_id)}',
+                                        this
+                                    )">
+                                <span>🛰</span>
+                                <span>Traceroute</span>
+                            </button>
+
+                            <div class="node-tools-menu-divider"></div>
+
+                            <button type="button"
+                                    class="node-tools-menu-item"
+                                    onclick="runNodeTool(
+                                        'request_telemetry',
+                                        '${escapeHtml(node.node_id)}',
+                                        '${escapeHtml(node.clean_name || node.name || node.node_id)}',
+                                        this
+                                    )">
+                                <span>📊</span>
+                                <span>Request telemetry</span>
+                            </button>
+
+                            <button type="button"
+                                    class="node-tools-menu-item"
+                                    onclick="runNodeTool(
+                                        'request_position',
+                                        '${escapeHtml(node.node_id)}',
+                                        '${escapeHtml(node.clean_name || node.name || node.node_id)}',
+                                        this
+                                    )">
+                                <span>📍</span>
+                                <span>Request position</span>
+                            </button>
+
+                            <button type="button"
+                                    class="node-tools-menu-item"
+                                    disabled
+                                    title="Coming later">
+                                <span>🔄</span>
+                                <span>Refresh node</span>
+                            </button>
+
+                        </div>
+                    </div>
                 </div>
             </div>
+            ${positionBlock}
+            <div class="node-tool-result"
+                 id="nodeToolResult"
+                 style="display:none;">
+            </div>
         </div>`;
+
+        const savedToolResult = nodeToolResults[node.node_id];
+
+        if (savedToolResult) {
+            renderNodeToolResult(
+                node.node_id,
+                savedToolResult.type,
+                savedToolResult.title,
+                savedToolResult.message,
+                savedToolResult.details
+            );
+        }
+
+        if (radioCommandRunning) {
+            setNodeToolsBusy(true);
+        }
+    }
+
+function setNodeToolsBusy(isBusy) {
+    radioCommandRunning = Boolean(isBusy);
+
+    const toolsButton = document.getElementById('nodeToolsBtn');
+    const toolsMenu = document.getElementById('nodeToolsMenu');
+
+    if (toolsButton) {
+        toolsButton.disabled = radioCommandRunning;
+
+        toolsButton.innerHTML = radioCommandRunning
+            ? '<span>⏳ Working...</span>'
+            : '<span>🛠 Tools</span><span id="nodeToolsArrow">▾</span>';
+    }
+
+    if (radioCommandRunning && toolsMenu) {
+        toolsMenu.style.display = 'none';
+    }
+}
+
+function toggleNodeToolsMenu(forceOpen = null) {
+    if (radioCommandRunning && forceOpen !== false) {
+        showToast('A radio command is already running', 'info');
+        return;
+    }
+
+    const menu = document.getElementById('nodeToolsMenu');
+    const arrow = document.getElementById('nodeToolsArrow');
+
+    if (!menu) return;
+
+    const currentlyOpen = menu.style.display === 'block';
+    const shouldOpen = forceOpen === null
+        ? !currentlyOpen
+        : Boolean(forceOpen);
+
+    menu.style.display = shouldOpen ? 'block' : 'none';
+
+    if (arrow) {
+        arrow.textContent = shouldOpen ? '▴' : '▾';
+    }
+}
+
+
+function closeNodeToolsMenu() {
+    toggleNodeToolsMenu(false);
+}
+
+
+function getTracerouteNodeName(nodeId) {
+    const normalizedId = String(nodeId || '').toLowerCase();
+
+    const node = nodeCache.find(item =>
+        String(item.node_id || '').toLowerCase() === normalizedId
+    );
+
+    if (!node) {
+        return nodeId;
+    }
+
+    return (
+        node.clean_name ||
+        node.name ||
+        node.long_name ||
+        node.short_name ||
+        nodeId
+    );
+}
+
+
+function parseTracerouteLine(line) {
+    const text = String(line || '').trim();
+
+    if (!text) {
+        return {
+            nodes: [],
+            hopCount: 0
+        };
+    }
+
+    const parts = text
+        .split(/\s*-->\s*/)
+        .map(part => part.trim())
+        .filter(Boolean);
+
+    const nodes = parts.map(part => {
+        const match = part.match(
+            /^(![0-9a-f]{8}|Unknown)(?:\s*\(([^)]+)\))?$/i
+        );
+
+        if (!match) {
+            return {
+                id: part,
+                name: part,
+                snr: ''
+            };
+        }
+
+        const nodeId = match[1];
+        const nodeName = nodeId.toLowerCase() === 'unknown'
+            ? 'Unknown'
+            : getTracerouteNodeName(nodeId);
+
+        return {
+            id: nodeId,
+            name: nodeName,
+            snr: match[2] || ''
+        };
+    });
+
+    return {
+        nodes,
+        hopCount: Math.max(0, nodes.length - 1)
+    };
+}
+
+
+function parseTracerouteOutput(output) {
+    const text = String(output || '');
+
+    const forwardMatch = text.match(
+        /Route traced towards destination:\s*\n([^\n]+)/i
+    );
+
+    const returnMatch = text.match(
+        /Route traced back to us:\s*\n([^\n]+)/i
+    );
+
+    return {
+        forward: parseTracerouteLine(
+            forwardMatch?.[1]?.trim() || ''
+        ),
+
+        returnRoute: parseTracerouteLine(
+            returnMatch?.[1]?.trim() || ''
+        )
+    };
+}
+
+
+function renderTracerouteChain(route) {
+    if (!route || !Array.isArray(route.nodes) || !route.nodes.length) {
+        return `
+            <div class="route-empty">
+                Route information unavailable
+            </div>
+        `;
+    }
+
+    const nodesHtml = route.nodes.map((node, index) => {
+        const isFirst = index === 0;
+        const isLast = index === route.nodes.length - 1;
+
+        const knownName =
+            node.name &&
+            node.id &&
+            node.name.toLowerCase() !== node.id.toLowerCase();
+
+        const nodeClasses = [
+            'route-chain-node',
+            isFirst ? 'route-chain-source' : '',
+            isLast ? 'route-chain-destination' : ''
+        ].filter(Boolean).join(' ');
+
+        const nodeLabel = isFirst
+            ? 'SOURCE'
+            : (isLast ? 'DESTINATION' : '');
+
+        const connector = !isLast
+            ? `
+                <div class="route-chain-connector">
+                    <span class="route-chain-line"></span>
+
+                    <span class="route-snr-badge">
+                        ${escapeHtml(
+                            route.nodes[index + 1].snr || '? dB'
+                        )}
+                    </span>
+
+                    <span class="route-chain-arrow">↓</span>
+                </div>
+            `
+            : '';
+
+        return `
+            <div class="${nodeClasses}">
+                <div class="route-chain-dot"></div>
+
+                <div class="route-chain-node-content"
+                     title="${escapeHtml(node.id)}">
+
+                    ${nodeLabel
+                        ? `<span class="route-endpoint-label">${nodeLabel}</span>`
+                        : ''
+                    }
+
+                    <div class="route-chain-name">
+                        ${escapeHtml(node.name || node.id)}
+                    </div>
+
+                    ${knownName
+                        ? `
+                            <div class="route-chain-id">
+                                ${escapeHtml(node.id)}
+                            </div>
+                        `
+                        : ''
+                    }
+                </div>
+            </div>
+
+            ${connector}
+        `;
+    }).join('');
+
+    const hopWord = route.hopCount === 1 ? 'hop' : 'hops';
+
+    return `
+        <div class="route-chain-meta">
+            ${route.hopCount} ${hopWord}
+        </div>
+
+        <div class="route-chain">
+            ${nodesHtml}
+        </div>
+    `;
+}
+
+function formatDurationSeconds(totalSeconds) {
+    const seconds = Number(totalSeconds);
+
+    if (!Number.isFinite(seconds) || seconds < 0) {
+        return null;
+    }
+
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+
+    const parts = [];
+
+    if (days > 0) {
+        parts.push(`${days}d`);
+    }
+
+    if (hours > 0) {
+        parts.push(`${hours}h`);
+    }
+
+    if (minutes > 0 || parts.length === 0) {
+        parts.push(`${minutes}m`);
+    }
+
+    return parts.join(' ');
+}
+
+
+function formatTelemetryCliOutput(output) {
+    const text = String(output || '');
+
+    return text.replace(
+        /Uptime:\s*(\d+)\s*s\b/i,
+        (fullMatch, secondsText) => {
+            const formatted = formatDurationSeconds(secondsText);
+
+            return formatted
+                ? `Uptime: ${formatted}`
+                : fullMatch;
+        }
+    );
+}
+
+function renderNodeToolResult(nodeId, type, title, message, details = '') {
+    const result = document.getElementById('nodeToolResult');
+    if (!result) return;
+
+    nodeToolResults[nodeId] = {
+        type,
+        title,
+        message,
+        details
+    };
+
+    result.className = `node-tool-result ${type}`;
+    result.style.display = 'block';
+    result.dataset.nodeId = nodeId;
+
+    result.innerHTML = `
+        <div class="node-tool-result-header">
+            <strong>${escapeHtml(title)}</strong>
+
+            <button type="button"
+                    class="node-tool-result-close"
+                    onclick="closeNodeToolResult('${escapeHtml(nodeId)}')"
+                    title="Close">
+                ×
+            </button>
+        </div>
+
+        <div class="node-tool-result-message">
+            ${escapeHtml(message)}
+        </div>
+
+        ${details}
+    `;
+}
+
+
+function closeNodeToolResult(nodeId = null) {
+    const result = document.getElementById('nodeToolResult');
+
+    if (nodeId) {
+        delete nodeToolResults[nodeId];
+    }
+
+    if (
+        result &&
+        (!nodeId || result.dataset.nodeId === nodeId)
+    ) {
+        result.style.display = 'none';
+        result.innerHTML = '';
+        result.className = 'node-tool-result';
+        delete result.dataset.nodeId;
+    }
+
+    if (nodeToolResultTimer) {
+        clearTimeout(nodeToolResultTimer);
+        nodeToolResultTimer = null;
+    }
+}
+
+function scheduleNodeToolResultClose(nodeId, delay = 20000) {
+    if (nodeToolResultTimer) {
+        clearTimeout(nodeToolResultTimer);
+    }
+
+    nodeToolResultTimer = setTimeout(() => {
+        closeNodeToolResult(nodeId);
+    }, delay);
+}
+
+async function runNodeTool(action, nodeId, nodeName, button) {
+
+    if (!action || !nodeId) return;
+
+    if (radioCommandRunning) {
+        showToast(
+            'Another radio command is already running',
+            'info'
+        );
+        return;
+    }
+
+    closeNodeToolsMenu();
+    setNodeToolsBusy(true);
+
+    const originalText = button?.innerHTML || '';
+
+    const toolConfig = {
+        traceroute: {
+            pendingTitle: '🛰 Traceroute',
+            pendingMessage: `Checking route to ${nodeName}...`,
+            successToast: `✅ Traceroute completed: ${nodeName}`,
+            errorTitle: '❌ Traceroute failed',
+            errorToastPrefix: '❌ Traceroute failed'
+        },
+
+        request_telemetry: {
+            pendingTitle: '📊 Request telemetry',
+            pendingMessage: `Requesting telemetry from ${nodeName}...`,
+            successToast: `✅ Telemetry request completed: ${nodeName}`,
+            errorTitle: '❌ Telemetry request failed',
+            errorToastPrefix: '❌ Telemetry request failed'
+        },
+
+        request_position: {
+            pendingTitle: '📍 Request position',
+            pendingMessage: `Requesting position from ${nodeName}...`,
+            successToast: `✅ Position request completed: ${nodeName}`,
+            errorTitle: '❌ Position request failed',
+            errorToastPrefix: '❌ Position request failed'
+        }
+    };
+
+    const currentTool = toolConfig[action];
+
+    if (!currentTool) {
+        showToast('Unsupported Node Tool action', 'error');
+        setNodeToolsBusy(false);
+        return;
+    }    
+
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = `
+            <span>⏳</span>
+            <span>Running...</span>
+        `;
+    }
+
+    renderNodeToolResult(
+        nodeId,
+        'pending',
+        currentTool.pendingTitle,
+        currentTool.pendingMessage
+    );
+
+    try {
+        const response = await fetch('/api/node_tools', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                action: action,
+                node_id: nodeId
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            if (response.status === 409 || data.status === 'busy') {
+                throw new Error(
+                    'Another radio command is already running'
+                );
+            }
+
+            throw new Error(
+                data.error || `HTTP ${response.status}`
+            );
+        }
+
+        if (action === 'traceroute') {
+            const route = parseTracerouteOutput(data.output);
+
+            const routeDetails = `
+            <div class="route-grid">
+
+                <div class="route-card route-card-forward">
+                    <div class="route-card-header">
+                        <span class="route-badge route-forward">
+                            FORWARD
+                        </span>
+                    </div>
+
+                    ${renderTracerouteChain(route.forward)}
+                </div>
+
+                <div class="route-card route-card-return">
+                    <div class="route-card-header">
+                        <span class="route-badge route-return">
+                            RETURN
+                        </span>
+                    </div>
+
+                    ${renderTracerouteChain(route.returnRoute)}
+                </div>
+
+            </div>
+        `;
+
+            renderNodeToolResult(
+                nodeId,
+                "success",
+                `🛰 Traceroute to ${data.node_name || nodeName}`,
+                "",
+                routeDetails
+            );
+            scheduleNodeToolResultClose(nodeId, 20000);
+        }
+
+        else if (action === 'request_telemetry') {
+            const rawOutput = String(data.output || '').trim();
+            const displayOutput = formatTelemetryCliOutput(rawOutput);
+
+            const telemetryDetails = rawOutput
+                ? `
+                    <div class="telemetry-request-output">
+                        <div class="telemetry-request-status">
+                            Request completed by Meshtastic CLI
+                        </div>
+
+                        <pre>${escapeHtml(displayOutput)}</pre>
+                    </div>
+                `
+                : `
+                    <div class="telemetry-request-output">
+                        <div class="telemetry-request-status">
+                            Request sent successfully
+                        </div>
+
+                        <div class="telemetry-request-note">
+                            The response may arrive asynchronously through the listener.
+                        </div>
+                    </div>
+                `;
+
+            renderNodeToolResult(
+                nodeId,
+                'success',
+                `📊 Telemetry from ${data.node_name || nodeName}`,
+                '',
+                telemetryDetails
+            );
+
+            scheduleNodeToolResultClose(nodeId, 20000);
+        }
+
+        else if (action === 'request_position') {
+            const rawOutput = String(data.output || '').trim();
+
+            const positionDetails = rawOutput
+                ? `
+                    <div class="telemetry-request-output">
+                        <div class="telemetry-request-status">
+                            Request completed by Meshtastic CLI
+                        </div>
+
+                        <pre>${escapeHtml(rawOutput)}</pre>
+                    </div>
+                `
+                : `
+                    <div class="telemetry-request-output">
+                        <div class="telemetry-request-status">
+                            Position request sent successfully
+                        </div>
+
+                        <div class="telemetry-request-note">
+                            The response may arrive asynchronously through the listener.
+                        </div>
+                    </div>
+                `;
+
+            renderNodeToolResult(
+                nodeId,
+                'success',
+                `📍 Position from ${data.node_name || nodeName}`,
+                '',
+                positionDetails
+            );
+
+            if (data.position_saved && data.position) {
+                const cachedIndex = nodeCache.findIndex(
+                    item => item.node_id === nodeId
+                );
+
+                if (cachedIndex >= 0) {
+                    nodeCache[cachedIndex] = {
+                        ...nodeCache[cachedIndex],
+                        position: data.position
+                    };
+
+                    if (currentChatId === nodeId) {
+                        renderNodeDetails(nodeCache[cachedIndex]);
+                    }
+                } else {
+                    await loadMessages();
+                }
+            }
+
+            scheduleNodeToolResultClose(nodeId, 20000);
+        }
+        
+        const completedName = data.node_name || nodeName;
+
+        let successMessage = `✅ Command completed: ${completedName}`;
+
+        if (action === 'traceroute') {
+            successMessage = `✅ Traceroute completed: ${completedName}`;
+        } else if (action === 'request_telemetry') {
+            successMessage = `✅ Telemetry request completed: ${completedName}`;
+        } else if (action === 'request_position') {
+            successMessage = `✅ Position request completed: ${completedName}`;
+        }
+
+        showToast(successMessage, 'success');
+
+    } catch (error) {
+        console.error('[NODE TOOLS] Error:', error);
+
+        renderNodeToolResult(
+            nodeId,
+            'error',
+            currentTool.errorTitle,
+            error.message
+        );
+
+        showToast(
+            `${currentTool.errorToastPrefix}: ${error.message}`,
+            'error'
+        );
+        
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = originalText;
+        }
+
+        setNodeToolsBusy(false);
+        setTimeout(loadRadioHealth, 1000);
+    }
 }
 
 function clearNodeSearch() {
@@ -2304,6 +3855,17 @@ document.addEventListener('click', function(e) {
     }
     if (importMenu && importMenu.style.display === 'block' && !importMenu.contains(e.target) && !importBtn?.contains(e.target)) {
         importMenu.style.display = 'none';
+    }
+        const nodeToolsMenu = document.getElementById('nodeToolsMenu');
+    const nodeToolsButton = document.getElementById('nodeToolsBtn');
+
+    if (
+        nodeToolsMenu &&
+        nodeToolsMenu.style.display === 'block' &&
+        !nodeToolsMenu.contains(e.target) &&
+        !nodeToolsButton?.contains(e.target)
+    ) {
+        closeNodeToolsMenu();
     }
 });
 
@@ -4472,15 +6034,6 @@ async function forgetWifi(ssid) {
     }
 }
 
-function escapeHtml(text) {
-    return String(text)
-        .replaceAll('&', '&amp;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#039;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;');
-}
-
 function exitSplitView() {
     const chatList = document.getElementById('chatListContainer');
     const messagesView = document.getElementById('messagesView');
@@ -4702,17 +6255,17 @@ function updateHeaderNodeStatus(data, reachable = true) {
         label = 'Disconnected';
         stateClass = 'status-offline';
 
-    } else if (!listenerRunning || status === 'LISTENER_DOWN') {
-        label = 'Offline';
-        stateClass = 'status-error';
+    } else if (status === 'PAUSED') {
+        label = 'Radio Busy';
+        stateClass = 'status-warning';
 
     } else if (status === 'STARTING') {
         label = 'Starting';
         stateClass = 'status-warning';
 
-    } else if (status === 'PAUSED') {
-        label = 'Paused';
-        stateClass = 'status-warning';
+    } else if (!listenerRunning || status === 'LISTENER_DOWN') {
+        label = 'Offline';
+        stateClass = 'status-error';
 
     } else if (status === 'NO_PACKETS') {
         label = 'No Signal';
@@ -4721,7 +6274,6 @@ function updateHeaderNodeStatus(data, reachable = true) {
     } else if (status === 'IDLE' || level === 'WARNING') {
         label = status === 'IDLE' ? 'Idle' : 'Warning';
         stateClass = 'status-warning';
-
     } else if (level === 'ERROR') {
         label = 'Error';
         stateClass = 'status-error';
@@ -5065,7 +6617,6 @@ window.closeWifiConnectModal = closeWifiConnectModal;
 window.toggleWifiPasswordVisible = toggleWifiPasswordVisible;
 window.connectSelectedWifi = connectSelectedWifi;
 window.loadSystemInfo = loadSystemInfo;
-window.loadSystemInfo = loadSystemInfo;
 window.exitSplitView = exitSplitView;
 window.toggleRadioHealthHistory = toggleRadioHealthHistory;
 window.runSystemAction = runSystemAction;
@@ -5073,6 +6624,17 @@ window.restartListener = restartListener;
 window.updateCameraControlLabels = updateCameraControlLabels;
 window.updateCameraImageControls = updateCameraImageControls;
 window.restoreCameraImageDefaults = restoreCameraImageDefaults;
+window.updateListenerRecoverySettings = updateListenerRecoverySettings;
+window.toggleNodeToolsMenu = toggleNodeToolsMenu;
+window.closeNodeToolsMenu = closeNodeToolsMenu;
+window.runNodeTool = runNodeTool;
+window.closeNodeToolResult = closeNodeToolResult;
+window.openNodeMap = openNodeMap;
+window.setMapProvider = setMapProvider;
+window.updateReferenceLocationFields =
+    updateReferenceLocationFields;
+window.saveReferenceLocation =
+    saveReferenceLocation;
 window.getAppSettings = function() {
     return appSettings;
 };
@@ -5089,3 +6651,4 @@ console.log('[EXPORT] Все функции экспортированы в wind
 // ============================================================
 console.log('[CHAT] Script loaded, calling init()...');
 init();
+

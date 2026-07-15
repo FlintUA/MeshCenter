@@ -23,6 +23,7 @@ from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes
 from api.api_system import register_system_routes
 from system_log import log_system_event
+from api.api_node_tools import register_node_tools_routes
 
 try:
     from config import *
@@ -528,6 +529,10 @@ def default_settings():
             "temperature": "c",
             "pressure": "hpa",
             "wind": "ms"
+        },
+        "listener_autorecovery": {
+            "enabled": False,
+            "delay": 0
         }
     }
 
@@ -542,14 +547,31 @@ def load_settings():
         data = default_settings()
 
     units = data.get("units", {})
+    recovery = data.get("listener_autorecovery", {})
+    if not isinstance(recovery, dict):
+        recovery = {}
+
     if not isinstance(units, dict):
         units = {}
 
     normalized_settings = {
         "units": {
-            "temperature": units.get("temperature", "c") if units.get("temperature", "c") in ("c", "f", "both") else "c",
-            "pressure": units.get("pressure", "hpa") if units.get("pressure", "hpa") in ("hpa", "mmhg", "both") else "hpa",
-            "wind": units.get("wind", "ms") if units.get("wind", "ms") in ("ms", "kmh", "mph") else "ms",
+            "temperature": units.get("temperature", "c")
+                if units.get("temperature", "c") in ("c", "f", "both")
+                else "c",
+
+            "pressure": units.get("pressure", "hpa")
+                if units.get("pressure", "hpa") in ("hpa", "mmhg", "both")
+                else "hpa",
+
+            "wind": units.get("wind", "ms")
+                if units.get("wind", "ms") in ("ms", "kmh", "mph")
+                else "ms",
+        },
+
+        "listener_autorecovery": {
+            "enabled": bool(recovery.get("enabled", False)),
+            "delay": int(recovery.get("delay", 60))
         }
     }
 
@@ -1579,14 +1601,24 @@ def get_nodes_list():
             if ignored: meta_parts.append("🚫 ignored")
             if favorite: meta_parts.append("⭐ favorite")
             result.append({
-                "name": icon + " " + n["name"], "clean_name": n["name"],
-                "node_id": n["node_id"], "meta": " | ".join(meta_parts),
-                "last_text": last_text, "short_name": short_name,
-                "hw_model": hw_model, "role": role,
-                "rssi": rssi, "snr": snr,
-                "hop_start": hop_start, "relay_node": relay_node,
-                "signal_quality": quality, "age": age_display,
-                "ignored": ignored, "favorite": favorite
+                "name": icon + " " + n["name"],
+                "clean_name": n["name"],
+                "node_id": n["node_id"],
+                "meta": " | ".join(meta_parts),
+                "last_text": last_text,
+                "short_name": short_name,
+                "hw_model": hw_model,
+                "role": role,
+                "rssi": rssi,
+                "snr": snr,
+                "hop_start": hop_start,
+                "relay_node": relay_node,
+                "signal_quality": quality,
+                "age": age_display,
+                "ignored": ignored,
+                "favorite": favorite,
+                # последняя сохранённая позиция
+                "position": n.get("position")
             })
     return result
 
@@ -2457,6 +2489,21 @@ register_settings_routes(
     handle_errors,
 )
 
+register_node_tools_routes(
+    app=app,
+    handle_errors=handle_errors,
+    is_valid_node_id=is_valid_node_id,
+    nodes=nodes,
+    state_lock=state_lock,
+    save_nodes=save_nodes,
+    MESHTASTIC_CMD=MESHTASTIC_CMD,
+    MESHTASTIC_PORT=MESHTASTIC_PORT,
+    radio_lock=radio_lock,
+    pause_listen=pause_listen,
+    prepare_radio_command=prepare_radio_command,
+    log_system_event=log_system_event,
+)
+
 # ============================================================
 # API ROUTES
 # ============================================================
@@ -2964,3 +3011,4 @@ if __name__ == "__main__":
     """)
     
     app.run(host=APP_HOST, port=APP_PORT, debug=False, threaded=True)
+

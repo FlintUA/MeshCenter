@@ -688,7 +688,9 @@
                     <div class="settings-grid">
                         <div class="settings-card">
                             <div class="settings-card-title">🌍 General</div>
-                            <div class="settings-card-text">Basic interface preferences will be added here.</div>
+                            <div class="settings-card-text">
+                                Basic interface preferences will be added here.
+                            </div>
                         </div>
 
                         <div class="settings-card">
@@ -713,13 +715,108 @@
 
                         <div class="settings-card">
                             <div class="settings-card-title">🧩 System</div>
-                            <div class="settings-card-text">System-level options and service information will be added later.</div>
+                            <div class="settings-card-text">
+                                System-level options and service information will be added later.
+                            </div>
+                        </div>
+
+                        <div class="map-settings-card">
+                            <div class="map-settings-title">
+                                🗺 Map
+                            </div>
+
+                            <div class="map-settings-row">
+                                <div>
+                                    <div class="map-settings-label">Map provider</div>
+                                    <div class="map-settings-description">
+                                        Used when opening a saved node position.
+                                    </div>
+                                </div>
+
+                                <select id="mapProvider"
+                                        class="map-provider-select"
+                                        onchange="setMapProvider(this.value)">
+                                    <option value="osm">OpenStreetMap</option>
+                                    <option value="google">Google Maps</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="reference-location-card">
+                            <div class="reference-location-title">
+                                📍 Reference location
+                            </div>
+
+                            <div class="reference-location-description">
+                                Used to calculate distance and bearing to Meshtastic nodes.
+                            </div>
+
+                            <div class="reference-location-row">
+                                <label for="referenceLocationMode">Mode</label>
+
+                                <select id="referenceLocationMode"
+                                        onchange="updateReferenceLocationFields()">
+                                    <option value="disabled">Disabled</option>
+                                    <option value="manual">Manual coordinates</option>
+                                    <option value="node">Use node position</option>
+                                </select>
+                            </div>
+
+                            <div id="referenceLocationManualFields"
+                                 class="reference-location-fields"
+                                 style="display:none;">
+                                <div class="reference-location-coordinate">
+                                    <label for="referenceLatitude">Latitude</label>
+                                    <input id="referenceLatitude"
+                                           type="number"
+                                           min="-90"
+                                           max="90"
+                                           step="0.000001"
+                                           placeholder="Enter latitude">
+                                </div>
+
+                                <div class="reference-location-coordinate">
+                                    <label for="referenceLongitude">Longitude</label>
+                                    <input id="referenceLongitude"
+                                           type="number"
+                                           min="-180"
+                                           max="180"
+                                           step="0.000001"
+                                           placeholder="Enter longitude">
+                                </div>
+                            </div>
+
+                            <div id="referenceLocationNodeFields"
+                                class="reference-location-fields"
+                                style="display:none;">
+
+                                <div class="reference-location-coordinate">
+                                    <label for="referenceNodeId">
+                                        Reference node
+                                    </label>
+
+                                    <select id="referenceNodeId">
+                                        <option value="">
+                                            Select node
+                                        </option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <button type="button"
+                                    class="reference-location-save-btn"
+                                    onclick="saveReferenceLocation()">
+                                💾 Save reference location
+                            </button>
+
+                            <div id="referenceLocationStatus"
+                                 class="reference-location-status">
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-
-        </div>
+                        </div>
 
         <!-- Sidebar -->
         <div class="sidebar" id="sidebar">
@@ -727,6 +824,11 @@
             <div class="base-card" id="baseCard">
                 <div class="base-card-title">📡 <span id="baseNodeName">Loading...</span></div>
                 <div class="base-status-line" id="baseStatusLine">Loading...</div>
+            </div>
+            
+            <div class="base-reference-location"
+                id="baseReferenceLocation"
+                style="display:none;">
             </div>
             
             <!-- Sensors Card -->
@@ -1071,3 +1173,4 @@
 
 </body>
 </html>
+

@@ -13,7 +13,7 @@ import json
 import os
 import io
 import csv
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime
 from camera import camera
 from telemetry import telemetry
@@ -554,25 +554,25 @@ def load_settings():
     if not isinstance(units, dict):
         units = {}
 
-    normalized_settings = {
-        "units": {
-            "temperature": units.get("temperature", "c")
-                if units.get("temperature", "c") in ("c", "f", "both")
-                else "c",
+    normalized_settings = dict(data)
 
-            "pressure": units.get("pressure", "hpa")
-                if units.get("pressure", "hpa") in ("hpa", "mmhg", "both")
-                else "hpa",
+    normalized_settings["units"] = {
+        "temperature": units.get("temperature", "c")
+            if units.get("temperature", "c") in ("c", "f", "both")
+            else "c",
 
-            "wind": units.get("wind", "ms")
-                if units.get("wind", "ms") in ("ms", "kmh", "mph")
-                else "ms",
-        },
+        "pressure": units.get("pressure", "hpa")
+            if units.get("pressure", "hpa") in ("hpa", "mmhg", "both")
+            else "hpa",
 
-        "listener_autorecovery": {
-            "enabled": bool(recovery.get("enabled", False)),
-            "delay": int(recovery.get("delay", 60))
-        }
+        "wind": units.get("wind", "ms")
+            if units.get("wind", "ms") in ("ms", "kmh", "mph")
+            else "ms",
+    }
+
+    normalized_settings["listener_autorecovery"] = {
+        "enabled": bool(recovery.get("enabled", False)),
+        "delay": int(recovery.get("delay", 60))
     }
 
     settings.clear()
@@ -1094,22 +1094,42 @@ def parse_nodes_from_info():
             last_heard = node_data.get("lastHeard")
             hops_away = node_data.get("hopsAway", 0)
             if not long_name or long_name == "Unknown": continue
+
             with state_lock:
                 old = nodes.get(node_id, {})
                 old_name = old.get("name", "")
-                nodes[node_id] = {
-                    "name": long_name, "node_id": node_id,
+
+                node = dict(old)
+
+                node.update({
+                    "name": long_name,
+                    "node_id": node_id,
                     "last_seen": last_heard or old.get("last_seen", 0),
-                    "last_time": time.strftime("%H:%M:%S", time.localtime(last_heard)) if last_heard else old.get("last_time", "never"),
-                    "rssi": old.get("rssi"), "snr": snr or old.get("snr"),
-                    "hop_start": str(hops_away) if hops_away > 0 else old.get("hop_start", ""),
-                    "relay_node": old.get("relay_node", ""), "last_text": old.get("last_text", ""),
-                    "short_name": short_name or old.get("short_name", "") or node_id[-4:],
+                    "last_time": (
+                        time.strftime("%H:%M:%S", time.localtime(last_heard))
+                        if last_heard else old.get("last_time", "never")
+                    ),
+                    "rssi": old.get("rssi"),
+                    "snr": snr or old.get("snr"),
+                    "hop_start": (
+                        str(hops_away)
+                        if hops_away > 0 else old.get("hop_start", "")
+                    ),
+                    "relay_node": old.get("relay_node", ""),
+                    "last_text": old.get("last_text", ""),
+                    "short_name": (
+                        short_name
+                        or old.get("short_name", "")
+                        or node_id[-4:]
+                    ),
                     "hw_model": hw_model or old.get("hw_model", ""),
                     "role": role or old.get("role", "CLIENT"),
                     "ignored": old.get("ignored", False),
                     "favorite": old.get("favorite", False)
-                }
+                })
+
+                nodes[node_id] = node
+
                 if old_name and old_name != long_name:
                     updated += 1
                 else:
@@ -1128,24 +1148,40 @@ def parse_nodes_from_info():
 
 def ensure_known_nodes():
     for node_id, name in KNOWN_NODES.items():
+
         with state_lock:
             old = nodes.get(node_id, {})
             info = get_node_info(node_id)
-            nodes[node_id] = {
-                "name": name, "node_id": node_id,
+
+            node_data = dict(old)
+
+            node_data.update({
+                "name": name,
+                "node_id": node_id,
                 "last_seen": old.get("last_seen", 0),
                 "last_time": old.get("last_time", "never"),
-                "rssi": old.get("rssi"), "snr": old.get("snr"),
+                "rssi": old.get("rssi"),
+                "snr": old.get("snr"),
                 "hop_start": old.get("hop_start", ""),
                 "relay_node": old.get("relay_node", ""),
                 "last_text": old.get("last_text", ""),
-                "short_name": info.get("short_name", old.get("short_name", "")),
-                "hw_model": info.get("hw_model", old.get("hw_model", "")),
+                "short_name": info.get(
+                    "short_name",
+                    old.get("short_name", "")
+                ),
+                "hw_model": info.get(
+                    "hw_model",
+                    old.get("hw_model", "")
+                ),
                 "role": old.get("role", "CLIENT"),
                 "ignored": old.get("ignored", False),
                 "favorite": old.get("favorite", False)
-            }
+            })
+
+            nodes[node_id] = node_data
+
             ensure_chat(node_id, name, force=True)
+
     save_nodes()
 
 def normalize_unknown_nodes():
@@ -2953,6 +2989,144 @@ def api_radio_health():
     return jsonify(status)
     
 # ============================================================
+# CPU USAGE HISTORY
+# ============================================================
+CPU_HISTORY_FILE = os.path.join(DATA_DIR, "cpu_history.json")
+CPU_SAMPLE_INTERVAL = 2.0
+CPU_HISTORY_RETENTION = 24 * 60 * 60
+cpu_history = deque()
+cpu_history_lock = threading.RLock()
+_cpu_prev_total = None
+_cpu_prev_idle = None
+_cpu_current_usage = 0.0
+
+def _read_cpu_times():
+    try:
+        with open("/proc/stat", "r", encoding="utf-8") as fh:
+            parts = fh.readline().split()
+        if not parts or parts[0] != "cpu":
+            return None, None
+        values = [int(value) for value in parts[1:]]
+        idle = values[3] + (values[4] if len(values) > 4 else 0)
+        total = sum(values)
+        return total, idle
+    except Exception:
+        return None, None
+
+def _read_cpu_temperature():
+    for path in (
+        "/sys/class/thermal/thermal_zone0/temp",
+        "/sys/devices/virtual/thermal/thermal_zone0/temp",
+    ):
+        try:
+            raw = Path(path).read_text(encoding="utf-8").strip()
+            return round(float(raw) / 1000.0, 1)
+        except Exception:
+            continue
+    return None
+
+def _read_memory_percent():
+    try:
+        values = {}
+        with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+            for line in fh:
+                key, value = line.split(":", 1)
+                values[key] = int(value.strip().split()[0])
+        total = values.get("MemTotal", 0)
+        available = values.get("MemAvailable", 0)
+        if total <= 0:
+            return None
+        return round((total - available) * 100.0 / total, 1)
+    except Exception:
+        return None
+
+def _load_cpu_history():
+    data = safe_read_json(CPU_HISTORY_FILE, {"cpu": []})
+    records = data.get("cpu", []) if isinstance(data, dict) else []
+    cutoff = time.time() - CPU_HISTORY_RETENTION
+    with cpu_history_lock:
+        cpu_history.clear()
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+            try:
+                ts = float(item.get("timestamp", 0))
+                usage = float(item.get("usage", 0))
+            except (TypeError, ValueError):
+                continue
+            if ts >= cutoff:
+                cpu_history.append({"timestamp": ts, "usage": round(max(0.0, min(100.0, usage)), 1)})
+
+def _save_cpu_history():
+    with cpu_history_lock:
+        payload = {"cpu": list(cpu_history)}
+    safe_write_json(CPU_HISTORY_FILE, payload)
+
+def cpu_history_worker():
+    global _cpu_prev_total, _cpu_prev_idle, _cpu_current_usage
+    _cpu_prev_total, _cpu_prev_idle = _read_cpu_times()
+    last_save = 0.0
+    while True:
+        time.sleep(CPU_SAMPLE_INTERVAL)
+        total, idle = _read_cpu_times()
+        if total is None or idle is None:
+            continue
+        if _cpu_prev_total is not None and total > _cpu_prev_total:
+            delta_total = total - _cpu_prev_total
+            delta_idle = idle - _cpu_prev_idle
+            usage = 100.0 * (delta_total - delta_idle) / delta_total
+            _cpu_current_usage = round(max(0.0, min(100.0, usage)), 1)
+            now = time.time()
+            cutoff = now - CPU_HISTORY_RETENTION
+            with cpu_history_lock:
+                cpu_history.append({"timestamp": now, "usage": _cpu_current_usage})
+                while cpu_history and cpu_history[0]["timestamp"] < cutoff:
+                    cpu_history.popleft()
+            if now - last_save >= 60:
+                try:
+                    _save_cpu_history()
+                    last_save = now
+                except Exception as exc:
+                    print(f"[CPU] History save error: {exc}", flush=True)
+        _cpu_prev_total, _cpu_prev_idle = total, idle
+
+def _downsample_cpu_records(records, max_points):
+    if len(records) <= max_points:
+        return records
+    bucket_size = len(records) / max_points
+    result = []
+    for index in range(max_points):
+        start = int(index * bucket_size)
+        end = max(start + 1, int((index + 1) * bucket_size))
+        bucket = records[start:end]
+        if not bucket:
+            continue
+        result.append({
+            "timestamp": bucket[-1]["timestamp"],
+            "usage": round(sum(item["usage"] for item in bucket) / len(bucket), 1),
+        })
+    return result
+
+@app.route("/api/system/cpu-history")
+def api_system_cpu_history():
+    range_key = str(request.args.get("range", "30m")).lower()
+    ranges = {"30m": 1800, "1h": 3600, "6h": 21600, "12h": 43200, "24h": 86400}
+    seconds = ranges.get(range_key, 1800)
+    cutoff = time.time() - seconds
+    with cpu_history_lock:
+        records = [dict(item) for item in cpu_history if item["timestamp"] >= cutoff]
+    max_points = 900 if range_key == "30m" else 720
+    records = _downsample_cpu_records(records, max_points)
+    return jsonify({
+        "ok": True,
+        "range": range_key,
+        "current": _cpu_current_usage,
+        "temperature": _read_cpu_temperature(),
+        "ram_percent": _read_memory_percent(),
+        "records": records,
+    })
+
+# ============================================================
 # ЗАПУСК
 # ============================================================
 
@@ -2966,6 +3140,7 @@ if __name__ == "__main__":
     normalize_unknown_nodes()
     parse_nodes_from_info()
     load_settings()
+    _load_cpu_history()
 
     try:
         update_base_status_from_info()
@@ -2996,6 +3171,7 @@ if __name__ == "__main__":
     threading.Thread(target=telemetry_worker, daemon=True).start()
     threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
     threading.Thread(target=radio_health_worker, daemon=True).start()
+    threading.Thread(target=cpu_history_worker, daemon=True).start()
     
     print(f"""
     ╔══════════════════════════════════════════════╗

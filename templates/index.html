@@ -28,9 +28,27 @@
         </div>
 
         <div class="header-actions">
-            <button class="header-btn" id="toggleSidebarBtn" title="Toggle nodes sidebar">
-                <svg viewBox="0 0 24 24" width="20" height="20">
-                    <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" fill="currentColor"/>
+            <button class="header-btn"
+                    id="toggleBaseSidebarBtn"
+                    type="button"
+                    title="Hide Base panel"
+                    aria-label="Hide Base panel"
+                    aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                    <path d="M4 4h16v16H4V4zm2 2v12h4V6H6zm6 0v12h6V6h-6z"
+                          fill="currentColor"/>
+                </svg>
+            </button>
+
+            <button class="header-btn"
+                    id="toggleSidebarBtn"
+                    type="button"
+                    title="Hide Nodes panel"
+                    aria-label="Hide Nodes panel"
+                    aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                    <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"
+                          fill="currentColor"/>
                 </svg>
             </button>
         </div>
@@ -44,6 +62,132 @@
 
     <!-- Main Layout -->
     <div class="main-layout">
+        <!-- Local Node Panel -->
+        <aside class="base-sidebar" id="baseSidebar" aria-label="Local node information">
+            <!-- Base Card -->
+            <div class="base-card" id="baseCard">
+                <div class="base-card-title">
+                    <span class="base-card-name">
+                        📡 <span id="baseNodeName">Loading...</span>
+                    </span>
+                    <span class="base-card-caption">Local node</span>
+                </div>
+                <div class="base-status-line" id="baseStatusLine">Loading...</div>
+            </div>
+
+            <!-- Sensors / local-node dashboard -->
+            <div class="sensors-card" id="sensorsCard" style="display: none;">
+                <div class="sensors-title">
+                    <span>🌡️</span>
+                    <span>Environment Sensors</span>
+                </div>
+
+                <div class="sensors-grid">
+                    <div class="sensor-item">
+                        <div class="sensor-label">Temperature</div>
+                        <div class="sensor-value" id="tempValue">--</div>
+                        <div class="sensor-unit"></div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Humidity</div>
+                        <div class="sensor-value" id="humValue">--</div>
+                        <div class="sensor-unit">%</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Pressure</div>
+                        <div class="sensor-value" id="presValue">--</div>
+                        <div class="sensor-unit"></div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Voltage</div>
+                        <div class="sensor-value" id="voltValue">--</div>
+                        <div class="sensor-unit">V</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Current</div>
+                        <div class="sensor-value" id="currValue">--</div>
+                        <div class="sensor-unit">mA</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-label">Power</div>
+                        <div class="sensor-value" id="powValue">--</div>
+                        <div class="sensor-unit">mW</div>
+                    </div>
+                </div>
+
+                <div class="base-dashboard-row">
+                    <div class="battery-indicator"
+                         id="batteryIndicator"
+                         style="display: none;">
+                        <div class="base-mini-card-heading">
+                            <span>🔋 Battery</span>
+                            <strong id="batteryPercent">0%</strong>
+                        </div>
+                        <div class="battery-bar">
+                            <div class="battery-fill"
+                                 id="batteryFill"
+                                 style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <button type="button"
+                            class="base-reference-location"
+                            id="baseReferenceLocation"
+                            onclick="openReferenceSettings()"
+                            title="Open reference location settings">
+                        <span class="reference-card-icon">📍</span>
+                        <span class="reference-card-copy">
+                            <span class="reference-card-title">Reference</span>
+                            <span class="reference-card-name">Loading…</span>
+                            <span class="reference-card-coordinates"></span>
+                        </span>
+                        <span class="reference-card-arrow">›</span>
+                    </button>
+                </div>
+
+                <div class="sensor-update" id="sensorUpdate">
+                    Last update: --
+                </div>
+            </div>
+
+            <!-- Telemetry -->
+            <div class="telemetry-section" id="telemetrySection">
+                <div class="telemetry-header">
+                    <span class="telemetry-title">📊 Sensors</span>
+                    <span class="telemetry-status" id="telemetryStatus">⚪ No data yet</span>
+                </div>
+                <div class="telemetry-buttons">
+                    <button class="telemetry-btn environment" onclick="openTelemetryModal('environment')">
+                        <div class="telemetry-top">
+                            <span class="telemetry-icon">🌡️</span>
+                            <span class="telemetry-label">Environment</span>
+                            <span class="telemetry-update" id="telemetryEnvUpdate"></span>
+                        </div>
+                        <span class="telemetry-value" id="telemetryEnvValue">—</span>
+                    </button>
+                    <button class="telemetry-btn power" onclick="openTelemetryModal('power')">
+                        <div class="telemetry-top">
+                            <span class="telemetry-icon">⚡</span>
+                            <span class="telemetry-label">Power</span>
+                            <span class="telemetry-update" id="telemetryPowerUpdate"></span>
+                        </div>
+                        <span class="telemetry-value" id="telemetryPowerValue">—</span>
+                    </button>
+                </div>
+                <div class="telemetry-config-row">
+                    <span>📊 Interval:</span>
+                    <select id="telemetryInterval" onchange="updateTelemetryConfig()">
+                        <option value="300">5 min</option>
+                        <option value="900" selected>15 min</option>
+                        <option value="1800">30 min</option>
+                        <option value="3600">1 hour</option>
+                    </select>
+                    <span style="font-size:9px;color:#999;margin-left:4px;">(auto-updates from listener)</span>
+                </div>
+            </div>
+
+        </aside>
+
         <!-- Chat Area -->
         <div class="chat-area">
             <!-- Main Tabs -->
@@ -146,11 +290,38 @@
                         <div>
                             <div class="video-title">📷 Live Camera</div>
                         </div>
-                <!--        <button class="video-refresh-btn" onclick="refreshVideoFeed()">🔄 Refresh</button> -->
+
+                        <button type="button"
+                                class="camera-power-btn"
+                                id="cameraPowerBtn"
+                                onclick="toggleCameraPower()"
+                                title="Turn camera off">
+                            <span class="camera-power-btn-icon">⏻</span>
+                            <span id="cameraPowerBtnText">Turn Off</span>
+                        </button>
                     </div>
 
                     <div class="video-frame-wrap">
-                        <img id="videoFeed" class="camera-stream" alt="Camera stream">
+                        <img id="videoFeed"
+                             class="camera-stream"
+                             alt="Camera stream">
+
+                        <div class="camera-off-placeholder"
+                             id="cameraOffPlaceholder"
+                             style="display:none;">
+                            <div class="camera-off-icon">📷</div>
+                            <div class="camera-off-title">
+                                Camera is turned off
+                            </div>
+                            <div class="camera-off-text">
+                                Power-saving mode is active
+                            </div>
+                            <button type="button"
+                                    class="camera-off-start-btn"
+                                    onclick="setCameraPower(true)">
+                                ▶ Turn On Camera
+                            </button>
+                        </div>
                     </div>
 
                     <div class="video-info-bar">
@@ -244,7 +415,7 @@
                                             value="95"
                                             oninput="document.getElementById('photoQualityLabel').textContent=this.value+'%'"
                                             onchange="updatePhotoSettings(true)">
-                                        <span id="photoQualityLabel">95%</span>
+                                        <span id="photoQualityLabel">90%</span>
                                     </div>
 
                                 </div>
@@ -258,11 +429,12 @@
 
                         <div class="camera-actions-block">
 
-                                <button class="screenshot-btn" onclick="captureCameraPhoto()">
+                                <button class="screenshot-btn" id="cameraCaptureBtn" onclick="captureCameraPhoto()">
                                     📸 Capture
                                 </button>
 
                                 <button class="screenshots-btn"
+                                        id="cameraGalleryBtn"
                                         onclick="showScreenshots()">
                                     🖼 Gallery
                                 </button>
@@ -820,98 +992,6 @@
 
         <!-- Sidebar -->
         <div class="sidebar" id="sidebar">
-            <!-- Base Card -->
-            <div class="base-card" id="baseCard">
-                <div class="base-card-title">📡 <span id="baseNodeName">Loading...</span></div>
-                <div class="base-status-line" id="baseStatusLine">Loading...</div>
-            </div>
-            
-            <div class="base-reference-location"
-                id="baseReferenceLocation"
-                style="display:none;">
-            </div>
-            
-            <!-- Sensors Card -->
-            <div class="sensors-card" id="sensorsCard" style="display: none;">
-                <div class="sensors-title"><span>🌡️</span> Environment Sensors</div>
-                <div class="sensors-grid">
-                    <div class="sensor-item">
-                        <div class="sensor-label">Temperature</div>
-                        <div class="sensor-value" id="tempValue">--</div>
-                        <div class="sensor-unit"></div>
-                    </div>
-                    <div class="sensor-item">
-                        <div class="sensor-label">Humidity</div>
-                        <div class="sensor-value" id="humValue">--</div>
-                        <div class="sensor-unit">%</div>
-                    </div>
-                    <div class="sensor-item">
-                        <div class="sensor-label">Pressure</div>
-                        <div class="sensor-value" id="presValue">--</div>
-                        <div class="sensor-unit"></div>
-                    </div>
-                    <div class="sensor-item">
-                        <div class="sensor-label">Voltage</div>
-                        <div class="sensor-value" id="voltValue">--</div>
-                        <div class="sensor-unit">V</div>
-                    </div>
-                    <div class="sensor-item">
-                        <div class="sensor-label">Current</div>
-                        <div class="sensor-value" id="currValue">--</div>
-                        <div class="sensor-unit">mA</div>
-                    </div>
-                    <div class="sensor-item">
-                        <div class="sensor-label">Power</div>
-                        <div class="sensor-value" id="powValue">--</div>
-                        <div class="sensor-unit">mW</div>
-                    </div>
-                </div>
-                <div class="battery-indicator" id="batteryIndicator" style="display: none;">
-                    <div>🔋 Battery Level</div>
-                    <div class="battery-bar">
-                        <div class="battery-fill" id="batteryFill" style="width: 0%"></div>
-                    </div>
-                    <div id="batteryPercent" style="margin-top: 4px; font-size: 10px;">0%</div>
-                </div>
-                <div class="sensor-update" id="sensorUpdate">Last update: --</div>
-            </div>
-
-            <!-- Telemetry -->
-            <div class="telemetry-section" id="telemetrySection">
-                <div class="telemetry-header">
-                    <span class="telemetry-title">📊 Sensors</span>
-                    <span class="telemetry-status" id="telemetryStatus">⚪ No data yet</span>
-                </div>
-                <div class="telemetry-buttons">
-                    <button class="telemetry-btn environment" onclick="openTelemetryModal('environment')">
-                        <div class="telemetry-top">
-                            <span class="telemetry-icon">🌡️</span>
-                            <span class="telemetry-label">Environment</span>
-                            <span class="telemetry-update" id="telemetryEnvUpdate"></span>
-                        </div>
-                        <span class="telemetry-value" id="telemetryEnvValue">—</span>
-                    </button>
-                    <button class="telemetry-btn power" onclick="openTelemetryModal('power')">
-                        <div class="telemetry-top">
-                            <span class="telemetry-icon">⚡</span>
-                            <span class="telemetry-label">Power</span>
-                            <span class="telemetry-update" id="telemetryPowerUpdate"></span>
-                        </div>
-                        <span class="telemetry-value" id="telemetryPowerValue">—</span>
-                    </button>
-                </div>
-                <div class="telemetry-config-row">
-                    <span>📊 Interval:</span>
-                    <select id="telemetryInterval" onchange="updateTelemetryConfig()">
-                        <option value="300">5 min</option>
-                        <option value="900" selected>15 min</option>
-                        <option value="1800">30 min</option>
-                        <option value="3600">1 hour</option>
-                    </select>
-                    <span style="font-size:9px;color:#999;margin-left:4px;">(auto-updates from listener)</span>
-                </div>
-            </div>
-
             <!-- Sidebar Tabs -->
             <div class="sidebar-tabs">
                 <button class="sidebar-tab active" data-tab="nodes" onclick="switchSidebarTab('nodes')">📡 Nodes</button>

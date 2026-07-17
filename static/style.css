@@ -587,7 +587,7 @@ body {
 /* ===== SENSORS CARD ===== */
 .sensors-card {
     background: #f0f4f0;
-    padding: 8px 14px;
+    padding: 8px 10px;
     border-bottom: 1px solid #d5d8dd;
     flex-shrink: 0;
 }
@@ -601,8 +601,10 @@ body {
 
 .sensors-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 2px 8px;
+    grid-template-columns: max-content max-content max-content;
+    justify-content: space-between;
+    column-gap: 14px;
+    row-gap: 2px;
 }
 
 .sensor-item {
@@ -2260,12 +2262,32 @@ body {
     border: none;
 }
 
-#videoQualityLabel {
+.camera-quality-value{
+    display:inline-block;
+    min-width:42px;
+    text-align:right;
+
+    color:#1265d6;
+    font-size:12px;
+    font-weight:600;
+    line-height:1;
+
+    font-variant-numeric:tabular-nums;
+}
+
+#videoQualityLabel,
+#photoQualityLabel {
+    display: inline-block;
+    min-width: 42px;
+
+    text-align: right;
+
+    color: #1265d6;
     font-size: 12px;
     font-weight: 600;
-    color: #1a73e8;
-    min-width: 36px;
-    text-align: center;
+    line-height: 1;
+
+    font-variant-numeric: tabular-nums;
 }
 
 .screenshot-btn, .screenshots-btn {
@@ -4300,11 +4322,11 @@ body.context-chat-mode .settings-view {
 .video-controls-grid {
     display: grid;
     grid-template-columns:
-        285px
-        205px
+        250px
+        190px
         120px
-        minmax(280px, 1fr);
-    gap: 14px;
+        minmax(250px, 1fr);
+    gap: 10px;
     align-items: stretch;
 }
 
@@ -5263,3 +5285,701 @@ body.context-chat-mode .settings-view {
     min-height: 30px;
 }
 
+
+
+/* ============================================================
+   THREE-PANEL DESKTOP WORKSPACE - STAGE 1
+   Local node | Workspace | Nodes
+   ============================================================ */
+
+.app-container {
+    width: 98%;
+    max-width: 1600px;
+    margin: auto;
+}
+
+.main-layout {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.base-sidebar {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 360px;
+    width: 340px;
+    min-width: 330px;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: #f8f9fa;
+    border-right: 1px solid #e5e8ec;
+}
+
+.chat-area {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+}
+
+.sidebar {
+    flex: 0 0 300px;
+    width: 300px;
+    min-width: 300px;
+}
+
+/* Recover useful horizontal space inside the node panel. */
+.nodes-section {
+    padding-right: 7px;
+    padding-left: 7px;
+    padding-bottom: 8px;
+}
+
+.nodes-controls {
+    gap: 6px;
+    padding-top: 6px;
+    padding-bottom: 3px;
+}
+
+.chat-list-container,
+.nodes-scroll {
+    scrollbar-gutter: stable;
+}
+
+/* Bottom dock follows the application container. */
+.status-dock {
+    width: 98%;
+    max-width: 1600px;
+}
+
+/* Keep local-node components intact after moving them left. */
+.base-sidebar .base-card,
+.base-sidebar .base-reference-location,
+.base-sidebar .sensors-card,
+.base-sidebar .telemetry-section {
+    width: 100%;
+    flex-shrink: 0;
+}
+
+@media (max-width: 1180px) {
+    .base-sidebar {
+        flex-basis: 240px;
+        width: 240px;
+        min-width: 240px;
+    }
+
+    .sidebar {
+        flex-basis: 280px;
+        width: 280px;
+        min-width: 280px;
+    }
+}
+
+/* ============================================================
+   THREE-PANEL DESKTOP WORKSPACE - STAGE 2
+   Independent Base / Nodes panel visibility.
+   ============================================================ */
+
+.base-sidebar,
+.sidebar {
+    transition:
+        width 180ms ease,
+        min-width 180ms ease,
+        flex-basis 180ms ease,
+        opacity 140ms ease,
+        border-color 180ms ease;
+}
+
+.base-sidebar.panel-hidden {
+    flex-basis: 0 !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    opacity: 0;
+    overflow: hidden;
+    border-right-color: transparent;
+    pointer-events: none;
+}
+
+.sidebar.panel-hidden {
+    flex-basis: 0 !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    opacity: 0;
+    overflow: hidden;
+    border-left-color: transparent;
+    pointer-events: none;
+}
+
+/* Keep header controls visually consistent and show active hidden state. */
+.header-btn.panel-is-hidden {
+    background: rgba(255, 255, 255, 0.24);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+.header-btn svg {
+    display: block;
+}
+
+/* On narrow layouts panels continue to behave as drawers later.
+   Stage 2 remains desktop-first, but hidden state must still win. */
+@media (max-width: 900px) {
+    .base-sidebar.panel-hidden,
+    .sidebar.panel-hidden {
+        display: none !important;
+    }
+}
+
+/* ============================================================
+   LOCAL NODE DASHBOARD - STAGE 3
+   Compact Base panel, Battery + Reference cards.
+   ============================================================ */
+
+.base-card {
+    padding: 9px 12px 8px;
+}
+
+.base-card-title {
+    align-items: center;
+    gap: 8px;
+}
+
+.base-card-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.base-card-caption {
+    flex-shrink: 0;
+    color: #718198;
+    font-size: 9px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+
+.base-status-line {
+    gap: 7px 10px;
+    font-size: 11px;
+}
+
+.sensors-card {
+    padding: 8px 10px 7px;
+}
+
+.sensors-title {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.sensors-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    justify-content: initial;
+    column-gap: 6px;
+    row-gap: 3px;
+}
+
+.sensor-item {
+    min-width: 0;
+    gap: 2px;
+    white-space: nowrap;
+}
+
+.sensor-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.base-dashboard-row {
+    display: grid;
+    grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
+    gap: 7px;
+    margin-top: 8px;
+    padding-top: 7px;
+    border-top: 1px solid #d5d8dd;
+}
+
+.battery-indicator,
+.base-reference-location {
+    min-width: 0;
+    min-height: 55px;
+    margin: 0;
+    padding: 7px 8px;
+    border: 1px solid #cbd8cf;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .58);
+}
+
+.battery-indicator {
+    align-self: stretch;
+}
+
+.base-mini-card-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 8px;
+    color: #315b3d;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.base-mini-card-heading strong {
+    color: #216b36;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.battery-bar {
+    height: 7px;
+}
+
+.base-reference-location {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    color: #29485d;
+    border-color: #9ecbb0;
+    background: #eef8f1;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition:
+        background 150ms ease,
+        border-color 150ms ease,
+        transform 150ms ease;
+}
+
+.base-reference-location:hover {
+    border-color: #6fac88;
+    background: #e2f3e7;
+    transform: translateY(-1px);
+}
+
+.base-reference-location.reference-is-disabled {
+    color: #687585;
+    border-color: #ccd3dc;
+    background: #f2f4f7;
+}
+
+.reference-card-icon {
+    flex-shrink: 0;
+    font-size: 15px;
+}
+
+.reference-card-copy {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.reference-card-title {
+    color: #617184;
+    font-size: 8px;
+    font-weight: 700;
+    line-height: 1.15;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+
+.reference-card-name {
+    overflow: hidden;
+    color: #214d35;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.reference-is-disabled .reference-card-name {
+    color: #596675;
+}
+
+.reference-card-coordinates {
+    overflow: hidden;
+    color: #718198;
+    font-size: 8px;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.reference-card-arrow {
+    flex-shrink: 0;
+    color: #6b8976;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.sensor-update {
+    margin-top: 5px;
+}
+
+.reference-location-card {
+    transition:
+        box-shadow 220ms ease,
+        border-color 220ms ease;
+}
+
+.reference-location-card-highlight {
+    border-color: #53a66e !important;
+    box-shadow:
+        0 0 0 3px rgba(83, 166, 110, .16),
+        0 8px 22px rgba(43, 92, 58, .12);
+}
+
+/* ============================================================
+   CAMERA POWER CONTROL
+   ============================================================ */
+
+.video-header {
+    gap: 12px;
+}
+
+.camera-power-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 104px;
+    height: 30px;
+    padding: 0 11px;
+    border: 1px solid #d5a4a4;
+    border-radius: 7px;
+    background: #fff5f5;
+    color: #a32929;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+        background 150ms ease,
+        border-color 150ms ease,
+        color 150ms ease,
+        opacity 150ms ease;
+}
+
+.camera-power-btn:hover:not(:disabled) {
+    background: #ffe8e8;
+    border-color: #c87d7d;
+}
+
+.camera-power-btn.camera-power-off {
+    border-color: #94c7a5;
+    background: #eef9f1;
+    color: #267340;
+}
+
+.camera-power-btn.camera-power-off:hover:not(:disabled) {
+    background: #e0f3e5;
+    border-color: #69a87f;
+}
+
+.camera-power-btn:disabled {
+    opacity: .58;
+    cursor: wait;
+}
+
+.camera-power-btn-icon {
+    font-size: 14px;
+    line-height: 1;
+}
+
+.camera-off-placeholder {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 8px;
+    padding: 24px;
+    background:
+        linear-gradient(
+            180deg,
+            rgba(247, 249, 252, .98),
+            rgba(237, 242, 247, .98)
+        );
+    color: #526178;
+    text-align: center;
+}
+
+.camera-off-icon {
+    font-size: 40px;
+    filter: grayscale(.35);
+    opacity: .8;
+}
+
+.camera-off-title {
+    color: #334155;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.camera-off-text {
+    font-size: 12px;
+}
+
+.camera-off-start-btn {
+    margin-top: 6px;
+    height: 34px;
+    padding: 0 15px;
+    border: 1px solid #7eb391;
+    border-radius: 7px;
+    background: #e9f7ed;
+    color: #216b3a;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.camera-off-start-btn:hover {
+    background: #dff2e5;
+    border-color: #5d9b72;
+}
+
+.camera-controls-disabled {
+    opacity: .52;
+}
+
+.camera-controls-disabled input,
+.camera-controls-disabled select,
+.camera-controls-disabled button {
+    cursor: not-allowed;
+}
+
+.camera-controls-disabled #cameraGalleryBtn {
+    cursor: pointer;
+    opacity: 1;
+}
+
+.video-frame-wrap {
+    position: relative;
+}
+
+/* ============================================================
+   NODE LIST MAP BADGE
+   Mobile-friendly position shortcut.
+   ============================================================ */
+
+.node-map-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 25px;
+    margin-top: 6px;
+    padding: 4px 9px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.15;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+        background-color 0.16s ease,
+        border-color 0.16s ease,
+        transform 0.16s ease;
+}
+
+.node-map-badge:active {
+    transform: translateY(1px);
+}
+
+.node-map-badge-neutral {
+    border-color: #b9c7d6;
+    background: #eef3f8;
+    color: #41576d;
+}
+
+.node-map-badge-near {
+    border-color: #8ac39a;
+    background: #e8f6ec;
+    color: #23663a;
+}
+
+.node-map-badge-medium {
+    border-color: #8eb8dd;
+    background: #eaf3fb;
+    color: #275f8d;
+}
+
+.node-map-badge-far {
+    border-color: #d9bd72;
+    background: #fbf5df;
+    color: #7b5d16;
+}
+
+.node-map-badge-very-far {
+    border-color: #d99b91;
+    background: #fcecea;
+    color: #8b3d34;
+}
+
+@media (hover: hover) {
+    .node-map-badge:hover {
+        filter: brightness(.97);
+        transform: translateY(-1px);
+    }
+}
+
+@media (max-width: 520px) {
+    .node-map-badge {
+        min-height: 30px;
+        padding: 6px 10px;
+        font-size: 11px;
+    }
+}
+
+.node-position-navigation {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+}
+
+.node-position-navigation .value {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: nowrap;
+}
+
+.node-position-bearing {
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+
+/* ===== CPU MONITORING ===== */
+.cpu-history-panel {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid #dfe4eb;
+}
+
+.cpu-history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 12px;
+}
+
+.cpu-history-header > div:first-child {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.cpu-history-current {
+    font-weight: 700;
+    color: #2470d8;
+}
+
+.cpu-history-ranges {
+    display: flex;
+    gap: 3px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.cpu-range-btn {
+    border: 1px solid #d5dce6;
+    background: #f6f8fb;
+    color: #53657b;
+    border-radius: 5px;
+    padding: 3px 6px;
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.cpu-range-btn:hover { background: #edf3fb; }
+.cpu-range-btn.active {
+    background: #2470d8;
+    border-color: #2470d8;
+    color: white;
+}
+
+.cpu-history-chart-wrap {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+    height: 125px;
+    min-height: 125px;
+}
+
+.cpu-history-chart-wrap canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+}
+
+.cpu-history-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #8592a3;
+    font-size: 11px;
+    pointer-events: none;
+}
+
+#dockContextText {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    min-width: 0;
+}
+
+.dock-context-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dock-system-metrics {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.dock-system-metrics span + span::before {
+    content: '·';
+    margin-right: 8px;
+    color: #9aa5b4;
+}
+
+.dock-system-metrics .normal,
+.cpu-history-current.normal { color: #239b62; }
+.dock-system-metrics .warning,
+.cpu-history-current.warning { color: #c78616; }
+.dock-system-metrics .danger,
+.cpu-history-current.danger { color: #d74343; }
+
+@media (max-width: 760px) {
+    .dock-context-label { display: none; }
+    .dock-system-metrics { gap: 5px; font-size: 10px; }
+    .dock-system-metrics span + span::before { margin-right: 5px; }
+    .cpu-history-header { align-items: flex-start; flex-direction: column; }
+    .cpu-history-ranges { justify-content: flex-start; }
+}

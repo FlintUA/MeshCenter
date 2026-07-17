@@ -18,6 +18,9 @@ let totalUnreadCount = 0;
 let showDuplicatesOnly = false;
 let currentMainTab = 'chats';
 let cameraActive = false;
+let cameraPowerEnabled = true;
+let cameraPowerStatus = 'ready';
+let cameraPowerRequestInProgress = false;
 let isInitialized = false;
 let contextChatMode = false;
 let contextBaseTab = null;
@@ -37,6 +40,10 @@ let telemetryData = {
 };
 let telemetryHistory = [];
 let telemetryChart = null;
+let cpuUsageChart = null;
+let cpuHistoryRange = '30m';
+let cpuStatusTimer = null;
+let cpuChartTimer = null;
 let telemetryInterval = 900;
 let telemetryUpdateInterval = null;
 let telemetryTimeRange = 60;
@@ -205,57 +212,114 @@ function populateReferenceNodeSelect() {
         return;
     }
 
-    const selectedValue = select.value;
+    const savedNodeId = String(
+        appSettings?.reference_location?.node_id || ''
+    );
 
-    const sortedNodes = [...nodeCache].sort((a, b) => {
-        const nameA =
-            a.clean_name || a.name || a.node_id || '';
+    const currentValue = String(
+        select.value || savedNodeId || ''
+    );
 
-        const nameB =
-            b.clean_name || b.name || b.node_id || '';
+    select.innerHTML = '';
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Select node';
+    select.appendChild(placeholder);
+
+    const availableNodes = Array.isArray(nodeCache)
+        ? nodeCache.filter(node =>
+            node
+            && node.node_id
+            && Number.isFinite(
+                Number(node?.position?.latitude)
+            )
+            && Number.isFinite(
+                Number(node?.position?.longitude)
+            )
+        )
+        : [];
+
+    availableNodes.sort((a, b) => {
+        const nameA = String(
+            a.clean_name
+            || a.name
+            || a.long_name
+            || a.node_id
+            || ''
+        );
+
+        const nameB = String(
+            b.clean_name
+            || b.name
+            || b.long_name
+            || b.node_id
+            || ''
+        );
 
         return nameA.localeCompare(nameB);
     });
 
-    select.innerHTML = `
-        <option value="">
-            Select node
-        </option>
-    `;
-
-    for (const node of sortedNodes) {
-        const nodeId = String(node.node_id || '');
-
-        if (!nodeId) {
-            continue;
-        }
-
-        const nodeName =
-            node.clean_name
-            || node.name
-            || nodeId;
-
-        const hasPosition =
-            Number.isFinite(Number(node?.position?.latitude))
-            && Number.isFinite(Number(node?.position?.longitude));
-
+    for (const node of availableNodes) {
         const option = document.createElement('option');
 
-        option.value = nodeId;
-        option.textContent = hasPosition
-            ? `[📍] ${nodeName}`
-            : `   ${nodeName}`;
+        option.value = node.node_id;
+
+        option.textContent =
+            `📍 ${
+                node.clean_name
+                || node.name
+                || node.long_name
+                || node.short_name
+                || node.node_id
+            }`;
 
         select.appendChild(option);
     }
 
+    /*
+     * Если настройки загрузились раньше списка нод,
+     * всё равно временно добавляем сохранённую ноду.
+     * После загрузки nodeCache список будет построен заново.
+     */
     if (
-        selectedValue
-        && [...select.options].some(
-            option => option.value === selectedValue
+        savedNodeId
+        && ![...select.options].some(
+            option => option.value === savedNodeId
         )
     ) {
-        select.value = selectedValue;
+        const savedNode = Array.isArray(nodeCache)
+            ? nodeCache.find(
+                node => node.node_id === savedNodeId
+            )
+            : null;
+
+        const option = document.createElement('option');
+
+        option.value = savedNodeId;
+
+        option.textContent =
+            `📍 ${
+                savedNode?.clean_name
+                || savedNode?.name
+                || savedNode?.long_name
+                || savedNode?.short_name
+                || savedNodeId
+            }`;
+
+        select.appendChild(option);
+    }
+
+    const valueToRestore =
+        savedNodeId || currentValue;
+
+    if (
+        valueToRestore
+        && [...select.options].some(
+            option => option.value === valueToRestore
+        )
+    ) {
+        select.value = valueToRestore;
     }
 }
 
@@ -342,47 +406,88 @@ function getReferenceLocation() {
 
 function updateReferenceLocationSummary() {
     const element =
-        document.getElementById(
-            'baseReferenceLocation'
-        );
+        document.getElementById('baseReferenceLocation');
 
     if (!element) {
         return;
     }
 
+    const nameElement =
+        element.querySelector('.reference-card-name');
+
+    const coordinatesElement =
+        element.querySelector('.reference-card-coordinates');
+
     const reference =
         getReferenceLocation();
 
+    element.style.display = 'flex';
+
     if (!reference) {
-        element.style.display = 'none';
-        element.textContent = '';
+        if (nameElement) {
+            nameElement.textContent = 'Disabled';
+        }
+
+        if (coordinatesElement) {
+            coordinatesElement.textContent =
+                'Click to configure';
+        }
+
+        element.classList.add('reference-is-disabled');
+        element.classList.remove('reference-has-position');
         return;
     }
 
-    element.style.display = 'block';
+    element.classList.remove('reference-is-disabled');
 
     const hasCoordinates =
         Number.isFinite(reference.latitude)
         && Number.isFinite(reference.longitude);
 
-    if (reference.mode === 'manual') {
-        element.textContent =
-            `📍 Reference: `
-            + `${reference.latitude.toFixed(5)}, `
-            + `${reference.longitude.toFixed(5)}`;
-
-        return;
+    if (nameElement) {
+        nameElement.textContent =
+            reference.mode === 'manual'
+                ? 'Manual coordinates'
+                : reference.name;
     }
 
-    if (hasCoordinates) {
-        element.textContent =
-            `📍 Reference: ${reference.name} - `
-            + `${reference.latitude.toFixed(5)}, `
-            + `${reference.longitude.toFixed(5)}`;
-    } else {
-        element.textContent =
-            `📍 Reference: ${reference.name} - no position`;
+    if (coordinatesElement) {
+        coordinatesElement.textContent =
+            hasCoordinates
+                ? `${reference.latitude.toFixed(5)}, ${reference.longitude.toFixed(5)}`
+                : 'No saved position';
     }
+
+    element.classList.toggle(
+        'reference-has-position',
+        hasCoordinates
+    );
+}
+
+function openReferenceSettings() {
+    switchMainTab('settings');
+
+    window.setTimeout(() => {
+        const card =
+            document.querySelector('.reference-location-card');
+
+        if (card) {
+            card.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+            });
+
+            card.classList.add(
+                'reference-location-card-highlight'
+            );
+
+            window.setTimeout(() => {
+                card.classList.remove(
+                    'reference-location-card-highlight'
+                );
+            }, 1200);
+        }
+    }, 80);
 }
 
 async function loadSettings() {
@@ -641,6 +746,116 @@ function getNodeDistanceAndBearing(
     };
 }
 
+
+function getBearingArrow(bearing) {
+    if (!Number.isFinite(bearing)) {
+        return '';
+    }
+
+    const arrows = [
+        '↑',
+        '↗',
+        '→',
+        '↘',
+        '↓',
+        '↙',
+        '←',
+        '↖'
+    ];
+
+    return arrows[
+        Math.round(bearing / 45) % 8
+    ];
+}
+
+function getNodeMapBadgeClass(distanceMeters) {
+    if (!Number.isFinite(distanceMeters)) {
+        return 'node-map-badge-neutral';
+    }
+
+    if (distanceMeters < 1000) {
+        return 'node-map-badge-near';
+    }
+
+    if (distanceMeters < 5000) {
+        return 'node-map-badge-medium';
+    }
+
+    if (distanceMeters < 20000) {
+        return 'node-map-badge-far';
+    }
+
+    return 'node-map-badge-very-far';
+}
+
+function renderNodeMapBadge(node) {
+    const latitude =
+        Number(node?.position?.latitude);
+
+    const longitude =
+        Number(node?.position?.longitude);
+
+    if (
+        !Number.isFinite(latitude)
+        || !Number.isFinite(longitude)
+    ) {
+        return '';
+    }
+
+    const reference =
+        getReferenceLocation();
+
+    let badgeText = '📍 Open map';
+    let badgeClass = 'node-map-badge-neutral';
+
+    if (
+        reference
+        && Number.isFinite(reference.latitude)
+        && Number.isFinite(reference.longitude)
+    ) {
+        const distanceMeters =
+            calculateDistanceMeters(
+                reference.latitude,
+                reference.longitude,
+                latitude,
+                longitude
+            );
+
+        badgeClass =
+            getNodeMapBadgeClass(distanceMeters);
+
+        if (distanceMeters < 1) {
+            badgeText = '📍 Reference';
+        } else {
+            const bearing =
+                calculateBearingDegrees(
+                    reference.latitude,
+                    reference.longitude,
+                    latitude,
+                    longitude
+                );
+
+            const arrow =
+                getBearingArrow(bearing);
+
+            const direction =
+                getBearingDirection(bearing);
+
+            badgeText =
+                `📍 ${formatNodeDistance(distanceMeters)} `
+                + `${arrow} ${direction}`;
+        }
+    }
+
+    return `
+        <button type="button"
+                class="node-map-badge ${badgeClass}"
+                onclick="event.stopPropagation(); openNodeMap(${latitude}, ${longitude})">
+            ${escapeHtml(badgeText)}
+        </button>
+    `;
+}
+
 async function saveReferenceLocation() {
     const modeSelect =
         document.getElementById('referenceLocationMode');
@@ -846,6 +1061,11 @@ async function setMapProvider(provider) {
             ? 'google'
             : 'osm';
 
+    const providerName =
+        normalizedProvider === 'google'
+            ? 'Google Maps'
+            : 'OpenStreetMap';
+
     const maps = {
         ...(appSettings?.maps || {}),
         provider: normalizedProvider
@@ -1033,6 +1253,8 @@ function showToast(message, type = 'info') {
 // ============================================================
 document.addEventListener('DOMContentLoaded', async function() {
     await loadSettings();
+    await loadCameraPowerState();
+    startCpuMonitoringUi();
 
     const title = document.getElementById('appTitle');
     if (title) {
@@ -1317,6 +1539,7 @@ async function loadMessages() {
         );
         
         populateReferenceNodeSelect();
+        updateReferenceLocationSummary();
         
         if (currentChatId && currentChatType === 'dm') {
             updateChatHeaderStatus();
@@ -1390,6 +1613,10 @@ async function loadMessages() {
                 const cardClass = isIgnored ? 'node-card ignored' : (isFavorite ? 'node-card favorite' : 'node-card');
                 const lastText = node.last_text ? 
                     `<div class="node-last-text">📝 ${escapeHtml(truncateText(node.last_text, 60))}</div>` : '';
+
+                const mapBadge =
+                    renderNodeMapBadge(node);
+
                 const ignoreStatus = isIgnored ? '🚫 ' : '';
                 const favoriteStatus = isFavorite ? '⭐ ' : '';
 
@@ -1406,6 +1633,7 @@ async function loadMessages() {
                         </div>
                         <div class="node-meta">${escapeHtml(node.meta)}</div>
                         ${lastText}
+                        ${mapBadge}
                     </div>
                 `;
             }).join('');
@@ -2097,6 +2325,9 @@ function updateNodeDetails(nodeId) {
             nodeCache = mergeNodeCachePreservingPosition(
                 data.nodes || []
             );
+
+            populateReferenceNodeSelect();
+            updateReferenceLocationSummary();
 
             const allNodes = nodeCache;
             const selectedNode = allNodes.find(n => n.node_id === nodeId);
@@ -3136,12 +3367,95 @@ function formatUptime(seconds) {
 // ============================================================
 // EVENT LISTENERS
 // ============================================================
-document.getElementById('toggleSidebarBtn')?.addEventListener('click', () => {
-    const sidebar = document.getElementById('sidebar');
-    if (sidebar) {
-        sidebar.classList.toggle('hidden');
+const PANEL_STORAGE_KEYS = {
+    base: 'meshcenter.basePanelHidden',
+    nodes: 'meshcenter.nodesPanelHidden'
+};
+
+function readPanelHidden(storageKey) {
+    try {
+        return localStorage.getItem(storageKey) === '1';
+    } catch (error) {
+        console.warn('[LAYOUT] Unable to read panel state:', error);
+        return false;
     }
+}
+
+function savePanelHidden(storageKey, isHidden) {
+    try {
+        localStorage.setItem(storageKey, isHidden ? '1' : '0');
+    } catch (error) {
+        console.warn('[LAYOUT] Unable to save panel state:', error);
+    }
+}
+
+function applyPanelState(panel, button, isHidden, panelName) {
+    if (!panel || !button) return;
+
+    panel.classList.toggle('panel-hidden', isHidden);
+    button.classList.toggle('panel-is-hidden', isHidden);
+    button.setAttribute('aria-pressed', String(isHidden));
+
+    const action = isHidden ? 'Show' : 'Hide';
+    button.title = `${action} ${panelName} panel`;
+    button.setAttribute('aria-label', `${action} ${panelName} panel`);
+
+    /*
+     * Remove the old right-sidebar hidden class if it remains from an
+     * earlier interface version. Stage 2 uses panel-hidden for both sides.
+     */
+    panel.classList.remove('hidden');
+}
+
+function setBasePanelHidden(isHidden, persist = true) {
+    const panel = document.getElementById('baseSidebar');
+    const button = document.getElementById('toggleBaseSidebarBtn');
+
+    applyPanelState(panel, button, Boolean(isHidden), 'Base');
+
+    if (persist) {
+        savePanelHidden(PANEL_STORAGE_KEYS.base, Boolean(isHidden));
+    }
+}
+
+function setNodesPanelHidden(isHidden, persist = true) {
+    const panel = document.getElementById('sidebar');
+    const button = document.getElementById('toggleSidebarBtn');
+
+    applyPanelState(panel, button, Boolean(isHidden), 'Nodes');
+
+    if (persist) {
+        savePanelHidden(PANEL_STORAGE_KEYS.nodes, Boolean(isHidden));
+    }
+}
+
+function restorePanelStates() {
+    setBasePanelHidden(
+        readPanelHidden(PANEL_STORAGE_KEYS.base),
+        false
+    );
+
+    setNodesPanelHidden(
+        readPanelHidden(PANEL_STORAGE_KEYS.nodes),
+        false
+    );
+}
+
+document.getElementById('toggleBaseSidebarBtn')?.addEventListener('click', () => {
+    const panel = document.getElementById('baseSidebar');
+    setBasePanelHidden(
+        !panel?.classList.contains('panel-hidden')
+    );
 });
+
+document.getElementById('toggleSidebarBtn')?.addEventListener('click', () => {
+    const panel = document.getElementById('sidebar');
+    setNodesPanelHidden(
+        !panel?.classList.contains('panel-hidden')
+    );
+});
+
+restorePanelStates();
 
 document.getElementById('nodeSearchInput')?.addEventListener('input', (e) => {
     nodeSearchTerm = e.target.value;
@@ -4675,8 +4989,289 @@ function closeTelemetryModal() {
 // ============================================================
 // CAMERA CONTROL
 // ============================================================
+
+function isCameraTabVisible() {
+    return currentMainTab === 'video';
+}
+
+function setCameraControlsDisabled(disabled) {
+    const controls = document.getElementById('videoControls');
+
+    if (!controls) {
+        return;
+    }
+
+    controls.classList.toggle(
+        'camera-controls-disabled',
+        disabled
+    );
+
+    controls.querySelectorAll(
+        'input, select, button'
+    ).forEach(element => {
+        if (element.id === 'cameraGalleryBtn') {
+            return;
+        }
+
+        element.disabled = disabled;
+    });
+}
+
+function renderCameraPowerState() {
+    const button =
+        document.getElementById('cameraPowerBtn');
+
+    const buttonText =
+        document.getElementById('cameraPowerBtnText');
+
+    const placeholder =
+        document.getElementById('cameraOffPlaceholder');
+
+    const feed =
+        document.getElementById('videoFeed');
+
+    const status =
+        document.getElementById('videoStatus');
+
+    const liveInfo =
+        document.getElementById('videoLiveInfo');
+
+    const transitioning =
+        cameraPowerStatus === 'starting'
+        || cameraPowerStatus === 'stopping';
+
+    if (button) {
+        button.disabled =
+            cameraPowerRequestInProgress || transitioning;
+
+        button.classList.toggle(
+            'camera-power-off',
+            !cameraPowerEnabled
+        );
+    }
+
+    if (cameraPowerStatus === 'starting') {
+        if (buttonText) {
+            buttonText.textContent = 'Starting...';
+        }
+
+        if (status) {
+            status.textContent = '🟡 Starting camera...';
+            status.style.color = '#d97706';
+        }
+
+        return;
+    }
+
+    if (cameraPowerStatus === 'stopping') {
+        if (buttonText) {
+            buttonText.textContent = 'Stopping...';
+        }
+
+        if (status) {
+            status.textContent = '🟠 Stopping camera...';
+            status.style.color = '#ea580c';
+        }
+
+        return;
+    }
+
+    if (cameraPowerStatus === 'error') {
+        if (buttonText) {
+            buttonText.textContent =
+                cameraPowerEnabled ? 'Turn Off' : 'Try Again';
+        }
+
+        if (status) {
+            status.textContent = '🔴 Camera error';
+            status.style.color = '#c62828';
+        }
+
+        return;
+    }
+
+    if (!cameraPowerEnabled) {
+        cameraActive = false;
+
+        if (feed) {
+            feed.removeAttribute('src');
+            feed.style.display = 'none';
+        }
+
+        if (placeholder) {
+            placeholder.style.display = 'flex';
+        }
+
+        if (buttonText) {
+            buttonText.textContent = 'Turn On';
+        }
+
+        if (status) {
+            status.textContent = '⚫ Camera Off';
+            status.style.color = '#64748b';
+        }
+
+        if (liveInfo) {
+            liveInfo.textContent = 'Power-saving mode';
+        }
+
+        setCameraControlsDisabled(true);
+        updateStatusDock('video');
+        return;
+    }
+
+    if (placeholder) {
+        placeholder.style.display = 'none';
+    }
+
+    if (feed) {
+        feed.style.display = 'block';
+    }
+
+    if (buttonText) {
+        buttonText.textContent = 'Turn Off';
+    }
+
+    setCameraControlsDisabled(false);
+
+    if (status) {
+        status.textContent =
+            cameraActive && isCameraTabVisible()
+                ? '🟢 Online'
+                : '⏸️ Paused';
+
+        status.style.color =
+            cameraActive && isCameraTabVisible()
+                ? '#4caf50'
+                : '#888';
+    }
+
+    updateStatusDock('video');
+}
+
+async function loadCameraPowerState() {
+    try {
+        const response =
+            await fetch('/api/camera/power');
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(
+                data.error || `HTTP ${response.status}`
+            );
+        }
+
+        cameraPowerEnabled = Boolean(data.enabled);
+        cameraPowerStatus = data.status || (
+            cameraPowerEnabled ? 'ready' : 'off'
+        );
+
+        renderCameraPowerState();
+        return data;
+
+    } catch (error) {
+        cameraPowerStatus = 'error';
+        renderCameraPowerState();
+
+        console.error(
+            '[CAMERA POWER] State load failed:',
+            error
+        );
+
+        return null;
+    }
+}
+
+async function setCameraPower(enabled) {
+    if (cameraPowerRequestInProgress) {
+        return;
+    }
+
+    cameraPowerRequestInProgress = true;
+    cameraPowerStatus = enabled
+        ? 'starting'
+        : 'stopping';
+
+    if (!enabled) {
+        stopVideoFeed();
+        cameraActive = false;
+    }
+
+    renderCameraPowerState();
+
+    try {
+        const response =
+            await fetch('/api/camera/power', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    enabled: Boolean(enabled)
+                })
+            });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(
+                data.error || `HTTP ${response.status}`
+            );
+        }
+
+        cameraPowerEnabled = Boolean(data.enabled);
+        cameraPowerStatus = data.status || (
+            cameraPowerEnabled ? 'ready' : 'off'
+        );
+
+        if (
+            cameraPowerEnabled
+            && isCameraTabVisible()
+        ) {
+            await switchCameraMode('video');
+            await loadVideoSettings();
+            await loadPhotoSettings();
+            await reconnectCameraFeed();
+            cameraActive = true;
+        }
+
+        renderCameraPowerState();
+
+        showToast(
+            cameraPowerEnabled
+                ? '✅ Camera turned on'
+                : '✅ Camera turned off',
+            'success'
+        );
+
+    } catch (error) {
+        cameraPowerStatus = 'error';
+
+        showToast(
+            `❌ Camera power error: ${error.message}`,
+            'error'
+        );
+
+        console.error(
+            '[CAMERA POWER] Change failed:',
+            error
+        );
+
+        await loadCameraPowerState();
+
+    } finally {
+        cameraPowerRequestInProgress = false;
+        renderCameraPowerState();
+    }
+}
+
+function toggleCameraPower() {
+    setCameraPower(!cameraPowerEnabled);
+}
+
 async function startCameraStream() {
-    if (cameraActive) return;
+    if (!cameraPowerEnabled || cameraActive) return;
     cameraActive = true;
     
     console.log('[CAMERA] Starting stream...');
@@ -5007,6 +5602,11 @@ function stopVideoFeed() {
 }
 
 function reconnectCameraFeed() {
+    if (!cameraPowerEnabled) {
+        renderCameraPowerState();
+        return Promise.resolve(false);
+    }
+
     return new Promise((resolve) => {
         const img = document.getElementById('videoFeed');
         const status = document.getElementById('videoStatus');
@@ -5163,6 +5763,11 @@ function reconnectCameraFeed() {
 }
 
 function refreshVideoFeed() {
+    if (!cameraPowerEnabled) {
+        renderCameraPowerState();
+        return;
+    }
+
     reconnectCameraFeed();
 }
 
@@ -5170,6 +5775,11 @@ function refreshVideoFeed() {
 // SWITCH CAMERA MODE
 // ============================================================
 async function switchCameraMode(mode) {
+    if (!cameraPowerEnabled) {
+        renderCameraPowerState();
+        return false;
+    }
+
     try {
         console.log(`[CAMERA] Switching to ${mode} mode...`);
         const response = await fetch('/api/camera/switch_mode', {
@@ -5333,6 +5943,14 @@ async function capturePhotoPreview() {
 }
 
 async function captureCameraPhoto() {
+    if (!cameraPowerEnabled) {
+        showToast(
+            '⚫ Turn the camera on first',
+            'error'
+        );
+        return;
+    }
+
     const btn = document.querySelector('.camera-actions-block .screenshot-btn');
     const videoFeed = document.getElementById('videoFeed');
 
@@ -5727,10 +6345,20 @@ function switchMainTab(tab) {
         updateStatusDock('video');
         stopMessagePolling();
 
-        switchCameraMode('video').then(() => {
+        loadCameraPowerState().then(async () => {
+            if (!cameraPowerEnabled) {
+                renderCameraPowerState();
+                return;
+            }
+
+            await switchCameraMode('video');
+
             setTimeout(() => loadVideoSettings(), 100);
             setTimeout(() => loadPhotoSettings(), 150);
-            setTimeout(() => refreshVideoFeed(), 200);
+            setTimeout(() => {
+                refreshVideoFeed();
+                cameraActive = true;
+            }, 200);
         });
 
     } else if (tab === 'photo') {
@@ -5753,10 +6381,15 @@ function switchMainTab(tab) {
         if (messagesView) messagesView.style.display = 'none';
         if (systemView) systemView.style.display = 'flex';
 
+        updateStatusDock('system');
         loadSystemNetwork();
         loadSystemInfo();
         loadRadioHealth();
 
+    } else if (tab === 'system') {
+        left.innerHTML = '🖥️ System';
+        centerText.textContent = 'System Monitor';
+        setStatusDockContext('MeshCenter');
     } else if (tab === 'settings') {
         const btn = document.getElementById('mainTabSettings');
         if (btn) btn.classList.add('active');
@@ -5781,19 +6414,25 @@ function updateStatusDock(tab) {
     if (tab === 'chats') {
         left.innerHTML = '💬 Chats';
         centerText.textContent = 'Mesh Online';
-        right.textContent = 'Nodes';
+        setStatusDockContext('Nodes');
     } else if (tab === 'video') {
         left.innerHTML = '📷 Camera';
-        centerText.textContent = 'Camera Online';
-        right.textContent = getCurrentVideoInfoText();
+
+        centerText.textContent = cameraPowerEnabled
+            ? (cameraActive ? 'Camera Online' : 'Camera Ready')
+            : 'Camera Off';
+
+        setStatusDockContext(cameraPowerEnabled
+            ? getCurrentVideoInfoText()
+            : 'Power-saving mode');
     } else if (tab === 'settings') {
         left.innerHTML = '⚙️ Settings';
         centerText.textContent = 'Ready';
-        right.textContent = 'MeshCenter';
+        setStatusDockContext('MeshCenter');
     } else {
         left.innerHTML = 'Workspace';
         centerText.textContent = 'Ready';
-        right.textContent = 'MeshCenter';
+        setStatusDockContext('MeshCenter');
     }
 }
 
@@ -6200,6 +6839,305 @@ async function connectSelectedWifi() {
     closeWifiConnectModal();
 }
 
+
+function ensureCpuHistoryPanel() {
+    if (document.getElementById('cpuUsageHistoryPanel')) return;
+
+    const kernelValue = document.getElementById('systemKernel');
+    if (!kernelValue) return;
+
+    const systemCard = kernelValue.closest('.system-card, .info-card, .card')
+        || kernelValue.parentElement?.parentElement;
+    if (!systemCard) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'cpuUsageHistoryPanel';
+    panel.className = 'cpu-history-panel';
+    panel.innerHTML = `
+        <div class="cpu-history-header">
+            <div>
+                <strong>CPU Usage</strong>
+                <span id="cpuHistoryCurrent" class="cpu-history-current">--%</span>
+            </div>
+            <div class="cpu-history-ranges" role="group" aria-label="CPU history range">
+                ${['30m', '1h', '6h', '12h', '24h'].map(range => `
+                    <button type="button"
+                            class="cpu-range-btn ${range === cpuHistoryRange ? 'active' : ''}"
+                            data-range="${range}">${range}</button>
+                `).join('')}
+            </div>
+        </div>
+        <div class="cpu-history-chart-wrap">
+            <canvas id="cpuUsageHistoryCanvas"></canvas>
+            <div id="cpuHistoryEmpty" class="cpu-history-empty">Collecting CPU data…</div>
+        </div>
+    `;
+    systemCard.appendChild(panel);
+
+    panel.addEventListener('click', event => {
+        const button = event.target.closest('.cpu-range-btn');
+        if (!button) return;
+        cpuHistoryRange = button.dataset.range || '30m';
+        panel.querySelectorAll('.cpu-range-btn').forEach(item => {
+            item.classList.toggle('active', item === button);
+        });
+        loadCpuHistory(true);
+    });
+}
+
+function cpuMetricClass(value, warning = 50, danger = 80) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '';
+    if (number >= danger) return 'danger';
+    if (number >= warning) return 'warning';
+    return 'normal';
+}
+
+
+let dockCpuState = {
+    usage: null,
+    ram: null,
+    temp: null
+};
+function ensureStatusDockMetrics() {
+    const right = document.getElementById('dockContextText');
+    if (!right) return null;
+
+    let context = right.querySelector('.dock-context-label');
+    let metrics = right.querySelector('.dock-system-metrics');
+
+    if (!context || !metrics) {
+        const previous = right.textContent.trim();
+        right.innerHTML = '';
+        context = document.createElement('span');
+        context.className = 'dock-context-label';
+        context.textContent = previous || 'MeshCenter';
+        metrics = document.createElement('span');
+        metrics.className = 'dock-system-metrics';
+        metrics.innerHTML = `
+            <span id="dockCpuMetric">CPU --%</span>
+            <span id="dockRamMetric">RAM --%</span>
+            <span id="dockTempMetric">--°C</span>
+        `;
+        right.append(context, metrics);
+    }
+    return { right, context, metrics };
+}
+
+function setStatusDockContext(text) {
+    const dock = ensureStatusDockMetrics();
+    if (dock) dock.context.textContent = text;
+}
+
+function updateCpuStatus(data) {
+    const usage = Number(data?.current);
+    const ram = Number(data?.ram_percent);
+
+    const rawTemp =
+        data?.cpu_temp
+        ?? data?.cpu_temperature
+        ?? data?.temperature;
+
+    const temp = rawTemp === null || rawTemp === undefined
+        ? NaN
+        : Number(rawTemp);
+
+    if (Number.isFinite(usage)) dockCpuState.usage = usage;
+    if (Number.isFinite(ram)) dockCpuState.ram = ram;
+    if (Number.isFinite(temp)) dockCpuState.temp = temp;
+
+    const cpuEl = document.getElementById('dockCpuMetric');
+    const ramEl = document.getElementById('dockRamMetric');
+    const tempEl = document.getElementById('dockTempMetric');
+    const currentEl = document.getElementById('cpuHistoryCurrent');
+
+    if (cpuEl) {
+        cpuEl.textContent = Number.isFinite(dockCpuState.usage) ? `CPU ${dockCpuState.usage.toFixed(1)}%` : 'CPU --%';
+        cpuEl.className = cpuMetricClass(dockCpuState.usage);
+    }
+    if (ramEl) {
+        ramEl.textContent = Number.isFinite(dockCpuState.ram) ? `RAM ${dockCpuState.ram.toFixed(1)}%` : 'RAM --%';
+        ramEl.className = cpuMetricClass(dockCpuState.ram, 70, 90);
+    }
+    if (tempEl) {
+        tempEl.textContent = Number.isFinite(dockCpuState.temp)
+            ? formatTemperature(dockCpuState.temp)
+            : '--';
+
+        tempEl.className = cpuMetricClass(dockCpuState.temp, 65, 75);
+    }
+    if (currentEl) {
+        currentEl.textContent = Number.isFinite(dockCpuState.usage) ? `${dockCpuState.usage.toFixed(1)}%` : '--%';
+        currentEl.className = `cpu-history-current ${cpuMetricClass(dockCpuState.usage)}`;
+    }
+}
+
+async function loadCpuStatus() {
+    try {
+        ensureStatusDockMetrics();
+
+        const [cpuResponse, systemResponse] = await Promise.all([
+            fetch('/api/system/cpu-history?range=30m', { cache: 'no-store' }),
+            fetch('/api/system/info', { cache: 'no-store' })
+        ]);
+
+        if (!cpuResponse.ok) return;
+
+        const cpuData = await cpuResponse.json();
+        let systemData = {};
+
+        if (systemResponse.ok) {
+            systemData = await systemResponse.json();
+        }
+
+        updateCpuStatus({
+            ...cpuData,
+            cpu_temp:
+                systemData?.cpu_temp
+                ?? cpuData?.cpu_temp
+                ?? cpuData?.cpu_temperature
+                ?? cpuData?.temperature
+        });
+    } catch (error) {
+        console.debug('CPU status update failed:', error);
+    }
+}
+
+function getCpuHistoryRangeMs(range) {
+    const ranges = {
+        '30m': 30 * 60 * 1000,
+        '1h': 60 * 60 * 1000,
+        '6h': 6 * 60 * 60 * 1000,
+        '12h': 12 * 60 * 60 * 1000,
+        '24h': 24 * 60 * 60 * 1000
+    };
+
+    return ranges[range] || ranges['30m'];
+}
+
+async function loadCpuHistory(force = false) {
+    if (currentMainTab !== 'system' && !force) return;
+    ensureCpuHistoryPanel();
+    const canvas = document.getElementById('cpuUsageHistoryCanvas');
+    if (!canvas || typeof Chart === 'undefined') return;
+
+    try {
+        const response = await fetch(`/api/system/cpu-history?range=${encodeURIComponent(cpuHistoryRange)}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        const records = Array.isArray(data.records) ? data.records : [];
+        updateCpuStatus(data);
+
+        const empty = document.getElementById('cpuHistoryEmpty');
+        if (empty) empty.style.display = records.length ? 'none' : 'flex';
+
+        const now = Date.now();
+        const rangeMs = getCpuHistoryRangeMs(cpuHistoryRange);
+        const rangeStart = now - rangeMs;
+
+        const chartData = records
+            .map(item => ({
+                x: Number(item.timestamp) * 1000,
+                y: Number(item.usage)
+            }))
+            .filter(item =>
+                Number.isFinite(item.x)
+                && Number.isFinite(item.y)
+                && item.x >= rangeStart
+                && item.x <= now
+            );
+        
+        const currentUsage = Number(data.current);
+
+        if (Number.isFinite(currentUsage)) {
+            const lastPoint = chartData[chartData.length - 1];
+
+            if (!lastPoint || now - lastPoint.x > 1000) {
+                chartData.push({
+                    x: now,
+                    y: currentUsage
+                });
+            }
+        }    
+
+        if (cpuUsageChart) {
+            cpuUsageChart.data.datasets[0].data = chartData;
+
+            cpuUsageChart.options.scales.x.min = rangeStart;
+            cpuUsageChart.options.scales.x.max = now;
+
+            cpuUsageChart.resize();
+            cpuUsageChart.update('none');
+            return;
+        }
+
+        cpuUsageChart = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: 'CPU %',
+                    data: chartData,
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    pointHoverRadius: 3,
+                    tension: 0.18,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                parsing: false,
+                normalized: true,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title(items) {
+                                const value = items?.[0]?.parsed?.x;
+                                return value ? new Date(value).toLocaleString() : '';
+                            },
+                            label(item) { return `CPU: ${Number(item.parsed.y).toFixed(1)}%`; }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'linear',
+                        min: rangeStart,
+                        max: now,
+                        ticks: {
+                            maxTicksLimit: 6,
+                            callback(value) {
+                                return new Date(Number(value)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                            }
+                        },
+                        grid: { display: false }
+                    },
+                    y: {
+                        min: 0,
+                        max: 100,
+                        ticks: { stepSize: 25, callback: value => `${value}%` }
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        console.error('CPU history load error:', error);
+    }
+}
+
+function startCpuMonitoringUi() {
+    ensureStatusDockMetrics();
+    loadCpuStatus();
+    clearInterval(cpuStatusTimer);
+    clearInterval(cpuChartTimer);
+    cpuStatusTimer = setInterval(loadCpuStatus, 2000);
+    cpuChartTimer = setInterval(() => loadCpuHistory(false), 5000);
+}
+
 async function loadSystemInfo() {
     try {
         const response = await fetch('/api/system/info');
@@ -6210,7 +7148,7 @@ async function loadSystemInfo() {
 
         document.getElementById('systemCpuTemp').textContent =
             data.cpu_temp !== null && data.cpu_temp !== undefined
-                ? `${data.cpu_temp}°C`
+                ? formatTemperature(data.cpu_temp)
                 : '--';
 
         document.getElementById('systemCpuLoad').textContent =
@@ -6231,6 +7169,8 @@ async function loadSystemInfo() {
         document.getElementById('systemModel').textContent = data.model || '--';
         document.getElementById('systemOs').textContent = data.os || '--';
         document.getElementById('systemKernel').textContent = data.kernel || '--';
+        ensureCpuHistoryPanel();
+        loadCpuHistory(true);
 
     } catch (error) {
         console.error('System info load error:', error);
@@ -6635,6 +7575,10 @@ window.updateReferenceLocationFields =
     updateReferenceLocationFields;
 window.saveReferenceLocation =
     saveReferenceLocation;
+window.openReferenceSettings =
+    openReferenceSettings;
+window.setBasePanelHidden = setBasePanelHidden;
+window.setNodesPanelHidden = setNodesPanelHidden;
 window.getAppSettings = function() {
     return appSettings;
 };
@@ -6652,3 +7596,6 @@ console.log('[EXPORT] Все функции экспортированы в wind
 console.log('[CHAT] Script loaded, calling init()...');
 init();
 
+
+window.setCameraPower = setCameraPower;
+window.toggleCameraPower = toggleCameraPower;

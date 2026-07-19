@@ -1635,7 +1635,7 @@ def get_nodes_list():
             if hw_model: meta_parts.append("hw: " + str(hw_model))
             if role: meta_parts.append("role: " + str(role))
             if ignored: meta_parts.append("🚫 ignored")
-            if favorite: meta_parts.append("⭐ favorite")
+            if favorite: meta_parts.append("⚑ favorite")
             result.append({
                 "name": icon + " " + n["name"],
                 "clean_name": n["name"],

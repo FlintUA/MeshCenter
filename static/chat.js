@@ -360,9 +360,18 @@ function getReferenceLocation() {
             return null;
         }
 
-        const referenceNode = nodeCache.find(
-            node => node.node_id === nodeId
-        );
+        const normalizedNodeId = nodeId.trim().toLowerCase();
+
+        const referenceNode = nodeCache.find(node => {
+            const candidateId = String(
+                node?.node_id
+                || node?.id
+                || node?.user?.id
+                || ''
+            ).trim().toLowerCase();
+
+            return candidateId === normalizedNodeId;
+        });
 
         if (!referenceNode) {
             return {
@@ -374,11 +383,18 @@ function getReferenceLocation() {
             };
         }
 
-        const latitude =
-            Number(referenceNode?.position?.latitude);
+        const latitude = Number(
+            referenceNode?.position?.latitude
+            ?? referenceNode?.latitude
+            ?? referenceNode?.lat
+        );
 
-        const longitude =
-            Number(referenceNode?.position?.longitude);
+        const longitude = Number(
+            referenceNode?.position?.longitude
+            ?? referenceNode?.longitude
+            ?? referenceNode?.lon
+            ?? referenceNode?.lng
+        );
 
         return {
             mode: 'node',
@@ -789,23 +805,21 @@ function getNodeMapBadgeClass(distanceMeters) {
 }
 
 function renderNodeMapBadge(node) {
-    const latitude =
-        Number(node?.position?.latitude);
+    const latitude = Number(node?.position?.latitude);
+    const longitude = Number(node?.position?.longitude);
+    const hasCoordinates =
+        Number.isFinite(latitude)
+        && Number.isFinite(longitude);
 
-    const longitude =
-        Number(node?.position?.longitude);
-
-    if (
-        !Number.isFinite(latitude)
-        || !Number.isFinite(longitude)
-    ) {
+    // No coordinates: do not reserve space and do not show a disabled control.
+    if (!hasCoordinates) {
         return '';
     }
 
-    const reference =
-        getReferenceLocation();
-
-    let badgeText = '📍 Open map';
+    const reference = getReferenceLocation();
+    let distanceText = '--';
+    let bearingText = 'No reference';
+    let mapTitle = 'Open node position on map';
     let badgeClass = 'node-map-badge-neutral';
 
     if (
@@ -813,45 +827,41 @@ function renderNodeMapBadge(node) {
         && Number.isFinite(reference.latitude)
         && Number.isFinite(reference.longitude)
     ) {
-        const distanceMeters =
-            calculateDistanceMeters(
+        const distanceMeters = calculateDistanceMeters(
+            reference.latitude,
+            reference.longitude,
+            latitude,
+            longitude
+        );
+
+        badgeClass = getNodeMapBadgeClass(distanceMeters);
+
+        if (distanceMeters < 1) {
+            distanceText = '0 m';
+            bearingText = 'Reference';
+            mapTitle = 'Reference position';
+        } else {
+            const bearing = calculateBearingDegrees(
                 reference.latitude,
                 reference.longitude,
                 latitude,
                 longitude
             );
-
-        badgeClass =
-            getNodeMapBadgeClass(distanceMeters);
-
-        if (distanceMeters < 1) {
-            badgeText = '📍 Reference';
-        } else {
-            const bearing =
-                calculateBearingDegrees(
-                    reference.latitude,
-                    reference.longitude,
-                    latitude,
-                    longitude
-                );
-
-            const arrow =
-                getBearingArrow(bearing);
-
-            const direction =
-                getBearingDirection(bearing);
-
-            badgeText =
-                `📍 ${formatNodeDistance(distanceMeters)} `
-                + `${arrow} ${direction}`;
+            const direction = getBearingDirection(bearing);
+            distanceText = formatNodeDistance(distanceMeters);
+            bearingText = `${getBearingArrow(bearing)} ${Math.round(bearing)}° ${direction}`;
+            mapTitle = `${distanceText}, ${Math.round(bearing)}° ${direction}`;
         }
     }
 
     return `
         <button type="button"
-                class="node-map-badge ${badgeClass}"
+                class="node-map-badge node-map-badge-available ${badgeClass}"
+                title="${escapeHtml(mapTitle)}"
+                aria-label="${escapeHtml(mapTitle)}"
                 onclick="event.stopPropagation(); openNodeMap(${latitude}, ${longitude})">
-            ${escapeHtml(badgeText)}
+            <span class="node-map-distance">${escapeHtml(distanceText)}</span>
+            <span class="node-map-bearing">${escapeHtml(bearingText)}</span>
         </button>
     `;
 }
@@ -1340,7 +1350,7 @@ function renderChatItem(chat) {
     const lastMsg = chat.last_message || 'No messages yet';
     const time = chat.last_time || '';
     const ignored = chat.ignored ? '🚫 ' : '';
-    const favorite = chat.favorite ? '⭐ ' : '';
+    const favorite = chat.favorite ? '⚑ ' : '';
     const unreadBadge = (chat.unread || 0) > 0 ? `<span class="chat-unread-badge">${chat.unread}</span>` : '';
     const hasUnread = (chat.unread || 0) > 0 ? 'has-unread' : '';
 
@@ -1597,47 +1607,82 @@ async function loadMessages() {
         if (filteredNodes.length === 0) {
             let message = '🔍 No nodes found';
             if (showFavorites && showIgnored) {
-                message = '⭐ No favorite ignored nodes found';
+                message = '⚑ No favorite ignored nodes found';
             } else if (showFavorites) {
-                message = '⭐ No favorite nodes found';
+                message = '⚑ No favorite nodes found';
             } else if (showIgnored) {
                 message = '🚫 No ignored nodes found';
             }
             nodesList.innerHTML = `<div class="loading" style="padding: 16px;">${message}</div>`;
         } else {
             nodesList.innerHTML = filteredNodes.map(node => {
-                const badgeClass = signalBadgeClass(node.signal_quality);
-                const badgeText = signalBadgeText(node.signal_quality);
+                const { activityClass, displayName } = getNodeActivityPresentation(node);
                 const isIgnored = node.ignored || false;
                 const isFavorite = node.favorite || false;
-                const cardClass = isIgnored ? 'node-card ignored' : (isFavorite ? 'node-card favorite' : 'node-card');
-                const lastText = node.last_text ? 
-                    `<div class="node-last-text">📝 ${escapeHtml(truncateText(node.last_text, 60))}</div>` : '';
+                const isSelected = currentChatType === 'dm' && currentChatId === node.node_id;
+                const cardClasses = ['node-card'];
+                if (isIgnored) cardClasses.push('ignored');
+                if (isFavorite) cardClasses.push('favorite');
+                if (isSelected) cardClasses.push('selected');
+                const cardClass = cardClasses.join(' ');
+                const lastText = node.last_text
+                    ? `<div class="node-last-text"><span class="node-last-text-icon">💬</span><span>${escapeHtml(truncateText(node.last_text, 60))}</span></div>`
+                    : '';
 
-                const mapBadge =
-                    renderNodeMapBadge(node);
+                const mapBadge = renderNodeMapBadge(node);
+                const favoriteStatus = isFavorite ? '⚑' : ' ';
+                const ignoreStatus = isIgnored ? '<span class="node-ignore-mark" title="Ignored">🚫</span>' : '';
+                const shortName = node.short_name || '-';
+                const hardware = node.hw_model || '-';
+                const seenText = formatCompactNodeAge(node.age || node.last_time || '-');
+                const hopsText = formatNodeHops(node);
+                const signalSegments = renderNodeSignalSegments(node);
 
-                const ignoreStatus = isIgnored ? '🚫 ' : '';
-                const favoriteStatus = isFavorite ? '⭐ ' : '';
-
-                const unignoreBtn = isIgnored ? 
-                    `<button class="unignore-btn-mini" onclick="event.stopPropagation(); toggleIgnore('${escapeHtml(node.node_id)}')">Unignore</button>` : '';
+                const unignoreBtn = isIgnored
+                    ? `<button class="unignore-btn-mini" onclick="event.stopPropagation(); toggleIgnore('${escapeHtml(node.node_id)}')">Unignore</button>`
+                    : '';
 
                 return `
-                    <div class="${cardClass}" onclick="selectNode('${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name)}')">
-                        <div class="node-name" style="display:flex;align-items:center;gap:4px;">
-                            ${ignoreStatus}${favoriteStatus}${escapeHtml(node.name)}
-                            <span class="node-inline-id">[${escapeHtml(node.node_id)}]</span>
-                            <span class="badge ${badgeClass}">${badgeText}</span>
+                    <div class="${cardClass}" data-node-id="${escapeHtml(node.node_id)}" onclick="selectNode('${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name)}')">
+                        <div class="node-card-topline">
+                            <span class="node-favorite-slot"
+                                title="${isFavorite ? 'Favorite node' : 'Not favorite'}">
+                                ${favoriteStatus}
+                            </span>
+                            <span class="node-activity-square ${activityClass}"
+                                  title="Node activity"></span>
+                            <div class="node-card-name-wrap">
+                                <div class="node-card-title">${escapeHtml(displayName)}</div>
+                            </div>
+                            ${ignoreStatus}
                             ${unignoreBtn}
                         </div>
-                        <div class="node-meta">${escapeHtml(node.meta)}</div>
+
+                        <div class="node-card-identity-row">
+                            <span class="node-short-name">${escapeHtml(shortName)}</span>
+                            <span class="node-identity-separator">•</span>
+                            <span class="node-hardware-name">${escapeHtml(hardware)}</span>
+                            <span class="node-identity-separator">•</span>
+                            <span class="node-inline-id">${escapeHtml(node.node_id)}</span>
+                        </div>
+
+                        <div class="node-card-status-row">
+                            <span class="node-hop-count" title="Mesh route hops">${escapeHtml(hopsText)}</span>
+                            <div class="node-card-signal-wrap">
+                                ${signalSegments}
+                            </div>
+                            <span class="node-last-seen">🕒 ${escapeHtml(seenText)}</span>
+                            ${mapBadge}
+                        </div>
+
                         ${lastText}
-                        ${mapBadge}
                     </div>
                 `;
             }).join('');
         }
+
+        // Повторная синхронизация после полной перерисовки списка.
+        syncSelectedNodeCard();
 
         const selectedNode = allNodes.find(n => n.node_id === currentChatId);
         if (selectedNode) {
@@ -1658,6 +1703,54 @@ async function loadMessages() {
     }
 }
 
+function getNodeActivityPresentation(node) {
+    const rawName = String(
+        node?.name
+        || node?.clean_name
+        || node?.long_name
+        || node?.node_id
+        || 'Unknown'
+    ).trim();
+
+    let activityClass = 'activity-unknown';
+
+    if (rawName.startsWith('🟢')) {
+        activityClass = 'activity-online';
+    } else if (rawName.startsWith('🟡')) {
+        activityClass = 'activity-away';
+    } else if (rawName.startsWith('🔴')) {
+        activityClass = 'activity-offline';
+    } else {
+        // Fallback for data without a status emoji in node.name.
+        const age = String(node?.age || '').toLowerCase();
+        const value = parseInt(age, 10);
+
+        if (age.includes('day') || (age.includes('h') && Number.isFinite(value) && value > 24)) {
+            activityClass = 'activity-offline';
+        } else if (
+            age.includes('h')
+            || age.includes('day')
+            || (age.includes('min') && Number.isFinite(value) && value > 10)
+        ) {
+            activityClass = 'activity-away';
+        } else if (age) {
+            activityClass = 'activity-online';
+        }
+    }
+
+    const displayName = String(
+        node?.clean_name
+        || rawName.replace(/^[🟢🟡🔴⚪]\s*/u, '')
+        || node?.node_id
+        || 'Unknown'
+    ).trim();
+
+    return {
+        activityClass,
+        displayName
+    };
+}
+
 function signalBadgeClass(signalQuality) {
     if (signalQuality === 'good') return 'badge-online';
     if (signalQuality === 'medium') return 'badge-medium';
@@ -1668,6 +1761,85 @@ function signalBadgeText(signalQuality) {
     if (signalQuality === 'good') return '●';
     if (signalQuality === 'medium') return '○';
     return '○';
+}
+
+function getNodeSignalLevel(node) {
+    const rssi = Number(node?.rssi);
+    const snr = Number(node?.snr);
+
+    let level = 0;
+
+    if (Number.isFinite(rssi)) {
+        if (rssi >= -70) level = 7;
+        else if (rssi >= -80) level = 6;
+        else if (rssi >= -90) level = 5;
+        else if (rssi >= -100) level = 4;
+        else if (rssi >= -110) level = 3;
+        else if (rssi >= -120) level = 2;
+        else level = 1;
+
+        if (Number.isFinite(snr)) {
+            if (snr >= 5) level += 1;
+            else if (snr <= -10) level -= 1;
+        }
+    } else if (node?.signal_quality === 'good') {
+        level = 6;
+    } else if (node?.signal_quality === 'medium') {
+        level = 4;
+    } else if (node?.signal_quality) {
+        level = 1;
+    }
+
+    return Math.max(0, Math.min(7, level));
+}
+
+function formatCompactNodeAge(value) {
+    const text = String(value ?? '').trim();
+    if (!text || text === '-') return '-';
+
+    return text
+        .replace(/\s+ago\b/gi, '')
+        .replace(/^ago\s+/i, '')
+        .trim();
+}
+
+function formatNodeHops(node) {
+    const raw =
+        node?.hops_away
+        ?? node?.hopsAway
+        ?? node?.hop_count
+        ?? node?.hopCount
+        ?? node?.hop_start;
+
+    if (raw === null || raw === undefined || raw === '') {
+        return 'H?';
+    }
+
+    const hops = Number(raw);
+    if (!Number.isFinite(hops) || hops < 0) {
+        return 'H?';
+    }
+
+    return `H${Math.round(hops)}`;
+}
+
+function renderNodeSignalSegments(node) {
+    const level = getNodeSignalLevel(node);
+    const qualityClass = level >= 5
+        ? 'signal-good'
+        : (level >= 3 ? 'signal-medium' : 'signal-weak');
+
+    const segments = Array.from({ length: 7 }, (_, index) =>
+        `<span class="node-signal-segment ${index < level ? 'filled' : ''}"></span>`
+    ).join('');
+
+    return `
+        <span class="node-signal-indicator ${qualityClass}"
+              title="Signal quality: ${level}/7"
+              aria-label="Signal quality ${level} of 7">
+            ${segments}
+        </span>
+    `;
 }
 
 function checkNodeIgnored(nodeId) {
@@ -1738,10 +1910,25 @@ function updateChatHeaderStatus() {
     subtitleEl.style.color = statusIcon === '🟢' ? '#2e7d32' : (statusIcon === '🟡' ? '#f57c00' : '#c62828');
 }
 
+function syncSelectedNodeCard() {
+    const selectedNodeId =
+        currentChatType === 'dm' && currentChatId ? String(currentChatId) : '';
+
+    document.querySelectorAll('#nodesList .node-card').forEach(card => {
+        const isSelected =
+            selectedNodeId !== '' && card.dataset.nodeId === selectedNodeId;
+
+        card.classList.toggle('selected', isSelected);
+    });
+}
+
 function openChat(chatId, chatName, chatType) {
     currentChatId = chatId;
     currentChatName = chatName || chatId;
     currentChatType = chatType || 'dm';
+
+    // Синхронизируем выделение сразу, не ожидая следующего опроса /api/messages.
+    syncSelectedNodeCard();
 
     if (currentMainTab && currentMainTab !== 'chats') {
         contextChatMode = true;
@@ -1823,6 +2010,8 @@ function showChatList() {
     currentChatId = null;
     currentChatName = null;
     currentChatType = null;
+
+    syncSelectedNodeCard();
 
     const chatHeader = document.getElementById('chatHeader');
     const chatListContainer = document.getElementById('chatListContainer');
@@ -2513,8 +2702,7 @@ function renderNodeDetails(node) {
                         data-node-id="${escapeHtml(node.node_id)}"
                         onclick="setDirectMessage('${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name)}')"
                         style="${isActive ? 'background: #ff9800; box-shadow: 0 0 0 3px rgba(255, 152, 0, 0.4);' : ''}">
-                    <span class="node-title-name">${isFavorite ? '⭐ ' : ''}${escapeHtml(node.clean_name)}</span>
-                    <span class="node-title-action">→ Direct Message</span>
+                    <span class="node-title-name">${isFavorite ? '⚑ ' : ''}${escapeHtml(node.clean_name)}</span>
                 </button>
             </div>
             <div class="node-details-grid">
@@ -2567,7 +2755,7 @@ function renderNodeDetails(node) {
                             data-node-id="${escapeHtml(node.node_id)}"
                             onclick="toggleFavorite('${escapeHtml(node.node_id)}')"
                             title="${isFavorite ? 'Remove from favorites' : 'Add to favorites'}">
-                        ${isFavorite ? '⭐ Unstar' : '☆ Favorite'}
+                        ${isFavorite ? '  Unfavorite' : '  Favorite'}
                     </button>
 
                     <button class="${ignoreBtnClass}"
@@ -3275,8 +3463,52 @@ function clearNodeSearch() {
     loadMessages();
 }
 
+function installCompactNodeCardStyles() {
+    if (document.getElementById('meshcenter-node-card-v11-styles')) return;
+
+    const style = document.createElement('style');
+    style.id = 'meshcenter-node-card-v11-styles';
+    style.textContent = `
+        .node-card.selected,
+        .node-card.favorite.selected,
+        .node-card.ignored.selected {
+            background: #eaf3fb !important;
+            border-color: #9bbfda !important;
+            box-shadow: 0 0 0 1px rgba(75, 132, 175, 0.14), 0 3px 10px rgba(54, 92, 120, 0.08) !important;
+        }
+
+        .node-hop-count {
+            flex: 0 0 auto;
+            min-width: 24px;
+            padding: 2px 5px;
+            border-radius: 5px;
+            background: rgba(91, 111, 126, 0.10);
+            color: #4f6473;
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1.2;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        .node-map-badge.node-map-badge-available {
+            cursor: pointer;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+installCompactNodeCardStyles();
+
 function selectNode(nodeId, nodeName) {
-    if (currentChatId === nodeId) return;
+    // Даже если эта нода уже выбрана сверху, восстанавливаем выделение
+    // компактной карточки. Раньше ранний return оставлял карточку без фона.
+    if (currentChatId === nodeId && currentChatType === 'dm') {
+        syncSelectedNodeCard();
+        updateNodeDetails(nodeId);
+        return;
+    }
+
     openChat(nodeId, nodeName, 'dm');
     updateNodeDetails(nodeId);
 }

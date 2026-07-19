@@ -28,6 +28,26 @@ let radioHealthTimer = null;
 let radioCommandRunning = false;
 let nodeToolResultTimer = null;
 let nodeToolResults = {};
+let activeNodeTabs = {}; // Active tab per node.
+let nodeRenderCache = {}; // Last rendered signature per node.
+
+// Registry for the selected-node card. Future core modules or plugins can
+// register an additional tab without rewriting renderNodeDetails().
+const NODE_DETAIL_TABS = [
+    { id: 'overview', label: 'Overview', render: renderOverviewPane },
+    { id: 'radio', label: 'Radio', render: renderRadioPane },
+    { id: 'position', label: 'Position', render: renderPositionPane },
+    { id: 'data', label: 'Data', render: renderDataPane },
+    { id: 'log', label: 'Log', render: renderLogPane }
+];
+
+function registerNodeDetailTab(tab) {
+    if (!tab || !tab.id || !tab.label || typeof tab.render !== 'function') return false;
+    if (NODE_DETAIL_TABS.some(item => item.id === tab.id)) return false;
+    NODE_DETAIL_TABS.push(tab);
+    resetNodeRenderCache();
+    return true;
+}
 
 // ===== TELEMETRY =====
 let telemetryData = {
@@ -2676,182 +2696,650 @@ function renderNodePositionBlock(node) {
     `;
 }
 
+// ============================================================
+// НОВАЯ ДЕТАЛЬНАЯ КАРТОЧКА НОДЫ
+// ============================================================
+
+// Build a signature from every value currently used by the selected-node card.
+// The signature is only a fast "nothing changed" guard. When values do change,
+// the card is patched in place rather than replaced, so polling does not flash.
+function generateNodeDetailSignature(node) {
+    if (!node || !node.node_id) return '';
+
+    const position = node.position || {};
+    const telemetry = node.telemetry || {};
+    const deviceMetrics = node.device_metrics || {};
+    const environmentMetrics = node.environment_metrics || {};
+    const powerMetrics = node.power_metrics || {};
+
+    return JSON.stringify([
+        node.node_id,
+        node.clean_name,
+        node.name,
+        node.short_name,
+        node.hw_model,
+        node.role,
+        node.age,
+        node.last_heard,
+        node.first_seen,
+        node.rssi,
+        node.snr,
+        node.signal_quality,
+        node.hop_start,
+        node.hops_away,
+        node.relay_node,
+        node.last_relay,
+        node.ignored,
+        node.favorite,
+        node.last_text,
+        node.last_text_time,
+        node.last_position_time,
+        node.last_telemetry_time,
+        node.messages_count,
+        node.packet_count,
+        node.battery_level,
+        node.voltage,
+        node.channel_utilization,
+        node.air_util_tx,
+        node.uptime,
+        position.latitude,
+        position.longitude,
+        position.altitude,
+        position.time,
+        position.timestamp,
+        position.source,
+        position.precision,
+        telemetry,
+        deviceMetrics,
+        environmentMetrics,
+        powerMetrics,
+        getReferenceLocation()
+    ]);
+}
+
+function resetNodeRenderCache(nodeId = null) {
+    if (nodeId) {
+        delete nodeRenderCache[nodeId];
+        return;
+    }
+    nodeRenderCache = {};
+}
+
+// Small DOM morphing helper. It updates text and attributes in the existing
+// elements, preserving the card itself, scroll position and interaction state.
+function patchNodeDetailDom(currentNode, nextNode) {
+    if (!currentNode || !nextNode) return;
+
+    if (currentNode.nodeType !== nextNode.nodeType) {
+        currentNode.replaceWith(nextNode.cloneNode(true));
+        return;
+    }
+
+    if (currentNode.nodeType === Node.TEXT_NODE) {
+        if (currentNode.nodeValue !== nextNode.nodeValue) {
+            currentNode.nodeValue = nextNode.nodeValue;
+        }
+        return;
+    }
+
+    if (currentNode.nodeType !== Node.ELEMENT_NODE) return;
+
+    if (currentNode.tagName !== nextNode.tagName) {
+        currentNode.replaceWith(nextNode.cloneNode(true));
+        return;
+    }
+
+    for (const attr of Array.from(currentNode.attributes)) {
+        if (!nextNode.hasAttribute(attr.name)) currentNode.removeAttribute(attr.name);
+    }
+    for (const attr of Array.from(nextNode.attributes)) {
+        if (currentNode.getAttribute(attr.name) !== attr.value) {
+            currentNode.setAttribute(attr.name, attr.value);
+        }
+    }
+
+    const currentChildren = Array.from(currentNode.childNodes);
+    const nextChildren = Array.from(nextNode.childNodes);
+    const commonLength = Math.min(currentChildren.length, nextChildren.length);
+
+    for (let i = 0; i < commonLength; i += 1) {
+        patchNodeDetailDom(currentChildren[i], nextChildren[i]);
+    }
+
+    for (let i = currentChildren.length - 1; i >= nextChildren.length; i -= 1) {
+        currentNode.removeChild(currentNode.childNodes[i]);
+    }
+
+    for (let i = commonLength; i < nextChildren.length; i += 1) {
+        currentNode.appendChild(nextChildren[i].cloneNode(true));
+    }
+}
+
+function renderOrPatchNodeDetailCard(details, html, nodeId) {
+    const template = document.createElement('template');
+    template.innerHTML = html.trim();
+    const nextCard = template.content.firstElementChild;
+    const currentCard = details.querySelector(':scope > .node-detail-card');
+
+    if (currentCard && currentCard.dataset.nodeId === nodeId && nextCard) {
+        patchNodeDetailDom(currentCard, nextCard);
+    } else {
+        details.replaceChildren(nextCard);
+    }
+}
+
 function renderNodeDetails(node) {
     const details = document.getElementById('nodeDetails');
     if (!details) return;
 
-    if (!node) {
+    if (!node || typeof node !== 'object') {
         details.className = 'node-details-placeholder';
         details.innerHTML = 'Select a node below';
         return;
     }
 
+    const nodeId = node.node_id;
+    const signature = generateNodeDetailSignature(node);
+    const existingCard = details.querySelector(':scope > .node-detail-card');
+
+    if (existingCard?.dataset.nodeId === nodeId && nodeRenderCache[nodeId] === signature) {
+        return;
+    }
+
+    const displayName = node.clean_name || node.name || nodeId;
+    const shortName = node.short_name || '-';
+    const hwModel = node.hw_model || '-';
+    const role = node.role || 'CLIENT';
+    const lastSeen = node.age || 'Never';
+    const hops = node.hop_start || node.hops_away || '?';
+    const rssi = node.rssi || '--';
+    const snr = node.snr || '--';
     const isIgnored = node.ignored || false;
     const isFavorite = node.favorite || false;
-    const ignoreBtnClass = isIgnored ? 'ignore-btn active' : 'ignore-btn';
-    const ignoreBtnText = isIgnored ? 'Ignored' : 'Ignore';
-    const favoriteBtnClass = isFavorite ? 'favorite-btn active' : 'favorite-btn';
-    const isActive = directMessageTarget === node.node_id;
-    const positionBlock = renderNodePositionBlock(node);
 
-    details.className = '';
-    details.innerHTML = `
-        <div class="node-details">
-            <div class="node-details-header">
-                <button class="node-title-btn" 
-                        data-node-id="${escapeHtml(node.node_id)}"
-                        onclick="setDirectMessage('${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name)}')"
-                        style="${isActive ? 'background: #ff9800; box-shadow: 0 0 0 3px rgba(255, 152, 0, 0.4);' : ''}">
-                    <span class="node-title-name">${isFavorite ? '⚑ ' : ''}${escapeHtml(node.clean_name)}</span>
-                </button>
-            </div>
-            <div class="node-details-grid">
-                <div class="node-details-col">
-                    <div class="node-details-item">
-                        <span class="label">ID:</span>
-                        <span class="value" style="font-size:10px;word-break:break-all;">${escapeHtml(node.node_id)}</span>
-                    </div>
-                    <div class="node-details-item">
-                        <span class="label">HW:</span>
-                        <span class="value">${escapeHtml(node.hw_model || '-')}</span>
-                    </div>
-                    <div class="node-details-item">
-                        <span class="label">Seen:</span>
-                        <span class="value">${escapeHtml(node.age || '-')}</span>
-                    </div>
-                    <div class="node-details-item">
-                        <span class="label">RSSI:</span>
-                        <span class="value">${escapeHtml(node.rssi || '-')} dBm</span>
-                    </div>
-                    <div class="node-details-item">
-                        <span class="label">Hops:</span>
-                        <span class="value">${escapeHtml(node.hop_start || '-')}</span>
-                    </div>
-                </div>
-                <div class="node-details-col">
-                    <div class="node-details-item">
-                        <span class="label">Short:</span>
-                        <span class="value">${escapeHtml(node.short_name || '-')}</span>
-                    </div>
-                    <div class="node-details-item">
-                        <span class="label">Role:</span>
-                        <span class="value">${escapeHtml(node.role || 'CLIENT')}</span>
-                    </div>
-                    <div class="node-details-item">
-                        <span class="label">Signal:</span>
-                        <span class="value">${escapeHtml(node.signal_quality || '-')}</span>
-                    </div>
-                    <div class="node-details-item">
-                        <span class="label">SNR:</span>
-                        <span class="value">${escapeHtml(node.snr || '-')} dB</span>
-                    </div>
-                    <div class="node-details-item">
-                        <span class="label">Relay:</span>
-                        <span class="value">${escapeHtml(node.relay_node || '-')}</span>
-                    </div>
-                </div>
-                <div class="node-details-col node-details-col-actions">
-                    <button class="${favoriteBtnClass}"
-                            data-node-id="${escapeHtml(node.node_id)}"
-                            onclick="toggleFavorite('${escapeHtml(node.node_id)}')"
-                            title="${isFavorite ? 'Remove from favorites' : 'Add to favorites'}">
-                        ${isFavorite ? '  Unfavorite' : '  Favorite'}
-                    </button>
-
-                    <button class="${ignoreBtnClass}"
-                            data-node-id="${escapeHtml(node.node_id)}"
-                            onclick="toggleIgnore('${escapeHtml(node.node_id)}')"
-                            title="${isIgnored ? 'Unignore this node' : 'Ignore this node'}">
-                        ${ignoreBtnText}
-                    </button>
-
-                    <div class="node-tools-wrap">
-                        <button type="button"
-                                class="node-tools-btn"
-                                id="nodeToolsBtn"
-                                onclick="event.stopPropagation(); toggleNodeToolsMenu()">
-                            🛠 Tools
-                            <span id="nodeToolsArrow">▾</span>
-                        </button>
-
-                        <div class="node-tools-menu"
-                             id="nodeToolsMenu"
-                             style="display:none;"
-                             onclick="event.stopPropagation();">
-
-                            <button type="button"
-                                    class="node-tools-menu-item"
-                                    onclick="runNodeTool(
-                                        'traceroute',
-                                        '${escapeHtml(node.node_id)}',
-                                        '${escapeHtml(node.clean_name || node.name || node.node_id)}',
-                                        this
-                                    )">
-                                <span>🛰</span>
-                                <span>Traceroute</span>
-                            </button>
-
-                            <div class="node-tools-menu-divider"></div>
-
-                            <button type="button"
-                                    class="node-tools-menu-item"
-                                    onclick="runNodeTool(
-                                        'request_telemetry',
-                                        '${escapeHtml(node.node_id)}',
-                                        '${escapeHtml(node.clean_name || node.name || node.node_id)}',
-                                        this
-                                    )">
-                                <span>📊</span>
-                                <span>Request telemetry</span>
-                            </button>
-
-                            <button type="button"
-                                    class="node-tools-menu-item"
-                                    onclick="runNodeTool(
-                                        'request_position',
-                                        '${escapeHtml(node.node_id)}',
-                                        '${escapeHtml(node.clean_name || node.name || node.node_id)}',
-                                        this
-                                    )">
-                                <span>📍</span>
-                                <span>Request position</span>
-                            </button>
-
-                            <button type="button"
-                                    class="node-tools-menu-item"
-                                    disabled
-                                    title="Coming later">
-                                <span>🔄</span>
-                                <span>Refresh node</span>
-                            </button>
-
-                        </div>
-                    </div>
-                </div>
-            </div>
-            ${positionBlock}
-            <div class="node-tool-result"
-                 id="nodeToolResult"
-                 style="display:none;">
-            </div>
-        </div>`;
-
-        const savedToolResult = nodeToolResults[node.node_id];
-
-        if (savedToolResult) {
-            renderNodeToolResult(
-                node.node_id,
-                savedToolResult.type,
-                savedToolResult.title,
-                savedToolResult.message,
-                savedToolResult.details
-            );
-        }
-
-        if (radioCommandRunning) {
-            setNodeToolsBusy(true);
+    // ---- Позиция ----
+    const position = node.position || {};
+    const hasPosition = Number.isFinite(position.latitude) && Number.isFinite(position.longitude);
+    let distanceText = '--', bearingText = '--';
+    if (hasPosition) {
+        const ref = getReferenceLocation();
+        if (ref && Number.isFinite(ref.latitude) && Number.isFinite(ref.longitude)) {
+            const distM = calculateDistanceMeters(ref.latitude, ref.longitude, position.latitude, position.longitude);
+            distanceText = formatNodeDistance(distM);
+            const bearing = calculateBearingDegrees(ref.latitude, ref.longitude, position.latitude, position.longitude);
+            bearingText = `${Math.round(bearing)}° ${getBearingDirection(bearing)}`;
         }
     }
+
+    // ---- Батарея / телеметрия ----
+    const battery = node.battery_level ?? '--';
+    const voltage = node.voltage ?? '--';
+
+    // ---- Последнее сообщение ----
+    const lastText = node.last_text || '';
+
+    // ---- Строим HTML ----
+    const html = `
+        <div class="node-detail-card" data-node-id="${escapeHtml(nodeId)}">
+            <!-- Верхняя панель -->
+            <div class="node-detail-header">
+                <div class="node-detail-title-wrap">
+                    <span class="node-detail-favorite" title="${isFavorite ? 'Favorite node' : ''}">${isFavorite ? '⚑' : ''}</span>
+                    <span class="node-detail-activity ${getNodeActivityPresentation(node).activityClass}" title="Activity status" aria-hidden="true"></span>
+                    <span class="node-detail-name">${escapeHtml(displayName)}</span>
+                    <span class="node-detail-short-id">${escapeHtml(shortName)}</span>
+                </div>
+                <button class="node-detail-actions-btn" onclick="toggleNodeActionsMenu(event)" aria-label="Actions">
+                    ⋮
+                </button>
+            </div>
+
+            <!-- Вторая строка: ID, модель, роль -->
+            <div class="node-detail-subheader">
+                <span class="node-detail-role">${escapeHtml(role)}</span>
+                <span class="node-detail-separator">•</span>
+                <span class="node-detail-hw">${escapeHtml(hwModel)}</span>
+                <span class="node-detail-separator">•</span>
+                <span class="node-detail-id" title="${escapeHtml(nodeId)}">${escapeHtml(truncateText(nodeId, 12))}</span>
+                <button class="node-detail-copy-id" onclick="copyNodeId('${escapeHtml(nodeId)}')" title="Copy ID">📋</button>
+            </div>
+
+            <!-- Третья строка: статус -->
+            <div class="node-detail-status-row">
+                <span class="node-detail-last-seen">🕒 ${escapeHtml(lastSeen)}</span>
+                <span class="node-detail-hops">Hops: ${escapeHtml(hops)}</span>
+                <span class="node-detail-ignored">${isIgnored ? '🚫 Ignored' : ''}</span>
+            </div>
+
+            <!-- Вкладки -->
+            <div class="node-detail-tabs" role="tablist" aria-label="Node details">
+                ${NODE_DETAIL_TABS.map((tab, index) => `
+                    <button type="button"
+                            class="node-detail-tab ${index === 0 ? 'active' : ''}"
+                            data-tab="${escapeHtml(tab.id)}"
+                            role="tab"
+                            aria-selected="${index === 0 ? 'true' : 'false'}"
+                            onclick="switchNodeDetailTab('${escapeHtml(tab.id)}', '${escapeHtml(nodeId)}')">${escapeHtml(tab.label)}</button>
+                `).join('')}
+            </div>
+
+            <!-- Контент вкладок -->
+            <div class="node-detail-content">
+                ${NODE_DETAIL_TABS.map((tab, index) => `
+                    <div class="node-detail-pane ${index === 0 ? 'active' : ''}"
+                         id="pane-${escapeHtml(tab.id)}-${escapeHtml(nodeId)}"
+                         data-node-id="${escapeHtml(nodeId)}"
+                         role="tabpanel">
+                        ${tab.render(node)}
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `;
+
+    details.className = '';
+    renderOrPatchNodeDetailCard(details, html, nodeId);
+    nodeRenderCache[nodeId] = signature;
+
+    // Restore the active tab immediately after the in-place patch.
+    const savedTab = activeNodeTabs[nodeId] || 'overview';
+    switchNodeDetailTab(savedTab, nodeId);
+
+    // ---- Выпадающее меню Actions (вставляем после карточки) ----
+    document.getElementById('nodeActionsMenu')?.remove();
+    const actionsMenu = document.createElement('div');
+    actionsMenu.className = 'node-actions-menu';
+    actionsMenu.id = 'nodeActionsMenu';
+    actionsMenu.style.display = 'none';
+    actionsMenu.innerHTML = `
+        <div class="node-actions-menu-inner">
+            <button onclick="openChat('${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', 'dm')">📨 Send message</button>
+            <button onclick="runNodeTool('request_position', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">📍 Request position</button>
+            <button onclick="runNodeTool('request_telemetry', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">📊 Request telemetry</button>
+            <button onclick="runNodeTool('traceroute', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">🔍 Traceroute</button>
+            <button onclick="copyNodeId('${escapeHtml(nodeId)}')">📋 Copy ID</button>
+            <button onclick="setNodeAsReference('${escapeHtml(nodeId)}')">📍 Set as reference</button>
+            <button onclick="toggleFavorite('${escapeHtml(nodeId)}')">${isFavorite ? '⚑ Unfavorite' : '⚐ Favorite'}</button>
+            <button onclick="toggleIgnore('${escapeHtml(nodeId)}')">${isIgnored ? '🔓 Unignore' : '🚫 Ignore'}</button>
+        </div>
+    `;
+    details.parentNode.insertBefore(actionsMenu, details.nextSibling);
+    ensureNodeActionsCloser();
+}
+
+// ============================================================
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ РЕНДЕРИНГА
+// ============================================================
+
+function renderOverviewPane(node) {
+    const rssi = node.rssi ?? '--';
+    const snr = node.snr ?? '--';
+    const hops = node.hop_start ?? node.hops_away ?? '?';
+    const battery = node.battery_level ?? '--';
+    const voltage = node.voltage ?? '--';
+    const lastText = node.last_text || '';
+    const hasPosition = Number.isFinite(node.position?.latitude) && Number.isFinite(node.position?.longitude);
+    let distanceText = '--', bearingText = '--';
+    if (hasPosition) {
+        const ref = getReferenceLocation();
+        if (ref && Number.isFinite(ref.latitude) && Number.isFinite(ref.longitude)) {
+            const distM = calculateDistanceMeters(ref.latitude, ref.longitude, node.position.latitude, node.position.longitude);
+            distanceText = formatNodeDistance(distM);
+            const bearing = calculateBearingDegrees(ref.latitude, ref.longitude, node.position.latitude, node.position.longitude);
+            bearingText = `${Math.round(bearing)}° ${getBearingDirection(bearing)}`;
+        }
+    }
+
+    return `
+        <div class="node-detail-overview">
+            <div class="node-detail-tiles">
+                <div class="tile">
+                    <span class="tile-label">RSSI</span>
+                    <span class="tile-value">${escapeHtml(rssi)} dBm</span>
+                </div>
+                <div class="tile">
+                    <span class="tile-label">SNR</span>
+                    <span class="tile-value">${escapeHtml(snr)} dB</span>
+                </div>
+                <div class="tile">
+                    <span class="tile-label">Hops</span>
+                    <span class="tile-value">${escapeHtml(hops)}</span>
+                </div>
+                <div class="tile">
+                    <span class="tile-label">Distance</span>
+                    <span class="tile-value">${escapeHtml(distanceText)}</span>
+                </div>
+                <div class="tile">
+                    <span class="tile-label">Bearing</span>
+                    <span class="tile-value">${escapeHtml(bearingText)}</span>
+                </div>
+                ${battery !== '--' ? `
+                <div class="tile">
+                    <span class="tile-label">Battery</span>
+                    <span class="tile-value">${escapeHtml(battery)}%</span>
+                </div>` : ''}
+                ${voltage !== '--' ? `
+                <div class="tile">
+                    <span class="tile-label">Voltage</span>
+                    <span class="tile-value">${escapeHtml(voltage)} V</span>
+                </div>` : ''}
+            </div>
+            ${lastText ? `
+            <div class="node-detail-last-msg">
+                <span class="last-msg-label">Last message</span>
+                <span class="last-msg-text">${escapeHtml(truncateText(lastText, 80))}</span>
+                <span class="last-msg-time">${escapeHtml(node.last_time || '')}</span>
+            </div>` : ''}
+            <div class="node-detail-quick-actions">
+                <button class="quick-action" onclick="openChat('${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', 'dm')">💬 Message</button>
+                <button class="quick-action" onclick="openNodeMap(${node.position?.latitude || 0}, ${node.position?.longitude || 0})" ${!hasPosition ? 'disabled' : ''}>🗺️ Map</button>
+                <button class="quick-action" onclick="toggleNodeActionsMenu(event)">⚡ More</button>
+            </div>
+        </div>
+    `;
+}
+
+function renderRadioPane(node) {
+    const rssi = node.rssi ?? '--';
+    const snr = node.snr ?? '--';
+    const hops = node.hop_start ?? node.hops_away ?? '?';
+    const lastSeen = node.age || 'Never';
+    const relay = node.relay_node || '--';
+    const signalQuality = node.signal_quality || '--';
+
+    // Простая история (заглушка)
+    let historyHtml = '<div class="radio-history-placeholder">Signal history is not available yet</div>';
+
+    return `
+        <div class="node-detail-radio">
+            <div class="radio-params">
+                <div class="radio-param"><span class="label">Signal quality</span><span class="value">${escapeHtml(signalQuality)}</span></div>
+                <div class="radio-param"><span class="label">RSSI</span><span class="value">${escapeHtml(rssi)} dBm</span></div>
+                <div class="radio-param"><span class="label">SNR</span><span class="value">${escapeHtml(snr)} dB</span></div>
+                <div class="radio-param"><span class="label">Hops</span><span class="value">${escapeHtml(hops)}</span></div>
+                <div class="radio-param"><span class="label">Last relay</span><span class="value">${escapeHtml(relay)}</span></div>
+                <div class="radio-param"><span class="label">Last heard</span><span class="value">${escapeHtml(lastSeen)}</span></div>
+            </div>
+            <div class="radio-history">
+                <div class="radio-history-header">
+                    <span>Signal history</span>
+                    <span class="radio-history-range" title="Time ranges will be enabled when history storage is added">30m · 1h · 6h · 24h</span>
+                </div>
+                ${historyHtml}
+            </div>
+            <div class="radio-actions">
+                <button class="radio-action" onclick="runNodeTool('traceroute', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">🔍 Run traceroute</button>
+                <button class="radio-action" onclick="refreshNodeMetrics('${escapeHtml(node.node_id)}')">🔄 Refresh</button>
+            </div>
+        </div>
+    `;
+}
+
+function renderPositionPane(node) {
+    const pos = node.position || {};
+    const hasPosition = Number.isFinite(pos.latitude) && Number.isFinite(pos.longitude);
+    const lat = hasPosition ? pos.latitude.toFixed(6) : '--';
+    const lon = hasPosition ? pos.longitude.toFixed(6) : '--';
+    const alt = Number.isFinite(pos.altitude) ? `${Math.round(pos.altitude)} m` : '--';
+    const age = pos.updated_time || node.age || '--';
+    const source = pos.source || 'Radio';
+    const precision = pos.precision_label || '--';
+
+    let distanceText = '--', bearingText = '--';
+    if (hasPosition) {
+        const ref = getReferenceLocation();
+        if (ref && Number.isFinite(ref.latitude) && Number.isFinite(ref.longitude)) {
+            const distM = calculateDistanceMeters(ref.latitude, ref.longitude, pos.latitude, pos.longitude);
+            distanceText = formatNodeDistance(distM);
+            const bearing = calculateBearingDegrees(ref.latitude, ref.longitude, pos.latitude, pos.longitude);
+            bearingText = `${Math.round(bearing)}° ${getBearingDirection(bearing)}`;
+        }
+    }
+
+    const referenceName = (() => {
+        const ref = getReferenceLocation();
+        return ref ? ref.name : 'Not set';
+    })();
+
+    return `
+        <div class="node-detail-position">
+            ${hasPosition ? `
+            <div class="position-coords">
+                <div class="coord"><span class="label">Latitude</span><span class="value">${escapeHtml(lat)}</span></div>
+                <div class="coord"><span class="label">Longitude</span><span class="value">${escapeHtml(lon)}</span></div>
+                <div class="coord"><span class="label">Altitude</span><span class="value">${escapeHtml(alt)}</span></div>
+                <div class="coord"><span class="label">Distance</span><span class="value">${escapeHtml(distanceText)}</span></div>
+                <div class="coord"><span class="label">Bearing</span><span class="value">${escapeHtml(bearingText)}</span></div>
+                <div class="coord"><span class="label">Position age</span><span class="value">${escapeHtml(age)}</span></div>
+                <div class="coord"><span class="label">Source</span><span class="value">${escapeHtml(source)}</span></div>
+                <div class="coord"><span class="label">Precision</span><span class="value">${escapeHtml(precision)}</span></div>
+            </div>
+            <div class="position-actions">
+                <button onclick="openNodeMap(${pos.latitude}, ${pos.longitude})">🗺 Show on map</button>
+                <button onclick="copyCoordinates('${pos.latitude}', '${pos.longitude}')">📋 Copy coordinates</button>
+                <button onclick="setNodeAsReference('${escapeHtml(node.node_id)}')">📍 Set as reference</button>
+                <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">📡 Request new position</button>
+            </div>
+            <div class="position-reference">Reference: ${escapeHtml(referenceName)}</div>
+            ` : `
+            <div class="position-no-data">
+                <span>📍 No known position</span>
+                <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">Request position</button>
+            </div>
+            `}
+        </div>
+    `;
+}
+
+function renderDataPane(node) {
+    // Группировка данных
+    const device = {
+        battery: node.battery_level ?? '--',
+        voltage: node.voltage ?? '--',
+        channel_util: node.channel_utilization ?? '--',
+        air_util_tx: node.air_util_tx ?? '--',
+        uptime: node.uptime_seconds ? formatUptime(node.uptime_seconds) : '--'
+    };
+
+    const environment = {
+        temperature: node.temperature ?? '--',
+        humidity: node.humidity ?? '--',
+        pressure: node.pressure ?? '--'
+    };
+
+    const power = {
+        voltage: node.voltage ?? '--',
+        current: node.current ?? '--',
+        power: node.power ?? '--'
+    };
+
+    const hasEnv = environment.temperature !== '--' || environment.humidity !== '--' || environment.pressure !== '--';
+    const hasPower = power.voltage !== '--' || power.current !== '--' || power.power !== '--';
+
+    return `
+        <div class="node-detail-data">
+            <div class="data-group">
+                <div class="data-group-title">📟 Device</div>
+                <div class="data-grid">
+                    <div><span class="label">Battery</span><span class="value">${escapeHtml(device.battery)}%</span></div>
+                    <div><span class="label">Voltage</span><span class="value">${escapeHtml(device.voltage)} V</span></div>
+                    <div><span class="label">Channel utilization</span><span class="value">${escapeHtml(device.channel_util)}%</span></div>
+                    <div><span class="label">Air utilization TX</span><span class="value">${escapeHtml(device.air_util_tx)}%</span></div>
+                    <div><span class="label">Uptime</span><span class="value">${escapeHtml(device.uptime)}</span></div>
+                </div>
+            </div>
+            ${hasEnv ? `
+            <div class="data-group">
+                <div class="data-group-title">🌡️ Environment</div>
+                <div class="data-grid">
+                    <div><span class="label">Temperature</span><span class="value">${formatTemperature(environment.temperature)}</span></div>
+                    <div><span class="label">Humidity</span><span class="value">${environment.humidity !== '--' ? environment.humidity + '%' : '--'}</span></div>
+                    <div><span class="label">Pressure</span><span class="value">${formatPressure(environment.pressure)}</span></div>
+                </div>
+            </div>` : `
+            <div class="data-group">
+                <div class="data-group-title">🌡️ Environment</div>
+                <div class="data-no-data">No environment data</div>
+                <button class="data-request" onclick="runNodeTool('request_telemetry', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">Request telemetry</button>
+            </div>`}
+            ${hasPower ? `
+            <div class="data-group">
+                <div class="data-group-title">⚡ Power</div>
+                <div class="data-grid">
+                    <div><span class="label">Voltage</span><span class="value">${escapeHtml(power.voltage)} V</span></div>
+                    <div><span class="label">Current</span><span class="value">${escapeHtml(power.current)} mA</span></div>
+                    <div><span class="label">Power</span><span class="value">${escapeHtml(power.power)} mW</span></div>
+                </div>
+            </div>` : `
+            <div class="data-group">
+                <div class="data-group-title">⚡ Power</div>
+                <div class="data-no-data">No power data</div>
+                <button class="data-request" onclick="runNodeTool('request_telemetry', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">Request telemetry</button>
+            </div>`}
+            <div class="data-actions">
+                <button onclick="runNodeTool('request_telemetry', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">📊 Request telemetry</button>
+                <button onclick="viewTelemetryHistory('${escapeHtml(node.node_id)}')">📈 View history</button>
+            </div>
+        </div>
+    `;
+}
+
+function renderLogPane(node) {
+    // Сводка
+    const summary = {
+        first_seen: node.first_seen || '--',
+        last_heard: node.age || 'Never',
+        last_text: node.last_time || 'Never',
+        last_position: node.position?.updated_time || 'Never',
+        last_telemetry: node.telemetry_time || 'Never',
+        packets: node.packets_received ?? '--',
+        messages: node.messages_received ?? '--'
+    };
+
+
+    return `
+        <div class="node-detail-log">
+            <div class="log-summary">
+                <div class="log-summary-item"><span class="label">First seen</span><span class="value">${escapeHtml(summary.first_seen)}</span></div>
+                <div class="log-summary-item"><span class="label">Last heard</span><span class="value">${escapeHtml(summary.last_heard)}</span></div>
+                <div class="log-summary-item"><span class="label">Last text</span><span class="value">${escapeHtml(summary.last_text)}</span></div>
+                <div class="log-summary-item"><span class="label">Last position</span><span class="value">${escapeHtml(summary.last_position)}</span></div>
+                <div class="log-summary-item"><span class="label">Last telemetry</span><span class="value">${escapeHtml(summary.last_telemetry)}</span></div>
+                <div class="log-summary-item"><span class="label">Packets</span><span class="value">${escapeHtml(summary.packets)}</span></div>
+                <div class="log-summary-item"><span class="label">Messages</span><span class="value">${escapeHtml(summary.messages)}</span></div>
+            </div>
+            <div class="log-events">
+                <div class="log-events-title">Event history</div>
+                <div class="log-history-placeholder">Detailed node event history is not available yet</div>
+            </div>
+        </div>
+    `;
+}
+
+// ============================================================
+// УПРАВЛЕНИЕ ВКЛАДКАМИ
+// ============================================================
+
+function switchNodeDetailTab(tabName, nodeId) {
+    if (!nodeId || !NODE_DETAIL_TABS.some(tab => tab.id === tabName)) return;
+
+    activeNodeTabs[nodeId] = tabName;
+    const card = document.querySelector(`.node-detail-card[data-node-id="${CSS.escape(nodeId)}"]`);
+    if (!card) return;
+
+    card.querySelectorAll('.node-detail-pane').forEach(pane => {
+        pane.classList.toggle('active', pane.id === `pane-${tabName}-${nodeId}`);
+    });
+
+    card.querySelectorAll('.node-detail-tab').forEach(tab => {
+        const active = tab.dataset.tab === tabName;
+        tab.classList.toggle('active', active);
+        tab.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+}
+
+// ============================================================
+// ДЕЙСТВИЯ
+// ============================================================
+
+function toggleNodeActionsMenu(event) {
+    event.stopPropagation();
+    const menu = document.getElementById('nodeActionsMenu');
+    if (!menu) return;
+    const isVisible = menu.style.display === 'block';
+    menu.style.display = isVisible ? 'none' : 'block';
+}
+
+function copyNodeId(nodeId) {
+    navigator.clipboard.writeText(nodeId).then(() => {
+        showToast('✅ Node ID copied', 'success');
+    }).catch(() => {
+        showToast('❌ Failed to copy', 'error');
+    });
+}
+
+function copyCoordinates(lat, lon) {
+    const coords = `${lat}, ${lon}`;
+    navigator.clipboard.writeText(coords).then(() => {
+        showToast('✅ Coordinates copied', 'success');
+    }).catch(() => {
+        showToast('❌ Failed to copy', 'error');
+    });
+}
+
+function setNodeAsReference(nodeId) {
+    // Устанавливаем текущую ноду как референс
+    // Сохраняем в настройках
+    const ref = {
+        mode: 'node',
+        node_id: nodeId
+    };
+    fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reference_location: ref })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.ok) {
+            appSettings = data.settings;
+            updateSettingsUi();
+            showToast('✅ Reference node set', 'success');
+            // Перерисовать карточку
+            const node = nodeCache.find(n => n.node_id === nodeId);
+            if (node) renderNodeDetails(node);
+        } else {
+            showToast('❌ Failed to set reference', 'error');
+        }
+    })
+    .catch(() => showToast('❌ Network error', 'error'));
+}
+
+function refreshNodeMetrics(nodeId) {
+    // Просто обновляем данные
+    loadMessages();
+    showToast('🔄 Refreshing local node data', 'info');
+}
+
+function viewTelemetryHistory(nodeId) {
+    // Открыть модалку телеметрии с фильтром по ноде
+    openTelemetryModal('environment');
+    showToast('History currently shows all telemetry records; node filtering is planned', 'info');
+    // TODO(plugin): add node_id filtering to the telemetry history API and modal
+}
+
+let nodeActionsCloserInstalled = false;
+function ensureNodeActionsCloser() {
+    if (nodeActionsCloserInstalled) return;
+    nodeActionsCloserInstalled = true;
+    document.addEventListener('click', (event) => {
+        const menu = document.getElementById('nodeActionsMenu');
+        const button = document.querySelector('.node-detail-actions-btn');
+        if (menu && button && !menu.contains(event.target) && !button.contains(event.target)) {
+            menu.style.display = 'none';
+        }
+    });
+}
 
 function setNodeToolsBusy(isBusy) {
     radioCommandRunning = Boolean(isBusy);
@@ -4257,6 +4745,7 @@ async function restartListener() {
 }
 
 async function rescanNodes() {
+    resetNodeRenderCache();
     const btn = document.getElementById('rescanNodesBtn');
     const originalText = btn.textContent;
     
@@ -7831,3 +8320,120 @@ init();
 
 window.setCameraPower = setCameraPower;
 window.toggleCameraPower = toggleCameraPower;
+
+
+// ============================================================
+// ЭКСПОРТ В ГЛОБАЛЬНУЮ ОБЛАСТЬ
+// ============================================================
+window.loadChatList = loadChatList;
+window.loadMessages = loadMessages;
+window.openChat = openChat;
+window.showChatList = showChatList;
+window.toggleIgnore = toggleIgnore;
+window.toggleFavorite = toggleFavorite;
+window.selectNode = selectNode;
+window.clearNodeSearch = clearNodeSearch;
+window.rescanNodes = rescanNodes;
+window.restartListener = restartListener;
+window.mergeDuplicates = mergeDuplicates;
+window.cleanupAllNodes = cleanupAllNodes;
+window.toggleShowDuplicates = toggleShowDuplicates;
+window.showExportOptions = showExportOptions;
+window.showImportOptions = showImportOptions;
+window.closeFormatMenus = closeFormatMenus;
+window.exportNodesCSV = exportNodesCSV;
+window.exportNodesJSON = exportNodesJSON;
+window.importNodesCSV = importNodesCSV;
+window.importNodesJSON = importNodesJSON;
+window.showScreenshots = showScreenshots;
+window.deleteScreenshot = deleteScreenshot;
+window.deleteAllScreenshots = deleteAllScreenshots;
+window.closeScreenshots = closeScreenshots;
+window.switchMainTab = switchMainTab;
+window.switchSidebarTab = switchSidebarTab;
+window.refreshVideoFeed = refreshVideoFeed;
+window.updateVideoSettings = updateVideoSettings;
+window.takeScreenshot = takeScreenshot;
+window.loadPhotoSettings = loadPhotoSettings;
+window.updatePhotoSettings = updatePhotoSettings;
+window.capturePhotoPreview = capturePhotoPreview;
+window.savePhoto = savePhoto;
+window.refreshPhoto = refreshPhoto;
+window.showChatActions = showChatActions;
+window.deleteCurrentChat = deleteCurrentChat;
+window.clearCurrentChat = clearCurrentChat;
+window.deleteAllDmChats = deleteAllDmChats;
+window.executeDeleteChat = executeDeleteChat;
+window.executeClearChat = executeClearChat;
+window.executeDeleteAllDm = executeDeleteAllDm;
+window.closeChatActions = closeChatActions;
+window.closeConfirmDelete = closeConfirmDelete;
+window.closeConfirmClear = closeConfirmClear;
+window.closeDeleteAllDmModal = closeDeleteAllDmModal;
+window.openTelemetryModal = openTelemetryModal;
+window.closeTelemetryModal = closeTelemetryModal;
+window.setTelemetryRange = setTelemetryRange;
+window.updateTelemetryConfig = updateTelemetryConfig;
+window.switchCameraMode = switchCameraMode;
+window.startCameraStream = startCameraStream;
+window.stopCameraStream = stopCameraStream;
+window.loadSensors = loadSensors;
+window.loadBaseStatus = loadBaseStatus;
+window.loadTelemetry = loadTelemetry;
+window.loadSettings = loadSettings;
+window.setUnitSetting = setUnitSetting;
+window.exportTelemetryData = exportTelemetryData;
+window.closeTelemetryExportMenu = closeTelemetryExportMenu;
+window.downloadTelemetryExport = downloadTelemetryExport;
+window.toggleTelemetrySeries = toggleTelemetrySeries;
+window.openCustomTelemetryExport = openCustomTelemetryExport;
+window.closeCustomTelemetryExport = closeCustomTelemetryExport;
+window.updateCustomExportMode = updateCustomExportMode;
+window.runCustomTelemetryExport = runCustomTelemetryExport;
+window.updateStatusDock = updateStatusDock;
+window.syncDockVideoSettings = syncDockVideoSettings;
+window.loadSystemNetwork = loadSystemNetwork;
+window.openWifiConnectModal = openWifiConnectModal;
+window.closeWifiConnectModal = closeWifiConnectModal;
+window.toggleWifiPasswordVisible = toggleWifiPasswordVisible;
+window.connectSelectedWifi = connectSelectedWifi;
+window.loadSystemInfo = loadSystemInfo;
+window.exitSplitView = exitSplitView;
+window.toggleRadioHealthHistory = toggleRadioHealthHistory;
+window.runSystemAction = runSystemAction;
+window.updateCameraControlLabels = updateCameraControlLabels;
+window.updateCameraImageControls = updateCameraImageControls;
+window.restoreCameraImageDefaults = restoreCameraImageDefaults;
+window.updateListenerRecoverySettings = updateListenerRecoverySettings;
+window.toggleNodeToolsMenu = toggleNodeToolsMenu;
+window.closeNodeToolsMenu = closeNodeToolsMenu;
+window.runNodeTool = runNodeTool;
+window.closeNodeToolResult = closeNodeToolResult;
+window.openNodeMap = openNodeMap;
+window.setMapProvider = setMapProvider;
+window.updateReferenceLocationFields = updateReferenceLocationFields;
+window.saveReferenceLocation = saveReferenceLocation;
+window.openReferenceSettings = openReferenceSettings;
+window.setBasePanelHidden = setBasePanelHidden;
+window.setNodesPanelHidden = setNodesPanelHidden;
+window.getAppSettings = function() { return appSettings; };
+window.setCameraPower = setCameraPower;
+window.toggleCameraPower = toggleCameraPower;
+
+// ===== НОВЫЕ ФУНКЦИИ ДЛЯ ДЕТАЛЬНОЙ КАРТОЧКИ =====
+window.renderNodeDetails = renderNodeDetails;
+window.registerNodeDetailTab = registerNodeDetailTab;
+window.switchNodeDetailTab = switchNodeDetailTab;
+window.toggleNodeActionsMenu = toggleNodeActionsMenu;
+window.copyNodeId = copyNodeId;
+window.copyCoordinates = copyCoordinates;
+window.setNodeAsReference = setNodeAsReference;
+window.refreshNodeMetrics = refreshNodeMetrics;
+window.viewTelemetryHistory = viewTelemetryHistory;
+
+// Экспортируем переменные (если нужно)
+window.chatListCache = chatListCache;
+window.currentChatId = currentChatId;
+window.nodeCache = nodeCache;
+
+console.log('[EXPORT] Все функции экспортированы в window');

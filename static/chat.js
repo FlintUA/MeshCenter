@@ -1516,7 +1516,7 @@ function renderChatItem(chat) {
     }
 
     return `
-        <div class="chat-item ${hasUnread} ${selectedClass}" data-chat-id="${escapeHtml(chat.id)}" onclick="openChat('${escapeHtml(chat.id)}', '${escapeHtml(chat.name)}', '${escapeHtml(chat.type)}')">
+        <div class="chat-item ${hasUnread} ${selectedClass}" data-chat-id="${escapeHtml(chat.id)}" onclick="openChat('${escapeHtml(chat.id)}', '${escapeHtml(chat.name)}', '${escapeHtml(chat.type)}', 'chat')">
             <div class="chat-icon ${iconClass}">${icon}</div>
             <div class="chat-info">
                 <div class="chat-name">${ignored}${favorite}${escapeHtml(chat.name)}</div>
@@ -1613,6 +1613,7 @@ async function loadChatList() {
 
         container.innerHTML = html;
         console.log('[CHAT] Chat list rendered successfully');
+        flushPendingSynchronizedScroll();
 
     } catch (error) {
         console.error('[CHAT] Error:', error);
@@ -1832,6 +1833,7 @@ async function loadMessages() {
 
         // Повторная синхронизация после полной перерисовки списка.
         syncSelectedNodeCard();
+        flushPendingSynchronizedScroll();
 
         const selectedNode = allNodes.find(n => n.node_id === currentChatId);
         if (selectedNode) {
@@ -2059,6 +2061,102 @@ function updateChatHeaderStatus() {
     subtitleEl.style.color = statusIcon === '🟢' ? '#2e7d32' : (statusIcon === '🟡' ? '#f57c00' : '#c62828');
 }
 
+// ============================================================
+// BIDIRECTIONAL CHAT / NODE LIST SCROLL SYNCHRONIZATION
+// ============================================================
+let pendingChatScrollNodeId = null;
+let pendingNodeScrollNodeId = null;
+
+function isElementFullyVisibleInContainer(element, container) {
+    if (!element || !container) return false;
+
+    const elementRect = element.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+
+    return (
+        elementRect.top >= containerRect.top &&
+        elementRect.bottom <= containerRect.bottom &&
+        elementRect.left >= containerRect.left &&
+        elementRect.right <= containerRect.right
+    );
+}
+
+function centerElementInContainerIfNeeded(element, container) {
+    if (!element || !container) return false;
+
+    if (!isElementFullyVisibleInContainer(element, container)) {
+        element.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center',
+            inline: 'nearest'
+        });
+    }
+
+    return true;
+}
+
+function findElementByDataValue(selector, dataKey, value) {
+    const expectedValue = String(value || '');
+    return Array.from(document.querySelectorAll(selector)).find(element =>
+        String(element.dataset[dataKey] || '') === expectedValue
+    ) || null;
+}
+
+function scrollChatItemIntoView(nodeId) {
+    const chatItem = findElementByDataValue(
+        '#chatList .chat-item',
+        'chatId',
+        nodeId
+    );
+    const chatContainer = document.getElementById('chatListContainer');
+
+    return centerElementInContainerIfNeeded(chatItem, chatContainer);
+}
+
+function scrollNodeCardIntoView(nodeId) {
+    const nodeCard = findElementByDataValue(
+        '#nodesList .node-card',
+        'nodeId',
+        nodeId
+    );
+    const nodesContainer = document.querySelector('.nodes-scroll');
+
+    return centerElementInContainerIfNeeded(nodeCard, nodesContainer);
+}
+
+function flushPendingSynchronizedScroll() {
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            if (pendingChatScrollNodeId) {
+                if (scrollChatItemIntoView(pendingChatScrollNodeId)) {
+                    pendingChatScrollNodeId = null;
+                }
+            }
+
+            if (pendingNodeScrollNodeId) {
+                if (scrollNodeCardIntoView(pendingNodeScrollNodeId)) {
+                    pendingNodeScrollNodeId = null;
+                }
+            }
+        });
+    });
+}
+
+function requestSynchronizedListScroll(nodeId, source) {
+    if (!nodeId) return;
+
+    if (source === 'chat') {
+        pendingNodeScrollNodeId = String(nodeId);
+    } else if (source === 'nodes') {
+        pendingChatScrollNodeId = String(nodeId);
+    } else {
+        pendingChatScrollNodeId = String(nodeId);
+        pendingNodeScrollNodeId = String(nodeId);
+    }
+
+    flushPendingSynchronizedScroll();
+}
+
 function syncSelectedNodeCard() {
     const selectedNodeId =
         currentChatType === 'dm' && currentChatId ? String(currentChatId) : '';
@@ -2106,10 +2204,14 @@ function updateChatHeader() {
 // ============================================================
 // OPEN CHAT (MODIFIED)
 // ============================================================
-function openChat(chatId, chatName, chatType) {
+function openChat(chatId, chatName, chatType, selectionSource = 'external') {
     currentChatId = chatId;
     currentChatName = chatName || chatId;
     currentChatType = chatType || 'dm';
+
+    if (currentChatType === 'dm' && chatId !== 'channel') {
+        requestSynchronizedListScroll(chatId, selectionSource);
+    }
 
     // Сброс сигнатуры, чтобы принудительно обновить сообщения
     lastRenderedSignature[chatId] = null;
@@ -2160,6 +2262,10 @@ function openChat(chatId, chatName, chatType) {
     if (actionsBtn) actionsBtn.style.display = 'block';
     const deleteDmBtn = document.getElementById('deleteAllDmHeaderBtn');
     if (deleteDmBtn) deleteDmBtn.style.display = 'none';
+
+    // Синхронизируем подсветку и положение в обоих списках.
+    syncSelectedNodeCard();
+    flushPendingSynchronizedScroll();
 
     // Обновляем список чатов для подсветки выбранного
     loadChatList();
@@ -4177,11 +4283,12 @@ function selectNode(nodeId, nodeName) {
     // компактной карточки. Раньше ранний return оставлял карточку без фона.
     if (currentChatId === nodeId && currentChatType === 'dm') {
         syncSelectedNodeCard();
+        requestSynchronizedListScroll(nodeId, 'nodes');
         updateNodeDetails(nodeId);
         return;
     }
 
-    openChat(nodeId, nodeName, 'dm');
+    openChat(nodeId, nodeName, 'dm', 'nodes');
     updateNodeDetails(nodeId);
 }
 

@@ -17,6 +17,9 @@ config.local.py
 .env
 chats.json
 backups/
+*.py[cod]
+weather_secrets.py
+
 
 # Runtime data
 data/

@@ -5188,98 +5188,122 @@ body.context-chat-mode .settings-view {
    ============================================================ */
 
 .reference-location-card {
-    padding: 14px;
+    --reference-label-width: 78px;
+    padding: 16px;
     border: 1px solid #dce3ec;
     border-radius: 10px;
     background: #ffffff;
 }
 
 .reference-location-title {
-    margin-bottom: 4px;
+    margin: 0 0 4px;
     color: #1d3557;
     font-size: 14px;
     font-weight: 700;
+    line-height: 1.3;
 }
 
 .reference-location-description {
-    margin-bottom: 12px;
+    margin: 0 0 14px;
     color: #7a8794;
     font-size: 10px;
-    line-height: 1.4;
+    line-height: 1.45;
 }
 
 .reference-location-row,
 .reference-location-coordinate {
-    display: flex;
+    display: grid;
+    grid-template-columns: var(--reference-label-width) minmax(0, 1fr);
     align-items: center;
-    justify-content: space-between;
     gap: 12px;
+    min-height: 34px;
 }
 
-.reference-location-row {
+.reference-location-row,
+.reference-location-fields {
     margin-bottom: 10px;
 }
 
 .reference-location-fields {
     display: grid;
-    gap: 8px;
-    margin-bottom: 10px;
+    gap: 10px;
 }
 
 .reference-location-fields label,
 .reference-location-row label {
+    min-width: 0;
     color: #34495e;
     font-size: 11px;
     font-weight: 600;
+    line-height: 1.25;
 }
 
 .reference-location-card select,
 .reference-location-card input {
-    width: 165px;
-    height: 32px;
-    padding: 0 8px;
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    padding: 0 10px;
     border: 1px solid #cad4e0;
     border-radius: 6px;
     background: #f8fafc;
     color: #243447;
+    font: inherit;
     font-size: 11px;
     box-sizing: border-box;
 }
 
+.reference-location-card select:focus,
+.reference-location-card input:focus {
+    outline: none;
+    border-color: #7eb28d;
+    box-shadow: 0 0 0 2px rgba(83, 166, 110, .12);
+}
+
 .reference-location-save-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 100%;
-    min-height: 32px;
-    padding: 6px 10px;
+    min-height: 34px;
+    margin: 2px 0 0;
+    padding: 7px 12px;
     border: 1px solid #8abf99;
     border-radius: 7px;
     background: #e2f3e7;
     color: #236337;
     font-size: 10px;
     font-weight: 700;
+    line-height: 1.2;
     cursor: pointer;
+    box-sizing: border-box;
 }
 
-.reference-location-save-btn:hover {
+.reference-location-save-btn:hover:not(:disabled) {
     border-color: #68a77a;
     background: #d3ebda;
 }
 
+.reference-location-save-btn:disabled {
+    border-color: #d5dde5;
+    background: #f2f4f7;
+    color: #7a8794;
+    cursor: default;
+}
+
 .reference-location-status {
-    min-height: 14px;
-    margin-top: 7px;
+    min-height: 13px;
+    margin-top: 6px;
     color: #66756b;
     font-size: 9px;
+    line-height: 1.4;
 }
 
-.reference-location-coordinate > label {
-    flex: 1 1 auto;
-    min-width: 0;
-}
-
-.reference-location-coordinate > input,
-.reference-location-coordinate > select {
-    flex: 0 0 165px;
-    width: 165px;
+@media (max-width: 520px) {
+    .reference-location-card {
+        --reference-label-width: 72px;
+        padding: 14px;
+    }
 }
 
 /* Reference location in Base card */
@@ -7162,3 +7186,1555 @@ body.context-chat-mode .settings-view {
     border: 1px dashed var(--mc-border, #d8dee6);
     border-radius: var(--radius-md, 10px);
 }
+
+
+/* ============================================================
+   UNIFIED TOP WORKSPACE HEADER - STAGE 1
+   Align local-node title, main tabs and right sidebar tabs.
+   ============================================================ */
+
+:root {
+    --workspace-nav-height: 42px;
+    --local-node-status-height: 25px;
+}
+
+/* Local node: a two-level blue header. */
+.base-card {
+    padding: 0;
+    background: linear-gradient(135deg, #e8f0f8, #d5e0ec);
+    border-bottom: 1px solid #cbd5df;
+}
+
+.base-card-title {
+    box-sizing: border-box;
+    min-height: var(--workspace-nav-height);
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    border-bottom: 1px solid rgba(79, 105, 132, 0.16);
+}
+
+.base-card-name {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    overflow: hidden;
+    color: #173a5e;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.base-card-icon {
+    flex: 0 0 auto;
+    font-size: 14px;
+}
+
+.base-status-line {
+    box-sizing: border-box;
+    min-height: var(--local-node-status-height);
+    margin-top: 0;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: nowrap;
+    color: #2a4a6a;
+    font-size: 10px;
+    line-height: 1;
+}
+
+.base-status-metrics {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    white-space: nowrap;
+}
+
+.base-status-item,
+.base-status-uptime {
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+}
+
+.base-status-uptime {
+    flex: 0 0 auto;
+    margin-left: auto;
+    color: #415d78;
+    font-weight: 600;
+}
+
+.base-status-loading {
+    color: #718198;
+}
+
+/* One shared height for the center and right navigation rows. */
+.main-content-tabs,
+.sidebar-tabs {
+    box-sizing: border-box;
+    min-height: var(--workspace-nav-height);
+    height: var(--workspace-nav-height);
+}
+
+.main-content-tab,
+.sidebar-tab {
+    box-sizing: border-box;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sidebar-tab {
+    padding-top: 0;
+    padding-bottom: 0;
+    font-size: 12px;
+}
+
+@media (max-width: 1180px) {
+    .base-status-line {
+        padding-left: 9px;
+        padding-right: 9px;
+        font-size: 9px;
+    }
+
+    .base-status-metrics {
+        gap: 5px;
+    }
+}
+
+
+/* =========================================================
+   Rounded workspace navigation tabs
+   Chats / Camera / System / Settings + Nodes / Tools
+   ========================================================= */
+
+.main-content-tabs,
+.sidebar-tabs {
+    gap: 5px;
+    padding: 6px 8px 0;
+    align-items: flex-end;
+    overflow: visible;
+}
+
+.main-content-tab,
+.sidebar-tab {
+    height: calc(100% - 0px);
+    min-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+
+    background: rgba(255, 255, 255, 0.48);
+    border: 1px solid #dfe4eb;
+    border-bottom: 3px solid transparent;
+    border-radius: 10px 10px 0 0;
+
+    box-shadow: 0 -1px 4px rgba(26, 46, 78, 0.04);
+}
+
+.main-content-tab:hover,
+.sidebar-tab:hover {
+    background: #f8fafc;
+    border-color: #d4dbe5;
+    border-bottom-color: transparent;
+}
+
+.main-content-tab.active,
+.sidebar-tab.active {
+    background: #ffffff;
+    border-color: #d8dee7;
+    border-bottom-color: #1e3c72;
+    box-shadow: 0 -2px 7px rgba(26, 46, 78, 0.08);
+}
+
+/* Keep all central tabs visually even while preserving their current width. */
+.main-content-tab {
+    margin: 0;
+}
+
+/* Right-side tabs share the available width evenly. */
+.sidebar-tab {
+    margin: 0;
+}
+
+
+/* =========================================================
+   Direct-message avatars: Meshtastic node short names
+   ========================================================= */
+
+.chat-icon.dm.node-short-name {
+    background: #dfe7f2;
+    color: #24456f;
+    border: 1px solid #cbd7e7;
+
+    font-family:
+        "Roboto Mono",
+        "Consolas",
+        monospace;
+
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.2px;
+    text-transform: uppercase;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+/* Preserve the existing circle size; only the content changes. */
+.chat-icon.dm.node-short-name {
+    width: 36px;
+    height: 36px;
+}
+
+
+/* ============================================================
+   Selected Node Inspector: rounded tabs + direct state controls
+   ============================================================ */
+
+.node-detail-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 0 0 auto;
+}
+
+.node-detail-state-btn {
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--mc-text-secondary, #667085);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    transition:
+        background-color 0.16s ease,
+        border-color 0.16s ease,
+        color 0.16s ease,
+        transform 0.16s ease;
+}
+
+.node-detail-state-btn:hover {
+    background: var(--mc-surface-alt, #f5f7fa);
+    border-color: var(--mc-border, #d8dee6);
+    transform: translateY(-1px);
+}
+
+.node-detail-state-btn:active {
+    transform: translateY(0);
+}
+
+.node-detail-favorite-btn.active {
+    color: #a97800;
+    background: #fff7d9;
+    border-color: #ead58b;
+}
+
+.node-detail-ignore-btn.active {
+    color: #a43d45;
+    background: #fff0f1;
+    border-color: #e8b9bd;
+}
+
+.node-detail-actions-btn {
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: 8px;
+}
+
+.node-detail-tabs {
+    align-items: flex-end;
+    gap: 4px;
+    padding: 4px 4px 0;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--mc-border, #dfe4eb);
+    overflow: visible;
+}
+
+.node-detail-tab {
+    margin: 0;
+    padding: 7px 10px 6px;
+    border: 1px solid var(--mc-border, #dfe4eb);
+    border-bottom: 3px solid transparent;
+    border-radius: 9px 9px 0 0;
+    background: var(--mc-surface-alt, #f7f9fb);
+    color: var(--mc-text-secondary, #667085);
+    box-shadow: 0 -1px 3px rgba(26, 46, 78, 0.035);
+}
+
+.node-detail-tab:hover {
+    color: var(--mc-text-primary, #1a2a4a);
+    background: #ffffff;
+    border-color: #d4dbe5;
+    border-bottom-color: transparent;
+}
+
+.node-detail-tab.active {
+    color: var(--mc-primary, #1a73e8);
+    background: #ffffff;
+    border-color: #d8dee7;
+    border-bottom-color: var(--mc-primary, #1a73e8);
+    box-shadow: 0 -2px 6px rgba(26, 46, 78, 0.07);
+}
+
+@media (max-width: 700px) {
+    .node-detail-tabs {
+        padding-left: 2px;
+        padding-right: 2px;
+    }
+
+    .node-detail-tab {
+        padding-left: 9px;
+        padding-right: 9px;
+    }
+}
+
+/* ============================================================
+   Camera Control Workspace
+   Camera / Image tabs, responsive panels and live status
+   ============================================================ */
+
+.video-info-bar {
+    min-height: 42px;
+    padding: 0 12px;
+    gap: 12px;
+}
+
+.camera-control-tabs {
+    display: flex;
+    align-self: stretch;
+    align-items: flex-end;
+    gap: 4px;
+    padding-top: 5px;
+}
+
+.camera-control-tab {
+    min-width: 92px;
+    height: 37px;
+    padding: 0 14px;
+    border: 1px solid #d7dee8;
+    border-bottom: 3px solid transparent;
+    border-radius: 9px 9px 0 0;
+    background: #f7f9fc;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+        background-color .16s ease,
+        border-color .16s ease,
+        color .16s ease;
+}
+
+.camera-control-tab:hover {
+    background: #ffffff;
+    color: #24456f;
+}
+
+.camera-control-tab.active {
+    background: #ffffff;
+    color: #163e72;
+    border-color: #d3dce8;
+    border-bottom-color: #1e4f8f;
+}
+
+.camera-live-status {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+    white-space: nowrap;
+}
+
+.camera-status-divider {
+    color: #9aa8ba;
+}
+
+#videoStatus {
+    font-weight: 600;
+}
+
+.video-controls {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.camera-control-panel {
+    display: none;
+    min-width: 0;
+    padding: 10px 14px 12px;
+}
+
+.camera-control-panel.active {
+    display: block;
+}
+
+.camera-control-panel[hidden] {
+    display: none !important;
+}
+
+.camera-basic-controls-grid {
+    display: grid;
+    grid-template-columns:
+        minmax(260px, 300px)
+        minmax(205px, 230px)
+        120px;
+    align-items: end;
+    gap: 16px;
+    min-width: 0;
+}
+
+.camera-image-workspace {
+    min-width: 0;
+}
+
+.camera-image-toolbar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 11px;
+}
+
+.camera-preset-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: min(260px, 100%);
+}
+
+.camera-preset-group label {
+    color: #526178;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+}
+
+.camera-preset-group select {
+    width: 100%;
+    height: 34px;
+    padding: 5px 9px;
+    border: 1px solid #cfd8e5;
+    border-radius: 7px;
+    background: #ffffff;
+    color: #243b5a;
+    font-size: 12px;
+}
+
+#imageControlsPanel .camera-image-controls-grid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+    column-gap: 22px;
+    row-gap: 10px;
+}
+
+#imageControlsPanel .camera-exposure-slider {
+    grid-column: 1 / -1;
+}
+
+#imageControlsPanel .camera-control-slider input[type="range"] {
+    width: 100%;
+}
+
+@media (max-width: 900px) {
+    .camera-basic-controls-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .camera-actions-block {
+        grid-column: 1 / -1;
+        flex-direction: row;
+    }
+
+    .camera-actions-block .screenshot-btn,
+    .camera-actions-block .screenshots-btn {
+        flex: 1 1 0;
+        width: auto;
+    }
+}
+
+@media (max-width: 700px) {
+    .video-info-bar {
+        align-items: stretch;
+        flex-direction: column;
+        padding: 0 10px 7px;
+        gap: 7px;
+    }
+
+    .camera-control-tabs {
+        width: 100%;
+    }
+
+    .camera-control-tab {
+        flex: 1 1 0;
+    }
+
+    .camera-live-status {
+        width: 100%;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        white-space: normal;
+    }
+
+    .camera-basic-controls-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .camera-settings-row {
+        flex-wrap: wrap;
+    }
+
+    #imageControlsPanel .camera-image-controls-grid {
+        grid-template-columns: 1fr;
+    }
+
+    #imageControlsPanel .camera-exposure-slider {
+        grid-column: auto;
+    }
+}
+
+/* ============================================================
+   WORKSPACE FOUNDATION: MEDIA + WEATHER MODULE
+   ============================================================ */
+
+.workspace-view,
+.media-view {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    padding: 14px;
+    background: var(--color-bg, #f5f7fa);
+    flex-direction: column;
+}
+
+.media-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--color-surface, #fff);
+    border: 1px solid var(--color-border, #dfe5ec);
+    border-radius: 12px;
+}
+
+.media-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex: 0 0 auto;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--color-border, #e5e8ec);
+    background: linear-gradient(180deg, #fff 0%, #fbfcfe 100%);
+}
+
+.media-title {
+    margin: 0;
+    color: var(--color-text, #243247);
+    font-size: 18px;
+    line-height: 1.25;
+}
+
+.media-subtitle {
+    margin: 4px 0 0;
+    color: var(--color-text-muted, #7b8796);
+    font-size: 12px;
+}
+
+.media-refresh-btn,
+.media-primary-btn {
+    border: 1px solid #cbd8e6;
+    border-radius: 8px;
+    background: #edf3f9;
+    color: #274766;
+    padding: 8px 13px;
+    font-size: 12px;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.media-refresh-btn:hover,
+.media-primary-btn:hover {
+    background: #e2ebf5;
+}
+
+.media-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 16px 18px 20px;
+}
+
+.media-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #e8edf3;
+}
+
+.media-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.media-summary strong {
+    color: #2b3b50;
+    font-size: 15px;
+}
+
+.media-summary span {
+    color: #7b8796;
+    font-size: 11px;
+}
+
+.media-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.media-sort-label {
+    padding: 5px 10px;
+    border: 1px solid #dfe5ec;
+    border-radius: 999px;
+    background: #f3f6f9;
+    color: #667487;
+    font-size: 11px;
+}
+
+.media-delete-all-btn {
+    border: 1px solid #ead0d0;
+    border-radius: 7px;
+    background: #f8eded;
+    color: #914343;
+    padding: 7px 11px;
+    font-size: 11px;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.media-delete-all-btn:hover {
+    background: #f2dddd;
+}
+
+.media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 16px;
+}
+
+.media-item {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid #dfe5ec;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(34, 50, 71, 0.05);
+    transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.media-item:hover {
+    transform: translateY(-2px);
+    border-color: #cbd7e4;
+    box-shadow: 0 7px 18px rgba(34, 50, 71, 0.10);
+}
+
+.media-preview {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 175px;
+    overflow: hidden;
+    background: #e9edf2;
+}
+
+.media-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 180ms ease;
+}
+
+.media-item:hover .media-preview img {
+    transform: scale(1.025);
+}
+
+.media-preview-error-text {
+    display: none;
+    color: #8a94a3;
+    font-size: 12px;
+}
+
+.media-preview-error .media-preview-error-text {
+    display: block;
+}
+
+.media-item-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 11px;
+}
+
+.media-item-copy {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 3px;
+}
+
+.media-item-copy strong {
+    overflow: hidden;
+    color: #344359;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.media-item-copy span {
+    color: #8a95a4;
+    font-size: 10px;
+}
+
+.media-item-actions {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 5px;
+}
+
+.media-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 7px;
+    background: #edf2f7;
+    color: #43566d;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.media-icon-btn:hover {
+    background: #dfe8f1;
+}
+
+.media-delete-btn:hover {
+    background: #f7e5e5;
+    color: #a33f3f;
+}
+
+.media-loading,
+.media-empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    min-height: 280px;
+    padding: 30px;
+    color: #7b8796;
+    text-align: center;
+}
+
+.media-empty-icon {
+    margin-bottom: 10px;
+    font-size: 38px;
+    opacity: 0.75;
+}
+
+.media-empty-title {
+    color: #344359;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.media-empty-text {
+    max-width: 380px;
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.media-error-state .media-primary-btn {
+    margin-top: 14px;
+}
+
+/* Weather is intentionally a display-only module in this milestone. */
+.weather-card {
+    flex: 0 0 auto;
+    margin: 10px 10px 12px;
+    overflow: hidden;
+    border: 1px solid #dce4ed;
+    border-radius: 11px;
+    background: linear-gradient(160deg, #f8fbff 0%, #eef4fa 100%);
+    box-shadow: 0 3px 10px rgba(37, 56, 78, 0.06);
+}
+
+.weather-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 11px 12px 8px;
+}
+
+.weather-card-title {
+    color: #2d4057;
+    font-size: 13px;
+    font-weight: 750;
+}
+
+.weather-location {
+    margin-top: 2px;
+    color: #79879a;
+    font-size: 10px;
+}
+
+.weather-state-badge {
+    border: 1px solid #d2deea;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.72);
+    color: #718095;
+    padding: 3px 7px;
+    font-size: 9px;
+    font-weight: 650;
+}
+
+.weather-current {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 12px 10px;
+}
+
+.weather-icon {
+    font-size: 31px;
+    line-height: 1;
+}
+
+.weather-temperature {
+    color: #263b52;
+    font-size: 24px;
+    font-weight: 750;
+    line-height: 1;
+}
+
+.weather-condition {
+    margin-top: 4px;
+    color: #7c8999;
+    font-size: 9px;
+}
+
+.weather-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    border-top: 1px solid #e0e7ef;
+    border-bottom: 1px solid #e0e7ef;
+    background: #dde6ef;
+}
+
+.weather-metric {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 3px;
+    padding: 8px 6px;
+    background: rgba(255,255,255,0.78);
+    text-align: center;
+}
+
+.weather-metric span {
+    overflow: hidden;
+    color: #8390a0;
+    font-size: 8px;
+    text-overflow: ellipsis;
+}
+
+.weather-metric strong {
+    color: #41536a;
+    font-size: 10px;
+}
+
+.weather-footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 11px;
+    color: #8793a2;
+    font-size: 8px;
+}
+
+@media (max-width: 900px) {
+    .media-grid {
+        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    }
+}
+
+@media (max-width: 620px) {
+    .media-header,
+    .media-toolbar {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .media-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Live Weather module states */
+.weather-state-badge {
+    appearance: none;
+    cursor: pointer;
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.weather-state-badge:hover {
+    background: #ffffff;
+    border-color: #b9c9da;
+}
+
+.weather-online .weather-state-badge {
+    border-color: #b9dfc9;
+    background: #eefaf3;
+    color: #218653;
+}
+
+.weather-loading .weather-state-badge {
+    color: #6d7c8f;
+}
+
+.weather-error .weather-state-badge {
+    border-color: #edc5c5;
+    background: #fff3f3;
+    color: #b14b4b;
+}
+
+.weather-stale .weather-state-badge {
+    border-color: #ead8ae;
+    background: #fff9ea;
+    color: #9b7421;
+}
+
+.weather-loading .weather-icon {
+    animation: weatherPulse 1.25s ease-in-out infinite;
+}
+
+@keyframes weatherPulse {
+    0%, 100% { opacity: 0.55; transform: scale(0.96); }
+    50% { opacity: 1; transform: scale(1.04); }
+}
+
+/* Compact three-day forecast */
+.weather-forecast {
+    border-top: 1px solid #e0e7ef;
+    padding: 8px 9px 9px;
+    background: rgba(255, 255, 255, 0.34);
+}
+
+.weather-forecast-title {
+    margin: 0 2px 7px;
+    color: #6f7e90;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.weather-forecast-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+}
+
+.weather-forecast-day {
+    min-width: 0;
+    padding: 6px 3px 5px;
+    border: 1px solid rgba(215, 225, 235, 0.86);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.62);
+    text-align: center;
+}
+
+.weather-forecast-label {
+    overflow: hidden;
+    color: #66758a;
+    font-size: 8px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.weather-forecast-date {
+    margin-top: 1px;
+    color: #8794a4;
+    font-size: 7px;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.weather-forecast-icon {
+    margin: 3px 0 2px;
+    font-size: 20px;
+    line-height: 1.1;
+}
+
+.weather-forecast-temperature {
+    color: #344a62;
+    font-size: 10px;
+    font-weight: 750;
+    white-space: nowrap;
+}
+
+.weather-forecast-description {
+    overflow: hidden;
+    margin-top: 2px;
+    color: #8a96a5;
+    font-size: 7px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.weather-forecast-placeholder {
+    grid-column: 1 / -1;
+    padding: 7px 4px;
+    color: #8a96a5;
+    font-size: 8px;
+    text-align: center;
+}
+
+/* ============================================================
+   UI/UX POLISH - SHARED WORKSPACE DESIGN SYSTEM
+   ============================================================ */
+
+.workspace-page-title,
+.video-title,
+.media-title,
+.system-header h3,
+.settings-title {
+    margin: 0;
+    color: var(--mc-text);
+    font-size: var(--mc-page-title-size);
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+.workspace-page-subtitle,
+.video-subtitle,
+.media-subtitle,
+.system-subtitle,
+.settings-subtitle {
+    margin: 4px 0 0;
+    color: var(--mc-muted);
+    font-size: var(--mc-body-size);
+    font-weight: 400;
+    line-height: 1.4;
+}
+
+.video-view,
+.workspace-view,
+.media-view,
+.system-view,
+.settings-panel {
+    padding: var(--mc-page-pad);
+}
+
+.video-panel,
+.media-panel,
+.system-panel,
+.settings-header,
+.settings-card,
+.system-card {
+    border-color: var(--mc-border);
+    border-radius: var(--mc-card-radius);
+}
+
+.video-header,
+.media-header,
+.system-header,
+.settings-header {
+    min-height: 64px;
+    padding: 14px 16px;
+    box-sizing: border-box;
+}
+
+.video-header,
+.media-header {
+    background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
+}
+
+.system-panel {
+    padding: 0;
+    overflow: hidden;
+}
+
+.system-header {
+    margin: 0;
+    border-bottom: 1px solid var(--mc-border);
+}
+
+.system-layout {
+    padding: 14px;
+}
+
+.settings-header {
+    margin-bottom: 14px;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, .04);
+}
+
+.settings-grid {
+    gap: 14px;
+    align-items: stretch;
+}
+
+.settings-card,
+.map-settings-card,
+.reference-location-card {
+    padding: var(--mc-card-pad);
+    background: var(--mc-surface);
+    box-shadow: 0 2px 8px rgba(15, 23, 42, .04);
+    box-sizing: border-box;
+}
+
+.settings-card-title,
+.map-settings-title,
+.reference-location-title,
+.system-card-title {
+    margin: 0 0 10px;
+    color: #1e293b;
+    font-size: var(--mc-card-title-size);
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+.settings-card-text,
+.map-settings-description,
+.reference-location-description {
+    color: var(--mc-muted);
+    font-size: var(--mc-body-size);
+    line-height: 1.45;
+}
+
+.settings-card--reference {
+    grid-column: span 2;
+}
+
+.settings-card--map {
+    grid-column: span 1;
+}
+
+.main-content-tab,
+.sidebar-tab,
+.camera-control-tab {
+    min-height: 38px;
+    line-height: 1;
+}
+
+.camera-control-tab {
+    height: 38px;
+    min-width: 92px;
+    padding: 0 14px;
+    font-size: 12px;
+}
+
+.video-info-bar {
+    min-height: 43px;
+}
+
+.system-refresh-btn,
+.media-refresh-btn,
+.media-primary-btn,
+.camera-power-btn,
+.camera-defaults-btn,
+.system-action-btn,
+.reference-location-save-btn,
+.settings-segmented button {
+    min-height: var(--mc-control-height);
+    box-sizing: border-box;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.2;
+}
+
+.system-card {
+    padding: var(--mc-card-pad);
+    margin-bottom: 14px;
+}
+
+.system-row {
+    min-height: 34px;
+    align-items: center;
+    padding: 6px 0;
+    box-sizing: border-box;
+}
+
+.system-actions-grid {
+    gap: 8px;
+}
+
+.system-action-btn {
+    padding: 8px 10px;
+}
+
+/* Camera workspace: reduce unused vertical space without cropping the stream. */
+.video-frame-wrap {
+    padding-top: 12px;
+    padding-bottom: 12px;
+}
+
+.camera-stream {
+    max-height: calc(100vh - 330px);
+}
+
+/* Settings controls */
+.settings-option {
+    margin-top: 12px;
+}
+
+.settings-segmented button {
+    padding: 0 14px;
+}
+
+.map-settings-row {
+    align-items: center;
+}
+
+.map-provider-select,
+.reference-location-card select,
+.reference-location-card input,
+.camera-preset-group select,
+.control-group select {
+    height: var(--mc-control-height);
+    border: 1px solid #cad4e0;
+    border-radius: 7px;
+    background-color: #f8fafc;
+    color: #243447;
+    font-size: 12px;
+    box-sizing: border-box;
+}
+
+/* Reference Location: stable grid and a consistent custom select arrow. */
+.reference-location-card {
+    --reference-label-width: 96px;
+}
+
+.reference-location-description {
+    margin-bottom: 14px;
+}
+
+.reference-location-row,
+.reference-location-coordinate {
+    grid-template-columns: var(--reference-label-width) minmax(170px, 1fr);
+    gap: 14px;
+    min-height: var(--mc-control-height);
+}
+
+.reference-location-row,
+.reference-location-fields {
+    margin-bottom: 10px;
+}
+
+.reference-location-fields {
+    gap: 10px;
+}
+
+.reference-location-fields label,
+.reference-location-row label {
+    font-size: 12px;
+    line-height: 1.3;
+}
+
+.reference-location-card select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding: 0 34px 0 11px;
+    background-image:
+        linear-gradient(45deg, transparent 50%, #526178 50%),
+        linear-gradient(135deg, #526178 50%, transparent 50%);
+    background-position:
+        calc(100% - 16px) 15px,
+        calc(100% - 11px) 15px;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.reference-location-card select:hover,
+.reference-location-card input:hover {
+    border-color: #aebdce;
+}
+
+.reference-location-save-btn {
+    margin-top: 2px;
+    padding: 0 14px;
+    font-size: 11px;
+}
+
+.reference-location-status {
+    min-height: 14px;
+    margin-top: 8px;
+    font-size: 10px;
+    line-height: 1.4;
+}
+
+/* Common status presentation */
+.camera-live-status,
+.dock-camera-status,
+.dock-system-metrics {
+    font-size: 11px;
+}
+
+@media (max-width: 1100px) {
+    .settings-card--reference,
+    .settings-card--map {
+        grid-column: span 3;
+    }
+}
+
+@media (max-width: 900px) {
+    .settings-card--reference,
+    .settings-card--map {
+        grid-column: auto;
+    }
+
+    .reference-location-row,
+    .reference-location-coordinate {
+        grid-template-columns: 96px minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 520px) {
+    .reference-location-card {
+        --reference-label-width: 82px;
+    }
+
+    .reference-location-row,
+    .reference-location-coordinate {
+        grid-template-columns: 1fr;
+        gap: 5px;
+    }
+}
+
+
+/* ============================================================
+   UI KIT ADOPTION - Camera, Media and System workspaces
+   Settings is intentionally excluded from this refinement pass.
+   ============================================================ */
+.video-header.mc-workspace-header,
+.media-header.mc-workspace-header,
+.system-header.mc-workspace-header {
+    height: var(--mc-workspace-header-height);
+    min-height: var(--mc-workspace-header-height);
+    padding: var(--mc-workspace-header-padding-y) var(--mc-workspace-header-padding-x);
+    box-sizing: border-box;
+    flex: 0 0 var(--mc-workspace-header-height);
+}
+
+.video-header.mc-workspace-header,
+.media-header.mc-workspace-header {
+    background: var(--mc-workspace-header-bg);
+}
+
+.system-header.mc-workspace-header {
+    margin: 0;
+    border-bottom: 1px solid var(--mc-border);
+}
+
+.video-header .workspace-page-title,
+.media-header .workspace-page-title,
+.system-header .workspace-page-title {
+    margin: 0;
+    color: var(--mc-text);
+    font-size: var(--mc-page-title-size);
+    font-weight: var(--mc-page-title-weight);
+    line-height: var(--mc-page-title-line-height);
+}
+
+.video-header .workspace-page-subtitle,
+.media-header .workspace-page-subtitle,
+.system-header .workspace-page-subtitle {
+    margin: var(--mc-page-subtitle-gap) 0 0;
+    color: var(--mc-muted);
+    font-size: var(--mc-body-size);
+    font-weight: 400;
+    line-height: var(--mc-page-subtitle-line-height);
+}
+
+.mc-refresh-btn,
+.media-refresh-btn.mc-refresh-btn,
+.system-refresh-btn.mc-refresh-btn {
+    min-height: var(--mc-control-height);
+    padding: 0 13px;
+    border: 1px solid var(--mc-button-secondary-border);
+    border-radius: var(--mc-control-radius);
+    background: var(--mc-button-secondary-bg);
+    color: var(--mc-button-secondary-text);
+    font-size: var(--mc-control-font-size);
+    font-weight: 650;
+    line-height: 1;
+    box-sizing: border-box;
+    cursor: pointer;
+    transition: background-color .16s ease, border-color .16s ease;
+}
+
+.mc-refresh-btn:hover,
+.media-refresh-btn.mc-refresh-btn:hover,
+.system-refresh-btn.mc-refresh-btn:hover {
+    background: var(--mc-button-secondary-bg-hover);
+    border-color: var(--mc-button-secondary-border-hover);
+    transform: none;
+}
+
+.camera-basic-controls-grid {
+    align-items: start;
+}
+
+.camera-actions-block {
+    align-self: start;
+    padding-top: var(--mc-camera-control-label-offset);
+}
+
+.camera-actions-block .screenshot-btn {
+    height: var(--mc-control-height);
+    min-height: var(--mc-control-height);
+    margin: 0;
+}
+
+/* ===== CHAT PANELS ===== */
+.chat-area {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.chat-panels {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.chat-list-container {
+    flex: 0 0 40%;
+    min-width: 220px;
+    overflow-y: auto;
+    border-right: 1px solid var(--mc-border, #dfe5ec);
+    padding: 4px 8px;
+    background: var(--mc-bg-subtle, #f7f9fc);
+}
+
+.messages-view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    background: white;
+}
+
+.chat-item.selected {
+    background: var(--mc-primary-soft, #eaf3ff);
+    border-left: 3px solid var(--mc-primary, #1f6fdb);
+}
+
+/* Адаптивность: на маленьких экранах стек */
+@media (max-width: 768px) {
+    .chat-panels {
+        flex-direction: column;
+    }
+    .chat-list-container {
+        flex: none;
+        height: 40%;
+        border-right: none;
+        border-bottom: 1px solid var(--mc-border, #dfe5ec);
+    }
+    .messages-view {
+        flex: 1;
+    }
+}
+
+/* ===== CHAT PANELS ===== */
+.chat-area {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.chat-panels {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.chat-list-container {
+    flex: 0 0 40%;
+    min-width: 220px;
+    overflow-y: auto;
+    border-right: 1px solid var(--mc-border, #dfe5ec);
+    padding: 4px 8px;
+    background: var(--mc-bg-subtle, #f7f9fc);
+}
+
+.messages-view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    background: white;
+}
+
+.chat-item.selected {
+    background: var(--mc-primary-soft, #eaf3ff);
+    border-left: 3px solid var(--mc-primary, #1f6fdb);
+}
+
+/* Адаптивность: на маленьких экранах стек */
+@media (max-width: 768px) {
+    .chat-panels {
+        flex-direction: column;
+    }
+    .chat-list-container {
+        flex: none;
+        height: 40%;
+        border-right: none;
+        border-bottom: 1px solid var(--mc-border, #dfe5ec);
+    }
+    .messages-view {
+        flex: 1;
+    }
+}
+

@@ -1,10 +1,11 @@
-<div class="system-card-title"></div><!doctype html>
+<!doctype html>
 <html lang="ru">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MeshCenter</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
 </head>
 <body>
@@ -68,11 +69,13 @@
             <div class="base-card" id="baseCard">
                 <div class="base-card-title">
                     <span class="base-card-name">
-                        📡 <span id="baseNodeName">Loading...</span>
+                        <span class="base-card-icon" aria-hidden="true">📡</span>
+                        <span id="baseNodeName">Loading...</span>
                     </span>
-                    <span class="base-card-caption">Local node</span>
                 </div>
-                <div class="base-status-line" id="baseStatusLine">Loading...</div>
+                <div class="base-status-line" id="baseStatusLine">
+                    <span class="base-status-loading">Loading...</span>
+                </div>
             </div>
 
             <!-- Sensors / local-node dashboard -->
@@ -186,6 +189,43 @@
                 </div>
             </div>
 
+            <!-- Weather module: provider access stays on the backend -->
+            <section class="weather-card module-card weather-loading" id="weatherCard" aria-labelledby="weatherCardTitle">
+                <div class="weather-card-header">
+                    <div>
+                        <div class="weather-card-title" id="weatherCardTitle">🌤️ Weather</div>
+                        <div class="weather-location" id="weatherLocation">Erlangen</div>
+                    </div>
+                    <button class="weather-state-badge" id="weatherStateBadge" type="button" onclick="loadWeather(true)" title="Refresh weather">Loading</button>
+                </div>
+
+                <div class="weather-current">
+                    <div class="weather-icon" id="weatherIcon" aria-hidden="true">🌤️</div>
+                    <div>
+                        <div class="weather-temperature" id="weatherTemperature">--°</div>
+                        <div class="weather-condition" id="weatherCondition">Connecting to OpenWeather…</div>
+                    </div>
+                </div>
+
+                <div class="weather-metrics">
+                    <div class="weather-metric"><span>Humidity</span><strong id="weatherHumidity">--%</strong></div>
+                    <div class="weather-metric"><span>Pressure</span><strong id="weatherPressure">-- hPa</strong></div>
+                    <div class="weather-metric"><span>Wind</span><strong id="weatherWind">-- m/s</strong></div>
+                </div>
+
+                <div class="weather-footer">
+                    <span id="weatherFeelsLike">Feels like --°</span>
+                    <span id="weatherUpdated">Updated --</span>
+                </div>
+
+                <div class="weather-forecast" aria-labelledby="weatherForecastTitle">
+                    <div class="weather-forecast-title" id="weatherForecastTitle">Forecast</div>
+                    <div class="weather-forecast-grid" id="weatherForecastGrid">
+                        <div class="weather-forecast-placeholder">Loading 3-day forecast…</div>
+                    </div>
+                </div>
+            </section>
+
         </aside>
 
         <!-- Chat Area -->
@@ -198,11 +238,12 @@
                 <button class="main-content-tab" id="mainTabVideo" onclick="switchMainTab('video')">
                     🎥 Camera
                 </button>
-
+                <button class="main-content-tab" id="mainTabMedia" onclick="switchMainTab('media')">
+                    🖼️ Media
+                </button>
                 <button class="main-content-tab" id="mainTabSystem" onclick="switchMainTab('system')">
                     🖥️ System
                 </button>
-
                 <button class="main-content-tab" id="mainTabSettings" onclick="switchMainTab('settings')">
                     ⚙️ Settings
                 </button>
@@ -210,85 +251,81 @@
 
             <!-- Chat Header -->
             <div class="chat-header" id="chatHeader">
-                <button class="back-btn" id="backToChatsBtn" style="display: none;" onclick="showChatList()">
-                    ←
-                </button>
                 <div class="chat-header-info">
                     <span class="chat-title" id="chatTitle">💬 Chats</span>
-                    <span class="chat-subtitle" id="chatSubtitle"></span>
+                    <span class="chat-subtitle" id="chatSubtitle">Select a chat to view messages</span>
                 </div>
                 <div class="chat-header-actions">
-                    <button class="chat-actions-btn"
-                            id="deleteAllDmHeaderBtn"
-                            onclick="deleteAllDmChats()"
-                            title="Delete all DM chats"
-                            style="display:none;">
+                    <button class="chat-actions-btn" id="deleteAllDmHeaderBtn" onclick="deleteAllDmChats()" title="Delete all DM chats" style="display:none;">
                         🗑️
-                    </button>                    
+                    </button>
                     <button class="chat-actions-btn" id="chatActionsBtn" style="display: none;" onclick="showChatActions()">
                         ⋮
                     </button>
                 </div>
             </div>
 
-            <!-- Chat List View -->
-            <div class="chat-list-container" id="chatListContainer">
-                <div class="chat-list" id="chatList">
-                    <div class="loading" id="initialLoading">
-                        <div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:30px 0;">
-                            <div style="width:40px;height:40px;border:4px solid #e0e0e0;border-top:4px solid #1a73e8;border-radius:50%;animation:spin 1s linear infinite;"></div>
-                            <span style="color:#888;font-size:14px;">Loading chats and nodes...</span>
-                            <span style="color:#bbb;font-size:12px;">Please wait</span>
+            <!-- Panels: Chat List + Messages -->
+            <div class="chat-panels">
+                <!-- Chat List View -->
+                <div class="chat-list-container" id="chatListContainer">
+                    <div class="chat-list" id="chatList">
+                        <div class="loading" id="initialLoading">
+                            <div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:30px 0;">
+                                <div style="width:40px;height:40px;border:4px solid #e0e0e0;border-top:4px solid #1a73e8;border-radius:50%;animation:spin 1s linear infinite;"></div>
+                                <span style="color:#888;font-size:14px;">Loading chats and nodes...</span>
+                                <span style="color:#bbb;font-size:12px;">Please wait</span>
+                            </div>
                         </div>
-                    </div>
-                    <style>
-                        @keyframes spin {
-                            0% { transform: rotate(0deg); }
-                            100% { transform: rotate(360deg); }
-                        }
-                    </style>
-                </div>
-            </div>
-            
-            <!-- Messages View -->
-            <div class="messages-view" id="messagesView" style="display: none;">
-                <div class="messages-container" id="messagesContainer">
-                    <div class="loading">Loading messages...</div>
-                </div>
-
-                <!-- Input Area -->
-                <div class="input-area">
-                    <form class="input-form" id="sendForm">
-                        <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
-                        <button type="button" id="emojiBtn" class="emoji-btn" title="Insert emoji">😊</button>
-                        <button type="submit" id="sendBtn">Send</button>
-                    </form>
-                    
-                    <div id="emojiPicker" class="emoji-picker" style="display: none;">
-                        <div class="emoji-picker-header">
-                            <span>😊 Emojis</span>
-                            <button type="button" id="emojiCloseBtn" class="emoji-close-btn">✕</button>
-                        </div>
-                        <div class="emoji-categories">
-                            <button class="emoji-cat-btn active" data-cat="smileys">😊</button>
-                            <button class="emoji-cat-btn" data-cat="gestures">👋</button>
-                            <button class="emoji-cat-btn" data-cat="food">🍕</button>
-                            <button class="emoji-cat-btn" data-cat="activities">🎉</button>
-                            <button class="emoji-cat-btn" data-cat="travel">🚗</button>
-                            <button class="emoji-cat-btn" data-cat="objects">💡</button>
-                            <button class="emoji-cat-btn" data-cat="symbols">❤️</button>
-                        </div>
-                        <div class="emoji-grid" id="emojiGrid"></div>
+                        <style>
+                            @keyframes spin {
+                                0% { transform: rotate(0deg); }
+                                100% { transform: rotate(360deg); }
+                            }
+                        </style>
                     </div>
                 </div>
-            </div>
 
+                <!-- Messages View -->
+                <div class="messages-view" id="messagesView">
+                    <div class="messages-container" id="messagesContainer">
+                        <div class="loading">💬 Select a chat from the list</div>
+                    </div>
+
+                    <!-- Input Area -->
+                    <div class="input-area">
+                        <form class="input-form" id="sendForm">
+                            <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
+                            <button type="button" id="emojiBtn" class="emoji-btn" title="Insert emoji">😊</button>
+                            <button type="submit" id="sendBtn">Send</button>
+                        </form>
+                        
+                        <div id="emojiPicker" class="emoji-picker" style="display: none;">
+                            <div class="emoji-picker-header">
+                                <span>😊 Emojis</span>
+                                <button type="button" id="emojiCloseBtn" class="emoji-close-btn">✕</button>
+                            </div>
+                            <div class="emoji-categories">
+                                <button class="emoji-cat-btn active" data-cat="smileys">😊</button>
+                                <button class="emoji-cat-btn" data-cat="gestures">👋</button>
+                                <button class="emoji-cat-btn" data-cat="food">🍕</button>
+                                <button class="emoji-cat-btn" data-cat="activities">🎉</button>
+                                <button class="emoji-cat-btn" data-cat="travel">🚗</button>
+                                <button class="emoji-cat-btn" data-cat="objects">💡</button>
+                                <button class="emoji-cat-btn" data-cat="symbols">❤️</button>
+                            </div>
+                            <div class="emoji-grid" id="emojiGrid"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <!-- ===== VIDEO VIEW ===== -->
             <div class="video-view" id="videoView" style="display: none;">
                 <div class="video-panel">
-                    <div class="video-header">
+                    <div class="video-header mc-workspace-header">
                         <div>
-                            <div class="video-title">📷 Live Camera</div>
+                            <div class="video-title workspace-page-title">📷 Live Camera</div>
+                            <div class="video-subtitle workspace-page-subtitle">Live preview and capture controls</div>
                         </div>
 
                         <button type="button"
@@ -325,126 +362,158 @@
                     </div>
 
                     <div class="video-info-bar">
-                        <span id="videoStatus">⏸️ Paused</span>
-                        <span id="videoLiveInfo">Live: 640×480 @ 12 FPS</span>
+                        <div class="camera-control-tabs"
+                             role="tablist"
+                             aria-label="Camera settings">
+                            <button type="button"
+                                    class="camera-control-tab active"
+                                    id="cameraControlTabCamera"
+                                    role="tab"
+                                    aria-selected="true"
+                                    aria-controls="cameraControlsPanel"
+                                    onclick="switchCameraControlTab('camera')">
+                                🎥 Mode
+                            </button>
+
+                            <button type="button"
+                                    class="camera-control-tab"
+                                    id="cameraControlTabImage"
+                                    role="tab"
+                                    aria-selected="false"
+                                    aria-controls="imageControlsPanel"
+                                    onclick="switchCameraControlTab('image')">
+                                🎛 Image
+                            </button>
+                        </div>
+
+                        <div class="camera-live-status">
+                            <span id="videoLiveInfo">Live: 640×480 @ 12 FPS</span>
+                            <span class="camera-status-divider" aria-hidden="true">·</span>
+                            <span id="videoStatus">⏸️ Paused</span>
+                        </div>
                     </div>
 
                     <div class="video-controls" id="videoControls">
-                    <div class="video-controls-grid">
+                        <div class="camera-control-panel active"
+                             id="cameraControlsPanel"
+                             role="tabpanel"
+                             aria-labelledby="cameraControlTabCamera">
 
-                        <!-- VIDEO -->
-                        <div class="camera-settings-block">
+                            <div class="camera-basic-controls-grid">
+                                <!-- VIDEO -->
+                                <div class="camera-settings-block">
+                                    <div class="camera-settings-row">
+                                        <div class="control-group video-resolution-group">
+                                            <label>VIDEO</label>
+                                            <select id="videoResolution" onchange="updateVideoSettings()">
+                                                <option value="640x480">640×480 (VGA)</option>
+                                                <option value="800x600">800×600 (SVGA)</option>
+                                                <option value="1280x720">1280×720 (HD)</option>
+                                                <option value="1640x1232">1640×1232 (Native)</option>
+                                                <option value="1920x1080">1920×1080 (Full HD)</option>
+                                            </select>
+                                        </div>
 
-                            <div class="camera-settings-row">
-                                <div class="control-group video-resolution-group">
-                                    <label>VIDEO</label>
-                                    <select id="videoResolution" onchange="updateVideoSettings()">
-                                        <option value="640x480">640×480 (VGA)</option>
-                                        <option value="800x600">800×600 (SVGA)</option>
-                                        <option value="1280x720">1280×720 (HD)</option>
-                                        <option value="1640x1232">1640×1232 (Native)</option>
-                                        <option value="1920x1080">1920×1080 (Full HD)</option>
-                                    </select>
-                                </div>
-
-                                <div class="control-group video-fps-group">
-                                    <label>FPS</label>
-                                    <select id="videoFps" onchange="updateVideoSettings()">
-                                        <option value="5">5</option>
-                                        <option value="8">8</option>
-                                        <option value="10">10</option>
-                                        <option value="12">12</option>
-                                        <option value="15">15</option>
-                                        <option value="20">20</option>
-                                        <option value="24">24</option>
-                                        <option value="30">30</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="camera-settings-row">
-                                <div class="control-group video-quality-group">
-                                    <label>VIDEO QUALITY</label>
-                                    <div class="quality-control">
-                                        <input type="range"
-                                            id="videoQuality"
-                                            min="40"
-                                            max="90"
-                                            value="80"
-                                            oninput="updateVideoSettings()">
-                                        <span id="videoQualityLabel">90%</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                        </div>
-
-
-                        <!-- PHOTO -->
-                        <div class="camera-settings-block">
-
-                            <div class="camera-settings-row">
-
-                                <div class="control-group capture-resolution-group">
-                                    <label>CAPTURE</label>
-                                    <select id="photoResolution"
-                                            onchange="updatePhotoSettings(false)">
-                                        <option value="640x480">640×480</option>
-                                        <option value="800x600">800×600</option>
-                                        <option value="1024x768">1024×768</option>
-                                        <option value="1280x720">1280×720 (HD)</option>
-                                        <option value="1600x1200">1600×1200</option>
-                                        <option value="1920x1080">1920×1080 (Full HD)</option>
-                                        <option value="2592x1944">2592×1944</option>
-                                        <option value="3280x2464">3280×2464</option>
-                                    </select>
-                                </div>
-
-                            </div>
-
-                            <div class="camera-settings-row">
-
-                                <div class="control-group capture-quality-group">
-                                    <label>PHOTO QUALITY</label>
-
-                                    <div class="quality-control">
-                                        <input type="range"
-                                            id="photoQuality"
-                                            min="40"
-                                            max="100"
-                                            value="95"
-                                            oninput="document.getElementById('photoQualityLabel').textContent=this.value+'%'"
-                                            onchange="updatePhotoSettings(true)">
-                                        <span id="photoQualityLabel">90%</span>
+                                        <div class="control-group video-fps-group">
+                                            <label>FPS</label>
+                                            <select id="videoFps" onchange="updateVideoSettings()">
+                                                <option value="5">5</option>
+                                                <option value="8">8</option>
+                                                <option value="10">10</option>
+                                                <option value="12">12</option>
+                                                <option value="15">15</option>
+                                                <option value="20">20</option>
+                                                <option value="24">24</option>
+                                                <option value="30">30</option>
+                                            </select>
+                                        </div>
                                     </div>
 
+                                    <div class="camera-settings-row">
+                                        <div class="control-group video-quality-group">
+                                            <label>VIDEO QUALITY</label>
+                                            <div class="quality-control">
+                                                <input type="range"
+                                                       id="videoQuality"
+                                                       min="40"
+                                                       max="90"
+                                                       value="80"
+                                                       oninput="updateVideoSettings()">
+                                                <span id="videoQualityLabel">90%</span>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
 
-                            </div>
+                                <!-- PHOTO -->
+                                <div class="camera-settings-block">
+                                    <div class="camera-settings-row">
+                                        <div class="control-group capture-resolution-group">
+                                            <label>SCREENSHOT</label>
+                                            <select id="photoResolution"
+                                                    onchange="updatePhotoSettings(false)">
+                                                <option value="640x480">640×480</option>
+                                                <option value="800x600">800×600</option>
+                                                <option value="1024x768">1024×768</option>
+                                                <option value="1280x720">1280×720 (HD)</option>
+                                                <option value="1600x1200">1600×1200</option>
+                                                <option value="1920x1080">1920×1080 (Full HD)</option>
+                                                <option value="2592x1944">2592×1944</option>
+                                                <option value="3280x2464">3280×2464</option>
+                                            </select>
+                                        </div>
+                                    </div>
 
+                                    <div class="camera-settings-row">
+                                        <div class="control-group capture-quality-group">
+                                            <label>PHOTO QUALITY</label>
+                                            <div class="quality-control">
+                                                <input type="range"
+                                                       id="photoQuality"
+                                                       min="40"
+                                                       max="100"
+                                                       value="95"
+                                                       oninput="document.getElementById('photoQualityLabel').textContent=this.value+'%'"
+                                                       onchange="updatePhotoSettings(true)">
+                                                <span id="photoQualityLabel">90%</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- ACTIONS -->
+                                <div class="camera-actions-block">
+                                    <button class="screenshot-btn"
+                                            id="cameraCaptureBtn"
+                                            onclick="captureCameraPhoto()">
+                                        📸 Screenshot
+                                    </button>
+
+                                </div>
+                            </div>
                         </div>
 
+                        <div class="camera-control-panel"
+                             id="imageControlsPanel"
+                             role="tabpanel"
+                             aria-labelledby="cameraControlTabImage"
+                             hidden>
 
-                        <!-- BUTTONS -->
-
-                        <div class="camera-actions-block">
-
-                                <button class="screenshot-btn" id="cameraCaptureBtn" onclick="captureCameraPhoto()">
-                                    📸 Capture
-                                </button>
-
-                                <button class="screenshots-btn"
-                                        id="cameraGalleryBtn"
-                                        onclick="showScreenshots()">
-                                    🖼 Gallery
-                                </button>
-                            </div>
-                            <!-- IMAGE CONTROLS -->
-
-                            <div class="camera-image-controls">
-
-                                <div class="camera-image-controls-header">
-                                    <span>🎛 Image</span>
+                            <div class="camera-image-workspace">
+                                <div class="camera-image-toolbar">
+                                    <div class="camera-preset-group">
+                                        <label for="cameraImagePreset">Preset</label>
+                                        <select id="cameraImagePreset"
+                                                onchange="applyCameraImagePreset(this.value)">
+                                            <option value="custom">Current / Custom</option>
+                                            <option value="neutral">Default</option>
+                                            <option value="indoor">Indoor</option>
+                                            <option value="night">Night</option>
+                                            <option value="outdoor">Outdoor</option>
+                                            <option value="monochrome">Monochrome</option>
+                                            <option value="highContrast">High contrast</option>
+                                        </select>
+                                    </div>
 
                                     <button type="button"
                                             class="camera-defaults-btn"
@@ -455,21 +524,19 @@
                                 </div>
 
                                 <div class="camera-image-controls-grid">
-
                                     <div class="camera-control-slider">
                                         <label for="cameraBrightness">
                                             Brightness
                                             <span id="cameraBrightnessValue">0.0</span>
                                         </label>
-
                                         <input type="range"
-                                            id="cameraBrightness"
-                                            min="-1"
-                                            max="1"
-                                            step="0.1"
-                                            value="0"
-                                            oninput="updateCameraControlLabels()"
-                                            onchange="updateCameraImageControls()">
+                                               id="cameraBrightness"
+                                               min="-1"
+                                               max="1"
+                                               step="0.1"
+                                               value="0"
+                                               oninput="markCameraImagePresetCustom(); updateCameraControlLabels()"
+                                               onchange="updateCameraImageControls()">
                                     </div>
 
                                     <div class="camera-control-slider">
@@ -477,15 +544,14 @@
                                             Contrast
                                             <span id="cameraContrastValue">1.0</span>
                                         </label>
-
                                         <input type="range"
-                                            id="cameraContrast"
-                                            min="0"
-                                            max="2"
-                                            step="0.1"
-                                            value="1"
-                                            oninput="updateCameraControlLabels()"
-                                            onchange="updateCameraImageControls()">
+                                               id="cameraContrast"
+                                               min="0"
+                                               max="2"
+                                               step="0.1"
+                                               value="1"
+                                               oninput="markCameraImagePresetCustom(); updateCameraControlLabels()"
+                                               onchange="updateCameraImageControls()">
                                     </div>
 
                                     <div class="camera-control-slider">
@@ -493,15 +559,14 @@
                                             Saturation
                                             <span id="cameraSaturationValue">1.0</span>
                                         </label>
-
                                         <input type="range"
-                                            id="cameraSaturation"
-                                            min="0"
-                                            max="2"
-                                            step="0.1"
-                                            value="1"
-                                            oninput="updateCameraControlLabels()"
-                                            onchange="updateCameraImageControls()">
+                                               id="cameraSaturation"
+                                               min="0"
+                                               max="2"
+                                               step="0.1"
+                                               value="1"
+                                               oninput="markCameraImagePresetCustom(); updateCameraControlLabels()"
+                                               onchange="updateCameraImageControls()">
                                     </div>
 
                                     <div class="camera-control-slider">
@@ -509,15 +574,14 @@
                                             Sharpness
                                             <span id="cameraSharpnessValue">1.0</span>
                                         </label>
-
                                         <input type="range"
-                                            id="cameraSharpness"
-                                            min="0"
-                                            max="4"
-                                            step="0.1"
-                                            value="1"
-                                            oninput="updateCameraControlLabels()"
-                                            onchange="updateCameraImageControls()">
+                                               id="cameraSharpness"
+                                               min="0"
+                                               max="4"
+                                               step="0.1"
+                                               value="1"
+                                               oninput="markCameraImagePresetCustom(); updateCameraControlLabels()"
+                                               onchange="updateCameraImageControls()">
                                     </div>
 
                                     <div class="camera-control-slider camera-exposure-slider">
@@ -525,19 +589,16 @@
                                             Exposure
                                             <span id="cameraExposureValue">0.0</span>
                                         </label>
-
                                         <input type="range"
-                                            id="cameraExposure"
-                                            min="-4"
-                                            max="4"
-                                            step="0.5"
-                                            value="0"
-                                            oninput="updateCameraControlLabels()"
-                                            onchange="updateCameraImageControls()">
+                                               id="cameraExposure"
+                                               min="-4"
+                                               max="4"
+                                               step="0.5"
+                                               value="0"
+                                               oninput="markCameraImagePresetCustom(); updateCameraControlLabels()"
+                                               onchange="updateCameraImageControls()">
                                     </div>
-
                                 </div>
-
                             </div>
                         </div>
                     </div>
@@ -545,14 +606,34 @@
             </div>
 
             <!-- ===== SYSTEM VIEW ===== -->
+            <!-- ===== MEDIA WORKSPACE ===== -->
+            <section class="media-view workspace-view" id="mediaView" style="display: none;" aria-labelledby="mediaWorkspaceTitle">
+                <div class="media-panel">
+                    <header class="media-header mc-workspace-header">
+                        <div>
+                            <h2 class="media-title workspace-page-title" id="mediaWorkspaceTitle">🖼️ Media Gallery</h2>
+                            <p class="media-subtitle workspace-page-subtitle">Captured images stored locally on this MeshCenter node</p>
+                        </div>
+                        <button type="button" class="media-refresh-btn mc-refresh-btn" onclick="loadMediaGallery(true)">↻ Refresh</button>
+                    </header>
+                    <div class="media-content" id="mediaGalleryContent">
+                        <div class="media-empty-state">
+                            <div class="media-empty-icon">🖼️</div>
+                            <div class="media-empty-title">Media workspace is ready</div>
+                            <div class="media-empty-text">Open this workspace to load captured images.</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <div class="system-view" id="systemView" style="display: none;">
                 <div class="system-panel">
-                    <div class="system-header">
+                    <div class="system-header mc-workspace-header">
                         <div>
-                            <h3>🖥️ System</h3>
-                            <div class="system-subtitle">Raspberry Pi and network status</div>
+                            <h3 class="workspace-page-title">🖥️ System</h3>
+                            <div class="system-subtitle workspace-page-subtitle">Raspberry Pi and network status</div>
                         </div>
-                        <button class="system-refresh-btn" onclick="loadSystemNetwork(); loadSystemInfo();">🔄 Refresh</button>
+                        <button class="system-refresh-btn mc-refresh-btn" onclick="loadSystemNetwork(); loadSystemInfo();">↻ Refresh</button>
                     </div>
 
                     <div class="system-layout">
@@ -850,10 +931,10 @@
             <!-- ===== SETTINGS VIEW ===== -->
             <div class="settings-view" id="settingsView" style="display: none;">
                 <div class="settings-panel">
-                    <div class="settings-header">
+                    <div class="settings-header mc-workspace-header">
                         <div>
-                            <div class="settings-title">⚙️ Settings</div>
-                            <div class="settings-subtitle">Global MeshCenter preferences</div>
+                            <div class="settings-title workspace-page-title">⚙️ Settings</div>
+                            <div class="settings-subtitle workspace-page-subtitle">Global MeshCenter preferences</div>
                         </div>
                     </div>
 
@@ -892,7 +973,7 @@
                             </div>
                         </div>
 
-                        <div class="map-settings-card">
+                        <div class="map-settings-card settings-card settings-card--map">
                             <div class="map-settings-title">
                                 🗺 Map
                             </div>
@@ -914,7 +995,7 @@
                             </div>
                         </div>
 
-                        <div class="reference-location-card">
+                        <div class="reference-location-card settings-card settings-card--reference">
                             <div class="reference-location-title">
                                 📍 Reference location
                             </div>
@@ -940,20 +1021,18 @@
                                 <div class="reference-location-coordinate">
                                     <label for="referenceLatitude">Latitude</label>
                                     <input id="referenceLatitude"
-                                           type="number"
-                                           min="-90"
-                                           max="90"
-                                           step="0.000001"
+                                           type="text"
+                                           inputmode="decimal"
+                                           autocomplete="off"
                                            placeholder="Enter latitude">
                                 </div>
 
                                 <div class="reference-location-coordinate">
                                     <label for="referenceLongitude">Longitude</label>
                                     <input id="referenceLongitude"
-                                           type="number"
-                                           min="-180"
-                                           max="180"
-                                           step="0.000001"
+                                           type="text"
+                                           inputmode="decimal"
+                                           autocomplete="off"
                                            placeholder="Enter longitude">
                                 </div>
                             </div>
@@ -976,8 +1055,10 @@
                             </div>
 
                             <button type="button"
+                                    id="referenceLocationSaveButton"
                                     class="reference-location-save-btn"
-                                    onclick="saveReferenceLocation()">
+                                    onclick="saveReferenceLocation()"
+                                    disabled>
                                 💾 Save reference location
                             </button>
 
@@ -988,7 +1069,7 @@
                     </div>
                 </div>
             </div>
-                        </div>
+        </div>
 
         <!-- Sidebar -->
         <div class="sidebar" id="sidebar">
@@ -1210,20 +1291,10 @@
     </div>
 </div>
 
-<div class="modal-overlay" id="screenshotsModal" style="display: none;" onclick="closeScreenshots()">
-    <div class="modal-content" onclick="event.stopPropagation()">
-        <div class="modal-header">
-            <span>🖼️ Media Gallery</span>
-            <button class="modal-close" onclick="closeScreenshots()">✕</button>
-        </div>
-        <div class="modal-body" id="screenshotsGrid">
-            <div class="loading">Loading screenshots...</div>
-        </div>
-    </div>
-</div>
-
 <script src="/static/chart.umd.min.js"></script>
 <script src="/static/chat.js"></script>
+<script src="/static/media.js"></script>
+<script src="/static/weather.js"></script>
 
 <div class="modal-overlay" id="wifiConnectModal" style="display:none;" onclick="closeWifiConnectModal()">
     <div class="modal-content wifi-connect-modal" onclick="event.stopPropagation()">
@@ -1253,4 +1324,3 @@
 
 </body>
 </html>
-

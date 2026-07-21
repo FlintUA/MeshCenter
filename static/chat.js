@@ -30,6 +30,8 @@ let nodeToolResultTimer = null;
 let nodeToolResults = {};
 let activeNodeTabs = {}; // Active tab per node.
 let nodeRenderCache = {}; // Last rendered signature per node.
+let referenceLocationInitialState = '';
+let referenceLocationSaving = false;
 
 // Registry for the selected-node card. Future core modules or plugins can
 // register an additional tab without rewriting renderNodeDetails().
@@ -197,6 +199,55 @@ function pressureChartValue(value) {
     return hpa;
 }
 
+function normalizeCoordinateInput(value) {
+    return String(value ?? '')
+        .trim()
+        .replace(',', '.');
+}
+
+function getReferenceLocationFormState() {
+    return JSON.stringify({
+        mode:
+            document.getElementById('referenceLocationMode')?.value
+            || 'disabled',
+        latitude: normalizeCoordinateInput(
+            document.getElementById('referenceLatitude')?.value
+        ),
+        longitude: normalizeCoordinateInput(
+            document.getElementById('referenceLongitude')?.value
+        ),
+        node_id:
+            document.getElementById('referenceNodeId')?.value
+            || ''
+    });
+}
+
+function updateReferenceLocationSaveButton() {
+    const button =
+        document.getElementById('referenceLocationSaveButton');
+
+    if (!button) {
+        return;
+    }
+
+    const changed =
+        getReferenceLocationFormState()
+        !== referenceLocationInitialState;
+
+    button.disabled = referenceLocationSaving || !changed;
+    button.textContent = referenceLocationSaving
+        ? 'Saving…'
+        : changed
+            ? '💾 Save reference location'
+            : '✓ Reference location saved';
+}
+
+function markReferenceLocationStateSaved() {
+    referenceLocationInitialState =
+        getReferenceLocationFormState();
+    updateReferenceLocationSaveButton();
+}
+
 function updateReferenceLocationFields() {
     const modeSelect =
         document.getElementById('referenceLocationMode');
@@ -222,6 +273,8 @@ function updateReferenceLocationFields() {
                 ? 'grid'
                 : 'none';
     }
+
+    updateReferenceLocationSaveButton();
 }
 
 function populateReferenceNodeSelect() {
@@ -483,8 +536,8 @@ function updateReferenceLocationSummary() {
     if (nameElement) {
         nameElement.textContent =
             reference.mode === 'manual'
-                ? 'Manual coordinates'
-                : reference.name;
+                ? (appSettings?.reference_location?.place_name || 'Manual coordinates')
+                : (appSettings?.reference_location?.place_name || reference.name);
     }
 
     if (coordinatesElement) {
@@ -540,6 +593,12 @@ async function loadSettings() {
     }
 
     updateSettingsUi();
+}
+
+function notifySettingsUpdated() {
+    document.dispatchEvent(new CustomEvent('meshcenter:settings-updated', {
+        detail: { settings: appSettings }
+    }));
 }
 
 function updateSettingsUi() {
@@ -621,6 +680,8 @@ function updateSettingsUi() {
 
     updateReferenceLocationFields();
     updateReferenceLocationSummary();
+    markReferenceLocationStateSaved();
+    notifySettingsUpdated();
 }
 
 function degreesToRadians(value) {
@@ -880,151 +941,149 @@ function renderNodeMapBadge(node) {
                 title="${escapeHtml(mapTitle)}"
                 aria-label="${escapeHtml(mapTitle)}"
                 onclick="event.stopPropagation(); openNodeMap(${latitude}, ${longitude})">
-            <span class="node-map-distance">${escapeHtml(distanceText)}</span>
+            <span class="node-map-distance"
+                  title="Distance from reference location: ${escapeHtml(distanceText)}">${escapeHtml(distanceText)}</span>
             <span class="node-map-bearing">${escapeHtml(bearingText)}</span>
         </button>
     `;
 }
 
+async function resolveReferencePlaceName(latitude, longitude) {
+    try {
+        const response = await fetch(
+            '/api/settings/reference-location-name',
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ latitude, longitude })
+            }
+        );
+
+        if (!response.ok) {
+            return '';
+        }
+
+        const data = await response.json();
+        return data.ok ? String(data.place_name || '') : '';
+    } catch (error) {
+        console.warn('[REFERENCE] Place lookup failed:', error);
+        return '';
+    }
+}
+
 async function saveReferenceLocation() {
+    if (referenceLocationSaving) {
+        return;
+    }
+
     const modeSelect =
         document.getElementById('referenceLocationMode');
-
     const latitudeInput =
         document.getElementById('referenceLatitude');
-
     const longitudeInput =
         document.getElementById('referenceLongitude');
-
     const nodeSelect =
         document.getElementById('referenceNodeId');
-
     const statusElement =
         document.getElementById('referenceLocationStatus');
 
-    const mode =
-        modeSelect?.value || 'disabled';
+    const mode = modeSelect?.value || 'disabled';
+    const latitudeValue = normalizeCoordinateInput(latitudeInput?.value);
+    const longitudeValue = normalizeCoordinateInput(longitudeInput?.value);
+    const nodeId = nodeSelect?.value || '';
 
-    const latitudeValue =
-        latitudeInput?.value?.trim() || '';
-
-    const longitudeValue =
-        longitudeInput?.value?.trim() || '';
-
-    const nodeId =
-        nodeSelect?.value || '';
-
-    /*
-     * Сохраняем ранее записанные ручные координаты,
-     * даже если выбран режим Node или Disabled.
-     */
     const savedReference =
         appSettings?.reference_location || {};
-
-    const savedManual =
-    savedReference.manual || {};
+    const savedManual = savedReference.manual || {};
 
     const parseSavedCoordinate = value => {
-        if (
-            value === null
-            || value === undefined
-            || value === ''
-        ) {
+        if (value === null || value === undefined || value === '') {
             return null;
         }
 
-        const parsed = Number.parseFloat(String(value));
+        const parsed = Number.parseFloat(
+            normalizeCoordinateInput(value)
+        );
 
-        return Number.isFinite(parsed)
-            ? parsed
-            : null;
+        return Number.isFinite(parsed) ? parsed : null;
     };
-
-    const savedLatitude =
-        parseSavedCoordinate(savedManual.latitude);
-
-    const savedLongitude =
-        parseSavedCoordinate(savedManual.longitude);
 
     const referenceLocation = {
         mode,
-
         manual: {
-            latitude: savedLatitude,
-            longitude: savedLongitude
+            latitude: parseSavedCoordinate(savedManual.latitude),
+            longitude: parseSavedCoordinate(savedManual.longitude)
         },
-
-        node_id: savedReference.node_id || ''
+        node_id: savedReference.node_id || '',
+        place_name: ''
     };
 
+    let activeLatitude = null;
+    let activeLongitude = null;
+
     if (mode === 'manual') {
-        if (
-            latitudeValue === ''
-            || longitudeValue === ''
-        ) {
-            showToast(
-                '❌ Enter both reference coordinates',
-                'error'
-            );
-
+        if (latitudeValue === '' || longitudeValue === '') {
+            showToast('❌ Enter both reference coordinates', 'error');
             return;
         }
 
-        const latitude =
-            Number.parseFloat(latitudeValue);
+        const latitude = Number.parseFloat(latitudeValue);
+        const longitude = Number.parseFloat(longitudeValue);
 
-        const longitude =
-            Number.parseFloat(longitudeValue);
-
-        if (
-            !Number.isFinite(latitude)
-            || latitude < -90
-            || latitude > 90
-        ) {
-            showToast(
-                '❌ Invalid reference latitude',
-                'error'
-            );
-
+        if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+            showToast('❌ Invalid reference latitude', 'error');
             return;
         }
 
-        if (
-            !Number.isFinite(longitude)
-            || longitude < -180
-            || longitude > 180
-        ) {
-            showToast(
-                '❌ Invalid reference longitude',
-                'error'
-            );
-
+        if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+            showToast('❌ Invalid reference longitude', 'error');
             return;
         }
 
         referenceLocation.manual.latitude = latitude;
         referenceLocation.manual.longitude = longitude;
+        activeLatitude = latitude;
+        activeLongitude = longitude;
 
+        if (latitudeInput) latitudeInput.value = String(latitude);
+        if (longitudeInput) longitudeInput.value = String(longitude);
     }
 
     if (mode === 'node') {
         if (!nodeId) {
-            showToast(
-                '❌ Select a reference node',
-                'error'
-            );
+            showToast('❌ Select a reference node', 'error');
+            return;
+        }
 
+        const referenceNode = nodeCache.find(
+            node => node.node_id === nodeId
+        );
+
+        activeLatitude = Number(referenceNode?.position?.latitude);
+        activeLongitude = Number(referenceNode?.position?.longitude);
+
+        if (!Number.isFinite(activeLatitude) || !Number.isFinite(activeLongitude)) {
+            showToast('❌ Selected node has no valid position', 'error');
             return;
         }
 
         referenceLocation.node_id = nodeId;
     }
 
-    if (mode === 'disabled') {
-        /*
-         * Координаты и выбранную ноду не удаляем.
-         * Они пригодятся после повторного включения.
-         */
+    referenceLocationSaving = true;
+    updateReferenceLocationSaveButton();
+
+    if (statusElement) {
+        statusElement.textContent = 'Saving reference location…';
+    }
+
+    if (Number.isFinite(activeLatitude) && Number.isFinite(activeLongitude)) {
+        referenceLocation.place_name = await resolveReferencePlaceName(
+            activeLatitude,
+            activeLongitude
+        );
     }
 
     try {
@@ -1041,23 +1100,13 @@ async function saveReferenceLocation() {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            throw new Error(
-                data.error || `HTTP ${response.status}`
-            );
+            throw new Error(data.error || `HTTP ${response.status}`);
         }
 
         appSettings = data.settings;
-
-        /*
-         * Теперь безопасно обновить интерфейс:
-         * сервер вернёт сохранённые координаты.
-         */
         updateSettingsUi();
-
-        if (statusElement) {
-            statusElement.textContent =
-                'Reference location saved';
-        }
+        resetNodeRenderCache();
+        await loadMessages();
 
         const selectedNode = nodeCache.find(
             node => node.node_id === currentChatId
@@ -1067,21 +1116,23 @@ async function saveReferenceLocation() {
             renderNodeDetails(selectedNode);
         }
 
-        showToast(
-            '✅ Reference location saved',
-            'success'
-        );
+        if (statusElement) {
+            statusElement.textContent = 'Reference location saved';
+        }
 
+        showToast('✅ Reference location saved', 'success');
     } catch (error) {
         if (statusElement) {
-            statusElement.textContent =
-                `Save failed: ${error.message}`;
+            statusElement.textContent = `Save failed: ${error.message}`;
         }
 
         showToast(
             `❌ Unable to save reference location: ${error.message}`,
             'error'
         );
+    } finally {
+        referenceLocationSaving = false;
+        updateReferenceLocationSaveButton();
     }
 }
 
@@ -1362,11 +1413,89 @@ function toggleShowFavorites() {
 }
 
 // ============================================================
+// CHAT AVATAR / NODE SHORT NAME
+// ============================================================
+function getChatNodeShortName(chat) {
+    if (!chat || chat.is_channel) return '';
+
+    // Prefer a short name already supplied by the chats API.
+    const directShortName =
+        chat.short_name
+        || chat.shortName
+        || chat.node_short_name
+        || '';
+
+    if (directShortName) {
+        return String(directShortName).trim().slice(0, 4);
+    }
+
+    // Otherwise resolve the chat's node through the shared node cache.
+    const chatNodeId = String(
+        chat.node_id
+        || chat.nodeId
+        || chat.id
+        || ''
+    ).trim();
+
+    const matchedNode = Array.isArray(nodeCache)
+        ? nodeCache.find((node) => {
+            const nodeId = String(
+                node.node_id
+                || node.nodeId
+                || node.id
+                || ''
+            ).trim();
+
+            return nodeId && chatNodeId && nodeId === chatNodeId;
+        })
+        : null;
+
+    const cachedShortName = matchedNode
+        ? (
+            matchedNode.short_name
+            || matchedNode.shortName
+            || matchedNode.short
+            || ''
+        )
+        : '';
+
+    if (cachedShortName) {
+        return String(cachedShortName).trim().slice(0, 4);
+    }
+
+    // Safe fallback for chats that are not present in nodeCache yet.
+    // It keeps the avatar informative instead of returning a generic silhouette.
+    const sourceName = String(chat.name || chatNodeId || '?')
+        .replace(/[🚫⚑📡📍🔋⚡]/gu, ' ')
+        .trim();
+
+    const words = sourceName
+        .split(/[\s_\-.:/]+/)
+        .map((part) => part.replace(/[^\p{L}\p{N}]/gu, ''))
+        .filter(Boolean);
+
+    let fallback = '';
+
+    if (words.length >= 2) {
+        fallback = words
+            .slice(0, 4)
+            .map((part) => part.charAt(0))
+            .join('');
+    } else if (words.length === 1) {
+        fallback = words[0].slice(0, 4);
+    }
+
+    return (fallback || '?').toUpperCase();
+}
+
+// ============================================================
 // RENDER CHAT ITEM
 // ============================================================
 function renderChatItem(chat) {
-    const icon = chat.is_channel ? '📡' : '👤';
-    const iconClass = chat.is_channel ? 'channel' : 'dm';
+    const isSelected = (chat.id === currentChatId);
+    const selectedClass = isSelected ? 'selected' : '';
+    const icon = chat.is_channel ? '📡' : getChatNodeShortName(chat);
+    const iconClass = chat.is_channel ? 'channel' : 'dm node-short-name';
     const lastMsg = chat.last_message || 'No messages yet';
     const time = chat.last_time || '';
     const ignored = chat.ignored ? '🚫 ' : '';
@@ -1387,7 +1516,7 @@ function renderChatItem(chat) {
     }
 
     return `
-        <div class="chat-item ${hasUnread}" onclick="openChat('${escapeHtml(chat.id)}', '${escapeHtml(chat.name)}', '${escapeHtml(chat.type)}')">
+        <div class="chat-item ${hasUnread} ${selectedClass}" data-chat-id="${escapeHtml(chat.id)}" onclick="openChat('${escapeHtml(chat.id)}', '${escapeHtml(chat.name)}', '${escapeHtml(chat.type)}')">
             <div class="chat-icon ${iconClass}">${icon}</div>
             <div class="chat-info">
                 <div class="chat-name">${ignored}${favorite}${escapeHtml(chat.name)}</div>
@@ -1942,59 +2071,63 @@ function syncSelectedNodeCard() {
     });
 }
 
+// ============================================================
+// UPDATE CHAT HEADER (NEW)
+// ============================================================
+function updateChatHeader() {
+    const titleEl = document.getElementById('chatTitle');
+    const subtitleEl = document.getElementById('chatSubtitle');
+    if (!titleEl) return;
+
+    if (!currentChatId) {
+        titleEl.textContent = '💬 Chats';
+        if (subtitleEl) {
+            subtitleEl.textContent = 'Select a chat to view messages';
+            subtitleEl.style.color = '';
+        }
+        return;
+    }
+
+    if (currentChatType === 'channel') {
+        titleEl.textContent = '📡 ' + currentChatName;
+        if (subtitleEl) {
+            subtitleEl.textContent = 'Channel • All messages are broadcast';
+            subtitleEl.style.color = '#1a73e8';
+        }
+    } else {
+        titleEl.textContent = '💬 ' + currentChatName;
+        if (subtitleEl) {
+            subtitleEl.textContent = 'Direct Message';
+            subtitleEl.style.color = '';
+        }
+    }
+}
+
+// ============================================================
+// OPEN CHAT (MODIFIED)
+// ============================================================
 function openChat(chatId, chatName, chatType) {
     currentChatId = chatId;
     currentChatName = chatName || chatId;
     currentChatType = chatType || 'dm';
 
-    // Синхронизируем выделение сразу, не ожидая следующего опроса /api/messages.
-    syncSelectedNodeCard();
+    // Сброс сигнатуры, чтобы принудительно обновить сообщения
+    lastRenderedSignature[chatId] = null;
 
-    if (currentMainTab && currentMainTab !== 'chats') {
-        contextChatMode = true;
-        contextBaseTab = currentMainTab;
-        document.body.classList.add('context-chat-mode');
-    } else {
-        contextChatMode = false;
-        contextBaseTab = null;
-        document.body.classList.remove('context-chat-mode');
+    // Обновляем заголовок
+    updateChatHeader();
+
+    // Загружаем сообщения
+    const container = document.getElementById('messagesContainer');
+    if (container) {
+        container.innerHTML = '<div class="loading">⏳ Loading messages...</div>';
     }
+    loadChatMessages(chatId);
+    startMessagePolling(chatId);
 
-    document.getElementById('chatListContainer').style.display = 'none';
-    document.getElementById('messagesView').style.display = 'flex';
-
-
-    document.getElementById('chatHeader').style.display = 'flex';
-    document.getElementById('backToChatsBtn').style.display = 'block';
-    document.getElementById('chatActionsBtn').style.display = 'block';
-    
-    document.getElementById('deleteAllDmHeaderBtn').style.display = 'none';
-
-    const titleEl = document.getElementById('chatTitle');
-    const subtitleEl = document.getElementById('chatSubtitle');
-    
-    if (chatType === 'channel') {
-        titleEl.textContent = '📡 ' + chatName;
-        subtitleEl.textContent = 'Channel • All messages are broadcast';
-        subtitleEl.style.color = '#1a73e8';
-    } else {
-        updateChatHeaderStatus();
-    }
-
-    const input = document.getElementById('messageInput');
-    if (input) {
-        input.placeholder = chatType === 'channel' ? 'Type a message to channel...' : `Message ${chatName}...`;
-        input.value = '';
-        input.focus();
-    }
-
-    directMessageTarget = null;
-    document.querySelectorAll('.node-title-btn').forEach(btn => {
-        btn.style.background = 'linear-gradient(135deg, #4a5a7a 0%, #3a4a6a 100%)';
-        btn.style.boxShadow = 'none';
-    });
-
+    // Если это DM, обновить детали ноды
     if (chatType === 'dm' && chatId !== 'channel') {
+        updateNodeDetails(chatId);
         checkNodeIgnored(chatId).then(isIgnored => {
             if (isIgnored) {
                 showIgnoredBanner(chatId, chatName);
@@ -2003,77 +2136,82 @@ function openChat(chatId, chatName, chatType) {
             }
         });
     } else {
+        renderNodeDetails(null);
         hideIgnoredBanner();
     }
 
-    const container = document.getElementById('messagesContainer');
-    if (container) {
-        container.innerHTML = '<div class="loading">⏳ Loading messages...</div>';
-        container.scrollTop = 0;
+    // Убираем контекстный режим (если был)
+    if (contextChatMode) {
+        contextChatMode = false;
+        contextBaseTab = null;
+        document.body.classList.remove('context-chat-mode');
     }
 
-    lastRenderedSignature[chatId] = null;
-    lastMessagesSignature = '';
-    loadChatMessages(chatId);
-    startMessagePolling(chatId);
-    
-    if (chatType === 'dm' && chatId !== 'channel') {
-        updateNodeDetails(chatId);
-    } else {
-        renderNodeDetails(null);
+    // Настраиваем поле ввода
+    const input = document.getElementById('messageInput');
+    if (input) {
+        input.placeholder = chatType === 'channel' ? 'Type a message to channel...' : `Message ${chatName}...`;
+        input.value = '';
+        input.focus();
     }
-    
+
+    // Показываем кнопку действий, скрываем кнопку удаления всех DM
+    const actionsBtn = document.getElementById('chatActionsBtn');
+    if (actionsBtn) actionsBtn.style.display = 'block';
+    const deleteDmBtn = document.getElementById('deleteAllDmHeaderBtn');
+    if (deleteDmBtn) deleteDmBtn.style.display = 'none';
+
+    // Обновляем список чатов для подсветки выбранного
     loadChatList();
 }
 
+// ============================================================
+// SHOW CHAT LIST (MODIFIED)
+// ============================================================
 function showChatList() {
     currentChatId = null;
     currentChatName = null;
     currentChatType = null;
 
-    syncSelectedNodeCard();
+    updateChatHeader();
 
-    const chatHeader = document.getElementById('chatHeader');
-    const chatListContainer = document.getElementById('chatListContainer');
-    const messagesView = document.getElementById('messagesView');
-    const backBtn = document.getElementById('backToChatsBtn');
+    const container = document.getElementById('messagesContainer');
+    if (container) {
+        container.innerHTML = '<div class="loading">💬 Select a chat from the list</div>';
+    }
+
+    stopMessagePolling();
+    hideIgnoredBanner();
+    renderNodeDetails(null);
+
     const actionsBtn = document.getElementById('chatActionsBtn');
+    if (actionsBtn) actionsBtn.style.display = 'none';
     const deleteDmBtn = document.getElementById('deleteAllDmHeaderBtn');
+    if (deleteDmBtn) deleteDmBtn.style.display = 'none';
 
-    if (contextChatMode && contextBaseTab && contextBaseTab !== 'chats') {
+    if (contextChatMode) {
         contextChatMode = false;
         contextBaseTab = null;
         document.body.classList.remove('context-chat-mode');
-
-        if (chatHeader) chatHeader.style.display = 'none';
-        if (messagesView) messagesView.style.display = 'none';
-        if (backBtn) backBtn.style.display = 'none';
-        if (actionsBtn) actionsBtn.style.display = 'none';
-        if (deleteDmBtn) deleteDmBtn.style.display = 'none';
-
-        stopMessagePolling();
-        return;
     }
 
-    if (chatHeader) chatHeader.style.display = 'none';
-    if (chatListContainer) chatListContainer.style.display = 'block';
-    if (messagesView) messagesView.style.display = 'none';
-    if (backBtn) backBtn.style.display = 'none';
-    if (actionsBtn) actionsBtn.style.display = 'none';
-    if (deleteDmBtn) deleteDmBtn.style.display = 'none';
-
-    stopMessagePolling();
     loadChatList();
 }
 
+// ============================================================
+// RENDER MESSAGES (with force update when container shows loading)
+// ============================================================
 function renderMessages(container, messages, chatId) {
     if (!container) return;
+    
+    // Принудительно обновляем, если контейнер показывает загрузку
+    const isLoading = container.innerHTML.includes('loading') || container.innerHTML.includes('Loading');
     
     const signature = messages.map(m => 
         [m.kind, m.sender, m.text, m.time].join('|')
     ).join('||');
     
-    if (lastRenderedSignature[chatId] === signature) {
+    if (!isLoading && lastRenderedSignature[chatId] === signature) {
         console.log(`[RENDER] No changes for chat: ${chatId}, skipping render`);
         return;
     }
@@ -2472,7 +2610,14 @@ async function toggleIgnore(nodeId) {
 
         if (response.ok) {
             const data = await response.json();
-            
+
+            // [NEW] Update local nodeCache and reset render cache
+            const cachedNode = nodeCache.find(node => node.node_id === nodeId);
+            if (cachedNode) {
+                cachedNode.ignored = Boolean(data.ignored);
+            }
+            resetNodeRenderCache(nodeId);
+
             loadMessages();
             loadChatList();
             
@@ -2508,6 +2653,14 @@ async function toggleFavorite(nodeId) {
 
         if (response.ok) {
             const data = await response.json();
+
+            // [NEW] Update local nodeCache and reset render cache
+            const cachedNode = nodeCache.find(node => node.node_id === nodeId);
+            if (cachedNode) {
+                cachedNode.favorite = Boolean(data.favorite);
+            }
+            resetNodeRenderCache(nodeId);
+
             loadMessages();
             loadChatList();
             updateNodeDetails(nodeId);
@@ -2889,9 +3042,33 @@ function renderNodeDetails(node) {
                     <span class="node-detail-name">${escapeHtml(displayName)}</span>
                     <span class="node-detail-short-id">${escapeHtml(shortName)}</span>
                 </div>
-                <button class="node-detail-actions-btn" onclick="toggleNodeActionsMenu(event)" aria-label="Actions">
-                    ⋮
-                </button>
+                <!-- [NEW] Header actions: Favorite and Ignore buttons -->
+                <div class="node-detail-header-actions">
+                    <button type="button"
+                            class="node-detail-state-btn node-detail-favorite-btn ${isFavorite ? 'active' : ''}"
+                            onclick="toggleFavorite('${escapeHtml(nodeId)}')"
+                            title="${isFavorite ? 'Remove from favorites' : 'Add to favorites'}"
+                            aria-label="${isFavorite ? 'Remove node from favorites' : 'Add node to favorites'}"
+                            aria-pressed="${isFavorite ? 'true' : 'false'}">
+                        <span aria-hidden="true">${isFavorite ? '⚑' : '⚐'}</span>
+                    </button>
+
+                    <button type="button"
+                            class="node-detail-state-btn node-detail-ignore-btn ${isIgnored ? 'active' : ''}"
+                            onclick="toggleIgnore('${escapeHtml(nodeId)}')"
+                            title="${isIgnored ? 'Stop ignoring node' : 'Ignore node'}"
+                            aria-label="${isIgnored ? 'Stop ignoring node' : 'Ignore node'}"
+                            aria-pressed="${isIgnored ? 'true' : 'false'}">
+                        <span aria-hidden="true">${isIgnored ? '🔓' : '🚫'}</span>
+                    </button>
+
+                    <button class="node-detail-actions-btn"
+                            onclick="toggleNodeActionsMenu(event)"
+                            aria-label="More node actions"
+                            title="More actions">
+                        ⋮
+                    </button>
+                </div>
             </div>
 
             <!-- Вторая строка: ID, модель, роль -->
@@ -3039,13 +3216,19 @@ function renderOverviewPane(node) {
     `;
 }
 
+function formatSignalQualityLabel(value) {
+    const text = String(value ?? '--').trim();
+    if (!text || text === '--') return '--';
+    return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+}
+
 function renderRadioPane(node) {
     const rssi = node.rssi ?? '--';
     const snr = node.snr ?? '--';
     const hops = node.hop_start ?? node.hops_away ?? '?';
     const lastSeen = node.age || 'Never';
     const relay = node.relay_node || '--';
-    const signalQuality = node.signal_quality || '--';
+    const signalQuality = formatSignalQualityLabel(node.signal_quality);
 
     // Простая история (заглушка)
     let historyHtml = '<div class="radio-history-placeholder">Signal history is not available yet</div>';
@@ -3069,7 +3252,7 @@ function renderRadioPane(node) {
             </div>
             <div class="radio-actions">
                 <button class="radio-action" onclick="runNodeTool('traceroute', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">🔍 Run traceroute</button>
-                <button class="radio-action" onclick="refreshNodeMetrics('${escapeHtml(node.node_id)}')">🔄 Refresh</button>
+                <button class="radio-action" onclick="refreshNodeMetrics('${escapeHtml(node.node_id)}')">↻ Refresh</button>
             </div>
         </div>
     `;
@@ -3304,6 +3487,7 @@ function setNodeAsReference(nodeId) {
         if (data.ok) {
             appSettings = data.settings;
             updateSettingsUi();
+            notifySettingsUpdated();
             showToast('✅ Reference node set', 'success');
             // Перерисовать карточку
             const node = nodeCache.find(n => n.node_id === nodeId);
@@ -3318,7 +3502,7 @@ function setNodeAsReference(nodeId) {
 function refreshNodeMetrics(nodeId) {
     // Просто обновляем данные
     loadMessages();
-    showToast('🔄 Refreshing local node data', 'info');
+    showToast('↻ Refreshing local node data', 'info');
 }
 
 function viewTelemetryHistory(nodeId) {
@@ -4057,14 +4241,19 @@ async function loadBaseStatus() {
 
         card.innerHTML = `
             <div class="base-card-title">
-                <span>📡 ${escapeHtml(nodeName)}</span>
-                <span style="font-size:11px;opacity:0.8;">⏱ ${escapeHtml(uptime)}</span>
+                <span class="base-card-name">
+                    <span class="base-card-icon" aria-hidden="true">📡</span>
+                    <span>${escapeHtml(nodeName)}</span>
+                </span>
             </div>
             <div class="base-status-line">
-                ⚡ ${escapeHtml(voltage)}
-                🔋 ${escapeHtml(battery)}
-                📶 ${escapeHtml(channel)}
-                📡 ${escapeHtml(airTx)}
+                <span class="base-status-metrics">
+                    <span class="base-status-item">⚡ ${escapeHtml(voltage)}</span>
+                    <span class="base-status-item">🔋 ${escapeHtml(battery)}</span>
+                    <span class="base-status-item">📶 ${escapeHtml(channel)}</span>
+                    <span class="base-status-item">📡 ${escapeHtml(airTx)}</span>
+                </span>
+                <span class="base-status-uptime">⏱ ${escapeHtml(uptime)}</span>
             </div>
         `;
 
@@ -6071,7 +6260,12 @@ async function loadVideoSettings() {
             });
 
             updateCameraControlLabels();
-            
+
+            const presetSelect = document.getElementById('cameraImagePreset');
+            if (presetSelect) {
+                presetSelect.value = 'custom';
+            }
+
             const liveInfo = document.getElementById('videoLiveInfo');
             if (liveInfo) {
                 liveInfo.textContent = `Live: ${data.config.resolution || '640×480'} @ ${data.config.fps || 12} FPS`;
@@ -6127,6 +6321,125 @@ async function updateVideoSettings() {
         console.error('Error updating video settings:', error);
         showToast('❌ Network error', 'error');
     }
+}
+
+
+const CAMERA_IMAGE_PRESETS = Object.freeze({
+    neutral: {
+        brightness: 0.0,
+        contrast: 1.0,
+        saturation: 1.0,
+        sharpness: 1.0,
+        exposure_compensation: 0.0
+    },
+    indoor: {
+        brightness: 0.2,
+        contrast: 1.1,
+        saturation: 1.0,
+        sharpness: 1.1,
+        exposure_compensation: 0.5
+    },
+    night: {
+        brightness: 0.5,
+        contrast: 1.15,
+        saturation: 0.0,
+        sharpness: 1.0,
+        exposure_compensation: 1.0
+    },
+    outdoor: {
+        brightness: -0.1,
+        contrast: 1.1,
+        saturation: 1.15,
+        sharpness: 1.2,
+        exposure_compensation: -0.5
+    },
+    monochrome: {
+        brightness: 0.1,
+        contrast: 1.2,
+        saturation: 0.0,
+        sharpness: 1.2,
+        exposure_compensation: 0.0
+    },
+    highContrast: {
+        brightness: 0.0,
+        contrast: 1.5,
+        saturation: 0.9,
+        sharpness: 1.4,
+        exposure_compensation: 0.0
+    }
+});
+
+function switchCameraControlTab(tabName) {
+    const showImage = tabName === 'image';
+
+    const cameraTab = document.getElementById('cameraControlTabCamera');
+    const imageTab = document.getElementById('cameraControlTabImage');
+    const cameraPanel = document.getElementById('cameraControlsPanel');
+    const imagePanel = document.getElementById('imageControlsPanel');
+
+    cameraTab?.classList.toggle('active', !showImage);
+    imageTab?.classList.toggle('active', showImage);
+
+    cameraTab?.setAttribute('aria-selected', String(!showImage));
+    imageTab?.setAttribute('aria-selected', String(showImage));
+
+    if (cameraPanel) {
+        cameraPanel.hidden = showImage;
+        cameraPanel.classList.toggle('active', !showImage);
+    }
+
+    if (imagePanel) {
+        imagePanel.hidden = !showImage;
+        imagePanel.classList.toggle('active', showImage);
+    }
+}
+
+function markCameraImagePresetCustom() {
+    const presetSelect = document.getElementById('cameraImagePreset');
+
+    if (presetSelect) {
+        presetSelect.value = 'custom';
+    }
+}
+
+function writeCameraImageControls(values) {
+    const mapping = {
+        cameraBrightness: values.brightness,
+        cameraContrast: values.contrast,
+        cameraSaturation: values.saturation,
+        cameraSharpness: values.sharpness,
+        cameraExposure: values.exposure_compensation
+    };
+
+    Object.entries(mapping).forEach(([id, value]) => {
+        const element = document.getElementById(id);
+
+        if (element && Number.isFinite(Number(value))) {
+            element.value = String(value);
+        }
+    });
+
+    updateCameraControlLabels();
+}
+
+async function applyCameraImagePreset(presetName) {
+    if (!presetName || presetName === 'custom') {
+        return;
+    }
+
+    const preset = CAMERA_IMAGE_PRESETS[presetName];
+
+    if (!preset) {
+        return;
+    }
+
+    writeCameraImageControls(preset);
+    await updateCameraImageControls(false);
+
+    showToast(
+        `✅ Image preset applied: ${document.getElementById('cameraImagePreset')?.selectedOptions[0]?.textContent || presetName}`,
+        'success'
+    );
 }
 
 function formatCameraControlValue(value) {
@@ -6260,23 +6573,13 @@ async function updateCameraImageControls(showMessage = false) {
 }
 
 async function restoreCameraImageDefaults() {
-    const defaults = {
-        cameraBrightness: 0.0,
-        cameraContrast: 1.0,
-        cameraSaturation: 1.0,
-        cameraSharpness: 1.0,
-        cameraExposure: 0.0
-    };
+    writeCameraImageControls(CAMERA_IMAGE_PRESETS.neutral);
 
-    Object.entries(defaults).forEach(([id, value]) => {
-        const element = document.getElementById(id);
+    const presetSelect = document.getElementById('cameraImagePreset');
+    if (presetSelect) {
+        presetSelect.value = 'neutral';
+    }
 
-        if (element) {
-            element.value = value;
-        }
-    });
-
-    updateCameraControlLabels();
     await updateCameraImageControls(false);
 
     showToast(
@@ -6678,7 +6981,7 @@ async function captureCameraPhoto() {
     try {
         if (btn) {
             btn.disabled = true;
-            btn.textContent = '⏳ Capture...';
+            btn.textContent = '⏳ Saving...';
         }
 
         if (videoFeed) {
@@ -6696,13 +6999,13 @@ async function captureCameraPhoto() {
         const data = await response.json();
 
         if (data.ok) {
-            showToast(`✅ Captured: ${data.display_name || data.filename}`, 'success');
+            showToast(`✅ Screenshot saved: ${data.display_name || data.filename}`, 'success');
         } else {
-            showToast('❌ Capture failed: ' + (data.error || 'Unknown error'), 'error');
+            showToast('❌ Screenshot failed: ' + (data.error || 'Unknown error'), 'error');
         }
 
     } catch (error) {
-        console.error('Capture error:', error);
+        console.error('Screenshot error:', error);
         showToast('❌ Network error', 'error');
 
     } finally {
@@ -6717,7 +7020,7 @@ async function captureCameraPhoto() {
 
     if (btn) {
         btn.disabled = false;
-        btn.textContent = '📸 Capture';
+        btn.textContent = '📸 Screenshot';
         }
     }
 }
@@ -6728,7 +7031,7 @@ async function savePhoto() {
     const saveBtn = document.getElementById('photoSaveBtn');
     
     if (!display || display.style.display === 'none' || !currentPhotoData) {
-        showToast('❌ No photo to save. Capture preview first!', 'error');
+        showToast('❌ No photo to save. Create a screenshot first!', 'error');
         return;
     }
     
@@ -6814,173 +7117,7 @@ function refreshPhoto() {
 }
 
 // ============================================================
-// SCREENSHOTS GALLERY
-// ============================================================
-async function showScreenshots() {
-    const modal = document.getElementById('screenshotsModal');
-    const grid = document.getElementById('screenshotsGrid');
-
-    if (!modal || !grid) return;
-
-    modal.style.display = 'flex';
-    grid.innerHTML = '<div class="loading">🖼️ Loading gallery...</div>';
-
-    try {
-        const response = await fetch('/api/camera/screenshots');
-        const data = await response.json();
-        const screenshots = data.screenshots || [];
-        const storage = data.storage || {};
-        const storageText = storage.free_gb !== undefined
-            ? `Storage: ${storage.images || screenshots.length} images • ${storage.used_mb || 0} MB used • ${storage.free_gb} GB free`
-            : `Storage: ${screenshots.length} images`;
-
-        if (screenshots.length === 0) {
-            grid.innerHTML = '<div class="loading">📭 No images yet</div>';
-            return;
-        }
-
-        grid.innerHTML = `
-
-            <div class="gallery-toolbar">
-
-                <div class="gallery-info">
-
-                    <div class="gallery-info-main">
-                        📷 ${screenshots.length} images
-                    </div>
-
-                    <div class="gallery-info-sub">
-                        💾 ${storage.used_mb || 0} MB used
-                        &nbsp;&nbsp;•&nbsp;&nbsp;
-                        🖥 ${storage.free_gb || 0} GB free
-                        &nbsp;&nbsp;•&nbsp;&nbsp;
-                        Newest first
-                    </div>
-
-                </div>
-
-                <button class="gallery-delete-all-btn"
-                        onclick="deleteAllScreenshots()">
-                    🗑 Delete All
-                </button>
-
-            </div>
-
-            ${screenshots.map(item => `
-                <div class="screenshot-item" id="screenshot-${CSS.escape(item.filename)}">
-                    <a href="${item.url}" target="_blank" rel="noopener">
-                        <img src="${item.url}"
-                             alt="${item.display_name || item.filename}"
-                             title="${item.display_name || item.filename}"
-                             onerror="this.style.display='none'; this.parentElement.parentElement.querySelector('.screenshot-error').style.display='block'">
-                    </a>
-
-                    <div class="screenshot-error" style="display:none;padding:20px;text-align:center;color:#999;">
-                        ⚠️ Cannot load image
-                    </div>
-
-                    <div class="screenshot-info">
-                        <div>
-                            <div class="screenshot-time">${item.modified}</div>
-                            <div class="screenshot-name">${item.display_name || item.filename.split('/').pop()}</div>
-                        </div>
-
-                        <div class="screenshot-actions">
-                            <a class="screenshot-download-btn"
-                            href="${item.url}"
-                            download="${item.display_name || item.filename.split('/').pop()}"
-                            title="Download">⬇</a>
-
-                            <span class="screenshot-size">${(item.size / 1024).toFixed(1)} KB</span>
-
-                            <button class="screenshot-delete-btn"
-                                    onclick="deleteScreenshot('${item.filename}', event)"
-                                    title="Delete">🗑</button>
-                        </div>
-                    </div>
-                </div>
-            `).join('')}
-        `;
-
-    } catch (error) {
-        console.error('Error loading screenshots:', error);
-        grid.innerHTML = `
-            <div class="loading" style="color:#c62828;">
-                ⚠️ Network error loading gallery<br>
-                <button onclick="showScreenshots()" style="margin-top:8px;padding:6px 14px;border:none;border-radius:6px;background:#1a73e8;color:white;cursor:pointer;">
-                    🔄 Retry
-                </button>
-            </div>
-        `;
-    }
-}
-
-async function deleteScreenshot(filename, event) {
-    if (event) {
-        event.stopPropagation();
-    }
-
-    if (!confirm(`Delete screenshot "${filename}"?`)) {
-        return;
-    }
-
-    try {
-        const response = await fetch(`/api/camera/screenshot/${filename}`, {
-            method: 'DELETE'
-        });
-
-        const data = await response.json();
-
-        if (response.ok && data.ok) {
-            showToast('✅ Screenshot deleted', 'success');
-            await showScreenshots();
-        } else {
-            showToast('❌ Failed to delete: ' + (data.error || 'Unknown error'), 'error');
-        }
-
-    } catch (error) {
-        console.error('Error deleting screenshot:', error);
-        showToast('❌ Network error', 'error');
-    }
-}
-
-async function deleteAllScreenshots() {
-    if (!confirm('⚠️ Delete ALL screenshots?\n\nThis action cannot be undone!')) {
-        return;
-    }
-    
-    if (!confirm('Are you sure? All screenshots will be permanently deleted!')) {
-        return;
-    }
-    
-    try {
-        const response = await fetch('/api/camera/screenshots', {
-            method: 'DELETE'
-        });
-        
-        if (response.ok) {
-            showToast('✅ All screenshots deleted', 'success');
-            const grid = document.getElementById('screenshotsGrid');
-            if (grid) {
-                grid.innerHTML = '<div class="loading">📭 No screenshots yet</div>';
-            }
-        } else {
-            const data = await response.json();
-            showToast('❌ Failed: ' + (data.error || 'Unknown error'), 'error');
-        }
-    } catch (error) {
-        console.error('Error deleting all screenshots:', error);
-        showToast('❌ Network error', 'error');
-    }
-}
-
-function closeScreenshots() {
-    const modal = document.getElementById('screenshotsModal');
-    if (modal) modal.style.display = 'none';
-}
-
-// ============================================================
-// SWITCH MAIN TAB
+// SWITCH MAIN TAB (MODIFIED)
 // ============================================================
 function switchMainTab(tab) {
 
@@ -6995,6 +7132,7 @@ function switchMainTab(tab) {
         document.body.classList.remove('context-chat-mode');
 
         document.getElementById('videoView').style.display = 'none';
+        document.getElementById('mediaView').style.display = 'none';
         document.getElementById('systemView').style.display = 'none';
         document.getElementById('settingsView').style.display = 'none';
 
@@ -7020,6 +7158,7 @@ function switchMainTab(tab) {
 
     const messagesView = document.getElementById('messagesView');
     const videoView = document.getElementById('videoView');
+    const mediaView = document.getElementById('mediaView');
     const photoView = document.getElementById('photoView');
     const chatHeader = document.getElementById('chatHeader');
     const chatListContainer = document.getElementById('chatListContainer');
@@ -7028,6 +7167,7 @@ function switchMainTab(tab) {
 
     if (messagesView) messagesView.style.display = 'none';
     if (videoView) videoView.style.display = 'none';
+    if (mediaView) mediaView.style.display = 'none';
     if (photoView) photoView.style.display = 'none';
     if (systemView) systemView.style.display = 'none';
     if (settingsView) settingsView.style.display = 'none';
@@ -7037,19 +7177,36 @@ function switchMainTab(tab) {
     }
 
     if (tab === 'chats') {
-        if (chatHeader) chatHeader.style.display = currentChatId ? 'flex' : 'none';
+        const chatHeader = document.getElementById('chatHeader');
+        const chatListContainer = document.getElementById('chatListContainer');
+        const messagesView = document.getElementById('messagesView');
 
-        if (currentChatId) {
-            if (chatListContainer) chatListContainer.style.display = 'none';
-            if (messagesView) messagesView.style.display = 'flex';
-            startMessagePolling(currentChatId);
+        // Панели всегда видны
+        if (chatHeader) chatHeader.style.display = 'flex';
+        if (chatListContainer) chatListContainer.style.display = 'block';
+        if (messagesView) messagesView.style.display = 'flex';
+
+        // Если чат не выбран, выбрать первый канал (или первый DM)
+        if (!currentChatId) {
+            const channelChat = chatListCache.find(c => c.is_channel);
+            if (channelChat) {
+                openChat(channelChat.id, channelChat.name, channelChat.type);
+            } else if (chatListCache.length > 0) {
+                const firstChat = chatListCache[0];
+                openChat(firstChat.id, firstChat.name, firstChat.type);
+            } else {
+                showChatList();
+            }
         } else {
-            if (chatListContainer) chatListContainer.style.display = 'block';
-            if (messagesView) messagesView.style.display = 'none';
-            stopMessagePolling();
+            // Если чат уже выбран, обновляем сообщения и подсветку
+            // Сбрасываем сигнатуру, чтобы принудительно обновить сообщения
+            lastRenderedSignature[currentChatId] = null;
+            loadChatMessages(currentChatId);
+            startMessagePolling(currentChatId);
+            updateChatHeader();
+            loadChatList();
         }
 
-        loadChatList();
         loadMessages();
         updateStatusDock('chats');
 
@@ -7081,6 +7238,19 @@ function switchMainTab(tab) {
                 cameraActive = true;
             }, 200);
         });
+
+    } else if (tab === 'media') {
+        if (chatHeader) chatHeader.style.display = 'none';
+        if (chatListContainer) chatListContainer.style.display = 'none';
+        if (messagesView) messagesView.style.display = 'none';
+        if (mediaView) mediaView.style.display = 'flex';
+
+        updateStatusDock('media');
+        stopMessagePolling();
+
+        if (typeof loadMediaGallery === 'function') {
+            loadMediaGallery();
+        }
 
     } else if (tab === 'photo') {
         if (chatHeader) chatHeader.style.display = 'none';
@@ -7146,6 +7316,10 @@ function updateStatusDock(tab) {
         setStatusDockContext(cameraPowerEnabled
             ? getCurrentVideoInfoText()
             : 'Power-saving mode');
+    } else if (tab === 'media') {
+        left.innerHTML = '🖼️ Media';
+        centerText.textContent = 'Local Gallery';
+        setStatusDockContext('Images');
     } else if (tab === 'settings') {
         left.innerHTML = '⚙️ Settings';
         centerText.textContent = 'Ready';
@@ -7205,33 +7379,39 @@ async function loadSystemNetwork() {
         const response = await fetch('/api/system/network');
         const data = await response.json();
 
-        document.getElementById('systemWifiSsid').textContent = data.ssid || '--';
+        const ssidEl = document.getElementById('systemWifiSsid');
+        if (ssidEl) ssidEl.textContent = data.ssid || '--';
 
-        document.getElementById('systemWifiSignal').textContent =
-            data.signal_percent !== null && data.signal_percent !== undefined
+        const signalEl = document.getElementById('systemWifiSignal');
+        if (signalEl) {
+            signalEl.textContent = data.signal_percent !== null && data.signal_percent !== undefined
                 ? `${data.signal_percent}%`
                 : '--';
+        }
 
-        document.getElementById('systemWifiRssi').textContent =
-            data.rssi_dbm !== null && data.rssi_dbm !== undefined
+        const rssiEl = document.getElementById('systemWifiRssi');
+        if (rssiEl) {
+            rssiEl.textContent = data.rssi_dbm !== null && data.rssi_dbm !== undefined
                 ? `${data.rssi_dbm} dBm`
                 : '--';
+        }
 
-        // <<< ДОБАВИТЬ ЭТИ СТРОКИ >>>
+        const rxRateEl = document.getElementById('systemRxRate');
+        if (rxRateEl) rxRateEl.textContent = data.rx_bitrate || '--';
 
-        document.getElementById('systemRxRate').textContent =
-            data.rx_bitrate || '--';
+        const txRateEl = document.getElementById('systemTxRate');
+        if (txRateEl) txRateEl.textContent = data.tx_bitrate || '--';
 
-        document.getElementById('systemTxRate').textContent =
-            data.tx_bitrate || '--';
+        const ipEl = document.getElementById('systemWifiIp');
+        if (ipEl) ipEl.textContent = data.ip || '--';
 
-        // <<< ДО КОНЦА >>>
+        const gatewayEl = document.getElementById('systemWifiGateway');
+        if (gatewayEl) gatewayEl.textContent = data.gateway || '--';
 
-        document.getElementById('systemWifiIp').textContent = data.ip || '--';
-        document.getElementById('systemWifiGateway').textContent = data.gateway || '--';
-
-        document.getElementById('systemInternet').textContent =
-            data.internet ? '🟢 Connected' : '🔴 Radio Offline';
+        const internetEl = document.getElementById('systemInternet');
+        if (internetEl) {
+            internetEl.textContent = data.internet ? '🟢 Connected' : '🔴 Radio Offline';
+        }
 
     } catch (error) {
         console.error('System network load error:', error);
@@ -7398,12 +7578,14 @@ function exitSplitView() {
     const chatList = document.getElementById('chatListContainer');
     const messagesView = document.getElementById('messagesView');
     const videoView = document.getElementById('videoView');
+    const mediaView = document.getElementById('mediaView');
     const systemView = document.getElementById('systemView');
     const settingsView = document.getElementById('settingsView');
 
     if (chatList) chatList.style.display = 'flex';
     if (messagesView) messagesView.style.display = 'none';
     if (videoView) videoView.style.display = 'none';
+    if (mediaView) mediaView.style.display = 'none';
     if (systemView) systemView.style.display = 'none';
     if (settingsView) settingsView.style.display = 'none';
 
@@ -7496,7 +7678,7 @@ async function init() {
                     <small style="font-size:12px;color:#999;">${error.message || 'Unknown error'}</small>
                     <br><br>
                     <button onclick="window.location.reload()" style="padding:8px 20px;border:none;border-radius:8px;background:#1a73e8;color:white;cursor:pointer;">
-                        🔄 Refresh Page
+                        ↻ Refresh Page
                     </button>
                 </div>
             `;
@@ -7864,32 +8046,49 @@ async function loadSystemInfo() {
         const response = await fetch('/api/system/info');
         const data = await response.json();
 
-        document.getElementById('systemHostname').textContent = data.hostname || '--';
-        document.getElementById('systemUptime').textContent = data.uptime || '--';
+        const hostnameEl = document.getElementById('systemHostname');
+        if (hostnameEl) hostnameEl.textContent = data.hostname || '--';
 
-        document.getElementById('systemCpuTemp').textContent =
-            data.cpu_temp !== null && data.cpu_temp !== undefined
+        const uptimeEl = document.getElementById('systemUptime');
+        if (uptimeEl) uptimeEl.textContent = data.uptime || '--';
+
+        const cpuTempEl = document.getElementById('systemCpuTemp');
+        if (cpuTempEl) {
+            cpuTempEl.textContent = data.cpu_temp !== null && data.cpu_temp !== undefined
                 ? formatTemperature(data.cpu_temp)
                 : '--';
+        }
 
-        document.getElementById('systemCpuLoad').textContent =
-            data.load_avg !== null && data.load_avg !== undefined
+        const cpuLoadEl = document.getElementById('systemCpuLoad');
+        if (cpuLoadEl) {
+            cpuLoadEl.textContent = data.load_avg !== null && data.load_avg !== undefined
                 ? data.load_avg.toFixed(2)
                 : '--';
+        }
 
-        document.getElementById('systemRam').textContent =
-            data.ram_used_mb !== null && data.ram_total_mb !== null
+        const ramEl = document.getElementById('systemRam');
+        if (ramEl) {
+            ramEl.textContent = data.ram_used_mb !== null && data.ram_total_mb !== null
                 ? `${data.ram_used_mb} / ${data.ram_total_mb} MB`
                 : '--';
+        }
 
-        document.getElementById('systemDisk').textContent =
-            data.disk_used_gb !== null && data.disk_total_gb !== null
+        const diskEl = document.getElementById('systemDisk');
+        if (diskEl) {
+            diskEl.textContent = data.disk_used_gb !== null && data.disk_total_gb !== null
                 ? `${data.disk_used_gb} / ${data.disk_total_gb} GB`
                 : '--';
+        }
 
-        document.getElementById('systemModel').textContent = data.model || '--';
-        document.getElementById('systemOs').textContent = data.os || '--';
-        document.getElementById('systemKernel').textContent = data.kernel || '--';
+        const modelEl = document.getElementById('systemModel');
+        if (modelEl) modelEl.textContent = data.model || '--';
+
+        const osEl = document.getElementById('systemOs');
+        if (osEl) osEl.textContent = data.os || '--';
+
+        const kernelEl = document.getElementById('systemKernel');
+        if (kernelEl) kernelEl.textContent = data.kernel || '--';
+
         ensureCpuHistoryPanel();
         loadCpuHistory(true);
 
@@ -8225,10 +8424,6 @@ window.exportNodesCSV = exportNodesCSV;
 window.exportNodesJSON = exportNodesJSON;
 window.importNodesCSV = importNodesCSV;
 window.importNodesJSON = importNodesJSON;
-window.showScreenshots = showScreenshots;
-window.deleteScreenshot = deleteScreenshot;
-window.deleteAllScreenshots = deleteAllScreenshots;
-window.closeScreenshots = closeScreenshots;
 window.switchMainTab = switchMainTab;
 window.switchSidebarTab = switchSidebarTab;
 window.refreshVideoFeed = refreshVideoFeed;
@@ -8345,10 +8540,6 @@ window.exportNodesCSV = exportNodesCSV;
 window.exportNodesJSON = exportNodesJSON;
 window.importNodesCSV = importNodesCSV;
 window.importNodesJSON = importNodesJSON;
-window.showScreenshots = showScreenshots;
-window.deleteScreenshot = deleteScreenshot;
-window.deleteAllScreenshots = deleteAllScreenshots;
-window.closeScreenshots = closeScreenshots;
 window.switchMainTab = switchMainTab;
 window.switchSidebarTab = switchSidebarTab;
 window.refreshVideoFeed = refreshVideoFeed;
@@ -8437,3 +8628,15 @@ window.currentChatId = currentChatId;
 window.nodeCache = nodeCache;
 
 console.log('[EXPORT] Все функции экспортированы в window');
+
+document.addEventListener('input', event => {
+    if (event.target.closest('.reference-location-card')) {
+        updateReferenceLocationSaveButton();
+    }
+});
+
+document.addEventListener('change', event => {
+    if (event.target.closest('.reference-location-card')) {
+        updateReferenceLocationSaveButton();
+    }
+});

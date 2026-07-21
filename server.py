@@ -24,6 +24,8 @@ from api.api_settings import register_settings_routes
 from api.api_system import register_system_routes
 from system_log import log_system_event
 from api.api_node_tools import register_node_tools_routes
+from api.api_weather import register_weather_routes
+from weather_service import OpenWeatherService, WeatherConfig
 
 try:
     from config import *
@@ -2524,6 +2526,89 @@ register_settings_routes(
     save_settings,
     handle_errors,
 )
+
+def _coordinate(value, minimum, maximum):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if minimum <= number <= maximum else None
+
+
+def resolve_weather_location():
+    """Resolve Weather coordinates from the shared Reference Location."""
+    with state_lock:
+        reference = settings.get("reference_location", {})
+        if not isinstance(reference, dict):
+            reference = {}
+
+        mode = str(reference.get("mode", "disabled")).strip().lower()
+
+        if mode == "manual":
+            manual = reference.get("manual", {})
+            if not isinstance(manual, dict):
+                manual = {}
+            latitude = _coordinate(manual.get("latitude"), -90, 90)
+            longitude = _coordinate(manual.get("longitude"), -180, 180)
+            if latitude is not None and longitude is not None:
+                return {
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "name": "Manual reference",
+                    "source": "manual",
+                }
+
+        if mode == "node":
+            node_id = str(reference.get("node_id", "")).strip()
+            node = nodes.get(node_id) or {}
+            position = node.get("position") if isinstance(node.get("position"), dict) else {}
+            latitude_raw = position.get(
+                "latitude",
+                position.get("latitude_i", node.get("latitude")),
+            )
+            longitude_raw = position.get(
+                "longitude",
+                position.get("longitude_i", node.get("longitude")),
+            )
+            try:
+                latitude_raw = float(latitude_raw)
+                longitude_raw = float(longitude_raw)
+            except (TypeError, ValueError):
+                latitude_raw = longitude_raw = None
+
+            # Meshtastic integer coordinates are scaled by 1e-7.
+            if latitude_raw is not None and abs(latitude_raw) > 90:
+                latitude_raw /= 10_000_000
+            if longitude_raw is not None and abs(longitude_raw) > 180:
+                longitude_raw /= 10_000_000
+
+            latitude = _coordinate(latitude_raw, -90, 90)
+            longitude = _coordinate(longitude_raw, -180, 180)
+            if latitude is not None and longitude is not None:
+                return {
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "name": node.get("name") or node.get("long_name") or node_id,
+                    "source": "node",
+                }
+
+    return {
+        "latitude": WEATHER_LATITUDE,
+        "longitude": WEATHER_LONGITUDE,
+        "name": WEATHER_LOCATION_NAME,
+        "source": "configured",
+    }
+
+
+weather_service = OpenWeatherService(WeatherConfig(
+    api_key=OPENWEATHER_API_KEY,
+    latitude=WEATHER_LATITUDE,
+    longitude=WEATHER_LONGITUDE,
+    location_name=WEATHER_LOCATION_NAME,
+    language=WEATHER_LANGUAGE,
+    cache_seconds=WEATHER_CACHE_SECONDS,
+))
+register_weather_routes(app, weather_service, resolve_weather_location)
 
 register_node_tools_routes(
     app=app,

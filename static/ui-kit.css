@@ -1,0 +1,657 @@
+/* MeshCenter UI Kit
+   Shared design tokens and reusable primitives.
+   Keep feature-specific layout rules in style.css. */
+
+:root {
+    /* Surfaces and text */
+    --mc-surface: #ffffff;
+    --mc-surface-soft: #f8fafc;
+    --mc-text: #0f172a;
+    --mc-muted: #64748b;
+    --mc-border: #dfe5ee;
+    --mc-accent: #1e4f8f;
+
+    /* Spacing and geometry */
+    --mc-page-pad: 14px;
+    --mc-card-pad: 16px;
+    --mc-card-radius: 12px;
+    --mc-control-height: 36px;
+    --mc-control-radius: 8px;
+
+    /* Typography */
+    --mc-page-title-size: 18px;
+    --mc-page-title-weight: 700;
+    --mc-page-title-line-height: 1.25;
+    --mc-card-title-size: 14px;
+    --mc-body-size: 12px;
+    --mc-caption-size: 10px;
+    --mc-control-font-size: 12px;
+
+    /* Workspace headers */
+    --mc-workspace-header-height: 72px;
+    --mc-workspace-header-padding-x: 16px;
+    --mc-workspace-header-padding-y: 14px;
+    --mc-workspace-header-bg: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
+    --mc-page-subtitle-gap: 4px;
+    --mc-page-subtitle-line-height: 1.4;
+
+    /* Secondary buttons - Media Refresh is the visual reference */
+    --mc-button-secondary-bg: #edf3f9;
+    --mc-button-secondary-bg-hover: #e2ebf5;
+    --mc-button-secondary-border: #cbd8e6;
+    --mc-button-secondary-border-hover: #bdccdc;
+    --mc-button-secondary-text: #274766;
+
+    /* Camera controls */
+    --mc-camera-control-label-offset: 18px;
+}
+
+/* ============================================================
+   UI KIT STAGE 2 - unified surfaces, tabs and interaction states
+   Loaded after style.css and acts as the final visual layer.
+   ============================================================ */
+
+:root {
+    /* Application surfaces */
+    --mc-bg-app: #eef2f7;
+    --mc-bg-workspace: #f5f7fa;
+    --mc-bg-panel: #ffffff;
+    --mc-bg-subtle: #f7f9fc;
+    --mc-bg-muted: #eef3f8;
+    --mc-bg-media-stage: #e9edf2;
+
+    /* Borders */
+    --mc-border: #d7e0ea;
+    --mc-border-soft: #e4eaf1;
+    --mc-border-active: #2f73d9;
+    --mc-border-focus: #1f6feb;
+
+    /* Brand / interaction */
+    --mc-primary: #1f6fdb;
+    --mc-primary-hover: #175fc0;
+    --mc-primary-soft: #eaf3ff;
+    --mc-primary-muted: #dbeafd;
+
+    /* Text */
+    --mc-text-primary: #10233f;
+    --mc-text-secondary: #58708f;
+    --mc-text-muted: #8798ad;
+    --mc-text-inverse: #ffffff;
+
+    /* Status */
+    --mc-success: #27b96f;
+    --mc-success-soft: #e9f8f0;
+    --mc-warning: #e6ad22;
+    --mc-warning-soft: #fff7df;
+    --mc-danger: #e6505d;
+    --mc-danger-soft: #fdecee;
+    --mc-info: #2f80ed;
+    --mc-info-soft: #eaf3ff;
+
+    /* Tabs */
+    --mc-tab-bg: #f7f9fc;
+    --mc-tab-bg-hover: #ffffff;
+    --mc-tab-bg-active: #ffffff;
+    --mc-tab-text: #334b68;
+    --mc-tab-text-active: #102f5c;
+    --mc-tab-line-active: #214f91;
+
+    /* Elevation */
+    --mc-shadow-panel: 0 2px 8px rgba(15, 35, 63, 0.045);
+    --mc-shadow-hover: 0 6px 16px rgba(15, 35, 63, 0.09);
+
+    /* Backward-compatible aliases */
+    --mc-surface: var(--mc-bg-panel);
+    --mc-surface-soft: var(--mc-bg-subtle);
+    --mc-text: var(--mc-text-primary);
+    --mc-muted: var(--mc-text-secondary);
+    --mc-accent: var(--mc-tab-line-active);
+}
+
+/* ---------- Global surfaces ---------- */
+body {
+    background: var(--mc-bg-app);
+    color: var(--mc-text-primary);
+}
+
+.app-container,
+.main-layout {
+    background: var(--mc-bg-workspace);
+}
+
+.chat-area,
+.video-view,
+.workspace-view,
+.media-view,
+.system-view,
+.settings-view {
+    background: var(--mc-bg-workspace);
+}
+
+.base-sidebar,
+.sidebar {
+    background: var(--mc-bg-subtle);
+    border-color: var(--mc-border);
+}
+
+/* ---------- Shared panel language ---------- */
+.video-panel,
+.media-panel,
+.system-panel,
+.settings-header,
+.settings-card,
+.node-details,
+.node-detail-card,
+.node-position-card {
+    background: var(--mc-bg-panel);
+    border-color: var(--mc-border);
+    box-shadow: var(--mc-shadow-panel);
+}
+
+.system-card,
+.node-detail-pane .node-detail-section,
+.node-detail-overview-card,
+.node-detail-radio-card,
+.node-detail-data-section,
+.node-detail-log-summary,
+.node-event-history,
+.node-tool-result,
+.camera-image-controls {
+    background: var(--mc-bg-subtle);
+    border-color: var(--mc-border-soft);
+}
+
+.video-header,
+.media-header,
+.system-header,
+.settings-header {
+    background: var(--mc-bg-panel);
+    border-color: var(--mc-border);
+}
+
+.video-frame-wrap,
+.media-preview {
+    background: var(--mc-bg-media-stage);
+}
+
+.video-controls,
+.video-info-bar,
+.camera-image-controls,
+.media-content {
+    background: var(--mc-bg-subtle);
+    border-color: var(--mc-border-soft);
+}
+
+/* ---------- Primary application tabs ---------- */
+.main-content-tabs {
+    background: var(--mc-bg-workspace);
+    border-bottom-color: var(--mc-border);
+}
+
+.main-content-tab {
+    background: var(--mc-tab-bg);
+    color: var(--mc-tab-text);
+    border: 1px solid var(--mc-border-soft);
+    border-bottom: 3px solid transparent;
+    border-radius: 10px 10px 0 0;
+    box-shadow: none;
+}
+
+.main-content-tab:hover {
+    background: var(--mc-tab-bg-hover);
+    color: var(--mc-tab-text-active);
+}
+
+.main-content-tab.active {
+    background: var(--mc-tab-bg-active);
+    color: var(--mc-tab-text-active);
+    border-color: var(--mc-border);
+    border-bottom-color: var(--mc-tab-line-active);
+    box-shadow: none;
+}
+
+/* ---------- Secondary tabs: Camera and Nodes ---------- */
+.camera-control-tabs,
+.node-detail-tabs {
+    background: transparent;
+    border-bottom-color: var(--mc-border);
+}
+
+.camera-control-tab,
+.node-detail-tab {
+    background: var(--mc-tab-bg);
+    color: var(--mc-tab-text);
+    border-color: var(--mc-border-soft);
+    box-shadow: none;
+}
+
+.camera-control-tab:hover,
+.node-detail-tab:hover {
+    background: var(--mc-tab-bg-hover);
+    color: var(--mc-tab-text-active);
+    border-color: var(--mc-border);
+}
+
+.camera-control-tab.active,
+.node-detail-tab.active {
+    background: var(--mc-tab-bg-active);
+    color: var(--mc-primary);
+    border-color: var(--mc-border);
+    border-bottom-color: var(--mc-primary);
+    box-shadow: none;
+}
+
+/* ---------- Compact tabs / range selectors ---------- */
+.time-btn,
+.cpu-range-btn,
+.telemetry-time-controls .time-btn {
+    background: var(--mc-bg-subtle);
+    color: var(--mc-text-secondary);
+    border-color: var(--mc-border);
+}
+
+.time-btn:hover,
+.cpu-range-btn:hover,
+.telemetry-time-controls .time-btn:hover {
+    background: var(--mc-primary-soft);
+    color: var(--mc-primary);
+}
+
+.time-btn.active,
+.cpu-range-btn.active,
+.telemetry-time-controls .time-btn.active {
+    background: var(--mc-primary);
+    color: var(--mc-text-inverse);
+    border-color: var(--mc-primary);
+}
+
+/* ---------- Nodes panel ---------- */
+.nodes-section,
+.nodes-controls,
+.nodes-scroll {
+    background: var(--mc-bg-workspace);
+}
+
+.node-card {
+    background: var(--mc-bg-panel);
+    border-color: var(--mc-border);
+    box-shadow: none;
+}
+
+.node-card:hover {
+    background: var(--mc-bg-panel);
+    border-color: #b9c8d8;
+    box-shadow: var(--mc-shadow-hover);
+}
+
+.node-card.selected {
+    background: var(--mc-primary-soft);
+    border-color: #87bce7;
+    box-shadow: 0 0 0 1px rgba(47, 115, 217, 0.12);
+}
+
+.node-card.favorite {
+    background: var(--mc-warning-soft);
+    border-color: #e2bd45;
+}
+
+.node-card.ignored {
+    background: var(--mc-danger-soft);
+    border-color: #ebc5c9;
+}
+
+.node-details {
+    background: var(--mc-bg-panel);
+}
+
+.node-detail-empty,
+.node-detail-placeholder,
+.node-detail-pane .empty-state,
+.node-event-history-empty {
+    background: var(--mc-bg-subtle);
+    color: var(--mc-text-muted);
+    border-color: var(--mc-border-soft);
+}
+
+/* ---------- Media ---------- */
+.media-content {
+    background: var(--mc-bg-panel);
+}
+
+.media-toolbar {
+    border-bottom-color: var(--mc-border-soft);
+}
+
+.media-item {
+    background: var(--mc-bg-panel);
+    border-color: var(--mc-border);
+    box-shadow: var(--mc-shadow-panel);
+}
+
+.media-item:hover {
+    border-color: #b9c8d8;
+    box-shadow: var(--mc-shadow-hover);
+}
+
+.media-sort-label,
+.media-icon-btn {
+    background: var(--mc-bg-muted);
+    border-color: var(--mc-border);
+    color: var(--mc-text-secondary);
+}
+
+.media-delete-all-btn {
+    background: var(--mc-danger-soft);
+    border-color: #efc8cc;
+    color: #a23e48;
+}
+
+/* ---------- System ---------- */
+.system-card {
+    background: var(--mc-bg-subtle);
+    border-color: var(--mc-border);
+}
+
+.system-row {
+    border-bottom-color: var(--mc-border-soft);
+}
+
+.system-row span,
+.system-subtitle {
+    color: var(--mc-text-secondary);
+}
+
+.system-row strong,
+.system-card-title,
+.system-header h3 {
+    color: var(--mc-text-primary);
+}
+
+/* ---------- Settings: color adoption only, no layout changes ---------- */
+.settings-view {
+    background: var(--mc-bg-workspace);
+}
+
+.settings-header,
+.settings-card {
+    background: var(--mc-bg-panel);
+    border-color: var(--mc-border);
+    box-shadow: var(--mc-shadow-panel);
+}
+
+.settings-title,
+.settings-card-title,
+.settings-option-label {
+    color: var(--mc-text-primary);
+}
+
+.settings-subtitle,
+.settings-card-text {
+    color: var(--mc-text-secondary);
+}
+
+.settings-segmented button,
+.map-provider-select,
+.reference-location-card select,
+.reference-location-card input {
+    background: var(--mc-bg-subtle);
+    border-color: var(--mc-border);
+    color: var(--mc-text-primary);
+}
+
+.settings-segmented button:hover {
+    background: var(--mc-primary-soft);
+}
+
+.settings-segmented button.active {
+    background: var(--mc-primary);
+    border-color: var(--mc-primary);
+    color: var(--mc-text-inverse);
+}
+
+/* ---------- Buttons ---------- */
+.mc-refresh-btn,
+.media-refresh-btn,
+.system-refresh-btn,
+.media-primary-btn {
+    background: var(--mc-bg-muted);
+    border-color: var(--mc-border);
+    color: #274766;
+}
+
+.mc-refresh-btn:hover,
+.media-refresh-btn:hover,
+.system-refresh-btn:hover,
+.media-primary-btn:hover {
+    background: var(--mc-primary-soft);
+    border-color: #b8cce2;
+    color: var(--mc-primary-hover);
+}
+
+.screenshot-btn,
+.primary-btn,
+.send-btn {
+    background: var(--mc-primary);
+    color: var(--mc-text-inverse);
+    border-color: var(--mc-primary);
+}
+
+.screenshot-btn:hover,
+.primary-btn:hover,
+.send-btn:hover {
+    background: var(--mc-primary-hover);
+    border-color: var(--mc-primary-hover);
+}
+
+/* ---------- Status colors ---------- */
+.status-online,
+.status-ready,
+.status-running,
+.status-ok,
+.text-success {
+    color: var(--mc-success);
+}
+
+.status-warning,
+.text-warning {
+    color: var(--mc-warning);
+}
+
+.status-offline,
+.status-error,
+.text-danger {
+    color: var(--mc-danger);
+}
+
+/* ---------- Focus and keyboard accessibility ---------- */
+button:focus,
+select:focus,
+input:focus,
+a:focus {
+    outline: none;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+    outline: 2px solid var(--mc-border-focus);
+    outline-offset: 2px;
+}
+
+.main-content-tab:focus-visible,
+.camera-control-tab:focus-visible,
+.node-detail-tab:focus-visible {
+    outline-offset: -2px;
+}
+
+/* ---------- Scrollbars ---------- */
+.media-content::-webkit-scrollbar-track,
+.nodes-scroll::-webkit-scrollbar-track,
+.settings-view::-webkit-scrollbar-track,
+.system-view::-webkit-scrollbar-track {
+    background: var(--mc-bg-subtle);
+}
+
+.media-content::-webkit-scrollbar-thumb,
+.nodes-scroll::-webkit-scrollbar-thumb,
+.settings-view::-webkit-scrollbar-thumb,
+.system-view::-webkit-scrollbar-thumb {
+    background: #9aa8b8;
+    border-radius: 999px;
+}
+
+
+/* ============================================================
+   UI KIT STAGE 3 - Workspace structure and reliable scrolling
+   ============================================================ */
+
+/* System: keep the common page header visible and scroll the content area. */
+.system-view {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.system-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.system-header.mc-workspace-header {
+    flex: 0 0 var(--mc-workspace-header-height);
+}
+
+.system-layout {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+}
+
+.system-layout::-webkit-scrollbar {
+    width: 8px;
+}
+
+.system-layout::-webkit-scrollbar-track {
+    background: var(--mc-bg-subtle);
+}
+
+.system-layout::-webkit-scrollbar-thumb {
+    background: #9aa8b8;
+    border-radius: 999px;
+}
+
+.system-layout::-webkit-scrollbar-thumb:hover {
+    background: #7f8fa2;
+}
+
+/* Settings: use the same outer workspace panel and header structure as System. */
+.settings-view {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    padding: var(--mc-page-pad);
+    box-sizing: border-box;
+}
+
+.settings-panel {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+    background: var(--mc-bg-panel);
+    border: 1px solid var(--mc-border);
+    border-radius: var(--mc-card-radius);
+    box-shadow: var(--mc-shadow-panel);
+    box-sizing: border-box;
+}
+
+.settings-header.mc-workspace-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 0 0 var(--mc-workspace-header-height);
+    height: var(--mc-workspace-header-height);
+    min-height: var(--mc-workspace-header-height);
+    margin: 0;
+    padding: var(--mc-workspace-header-padding-y) var(--mc-workspace-header-padding-x);
+    background: var(--mc-bg-panel);
+    border: 0;
+    border-bottom: 1px solid var(--mc-border);
+    border-radius: 0;
+    box-shadow: none;
+    box-sizing: border-box;
+}
+
+.settings-header .workspace-page-title {
+    margin: 0;
+    color: var(--mc-text-primary);
+    font-size: var(--mc-page-title-size);
+    font-weight: var(--mc-page-title-weight);
+    line-height: var(--mc-page-title-line-height);
+}
+
+.settings-header .workspace-page-subtitle {
+    margin: var(--mc-page-subtitle-gap) 0 0;
+    color: var(--mc-text-secondary);
+    font-size: var(--mc-body-size);
+    font-weight: 400;
+    line-height: var(--mc-page-subtitle-line-height);
+}
+
+.settings-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 14px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+    box-sizing: border-box;
+}
+
+.settings-grid::-webkit-scrollbar {
+    width: 8px;
+}
+
+.settings-grid::-webkit-scrollbar-track {
+    background: var(--mc-bg-subtle);
+}
+
+.settings-grid::-webkit-scrollbar-thumb {
+    background: #9aa8b8;
+    border-radius: 999px;
+}
+
+.settings-grid::-webkit-scrollbar-thumb:hover {
+    background: #7f8fa2;
+}
+
+
+/* ============================================================
+   UI KIT STAGE 3.1 - Settings header parity with System
+   ============================================================ */
+.settings-panel > .settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 0 0 var(--mc-workspace-header-height);
+    height: var(--mc-workspace-header-height);
+    min-height: var(--mc-workspace-header-height);
+    margin: 0;
+    padding: var(--mc-workspace-header-padding-y) var(--mc-workspace-header-padding-x);
+    background: var(--mc-bg-panel);
+    border: 0;
+    border-bottom: 1px solid var(--mc-border);
+    border-radius: 0;
+    box-shadow: none;
+    box-sizing: border-box;
+}

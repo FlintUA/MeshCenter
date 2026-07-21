@@ -1,6 +1,9 @@
 from copy import deepcopy
 
 from flask import jsonify, request
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+import json
 
 
 DEFAULT_SETTINGS = {
@@ -26,6 +29,7 @@ DEFAULT_SETTINGS = {
             "longitude": None,
         },
         "node_id": "",
+        "place_name": "",
     },
 }
 
@@ -147,6 +151,10 @@ def normalize_settings(settings):
         reference_location.get("node_id", "")
     ).strip()
 
+    reference_place_name = str(
+        reference_location.get("place_name", "")
+    ).strip()
+
     manual = reference_location.get("manual", {})
     if not isinstance(manual, dict):
         manual = {}
@@ -198,9 +206,52 @@ def normalize_settings(settings):
                 "longitude": manual_longitude,
             },
             "node_id": reference_node_id,
+            "place_name": reference_place_name,
         },
     }
 
+
+
+def _reverse_geocode(latitude, longitude):
+    query = urlencode({
+        "format": "jsonv2",
+        "lat": f"{latitude:.7f}",
+        "lon": f"{longitude:.7f}",
+        "zoom": 10,
+        "addressdetails": 1,
+        "accept-language": "en",
+    })
+
+    request_object = Request(
+        f"https://nominatim.openstreetmap.org/reverse?{query}",
+        headers={
+            "User-Agent": "MeshCenter/1.0 (reference-location)",
+            "Accept": "application/json",
+        },
+    )
+
+    try:
+        with urlopen(request_object, timeout=6) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return ""
+
+    address = payload.get("address") or {}
+    locality = (
+        address.get("city")
+        or address.get("town")
+        or address.get("village")
+        or address.get("municipality")
+        or address.get("county")
+        or address.get("state")
+        or ""
+    )
+    country = address.get("country") or ""
+
+    if locality and country:
+        return f"{locality}, {country}"
+
+    return locality or country
 
 def register_settings_routes(
     app,
@@ -218,6 +269,25 @@ def register_settings_routes(
         return jsonify({
             "ok": True,
             "settings": normalized,
+        })
+
+
+    @app.route("/api/settings/reference-location-name", methods=["POST"])
+    @handle_errors
+    def api_reference_location_name():
+        data = request.get_json(force=True) or {}
+        latitude = _normalize_coordinate(data.get("latitude"), -90.0, 90.0)
+        longitude = _normalize_coordinate(data.get("longitude"), -180.0, 180.0)
+
+        if latitude is None or longitude is None:
+            return jsonify({
+                "ok": False,
+                "error": "Invalid coordinates",
+            }), 400
+
+        return jsonify({
+            "ok": True,
+            "place_name": _reverse_geocode(latitude, longitude),
         })
 
     @app.route("/api/settings", methods=["POST"])

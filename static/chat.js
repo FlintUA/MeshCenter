@@ -1793,7 +1793,7 @@ async function loadMessages() {
                     : '';
 
                 return `
-                    <div class="${cardClass}" data-node-id="${escapeHtml(node.node_id)}" onclick="selectNode('${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name)}')">
+                    <div class="${cardClass}" data-node-id="${escapeHtml(node.node_id)}">
                         <div class="node-card-topline">
                             <span class="node-favorite-slot"
                                 title="${isFavorite ? 'Favorite node' : 'Not favorite'}">
@@ -4277,6 +4277,30 @@ function installCompactNodeCardStyles() {
 }
 
 installCompactNodeCardStyles();
+
+function installNodeCardClickHandler() {
+    const nodesList = document.getElementById('nodesList');
+    if (!nodesList || nodesList.dataset.nodeClickHandlerInstalled === '1') return;
+
+    nodesList.dataset.nodeClickHandlerInstalled = '1';
+    nodesList.addEventListener('click', event => {
+        const card = event.target.closest('.node-card');
+        if (!card || !nodesList.contains(card)) return;
+
+        // Preserve independent controls if interactive elements are added later.
+        if (event.target.closest('button, a, input, select, textarea, [data-stop-node-select]')) {
+            return;
+        }
+
+        const nodeId = card.dataset.nodeId;
+        if (!nodeId) return;
+
+        const node = nodeCache.find(item => String(item.node_id) === String(nodeId));
+        const nodeName = node?.clean_name || node?.name || nodeId;
+
+        selectNode(nodeId, nodeName);
+    });
+}
 
 function selectNode(nodeId, nodeName) {
     // Даже если эта нода уже выбрана сверху, восстанавливаем выделение
@@ -8747,3 +8771,9 @@ document.addEventListener('change', event => {
         updateReferenceLocationSaveButton();
     }
 });
+// Install delegated node-card selection after the DOM is available.
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', installNodeCardClickHandler, { once: true });
+} else {
+    installNodeCardClickHandler();
+}

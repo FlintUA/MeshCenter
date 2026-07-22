@@ -372,11 +372,11 @@ body {
     background: var(--mc-bg-workspace);
 }
 
-.settings-header,
+.system-card,
 .settings-card {
-    background: var(--mc-bg-panel);
-    border-color: var(--mc-border);
-    box-shadow: var(--mc-shadow-panel);
+    background: var(--mc-bg-subtle);
+    border: 1px solid var(--mc-border);
+    box-shadow: none;
 }
 
 .settings-title,
@@ -654,4 +654,595 @@ a:focus-visible,
     border-radius: 0;
     box-shadow: none;
     box-sizing: border-box;
+}
+
+/* ============================================================
+   UI KIT v1.0 - workspace alignment and shared scrollbars
+   Final visual layer. Feature layout remains in style.css.
+   ============================================================ */
+:root {
+    /* Scrollbars */
+    --mc-scrollbar-size: 8px;
+    --mc-scrollbar-track: var(--mc-bg-subtle);
+    --mc-scrollbar-thumb: #9fb3c8;
+    --mc-scrollbar-thumb-hover: #829bb5;
+
+    /* Shared workspace surfaces */
+    --mc-workspace-panel-bg: var(--mc-bg-panel);
+    --mc-workspace-content-bg: var(--mc-bg-subtle);
+    --mc-workspace-border: var(--mc-border);
+}
+
+/* Camera must start at exactly the same top offset as System/Media. */
+.video-view {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    height: 100%;
+    min-height: 0;
+    padding: var(--mc-page-pad);
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.video-panel {
+    flex: 1 1 auto;
+    align-self: stretch;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    margin: 0;
+    overflow: hidden;
+    background: var(--mc-workspace-panel-bg);
+    border: 1px solid var(--mc-workspace-border);
+    border-radius: var(--mc-card-radius);
+    box-shadow: var(--mc-shadow-panel);
+    box-sizing: border-box;
+}
+
+/* Same surface hierarchy in every workspace. */
+.video-header,
+.media-header,
+.system-header,
+.settings-header {
+    background: var(--mc-workspace-panel-bg);
+    border-color: var(--mc-workspace-border);
+}
+
+.video-frame-wrap {
+    background: var(--mc-bg-media-stage);
+}
+
+.video-info-bar,
+.video-controls,
+.media-content,
+.system-layout,
+.settings-grid {
+    border-color: var(--mc-border-soft);
+}
+
+/* Shared scrollbar geometry and blue-grey UI Kit palette. */
+.media-content,
+.system-layout,
+.settings-grid,
+.nodes-scroll,
+.chat-list-panel,
+.messages-panel,
+.chat-list-container,
+.messages-container {
+    scrollbar-width: thin;
+    scrollbar-color: var(--mc-scrollbar-thumb) var(--mc-scrollbar-track);
+}
+
+.media-content::-webkit-scrollbar,
+.system-layout::-webkit-scrollbar,
+.settings-grid::-webkit-scrollbar,
+.nodes-scroll::-webkit-scrollbar,
+.chat-list-panel::-webkit-scrollbar,
+.messages-panel::-webkit-scrollbar,
+.chat-list-container::-webkit-scrollbar,
+.messages-container::-webkit-scrollbar {
+    width: var(--mc-scrollbar-size);
+    height: var(--mc-scrollbar-size);
+}
+
+.media-content::-webkit-scrollbar-track,
+.system-layout::-webkit-scrollbar-track,
+.settings-grid::-webkit-scrollbar-track,
+.nodes-scroll::-webkit-scrollbar-track,
+.chat-list-panel::-webkit-scrollbar-track,
+.messages-panel::-webkit-scrollbar-track,
+.chat-list-container::-webkit-scrollbar-track,
+.messages-container::-webkit-scrollbar-track {
+    background: var(--mc-scrollbar-track);
+    border-radius: 999px;
+}
+
+.media-content::-webkit-scrollbar-thumb,
+.system-layout::-webkit-scrollbar-thumb,
+.settings-grid::-webkit-scrollbar-thumb,
+.nodes-scroll::-webkit-scrollbar-thumb,
+.chat-list-panel::-webkit-scrollbar-thumb,
+.messages-panel::-webkit-scrollbar-thumb,
+.chat-list-container::-webkit-scrollbar-thumb,
+.messages-container::-webkit-scrollbar-thumb {
+    min-height: 34px;
+    background: var(--mc-scrollbar-thumb);
+    border: 2px solid var(--mc-scrollbar-track);
+    border-radius: 999px;
+    background-clip: padding-box;
+}
+
+.media-content::-webkit-scrollbar-thumb:hover,
+.system-layout::-webkit-scrollbar-thumb:hover,
+.settings-grid::-webkit-scrollbar-thumb:hover,
+.nodes-scroll::-webkit-scrollbar-thumb:hover,
+.chat-list-panel::-webkit-scrollbar-thumb:hover,
+.messages-panel::-webkit-scrollbar-thumb:hover,
+.chat-list-container::-webkit-scrollbar-thumb:hover,
+.messages-container::-webkit-scrollbar-thumb:hover {
+    background: var(--mc-scrollbar-thumb-hover);
+    border-color: var(--mc-scrollbar-track);
+}
+
+/* Keep scrollbars inside rounded workspace panels. */
+.media-panel,
+.system-panel,
+.settings-panel,
+.video-panel {
+    overflow: hidden;
+}
+
+/* ============================================================
+   UI KIT v1.0 - unified workspace header surface
+   Camera, Media, System and Settings use one visual component.
+   ============================================================ */
+:root {
+    --mc-workspace-header-bg: #f4f7fb;
+    --mc-workspace-header-border: #d7e0ea;
+}
+
+.video-header.mc-workspace-header,
+.media-header.mc-workspace-header,
+.system-header.mc-workspace-header,
+.settings-header.mc-workspace-header {
+    background: var(--mc-workspace-header-bg);
+    border-color: var(--mc-workspace-header-border);
+    border-bottom: 1px solid var(--mc-workspace-header-border);
+    box-shadow: none;
+}
+
+/* ============================================================
+   WORKSPACE FOUNDATION
+   Device-local interface preferences: panels, theme and density.
+   ============================================================ */
+.dock-left {
+    position: relative;
+}
+
+.dock-workspace-btn {
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 9px;
+    border: 1px solid #d5dce7;
+    border-radius: 7px;
+    background: #fff;
+    color: #52627a;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease;
+}
+
+.dock-workspace-btn:hover,
+.dock-workspace-btn.active {
+    color: #24457b;
+    border-color: #b9c7db;
+    background: #edf3fb;
+}
+
+.dock-workspace-btn:focus-visible,
+.workspace-popover button:focus-visible,
+.workspace-popover input:focus-visible + span {
+    outline: 2px solid #6e9fe8;
+    outline-offset: 1px;
+}
+
+.dock-workspace-btn-icon {
+    font-size: 15px;
+    line-height: 1;
+}
+
+.dock-workspace-chevron {
+    font-size: 9px;
+    opacity: .7;
+}
+
+.workspace-popover[hidden] {
+    display: none;
+}
+
+.workspace-popover {
+    position: absolute;
+    left: 70px;
+    bottom: calc(100% + 10px);
+    z-index: 1100;
+    width: 286px;
+    overflow: hidden;
+    border: 1px solid #d7dee8;
+    border-radius: 11px;
+    background: #fff;
+    color: #26364b;
+    box-shadow: 0 14px 34px rgba(15, 23, 42, .2);
+    user-select: none;
+}
+
+.workspace-popover::after {
+    content: "";
+    position: absolute;
+    left: 54px;
+    bottom: -6px;
+    width: 11px;
+    height: 11px;
+    border-right: 1px solid #d7dee8;
+    border-bottom: 1px solid #d7dee8;
+    background: #fff;
+    transform: rotate(45deg);
+}
+
+.workspace-popover-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 13px 14px 11px;
+    border-bottom: 1px solid #e5eaf0;
+    background: #f7f9fc;
+}
+
+.workspace-popover-header strong,
+.workspace-popover-header span {
+    display: block;
+}
+
+.workspace-popover-header strong {
+    font-size: 14px;
+}
+
+.workspace-popover-header span {
+    margin-top: 2px;
+    color: #7a8798;
+    font-size: 10px;
+    font-weight: 500;
+}
+
+.workspace-popover-close {
+    width: 24px;
+    height: 24px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #718096;
+    font-size: 20px;
+    line-height: 20px;
+    cursor: pointer;
+}
+
+.workspace-popover-close:hover {
+    background: #e8edf4;
+    color: #334155;
+}
+
+.workspace-menu-section {
+    padding: 10px 13px;
+    border-bottom: 1px solid #edf0f4;
+}
+
+.workspace-menu-section:last-child {
+    border-bottom: 0;
+}
+
+.workspace-menu-title {
+    margin-bottom: 7px;
+    color: #8995a5;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+.workspace-setting-row {
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.workspace-setting-row small {
+    display: block;
+    margin-top: 1px;
+    color: #8a96a6;
+    font-size: 9px;
+    font-weight: 500;
+}
+
+.workspace-setting-row input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.workspace-switch {
+    position: relative;
+    width: 34px;
+    height: 19px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: #c7d0dc;
+    transition: background-color .16s ease;
+}
+
+.workspace-switch::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, .25);
+    transition: transform .16s ease;
+}
+
+.workspace-setting-row input:checked + .workspace-switch {
+    background: #3f6fae;
+}
+
+.workspace-setting-row input:checked + .workspace-switch::after {
+    transform: translateX(15px);
+}
+
+.workspace-theme-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7px;
+}
+
+.workspace-theme-option {
+    cursor: pointer;
+}
+
+.workspace-theme-option input {
+    position: absolute;
+    opacity: 0;
+}
+
+.workspace-theme-option span {
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #dbe2eb;
+    border-radius: 7px;
+    background: #fafbfd;
+    color: #5c6b7e;
+    font-size: 11px;
+    font-weight: 700;
+    transition: .16s ease;
+}
+
+.workspace-theme-option input:checked + span {
+    border-color: #6f94c6;
+    background: #eaf2fc;
+    color: #244d82;
+    box-shadow: inset 0 0 0 1px rgba(63, 111, 174, .08);
+}
+
+/* Compact mode intentionally changes density only, not information architecture. */
+body.workspace-compact .base-brand-strip {
+    min-height: 44px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+}
+
+body.workspace-compact .base-card,
+body.workspace-compact .sensors-card,
+body.workspace-compact .telemetry-section,
+body.workspace-compact .weather-card,
+body.workspace-compact .base-reference-location {
+    margin-top: 6px;
+    margin-bottom: 6px;
+}
+
+body.workspace-compact .chat-header,
+body.workspace-compact .video-header.mc-workspace-header,
+body.workspace-compact .media-header.mc-workspace-header,
+body.workspace-compact .system-header.mc-workspace-header,
+body.workspace-compact .settings-header.mc-workspace-header {
+    min-height: 40px;
+    height: 40px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+}
+
+body.workspace-compact .sidebar-tab {
+    min-height: 34px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
+/* Dark theme. It is scoped to Workspace and does not alter application data. */
+html[data-theme="dark"] {
+    color-scheme: dark;
+    --mc-workspace-header-bg: #202936;
+    --mc-workspace-header-border: #364253;
+    --mc-border: #364253;
+    --mc-scrollbar-track: #202936;
+    --mc-scrollbar-thumb: #526174;
+    --mc-scrollbar-thumb-hover: #67788d;
+}
+
+html[data-theme="dark"] body {
+    background: #111821;
+    color: #dbe5f1;
+}
+
+html[data-theme="dark"] .app-container,
+html[data-theme="dark"] .main-layout,
+html[data-theme="dark"] .chat-area,
+html[data-theme="dark"] .chat-header,
+html[data-theme="dark"] .chat-list-container,
+html[data-theme="dark"] .messages-view,
+html[data-theme="dark"] .video-panel,
+html[data-theme="dark"] .media-panel,
+html[data-theme="dark"] .system-panel,
+html[data-theme="dark"] .settings-panel,
+html[data-theme="dark"] .base-sidebar,
+html[data-theme="dark"] .sidebar {
+    background-color: #18212c;
+    color: #dbe5f1;
+}
+
+html[data-theme="dark"] .base-card,
+html[data-theme="dark"] .sensors-card,
+html[data-theme="dark"] .telemetry-section,
+html[data-theme="dark"] .weather-card,
+html[data-theme="dark"] .base-reference-location,
+html[data-theme="dark"] .node-card,
+html[data-theme="dark"] .chat-item,
+html[data-theme="dark"] .settings-card,
+html[data-theme="dark"] .system-card {
+    background-color: #202a36;
+    border-color: #364253;
+    color: #dbe5f1;
+}
+
+html[data-theme="dark"] .chat-title,
+html[data-theme="dark"] .workspace-page-title,
+html[data-theme="dark"] .base-card-title,
+html[data-theme="dark"] .sensors-title,
+html[data-theme="dark"] .telemetry-title,
+html[data-theme="dark"] .weather-card-title {
+    color: #edf4fb;
+}
+
+html[data-theme="dark"] .chat-subtitle,
+html[data-theme="dark"] .workspace-page-subtitle,
+html[data-theme="dark"] .sensor-label,
+html[data-theme="dark"] .node-meta,
+html[data-theme="dark"] .message-time {
+    color: #96a6b8;
+}
+
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea,
+html[data-theme="dark"] .message-input {
+    background-color: #111a24;
+    border-color: #3b4859;
+    color: #e7eef7;
+}
+
+html[data-theme="dark"] .status-dock {
+    background: #151e29;
+    border-top-color: #344050;
+    color: #cbd7e4;
+    box-shadow: 0 -3px 12px rgba(0, 0, 0, .28);
+}
+
+html[data-theme="dark"] .dock-panel-btn,
+html[data-theme="dark"] .dock-workspace-btn {
+    background: #222d3a;
+    border-color: #3b4859;
+    color: #b8c6d6;
+}
+
+html[data-theme="dark"] .dock-panel-btn:hover,
+html[data-theme="dark"] .dock-workspace-btn:hover,
+html[data-theme="dark"] .dock-workspace-btn.active {
+    background: #2b3949;
+    border-color: #52657c;
+    color: #edf4fb;
+}
+
+html[data-theme="dark"] .dock-panel-btn.panel-is-hidden {
+    background: #4d6f9f;
+    border-color: #6688b7;
+    color: #fff;
+}
+
+html[data-theme="dark"] .dock-workspace-label,
+html[data-theme="dark"] .dock-right {
+    color: #91a2b6;
+}
+
+html[data-theme="dark"] .workspace-popover {
+    background: #202a36;
+    border-color: #445164;
+    color: #e4edf7;
+    box-shadow: 0 16px 38px rgba(0, 0, 0, .5);
+}
+
+html[data-theme="dark"] .workspace-popover::after {
+    background: #202a36;
+    border-color: #445164;
+}
+
+html[data-theme="dark"] .workspace-popover-header {
+    background: #18212c;
+    border-bottom-color: #364253;
+}
+
+html[data-theme="dark"] .workspace-popover-header span,
+html[data-theme="dark"] .workspace-setting-row small,
+html[data-theme="dark"] .workspace-menu-title {
+    color: #91a2b6;
+}
+
+html[data-theme="dark"] .workspace-menu-section {
+    border-bottom-color: #364253;
+}
+
+html[data-theme="dark"] .workspace-setting-row {
+    color: #dbe5f1;
+}
+
+html[data-theme="dark"] .workspace-theme-option span {
+    background: #18212c;
+    border-color: #3b4859;
+    color: #aebdcd;
+}
+
+html[data-theme="dark"] .workspace-theme-option input:checked + span {
+    background: #2b405b;
+    border-color: #6688b7;
+    color: #eef5fc;
+}
+
+@media (max-width: 760px) {
+    .dock-workspace-btn span:not(.dock-workspace-btn-icon):not(.dock-workspace-chevron) {
+        display: none;
+    }
+    .dock-workspace-btn {
+        width: 28px;
+        padding: 0;
+        justify-content: center;
+    }
+    .dock-workspace-chevron {
+        display: none;
+    }
+    .workspace-popover {
+        left: 0;
+        width: min(286px, calc(100vw - 16px));
+    }
 }

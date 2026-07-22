@@ -2872,7 +2872,7 @@ body {
 }
 
 .settings-card {
-    background: #ffffff;
+    background: var(--mc-card-bg);
     border-radius: 14px;
     padding: 16px;
     border: 1px solid #e6e9ef;
@@ -8276,6 +8276,7 @@ body.context-chat-mode .settings-view {
 .system-card {
     border-color: var(--mc-border);
     border-radius: var(--mc-card-radius);
+    background: var(--mc-card-bg);
 }
 
 .video-header,
@@ -8738,3 +8739,117 @@ body.context-chat-mode .settings-view {
     }
 }
 
+
+/* ============================================================
+   WORKSPACE SHELL - STAGE 1
+   Brand belongs to the local-node panel; panel controls live in
+   the persistent bottom status dock.
+   ============================================================ */
+.header {
+    display: none;
+}
+
+.base-brand-strip {
+    flex: 0 0 auto;
+    min-height: 52px;
+    display: flex;
+    align-items: center;
+    padding: 7px 14px;
+    color: #fff;
+    background: linear-gradient(135deg, #1a2a4a 0%, #2a3a6a 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.base-brand-strip .header-brand {
+    width: 100%;
+}
+
+.base-brand-strip .app-title {
+    gap: 8px;
+    min-width: 0;
+}
+
+.base-brand-strip .app-name {
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: -0.25px;
+}
+
+.base-brand-strip .header-logo {
+    width: 24px;
+    height: 24px;
+}
+
+.base-brand-strip .header-status {
+    margin-left: 9px;
+    padding: 4px 5px;
+}
+
+.base-brand-strip .status-label {
+    font-size: 13px;
+}
+
+.dock-left {
+    gap: 10px;
+}
+
+.dock-layout-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: 0 0 auto;
+}
+
+.dock-panel-btn {
+    width: 28px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid #d5dce7;
+    border-radius: 7px;
+    background: #ffffff;
+    color: #52627a;
+    cursor: pointer;
+    transition: background-color .16s ease, border-color .16s ease,
+                color .16s ease, box-shadow .16s ease;
+}
+
+.dock-panel-btn:hover {
+    color: #24457b;
+    border-color: #b9c7db;
+    background: #edf3fb;
+}
+
+.dock-panel-btn:focus-visible {
+    outline: 2px solid #6e9fe8;
+    outline-offset: 1px;
+}
+
+.dock-panel-btn.panel-is-hidden {
+    color: #ffffff;
+    border-color: #49689f;
+    background: #49689f;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.12);
+}
+
+.dock-panel-btn svg {
+    display: block;
+}
+
+.dock-workspace-label {
+    color: #64748b;
+    white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+    .dock-workspace-label {
+        display: none;
+    }
+
+    .status-dock {
+        padding-left: 8px;
+        padding-right: 8px;
+    }
+}

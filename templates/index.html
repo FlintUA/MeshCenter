@@ -10,51 +10,6 @@
 </head>
 <body>
 <div class="app-container">
-    <!-- Header -->
-    <div class="header">
-        <div class="header-brand">
-            <h1 id="appTitle" class="app-title" title="Click to refresh page (Ctrl+F5)">
-                <img src="{{ url_for('static', filename='meshcenter_logo.png') }}" class="header-logo" alt="MeshCenter">
-                <span class="app-name">MeshCenter</span>
-            </h1>
-
-            <button type="button"
-                    class="header-status status-connecting"
-                    id="headerStatusText"
-                    title="Checking Meshtastic node status..."
-                    aria-label="Open System status">
-                <span class="status-dot"></span>
-                <span class="status-label">Checking</span>
-            </button>
-        </div>
-
-        <div class="header-actions">
-            <button class="header-btn"
-                    id="toggleBaseSidebarBtn"
-                    type="button"
-                    title="Hide Base panel"
-                    aria-label="Hide Base panel"
-                    aria-pressed="false">
-                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                    <path d="M4 4h16v16H4V4zm2 2v12h4V6H6zm6 0v12h6V6h-6z"
-                          fill="currentColor"/>
-                </svg>
-            </button>
-
-            <button class="header-btn"
-                    id="toggleSidebarBtn"
-                    type="button"
-                    title="Hide Nodes panel"
-                    aria-label="Hide Nodes panel"
-                    aria-pressed="false">
-                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                    <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"
-                          fill="currentColor"/>
-                </svg>
-            </button>
-        </div>
-    </div>
-
     <!-- Status Bar -->
     <div class="status-bar" style="display:none;">
         <span id="statusText">🟢 Connecting...</span>
@@ -65,6 +20,25 @@
     <div class="main-layout">
         <!-- Local Node Panel -->
         <aside class="base-sidebar" id="baseSidebar" aria-label="Local node information">
+            <!-- Brand strip: part of the local-node panel -->
+            <div class="base-brand-strip">
+                <div class="header-brand">
+                    <h1 id="appTitle" class="app-title" title="Click to refresh page (Ctrl+F5)">
+                        <img src="{{ url_for('static', filename='meshcenter_logo.png') }}" class="header-logo" alt="MeshCenter">
+                        <span class="app-name">MeshCenter</span>
+                    </h1>
+
+                    <button type="button"
+                            class="header-status status-connecting"
+                            id="headerStatusText"
+                            title="Checking Meshtastic node status..."
+                            aria-label="Open System status">
+                        <span class="status-dot"></span>
+                        <span class="status-label">Checking</span>
+                    </button>
+                </div>
+            </div>
+
             <!-- Base Card -->
             <div class="base-card" id="baseCard">
                 <div class="base-card-title">
@@ -1163,7 +1137,95 @@
     <!-- Status Dock -->
     <div class="status-dock" id="statusDock">
         <div class="dock-section dock-left" id="dockLeft">
-            <span>Workspace</span>
+            <div class="dock-layout-controls" aria-label="Panel visibility controls">
+                <button class="dock-panel-btn"
+                        id="toggleBaseSidebarBtn"
+                        type="button"
+                        title="Hide Base panel"
+                        aria-label="Hide Base panel"
+                        aria-pressed="false">
+                    <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+                        <rect x="3.5" y="4" width="17" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
+                        <path d="M9 4.8v14.4" fill="none" stroke="currentColor" stroke-width="1.8"/>
+                        <path d="M5.8 8h1.2M5.8 11h1.2M5.8 14h1.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                    </svg>
+                </button>
+
+                <button class="dock-panel-btn"
+                        id="toggleSidebarBtn"
+                        type="button"
+                        title="Hide Nodes panel"
+                        aria-label="Hide Nodes panel"
+                        aria-pressed="false">
+                    <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+                        <rect x="3.5" y="4" width="17" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
+                        <path d="M15 4.8v14.4" fill="none" stroke="currentColor" stroke-width="1.8"/>
+                        <path d="M17 8h1.2M17 11h1.2M17 14h1.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                    </svg>
+                </button>
+            </div>
+            <button class="dock-workspace-btn"
+                    id="workspaceMenuBtn"
+                    type="button"
+                    title="Workspace settings"
+                    aria-label="Open Workspace settings"
+                    aria-haspopup="menu"
+                    aria-expanded="false">
+                <span class="dock-workspace-btn-icon" aria-hidden="true">▦</span>
+                <span>Workspace</span>
+                <span class="dock-workspace-chevron" aria-hidden="true">▴</span>
+            </button>
+            <span class="dock-workspace-label" id="dockWorkspaceLabel">Chats</span>
+
+            <div class="workspace-popover" id="workspacePopover" role="menu" aria-label="Workspace settings" hidden>
+                <div class="workspace-popover-header">
+                    <div>
+                        <strong>Workspace</strong>
+                        <span>Interface preferences for this device</span>
+                    </div>
+                    <button type="button" class="workspace-popover-close" id="workspacePopoverClose" title="Close" aria-label="Close Workspace settings">×</button>
+                </div>
+
+                <div class="workspace-menu-section">
+                    <div class="workspace-menu-title">Panels</div>
+                    <label class="workspace-setting-row">
+                        <span>Base panel</span>
+                        <input type="checkbox" id="workspaceBasePanel" checked>
+                        <span class="workspace-switch" aria-hidden="true"></span>
+                    </label>
+                    <label class="workspace-setting-row">
+                        <span>Nodes panel</span>
+                        <input type="checkbox" id="workspaceNodesPanel" checked>
+                        <span class="workspace-switch" aria-hidden="true"></span>
+                    </label>
+                </div>
+
+                <div class="workspace-menu-section">
+                    <div class="workspace-menu-title">Appearance</div>
+                    <div class="workspace-theme-options" role="radiogroup" aria-label="Theme">
+                        <label class="workspace-theme-option">
+                            <input type="radio" name="workspaceTheme" value="light" checked>
+                            <span>☀ Light</span>
+                        </label>
+                        <label class="workspace-theme-option">
+                            <input type="radio" name="workspaceTheme" value="dark">
+                            <span>◐ Dark</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="workspace-menu-section">
+                    <div class="workspace-menu-title">Display</div>
+                    <label class="workspace-setting-row">
+                        <span>
+                            Compact mode
+                            <small>Reduced spacing and controls</small>
+                        </span>
+                        <input type="checkbox" id="workspaceCompactMode">
+                        <span class="workspace-switch" aria-hidden="true"></span>
+                    </label>
+                </div>
+            </div>
         </div>
 
         <div class="dock-section dock-center" id="dockCenter">

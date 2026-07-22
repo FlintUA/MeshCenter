@@ -4407,95 +4407,188 @@ function formatUptime(seconds) {
 // ============================================================
 // EVENT LISTENERS
 // ============================================================
-const PANEL_STORAGE_KEYS = {
-    base: 'meshcenter.basePanelHidden',
-    nodes: 'meshcenter.nodesPanelHidden'
+const WORKSPACE_STORAGE_KEY = 'meshcenter.workspace';
+const WORKSPACE_DEFAULTS = Object.freeze({
+    leftPanel: true,
+    rightPanel: true,
+    theme: 'light',
+    compactMode: false
+});
+
+const Workspace = {
+    state: { ...WORKSPACE_DEFAULTS },
+
+    load() {
+        try {
+            const stored = JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY) || '{}');
+            this.state = this.sanitize(stored);
+            this.migrateLegacyPanelSettings();
+        } catch (error) {
+            console.warn('[WORKSPACE] Unable to load preferences:', error);
+            this.state = { ...WORKSPACE_DEFAULTS };
+        }
+        return this.state;
+    },
+
+    sanitize(value) {
+        const source = value && typeof value === 'object' ? value : {};
+        return {
+            leftPanel: source.leftPanel !== false,
+            rightPanel: source.rightPanel !== false,
+            theme: source.theme === 'dark' ? 'dark' : 'light',
+            compactMode: source.compactMode === true
+        };
+    },
+
+    migrateLegacyPanelSettings() {
+        try {
+            const hasWorkspace = localStorage.getItem(WORKSPACE_STORAGE_KEY) !== null;
+            if (hasWorkspace) return;
+            const oldLeft = localStorage.getItem('meshcenter.basePanelHidden');
+            const oldRight = localStorage.getItem('meshcenter.nodesPanelHidden');
+            if (oldLeft !== null) this.state.leftPanel = oldLeft !== '1';
+            if (oldRight !== null) this.state.rightPanel = oldRight !== '1';
+            this.save();
+        } catch (error) {
+            console.warn('[WORKSPACE] Legacy preference migration failed:', error);
+        }
+    },
+
+    save() {
+        try {
+            localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(this.state));
+        } catch (error) {
+            console.warn('[WORKSPACE] Unable to save preferences:', error);
+        }
+    },
+
+    update(patch, persist = true) {
+        this.state = this.sanitize({ ...this.state, ...patch });
+        this.apply();
+        if (persist) this.save();
+    },
+
+    apply() {
+        setBasePanelVisible(this.state.leftPanel, false);
+        setNodesPanelVisible(this.state.rightPanel, false);
+        document.documentElement.dataset.theme = this.state.theme;
+        document.body.classList.toggle('workspace-compact', this.state.compactMode);
+        this.syncControls();
+    },
+
+    syncControls() {
+        const left = document.getElementById('workspaceBasePanel');
+        const right = document.getElementById('workspaceNodesPanel');
+        const compact = document.getElementById('workspaceCompactMode');
+        if (left) left.checked = this.state.leftPanel;
+        if (right) right.checked = this.state.rightPanel;
+        if (compact) compact.checked = this.state.compactMode;
+        document.querySelectorAll('input[name="workspaceTheme"]').forEach(input => {
+            input.checked = input.value === this.state.theme;
+        });
+    }
 };
-
-function readPanelHidden(storageKey) {
-    try {
-        return localStorage.getItem(storageKey) === '1';
-    } catch (error) {
-        console.warn('[LAYOUT] Unable to read panel state:', error);
-        return false;
-    }
-}
-
-function savePanelHidden(storageKey, isHidden) {
-    try {
-        localStorage.setItem(storageKey, isHidden ? '1' : '0');
-    } catch (error) {
-        console.warn('[LAYOUT] Unable to save panel state:', error);
-    }
-}
 
 function applyPanelState(panel, button, isHidden, panelName) {
     if (!panel || !button) return;
-
     panel.classList.toggle('panel-hidden', isHidden);
     button.classList.toggle('panel-is-hidden', isHidden);
     button.setAttribute('aria-pressed', String(isHidden));
-
     const action = isHidden ? 'Show' : 'Hide';
     button.title = `${action} ${panelName} panel`;
     button.setAttribute('aria-label', `${action} ${panelName} panel`);
-
-    /*
-     * Remove the old right-sidebar hidden class if it remains from an
-     * earlier interface version. Stage 2 uses panel-hidden for both sides.
-     */
     panel.classList.remove('hidden');
 }
 
+function setBasePanelVisible(isVisible, persist = true) {
+    applyPanelState(
+        document.getElementById('baseSidebar'),
+        document.getElementById('toggleBaseSidebarBtn'),
+        !Boolean(isVisible),
+        'Base'
+    );
+    if (persist) Workspace.update({ leftPanel: Boolean(isVisible) });
+}
+
+function setNodesPanelVisible(isVisible, persist = true) {
+    applyPanelState(
+        document.getElementById('sidebar'),
+        document.getElementById('toggleSidebarBtn'),
+        !Boolean(isVisible),
+        'Nodes'
+    );
+    if (persist) Workspace.update({ rightPanel: Boolean(isVisible) });
+}
+
+// Backward-compatible wrappers for older code/export names.
+// The previous UI API used "Hidden" booleans, while Workspace stores
+// the clearer "Visible" state. Keeping these wrappers prevents a startup
+// ReferenceError and allows any legacy call sites to continue working.
 function setBasePanelHidden(isHidden, persist = true) {
-    const panel = document.getElementById('baseSidebar');
-    const button = document.getElementById('toggleBaseSidebarBtn');
-
-    applyPanelState(panel, button, Boolean(isHidden), 'Base');
-
-    if (persist) {
-        savePanelHidden(PANEL_STORAGE_KEYS.base, Boolean(isHidden));
-    }
+    setBasePanelVisible(!Boolean(isHidden), persist);
 }
 
 function setNodesPanelHidden(isHidden, persist = true) {
-    const panel = document.getElementById('sidebar');
-    const button = document.getElementById('toggleSidebarBtn');
-
-    applyPanelState(panel, button, Boolean(isHidden), 'Nodes');
-
-    if (persist) {
-        savePanelHidden(PANEL_STORAGE_KEYS.nodes, Boolean(isHidden));
-    }
+    setNodesPanelVisible(!Boolean(isHidden), persist);
 }
 
-function restorePanelStates() {
-    setBasePanelHidden(
-        readPanelHidden(PANEL_STORAGE_KEYS.base),
-        false
-    );
-
-    setNodesPanelHidden(
-        readPanelHidden(PANEL_STORAGE_KEYS.nodes),
-        false
-    );
+function setWorkspacePopover(open) {
+    const popover = document.getElementById('workspacePopover');
+    const button = document.getElementById('workspaceMenuBtn');
+    if (!popover || !button) return;
+    popover.hidden = !open;
+    button.classList.toggle('active', open);
+    button.setAttribute('aria-expanded', String(open));
 }
 
-document.getElementById('toggleBaseSidebarBtn')?.addEventListener('click', () => {
-    const panel = document.getElementById('baseSidebar');
-    setBasePanelHidden(
-        !panel?.classList.contains('panel-hidden')
-    );
-});
+function initializeWorkspace() {
+    Workspace.load();
+    Workspace.apply();
 
-document.getElementById('toggleSidebarBtn')?.addEventListener('click', () => {
-    const panel = document.getElementById('sidebar');
-    setNodesPanelHidden(
-        !panel?.classList.contains('panel-hidden')
-    );
-});
+    document.getElementById('toggleBaseSidebarBtn')?.addEventListener('click', () => {
+        Workspace.update({ leftPanel: !Workspace.state.leftPanel });
+    });
+    document.getElementById('toggleSidebarBtn')?.addEventListener('click', () => {
+        Workspace.update({ rightPanel: !Workspace.state.rightPanel });
+    });
+    document.getElementById('workspaceMenuBtn')?.addEventListener('click', event => {
+        event.stopPropagation();
+        const popover = document.getElementById('workspacePopover');
+        setWorkspacePopover(Boolean(popover?.hidden));
+    });
+    document.getElementById('workspacePopoverClose')?.addEventListener('click', () => setWorkspacePopover(false));
+    document.getElementById('workspaceBasePanel')?.addEventListener('change', event => {
+        Workspace.update({ leftPanel: event.target.checked });
+    });
+    document.getElementById('workspaceNodesPanel')?.addEventListener('change', event => {
+        Workspace.update({ rightPanel: event.target.checked });
+    });
+    document.getElementById('workspaceCompactMode')?.addEventListener('change', event => {
+        Workspace.update({ compactMode: event.target.checked });
+    });
+    document.querySelectorAll('input[name="workspaceTheme"]').forEach(input => {
+        input.addEventListener('change', event => {
+            if (event.target.checked) Workspace.update({ theme: event.target.value });
+        });
+    });
+    document.addEventListener('click', event => {
+        const popover = document.getElementById('workspacePopover');
+        const button = document.getElementById('workspaceMenuBtn');
 
-restorePanelStates();
+        // The Workspace markup may be unavailable while another view is being
+        // rendered. Never let the global click handler break the rest of the UI.
+        if (!popover || !button || popover.hidden) return;
+
+        if (!popover.contains(event.target) && !button.contains(event.target)) {
+            setWorkspacePopover(false);
+        }
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') setWorkspacePopover(false);
+    });
+}
+
+initializeWorkspace();
 
 document.getElementById('nodeSearchInput')?.addEventListener('input', (e) => {
     nodeSearchTerm = e.target.value;
@@ -7427,18 +7520,18 @@ function switchMainTab(tab) {
 }
 
 function updateStatusDock(tab) {
-    const left = document.getElementById('dockLeft');
+    const workspaceLabel = document.getElementById('dockWorkspaceLabel');
     const centerText = document.getElementById('dockStatusText');
     const right = document.getElementById('dockContextText');
 
-    if (!left || !centerText || !right) return;
+    if (!workspaceLabel || !centerText || !right) return;
 
     if (tab === 'chats') {
-        left.innerHTML = '💬 Chats';
+        workspaceLabel.textContent = 'Chats';
         centerText.textContent = 'Mesh Online';
         setStatusDockContext('Nodes');
     } else if (tab === 'video') {
-        left.innerHTML = '📷 Camera';
+        workspaceLabel.textContent = 'Camera';
 
         centerText.textContent = cameraPowerEnabled
             ? (cameraActive ? 'Camera Online' : 'Camera Ready')
@@ -7448,15 +7541,19 @@ function updateStatusDock(tab) {
             ? getCurrentVideoInfoText()
             : 'Power-saving mode');
     } else if (tab === 'media') {
-        left.innerHTML = '🖼️ Media';
+        workspaceLabel.textContent = 'Media';
         centerText.textContent = 'Local Gallery';
         setStatusDockContext('Images');
+    } else if (tab === 'system') {
+        workspaceLabel.textContent = 'System';
+        centerText.textContent = 'System Monitor';
+        setStatusDockContext('MeshCenter');
     } else if (tab === 'settings') {
-        left.innerHTML = '⚙️ Settings';
+        workspaceLabel.textContent = 'Settings';
         centerText.textContent = 'Ready';
         setStatusDockContext('MeshCenter');
     } else {
-        left.innerHTML = 'Workspace';
+        workspaceLabel.textContent = 'Workspace';
         centerText.textContent = 'Ready';
         setStatusDockContext('MeshCenter');
     }

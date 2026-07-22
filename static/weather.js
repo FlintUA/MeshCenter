@@ -15,16 +15,31 @@ function weatherText(id, value, fallback = '--') {
 }
 
 function weatherEmoji(code, condition) {
-    const icon = String(code || '');
+    const icon = String(code || '').toLowerCase();
     const name = String(condition || '').toLowerCase();
-    const isNight = icon.endsWith('n');
 
+    // Prefer the OpenWeather icon code. It is more precise and stable than
+    // matching translated/free-form description text.
+    const iconMap = {
+        '01d': '☀️', '01n': '🌙',
+        '02d': '🌤️', '02n': '☁️',
+        '03d': '☁️', '03n': '☁️',
+        '04d': '☁️', '04n': '☁️',
+        '09d': '🌧️', '09n': '🌧️',
+        '10d': '🌦️', '10n': '🌧️',
+        '11d': '⛈️', '11n': '⛈️',
+        '13d': '🌨️', '13n': '🌨️',
+        '50d': '🌫️', '50n': '🌫️',
+    };
+    if (iconMap[icon]) return iconMap[icon];
+
+    const isNight = icon.endsWith('n');
     if (name.includes('thunder')) return '⛈️';
     if (name.includes('snow')) return '🌨️';
     if (name.includes('rain') || name.includes('drizzle')) return '🌧️';
     if (name.includes('mist') || name.includes('fog') || name.includes('haze')) return '🌫️';
     if (name.includes('clear')) return isNight ? '🌙' : '☀️';
-    if (name.includes('cloud')) return isNight ? '☁️' : '⛅';
+    if (name.includes('cloud')) return '☁️';
     return '🌤️';
 }
 
@@ -108,9 +123,15 @@ function renderWeatherForecast(items) {
         const high = weatherShortTemperature(item.temp_max);
         const low = weatherShortTemperature(item.temp_min);
         const description = item.description || item.condition || '';
+        const rainChance = Number(item.precipitation_probability);
+        const titleParts = [description];
+        if (Number.isFinite(rainChance) && rainChance > 0) {
+            titleParts.push(`Precipitation chance: ${Math.round(rainChance)}%`);
+        }
+        const tooltip = titleParts.filter(Boolean).join(' • ');
 
         return `
-            <div class="weather-forecast-day" title="${escapeHtml(description)}">
+            <div class="weather-forecast-day" title="${escapeHtml(tooltip)}">
                 <div class="weather-forecast-label">${escapeHtml(label)}</div>
                 ${dateLine ? `<div class="weather-forecast-date">${escapeHtml(dateLine)}</div>` : ''}
                 <div class="weather-forecast-icon" aria-hidden="true">${icon}</div>

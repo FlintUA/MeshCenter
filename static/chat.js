@@ -3149,7 +3149,7 @@ function renderNodeDetails(node) {
             <!-- Верхняя панель -->
             <div class="node-detail-header">
                 <div class="node-detail-title-wrap">
-                    <span class="node-detail-favorite" title="${isFavorite ? 'Favorite node' : ''}">${isFavorite ? '⚑' : ''}</span>
+                    <span class="node-detail-favorite ${isFavorite ? 'is-active' : ''}" title="${isFavorite ? 'Favorite node' : ''}" aria-hidden="true">${isFavorite ? '⚑' : ''}</span>
                     <span class="node-detail-activity ${getNodeActivityPresentation(node).activityClass}" title="Activity status" aria-hidden="true"></span>
                     <span class="node-detail-name">${escapeHtml(displayName)}</span>
                     <span class="node-detail-short-id">${escapeHtml(shortName)}</span>

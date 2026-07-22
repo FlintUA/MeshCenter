@@ -2527,3 +2527,29 @@ html[data-theme="dark"] .camera-loading-title {
         transition: none;
     }
 }
+
+/* ==========================================================
+   DARK THEME - Chat list preview contrast
+   Exact classes used by renderChatItem() in static/chat.js.
+   ========================================================== */
+html[data-theme="dark"] .chat-item .chat-name {
+    color: #f4f8ff !important;
+    font-weight: 700 !important;
+}
+
+html[data-theme="dark"] .chat-item .chat-last-msg,
+html[data-theme="dark"] .chat-item .chat-last-sender,
+html[data-theme="dark"] .chat-item .chat-last-text {
+    color: #aebed0 !important;
+}
+
+html[data-theme="dark"] .chat-item.selected .chat-last-sender,
+html[data-theme="dark"] .chat-item.selected .chat-last-text,
+html[data-theme="dark"] .chat-item.active .chat-last-sender,
+html[data-theme="dark"] .chat-item.active .chat-last-text {
+    color: #c9d7e6 !important;
+}
+
+html[data-theme="dark"] .chat-item .chat-time {
+    color: #9fb0c2 !important;
+}

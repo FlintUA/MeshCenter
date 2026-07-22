@@ -1,4 +1,6 @@
 from flask import jsonify, request
+import glob
+import os
 import re
 import subprocess
 import threading
@@ -54,6 +56,70 @@ def _parse_position_output(output):
     }
 
 
+def _resolve_serial_port(configured_port):
+    """Return a usable serial device, or None to let Meshtastic auto-detect it."""
+    configured = str(configured_port or "").strip()
+
+    if configured and os.path.exists(configured):
+        return configured
+
+    candidates = []
+    for pattern in ("/dev/ttyACM*", "/dev/ttyUSB*"):
+        candidates.extend(glob.glob(pattern))
+
+    candidates = sorted(set(candidates))
+    return candidates[0] if candidates else None
+
+
+def _friendly_command_error(action_title, output, configured_port, resolved_port):
+    """Convert verbose Meshtastic/serial errors into a concise UI message."""
+    text = str(output or "").strip()
+    lower = text.lower()
+
+    missing_serial = (
+        "file not found error" in lower
+        or "serial device" in lower and "not found" in lower
+        or "no such file or directory" in lower
+        or "could not open port" in lower
+    )
+
+    if missing_serial:
+        if resolved_port:
+            return (
+                "radio_connection_failed",
+                f"{action_title} could not open the radio connection on {resolved_port}. "
+                "Check that the node is connected and that MeshCenter has permission to use the port.",
+            )
+
+        configured_note = (
+            f" Configured port {configured_port} is unavailable."
+            if configured_port else ""
+        )
+        return (
+            "radio_not_found",
+            f"{action_title} could not find a connected Meshtastic radio.{configured_note} "
+            "Check the USB connection or update MESHTASTIC_PORT in config.py.",
+        )
+
+    if "permission denied" in lower:
+        return (
+            "radio_permission_denied",
+            f"{action_title} cannot access the Meshtastic serial port. "
+            "Check the Linux device permissions for the MeshCenter service user.",
+        )
+
+    if "timed out" in lower or "timeout" in lower:
+        return (
+            "radio_timeout",
+            f"{action_title} timed out while waiting for the radio or remote node.",
+        )
+
+    return (
+        "command_failed",
+        f"{action_title} failed. See System Log for technical details.",
+    )
+
+
 def register_node_tools_routes(
     app,
     handle_errors,
@@ -103,10 +169,13 @@ def register_node_tools_routes(
 
         node_name = node.get("name") or node.get("clean_name") or node_id
 
+        resolved_port = _resolve_serial_port(MESHTASTIC_PORT)
+        port_args = ["--port", resolved_port] if resolved_port else []
+
         if action == "traceroute":
             cmd = [
                 MESHTASTIC_CMD,
-                "--port", MESHTASTIC_PORT,
+                *port_args,
                 "--traceroute", node_id,
                 "--timeout", "30",
             ]
@@ -118,7 +187,7 @@ def register_node_tools_routes(
         elif action == "request_telemetry":
             cmd = [
                 MESHTASTIC_CMD,
-                "--port", MESHTASTIC_PORT,
+                *port_args,
                 "--dest", node_id,
                 "--request-telemetry",
                 "--timeout", "30",
@@ -131,7 +200,7 @@ def register_node_tools_routes(
         else:
             cmd = [
                 MESHTASTIC_CMD,
-                "--port", MESHTASTIC_PORT,
+                *port_args,
                 "--dest", node_id,
                 "--request-position",
                 "--timeout", "30",
@@ -149,14 +218,16 @@ def register_node_tools_routes(
         print(f"[NODE TOOLS] {action_title}: {node_name} ({node_id})", flush=True)
 
         try:
-            if not prepare_radio_command(MESHTASTIC_PORT, timeout=10):
+            if not prepare_radio_command(resolved_port, timeout=10):
                 log_system_event(
                     "ERROR", "node_tools", action_failed_event,
-                    f"Serial port is busy: {MESHTASTIC_PORT}",
+                    f"Serial port is busy: {resolved_port or 'auto-detect'}",
                 )
                 return jsonify({
                     "ok": False,
-                    "error": f"Serial port busy: {MESHTASTIC_PORT}",
+                    "error": "The radio connection is busy. Try again in a few seconds.",
+                    "error_code": "radio_busy",
+                    "technical_error": f"Serial port busy: {resolved_port or 'auto-detect'}",
                 }), 503
 
             start_time = time.time()
@@ -184,11 +255,19 @@ def register_node_tools_routes(
                     "ERROR", "node_tools", action_failed_event,
                     f"Target: {node_name} ({node_id}); {error_text[:500]}",
                 )
+                error_code, user_message = _friendly_command_error(
+                    action_title,
+                    error_text,
+                    MESHTASTIC_PORT,
+                    resolved_port,
+                )
                 return jsonify({
                     "ok": False,
                     "action": action,
                     "node_id": node_id,
-                    "error": error_text,
+                    "error": user_message,
+                    "error_code": error_code,
+                    "technical_error": error_text[-2000:],
                     "returncode": result.returncode,
                 }), 500
 
@@ -262,11 +341,19 @@ def register_node_tools_routes(
                 f"Target: {node_name} ({node_id}); {error}",
             )
 
+            error_code, user_message = _friendly_command_error(
+                action_title,
+                str(error),
+                MESHTASTIC_PORT,
+                resolved_port,
+            )
             return jsonify({
                 "ok": False,
                 "action": action,
                 "node_id": node_id,
-                "error": str(error),
+                "error": user_message,
+                "error_code": error_code,
+                "technical_error": str(error),
             }), 500
 
         finally:

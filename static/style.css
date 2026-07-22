@@ -6081,10 +6081,27 @@ body.context-chat-mode .settings-view {
     text-align: center;
     font-size: 15px;
     line-height: 1;
+}
+
+/* Dark theme */
+body[data-theme="dark"] .node-favorite-slot,
+html[data-theme="dark"] .node-favorite-slot {
+    color: #f5c542;
+}
+
+/* Light theme */
+body[data-theme="light"] .node-favorite-slot,
+html[data-theme="light"] .node-favorite-slot {
     color: #165CBA;
 }
 
-.node-card.favorite .node-favorite-slot {
+body[data-theme="dark"] .node-card.favorite .node-favorite-slot,
+html[data-theme="dark"] .node-card.favorite .node-favorite-slot {
+    color: #f5c542;
+}
+
+body[data-theme="light"] .node-card.favorite .node-favorite-slot,
+html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     color: #165CBA;
 }
 
@@ -6146,7 +6163,7 @@ body.context-chat-mode .settings-view {
 }
 
 .node-short-name {
-    color: #33475b;
+    color: #a5afba;
     font-weight: 600;
     white-space: nowrap;
 }
@@ -6381,7 +6398,7 @@ body.context-chat-mode .settings-view {
 
 .node-card-identity-row .node-short-name {
     flex: 0 0 auto;
-    color: #263b53;
+    color: #a5afba;
     font-weight: 700;
 }
 
@@ -7176,7 +7193,18 @@ body.context-chat-mode .settings-view {
 .node-detail-activity.activity-offline { background: var(--mc-danger, #db5a63); }
 .node-detail-activity.activity-unknown { background: var(--mc-text-muted, #9aa4b2); }
 .node-detail-favorite:empty { display: none; }
-.node-detail-favorite { color: #d6a514; font-size: 18px; line-height: 1; }
+.node-detail-favorite {
+    font-size: 18px;
+    line-height: 1;
+}
+
+[data-theme="light"] .node-detail-favorite{
+    color:#165CBA;
+}
+
+[data-theme="dark"] .node-detail-favorite{
+    color:#f5c542;
+}
 .radio-history-range { opacity: .55; cursor: help; }
 .log-history-placeholder {
     padding: var(--space-lg, 16px);
@@ -7437,10 +7465,18 @@ body.context-chat-mode .settings-view {
     transform: translateY(0);
 }
 
-.node-detail-favorite-btn.active {
-    color: #a97800;
-    background: #fff7d9;
-    border-color: #ead58b;
+/* Dark theme */
+[data-theme="dark"] .node-detail-favorite-btn.active {
+    color: #f5c542;
+    background: rgba(245,197,66,.18);
+    border-color: rgba(245,197,66,.45);
+}
+
+/* Light theme */
+[data-theme="light"] .node-detail-favorite-btn.active {
+    color: #165CBA;
+    background: rgba(22,92,186,.12);
+    border-color: rgba(22,92,186,.30);
 }
 
 .node-detail-ignore-btn.active {

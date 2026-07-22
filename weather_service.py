@@ -201,6 +201,15 @@ class OpenWeatherService:
     def _build_three_day_forecast(
         forecast: dict[str, Any], local_tz: timezone
     ) -> list[dict[str, Any]]:
+        """Build compact daily cards from OpenWeather 3-hour forecast data.
+
+        OpenWeather's /forecast endpoint does not provide ready-made daily
+        summaries. Each card therefore has to be derived from several 3-hour
+        samples. The representative state is selected from local daytime
+        samples (09:00-18:00), grouping related OpenWeather condition IDs into
+        broad categories so broken/overcast/scattered clouds count as the same
+        general weather state.
+        """
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         today = datetime.now(local_tz).date()
 
@@ -214,6 +223,30 @@ class OpenWeatherService:
                 enriched = dict(item)
                 enriched["_local_dt"] = local_dt
                 grouped[local_dt.date().isoformat()].append(enriched)
+
+        def weather_category(entry: dict[str, Any]) -> str:
+            weather_data = (entry.get("weather") or [{}])[0]
+            try:
+                weather_id = int(weather_data.get("id") or 0)
+            except (TypeError, ValueError):
+                weather_id = 0
+
+            if 200 <= weather_id < 300:
+                return "Thunderstorm"
+            if 300 <= weather_id < 400:
+                return "Drizzle"
+            if 500 <= weather_id < 600:
+                return "Rain"
+            if 600 <= weather_id < 700:
+                return "Snow"
+            if 700 <= weather_id < 800:
+                return "Atmosphere"
+            if weather_id == 800:
+                return "Clear"
+            if 801 <= weather_id < 900:
+                return "Clouds"
+
+            return str(weather_data.get("main") or "Unknown")
 
         result: list[dict[str, Any]] = []
         for date_key in sorted(grouped.keys())[:3]:
@@ -229,36 +262,69 @@ class OpenWeatherService:
                 if (entry.get("main") or {}).get("temp_max") is not None
             ]
 
-            # The sample nearest local noon gives a stable daytime icon.
+            # Prefer the part of the day users normally understand as the
+            # daily forecast. Night-time rain must not label the whole day as
+            # rainy when the daylight hours are predominantly cloudy or clear.
+            daytime_items = [
+                entry for entry in items
+                if 9 <= entry["_local_dt"].hour <= 18
+            ] or items
+
+            category_counts = Counter(
+                weather_category(entry) for entry in daytime_items
+            )
+            highest_count = max(category_counts.values())
+            tied_categories = {
+                category
+                for category, count in category_counts.items()
+                if count == highest_count
+            }
+
+            # Resolve equal counts by the category represented closest to
+            # local noon. This produces a stable, human-friendly summary while
+            # still keeping frequency as the primary criterion.
+            representative_pool = [
+                entry for entry in daytime_items
+                if weather_category(entry) in tied_categories
+            ]
+            nearest_to_noon = min(
+                representative_pool,
+                key=lambda entry: (
+                    abs(entry["_local_dt"].hour - 12),
+                    entry["_local_dt"],
+                ),
+            )
+            dominant_category = weather_category(nearest_to_noon)
+
+            matching_items = [
+                entry for entry in daytime_items
+                if weather_category(entry) == dominant_category
+            ]
             representative = min(
-                items,
-                key=lambda entry: abs(entry["_local_dt"].hour - 12),
+                matching_items,
+                key=lambda entry: (
+                    abs(entry["_local_dt"].hour - 12),
+                    entry["_local_dt"],
+                ),
             )
             representative_weather = (representative.get("weather") or [{}])[0]
 
-            descriptions = [
-                ((entry.get("weather") or [{}])[0].get("description") or "")
-                for entry in items
+            daytime_pop_values = [
+                float(entry.get("pop") or 0)
+                for entry in daytime_items
             ]
-            common_description = Counter(filter(None, descriptions)).most_common(1)
-
-            precipitation_probability = max(
-                [float(entry.get("pop") or 0) for entry in items] or [0]
-            )
+            precipitation_probability = max(daytime_pop_values or [0])
 
             result.append({
                 "date": date_key,
                 "day_offset": (datetime.fromisoformat(date_key).date() - today).days,
                 "temp_min": min(temperatures_min) if temperatures_min else None,
                 "temp_max": max(temperatures_max) if temperatures_max else None,
-                "condition": representative_weather.get("main"),
-                "description": (
-                    common_description[0][0]
-                    if common_description
-                    else representative_weather.get("description")
-                ),
+                "condition": dominant_category,
+                "description": representative_weather.get("description"),
                 "icon_code": representative_weather.get("icon"),
                 "precipitation_probability": round(precipitation_probability * 100),
+                "representative_local_time": representative["_local_dt"].strftime("%H:%M"),
             })
 
         return result

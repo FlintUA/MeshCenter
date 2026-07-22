@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MeshCenter</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=camera-ready-11">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=camera-ready-11">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
 </head>
 <body>
@@ -221,6 +221,9 @@
                 <button class="main-content-tab" id="mainTabSettings" onclick="switchMainTab('settings')">
                     ⚙️ Settings
                 </button>
+                <button class="main-content-tab" id="mainTabAbout" onclick="switchMainTab('about')">
+                    ℹ️ About
+                </button>
             </div>
 
             <!-- Chat Header -->
@@ -314,8 +317,17 @@
 
                     <div class="video-frame-wrap">
                         <img id="videoFeed"
-                             class="camera-stream"
-                             alt="Camera stream">
+                             class="camera-stream camera-stream-hidden"
+                             alt="">
+
+                        <div class="camera-loading-placeholder"
+                             id="cameraLoadingPlaceholder"
+                             role="status"
+                             aria-live="polite">
+                            <div class="camera-loading-spinner" aria-hidden="true"></div>
+                            <div class="camera-loading-title">Connecting to camera…</div>
+                            <div class="camera-loading-text">Waiting for the first video frame</div>
+                        </div>
 
                         <div class="camera-off-placeholder"
                              id="cameraOffPlaceholder"
@@ -412,7 +424,8 @@
                                                        min="40"
                                                        max="90"
                                                        value="80"
-                                                       oninput="updateVideoSettings()">
+                                                       oninput="updateVideoQualityLabel(this.value)"
+                                                       onchange="updateVideoSettings()">
                                                 <span id="videoQualityLabel">90%</span>
                                             </div>
                                         </div>
@@ -740,6 +753,31 @@
 
                             </div>
 
+                            <!-- System Log -->
+                            <div class="system-card system-log-card">
+                                <button
+                                    type="button"
+                                    id="radioHistoryToggle"
+                                    class="radio-history-toggle system-log-toggle"
+                                    onclick="toggleRadioHealthHistory()"
+                                    aria-expanded="true"
+                                    aria-controls="radioHealthHistoryPanel"
+                                >
+                                    <span class="system-card-title">📋 System Log</span>
+                                    <span id="radioHistoryArrow">▴</span>
+                                </button>
+
+                                <div
+                                    id="radioHealthHistoryPanel"
+                                    class="radio-history-panel system-log-panel"
+                                    style="display:block;"
+                                >
+                                    <div id="radioHealthHistory">
+                                        <div class="radio-history-empty">No events yet</div>
+                                    </div>
+                                </div>
+                            </div>
+
                         </div>
 
                         <!-- ================= RIGHT COLUMN ================= -->
@@ -865,31 +903,6 @@
                                 </div>
                             </div>
 
-                            <div class="radio-history-section">
-
-                                <button
-                                    type="button"
-                                    id="radioHistoryToggle"
-                                    class="radio-history-toggle"
-                                    onclick="toggleRadioHealthHistory()"
-                                    aria-expanded="false"
-                                    aria-controls="radioHealthHistoryPanel"
-                                >
-                                    <span>📋 System Log</span>
-                                    <span id="radioHistoryArrow">▾</span>
-                                </button>
-
-                                <div
-                                    id="radioHealthHistoryPanel"
-                                    class="radio-history-panel"
-                                    style="display:none;"
-                                >
-                                    <div id="radioHealthHistory">
-                                        <div class="radio-history-empty">No events yet</div>
-                                    </div>
-                                </div>
-
-                            </div>
 
                         </div>
 
@@ -1043,7 +1056,148 @@
                     </div>
                 </div>
             </div>
+
+        <!-- ===== ABOUT VIEW ===== -->
+        <div class="about-view" id="aboutView" style="display:none;">
+            <div class="about-shell">
+                <div class="about-header mc-workspace-header">
+                    <div>
+                        <div class="about-title workspace-page-title">ℹ️ About</div>
+                        <div class="about-subtitle workspace-page-subtitle">Project information, help and resources</div>
+                    </div>
+                </div>
+
+                <div class="about-tabs" role="tablist" aria-label="About sections">
+                    <button class="about-tab active" id="aboutTabOverview" onclick="switchAboutTab('overview')" role="tab" aria-selected="true">Overview</button>
+                    <button class="about-tab" id="aboutTabHelp" onclick="switchAboutTab('help')" role="tab" aria-selected="false">Help</button>
+                    <button class="about-tab" id="aboutTabLicense" onclick="switchAboutTab('license')" role="tab" aria-selected="false">License</button>
+                    <button class="about-tab" id="aboutTabLinks" onclick="switchAboutTab('links')" role="tab" aria-selected="false">Links</button>
+                    <button class="about-tab" id="aboutTabChangelog" onclick="switchAboutTab('changelog')" role="tab" aria-selected="false">Changelog</button>
+                </div>
+
+                <div class="about-content">
+                    <section class="about-section active" id="aboutSectionOverview" role="tabpanel">
+                        <div class="about-project-card">
+                            <img src="/static/meshcenter_logo.png" alt="MeshCenter logo" class="about-logo">
+                            <div class="about-project-copy">
+                                <h1>MeshCenter</h1>
+                                <div class="about-motto">Control <span>•</span> Monitoring <span>•</span> Communication</div>
+                                <div class="about-badges">
+                                    <span class="about-badge">Version 1.1.0</span>
+                                    <span class="about-badge about-badge-status"><i></i> Active Development</span>
+                                    <span class="about-badge">© 2026–Present</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="about-overview-grid">
+                            <article class="about-card about-card-creator">
+                                <div class="about-card-icon">👤</div>
+                                <div>
+                                    <div class="about-card-kicker">Creator</div>
+                                    <h2>Kostiantyn Vynohradov</h2>
+                                    <p class="about-muted">Created and maintained by</p>
+                                    <div class="about-aliases" aria-label="Known online as">
+                                        <span>Flint</span><span>Elektroniker</span>
+                                    </div>
+                                </div>
+                            </article>
+
+                            <article class="about-card">
+                                <div class="about-card-icon">🎯</div>
+                                <div>
+                                    <div class="about-card-kicker">Mission</div>
+                                    <h2>A control center for Meshtastic</h2>
+                                    <p>Lightweight communication, monitoring and system integration for Meshtastic nodes running with Raspberry Pi.</p>
+                                </div>
+                            </article>
+
+                            <article class="about-card">
+                                <div class="about-card-icon">🧩</div>
+                                <div>
+                                    <div class="about-card-kicker">Platform</div>
+                                    <div class="about-facts">
+                                        <div><span>Network</span><strong>Meshtastic</strong></div>
+                                        <div><span>Host</span><strong>Raspberry Pi</strong></div>
+                                        <div><span>Interface</span><strong>Web application</strong></div>
+                                    </div>
+                                </div>
+                            </article>
+
+                            <article class="about-card">
+                                <div class="about-card-icon">🔗</div>
+                                <div>
+                                    <div class="about-card-kicker">Quick Links</div>
+                                    <div class="about-link-list">
+                                        <a href="https://elektroniker.help" target="_blank" rel="noopener noreferrer"><span>Website</span><strong>elektroniker.help ↗</strong></a>
+                                        <a href="https://github.com/FlintUA/MeshCenter" target="_blank" rel="noopener noreferrer"><span>GitHub</span><strong>FlintUA/MeshCenter ↗</strong></a>
+                                    </div>
+                                </div>
+                            </article>
+                        </div>
+                    </section>
+
+                    <section class="about-section" id="aboutSectionHelp" role="tabpanel" hidden>
+                        <div class="about-section-heading"><h2>Help</h2><p>Quick guidance for the main areas of MeshCenter.</p></div>
+                        <div class="about-help-grid">
+                            <article class="about-card"><div class="about-card-icon">🚀</div><div><h2>Getting Started</h2><p>Connect MeshCenter to the Meshtastic node, wait for the node and chat lists to load, then select a channel or direct message.</p></div></article>
+                            <article class="about-card"><div class="about-card-icon">💬</div><div><h2>Chats</h2><p>Select a channel or node conversation, enter a message and press Send. Delivery information appears with the message when available.</p></div></article>
+                            <article class="about-card"><div class="about-card-icon">📡</div><div><h2>Nodes</h2><p>Select a node in the right panel to inspect radio data, position, telemetry and recent activity.</p></div></article>
+                            <article class="about-card"><div class="about-card-icon">🎥</div><div><h2>Camera & Media</h2><p>Use Camera for live view and captures. Saved images are available in the local Media gallery.</p></div></article>
+                            <article class="about-card"><div class="about-card-icon">🖥️</div><div><h2>System</h2><p>Review Raspberry Pi status, network information, radio health and system events.</p></div></article>
+                            <article class="about-card"><div class="about-card-icon">▦</div><div><h2>Workspace</h2><p>Use the bottom Workspace control to show or hide panels, switch theme and enable compact mode on this browser.</p></div></article>
+                        </div>
+                        <div class="about-note">More help topics and troubleshooting guidance will be added in future releases.</div>
+                    </section>
+
+                    <section class="about-section" id="aboutSectionLicense" role="tabpanel" hidden>
+                        <div class="about-section-heading"><h2>License</h2><p>Source code use and redistribution terms.</p></div>
+                        <article class="about-card about-license-card">
+                            <div class="about-card-icon">⚖️</div>
+                            <div>
+                                <h2>MeshCenter project license</h2>
+                                <p>The authoritative license text is published with the MeshCenter source repository. Please review the repository license before copying, modifying or redistributing the software.</p>
+                                <p class="about-legal-line">Created and maintained by Kostiantyn Vynohradov. All rights reserved where applicable.</p>
+                                <a class="about-primary-link" href="https://github.com/FlintUA/MeshCenter" target="_blank" rel="noopener noreferrer">View repository and license ↗</a>
+                            </div>
+                        </article>
+                    </section>
+
+                    <section class="about-section" id="aboutSectionLinks" role="tabpanel" hidden>
+                        <div class="about-section-heading"><h2>Links</h2><p>Official MeshCenter and creator resources.</p></div>
+                        <div class="about-links-grid">
+                            <a class="about-resource-card" href="https://elektroniker.help" target="_blank" rel="noopener noreferrer"><span class="about-resource-icon">🌐</span><span><small>Official website</small><strong>elektroniker.help</strong><em>Articles, projects and MeshCenter updates</em></span><b>↗</b></a>
+                            <a class="about-resource-card" href="https://github.com/FlintUA/MeshCenter" target="_blank" rel="noopener noreferrer"><span class="about-resource-icon">⌘</span><span><small>Source repository</small><strong>github.com/FlintUA/MeshCenter</strong><em>Code, releases, issues and project history</em></span><b>↗</b></a>
+                            <a class="about-resource-card" href="https://github.com/FlintUA/MeshCenter/releases" target="_blank" rel="noopener noreferrer"><span class="about-resource-icon">🏷️</span><span><small>Releases</small><strong>GitHub Releases</strong><em>Published versions and release notes</em></span><b>↗</b></a>
+                            <a class="about-resource-card" href="https://github.com/FlintUA" target="_blank" rel="noopener noreferrer"><span class="about-resource-icon">👤</span><span><small>Creator profile</small><strong>github.com/FlintUA</strong><em>Other public projects by Kostiantyn Vynohradov</em></span><b>↗</b></a>
+                        </div>
+                    </section>
+
+                    <section class="about-section" id="aboutSectionChangelog" role="tabpanel" hidden>
+                        <div class="about-section-heading"><h2>Changelog</h2><p>Current release highlights.</p></div>
+                        <article class="about-release-card">
+                            <div class="about-release-head"><div><span class="about-version">v1.1.0</span><h2>Workspace Foundation</h2></div><span class="about-current-label">Current</span></div>
+                            <ul>
+                                <li>Introduced Workspace preferences for this browser.</li>
+                                <li>Added panel visibility controls to the status bar.</li>
+                                <li>Added Light and Dark theme framework.</li>
+                                <li>Added Compact Mode and persistent interface settings.</li>
+                            </ul>
+                            <a class="about-primary-link" href="https://github.com/FlintUA/MeshCenter/releases" target="_blank" rel="noopener noreferrer">View full release history ↗</a>
+                        </article>
+                    </section>
+                </div>
+
+                <footer class="about-footer">
+                    <img src="/static/meshcenter_logo.png" alt="" aria-hidden="true">
+                    <div><strong>MeshCenter</strong><span>Control • Monitoring • Communication</span></div>
+                    <span>Created by Kostiantyn Vynohradov</span>
+                </footer>
+            </div>
         </div>
+
+        </div>
+
 
         <!-- Sidebar -->
         <div class="sidebar" id="sidebar">
@@ -1204,7 +1358,11 @@
                     <div class="workspace-menu-title">Appearance</div>
                     <div class="workspace-theme-options" role="radiogroup" aria-label="Theme">
                         <label class="workspace-theme-option">
-                            <input type="radio" name="workspaceTheme" value="light" checked>
+                            <input type="radio" name="workspaceTheme" value="system" checked>
+                            <span>◉ System</span>
+                        </label>
+                        <label class="workspace-theme-option">
+                            <input type="radio" name="workspaceTheme" value="light">
                             <span>☀ Light</span>
                         </label>
                         <label class="workspace-theme-option">
@@ -1354,7 +1512,7 @@
 </div>
 
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/chat.js"></script>
+<script src="/static/chat.js?v=camera-ready-11"></script>
 <script src="/static/media.js"></script>
 <script src="/static/weather.js"></script>
 

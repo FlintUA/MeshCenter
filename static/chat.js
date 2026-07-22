@@ -1166,9 +1166,15 @@ async function setMapProvider(provider) {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            throw new Error(
+            if (data.technical_error) {
+                console.error('[NODE TOOLS] Technical details:', data.technical_error);
+            }
+
+            const requestError = new Error(
                 data.error || `HTTP ${response.status}`
             );
+            requestError.code = data.error_code || '';
+            throw requestError;
         }
 
         appSettings = data.settings;
@@ -4058,9 +4064,15 @@ async function runNodeTool(action, nodeId, nodeName, button) {
                 );
             }
 
-            throw new Error(
+            if (data.technical_error) {
+                console.error('[NODE TOOLS] Technical details:', data.technical_error);
+            }
+
+            const requestError = new Error(
                 data.error || `HTTP ${response.status}`
             );
+            requestError.code = data.error_code || '';
+            throw requestError;
         }
 
         if (action === 'traceroute') {
@@ -4218,10 +4230,7 @@ async function runNodeTool(action, nodeId, nodeName, button) {
             error.message
         );
 
-        showToast(
-            `${currentTool.errorToastPrefix}: ${error.message}`,
-            'error'
-        );
+        showToast(error.message, 'error');
         
     } finally {
         if (button) {
@@ -4411,7 +4420,7 @@ const WORKSPACE_STORAGE_KEY = 'meshcenter.workspace';
 const WORKSPACE_DEFAULTS = Object.freeze({
     leftPanel: true,
     rightPanel: true,
-    theme: 'light',
+    theme: 'system',
     compactMode: false
 });
 
@@ -4435,7 +4444,7 @@ const Workspace = {
         return {
             leftPanel: source.leftPanel !== false,
             rightPanel: source.rightPanel !== false,
-            theme: source.theme === 'dark' ? 'dark' : 'light',
+            theme: ['system', 'light', 'dark'].includes(source.theme) ? source.theme : 'system',
             compactMode: source.compactMode === true
         };
     },
@@ -4468,10 +4477,22 @@ const Workspace = {
         if (persist) this.save();
     },
 
+    resolveTheme() {
+        if (this.state.theme !== 'system') return this.state.theme;
+        return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    },
+
+    applyTheme() {
+        const resolvedTheme = this.resolveTheme();
+        document.documentElement.dataset.theme = resolvedTheme;
+        document.documentElement.dataset.themePreference = this.state.theme;
+        document.documentElement.style.colorScheme = resolvedTheme;
+    },
+
     apply() {
         setBasePanelVisible(this.state.leftPanel, false);
         setNodesPanelVisible(this.state.rightPanel, false);
-        document.documentElement.dataset.theme = this.state.theme;
+        this.applyTheme();
         document.body.classList.toggle('workspace-compact', this.state.compactMode);
         this.syncControls();
     },
@@ -4571,6 +4592,17 @@ function initializeWorkspace() {
             if (event.target.checked) Workspace.update({ theme: event.target.value });
         });
     });
+
+    // When Theme is set to System, follow Windows/browser changes live.
+    const systemThemeQuery = window.matchMedia?.('(prefers-color-scheme: dark)');
+    const handleSystemThemeChange = () => {
+        if (Workspace.state.theme === 'system') Workspace.applyTheme();
+    };
+    if (systemThemeQuery?.addEventListener) {
+        systemThemeQuery.addEventListener('change', handleSystemThemeChange);
+    } else if (systemThemeQuery?.addListener) {
+        systemThemeQuery.addListener(handleSystemThemeChange);
+    }
     document.addEventListener('click', event => {
         const popover = document.getElementById('workspacePopover');
         const button = document.getElementById('workspaceMenuBtn');
@@ -6128,6 +6160,37 @@ function isCameraTabVisible() {
     return currentMainTab === 'video';
 }
 
+function setCameraFeedLoading(loading, message = 'Connecting to camera…') {
+    const img = document.getElementById('videoFeed');
+    const placeholder = document.getElementById('cameraLoadingPlaceholder');
+    const title = placeholder?.querySelector('.camera-loading-title');
+
+    if (title && message) {
+        title.textContent = message;
+    }
+
+    if (placeholder) {
+        placeholder.classList.toggle('camera-loading-visible', Boolean(loading));
+        placeholder.setAttribute('aria-hidden', loading ? 'false' : 'true');
+    }
+
+    if (img) {
+        img.classList.toggle('camera-stream-hidden', Boolean(loading));
+    }
+}
+
+function showCameraFeed() {
+    const img = document.getElementById('videoFeed');
+    if (img) {
+        img.classList.remove('camera-stream-hidden');
+    }
+    setCameraFeedLoading(false);
+}
+
+function hideCameraFeed(message = 'Connecting to camera…') {
+    setCameraFeedLoading(true, message);
+}
+
 function setCameraControlsDisabled(disabled) {
     const controls = document.getElementById('videoControls');
 
@@ -6229,8 +6292,9 @@ function renderCameraPowerState() {
 
         if (feed) {
             feed.removeAttribute('src');
-            feed.style.display = 'none';
+            feed.classList.add('camera-stream-hidden');
         }
+        setCameraFeedLoading(false);
 
         if (placeholder) {
             placeholder.style.display = 'flex';
@@ -6258,8 +6322,8 @@ function renderCameraPowerState() {
         placeholder.style.display = 'none';
     }
 
-    if (feed) {
-        feed.style.display = 'block';
+    if (feed && cameraActive && feed.naturalWidth > 0) {
+        showCameraFeed();
     }
 
     if (buttonText) {
@@ -6291,9 +6355,15 @@ async function loadCameraPowerState() {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            throw new Error(
+            if (data.technical_error) {
+                console.error('[NODE TOOLS] Technical details:', data.technical_error);
+            }
+
+            const requestError = new Error(
                 data.error || `HTTP ${response.status}`
             );
+            requestError.code = data.error_code || '';
+            throw requestError;
         }
 
         cameraPowerEnabled = Boolean(data.enabled);
@@ -6349,9 +6419,15 @@ async function setCameraPower(enabled) {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            throw new Error(
+            if (data.technical_error) {
+                console.error('[NODE TOOLS] Technical details:', data.technical_error);
+            }
+
+            const requestError = new Error(
                 data.error || `HTTP ${response.status}`
             );
+            requestError.code = data.error_code || '';
+            throw requestError;
         }
 
         cameraPowerEnabled = Boolean(data.enabled);
@@ -6407,32 +6483,31 @@ function toggleCameraPower() {
 async function startCameraStream() {
     if (!cameraPowerEnabled || cameraActive) return;
     cameraActive = true;
-    
+
     console.log('[CAMERA] Starting stream...');
-    const img = document.getElementById('videoFeed');
-    if (img) {
-        img.src = '/video_feed?t=' + Date.now();
-        img.style.display = 'block';
-    }
-    
+    hideCameraFeed('Connecting to camera…');
+
     const status = document.getElementById('videoStatus');
     if (status) {
         status.textContent = '🔄 Starting...';
         status.style.color = '#ff9800';
     }
+
+    await reconnectCameraFeed();
 }
 
 function stopCameraStream() {
     if (!cameraActive) return;
     cameraActive = false;
-    
+
     console.log('[CAMERA] Stopping stream...');
     const img = document.getElementById('videoFeed');
     if (img) {
-        img.src = '';
-        img.style.display = 'none';
+        img.removeAttribute('src');
+        img.classList.add('camera-stream-hidden');
     }
-    
+    setCameraFeedLoading(false);
+
     const status = document.getElementById('videoStatus');
     if (status) {
         status.textContent = '⏸️ Paused';
@@ -6451,6 +6526,8 @@ let cameraControlPending = false;
 let cameraControlShowMessage = false;
 let cameraFeedRefreshTimer = null;
 let cameraFeedRefreshSequence = 0;
+let videoSettingsRequestInProgress = false;
+let videoSettingsPending = false;
 
 async function loadVideoSettings() {
     try {
@@ -6513,37 +6590,105 @@ async function loadVideoSettings() {
     }
 }
 
-async function updateVideoSettings() {
-    const resolution = document.getElementById('videoResolution').value;
-    const fps = parseInt(document.getElementById('videoFps').value);
-    const quality = parseInt(document.getElementById('videoQuality').value);
-    
+function updateVideoQualityLabel(value) {
     const qualityLabel = document.getElementById('videoQualityLabel');
+    if (qualityLabel) {
+        qualityLabel.textContent = `${value}%`;
+    }
+}
+
+function readVideoSettingsFromUi() {
+    const resolution = document.getElementById('videoResolution')?.value || '640x480';
+    const fps = parseInt(document.getElementById('videoFps')?.value || '12', 10);
+    const quality = parseInt(document.getElementById('videoQuality')?.value || '75', 10);
+
+    return { resolution, fps, quality };
+}
+
+function sameVideoSettings(left, right) {
+    if (!left || !right) {
+        return false;
+    }
+
+    return String(left.resolution) === String(right.resolution)
+        && Number(left.fps) === Number(right.fps)
+        && Number(left.quality) === Number(right.quality);
+}
+
+async function updateVideoSettings() {
+    updateVideoQualityLabel(
+        document.getElementById('videoQuality')?.value || 75
+    );
+
+    /*
+     * Camera reconfiguration is expensive on Raspberry Pi Zero 2 W.
+     * Serialize requests and keep only the latest pending UI state so a
+     * quick resolution/FPS change cannot start overlapping pipelines.
+     */
+    if (videoSettingsRequestInProgress) {
+        videoSettingsPending = true;
+        return;
+    }
+
+    const requestedSettings = readVideoSettingsFromUi();
+
+    if (sameVideoSettings(requestedSettings, currentVideoSettings)) {
+        return;
+    }
+
+    videoSettingsRequestInProgress = true;
+    videoSettingsPending = false;
+
     const liveInfo = document.getElementById('videoLiveInfo');
-    
-    if (qualityLabel) qualityLabel.textContent = quality + '%';
-    if (liveInfo) liveInfo.textContent = `Live: ${resolution.replace('x', '×')} @ ${fps} FPS`;
-    
+    const status = document.getElementById('videoStatus');
+
+    if (status) {
+        status.textContent = '🔄 Applying settings...';
+        status.style.color = '#ff9800';
+    }
+
     try {
         const response = await fetch('/api/camera/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ resolution, fps, quality })
+            body: JSON.stringify(requestedSettings)
         });
-        
+
         const data = await response.json();
-        
-        if (data.ok) {
-            showToast('✅ Video settings updated', 'success');
-            if (cameraActive) {
-                refreshVideoFeed();
-            }
-        } else {
-            showToast('❌ Failed: ' + (data.error || 'Unknown error'), 'error');
+
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || `HTTP ${response.status}`);
         }
+
+        currentVideoSettings = data.config || requestedSettings;
+
+        if (liveInfo) {
+            const appliedResolution = currentVideoSettings.resolution || requestedSettings.resolution;
+            const appliedFps = currentVideoSettings.fps || requestedSettings.fps;
+            liveInfo.textContent = `Live: ${appliedResolution.replace('x', '×')} @ ${appliedFps} FPS`;
+        }
+
+        if (cameraActive) {
+            await reconnectCameraFeed();
+        } else if (status) {
+            status.textContent = '⏸️ Paused';
+            status.style.color = '#888';
+        }
+
+        showToast('✅ Video settings updated', 'success');
+
     } catch (error) {
         console.error('Error updating video settings:', error);
-        showToast('❌ Network error', 'error');
+        showToast(`❌ Camera settings failed: ${error.message}`, 'error');
+        await loadVideoSettings();
+
+    } finally {
+        videoSettingsRequestInProgress = false;
+
+        if (videoSettingsPending) {
+            videoSettingsPending = false;
+            queueMicrotask(updateVideoSettings);
+        }
     }
 }
 
@@ -6845,8 +6990,13 @@ async function takeScreenshot(source = 'video') {
 function stopVideoFeed() {
     const img = document.getElementById('videoFeed');
     if (img) {
+        img.onload = null;
+        img.onerror = null;
         img.removeAttribute('src');
+        img.classList.add('camera-stream-hidden');
     }
+
+    setCameraFeedLoading(false);
 }
 
 function reconnectCameraFeed() {
@@ -6872,12 +7022,18 @@ function reconnectCameraFeed() {
             cameraFeedRefreshTimer = null;
         }
 
+        hideCameraFeed('Connecting to camera…');
+
         if (status) {
-            status.textContent = '🔄 Applying settings...';
+            status.textContent = '🔄 Connecting...';
             status.style.color = '#ff9800';
         }
 
         let freezeFrame = null;
+
+        /* A stale overlay from an interrupted reconnect must never survive. */
+        frameWrap?.querySelectorAll('.camera-freeze-frame').forEach(element => element.remove());
+        frameWrap?.classList.add('camera-feed-reconfiguring');
 
         /*
          * Preserve the latest visible camera frame while the
@@ -6912,21 +7068,6 @@ function reconnectCameraFeed() {
                     0.85
                 );
 
-                const imageRect = img.getBoundingClientRect();
-                const wrapRect = frameWrap.getBoundingClientRect();
-
-                freezeFrame.style.left =
-                    `${imageRect.left - wrapRect.left}px`;
-
-                freezeFrame.style.top =
-                    `${imageRect.top - wrapRect.top}px`;
-
-                freezeFrame.style.width =
-                    `${imageRect.width}px`;
-
-                freezeFrame.style.height =
-                    `${imageRect.height}px`;
-
                 frameWrap.appendChild(freezeFrame);
                 }
 
@@ -6940,7 +7081,6 @@ function reconnectCameraFeed() {
 
         img.onload = null;
         img.onerror = null;
-        img.style.visibility = 'hidden';
         img.removeAttribute('src');
 
         cameraFeedRefreshTimer = setTimeout(() => {
@@ -6948,6 +7088,7 @@ function reconnectCameraFeed() {
 
             if (sequence !== cameraFeedRefreshSequence) {
                 freezeFrame?.remove();
+                frameWrap?.classList.remove('camera-feed-reconfiguring');
                 resolve();
                 return;
             }
@@ -6957,7 +7098,13 @@ function reconnectCameraFeed() {
                     return;
                 }
 
-                img.style.visibility = 'visible';
+                frameWrap?.classList.remove('camera-feed-reconfiguring');
+
+                if (online) {
+                    showCameraFeed();
+                } else {
+                    hideCameraFeed('Camera stream unavailable');
+                }
 
                 if (status) {
                     status.textContent = online
@@ -7388,6 +7535,7 @@ function switchMainTab(tab) {
     const chatListContainer = document.getElementById('chatListContainer');
     const systemView = document.getElementById('systemView');    
     const settingsView = document.getElementById('settingsView');
+    const aboutView = document.getElementById('aboutView');
 
     if (messagesView) messagesView.style.display = 'none';
     if (videoView) videoView.style.display = 'none';
@@ -7395,6 +7543,7 @@ function switchMainTab(tab) {
     if (photoView) photoView.style.display = 'none';
     if (systemView) systemView.style.display = 'none';
     if (settingsView) settingsView.style.display = 'none';
+    if (aboutView) aboutView.style.display = 'none';
 
     if (tab !== 'video') {
         stopVideoFeed();
@@ -7447,20 +7596,24 @@ function switchMainTab(tab) {
         updateStatusDock('video');
         stopMessagePolling();
 
+        hideCameraFeed('Connecting to camera…');
+
         loadCameraPowerState().then(async () => {
             if (!cameraPowerEnabled) {
+                setCameraFeedLoading(false);
                 renderCameraPowerState();
                 return;
             }
 
             await switchCameraMode('video');
+            await Promise.allSettled([
+                loadVideoSettings(),
+                loadPhotoSettings()
+            ]);
 
-            setTimeout(() => loadVideoSettings(), 100);
-            setTimeout(() => loadPhotoSettings(), 150);
-            setTimeout(() => {
-                refreshVideoFeed();
-                cameraActive = true;
-            }, 200);
+            cameraActive = true;
+            await reconnectCameraFeed();
+            renderCameraPowerState();
         });
 
     } else if (tab === 'media') {
@@ -7516,7 +7669,36 @@ function switchMainTab(tab) {
         if (messagesView) messagesView.style.display = 'none';
 
         updateStatusDock('settings');
+    } else if (tab === 'about') {
+        if (chatHeader) chatHeader.style.display = 'none';
+        if (chatListContainer) chatListContainer.style.display = 'none';
+        if (messagesView) messagesView.style.display = 'none';
+        if (aboutView) aboutView.style.display = 'flex';
+
+        stopMessagePolling();
+        switchAboutTab(window.meshcenterAboutTab || 'overview');
+        updateStatusDock('about');
     }
+}
+
+function switchAboutTab(tab) {
+    const normalized = ['overview', 'help', 'license', 'links', 'changelog'].includes(tab)
+        ? tab
+        : 'overview';
+
+    window.meshcenterAboutTab = normalized;
+
+    document.querySelectorAll('.about-tab').forEach(button => {
+        const active = button.id === 'aboutTab' + normalized.charAt(0).toUpperCase() + normalized.slice(1);
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', String(active));
+    });
+
+    document.querySelectorAll('.about-section').forEach(section => {
+        const active = section.id === 'aboutSection' + normalized.charAt(0).toUpperCase() + normalized.slice(1);
+        section.classList.toggle('active', active);
+        section.hidden = !active;
+    });
 }
 
 function updateStatusDock(tab) {
@@ -7552,6 +7734,10 @@ function updateStatusDock(tab) {
         workspaceLabel.textContent = 'Settings';
         centerText.textContent = 'Ready';
         setStatusDockContext('MeshCenter');
+    } else if (tab === 'about') {
+        workspaceLabel.textContent = 'About';
+        centerText.textContent = 'MeshCenter';
+        setStatusDockContext('v1.1.0');
     } else {
         workspaceLabel.textContent = 'Workspace';
         centerText.textContent = 'Ready';

@@ -1737,7 +1737,12 @@ def stop_listener():
         listen_process = None
         time.sleep(1.0)
 
-def wait_serial_release(device="/dev/ttyACM0", timeout=8):
+def wait_serial_release(device=None, timeout=8):
+    # When no explicit device is supplied, Meshtastic CLI will auto-detect it
+    # after the listener has stopped. There is no fixed path to inspect with lsof.
+    if not device:
+        return True
+
     start = time.time()
 
     while time.time() - start < timeout:
@@ -1763,7 +1768,7 @@ def wait_serial_release(device="/dev/ttyACM0", timeout=8):
     return False
 
 
-def prepare_radio_command(device="/dev/ttyACM0", timeout=8):
+def prepare_radio_command(device=None, timeout=8):
     pause_listen.set()
     stop_listener()
 

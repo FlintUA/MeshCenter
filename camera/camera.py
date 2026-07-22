@@ -1054,11 +1054,15 @@ def update_camera_settings(data):
             "control_changes": {},
         }, 200
 
-    # In the current Picamera2/libcamera combination, some ISP controls
-    # are not applied reliably through set_controls() after switching
-    # Video -> Photo -> Video. Reconfigure the active camera so all
-    # saved controls become part of the new pipeline configuration.
-    video_restart_required = bool(video_changes or control_changes)
+    # Resolution, FPS and ISP controls require a Picamera2 pipeline
+    # restart. JPEG quality is consumed by a new MJPEG generator and
+    # must not restart the camera hardware by itself.
+    pipeline_video_changes = {
+        name: value
+        for name, value in video_changes.items()
+        if name in {"resolution", "fps"}
+    }
+    video_restart_required = bool(pipeline_video_changes or control_changes)
 
     with camera_lock:
         was_started = camera_started

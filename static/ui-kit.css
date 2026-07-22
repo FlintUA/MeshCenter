@@ -1246,3 +1246,1284 @@ html[data-theme="dark"] .workspace-theme-option input:checked + span {
         width: min(286px, calc(100vw - 16px));
     }
 }
+
+/* ==========================================================
+   ABOUT CENTER
+   ========================================================== */
+.about-view{display:none;flex:1;min-width:0;min-height:0;overflow:hidden;background:var(--mc-bg-app,#f6f8fb)}
+.about-shell{display:flex;flex-direction:column;width:100%;height:100%;min-height:0}
+.about-header{flex:0 0 auto;padding:14px 18px 11px}
+.about-title{font-weight:800}
+.about-tabs{display:flex;gap:4px;flex:0 0 auto;padding:0 18px;border-bottom:1px solid var(--mc-border,#d9e1ec);background:var(--mc-surface,#fff);overflow-x:auto}
+.about-tab{appearance:none;border:0;border-bottom:3px solid transparent;background:transparent;padding:11px 15px 9px;color:var(--mc-text-muted,#68758a);font:700 13px/1 inherit;cursor:pointer;white-space:nowrap}
+.about-tab:hover{color:var(--mc-accent,#1769d2);background:var(--mc-accent-soft,#edf5ff)}
+.about-tab.active{color:var(--mc-accent,#1769d2);border-bottom-color:var(--mc-accent,#1769d2)}
+.about-content{flex:1;min-height:0;overflow:auto;padding:18px}
+.about-section{display:none;max-width:1080px;margin:0 auto}
+.about-section.active{display:block}
+.about-project-card{display:flex;align-items:center;gap:20px;padding:22px 24px;border:1px solid var(--mc-border,#d9e1ec);border-radius:14px;background:linear-gradient(135deg,var(--mc-surface,#fff),var(--mc-accent-soft,#eef6ff));box-shadow:0 8px 24px rgba(28,58,94,.08)}
+.about-logo{width:82px;height:82px;flex:0 0 82px;border-radius:50%;box-shadow:0 6px 18px rgba(21,81,91,.18)}
+.about-project-copy h1{margin:0;color:var(--mc-text-primary,#17243a);font-size:30px;line-height:1.05;letter-spacing:-.5px}
+.about-motto{margin-top:7px;color:var(--mc-text-secondary,#526177);font-size:15px;font-weight:700}.about-motto span{color:#f59b2f;margin:0 4px}
+.about-badges{display:flex;flex-wrap:wrap;gap:7px;margin-top:13px}.about-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid var(--mc-border,#d9e1ec);border-radius:999px;background:var(--mc-surface,#fff);color:var(--mc-text-secondary,#526177);font-size:11px;font-weight:700}.about-badge-status i{width:7px;height:7px;border-radius:50%;background:#25c66b;box-shadow:0 0 0 3px rgba(37,198,107,.13)}
+.about-overview-grid,.about-help-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px;margin-top:13px}
+.about-card{display:flex;gap:13px;padding:17px;border:1px solid var(--mc-border,#d9e1ec);border-radius:12px;background:var(--mc-surface,#fff);color:var(--mc-text-primary,#17243a);box-shadow:0 3px 12px rgba(28,58,94,.05)}
+.about-card>div:last-child{min-width:0;flex:1}.about-card-icon{display:grid;place-items:center;width:36px;height:36px;flex:0 0 36px;border-radius:10px;background:var(--mc-accent-soft,#edf5ff);font-size:17px}
+.about-card-kicker{margin-bottom:4px;color:var(--mc-text-muted,#738096);font-size:10px;font-weight:800;letter-spacing:.09em;text-transform:uppercase}.about-card h2{margin:0 0 6px;color:var(--mc-text-primary,#17243a);font-size:16px}.about-card p{margin:0;color:var(--mc-text-secondary,#58677b);font-size:12px;line-height:1.55}.about-muted{font-size:11px!important}.about-aliases{display:flex;gap:7px;margin-top:9px}.about-aliases span{padding:4px 9px;border-radius:999px;background:var(--mc-accent-soft,#edf5ff);color:var(--mc-accent,#1769d2);font-size:11px;font-weight:800}
+.about-facts{display:grid;gap:7px}.about-facts div,.about-link-list a{display:flex;justify-content:space-between;gap:12px;padding-bottom:7px;border-bottom:1px solid var(--mc-border-soft,#edf1f6);font-size:12px}.about-facts div:last-child,.about-link-list a:last-child{padding-bottom:0;border-bottom:0}.about-facts span,.about-link-list span{color:var(--mc-text-muted,#738096)}.about-facts strong,.about-link-list strong{color:var(--mc-text-primary,#17243a);text-align:right}.about-link-list{display:grid;gap:8px}.about-link-list a{text-decoration:none}.about-link-list a:hover strong{color:var(--mc-accent,#1769d2)}
+.about-section-heading{margin:2px 0 14px}.about-section-heading h2{margin:0;color:var(--mc-text-primary,#17243a);font-size:21px}.about-section-heading p{margin:4px 0 0;color:var(--mc-text-muted,#738096);font-size:12px}.about-note{margin-top:13px;padding:12px 14px;border:1px dashed var(--mc-border,#d9e1ec);border-radius:10px;background:var(--mc-surface,#fff);color:var(--mc-text-muted,#738096);font-size:12px;text-align:center}
+.about-license-card{max-width:760px}.about-legal-line{margin-top:11px!important;font-size:11px!important}.about-primary-link{display:inline-flex;margin-top:14px;padding:8px 12px;border-radius:8px;background:var(--mc-accent,#1769d2);color:#fff!important;text-decoration:none;font-size:12px;font-weight:800}.about-primary-link:hover{filter:brightness(1.05)}
+.about-links-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.about-resource-card{display:grid;grid-template-columns:40px 1fr auto;align-items:center;gap:12px;padding:16px;border:1px solid var(--mc-border,#d9e1ec);border-radius:12px;background:var(--mc-surface,#fff);color:var(--mc-text-primary,#17243a);text-decoration:none}.about-resource-card:hover{border-color:var(--mc-accent,#1769d2);transform:translateY(-1px)}.about-resource-icon{display:grid;place-items:center;width:40px;height:40px;border-radius:11px;background:var(--mc-accent-soft,#edf5ff);font-size:18px}.about-resource-card span:nth-child(2){display:grid;min-width:0}.about-resource-card small{color:var(--mc-text-muted,#738096);font-size:10px;text-transform:uppercase;letter-spacing:.07em;font-weight:800}.about-resource-card strong{margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.about-resource-card em{margin-top:3px;color:var(--mc-text-secondary,#58677b);font-size:11px;font-style:normal}.about-resource-card b{color:var(--mc-accent,#1769d2)}
+.about-release-card{padding:20px;border:1px solid var(--mc-border,#d9e1ec);border-radius:12px;background:var(--mc-surface,#fff);color:var(--mc-text-primary,#17243a)}.about-release-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.about-version{color:var(--mc-accent,#1769d2);font-size:12px;font-weight:900}.about-release-head h2{margin:3px 0 0;font-size:18px}.about-current-label{padding:4px 8px;border-radius:999px;background:rgba(37,198,107,.12);color:#168846;font-size:10px;font-weight:900}.about-release-card ul{margin:16px 0 0;padding-left:20px;color:var(--mc-text-secondary,#58677b);font-size:12px;line-height:1.8}
+.about-footer{display:flex;align-items:center;gap:9px;flex:0 0 auto;padding:8px 18px;border-top:1px solid var(--mc-border,#d9e1ec);background:var(--mc-surface,#fff);color:var(--mc-text-muted,#738096);font-size:10px}.about-footer img{width:25px;height:25px;border-radius:50%}.about-footer div{display:grid}.about-footer strong{color:var(--mc-text-primary,#17243a);font-size:11px}.about-footer div span{font-size:9px}.about-footer>span{margin-left:auto}
+body.workspace-compact .about-content{padding:11px}body.workspace-compact .about-project-card{padding:15px 18px}body.workspace-compact .about-card{padding:12px}body.workspace-compact .about-tabs{padding-left:12px}body.workspace-compact .about-tab{padding-top:8px;padding-bottom:7px}
+@media(max-width:820px){.about-overview-grid,.about-help-grid,.about-links-grid{grid-template-columns:1fr}.about-content{padding:12px}.about-project-card{align-items:flex-start}.about-logo{width:64px;height:64px;flex-basis:64px}.about-project-copy h1{font-size:24px}.about-footer>span{display:none}}
+@media(max-width:520px){.about-project-card{display:block;text-align:center}.about-logo{margin-bottom:10px}.about-badges{justify-content:center}.about-header{padding-left:12px}.about-tabs{padding:0 8px}.about-tab{padding-left:11px;padding-right:11px}.about-footer{justify-content:center}}
+
+/* ============================================================
+   ABOUT CENTER - layout and navigation polish
+   ============================================================ */
+
+/* Keep all six primary tabs visible inside the workspace width. */
+.main-content-tabs {
+    display: flex;
+    min-width: 0;
+    gap: 4px;
+    padding: 0 6px;
+    overflow: hidden;
+}
+
+.main-content-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 9px 7px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* About is a full workspace view, just like Settings and System. */
+.about-view {
+    flex: 1 1 auto;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    padding: var(--mc-page-pad);
+    overflow: hidden;
+    box-sizing: border-box;
+    background: var(--mc-bg-workspace);
+}
+
+.about-shell {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--mc-bg-panel);
+    border: 1px solid var(--mc-border);
+    border-radius: var(--mc-card-radius);
+    box-shadow: var(--mc-shadow-panel);
+    box-sizing: border-box;
+}
+
+.about-header.mc-workspace-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 0 0 var(--mc-workspace-header-height);
+    height: var(--mc-workspace-header-height);
+    min-height: var(--mc-workspace-header-height);
+    margin: 0;
+    padding: var(--mc-workspace-header-padding-y) var(--mc-workspace-header-padding-x);
+    background: var(--mc-bg-panel);
+    border: 0;
+    border-bottom: 1px solid var(--mc-border);
+    border-radius: 0;
+    box-shadow: none;
+    box-sizing: border-box;
+}
+
+.about-header .workspace-page-title {
+    margin: 0;
+    color: var(--mc-text-primary);
+    font-size: var(--mc-page-title-size);
+    font-weight: var(--mc-page-title-weight);
+    line-height: var(--mc-page-title-line-height);
+}
+
+.about-header .workspace-page-subtitle {
+    margin: var(--mc-page-subtitle-gap) 0 0;
+    color: var(--mc-text-secondary);
+    font-size: var(--mc-body-size);
+    font-weight: 400;
+    line-height: var(--mc-page-subtitle-line-height);
+}
+
+/* Secondary navigation belongs below the shared page header. */
+.about-tabs {
+    display: flex;
+    align-items: stretch;
+    flex: 0 0 auto;
+    min-width: 0;
+    gap: 2px;
+    padding: 0 12px;
+    overflow: hidden;
+    background: var(--mc-bg-panel);
+    border-bottom: 1px solid var(--mc-border);
+}
+
+.about-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 10px 6px 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.about-content {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    padding: 18px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+    box-sizing: border-box;
+    background: var(--mc-bg-workspace);
+}
+
+.about-section {
+    width: 100%;
+    max-width: 980px;
+    min-width: 0;
+    margin: 0 auto;
+    box-sizing: border-box;
+}
+
+.about-project-card,
+.about-card,
+.about-resource-card,
+.about-release-card {
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+.about-overview-grid,
+.about-help-grid,
+.about-links-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.about-resource-card strong,
+.about-resource-card em,
+.about-card h2,
+.about-card p {
+    overflow-wrap: anywhere;
+}
+
+.about-resource-card strong {
+    white-space: normal;
+}
+
+.about-footer {
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+body.workspace-compact .main-content-tab {
+    padding-left: 5px;
+    padding-right: 5px;
+}
+
+body.workspace-compact .about-view {
+    padding: 8px;
+}
+
+@media (max-width: 1050px) {
+    .main-content-tabs {
+        gap: 2px;
+        padding-left: 3px;
+        padding-right: 3px;
+    }
+
+    .main-content-tab {
+        padding-left: 4px;
+        padding-right: 4px;
+        font-size: 12px;
+    }
+
+    .about-overview-grid,
+    .about-help-grid,
+    .about-links-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 720px) {
+    .main-content-tab {
+        font-size: 11px;
+    }
+
+    .about-view {
+        padding: 8px;
+    }
+
+    .about-tabs {
+        padding: 0 5px;
+    }
+
+    .about-tab {
+        padding-left: 3px;
+        padding-right: 3px;
+        font-size: 11px;
+    }
+}
+
+/* ============================================================
+   ABOUT CENTER - shared MeshCenter workspace color language
+   Keep the branded project card as the only gradient accent.
+   ============================================================ */
+.about-header.mc-workspace-header {
+    background: var(--mc-workspace-header-bg);
+    border-bottom-color: var(--mc-workspace-header-border);
+}
+
+.about-tabs {
+    background: var(--mc-bg-panel);
+    border-bottom-color: var(--mc-border);
+}
+
+.about-content {
+    background: var(--mc-bg-workspace);
+}
+
+/* Standard cards match Settings/System surfaces. */
+.about-card,
+.about-resource-card,
+.about-release-card,
+.about-note {
+    background: var(--mc-bg-subtle);
+    border-color: var(--mc-border);
+    box-shadow: none;
+}
+
+/* The main MeshCenter identity card intentionally remains branded. */
+.about-project-card {
+    background: linear-gradient(135deg, var(--mc-bg-panel) 0%, var(--mc-primary-soft) 100%);
+    border-color: var(--mc-border);
+    box-shadow: var(--mc-shadow-panel);
+}
+
+.about-card-icon,
+.about-resource-icon,
+.about-aliases span {
+    background: var(--mc-primary-soft);
+}
+
+.about-footer {
+    background: var(--mc-bg-panel);
+    border-top-color: var(--mc-border);
+}
+
+html[data-theme="dark"] .about-shell,
+html[data-theme="dark"] .about-header.mc-workspace-header,
+html[data-theme="dark"] .about-tabs,
+html[data-theme="dark"] .about-footer {
+    background: #18212c;
+    border-color: #364253;
+}
+
+html[data-theme="dark"] .about-content {
+    background: #18212c;
+}
+
+html[data-theme="dark"] .about-card,
+html[data-theme="dark"] .about-resource-card,
+html[data-theme="dark"] .about-release-card,
+html[data-theme="dark"] .about-note {
+    background: #202a36;
+    border-color: #364253;
+    color: #dbe5f1;
+}
+
+html[data-theme="dark"] .about-project-card {
+    background: linear-gradient(135deg, #202a36 0%, #21364d 100%);
+    border-color: #364253;
+}
+
+/* ============================================================
+   UNIFIED PRIMARY NAVIGATION HEIGHT
+   Central workspace tabs and right Nodes/Tools tabs use the
+   same container geometry and the same visible tab height.
+   ============================================================ */
+.main-content-tabs,
+.sidebar-tabs {
+    box-sizing: border-box;
+    height: var(--workspace-nav-height, 42px);
+    min-height: var(--workspace-nav-height, 42px);
+    padding: 6px 8px 0;
+    gap: 5px;
+    align-items: flex-end;
+    overflow: hidden;
+}
+
+.main-content-tab,
+.sidebar-tab {
+    box-sizing: border-box;
+    height: 36px;
+    min-height: 36px;
+    padding-top: 0;
+    padding-bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+/* Keep the six central tabs compact while preserving identical height. */
+.main-content-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-left: 6px;
+    padding-right: 6px;
+}
+
+/* Nodes and Tools continue to divide the right panel evenly. */
+.sidebar-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+body.workspace-compact .main-content-tabs,
+body.workspace-compact .sidebar-tabs {
+    height: var(--workspace-nav-height, 42px);
+    min-height: var(--workspace-nav-height, 42px);
+    padding-top: 6px;
+}
+
+body.workspace-compact .main-content-tab,
+body.workspace-compact .sidebar-tab {
+    height: 36px;
+    min-height: 36px;
+}
+
+/* ============================================================
+   DARK THEME CONTRAST + SYSTEM THEME MODE
+   Keep all text readable by routing legacy hard-coded colors
+   through the shared UI tokens whenever dark mode is active.
+   ============================================================ */
+html[data-theme="dark"] {
+    --mc-bg-app: #0d1723;
+    --mc-bg-workspace: #111c29;
+    --mc-bg-panel: #1b2837;
+    --mc-bg-subtle: #162231;
+    --mc-bg-muted: #202f40;
+    --mc-bg-media-stage: #101923;
+
+    --mc-border: #3a4a5d;
+    --mc-border-soft: #2b3a4b;
+    --mc-border-active: #6aa7ff;
+    --mc-border-focus: #73b2ff;
+
+    --mc-primary: #66a8ff;
+    --mc-primary-hover: #8abeff;
+    --mc-primary-soft: #203d5d;
+    --mc-primary-muted: #294967;
+
+    --mc-text-primary: #f2f7fc;
+    --mc-text-secondary: #c3d1df;
+    --mc-text-muted: #90a5ba;
+    --mc-text-inverse: #0b1520;
+
+    --mc-tab-bg: #f7f9fc;
+    --mc-tab-bg-hover: #ffffff;
+    --mc-tab-bg-active: #ffffff;
+    --mc-tab-text: #314763;
+    --mc-tab-text-active: #102f5c;
+    --mc-tab-line-active: #245b9f;
+
+    --mc-surface: var(--mc-bg-panel);
+    --mc-surface-soft: var(--mc-bg-subtle);
+    --mc-text: var(--mc-text-primary);
+    --mc-muted: var(--mc-text-secondary);
+    --mc-accent: var(--mc-primary);
+    --mc-workspace-header-bg: linear-gradient(180deg, #202e3e 0%, #1a2736 100%);
+}
+
+html[data-theme="dark"] body,
+html[data-theme="dark"] .app-container,
+html[data-theme="dark"] .main-layout,
+html[data-theme="dark"] .chat-area,
+html[data-theme="dark"] .messages-view,
+html[data-theme="dark"] .video-view,
+html[data-theme="dark"] .workspace-view,
+html[data-theme="dark"] .media-view,
+html[data-theme="dark"] .system-view,
+html[data-theme="dark"] .settings-view,
+html[data-theme="dark"] .about-view {
+    color: var(--mc-text-primary);
+}
+
+/* Shared headings, labels and values */
+html[data-theme="dark"] :is(
+    h1, h2, h3, h4, h5, h6,
+    .chat-title, .chat-name, .chat-header-title,
+    .node-name, .node-title, .node-detail-title,
+    .workspace-page-title,
+    .settings-title, .settings-card-title,
+    .system-title, .system-card-title,
+    .media-title, .video-title,
+    .about-title, .about-card h2, .about-section-heading h2,
+    .about-project-copy h1, .about-release-head h2,
+    .about-resource-card strong, .about-facts strong,
+    .about-link-list strong, .about-footer strong
+) {
+    color: var(--mc-text-primary) !important;
+}
+
+html[data-theme="dark"] :is(
+    p, label, dt, dd, li,
+    .chat-preview, .chat-last-message, .chat-subtitle,
+    .node-meta, .node-subtitle, .node-detail-value,
+    .workspace-page-subtitle,
+    .settings-subtitle, .settings-card p,
+    .system-subtitle, .system-card,
+    .media-subtitle, .video-subtitle,
+    .about-subtitle, .about-card p, .about-motto,
+    .about-resource-card em, .about-release-card ul,
+    .about-footer, .about-note
+) {
+    color: var(--mc-text-secondary) !important;
+}
+
+html[data-theme="dark"] :is(
+    small, .muted, .hint, .helper-text,
+    .message-time, .sensor-label,
+    .about-card-kicker, .about-resource-card small,
+    .about-facts span, .about-link-list span,
+    .about-section-heading p
+) {
+    color: var(--mc-text-muted) !important;
+}
+
+/* Dark surfaces and cards */
+html[data-theme="dark"] :is(
+    .chat-item, .node-card, .system-card, .settings-card,
+    .about-card, .about-resource-card, .about-release-card,
+    .about-note, .about-footer,
+    .system-log-card, .radio-health-card,
+    .wifi-card, .auto-recovery-card
+) {
+    background: var(--mc-bg-panel) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
+}
+
+html[data-theme="dark"] :is(
+    .chat-item:hover, .node-card:hover,
+    .about-resource-card:hover
+) {
+    background: #233346 !important;
+}
+
+html[data-theme="dark"] :is(
+    .chat-item.active, .chat-item.selected,
+    .node-card.active, .node-card.selected
+) {
+    background: #263e58 !important;
+    border-color: #66a8ff !important;
+}
+
+/* Inputs, selectors and table-like rows */
+html[data-theme="dark"] :is(input, select, textarea, .message-input) {
+    background: #0f1a26 !important;
+    color: var(--mc-text-primary) !important;
+    border-color: var(--mc-border) !important;
+}
+html[data-theme="dark"] :is(input, textarea)::placeholder {
+    color: #8297ab !important;
+}
+html[data-theme="dark"] :is(option) {
+    background: #172432;
+    color: var(--mc-text-primary);
+}
+html[data-theme="dark"] :is(
+    .system-info-row, .network-info-row, .radio-health-row,
+    .settings-row, .about-facts div, .about-link-list a
+) {
+    border-color: var(--mc-border-soft) !important;
+    color: var(--mc-text-secondary) !important;
+}
+html[data-theme="dark"] :is(
+    .system-info-row strong, .network-info-row strong,
+    .radio-health-row strong, .settings-row strong
+) {
+    color: var(--mc-text-primary) !important;
+}
+
+/* About keeps its branded hero, but all text remains readable */
+html[data-theme="dark"] .about-project-card {
+    background: linear-gradient(135deg, #213b57 0%, #263f5a 55%, #1d344b 100%) !important;
+    border-color: #46617c !important;
+}
+html[data-theme="dark"] .about-project-card :is(h1, .about-motto) {
+    color: #f4f8fc !important;
+}
+html[data-theme="dark"] .about-badge {
+    background: #f8fbff !important;
+    color: #23415f !important;
+    border-color: #d5e2ef !important;
+}
+html[data-theme="dark"] .about-aliases span {
+    background: #f4f8fc !important;
+    color: #205b9e !important;
+}
+html[data-theme="dark"] .about-tab {
+    color: var(--mc-text-secondary) !important;
+}
+html[data-theme="dark"] .about-tab.active {
+    color: #8bc0ff !important;
+}
+html[data-theme="dark"] a {
+    color: #8bc0ff;
+}
+
+/* System chart and log */
+html[data-theme="dark"] :is(.chart-container, .system-chart, .system-log-body, .log-container) {
+    background: #162331 !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-secondary) !important;
+}
+html[data-theme="dark"] :is(.system-log-entry, .log-entry) {
+    color: var(--mc-text-secondary) !important;
+    border-color: var(--mc-border-soft) !important;
+}
+
+/* Workspace theme selector: three equal choices */
+.workspace-theme-options {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.workspace-theme-option span {
+    min-width: 0;
+    white-space: nowrap;
+}
+
+/* Browser-native controls should match the resolved theme. */
+html[data-theme="dark"] { color-scheme: dark; }
+html[data-theme="light"] { color-scheme: light; }
+
+/* ============================================================
+   DARK THEME POLISH — darker navigation, stronger panel framing
+   and higher contrast About content.
+   ============================================================ */
+html[data-theme="dark"] {
+    --mc-tab-bg: #121c28;
+    --mc-tab-bg-hover: #182535;
+    --mc-tab-bg-active: #1d2b3b;
+    --mc-tab-text: #b7c6d6;
+    --mc-tab-text-active: #f4f8fc;
+    --mc-tab-line-active: #4f9cff;
+    --mc-border: #2f3e50;
+    --mc-border-soft: #243243;
+}
+
+/* Primary and right-side navigation use the same dark treatment. */
+html[data-theme="dark"] .main-content-tabs,
+html[data-theme="dark"] .sidebar-tabs {
+    background: #0f1823 !important;
+    border-bottom-color: #0a1119 !important;
+}
+
+html[data-theme="dark"] .main-content-tab,
+html[data-theme="dark"] .sidebar-tab {
+    background: var(--mc-tab-bg) !important;
+    color: var(--mc-tab-text) !important;
+    border-color: #263547 !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .34) !important;
+}
+
+html[data-theme="dark"] .main-content-tab:hover,
+html[data-theme="dark"] .sidebar-tab:hover {
+    background: var(--mc-tab-bg-hover) !important;
+    color: var(--mc-tab-text-active) !important;
+}
+
+html[data-theme="dark"] .main-content-tab.active,
+html[data-theme="dark"] .sidebar-tab.active {
+    background: var(--mc-tab-bg-active) !important;
+    color: var(--mc-tab-text-active) !important;
+    border-color: #33465c !important;
+    border-bottom-color: var(--mc-tab-line-active) !important;
+}
+
+/* Stronger, darker outline around the major workspace panels. */
+html[data-theme="dark"] :is(
+    .video-panel,
+    .media-panel,
+    .system-panel,
+    .settings-panel,
+    .about-shell,
+    .chat-area,
+    .messages-view,
+    .sidebar,
+    .base-sidebar
+) {
+    border-color: #0a121c !important;
+}
+
+html[data-theme="dark"] :is(
+    .video-panel,
+    .media-panel,
+    .system-panel,
+    .settings-panel,
+    .about-shell
+) {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .42),
+                0 8px 24px rgba(0, 0, 0, .16) !important;
+}
+
+/* About: prevent legacy navy text from disappearing on dark surfaces. */
+html[data-theme="dark"] .about-project-copy h1,
+html[data-theme="dark"] .about-card h2,
+html[data-theme="dark"] .about-facts strong,
+html[data-theme="dark"] .about-link-list strong,
+html[data-theme="dark"] .about-resource-card strong,
+html[data-theme="dark"] .about-release-head h2 {
+    color: #f4f8fc !important;
+}
+
+html[data-theme="dark"] .about-motto,
+html[data-theme="dark"] .about-card p,
+html[data-theme="dark"] .about-facts,
+html[data-theme="dark"] .about-link-list,
+html[data-theme="dark"] .about-resource-card em,
+html[data-theme="dark"] .about-release-card ul {
+    color: #bdcada !important;
+}
+
+html[data-theme="dark"] .about-card-kicker,
+html[data-theme="dark"] .about-facts span,
+html[data-theme="dark"] .about-link-list span,
+html[data-theme="dark"] .about-resource-card small {
+    color: #91a6bc !important;
+}
+
+html[data-theme="dark"] .about-link-list a,
+html[data-theme="dark"] .about-resource-card,
+html[data-theme="dark"] .about-facts div {
+    color: #d7e2ec !important;
+    border-color: #35475a !important;
+}
+
+html[data-theme="dark"] .about-card,
+html[data-theme="dark"] .about-resource-card,
+html[data-theme="dark"] .about-release-card {
+    background: #1b2837 !important;
+    border-color: #35475a !important;
+}
+
+html[data-theme="dark"] .about-project-card {
+    border-color: #31475f !important;
+}
+
+/* ============================================================
+   DARK THEME — camera workspace and Management Tools contrast
+   ============================================================ */
+html[data-theme="dark"] .video-frame-wrap,
+html[data-theme="dark"] .video-view .video-frame-wrap {
+    background: #111b27 !important;
+    border-color: #263547 !important;
+}
+
+html[data-theme="dark"] .camera-stream {
+    background: #080d13 !important;
+    box-shadow: 0 0 0 1px #2b3a4c !important;
+}
+
+html[data-theme="dark"] .nodes-management-item {
+    border-bottom-color: #334456 !important;
+    color: #dce6f0 !important;
+}
+
+html[data-theme="dark"] .nodes-management-item:hover {
+    background: #1d2b3a !important;
+}
+
+html[data-theme="dark"] .nodes-management-item .name {
+    color: #e8eef5 !important;
+}
+
+html[data-theme="dark"] .nodes-management-item .id {
+    color: #9fb1c4 !important;
+}
+
+html[data-theme="dark"] .nodes-stats,
+html[data-theme="dark"] #totalNodesCount {
+    color: #c5d2df !important;
+}
+
+html[data-theme="dark"] #nodesManagementList::-webkit-scrollbar-thumb {
+    background: #405369 !important;
+}
+
+html[data-theme="dark"] #nodesManagementList::-webkit-scrollbar-thumb:hover {
+    background: #536a83 !important;
+}
+
+/* ==========================================================
+   DARK THEME — chat workspace, controls and residual contrast
+   ========================================================== */
+html[data-theme="dark"] {
+    --mc-chat-bg: #111c29;
+    --mc-chat-surface: #182636;
+    --mc-chat-surface-raised: #203044;
+    --mc-chat-border: #2e4258;
+    --mc-chat-input: #1b2b3d;
+    --mc-chat-text: #eef6ff;
+    --mc-chat-muted: #9fb0c3;
+}
+
+/* Darken the complete conversation workspace. */
+html[data-theme="dark"] .messages-view,
+html[data-theme="dark"] .messages-container {
+    background: var(--mc-chat-bg) !important;
+    color: var(--mc-chat-text) !important;
+}
+
+html[data-theme="dark"] .messages-container {
+    border-left-color: var(--mc-chat-border) !important;
+    border-right-color: var(--mc-chat-border) !important;
+}
+
+/* Incoming and system messages must remain readable on the dark canvas. */
+html[data-theme="dark"] .message.rx .bubble {
+    background: var(--mc-chat-surface-raised) !important;
+    color: var(--mc-chat-text) !important;
+    border-color: var(--mc-chat-border) !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+}
+
+html[data-theme="dark"] .message.rx .bubble .sender {
+    color: #8fc5ff !important;
+}
+
+html[data-theme="dark"] .message.system .bubble {
+    background: #273140 !important;
+    color: #d8e2ed !important;
+    border-color: #3b4858 !important;
+}
+
+html[data-theme="dark"] .bubble .time,
+html[data-theme="dark"] .message-time {
+    color: var(--mc-chat-muted) !important;
+}
+
+/* Composer: slightly lighter than the chat canvas, with a subdued frame. */
+html[data-theme="dark"] .input-area {
+    background: #142130 !important;
+    border-top-color: var(--mc-chat-border) !important;
+}
+
+html[data-theme="dark"] .input-form input[type="text"],
+html[data-theme="dark"] .message-input {
+    background: var(--mc-chat-input) !important;
+    color: var(--mc-chat-text) !important;
+    border-color: #36506a !important;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
+}
+
+html[data-theme="dark"] .input-form input[type="text"]::placeholder,
+html[data-theme="dark"] .message-input::placeholder {
+    color: #8fa3b8 !important;
+}
+
+html[data-theme="dark"] .input-form input[type="text"]:focus,
+html[data-theme="dark"] .message-input:focus {
+    background: #203247 !important;
+    border-color: #4ea1ff !important;
+    box-shadow: 0 0 0 2px rgba(78, 161, 255, 0.16) !important;
+}
+
+/* Camera defaults button should belong to the dark control surface. */
+html[data-theme="dark"] .camera-defaults-btn {
+    background: #223349 !important;
+    color: #eef6ff !important;
+    border-color: #3a526d !important;
+    box-shadow: none !important;
+}
+
+html[data-theme="dark"] .camera-defaults-btn:hover {
+    background: #2b4059 !important;
+    border-color: #5b82aa !important;
+}
+
+/* Residual navy text inherited from the light theme. */
+html[data-theme="dark"] :is(
+    .media-title,
+    .media-summary strong,
+    .media-summary-count,
+    .nodes-tools-title,
+    .nodes-tools-count,
+    .nodes-management-count,
+    .camera-image-panel label,
+    .camera-control-label,
+    .camera-value,
+    .workspace-page-title,
+    .workspace-page-subtitle,
+    .system-card-title,
+    .settings-card-title,
+    .nodes-list-title,
+    .nodes-list-count
+) {
+    color: var(--mc-chat-text) !important;
+}
+
+html[data-theme="dark"] :is(
+    .media-summary,
+    .media-meta,
+    .camera-control-help,
+    .nodes-tools-subtitle,
+    .nodes-management-meta
+) {
+    color: var(--mc-chat-muted) !important;
+}
+
+/* Management list names and counters — keep hierarchy but never lose contrast. */
+html[data-theme="dark"] .nodes-management-item .name,
+html[data-theme="dark"] #nodesManagementList .name,
+html[data-theme="dark"] #nodesManagementList strong {
+    color: #edf5ff !important;
+}
+
+html[data-theme="dark"] .nodes-management-item .id,
+html[data-theme="dark"] #nodesManagementList .id {
+    color: #9eb1c6 !important;
+}
+
+html[data-theme="dark"] .nodes-stats,
+html[data-theme="dark"] #totalNodesCount,
+html[data-theme="dark"] .nodes-tools-total {
+    color: #cbd8e6 !important;
+}
+
+/* ==========================================================
+   DARK THEME — node position actions and search controls
+   ========================================================== */
+html[data-theme="dark"] {
+    --mc-dark-control-bg: #223349;
+    --mc-dark-control-bg-hover: #2b4059;
+    --mc-dark-control-border: #3a526d;
+    --mc-dark-control-text: #eef6ff;
+}
+
+/* Position action buttons: keep labels readable and use the standard dark control surface. */
+html[data-theme="dark"] .position-actions button,
+html[data-theme="dark"] .position-no-data button,
+html[data-theme="dark"] .node-position-map-btn,
+html[data-theme="dark"] .node-detail-quick-actions .quick-action {
+    background: var(--mc-dark-control-bg) !important;
+    color: var(--mc-dark-control-text) !important;
+    border-color: var(--mc-dark-control-border) !important;
+    box-shadow: none !important;
+}
+
+html[data-theme="dark"] .position-actions button:hover,
+html[data-theme="dark"] .position-no-data button:hover,
+html[data-theme="dark"] .node-position-map-btn:hover,
+html[data-theme="dark"] .node-detail-quick-actions .quick-action:hover:not(:disabled) {
+    background: var(--mc-dark-control-bg-hover) !important;
+    color: #ffffff !important;
+    border-color: #5b82aa !important;
+}
+
+html[data-theme="dark"] .node-detail-quick-actions .quick-action:disabled {
+    background: #1a2736 !important;
+    color: #718399 !important;
+    border-color: #2d3d50 !important;
+}
+
+/* Position values and separators should remain legible on the node card. */
+html[data-theme="dark"] .coord {
+    border-bottom-color: #43566b !important;
+}
+
+html[data-theme="dark"] .coord .label,
+html[data-theme="dark"] .position-reference,
+html[data-theme="dark"] .position-no-data {
+    color: #9eb1c6 !important;
+}
+
+html[data-theme="dark"] .coord .value {
+    color: #edf5ff !important;
+}
+
+/* Search clear button: match the search field instead of using the light beige preset. */
+html[data-theme="dark"] .clear-search-btn {
+    background: var(--mc-dark-control-bg) !important;
+    color: #d7e4f1 !important;
+    border: 1px solid var(--mc-dark-control-border) !important;
+    box-shadow: none !important;
+}
+
+html[data-theme="dark"] .clear-search-btn:hover {
+    background: var(--mc-dark-control-bg-hover) !important;
+    color: #ffffff !important;
+    border-color: #5b82aa !important;
+}
+
+html[data-theme="dark"] .clear-search-btn:focus-visible {
+    outline: 2px solid rgba(78, 161, 255, .45) !important;
+    outline-offset: 1px;
+}
+
+/* Short node identifier badge in the details header. */
+html[data-theme="dark"] .node-detail-short-id {
+    background: #32445b !important;
+    color: #eaf2ff !important;
+    border-color: #51627b !important;
+}
+
+/* Dark theme node values contrast */
+body.dark-theme .node-detail-value,
+body.dark-theme .node-data-value,
+body.dark-theme .radio-value,
+body.dark-theme .position-value,
+body.dark-theme .detail-value,
+body.dark-theme .info-value,
+body.dark-theme .tab-content .value,
+body.dark-theme .node-details-card .value{color:#e8eef7!important;font-weight:600;}
+body.dark-theme .quality-good{color:#6fdc8c!important;}
+body.dark-theme .quality-fair{color:#f0c75e!important;}
+body.dark-theme .quality-poor{color:#ff7d7d!important;}
+
+/* ==========================================================
+   DARK THEME — Weather card
+   Match the standard MeshCenter dark surfaces used by About,
+   System and node cards. Keep weather states readable without
+   reintroducing light panels inside the dark sidebar.
+   ========================================================== */
+html[data-theme="dark"] .weather-card {
+    background: #1b2938 !important;
+    border-color: #34475b !important;
+    color: #eaf2fb !important;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, .22) !important;
+}
+
+html[data-theme="dark"] .weather-card-header {
+    background: transparent !important;
+}
+
+html[data-theme="dark"] .weather-card-title,
+html[data-theme="dark"] .weather-temperature {
+    color: #f2f7fd !important;
+}
+
+html[data-theme="dark"] .weather-location,
+html[data-theme="dark"] .weather-condition,
+html[data-theme="dark"] .weather-footer,
+html[data-theme="dark"] .weather-forecast-date,
+html[data-theme="dark"] .weather-forecast-description,
+html[data-theme="dark"] .weather-forecast-placeholder {
+    color: #9fb0c2 !important;
+}
+
+/* Metrics become three dark sub-panels rather than white tiles. */
+html[data-theme="dark"] .weather-metrics {
+    background: #34475b !important;
+    border-top-color: #34475b !important;
+    border-bottom-color: #34475b !important;
+}
+
+html[data-theme="dark"] .weather-metric {
+    background: #202f40 !important;
+}
+
+html[data-theme="dark"] .weather-metric span {
+    color: #91a4b8 !important;
+}
+
+html[data-theme="dark"] .weather-metric strong {
+    color: #edf4fb !important;
+}
+
+/* Forecast uses the same raised dark-card hierarchy as About. */
+html[data-theme="dark"] .weather-forecast {
+    background: #182533 !important;
+    border-top-color: #34475b !important;
+}
+
+html[data-theme="dark"] .weather-forecast-title {
+    color: #b7c6d6 !important;
+}
+
+html[data-theme="dark"] .weather-forecast-day {
+    background: #223245 !important;
+    border-color: #3a4e64 !important;
+    box-shadow: none !important;
+}
+
+html[data-theme="dark"] .weather-forecast-label,
+html[data-theme="dark"] .weather-forecast-temperature {
+    color: #edf4fb !important;
+}
+
+/* Refresh/status pill — dark by default, state colors remain semantic. */
+html[data-theme="dark"] .weather-state-badge {
+    background: #223349 !important;
+    border-color: #3a526d !important;
+    color: #dce8f5 !important;
+    box-shadow: none !important;
+}
+
+html[data-theme="dark"] .weather-state-badge:hover {
+    background: #2b4059 !important;
+    border-color: #5b82aa !important;
+    color: #ffffff !important;
+}
+
+html[data-theme="dark"] .weather-online .weather-state-badge {
+    background: #17392d !important;
+    border-color: #2c6b52 !important;
+    color: #8ce2b5 !important;
+}
+
+html[data-theme="dark"] .weather-loading .weather-state-badge {
+    background: #223349 !important;
+    border-color: #3a526d !important;
+    color: #b9c9da !important;
+}
+
+html[data-theme="dark"] .weather-error .weather-state-badge {
+    background: #45272b !important;
+    border-color: #744047 !important;
+    color: #ffb3ba !important;
+}
+
+html[data-theme="dark"] .weather-stale .weather-state-badge {
+    background: #493b20 !important;
+    border-color: #76602f !important;
+    color: #f2d17a !important;
+}
+
+
+/* Dark theme - selected node title contrast */
+html[data-theme="dark"] .selected-node-card .node-name,
+html[data-theme="dark"] .node-details-panel .node-name,
+html[data-theme="dark"] .selected-node-card .node-title,
+html[data-theme="dark"] .node-details-panel .node-title{
+    color:#f4f8ff !important;
+    font-weight:700;
+    text-shadow:none;
+}
+
+/* Dark theme - node card titles (right panel and selected node header) */
+html[data-theme="dark"] .node-card-topline .node-card-title,
+html[data-theme="dark"] .node-card .node-card-title {
+    color: #f4f8ff !important;
+    font-weight: 700 !important;
+    text-shadow: none !important;
+}
+
+/* ==========================================================
+   DARK THEME — Selected node header and Radio values
+   Exact selectors used by renderNodeDetails()/renderRadioPane().
+   ========================================================== */
+html[data-theme="dark"] #nodeDetails .node-detail-card .node-detail-name {
+    color: #f4f8ff !important;
+    -webkit-text-fill-color: #f4f8ff !important;
+    opacity: 1 !important;
+    font-weight: 700 !important;
+}
+
+html[data-theme="dark"] #nodeDetails .node-detail-radio .radio-param .value {
+    color: #eaf2fb !important;
+    -webkit-text-fill-color: #eaf2fb !important;
+    opacity: 1 !important;
+    font-weight: 700 !important;
+}
+
+html[data-theme="dark"] #nodeDetails .node-detail-radio .radio-param .label {
+    color: #9fb0c3 !important;
+}
+
+html[data-theme="dark"] #nodeDetails .node-detail-radio .radio-param {
+    border-bottom-color: #52657a !important;
+}
+
+/* ============================================================
+   CAMERA PREVIEW — RESPONSIVE, NON-CROPPING STREAM
+   ============================================================ */
+.video-view {
+    overflow: hidden !important;
+}
+
+.video-panel {
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) auto auto !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+}
+
+.video-frame-wrap {
+    position: relative !important;
+    display: grid !important;
+    place-items: center !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    padding: 12px !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+    contain: layout paint !important;
+}
+
+.camera-stream,
+.camera-freeze-frame {
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    object-fit: contain !important;
+    object-position: center center !important;
+    border-radius: 8px !important;
+    box-sizing: border-box !important;
+}
+
+.camera-stream {
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+.camera-freeze-frame {
+    position: absolute !important;
+    inset: 12px !important;
+    z-index: 2 !important;
+    width: calc(100% - 24px) !important;
+    height: calc(100% - 24px) !important;
+    pointer-events: none !important;
+}
+
+.video-info-bar,
+.video-controls {
+    min-width: 0 !important;
+    flex: none !important;
+}
+
+/* Keep the preview usable on shorter browser windows. */
+@media (max-height: 760px) {
+    .video-header {
+        min-height: 52px !important;
+        padding-block: 9px !important;
+    }
+
+    .video-frame-wrap {
+        padding: 8px !important;
+    }
+
+    .camera-freeze-frame {
+        inset: 8px !important;
+        width: calc(100% - 16px) !important;
+        height: calc(100% - 16px) !important;
+    }
+
+    .video-controls {
+        padding-top: 8px !important;
+        padding-bottom: 8px !important;
+    }
+}
+
+
+/* ==========================================================
+   Camera feed readiness state
+   Hide the browser broken-image UI until the first MJPEG frame.
+   ========================================================== */
+.video-frame-wrap {
+    position: relative;
+}
+
+.camera-stream {
+    opacity: 1;
+    transition: opacity 160ms ease;
+}
+
+.camera-stream.camera-stream-hidden {
+    opacity: 0 !important;
+    visibility: hidden !important;
+}
+
+.camera-loading-placeholder {
+    position: absolute;
+    inset: 12px;
+    z-index: 3;
+    display: none;
+    place-items: center;
+    align-content: center;
+    justify-content: center;
+    gap: 9px;
+    border: 1px solid var(--mc-border, #334155);
+    border-radius: 8px;
+    background: var(--mc-surface, #f8fafc);
+    color: var(--mc-text-secondary, #64748b);
+    text-align: center;
+    pointer-events: none;
+}
+
+.camera-loading-placeholder.camera-loading-visible {
+    display: grid;
+}
+
+.camera-loading-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid rgba(59, 130, 246, .22);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: camera-loading-spin .8s linear infinite;
+}
+
+.camera-loading-title {
+    color: var(--mc-text-primary, #1e293b);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.camera-loading-text {
+    font-size: 11px;
+}
+
+html[data-theme="dark"] .camera-loading-placeholder {
+    border-color: #2f4053;
+    background: #101c29;
+    color: #94a8bd;
+}
+
+html[data-theme="dark"] .camera-loading-title {
+    color: #eef5ff;
+}
+
+@keyframes camera-loading-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .camera-loading-spinner {
+        animation-duration: 1.8s;
+    }
+    .camera-stream {
+        transition: none;
+    }
+}

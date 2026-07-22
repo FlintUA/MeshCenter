@@ -8853,3 +8853,31 @@ body.context-chat-mode .settings-view {
         padding-right: 8px;
     }
 }
+
+/* ===== SYSTEM LOG STANDALONE CARD ===== */
+.system-log-card {
+    min-height: 0;
+}
+
+.system-log-toggle {
+    padding: 0;
+    margin: 0 0 10px;
+}
+
+.system-log-toggle .system-card-title {
+    margin: 0;
+}
+
+.system-log-panel {
+    margin-top: 0;
+    max-height: 260px;
+    border: 1px solid rgba(31, 78, 121, 0.10);
+    background: rgba(255, 255, 255, 0.52);
+}
+
+body[data-theme="dark"] .system-log-panel,
+html[data-theme="dark"] .system-log-panel {
+    border-color: rgba(148, 163, 184, 0.18);
+    background: rgba(15, 23, 42, 0.28);
+}
+

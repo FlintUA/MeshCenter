@@ -7651,14 +7651,20 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     margin-bottom: 11px;
 }
 
-.camera-preset-group {
+.camera-preset-group,
+.camera-white-balance-group {
     display: flex;
     flex-direction: column;
     gap: 4px;
     width: min(260px, 100%);
 }
 
-.camera-preset-group label {
+.camera-white-balance-group {
+    width: min(220px, 100%);
+}
+
+.camera-preset-group label,
+.camera-white-balance-group label {
     color: #526178;
     font-size: 10px;
     font-weight: 600;
@@ -7666,7 +7672,8 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     text-transform: uppercase;
 }
 
-.camera-preset-group select {
+.camera-preset-group select,
+.camera-white-balance-group select {
     width: 100%;
     height: 34px;
     padding: 5px 9px;
@@ -7675,6 +7682,25 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     background: #ffffff;
     color: #243b5a;
     font-size: 12px;
+}
+
+
+@media (max-width: 760px) {
+    .camera-image-toolbar {
+        align-items: stretch;
+        flex-wrap: wrap;
+    }
+
+    .camera-preset-group,
+    .camera-white-balance-group {
+        width: 100%;
+        flex: 1 1 190px;
+    }
+
+    .camera-defaults-btn {
+        margin-left: auto;
+        align-self: flex-end;
+    }
 }
 
 #imageControlsPanel .camera-image-controls-grid {

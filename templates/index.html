@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MeshCenter</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=favorite-flag-css-icon-15">
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=chat-preview-contrast-12">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=workspace-shell-21">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=workspace-shell-21">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
 </head>
 <body>
@@ -215,14 +215,8 @@
                 <button class="main-content-tab" id="mainTabMedia" onclick="switchMainTab('media')">
                     🖼️ Media
                 </button>
-                <button class="main-content-tab" id="mainTabSystem" onclick="switchMainTab('system')">
-                    🖥️ System
-                </button>
-                <button class="main-content-tab" id="mainTabSettings" onclick="switchMainTab('settings')">
-                    ⚙️ Settings
-                </button>
-                <button class="main-content-tab" id="mainTabAbout" onclick="switchMainTab('about')">
-                    ℹ️ About
+                <button class="main-content-tab" id="mainTabDevices" onclick="switchMainTab('devices')">
+                    🔌 Devices
                 </button>
             </div>
 
@@ -298,7 +292,7 @@
             </div>
             <!-- ===== VIDEO VIEW ===== -->
             <div class="video-view" id="videoView" style="display: none;">
-                <div class="video-panel">
+                <div class="video-panel mc-workspace-panel">
                     <div class="video-header mc-workspace-header">
                         <div>
                             <div class="video-title workspace-page-title">📷 Live Camera</div>
@@ -502,6 +496,21 @@
                                         </select>
                                     </div>
 
+                                    <div class="camera-white-balance-group">
+                                        <label for="cameraWhiteBalance">White balance</label>
+                                        <select id="cameraWhiteBalance"
+                                                onchange="updateCameraImageControls(true)"
+                                                title="Select the automatic white-balance mode">
+                                            <option value="auto">Auto</option>
+                                            <option value="daylight">Daylight / Sun</option>
+                                            <option value="cloudy">Cloudy</option>
+                                            <option value="indoor">Indoor</option>
+                                            <option value="tungsten">Tungsten</option>
+                                            <option value="fluorescent">Fluorescent</option>
+                                            <option value="incandescent">Incandescent</option>
+                                        </select>
+                                    </div>
+
                                     <button type="button"
                                             class="camera-defaults-btn"
                                             onclick="restoreCameraImageDefaults()"
@@ -595,7 +604,7 @@
             <!-- ===== SYSTEM VIEW ===== -->
             <!-- ===== MEDIA WORKSPACE ===== -->
             <section class="media-view workspace-view" id="mediaView" style="display: none;" aria-labelledby="mediaWorkspaceTitle">
-                <div class="media-panel">
+                <div class="media-panel mc-workspace-panel">
                     <header class="media-header mc-workspace-header">
                         <div>
                             <h2 class="media-title workspace-page-title" id="mediaWorkspaceTitle">🖼️ Media Gallery</h2>
@@ -613,14 +622,43 @@
                 </div>
             </section>
 
+            <!-- ===== DEVICES WORKSPACE ===== -->
+            <section class="devices-view workspace-view" id="devicesView" style="display: none;" aria-labelledby="devicesWorkspaceTitle">
+                <div class="devices-panel mc-workspace-panel">
+                    <header class="devices-header mc-workspace-header">
+                        <div>
+                            <h2 class="workspace-page-title" id="devicesWorkspaceTitle">🔌 Devices</h2>
+                            <p class="workspace-page-subtitle">Sensors, actuators and connected hardware</p>
+                        </div>
+                    </header>
+                    <div class="devices-content">
+                        <div class="devices-empty-state">
+                            <div class="devices-empty-icon">🔌</div>
+                            <h3>Devices workspace is ready</h3>
+                            <p>Connected sensors, power monitors, relays and other hardware modules will appear here.</p>
+                            <div class="devices-empty-tags" aria-label="Planned device types">
+                                <span>Sensors</span><span>Power</span><span>GPIO</span><span>Relays</span><span>Displays</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <div class="system-view" id="systemView" style="display: none;">
-                <div class="system-panel">
+                <div class="system-panel mc-workspace-panel">
                     <div class="system-header mc-workspace-header">
                         <div>
                             <h3 class="workspace-page-title">🖥️ System</h3>
                             <div class="system-subtitle workspace-page-subtitle">Raspberry Pi and network status</div>
                         </div>
-                        <button class="system-refresh-btn mc-refresh-btn" onclick="loadSystemNetwork(); loadSystemInfo();">↻ Refresh</button>
+                        <div class="workspace-page-actions">
+                            <button class="system-refresh-btn mc-refresh-btn" onclick="loadSystemNetwork(); loadSystemInfo();">↻ Refresh</button>
+                            <button type="button" class="workspace-page-close-btn" onclick="closeWorkspacePage()" title="Close System" aria-label="Close System">
+                                <svg class="workspace-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <path d="M7 7L17 17M17 7L7 17"></path>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
 
                     <div class="system-layout">
@@ -917,12 +955,17 @@
 
             <!-- ===== SETTINGS VIEW ===== -->
             <div class="settings-view" id="settingsView" style="display: none;">
-                <div class="settings-panel">
+                <div class="settings-panel mc-workspace-panel">
                     <div class="settings-header mc-workspace-header">
                         <div>
                             <div class="settings-title workspace-page-title">⚙️ Settings</div>
                             <div class="settings-subtitle workspace-page-subtitle">Global MeshCenter preferences</div>
                         </div>
+                        <button type="button" class="workspace-page-close-btn" onclick="closeWorkspacePage()" title="Close Settings" aria-label="Close Settings">
+                            <svg class="workspace-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M7 7L17 17M17 7L7 17"></path>
+                            </svg>
+                        </button>
                     </div>
 
                     <div class="settings-grid">
@@ -1059,12 +1102,17 @@
 
         <!-- ===== ABOUT VIEW ===== -->
         <div class="about-view" id="aboutView" style="display:none;">
-            <div class="about-shell">
+            <div class="about-shell mc-workspace-panel">
                 <div class="about-header mc-workspace-header">
                     <div>
                         <div class="about-title workspace-page-title">ℹ️ About</div>
                         <div class="about-subtitle workspace-page-subtitle">Project information, help and resources</div>
                     </div>
+                    <button type="button" class="workspace-page-close-btn" onclick="closeWorkspacePage()" title="Close About" aria-label="Close About">
+                        <svg class="workspace-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M7 7L17 17M17 7L7 17"></path>
+                        </svg>
+                    </button>
                 </div>
 
                 <div class="about-tabs" role="tablist" aria-label="About sections">
@@ -1383,6 +1431,25 @@
                         <span class="workspace-switch" aria-hidden="true"></span>
                     </label>
                 </div>
+
+                <div class="workspace-menu-section workspace-application-section">
+                    <div class="workspace-menu-title">Application</div>
+                    <button type="button" class="workspace-nav-btn" data-workspace-page="system" onclick="openWorkspacePage('system')">
+                        <span class="workspace-nav-icon" aria-hidden="true">🖥️</span>
+                        <span><strong>System</strong><small>Health, network and logs</small></span>
+                        <span class="workspace-nav-arrow" aria-hidden="true">›</span>
+                    </button>
+                    <button type="button" class="workspace-nav-btn" data-workspace-page="settings" onclick="openWorkspacePage('settings')">
+                        <span class="workspace-nav-icon" aria-hidden="true">⚙️</span>
+                        <span><strong>Settings</strong><small>MeshCenter preferences</small></span>
+                        <span class="workspace-nav-arrow" aria-hidden="true">›</span>
+                    </button>
+                    <button type="button" class="workspace-nav-btn" data-workspace-page="about" onclick="openWorkspacePage('about')">
+                        <span class="workspace-nav-icon" aria-hidden="true">ℹ️</span>
+                        <span><strong>About</strong><small>Project information and help</small></span>
+                        <span class="workspace-nav-arrow" aria-hidden="true">›</span>
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -1512,7 +1579,7 @@
 </div>
 
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/chat.js?v=favorite-flag-css-icon-15"></script>
+<script src="/static/chat.js?v=workspace-shell-21"></script>
 <script src="/static/media.js"></script>
 <script src="/static/weather.js"></script>
 

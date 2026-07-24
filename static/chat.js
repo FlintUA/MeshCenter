@@ -17,6 +17,8 @@ let clearTargetChatId = null;
 let totalUnreadCount = 0;
 let showDuplicatesOnly = false;
 let currentMainTab = 'chats';
+let lastOperationalMainTab = 'chats';
+let mainTabTransitionSequence = 0;
 let cameraActive = false;
 let cameraPowerEnabled = true;
 let cameraPowerStatus = 'ready';
@@ -4562,6 +4564,20 @@ function setWorkspacePopover(open) {
     button.setAttribute('aria-expanded', String(open));
 }
 
+function openWorkspacePage(page) {
+    const allowedPages = new Set(['system', 'settings', 'about']);
+    if (!allowedPages.has(page)) return;
+    setWorkspacePopover(false);
+    switchMainTab(page);
+}
+
+function closeWorkspacePage() {
+    const fallbackTab = ['chats', 'video', 'media', 'devices'].includes(lastOperationalMainTab)
+        ? lastOperationalMainTab
+        : 'chats';
+    switchMainTab(fallbackTab);
+}
+
 function initializeWorkspace() {
     Workspace.load();
     Workspace.apply();
@@ -6567,6 +6583,14 @@ async function loadVideoSettings() {
                 presetSelect.value = 'custom';
             }
 
+            const whiteBalanceSelect = document.getElementById('cameraWhiteBalance');
+            if (whiteBalanceSelect) {
+                const savedAwbMode = String(currentCameraControls.awb_mode || 'auto').toLowerCase();
+                const availableMode = Array.from(whiteBalanceSelect.options)
+                    .some(option => option.value === savedAwbMode);
+                whiteBalanceSelect.value = availableMode ? savedAwbMode : 'auto';
+            }
+
             const liveInfo = document.getElementById('videoLiveInfo');
             if (liveInfo) {
                 liveInfo.textContent = `Live: ${data.config.resolution || '640×480'} @ ${data.config.fps || 12} FPS`;
@@ -6862,7 +6886,9 @@ function readCameraImageControls() {
 
         exposure_compensation: parseFloat(
             document.getElementById('cameraExposure')?.value ?? 0
-        )
+        ),
+
+        awb_mode: document.getElementById('cameraWhiteBalance')?.value || 'auto'
     };
 }
 
@@ -6947,6 +6973,11 @@ async function restoreCameraImageDefaults() {
     const presetSelect = document.getElementById('cameraImagePreset');
     if (presetSelect) {
         presetSelect.value = 'neutral';
+    }
+
+    const whiteBalanceSelect = document.getElementById('cameraWhiteBalance');
+    if (whiteBalanceSelect) {
+        whiteBalanceSelect.value = 'auto';
     }
 
     await updateCameraImageControls(false);
@@ -7491,6 +7522,12 @@ function refreshPhoto() {
 // SWITCH MAIN TAB (MODIFIED)
 // ============================================================
 function switchMainTab(tab) {
+    const transitionSequence = ++mainTabTransitionSequence;
+    const operationalTabs = new Set(['chats', 'video', 'media', 'devices']);
+
+    if (operationalTabs.has(tab)) {
+        lastOperationalMainTab = tab;
+    }
 
 //    if (radioHealthTimer) {
 //        clearInterval(radioHealthTimer);
@@ -7506,6 +7543,8 @@ function switchMainTab(tab) {
         document.getElementById('mediaView').style.display = 'none';
         document.getElementById('systemView').style.display = 'none';
         document.getElementById('settingsView').style.display = 'none';
+        document.getElementById('aboutView').style.display = 'none';
+        document.getElementById('devicesView').style.display = 'none';
 
         document.getElementById('chatListContainer').style.display = currentChatId ? 'none' : 'block';
         document.getElementById('messagesView').style.display = currentChatId ? 'flex' : 'none';
@@ -7527,9 +7566,14 @@ function switchMainTab(tab) {
         );
     });
 
+    document.querySelectorAll('.workspace-nav-btn[data-workspace-page]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.workspacePage === tab);
+    });
+
     const messagesView = document.getElementById('messagesView');
     const videoView = document.getElementById('videoView');
     const mediaView = document.getElementById('mediaView');
+    const devicesView = document.getElementById('devicesView');
     const photoView = document.getElementById('photoView');
     const chatHeader = document.getElementById('chatHeader');
     const chatListContainer = document.getElementById('chatListContainer');
@@ -7540,12 +7584,14 @@ function switchMainTab(tab) {
     if (messagesView) messagesView.style.display = 'none';
     if (videoView) videoView.style.display = 'none';
     if (mediaView) mediaView.style.display = 'none';
+    if (devicesView) devicesView.style.display = 'none';
     if (photoView) photoView.style.display = 'none';
     if (systemView) systemView.style.display = 'none';
     if (settingsView) settingsView.style.display = 'none';
     if (aboutView) aboutView.style.display = 'none';
 
     if (tab !== 'video') {
+        stopCameraStream();
         stopVideoFeed();
     }
 
@@ -7599,6 +7645,8 @@ function switchMainTab(tab) {
         hideCameraFeed('Connecting to camera…');
 
         loadCameraPowerState().then(async () => {
+            if (transitionSequence !== mainTabTransitionSequence || currentMainTab !== 'video') return;
+
             if (!cameraPowerEnabled) {
                 setCameraFeedLoading(false);
                 renderCameraPowerState();
@@ -7606,14 +7654,30 @@ function switchMainTab(tab) {
             }
 
             await switchCameraMode('video');
+            if (transitionSequence !== mainTabTransitionSequence || currentMainTab !== 'video') return;
+
             await Promise.allSettled([
                 loadVideoSettings(),
                 loadPhotoSettings()
             ]);
+            if (transitionSequence !== mainTabTransitionSequence || currentMainTab !== 'video') return;
 
             cameraActive = true;
             await reconnectCameraFeed();
+
+            if (transitionSequence !== mainTabTransitionSequence || currentMainTab !== 'video') {
+                stopCameraStream();
+                stopVideoFeed();
+                return;
+            }
+
             renderCameraPowerState();
+        }).catch(error => {
+            if (transitionSequence !== mainTabTransitionSequence || currentMainTab !== 'video') return;
+            console.error('[CAMERA] Failed to open camera workspace:', error);
+            cameraActive = false;
+            stopVideoFeed();
+            setCameraFeedLoading(false);
         });
 
     } else if (tab === 'media') {
@@ -7628,6 +7692,15 @@ function switchMainTab(tab) {
         if (typeof loadMediaGallery === 'function') {
             loadMediaGallery();
         }
+
+    } else if (tab === 'devices') {
+        if (chatHeader) chatHeader.style.display = 'none';
+        if (chatListContainer) chatListContainer.style.display = 'none';
+        if (messagesView) messagesView.style.display = 'none';
+        if (devicesView) devicesView.style.display = 'flex';
+
+        updateStatusDock('devices');
+        stopMessagePolling();
 
     } else if (tab === 'photo') {
         if (chatHeader) chatHeader.style.display = 'none';
@@ -7654,14 +7727,7 @@ function switchMainTab(tab) {
         loadSystemInfo();
         loadRadioHealth();
 
-    } else if (tab === 'system') {
-        left.innerHTML = '🖥️ System';
-        centerText.textContent = 'System Monitor';
-        setStatusDockContext('MeshCenter');
     } else if (tab === 'settings') {
-        const btn = document.getElementById('mainTabSettings');
-        if (btn) btn.classList.add('active');
-
         if (settingsView) settingsView.style.display = 'flex';
 
         if (chatHeader) chatHeader.style.display = 'none';
@@ -7726,6 +7792,10 @@ function updateStatusDock(tab) {
         workspaceLabel.textContent = 'Media';
         centerText.textContent = 'Local Gallery';
         setStatusDockContext('Images');
+    } else if (tab === 'devices') {
+        workspaceLabel.textContent = 'Devices';
+        centerText.textContent = 'Ready';
+        setStatusDockContext('Connected hardware');
     } else if (tab === 'system') {
         workspaceLabel.textContent = 'System';
         centerText.textContent = 'System Monitor';

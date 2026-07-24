@@ -2053,6 +2053,17 @@ html[data-theme="dark"] .message-input:focus {
     box-shadow: 0 0 0 2px rgba(78, 161, 255, 0.16) !important;
 }
 
+
+html[data-theme="dark"] .camera-white-balance-group select {
+    background-color: #101d2b !important;
+    color: #eef6ff !important;
+    border-color: #3a526d !important;
+}
+
+html[data-theme="dark"] .camera-white-balance-group label {
+    color: #9fb4cc !important;
+}
+
 /* Camera defaults button should belong to the dark control surface. */
 html[data-theme="dark"] .camera-defaults-btn {
     background: #223349 !important;
@@ -2552,4 +2563,420 @@ html[data-theme="dark"] .chat-item.active .chat-last-text {
 
 html[data-theme="dark"] .chat-item .chat-time {
     color: #9fb0c2 !important;
+}
+
+
+/* ==========================================================
+   Workspace Stage 1: application navigation + Devices
+   ========================================================== */
+.workspace-application-section {
+    display: grid;
+    gap: 6px;
+}
+
+.workspace-nav-btn {
+    width: 100%;
+    min-height: 46px;
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr) 14px;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 9px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: transparent;
+    color: #334155;
+    text-align: left;
+    cursor: pointer;
+}
+
+.workspace-nav-btn:hover,
+.workspace-nav-btn.active {
+    border-color: #c9d8ea;
+    background: #eef5fd;
+    color: #173f73;
+}
+
+.workspace-nav-icon {
+    width: 26px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    background: #e6eef8;
+}
+
+.workspace-nav-btn strong,
+.workspace-nav-btn small {
+    display: block;
+}
+
+.workspace-nav-btn strong {
+    font-size: 12px;
+    line-height: 1.2;
+}
+
+.workspace-nav-btn small {
+    margin-top: 2px;
+    color: #8795a8;
+    font-size: 9px;
+    font-weight: 500;
+}
+
+.workspace-nav-arrow {
+    color: #8ba0b7;
+    font-size: 18px;
+}
+
+.devices-view {
+    min-width: 0;
+    min-height: 0;
+    flex: 1;
+    padding: 10px;
+    overflow: hidden;
+}
+
+.devices-panel {
+    width: 100%;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--mc-border, #d8e1ec);
+    border-radius: 12px;
+    background: var(--mc-panel, #f7f9fc);
+}
+
+.devices-header {
+    flex: 0 0 auto;
+}
+
+.devices-content {
+    min-height: 0;
+    flex: 1;
+    display: grid;
+    place-items: center;
+    padding: 28px;
+}
+
+.devices-empty-state {
+    width: min(520px, 100%);
+    padding: 36px 28px;
+    border: 1px dashed #c8d5e5;
+    border-radius: 14px;
+    background: rgba(255,255,255,.55);
+    text-align: center;
+}
+
+.devices-empty-icon {
+    margin-bottom: 12px;
+    font-size: 40px;
+}
+
+.devices-empty-state h3 {
+    margin: 0 0 7px;
+    color: #17365f;
+    font-size: 20px;
+}
+
+.devices-empty-state p {
+    margin: 0 auto;
+    max-width: 430px;
+    color: #718198;
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.devices-empty-tags {
+    margin-top: 18px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 7px;
+}
+
+.devices-empty-tags span {
+    padding: 4px 9px;
+    border: 1px solid #cfdae8;
+    border-radius: 999px;
+    background: #fff;
+    color: #48617e;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+html[data-theme="dark"] .workspace-nav-btn {
+    color: #dce8f6;
+}
+
+html[data-theme="dark"] .workspace-nav-btn:hover,
+html[data-theme="dark"] .workspace-nav-btn.active {
+    border-color: #36516c;
+    background: #22364a;
+    color: #fff;
+}
+
+html[data-theme="dark"] .workspace-nav-icon {
+    background: #273d53;
+}
+
+html[data-theme="dark"] .workspace-nav-btn small,
+html[data-theme="dark"] .workspace-nav-arrow {
+    color: #90a6bc;
+}
+
+html[data-theme="dark"] .devices-panel {
+    border-color: #2f4357;
+    background: #172432;
+}
+
+html[data-theme="dark"] .devices-empty-state {
+    border-color: #3a5269;
+    background: #1d2d3d;
+}
+
+html[data-theme="dark"] .devices-empty-state h3 {
+    color: #f3f8ff;
+}
+
+html[data-theme="dark"] .devices-empty-state p {
+    color: #9fb1c5;
+}
+
+html[data-theme="dark"] .devices-empty-tags span {
+    border-color: #3a5269;
+    background: #162534;
+    color: #b8cbe0;
+}
+
+
+/* ==========================================================
+   Temporary Workspace pages: actions and close controls
+   ========================================================== */
+.workspace-page-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.workspace-page-close-btn {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--mc-workspace-header-border, #d7e0ea);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--mc-text-primary, #16243a);
+    font: inherit;
+    line-height: 1;
+    cursor: pointer;
+    flex: 0 0 34px;
+    vertical-align: middle;
+    transition: background-color .15s ease, border-color .15s ease, color .15s ease, transform .12s ease;
+}
+
+.workspace-page-close-btn .workspace-close-icon {
+    display: block;
+    width: 18px;
+    height: 18px;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.workspace-page-close-btn .workspace-close-icon path {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+}
+
+.workspace-page-close-btn:hover {
+    background: rgba(47, 123, 216, .10);
+    border-color: rgba(47, 123, 216, .45);
+    color: #165cba;
+    transform: translateY(-1px);
+}
+
+.workspace-page-close-btn:focus-visible {
+    outline: 2px solid rgba(47, 123, 216, .45);
+    outline-offset: 2px;
+}
+
+html[data-theme="dark"] .workspace-page-close-btn,
+body[data-theme="dark"] .workspace-page-close-btn {
+    color: #dbe8f7;
+    border-color: #405067;
+    background: #162331;
+}
+
+html[data-theme="dark"] .workspace-page-close-btn:hover,
+body[data-theme="dark"] .workspace-page-close-btn:hover {
+    color: #ffffff;
+    border-color: #5aa7ff;
+    background: #20354a;
+    transform: translateY(-1px);
+}
+
+/* ==========================================================
+   Devices workspace: align with standard MeshCenter pages
+   ========================================================== */
+.devices-view {
+    height: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
+    padding: var(--mc-page-pad, 10px);
+    box-sizing: border-box;
+    overflow: hidden;
+    background: var(--mc-bg-workspace);
+}
+
+.devices-panel {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--mc-border);
+    border-radius: var(--mc-card-radius, 12px);
+    background: var(--mc-bg-panel);
+    box-shadow: var(--mc-shadow-panel);
+}
+
+.devices-header.mc-workspace-header {
+    flex: 0 0 var(--mc-workspace-header-height, 64px);
+    min-height: var(--mc-workspace-header-height, 64px);
+    margin: 0;
+    padding: 14px 16px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--mc-border);
+    background: var(--mc-bg-panel);
+}
+
+.devices-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: block;
+    padding: 14px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: var(--mc-bg-workspace);
+    scrollbar-gutter: stable;
+}
+
+.devices-empty-state {
+    width: 100%;
+    max-width: none;
+    min-height: 190px;
+    margin: 0;
+    padding: 28px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--mc-border-soft);
+    border-radius: var(--mc-card-radius, 12px);
+    background: var(--mc-bg-subtle);
+    text-align: center;
+    box-shadow: var(--mc-shadow-panel);
+}
+
+.devices-empty-icon {
+    margin-bottom: 10px;
+    font-size: 34px;
+}
+
+html[data-theme="dark"] .devices-panel {
+    border-color: var(--mc-border);
+    background: var(--mc-bg-panel);
+}
+
+html[data-theme="dark"] .devices-header.mc-workspace-header {
+    border-bottom-color: var(--mc-border);
+    background: var(--mc-bg-panel);
+}
+
+html[data-theme="dark"] .devices-content {
+    background: var(--mc-bg-workspace);
+}
+
+html[data-theme="dark"] .devices-empty-state {
+    border-color: var(--mc-border-soft);
+    background: var(--mc-bg-subtle);
+}
+
+
+/* ==========================================================
+   Unified workspace panel container
+   Camera, Media, Devices and temporary application pages share
+   one border, radius and shadow in both themes.
+   ========================================================== */
+.mc-workspace-panel {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+    background: var(--mc-workspace-panel-bg, var(--mc-bg-panel));
+    border: 1px solid var(--mc-workspace-border, var(--mc-border));
+    border-radius: var(--mc-card-radius, 12px);
+    box-shadow: var(--mc-shadow-panel);
+}
+
+/* Keep each page's existing flex behavior while using the same shell. */
+.video-panel.mc-workspace-panel,
+.media-panel.mc-workspace-panel,
+.devices-panel.mc-workspace-panel,
+.system-panel.mc-workspace-panel,
+.settings-panel.mc-workspace-panel,
+.about-shell.mc-workspace-panel {
+    background: var(--mc-workspace-panel-bg, var(--mc-bg-panel));
+    border-color: var(--mc-workspace-border, var(--mc-border));
+    border-radius: var(--mc-card-radius, 12px);
+    box-shadow: var(--mc-shadow-panel);
+}
+
+/* Dark theme: identical deep outline and restrained elevation everywhere. */
+html[data-theme="dark"] .mc-workspace-panel,
+body[data-theme="dark"] .mc-workspace-panel {
+    background: var(--mc-workspace-panel-bg, #18212c);
+    border-color: #0a121c !important;
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, .42),
+        0 8px 24px rgba(0, 0, 0, .16) !important;
+}
+
+/* Devices previously had a lighter outline; the shared shell owns it now. */
+html[data-theme="dark"] .devices-panel.mc-workspace-panel,
+body[data-theme="dark"] .devices-panel.mc-workspace-panel {
+    border-color: #0a121c !important;
+}
+
+/* Light theme uses the same subtle elevation as the established pages. */
+html[data-theme="light"] .mc-workspace-panel,
+body[data-theme="light"] .mc-workspace-panel {
+    border-color: var(--mc-workspace-border, var(--mc-border));
+    box-shadow: var(--mc-shadow-panel);
+}
+
+
+/* Keep temporary workspace page headers and close controls aligned identically. */
+.settings-header > .workspace-page-close-btn,
+.about-header > .workspace-page-close-btn {
+    margin-left: auto;
+}
+
+.workspace-page-actions > .workspace-page-close-btn {
+    margin-left: 2px;
 }

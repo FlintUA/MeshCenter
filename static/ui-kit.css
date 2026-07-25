@@ -2991,3 +2991,140 @@ html[data-theme="dark"] .settings-select {
     background: #0f1d2b;
     color: #f4f8ff;
 }
+
+/* ============================================================
+   UNIFIED POPOVER SURFACES — Stage 2C.7.4
+   Workspace and Notifications use one shared visual language.
+   ============================================================ */
+:root {
+    --mc-popover-bg: #ffffff;
+    --mc-popover-header-bg: #f7f9fc;
+    --mc-popover-item-hover: #eef3f8;
+    --mc-popover-border: #d7dee8;
+    --mc-popover-divider: #e5eaf0;
+    --mc-popover-text: #26364b;
+    --mc-popover-muted: #7a8798;
+    --mc-popover-control-bg: #eef3f8;
+    --mc-popover-control-hover: #e1e9f2;
+    --mc-popover-shadow: 0 14px 34px rgba(15, 23, 42, .20);
+}
+
+/* Shared shell */
+.workspace-popover,
+.notification-popover {
+    border-color: var(--mc-popover-border);
+    background: var(--mc-popover-bg);
+    color: var(--mc-popover-text);
+    box-shadow: var(--mc-popover-shadow);
+}
+
+/* Shared headers */
+.workspace-popover-header,
+.notification-popover-header {
+    background: var(--mc-popover-header-bg);
+    border-bottom-color: var(--mc-popover-divider);
+}
+
+.workspace-popover-header span,
+.notification-popover-header span,
+.notification-item-copy small,
+.notification-empty {
+    color: var(--mc-popover-muted);
+}
+
+/* Shared controls */
+.workspace-popover-close,
+.notification-clear-btn {
+    color: var(--mc-popover-muted);
+}
+
+.workspace-popover-close:hover,
+.notification-clear-btn:hover {
+    background: var(--mc-popover-control-hover);
+    color: var(--mc-popover-text);
+}
+
+.notification-clear-btn,
+.dock-notification-btn {
+    background: var(--mc-popover-control-bg);
+    border-color: var(--mc-popover-border);
+    color: var(--mc-popover-text);
+}
+
+.dock-notification-btn:hover {
+    background: var(--mc-popover-control-hover);
+}
+
+/* Shared internal rhythm */
+.workspace-menu-section,
+.notification-item {
+    border-color: var(--mc-popover-divider);
+}
+
+.notification-item:hover {
+    background: var(--mc-popover-item-hover);
+}
+
+.workspace-popover::after {
+    background: var(--mc-popover-bg);
+    border-color: var(--mc-popover-border);
+}
+
+html[data-theme="dark"],
+body[data-theme="dark"] {
+    --mc-popover-bg: #202a36;
+    --mc-popover-header-bg: #18212c;
+    --mc-popover-item-hover: #2b3949;
+    --mc-popover-border: #445164;
+    --mc-popover-divider: #364253;
+    --mc-popover-text: #e4edf7;
+    --mc-popover-muted: #91a2b6;
+    --mc-popover-control-bg: #18212c;
+    --mc-popover-control-hover: #2b3949;
+    --mc-popover-shadow: 0 16px 38px rgba(0, 0, 0, .50);
+}
+
+html[data-theme="dark"] .workspace-popover,
+html[data-theme="dark"] .notification-popover,
+body[data-theme="dark"] .workspace-popover,
+body[data-theme="dark"] .notification-popover {
+    background: var(--mc-popover-bg);
+    border-color: var(--mc-popover-border);
+    color: var(--mc-popover-text);
+    box-shadow: var(--mc-popover-shadow);
+}
+
+html[data-theme="dark"] .workspace-popover-header,
+html[data-theme="dark"] .notification-popover-header,
+body[data-theme="dark"] .workspace-popover-header,
+body[data-theme="dark"] .notification-popover-header {
+    background: var(--mc-popover-header-bg);
+    border-bottom-color: var(--mc-popover-divider);
+}
+
+html[data-theme="dark"] .notification-item:hover,
+body[data-theme="dark"] .notification-item:hover {
+    background: var(--mc-popover-item-hover);
+}
+
+html[data-theme="dark"] .notification-clear-btn,
+html[data-theme="dark"] .dock-notification-btn,
+body[data-theme="dark"] .notification-clear-btn,
+body[data-theme="dark"] .dock-notification-btn {
+    background: var(--mc-popover-control-bg);
+    border-color: var(--mc-popover-border);
+    color: var(--mc-popover-text);
+}
+
+html[data-theme="dark"] .notification-clear-btn:hover,
+html[data-theme="dark"] .dock-notification-btn:hover,
+body[data-theme="dark"] .notification-clear-btn:hover,
+body[data-theme="dark"] .dock-notification-btn:hover {
+    background: var(--mc-popover-control-hover);
+}
+
+html[data-theme="dark"] .workspace-popover::after,
+body[data-theme="dark"] .workspace-popover::after {
+    background: var(--mc-popover-bg);
+    border-color: var(--mc-popover-border);
+}

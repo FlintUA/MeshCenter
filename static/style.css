@@ -10366,3 +10366,308 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 #dockTempMetric {
     width: 11.2ch;
 }
+
+
+/* ============================================================
+   STAGE 2C.7 — NODE STATE CONTROL + NOTIFICATION CENTER
+   ============================================================ */
+/* The action group is the single source of truth for favorite/ignored state. */
+.node-detail-favorite,
+.node-detail-ignored {
+    display: none !important;
+}
+
+.node-detail-action-group {
+    grid-template-columns: repeat(3, 34px);
+    border-color: color-mix(in srgb, var(--mc-border, #d8dee6) 82%, #7890aa 18%);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--mc-surface-alt, #f5f7fa) 92%, #dbe7f4 8%);
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.5),
+        0 1px 3px rgba(20,35,55,.08);
+}
+
+.node-detail-action-group .node-detail-state-btn,
+.node-detail-action-group .node-detail-actions-btn {
+    width: 34px;
+    height: 31px;
+    color: var(--mc-text-secondary, #64748b);
+    font-size: 14px;
+    transition: background-color .16s ease, color .16s ease, box-shadow .16s ease;
+}
+
+.node-detail-action-group .node-detail-state-btn:hover,
+.node-detail-action-group .node-detail-actions-btn:hover {
+    background: rgba(72, 110, 152, .12);
+}
+
+.node-detail-action-group .node-detail-favorite-btn.active {
+    color: #b17a00;
+    background: #fff2c7;
+    box-shadow: inset 0 -2px 0 #d8a51d;
+}
+
+.node-detail-action-group .node-detail-ignore-btn.active {
+    color: #b43842;
+    background: #ffe7e9;
+    box-shadow: inset 0 -2px 0 #d9545f;
+}
+
+[data-theme="dark"] .node-detail-action-group {
+    border-color: #344a60;
+    background: #17283a;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.035), 0 1px 3px rgba(0,0,0,.2);
+}
+
+[data-theme="dark"] .node-detail-action-group .node-detail-favorite-btn.active {
+    color: #ffd35a;
+    background: rgba(224, 171, 28, .17);
+    box-shadow: inset 0 -2px 0 #d4a31f;
+}
+
+[data-theme="dark"] .node-detail-action-group .node-detail-ignore-btn.active {
+    color: #ff858c;
+    background: rgba(218, 76, 87, .16);
+    box-shadow: inset 0 -2px 0 #d9545f;
+}
+
+/* Toasts appear just above the fixed dock and never cover the header. */
+.toast.notification-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 46px;
+    top: auto;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 260px;
+    max-width: min(520px, calc(100vw - 28px));
+    padding: 10px 15px;
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 10px;
+    transform: translateX(-50%) translateY(16px);
+    opacity: 0;
+    color: #fff;
+    box-shadow: 0 8px 28px rgba(0,0,0,.22);
+    pointer-events: none;
+    z-index: 9999;
+    transition: opacity .22s ease, transform .22s ease;
+}
+
+.toast.notification-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+.notification-toast-icon {
+    font-size: 14px;
+    font-weight: 800;
+}
+
+.toast.notification-toast.success { background: #277b4b; }
+.toast.notification-toast.warning { background: #9b6b18; }
+.toast.notification-toast.error { background: #a93e46; }
+.toast.notification-toast.info { background: #286da8; }
+
+.dock-notification-wrap {
+    position: relative;
+    flex: 0 0 auto;
+}
+
+.dock-notification-btn {
+    position: relative;
+    width: 27px;
+    height: 25px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--mc-border, #d8dee6);
+    border-radius: 7px;
+    background: var(--mc-surface-alt, #eef2f7);
+    color: var(--mc-text-secondary, #526178);
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.dock-notification-btn:hover {
+    background: #dfe9f4;
+}
+
+
+.notification-popover {
+    position: absolute;
+    left: 0;
+    bottom: 34px;
+    width: min(360px, calc(100vw - 24px));
+    max-height: min(430px, calc(100vh - 90px));
+    overflow: hidden;
+    border: 1px solid var(--mc-border, #d8dee6);
+    border-radius: 12px;
+    background: var(--mc-surface, #fff);
+    color: var(--mc-text, #1e293b);
+    box-shadow: 0 14px 38px rgba(20,35,55,.22);
+    z-index: 1600;
+}
+
+.notification-popover-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 13px;
+    border-bottom: 1px solid var(--mc-border, #e1e6ed);
+}
+
+.notification-popover-header > div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.notification-popover-header strong { font-size: 13px; }
+.notification-popover-header span { color: var(--mc-muted, #7b8796); font-size: 9px; }
+
+.notification-clear-btn {
+    border: 0;
+    border-radius: 6px;
+    padding: 5px 8px;
+    background: var(--mc-surface-alt, #eef2f7);
+    color: var(--mc-text-secondary, #526178);
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.notification-list {
+    max-height: 335px;
+    overflow-y: auto;
+    padding: 5px;
+}
+
+.notification-item {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 24px 1fr;
+    gap: 8px;
+    padding: 9px 8px;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--mc-border, #e1e6ed) 70%, transparent);
+    border-radius: 7px;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.notification-item:last-child { border-bottom: 0; }
+.notification-item:hover { background: var(--mc-surface-alt, #f4f7fa); }
+.notification-item.is-read { opacity: .72; }
+.notification-item-icon {
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    font-weight: 800;
+}
+.notification-success .notification-item-icon { color: #217648; background: #e7f5ec; }
+.notification-warning .notification-item-icon { color: #946316; background: #fff3d8; }
+.notification-error .notification-item-icon { color: #a43d45; background: #fde9eb; }
+.notification-info .notification-item-icon { color: #23699f; background: #e6f1fa; }
+.notification-item-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.notification-item-copy strong { overflow-wrap: anywhere; font-size: 11px; font-weight: 650; line-height: 1.3; }
+.notification-item-copy small { color: var(--mc-muted, #7b8796); font-size: 9px; }
+.notification-empty { padding: 30px 16px; color: var(--mc-muted, #7b8796); font-size: 11px; text-align: center; }
+
+[data-theme="dark"] .dock-notification-btn { background: #17283a; border-color: #344a60; color: #bdd0e4; }
+[data-theme="dark"] .dock-notification-btn:hover { background: #21364b; }
+[data-theme="dark"] .notification-popover { background: #172638; border-color: #34485e; }
+[data-theme="dark"] .notification-item:hover { background: #203449; }
+[data-theme="dark"] .notification-success .notification-item-icon { color: #72d69a; background: rgba(57,164,100,.16); }
+[data-theme="dark"] .notification-warning .notification-item-icon { color: #f0c86a; background: rgba(196,143,31,.17); }
+[data-theme="dark"] .notification-error .notification-item-icon { color: #ff9299; background: rgba(207,71,82,.17); }
+[data-theme="dark"] .notification-info .notification-item-icon { color: #8fc7f0; background: rgba(48,126,184,.18); }
+
+@media (max-width: 620px) {
+    .notification-popover { left: -62px; }
+    .toast.notification-toast { bottom: 48px; min-width: 0; width: calc(100vw - 24px); }
+}
+
+
+/* ============================================================
+   WI-FI NETWORK ROW POLISH — Stage 2C.7.2
+   Keep network parameters compact and place Forget + Connect together.
+   ============================================================ */
+.wifi-info {
+    grid-template-columns: max-content max-content max-content minmax(0, 1fr);
+    column-gap: 12px;
+    row-gap: 6px;
+    justify-content: start;
+    min-width: 0;
+}
+
+.wifi-info > span {
+    white-space: nowrap;
+}
+
+.wifi-actions {
+    justify-self: end;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: max-content;
+    margin-left: 14px;
+}
+
+.wifi-connect-btn,
+.wifi-forget-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding-left: 7px;
+    padding-right: 7px;
+}
+
+@media (max-width: 1180px) {
+    .wifi-info {
+        grid-template-columns: max-content max-content minmax(0, 1fr);
+    }
+
+    .wifi-info > span:nth-child(3) {
+        grid-column: 1 / 3;
+    }
+
+    .wifi-actions {
+        grid-column: 3;
+        grid-row: 1 / span 2;
+        align-self: center;
+        margin-left: 8px;
+    }
+}
+
+/* ============================================================
+   STAGE 2C.7.3 — UNIFIED STATUS DOCK SEPARATORS
+   Use the same full bullet between every status item.
+   ============================================================ */
+#dockContextText::before,
+.dock-system-metrics span + span::before {
+    content: none !important;
+    display: none !important;
+}
+
+#dockContextText .dock-system-metrics {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#dockContextText .dock-separator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    margin: 0;
+    color: #9aa5b4;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+}
+

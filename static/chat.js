@@ -1294,24 +1294,159 @@ const CACHE_TTL = 30000;
 let lastRenderedSignature = {};
 
 // ============================================================
-// TOAST FUNCTION
+// NOTIFICATION CENTER / TOAST SYSTEM
 // ============================================================
-function showToast(message, type = 'info') {
-    const oldToast = document.getElementById('toast');
-    if (oldToast) oldToast.remove();
-    
+const NOTIFICATION_STORAGE_KEY = 'meshcenter.notifications.v1';
+const NOTIFICATION_MAX_ITEMS = 50;
+let notificationItems = [];
+let notificationQueue = [];
+let notificationToastActive = false;
+
+function normalizeNotificationType(type) {
+    return ['success', 'warning', 'error', 'info'].includes(type) ? type : 'info';
+}
+
+function notificationIcon(type) {
+    return ({ success: '✓', warning: '⚠', error: '✕', info: 'ⓘ' })[type] || 'ⓘ';
+}
+
+function loadNotificationHistory() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(NOTIFICATION_STORAGE_KEY) || '[]');
+        notificationItems = Array.isArray(saved) ? saved.slice(0, NOTIFICATION_MAX_ITEMS) : [];
+    } catch (_) {
+        notificationItems = [];
+    }
+    renderNotificationCenter();
+}
+
+function saveNotificationHistory() {
+    try {
+        localStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify(notificationItems.slice(0, NOTIFICATION_MAX_ITEMS)));
+    } catch (_) {}
+}
+
+function cleanNotificationMessage(message) {
+    return String(message ?? '')
+        .replace(/^[✅✓☑️]+\s*/u, '')
+        .replace(/^[❌✕⛔]+\s*/u, '')
+        .replace(/^[⚠️]+\s*/u, '')
+        .replace(/^[ℹ️ⓘ]+\s*/u, '')
+        .trim();
+}
+
+function addNotification(message, type = 'info') {
+    const item = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        message: cleanNotificationMessage(message),
+        type: normalizeNotificationType(type),
+        timestamp: Date.now(),
+        read: false
+    };
+    notificationItems.unshift(item);
+    notificationItems = notificationItems.slice(0, NOTIFICATION_MAX_ITEMS);
+    saveNotificationHistory();
+    renderNotificationCenter();
+    return item;
+}
+
+function formatNotificationTime(timestamp) {
+    const date = new Date(Number(timestamp) || Date.now());
+    const today = new Date();
+    const sameDay = date.toDateString() === today.toDateString();
+    return sameDay
+        ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : date.toLocaleDateString([], { day: '2-digit', month: '2-digit' }) + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function renderNotificationCenter() {
+    const list = document.getElementById('notificationList');
+    const empty = document.getElementById('notificationEmpty');
+    if (!list) return;
+
+    list.innerHTML = notificationItems.map(item => `
+        <button type="button" class="notification-item notification-${escapeHtml(item.type)} ${item.read ? 'is-read' : ''}" onclick="markNotificationRead('${escapeHtml(item.id)}')">
+            <span class="notification-item-icon" aria-hidden="true">${notificationIcon(item.type)}</span>
+            <span class="notification-item-copy">
+                <strong>${escapeHtml(item.message)}</strong>
+                <small>${escapeHtml(formatNotificationTime(item.timestamp))}</small>
+            </span>
+        </button>
+    `).join('');
+
+    if (empty) empty.hidden = notificationItems.length !== 0;
+}
+
+function toggleNotificationCenter(event) {
+    event?.stopPropagation();
+    const popover = document.getElementById('notificationPopover');
+    const button = document.getElementById('notificationCenterBtn');
+    if (!popover || !button) return;
+    const willOpen = popover.hidden;
+    popover.hidden = !willOpen;
+    button.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    if (willOpen) {
+        notificationItems.forEach(item => { item.read = true; });
+        saveNotificationHistory();
+        renderNotificationCenter();
+    }
+}
+
+function closeNotificationCenter() {
+    const popover = document.getElementById('notificationPopover');
+    const button = document.getElementById('notificationCenterBtn');
+    if (popover) popover.hidden = true;
+    if (button) button.setAttribute('aria-expanded', 'false');
+}
+
+function markNotificationRead(id) {
+    const item = notificationItems.find(entry => entry.id === id);
+    if (item) item.read = true;
+    saveNotificationHistory();
+    renderNotificationCenter();
+}
+
+function clearNotifications() {
+    notificationItems = [];
+    saveNotificationHistory();
+    renderNotificationCenter();
+}
+
+function showNextNotificationToast() {
+    if (notificationToastActive || notificationQueue.length === 0) return;
+    notificationToastActive = true;
+    const item = notificationQueue.shift();
     const toast = document.createElement('div');
-    toast.id = 'toast';
-    toast.className = `toast ${type}`;
-    toast.textContent = message;
+    toast.className = `toast notification-toast ${item.type}`;
+    toast.setAttribute('role', item.type === 'error' ? 'alert' : 'status');
+    toast.innerHTML = `<span class="notification-toast-icon" aria-hidden="true">${notificationIcon(item.type)}</span><span>${escapeHtml(item.message)}</span>`;
     document.body.appendChild(toast);
-    
-    setTimeout(() => toast.classList.add('show'), 10);
-    
+
+    requestAnimationFrame(() => toast.classList.add('show'));
+    const duration = item.type === 'error' ? 5200 : item.type === 'warning' ? 4200 : 3200;
     setTimeout(() => {
         toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
+        setTimeout(() => {
+            toast.remove();
+            notificationToastActive = false;
+            showNextNotificationToast();
+        }, 260);
+    }, duration);
+}
+
+function showToast(message, type = 'info') {
+    const item = addNotification(message, type);
+    notificationQueue.push(item);
+    showNextNotificationToast();
+}
+
+function initializeNotificationCenter() {
+    loadNotificationHistory();
+    document.addEventListener('click', event => {
+        if (!event.target.closest('#notificationPopover') && !event.target.closest('#notificationCenterBtn')) {
+            closeNotificationCenter();
+        }
+    });
 }
 
 // ============================================================
@@ -2093,27 +2228,6 @@ function checkNodeIgnored(nodeId) {
     }
 }
 
-function showIgnoredBanner(nodeId, nodeName) {
-    hideIgnoredBanner();
-    
-    const container = document.getElementById('messagesContainer');
-    if (!container) return;
-    
-    const banner = document.createElement('div');
-    banner.id = 'ignoreBanner';
-    banner.className = 'ignore-banner';
-    banner.innerHTML = `
-        <div class="ignore-banner-content">
-            <span>🚫 Node "${escapeHtml(nodeName)}" is ignored</span>
-            <button class="unignore-btn" onclick="toggleIgnore('${escapeHtml(nodeId)}')">
-                Unignore
-            </button>
-        </div>
-    `;
-    
-    container.prepend(banner);
-}
-
 function hideIgnoredBanner() {
     const banner = document.getElementById('ignoreBanner');
     if (banner) banner.remove();
@@ -2318,13 +2432,8 @@ function openChat(chatId, chatName, chatType, selectionSource = 'external') {
     // Если это DM, обновить детали ноды
     if (chatType === 'dm' && chatId !== 'channel') {
         updateNodeDetails(chatId);
-        checkNodeIgnored(chatId).then(isIgnored => {
-            if (isIgnored) {
-                showIgnoredBanner(chatId, chatName);
-            } else {
-                hideIgnoredBanner();
-            }
-        });
+        // Ignore state is already visible in the action segment and Notification Center.
+        hideIgnoredBanner();
     } else {
         renderNodeDetails(null);
         hideIgnoredBanner();
@@ -2816,13 +2925,11 @@ async function toggleIgnore(nodeId) {
             loadChatList();
             
             updateNodeDetails(nodeId);
+            showToast(data.ignored ? 'Node ignored' : 'Node restored', data.ignored ? 'warning' : 'success');
             
             if (currentChatId === nodeId) {
-                if (data.ignored) {
-                    showIgnoredBanner(nodeId, currentChatName);
-                } else {
-                    hideIgnoredBanner();
-                }
+                // Avoid duplicating the bottom notification with a chat banner.
+                hideIgnoredBanner();
                 invalidateCache(nodeId);
                 lastMessagesSignature = '';
                 await loadChatMessages(nodeId);
@@ -2858,6 +2965,7 @@ async function toggleFavorite(nodeId) {
             loadMessages();
             loadChatList();
             updateNodeDetails(nodeId);
+            showToast(data.favorite ? 'Node added to favorites' : 'Node removed from favorites', 'success');
         } else {
             const error = await response.json();
             alert('Failed to toggle favorite: ' + (error.error || 'Unknown error'));
@@ -3231,7 +3339,6 @@ function renderNodeDetails(node) {
             <!-- Верхняя панель -->
             <div class="node-detail-header">
                 <div class="node-detail-title-wrap">
-                    <span class="node-detail-favorite ${isFavorite ? 'is-active' : ''}" title="${isFavorite ? 'Favorite node' : ''}" aria-hidden="true">${isFavorite ? '⚑' : ''}</span>
                     <span class="node-detail-activity ${getNodeActivityPresentation(node).activityClass}" title="Activity status" aria-hidden="true"></span>
                     <span class="node-detail-name">${escapeHtml(displayName)}</span>
                 </div>
@@ -3255,7 +3362,6 @@ function renderNodeDetails(node) {
                 <div class="node-detail-status-copy">
                     <span class="node-detail-last-seen">🕒 ${escapeHtml(lastSeen)}</span>
                     <span class="node-detail-hops">Hops: ${escapeHtml(hops)}</span>
-                    <span class="node-detail-ignored">${isIgnored ? '🚫 Ignored' : ''}</span>
                 </div>
                 <div class="node-detail-header-actions node-detail-action-group">
                     <button type="button"
@@ -3264,7 +3370,7 @@ function renderNodeDetails(node) {
                             title="${isFavorite ? 'Remove from favorites' : 'Add to favorites'}"
                             aria-label="${isFavorite ? 'Remove node from favorites' : 'Add node to favorites'}"
                             aria-pressed="${isFavorite ? 'true' : 'false'}">
-                        <span aria-hidden="true">${isFavorite ? '⚑' : '⚐'}</span>
+                        <span aria-hidden="true">⚑</span>
                     </button>
 
                     <button type="button"
@@ -3273,7 +3379,7 @@ function renderNodeDetails(node) {
                             title="${isIgnored ? 'Stop ignoring node' : 'Ignore node'}"
                             aria-label="${isIgnored ? 'Stop ignoring node' : 'Ignore node'}"
                             aria-pressed="${isIgnored ? 'true' : 'false'}">
-                        <span aria-hidden="true">${isIgnored ? '🔓' : '🚫'}</span>
+                        <span aria-hidden="true">🚫</span>
                     </button>
 
                     <button class="node-detail-actions-btn"
@@ -3331,10 +3437,7 @@ function renderNodeDetails(node) {
             <button onclick="runNodeTool('request_position', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">📍 Request position</button>
             <button onclick="runNodeTool('request_telemetry', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">📊 Request telemetry</button>
             <button onclick="runNodeTool('traceroute', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">🔍 Traceroute</button>
-            <button onclick="copyNodeId('${escapeHtml(nodeId)}')">📋 Copy ID</button>
             <button onclick="setNodeAsReference('${escapeHtml(nodeId)}')">📍 Set as reference</button>
-            <button onclick="toggleFavorite('${escapeHtml(nodeId)}')">${isFavorite ? '⚑ Unfavorite' : '⚐ Favorite'}</button>
-            <button onclick="toggleIgnore('${escapeHtml(nodeId)}')">${isIgnored ? '🔓 Unignore' : '🚫 Ignore'}</button>
         </div>
     `;
     details.parentNode.insertBefore(actionsMenu, details.nextSibling);
@@ -8148,10 +8251,10 @@ async function loadWifiNetworks() {
             ? '<span class="wifi-connected">Connected</span>'
             : `
                 <div class="wifi-actions">
+                    ${net.saved ? `<button class="wifi-forget-btn" data-ssid="${escapeHtml(net.ssid)}">Forget</button>` : ''}
                     <button class="wifi-connect-btn" data-ssid="${escapeHtml(net.ssid)}" data-saved="${net.saved ? '1' : '0'}">
                         Connect
                     </button>
-                    ${net.saved ? `<button class="wifi-forget-btn" data-ssid="${escapeHtml(net.ssid)}">Forget</button>` : ''}
                 </div>
             `;
 
@@ -8503,8 +8606,11 @@ function ensureStatusDockMetrics() {
         metrics = document.createElement('span');
         metrics.className = 'dock-system-metrics';
         metrics.innerHTML = `
+            <span class="dock-separator" aria-hidden="true">•</span>
             <span id="dockCpuMetric">CPU --%</span>
+            <span class="dock-separator" aria-hidden="true">•</span>
             <span id="dockRamMetric">RAM --%</span>
+            <span class="dock-separator" aria-hidden="true">•</span>
             <span id="dockTempMetric">TEMP --°C</span>
         `;
         right.append(metrics);
@@ -9092,6 +9198,10 @@ window.loadChatList = loadChatList;
 window.loadMessages = loadMessages;
 window.openChat = openChat;
 window.showChatList = showChatList;
+window.toggleNotificationCenter = toggleNotificationCenter;
+window.closeNotificationCenter = closeNotificationCenter;
+window.clearNotifications = clearNotifications;
+window.markNotificationRead = markNotificationRead;
 window.toggleIgnore = toggleIgnore;
 window.toggleFavorite = toggleFavorite;
 window.selectNode = selectNode;
@@ -9194,6 +9304,11 @@ console.log('[EXPORT] Все функции экспортированы в wind
 // ЗАПУСК
 // ============================================================
 console.log('[CHAT] Script loaded, calling init()...');
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeNotificationCenter, { once: true });
+} else {
+    initializeNotificationCenter();
+}
 init();
 
 
@@ -9208,6 +9323,10 @@ window.loadChatList = loadChatList;
 window.loadMessages = loadMessages;
 window.openChat = openChat;
 window.showChatList = showChatList;
+window.toggleNotificationCenter = toggleNotificationCenter;
+window.closeNotificationCenter = closeNotificationCenter;
+window.clearNotifications = clearNotifications;
+window.markNotificationRead = markNotificationRead;
 window.toggleIgnore = toggleIgnore;
 window.toggleFavorite = toggleFavorite;
 window.selectNode = selectNode;

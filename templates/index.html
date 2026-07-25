@@ -4,9 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MeshCenter</title>
-    <!-- MeshCenter build: stage2c6-1-stable-dock-metrics-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=stage2c6-1-stable-dock-metrics-20260725">
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c6-1-stable-dock-metrics-20260725">
+    <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=stage2c7-4-unified-popovers-20260725">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
 </head>
 <body>
@@ -1358,6 +1358,7 @@
                     </svg>
                 </button>
             </div>
+
             <button class="dock-workspace-btn"
                     id="workspaceMenuBtn"
                     type="button"
@@ -1369,6 +1370,27 @@
                 <span>Workspace</span>
                 <span class="dock-workspace-chevron" aria-hidden="true">▴</span>
             </button>
+            <div class="dock-notification-wrap">
+                <button type="button"
+                        class="dock-notification-btn"
+                        id="notificationCenterBtn"
+                        title="Notifications"
+                        aria-label="Open notifications"
+                        aria-haspopup="dialog"
+                        aria-expanded="false"
+                        onclick="toggleNotificationCenter(event)">
+                    <span aria-hidden="true">🔔</span>
+                </button>
+                <section class="notification-popover" id="notificationPopover" aria-label="Notifications" hidden onclick="event.stopPropagation()">
+                    <header class="notification-popover-header">
+                        <div><strong>Notifications</strong><span>Recent MeshCenter activity</span></div>
+                        <button type="button" class="notification-clear-btn" onclick="clearNotifications()">Clear</button>
+                    </header>
+                    <div class="notification-list" id="notificationList"></div>
+                    <div class="notification-empty" id="notificationEmpty">No notifications yet</div>
+                </section>
+            </div>
+
             <span class="dock-workspace-label" id="dockWorkspaceLabel">Chats</span>
 
             <div class="workspace-popover" id="workspacePopover" role="menu" aria-label="Workspace settings" hidden>
@@ -1584,9 +1606,9 @@
 </div>
 
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/chat.js?v=stage2c6-1-stable-dock-metrics-20260725"></script>
+<script src="/static/chat.js?v=stage2c7-4-unified-popovers-20260725"></script>
 <script src="/static/media.js"></script>
-<script src="/static/weather.js?v=stage2c6-1-stable-dock-metrics-20260725"></script>
+<script src="/static/weather.js?v=stage2c7-4-unified-popovers-20260725"></script>
 
 <div class="modal-overlay" id="wifiConnectModal" style="display:none;" onclick="closeWifiConnectModal()">
     <div class="modal-content wifi-connect-modal" onclick="event.stopPropagation()">

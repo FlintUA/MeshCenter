@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Configuration file for MeshCenter
+Configuration file for Meshtastic Web UI
 Copy this file to config.py and edit your settings
 """
 
@@ -9,14 +9,17 @@ APP_HOST = "0.0.0.0"
 APP_PORT = 5000
 
 # ===== MESHTASTIC SETTINGS =====
-MESHTASTIC_CMD = "/home/pi/.local/bin/meshtastic"  # Find with: which meshtastic
+MESHTASTIC_CMD = "/home/directory_user_profile/.local/bin/meshtastic"  # it is necessary to change the path correctly
+
+# ===== SERIAL PORT =====
+MESHTASTIC_PORT = "/dev/ttyACM0"  # or /dev/ttyUSB0
 
 # ===== YOUR NODE SETTINGS =====
 LOCAL_NODE_ID = "!xxxxxxxx"        # Your Meshtastic node ID
 LOCAL_NODE_NAME = "My Meshtastic"  # Your node display name
 
 # ===== DATA STORAGE =====
-DATA_DIR = "/home/pi/meshtastic/data"
+DATA_DIR = "/home/directory_user_profile/meshcenter/data" # it is necessary to change the path correctly
 
 # ===== FILE PATHS (auto-generated from DATA_DIR) =====
 HISTORY_FILE = f"{DATA_DIR}/messages.json"
@@ -37,3 +40,16 @@ KNOWN_NODES = {
 KNOWN_NODE_INFO = {
     "!xxxxxxxx": {"short_name": "MYND", "hw_model": "RAK4631"},
 }
+
+# ===== WEATHER / OPENWEATHER =====
+# Keep the real API key in weather_secrets.py (ignored by Git).
+try:
+    from weather_secrets import OPENWEATHER_API_KEY
+except ImportError:
+    OPENWEATHER_API_KEY = ""
+
+WEATHER_LATITUDE = 49.58810
+WEATHER_LONGITUDE = 11.00780
+WEATHER_LOCATION_NAME = "Erlangen"
+WEATHER_LANGUAGE = "en"
+WEATHER_CACHE_SECONDS = 600

@@ -175,38 +175,41 @@ Special attention has been paid to:
 ## Screenshots
 
 <p align="center">
-  <img width="1407" height="1292" alt="main002" src="https://github.com/user-attachments/assets/92e09683-3cd7-4dad-9af5-edfa25a050ca" />
+  <img width="1407" height="1292" alt="main002" src="docs/images/MeshCenter_main_light_theme.png" />
 </p>
 
 <p align="center">
-  <img width="1403" height="1265" alt="main003" src="https://github.com/user-attachments/assets/55839039-c167-489e-8122-616cfa56f1af" />
+  <img width="1407" height="1292" alt="main002" src="docs/images/MeshCenter_main_dark_theme.png" />
 </p>
 
 <p align="center">
-  <img width="370" height="815" alt="sidebar002" src="https://github.com/user-attachments/assets/84e56a8d-d65f-4877-a9e1-425c7da095cb" />
+  <img width="1403" height="1265" alt="main003" src="docs/images/MeshCenter_media_dark_theme.png" />
 </p>
 
 <p align="center">
-  <img width="771" height="556" alt="environment002" src="https://github.com/user-attachments/assets/d3922ae4-0bb3-4a37-9757-af0a5572cf45" />
+  <img width="1403" height="1265" alt="main003" src="docs/images/MeshCenter_media_light_theme.png" />
 </p>
 
 <p align="center">
-  <img width="783" height="568" alt="power003" src="https://github.com/user-attachments/assets/ac1bb3ec-21a7-498b-8279-a5735cfe59c8" />
+  <img width="1407" height="1292" alt="main002" src="docs/images/MeshCenter_system_light_theme.png" />
 </p>
 
 <p align="center">
-  <img width="1396" height="1293" alt="system001" src="https://github.com/user-attachments/assets/4a93ab95-4e42-4b98-8d63-d6dac167a6d4" />
+  <img width="1407" height="1292" alt="main002" src="docs/images/MeshCenter_system_dark_theme.png" />
 </p>
 
 <p align="center">
-  <img width="1396" height="1295" alt="photo002" src="https://github.com/user-attachments/assets/bffc4beb-da6e-40ed-8d27-9b6c5005af86" />
+  <img width="1403" height="1265" alt="main003" src="docs/images/MeshCenter_media_dark_theme.png" />
 </p>
 
 <p align="center">
-  <img width="733" height="850" alt="media_gallery" src="https://github.com/user-attachments/assets/d02fc7cd-e2a7-4a41-936e-b0f6b72a0cf9" />
+  <img width="1403" height="1265" alt="main003" src="docs/images/MeshCenter_sensors_light_theme.png" />
 </p>
 
-*Additional screenshots for new features (Weather, Node Tools, Settings, System) will be added in future releases.*
+<p align="center">
+  <img width="1403" height="1265" alt="main003" src="docs/images/MeshCenter_sensors_dark_theme.png" />
+</p>
+
 
 ---
 

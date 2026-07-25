@@ -2980,3 +2980,14 @@ body[data-theme="light"] .mc-workspace-panel {
 .workspace-page-actions > .workspace-page-close-btn {
     margin-left: 2px;
 }
+
+
+/* Stage 2A weather/location dark-theme alignment */
+html[data-theme="dark"] .weather-location-name { color: #f4f8ff; }
+html[data-theme="dark"] .weather-location-coordinates { color: #8fa7c2; }
+html[data-theme="dark"] .weather-location-block:hover .weather-location-name { color: #66b2ff; }
+html[data-theme="dark"] .settings-select {
+    border-color: #34475d;
+    background: #0f1d2b;
+    color: #f4f8ff;
+}

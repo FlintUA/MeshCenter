@@ -101,6 +101,19 @@ def normalize_settings(settings):
     if wind not in ("ms", "kmh", "mph"):
         wind = "ms"
 
+    # ---------------- Power / battery ----------------
+
+    power = settings.get("power", {})
+    if not isinstance(power, dict):
+        power = {}
+
+    try:
+        battery_capacity_mah = int(power.get("battery_capacity_mah", 3000))
+    except (TypeError, ValueError):
+        battery_capacity_mah = 3000
+
+    battery_capacity_mah = max(100, min(50000, battery_capacity_mah))
+
     # -------- Listener Auto Recovery --------
 
     recovery = settings.get("listener_autorecovery", {})
@@ -188,6 +201,10 @@ def normalize_settings(settings):
             "temperature": temperature,
             "pressure": pressure,
             "wind": wind,
+        },
+
+        "power": {
+            "battery_capacity_mah": battery_capacity_mah,
         },
 
         "listener_autorecovery": {

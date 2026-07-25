@@ -24,6 +24,7 @@ from api.api_settings import register_settings_routes
 from api.api_system import register_system_routes
 from system_log import log_system_event
 from api.api_node_tools import register_node_tools_routes
+from api.api_node_icons import register_node_icon_routes
 from api.api_weather import register_weather_routes
 from weather_service import OpenWeatherService, WeatherConfig
 
@@ -535,6 +536,9 @@ def default_settings():
         "listener_autorecovery": {
             "enabled": False,
             "delay": 0
+        },
+        "power": {
+            "battery_capacity_mah": 3000
         }
     }
 
@@ -575,6 +579,17 @@ def load_settings():
     normalized_settings["listener_autorecovery"] = {
         "enabled": bool(recovery.get("enabled", False)),
         "delay": int(recovery.get("delay", 60))
+    }
+
+    power = data.get("power", {})
+    if not isinstance(power, dict):
+        power = {}
+    try:
+        battery_capacity_mah = int(power.get("battery_capacity_mah", 3000))
+    except (TypeError, ValueError):
+        battery_capacity_mah = 3000
+    normalized_settings["power"] = {
+        "battery_capacity_mah": max(100, min(50000, battery_capacity_mah))
     }
 
     settings.clear()
@@ -2629,6 +2644,8 @@ register_node_tools_routes(
     prepare_radio_command=prepare_radio_command,
     log_system_event=log_system_event,
 )
+register_node_icon_routes(app, DATA_DIR, LOCAL_NODE_ID, is_valid_node_id)
+
 
 # ============================================================
 # API ROUTES
@@ -2873,7 +2890,7 @@ def api_telemetry_config():
     enabled = data.get("enabled")
 
     if interval is not None:
-        allowed = [300, 900, 1800, 3600]
+        allowed = [120, 300, 600, 900, 1800]
         if interval in allowed:
             with state_lock:
                 telemetry.telemetry_config["interval"] = interval

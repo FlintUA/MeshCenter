@@ -1,3 +1,4 @@
+// MeshCenter stage2b-preview-2
 // ============================================================
 // ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
 // ============================================================
@@ -68,10 +69,12 @@ let cpuUsageChart = null;
 let cpuHistoryRange = '30m';
 let cpuStatusTimer = null;
 let cpuChartTimer = null;
-let telemetryInterval = 900;
+let telemetryInterval = 300;
 let telemetryUpdateInterval = null;
 let telemetryTimeRange = 60;
 let telemetryFullHistory = [];
+let batteryCurrentSamples = [];
+let latestBatteryPercent = null;
 let appSettings = {
     units: {
         temperature: "c",
@@ -420,7 +423,9 @@ function getReferenceLocation() {
                 mode: 'manual',
                 latitude,
                 longitude,
-                name: 'Manual position'
+                name:
+                    String(reference.place_name || '').trim()
+                    || 'Manual position'
             };
         }
 
@@ -496,63 +501,30 @@ function getReferenceLocation() {
 }
 
 function updateReferenceLocationSummary() {
-    const element =
-        document.getElementById('baseReferenceLocation');
+    const nameElement = document.getElementById('weatherLocation');
+    const coordinatesElement = document.getElementById('weatherCoordinates');
+    const locationButton = document.getElementById('baseReferenceLocation');
+    const reference = getReferenceLocation();
 
-    if (!element) {
-        return;
-    }
-
-    const nameElement =
-        element.querySelector('.reference-card-name');
-
-    const coordinatesElement =
-        element.querySelector('.reference-card-coordinates');
-
-    const reference =
-        getReferenceLocation();
-
-    element.style.display = 'flex';
+    if (!nameElement || !coordinatesElement) return;
 
     if (!reference) {
-        if (nameElement) {
-            nameElement.textContent = 'Disabled';
-        }
-
-        if (coordinatesElement) {
-            coordinatesElement.textContent =
-                'Click to configure';
-        }
-
-        element.classList.add('reference-is-disabled');
-        element.classList.remove('reference-has-position');
+        nameElement.textContent = '📍 Location not configured';
+        coordinatesElement.textContent = 'Click to configure';
+        locationButton?.classList.add('reference-is-disabled');
         return;
     }
 
-    element.classList.remove('reference-is-disabled');
-
-    const hasCoordinates =
-        Number.isFinite(reference.latitude)
-        && Number.isFinite(reference.longitude);
-
-    if (nameElement) {
-        nameElement.textContent =
-            reference.mode === 'manual'
-                ? (appSettings?.reference_location?.place_name || 'Manual coordinates')
-                : (appSettings?.reference_location?.place_name || reference.name);
-    }
-
-    if (coordinatesElement) {
-        coordinatesElement.textContent =
-            hasCoordinates
-                ? `${reference.latitude.toFixed(5)}, ${reference.longitude.toFixed(5)}`
-                : 'No saved position';
-    }
-
-    element.classList.toggle(
-        'reference-has-position',
-        hasCoordinates
-    );
+    locationButton?.classList.remove('reference-is-disabled');
+    const hasCoordinates = Number.isFinite(reference.latitude) && Number.isFinite(reference.longitude);
+    const placeName =
+        String(appSettings?.reference_location?.place_name || '').trim()
+        || String(reference.name || '').trim()
+        || 'Reference location';
+    nameElement.textContent = `📍 ${placeName}`;
+    coordinatesElement.textContent = hasCoordinates
+        ? `${reference.latitude.toFixed(5)} • ${reference.longitude.toFixed(5)}`
+        : 'Position unavailable';
 }
 
 function openReferenceSettings() {
@@ -611,6 +583,11 @@ function updateSettingsUi() {
 
     document.getElementById('unitPressureHpa')?.classList.toggle('active', units.pressure === 'hpa');
     document.getElementById('unitPressureMmhg')?.classList.toggle('active', units.pressure === 'mmhg');
+
+    const batteryCapacityInput = document.getElementById('batteryCapacityMah');
+    if (batteryCapacityInput) {
+        batteryCapacityInput.value = appSettings?.power?.battery_capacity_mah || 3000;
+    }
 
     const recovery = appSettings?.listener_autorecovery || {};
 
@@ -1340,6 +1317,109 @@ function showToast(message, type = 'info') {
 // ============================================================
 // UTILITY FUNCTIONS
 // ============================================================
+
+function initBaseNodeAvatar() {
+    const button = document.getElementById('baseNodeAvatarBtn');
+    const input = document.getElementById('baseNodeAvatarInput');
+    const image = document.getElementById('baseNodeAvatar');
+    if (!button || !input || !image) return;
+
+    let localNodeId = '';
+    const fallbackSrc = image.getAttribute('src') || '/static/meshcenter_logo.png';
+
+    const loadServerIcon = async () => {
+        try {
+            const statusResponse = await fetch('/api/base_status', { cache: 'no-store' });
+            if (!statusResponse.ok) throw new Error('Unable to load local node status.');
+            const status = await statusResponse.json();
+            localNodeId = String(status.node_id || '').trim();
+            if (!localNodeId) throw new Error('Local node ID is unavailable.');
+
+            const iconResponse = await fetch(`/api/nodes/${encodeURIComponent(localNodeId)}/icon`, {
+                cache: 'no-store'
+            });
+            if (iconResponse.ok) {
+                const blob = await iconResponse.blob();
+                image.src = URL.createObjectURL(blob);
+            } else if (iconResponse.status === 404) {
+                image.src = fallbackSrc;
+            }
+        } catch (error) {
+            console.warn('Unable to load node icon from MeshCenter:', error);
+        }
+    };
+
+    const prepareTransparentNodeImage = (file) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('Unable to read image file.'));
+        reader.onload = () => {
+            const source = new Image();
+            source.onerror = () => reject(new Error('Unable to decode image file.'));
+            source.onload = () => {
+                const size = 256;
+                const canvas = document.createElement('canvas');
+                canvas.width = size;
+                canvas.height = size;
+                const ctx = canvas.getContext('2d', { alpha: true });
+                if (!ctx) return reject(new Error('Canvas is unavailable.'));
+
+                ctx.clearRect(0, 0, size, size);
+                const inset = 10;
+                const available = size - inset * 2;
+                const scale = Math.min(available / source.naturalWidth, available / source.naturalHeight);
+                const width = Math.max(1, Math.round(source.naturalWidth * scale));
+                const height = Math.max(1, Math.round(source.naturalHeight * scale));
+                const x = Math.round((size - width) / 2);
+                const y = Math.round((size - height) / 2);
+                ctx.drawImage(source, x, y, width, height);
+                canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Unable to create PNG.')), 'image/png');
+            };
+            source.src = String(reader.result || '');
+        };
+        reader.readAsDataURL(file);
+    });
+
+    button.addEventListener('click', () => input.click());
+    input.addEventListener('change', async () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        if (!/^image\/(png|jpeg|webp)$/i.test(file.type)) {
+            showToast('Please choose a PNG, JPEG or WebP image.', 'error');
+            input.value = '';
+            return;
+        }
+        if (file.size > 2 * 1024 * 1024) {
+            showToast('The node image must be smaller than 2 MB.', 'error');
+            input.value = '';
+            return;
+        }
+
+        try {
+            if (!localNodeId) await loadServerIcon();
+            if (!localNodeId) throw new Error('Local node ID is unavailable.');
+            const pngBlob = await prepareTransparentNodeImage(file);
+            const formData = new FormData();
+            formData.append('icon', pngBlob, 'node-icon.png');
+            const response = await fetch(`/api/nodes/${encodeURIComponent(localNodeId)}/icon`, {
+                method: 'POST',
+                body: formData
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.ok) throw new Error(result.error || 'Upload failed.');
+            image.src = `${result.icon_url}&t=${Date.now()}`;
+            localStorage.removeItem('meshcenter.baseNodeAvatar');
+            showToast('✅ Node icon saved on MeshCenter', 'success');
+        } catch (error) {
+            console.warn('Unable to save node image:', error);
+            showToast(`❌ ${error.message || 'Unable to save node image'}`, 'error');
+        } finally {
+            input.value = '';
+        }
+    });
+
+    loadServerIcon();
+}
+
 document.addEventListener('DOMContentLoaded', async function() {
     await loadSettings();
     await loadCameraPowerState();
@@ -1347,26 +1427,26 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     const title = document.getElementById('appTitle');
     if (title) {
-        title.addEventListener('click', function(e) {
-            const icon = this.querySelector('span');
-            if (icon) {
-                icon.style.display = 'inline-block';
-                icon.style.transition = 'transform 0.4s ease';
-                icon.style.transform = 'rotate(720deg) scale(1.3)';
+        title.addEventListener('click', function() {
+            if (this.classList.contains('is-reloading')) return;
+
+            const appName = this.querySelector('.app-name');
+            if (appName) {
+                appName.classList.add('brand-fade-out');
                 setTimeout(() => {
-                    icon.style.transform = 'rotate(0deg) scale(1)';
-                }, 400);
+                    appName.textContent = 'Reloading…';
+                    appName.classList.remove('brand-fade-out');
+                    appName.classList.add('brand-fade-in');
+                }, 150);
             }
 
-            this.innerHTML = '🔄 Reloading...';
-            this.style.opacity = '0.6';
+            this.classList.add('is-reloading');
             this.style.cursor = 'default';
-
-            setTimeout(() => {
-                window.location.reload(true);
-            }, 500);
+            setTimeout(() => window.location.reload(true), 520);
         });
     }
+
+    initBaseNodeAvatar();
 
     const headerStatus = document.getElementById('headerStatusText');
 
@@ -3154,10 +3234,30 @@ function renderNodeDetails(node) {
                     <span class="node-detail-favorite ${isFavorite ? 'is-active' : ''}" title="${isFavorite ? 'Favorite node' : ''}" aria-hidden="true">${isFavorite ? '⚑' : ''}</span>
                     <span class="node-detail-activity ${getNodeActivityPresentation(node).activityClass}" title="Activity status" aria-hidden="true"></span>
                     <span class="node-detail-name">${escapeHtml(displayName)}</span>
-                    <span class="node-detail-short-id">${escapeHtml(shortName)}</span>
                 </div>
-                <!-- [NEW] Header actions: Favorite and Ignore buttons -->
-                <div class="node-detail-header-actions">
+            </div>
+
+            <!-- Вторая строка: ID, модель, роль + node actions -->
+            <div class="node-detail-subheader">
+                <div class="node-detail-identity-line">
+                    <span class="node-detail-short-id">${escapeHtml(shortName)}</span>
+                    <span class="node-detail-separator">•</span>
+                    <span class="node-detail-role">${escapeHtml(role)}</span>
+                    <span class="node-detail-separator">•</span>
+                    <span class="node-detail-hw">${escapeHtml(hwModel)}</span>
+                    <span class="node-detail-separator">•</span>
+                    <button type="button" class="node-detail-id" onclick="copyNodeId('${escapeHtml(nodeId)}')" title="Click to copy Node ID" aria-label="Copy Node ID">${escapeHtml(truncateText(nodeId, 12))}</button>
+                </div>
+            </div>
+
+            <!-- Третья строка: статус + segmented actions -->
+            <div class="node-detail-status-row">
+                <div class="node-detail-status-copy">
+                    <span class="node-detail-last-seen">🕒 ${escapeHtml(lastSeen)}</span>
+                    <span class="node-detail-hops">Hops: ${escapeHtml(hops)}</span>
+                    <span class="node-detail-ignored">${isIgnored ? '🚫 Ignored' : ''}</span>
+                </div>
+                <div class="node-detail-header-actions node-detail-action-group">
                     <button type="button"
                             class="node-detail-state-btn node-detail-favorite-btn ${isFavorite ? 'active' : ''}"
                             onclick="toggleFavorite('${escapeHtml(nodeId)}')"
@@ -3183,23 +3283,6 @@ function renderNodeDetails(node) {
                         ⋮
                     </button>
                 </div>
-            </div>
-
-            <!-- Вторая строка: ID, модель, роль -->
-            <div class="node-detail-subheader">
-                <span class="node-detail-role">${escapeHtml(role)}</span>
-                <span class="node-detail-separator">•</span>
-                <span class="node-detail-hw">${escapeHtml(hwModel)}</span>
-                <span class="node-detail-separator">•</span>
-                <span class="node-detail-id" title="${escapeHtml(nodeId)}">${escapeHtml(truncateText(nodeId, 12))}</span>
-                <button class="node-detail-copy-id" onclick="copyNodeId('${escapeHtml(nodeId)}')" title="Copy ID">📋</button>
-            </div>
-
-            <!-- Третья строка: статус -->
-            <div class="node-detail-status-row">
-                <span class="node-detail-last-seen">🕒 ${escapeHtml(lastSeen)}</span>
-                <span class="node-detail-hops">Hops: ${escapeHtml(hops)}</span>
-                <span class="node-detail-ignored">${isIgnored ? '🚫 Ignored' : ''}</span>
             </div>
 
             <!-- Вкладки -->
@@ -3567,12 +3650,32 @@ function toggleNodeActionsMenu(event) {
     menu.style.display = isVisible ? 'none' : 'block';
 }
 
-function copyNodeId(nodeId) {
-    navigator.clipboard.writeText(nodeId).then(() => {
+async function copyNodeId(nodeId) {
+    const value = String(nodeId || '').trim();
+    if (!value) return;
+
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(value);
+        } else {
+            const textarea = document.createElement('textarea');
+            textarea.value = value;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-9999px';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            textarea.setSelectionRange(0, textarea.value.length);
+            const copied = document.execCommand('copy');
+            textarea.remove();
+            if (!copied) throw new Error('Copy command was rejected.');
+        }
         showToast('✅ Node ID copied', 'success');
-    }).catch(() => {
-        showToast('❌ Failed to copy', 'error');
-    });
+    } catch (error) {
+        console.warn('Unable to copy Node ID:', error);
+        showToast('❌ Failed to copy Node ID', 'error');
+    }
 }
 
 function copyCoordinates(lat, lon) {
@@ -4330,6 +4433,98 @@ function selectNode(nodeId, nodeName) {
 // ============================================================
 // SENSORS & BASE STATUS
 // ============================================================
+function formatEstimatedRuntime(hours) {
+    if (!Number.isFinite(hours) || hours <= 0) return '--';
+    if (hours >= 48) {
+        const days = Math.floor(hours / 24);
+        const remainingHours = Math.round(hours % 24);
+        return `${days}d ${remainingHours}h`;
+    }
+    if (hours >= 1) {
+        const wholeHours = Math.floor(hours);
+        const minutes = Math.round((hours - wholeHours) * 60);
+        return `${wholeHours}h ${minutes}m`;
+    }
+    return `${Math.max(1, Math.round(hours * 60))}m`;
+}
+
+function deriveBatteryCurrentMa(currentMa, powerMw = null, voltageV = null) {
+    const directCurrent = Number(currentMa);
+    if (Number.isFinite(directCurrent) && directCurrent > 5) return directCurrent;
+
+    const power = Number(powerMw);
+    const voltage = Number(voltageV);
+    if (Number.isFinite(power) && power > 0 && Number.isFinite(voltage) && voltage > 0.1) {
+        // P[mW] / U[V] = I[mA]
+        const derivedCurrent = power / voltage;
+        if (Number.isFinite(derivedCurrent) && derivedCurrent > 5) return derivedCurrent;
+    }
+
+    return null;
+}
+
+function updateBatteryRuntime(currentMa, batteryPercent, powerMw = null, voltageV = null) {
+    const runtimeEl = document.getElementById('batteryRuntime');
+    if (!runtimeEl) return;
+
+    if (Number.isFinite(batteryPercent)) {
+        latestBatteryPercent = Math.max(0, Math.min(100, batteryPercent));
+    }
+
+    const effectiveCurrent = deriveBatteryCurrentMa(currentMa, powerMw, voltageV);
+    if (Number.isFinite(effectiveCurrent)) {
+        batteryCurrentSamples.push(effectiveCurrent);
+        if (batteryCurrentSamples.length > 10) batteryCurrentSamples.shift();
+    }
+
+    const capacityMah = Number(appSettings?.power?.battery_capacity_mah || 3000);
+    const percent = latestBatteryPercent;
+    const averageCurrent = batteryCurrentSamples.length
+        ? batteryCurrentSamples.reduce((sum, value) => sum + value, 0) / batteryCurrentSamples.length
+        : null;
+
+    if (!Number.isFinite(percent)) {
+        runtimeEl.textContent = 'Waiting for charge data';
+        runtimeEl.title = 'Battery percentage is not available yet';
+        return;
+    }
+
+    if (!Number.isFinite(averageCurrent) || averageCurrent <= 5) {
+        runtimeEl.textContent = 'Waiting for current data';
+        runtimeEl.title = 'Current consumption is not available yet';
+        return;
+    }
+
+    const remainingMah = capacityMah * (percent / 100);
+    const runtimeHours = remainingMah / averageCurrent;
+    runtimeEl.textContent = formatEstimatedRuntime(runtimeHours);
+    runtimeEl.title = `Approximate estimate using ${Math.round(capacityMah)} mAh and ${Math.round(averageCurrent)} mA average current`;
+}
+
+async function updateBatteryCapacitySetting() {
+    const input = document.getElementById('batteryCapacityMah');
+    if (!input) return;
+
+    const capacity = Math.max(100, Math.min(50000, parseInt(input.value, 10) || 3000));
+    input.value = capacity;
+
+    try {
+        const response = await fetch('/api/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ settings: { power: { battery_capacity_mah: capacity } } })
+        });
+        const data = await response.json();
+        if (!data.ok) throw new Error(data.error || 'Unable to save battery capacity');
+        appSettings = data.settings || appSettings;
+        updateBatteryRuntime(null, latestBatteryPercent);
+        showToast(`Battery capacity set to ${capacity} mAh`, 'success');
+    } catch (error) {
+        console.error('Error updating battery capacity:', error);
+        showToast('Unable to save battery capacity', 'error');
+    }
+}
+
 async function loadSensors() {
     try {
         const response = await fetch('/api/sensors');
@@ -4353,11 +4548,20 @@ async function loadSensors() {
                 const batteryIndicator = document.getElementById('batteryIndicator');
                 if (batteryIndicator) batteryIndicator.style.display = 'block';
                 const percent = Math.min(100, Math.max(0, data.battery_percent));
-                document.getElementById('batteryFill').style.width = percent + '%';
-                document.getElementById('batteryPercent').textContent = percent + '%';
+                const batteryFill = document.getElementById('batteryFill');
+                if (batteryFill) {
+                    batteryFill.style.width = percent + '%';
+                    const hue = Math.max(0, Math.min(120, percent * 1.2));
+                    batteryFill.style.background = `hsl(${hue} 72% 44%)`;
+                }
+                const batteryPercent = document.getElementById('batteryPercent');
+                if (batteryPercent) batteryPercent.textContent = percent + '%';
+                updateBatteryRuntime(Number(data.current), percent, Number(data.power), Number(data.voltage));
+            } else {
+                updateBatteryRuntime(Number(data.current), null, Number(data.power), Number(data.voltage));
             }
 
-            document.getElementById('sensorUpdate').textContent = `Last update: ${data.last_update || '--'}`;
+            document.getElementById('sensorUpdate').textContent = `Updated ${data.last_update || '--'}`;
         }
     } catch (error) {
         console.error('Error loading sensors:', error);
@@ -4369,36 +4573,20 @@ async function loadBaseStatus() {
         const response = await fetch('/api/base_status');
         const data = await response.json();
 
-        const card = document.getElementById('baseCard');
-        if (!card) return;
-        
-        const nodeName = data.node_name || 'Flint Base';
+        const nameEl = document.getElementById('baseNodeName');
+        const uptimeEl = document.getElementById('baseUptimeBadge');
+        if (nameEl) nameEl.textContent = data.node_name || 'Flint Base';
+        if (uptimeEl) {
+            const uptime = data.uptime_seconds !== null ? formatUptime(data.uptime_seconds) : '--';
+            uptimeEl.textContent = `Uptime ${uptime}`;
+        }
 
-        const battery = data.real_battery !== null ? '~' + data.real_battery + '%' :
-                       data.battery_level !== null ? data.battery_level + '%' : '--%';
-        const voltage = data.voltage !== null ? Number(data.voltage).toFixed(3) + ' V' : '-- V';
-        const channel = data.channel_utilization !== null ? Number(data.channel_utilization).toFixed(2) + '%' : '--%';
-        const airTx = data.air_util_tx !== null ? Number(data.air_util_tx).toFixed(2) + '%' : '--%';
-        const uptime = data.uptime_seconds !== null ? formatUptime(data.uptime_seconds) : '--';
-
-        card.innerHTML = `
-            <div class="base-card-title">
-                <span class="base-card-name">
-                    <span class="base-card-icon" aria-hidden="true">📡</span>
-                    <span>${escapeHtml(nodeName)}</span>
-                </span>
-            </div>
-            <div class="base-status-line">
-                <span class="base-status-metrics">
-                    <span class="base-status-item">⚡ ${escapeHtml(voltage)}</span>
-                    <span class="base-status-item">🔋 ${escapeHtml(battery)}</span>
-                    <span class="base-status-item">📶 ${escapeHtml(channel)}</span>
-                    <span class="base-status-item">📡 ${escapeHtml(airTx)}</span>
-                </span>
-                <span class="base-status-uptime">⏱ ${escapeHtml(uptime)}</span>
-            </div>
-        `;
-
+        const percent = data.real_battery !== null ? Number(data.real_battery) :
+            (data.battery_level !== null ? Number(data.battery_level) : null);
+        if (Number.isFinite(percent)) {
+            latestBatteryPercent = Math.max(0, Math.min(100, percent));
+            updateBatteryRuntime(null, latestBatteryPercent);
+        }
     } catch (error) {
         console.error('Error loading base status:', error);
     }
@@ -5389,7 +5577,7 @@ async function loadTelemetryHistory() {
         telemetryHistory = telemetryFullHistory;
 
         if (historyData.config) {
-            telemetryInterval = historyData.config.interval || 900;
+            telemetryInterval = historyData.config.interval || 300;
             const select = document.getElementById('telemetryInterval');
             if (select) {
                 select.value = telemetryInterval;
@@ -5439,6 +5627,15 @@ function updateTelemetryUI() {
     if (powerUpdate) {
         powerUpdate.textContent = data.last_update ? `⏱${data.last_update}` : '';
     }
+
+    // /api/telemetry can contain the current reading even when /api/sensors
+    // has not yet refreshed it. It also provides a power/voltage fallback.
+    updateBatteryRuntime(
+        Number(data.current),
+        latestBatteryPercent,
+        Number(data.power),
+        Number(data.voltage)
+    );
     
     const statusEl = document.getElementById('telemetryStatus');
     if (statusEl) {
@@ -5452,7 +5649,8 @@ function updateTelemetryUI() {
 
 async function updateTelemetryConfig() {
     const select = document.getElementById('telemetryInterval');
-    const interval = parseInt(select.value);
+    if (!select) return;
+    const interval = parseInt(select.value, 10);
     
     try {
         const response = await fetch('/api/telemetry/config', {
@@ -8280,6 +8478,15 @@ function cpuMetricClass(value, warning = 50, danger = 80) {
     return 'normal';
 }
 
+function formatDockPercent(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '--.-';
+
+    // Figure space keeps one-digit values aligned without changing the dock width.
+    const formatted = number.toFixed(1);
+    return number < 10 ? `\u2007${formatted}` : formatted;
+}
+
 
 let dockCpuState = {
     usage: null,
@@ -8290,30 +8497,23 @@ function ensureStatusDockMetrics() {
     const right = document.getElementById('dockContextText');
     if (!right) return null;
 
-    let context = right.querySelector('.dock-context-label');
     let metrics = right.querySelector('.dock-system-metrics');
-
-    if (!context || !metrics) {
-        const previous = right.textContent.trim();
+    if (!metrics) {
         right.innerHTML = '';
-        context = document.createElement('span');
-        context.className = 'dock-context-label';
-        context.textContent = previous || 'MeshCenter';
         metrics = document.createElement('span');
         metrics.className = 'dock-system-metrics';
         metrics.innerHTML = `
             <span id="dockCpuMetric">CPU --%</span>
             <span id="dockRamMetric">RAM --%</span>
-            <span id="dockTempMetric">--°C</span>
+            <span id="dockTempMetric">TEMP --°C</span>
         `;
-        right.append(context, metrics);
+        right.append(metrics);
     }
-    return { right, context, metrics };
+    return { right, metrics };
 }
 
-function setStatusDockContext(text) {
-    const dock = ensureStatusDockMetrics();
-    if (dock) dock.context.textContent = text;
+function setStatusDockContext(_text) {
+    ensureStatusDockMetrics();
 }
 
 function updateCpuStatus(data) {
@@ -8339,16 +8539,16 @@ function updateCpuStatus(data) {
     const currentEl = document.getElementById('cpuHistoryCurrent');
 
     if (cpuEl) {
-        cpuEl.textContent = Number.isFinite(dockCpuState.usage) ? `CPU ${dockCpuState.usage.toFixed(1)}%` : 'CPU --%';
+        cpuEl.textContent = Number.isFinite(dockCpuState.usage) ? `CPU ${formatDockPercent(dockCpuState.usage)}%` : 'CPU --%';
         cpuEl.className = cpuMetricClass(dockCpuState.usage);
     }
     if (ramEl) {
-        ramEl.textContent = Number.isFinite(dockCpuState.ram) ? `RAM ${dockCpuState.ram.toFixed(1)}%` : 'RAM --%';
+        ramEl.textContent = Number.isFinite(dockCpuState.ram) ? `RAM ${formatDockPercent(dockCpuState.ram)}%` : 'RAM --%';
         ramEl.className = cpuMetricClass(dockCpuState.ram, 70, 90);
     }
     if (tempEl) {
         tempEl.textContent = Number.isFinite(dockCpuState.temp)
-            ? formatTemperature(dockCpuState.temp)
+            ? `TEMP ${formatTemperature(dockCpuState.temp)}`
             : '--';
 
         tempEl.className = cpuMetricClass(dockCpuState.temp, 65, 75);
@@ -9130,3 +9330,5 @@ if (document.readyState === 'loading') {
 } else {
     installNodeCardClickHandler();
 }
+
+window.updateBatteryCapacitySetting = updateBatteryCapacitySetting;

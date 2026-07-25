@@ -4,8 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MeshCenter</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=workspace-shell-21">
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=workspace-shell-21">
+    <!-- MeshCenter build: stage2c6-1-stable-dock-metrics-20260725 -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=stage2c6-1-stable-dock-metrics-20260725">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c6-1-stable-dock-metrics-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
 </head>
 <body>
@@ -20,118 +21,87 @@
     <div class="main-layout">
         <!-- Local Node Panel -->
         <aside class="base-sidebar" id="baseSidebar" aria-label="Local node information">
-            <!-- Brand strip: part of the local-node panel -->
-            <div class="base-brand-strip">
-                <div class="header-brand">
-                    <h1 id="appTitle" class="app-title" title="Click to refresh page (Ctrl+F5)">
-                        <img src="{{ url_for('static', filename='meshcenter_logo.png') }}" class="header-logo" alt="MeshCenter">
-                        <span class="app-name">MeshCenter</span>
-                    </h1>
-
-                    <button type="button"
-                            class="header-status status-connecting"
-                            id="headerStatusText"
-                            title="Checking Meshtastic node status..."
-                            aria-label="Open System status">
-                        <span class="status-dot"></span>
-                        <span class="status-label">Checking</span>
-                    </button>
-                </div>
-            </div>
-
-            <!-- Base Card -->
+            <!-- Unified local node information block -->
+            <section class="node-info-panel" id="nodeInfoPanel" aria-label="Local node status and telemetry">
+            <!-- Local node dashboard header -->
             <div class="base-card" id="baseCard">
-                <div class="base-card-title">
+                <div class="base-card-title node-dashboard-heading">
                     <span class="base-card-name">
-                        <span class="base-card-icon" aria-hidden="true">📡</span>
+                        <button type="button" class="base-node-avatar" id="baseNodeAvatarBtn" title="Choose node image" aria-label="Choose node image">
+                            <img id="baseNodeAvatar" src="{{ url_for('static', filename='meshcenter_logo.png') }}" alt="">
+                        </button>
+                        <input type="file" id="baseNodeAvatarInput" accept="image/png,image/jpeg,image/webp" hidden>
                         <span id="baseNodeName">Loading...</span>
                     </span>
-                </div>
-                <div class="base-status-line" id="baseStatusLine">
-                    <span class="base-status-loading">Loading...</span>
+                    <span class="node-uptime-badge" id="baseUptimeBadge">Uptime --</span>
                 </div>
             </div>
 
-            <!-- Sensors / local-node dashboard -->
+            <!-- Live local-node telemetry -->
             <div class="sensors-card" id="sensorsCard" style="display: none;">
                 <div class="sensors-title">
-                    <span>🌡️</span>
-                    <span>Environment Sensors</span>
+                    <span>Node telemetry</span>
+                    <span class="sensor-update" id="sensorUpdate">Updated --</span>
                 </div>
 
-                <div class="sensors-grid">
-                    <div class="sensor-item">
-                        <div class="sensor-label">Temperature</div>
-                        <div class="sensor-value" id="tempValue">--</div>
-                        <div class="sensor-unit"></div>
-                    </div>
-                    <div class="sensor-item">
-                        <div class="sensor-label">Humidity</div>
-                        <div class="sensor-value" id="humValue">--</div>
-                        <div class="sensor-unit">%</div>
-                    </div>
-                    <div class="sensor-item">
-                        <div class="sensor-label">Pressure</div>
-                        <div class="sensor-value" id="presValue">--</div>
-                        <div class="sensor-unit"></div>
-                    </div>
-                    <div class="sensor-item">
-                        <div class="sensor-label">Voltage</div>
-                        <div class="sensor-value" id="voltValue">--</div>
-                        <div class="sensor-unit">V</div>
-                    </div>
-                    <div class="sensor-item">
-                        <div class="sensor-label">Current</div>
-                        <div class="sensor-value" id="currValue">--</div>
-                        <div class="sensor-unit">mA</div>
-                    </div>
-                    <div class="sensor-item">
-                        <div class="sensor-label">Power</div>
-                        <div class="sensor-value" id="powValue">--</div>
-                        <div class="sensor-unit">mW</div>
+                <div class="node-telemetry-surface">
+                    <div class="sensors-grid node-metrics-grid">
+                        <div class="sensor-item">
+                            <div class="sensor-label">Temperature</div>
+                            <div class="sensor-reading"><span class="sensor-value" id="tempValue">--</span><span class="sensor-unit"></span></div>
+                        </div>
+                        <div class="sensor-item">
+                            <div class="sensor-label">Humidity</div>
+                            <div class="sensor-reading"><span class="sensor-value" id="humValue">--</span><span class="sensor-unit">%</span></div>
+                        </div>
+                        <div class="sensor-item">
+                            <div class="sensor-label">Pressure</div>
+                            <div class="sensor-reading"><span class="sensor-value" id="presValue">--</span><span class="sensor-unit"></span></div>
+                        </div>
+                        <div class="sensor-item">
+                            <div class="sensor-label">Voltage</div>
+                            <div class="sensor-reading"><span class="sensor-value" id="voltValue">--</span><span class="sensor-unit">V</span></div>
+                        </div>
+                        <div class="sensor-item">
+                            <div class="sensor-label">Current</div>
+                            <div class="sensor-reading"><span class="sensor-value" id="currValue">--</span><span class="sensor-unit">mA</span></div>
+                        </div>
+                        <div class="sensor-item">
+                            <div class="sensor-label">Power</div>
+                            <div class="sensor-reading"><span class="sensor-value" id="powValue">--</span><span class="sensor-unit">mW</span></div>
+                        </div>
                     </div>
                 </div>
 
-                <div class="base-dashboard-row">
+                <div class="base-dashboard-row base-dashboard-row--battery-only">
                     <div class="battery-indicator"
                          id="batteryIndicator"
                          style="display: none;">
                         <div class="base-mini-card-heading">
-                            <span>🔋 Battery</span>
-                            <strong id="batteryPercent">0%</strong>
+                            <span>Battery</span>
+                            <strong id="batteryPercent" class="battery-percent-sr">0%</strong>
                         </div>
-                        <div class="battery-bar">
+                        <div class="battery-bar" aria-label="Battery charge level">
                             <div class="battery-fill"
                                  id="batteryFill"
                                  style="width: 0%"></div>
                         </div>
+                        <div class="battery-scale" aria-hidden="true">
+                            <span>0</span><span>25</span><span>50</span><span>75</span><span>100</span>
+                        </div>
+                        <div class="battery-runtime-row">
+                            <span class="battery-runtime-label">Estimated runtime</span>
+                            <strong class="battery-runtime-value" id="batteryRuntime">Waiting for current data</strong>
+                        </div>
                     </div>
-
-                    <button type="button"
-                            class="base-reference-location"
-                            id="baseReferenceLocation"
-                            onclick="openReferenceSettings()"
-                            title="Open reference location settings">
-                        <span class="reference-card-icon">📍</span>
-                        <span class="reference-card-copy">
-                            <span class="reference-card-title">Reference</span>
-                            <span class="reference-card-name">Loading…</span>
-                            <span class="reference-card-coordinates"></span>
-                        </span>
-                        <span class="reference-card-arrow">›</span>
-                    </button>
-                </div>
-
-                <div class="sensor-update" id="sensorUpdate">
-                    Last update: --
                 </div>
             </div>
 
-            <!-- Telemetry -->
+            <!-- Telemetry history shortcuts -->
             <div class="telemetry-section" id="telemetrySection">
                 <div class="telemetry-header">
-                    <span class="telemetry-title">📊 Sensors</span>
-                    <span class="telemetry-status" id="telemetryStatus">⚪ No data yet</span>
+                    <span class="telemetry-title">Charts</span>
+                    <span class="telemetry-status" id="telemetryStatus">No data yet</span>
                 </div>
                 <div class="telemetry-buttons">
                     <button class="telemetry-btn environment" onclick="openTelemetryModal('environment')">
@@ -151,34 +121,31 @@
                         <span class="telemetry-value" id="telemetryPowerValue">—</span>
                     </button>
                 </div>
-                <div class="telemetry-config-row">
-                    <span>📊 Interval:</span>
-                    <select id="telemetryInterval" onchange="updateTelemetryConfig()">
-                        <option value="300">5 min</option>
-                        <option value="900" selected>15 min</option>
-                        <option value="1800">30 min</option>
-                        <option value="3600">1 hour</option>
-                    </select>
-                    <span style="font-size:9px;color:#999;margin-left:4px;">(auto-updates from listener)</span>
-                </div>
+
             </div>
+            </section>
 
             <!-- Weather module: provider access stays on the backend -->
             <section class="weather-card module-card weather-loading" id="weatherCard" aria-labelledby="weatherCardTitle">
-                <div class="weather-card-header">
-                    <div>
-                        <div class="weather-card-title" id="weatherCardTitle">🌤️ Weather</div>
-                        <div class="weather-location" id="weatherLocation">Erlangen</div>
-                    </div>
-                    <button class="weather-state-badge" id="weatherStateBadge" type="button" onclick="loadWeather(true)" title="Refresh weather">Loading</button>
-                </div>
+                <div class="weather-summary">
+                    <button type="button"
+                            class="weather-location-block"
+                            id="baseReferenceLocation"
+                            onclick="openReferenceSettings()"
+                            title="Open location settings">
+                        <span class="weather-location-name" id="weatherLocation">📍 Erlangen, Germany</span>
+                        <span class="weather-location-coordinates" id="weatherCoordinates">49.58810 • 11.00780</span>
+                    </button>
 
-                <div class="weather-current">
-                    <div class="weather-icon" id="weatherIcon" aria-hidden="true">🌤️</div>
-                    <div>
-                        <div class="weather-temperature" id="weatherTemperature">--°</div>
-                        <div class="weather-condition" id="weatherCondition">Connecting to OpenWeather…</div>
+                    <div class="weather-current weather-current--compact">
+                        <div class="weather-icon" id="weatherIcon" aria-hidden="true">🌤️</div>
+                        <div class="weather-current-copy">
+                            <div class="weather-temperature" id="weatherTemperature">--°</div>
+                            <div class="weather-condition" id="weatherCondition">Connecting…</div>
+                        </div>
                     </div>
+
+                    <button class="weather-state-badge weather-summary-state" id="weatherStateBadge" type="button" onclick="loadWeather(true)" title="Refresh weather">Loading</button>
                 </div>
 
                 <div class="weather-metrics">
@@ -969,11 +936,36 @@
                     </div>
 
                     <div class="settings-grid">
-                        <div class="settings-card">
+                        <div class="settings-card settings-card--placeholder settings-card--general">
                             <div class="settings-card-title">🌍 General</div>
                             <div class="settings-card-text">
                                 Basic interface preferences will be added here.
                             </div>
+                        </div>
+
+                        <div class="settings-card settings-card--telemetry">
+                            <div class="settings-card-title">📊 Telemetry</div>
+                            <div class="settings-card-text">
+                                Controls how often sensor readings are stored and refreshed.
+                            </div>
+                            <div class="settings-option settings-option--select">
+                                <label class="settings-option-label" for="telemetryInterval">Update interval</label>
+                                <select id="telemetryInterval" class="settings-select" onchange="updateTelemetryConfig()">
+                                    <option value="120">2 minutes</option>
+                                    <option value="300" selected>5 minutes</option>
+                                    <option value="600">10 minutes</option>
+                                    <option value="900">15 minutes</option>
+                                    <option value="1800">30 minutes</option>
+                                </select>
+                            </div>
+                            <div class="settings-option settings-option--select">
+                                <label class="settings-option-label" for="batteryCapacityMah">Battery capacity</label>
+                                <div class="settings-inline-input">
+                                    <input id="batteryCapacityMah" class="settings-number-input" type="number" min="100" max="50000" step="100" value="3000" onchange="updateBatteryCapacitySetting()">
+                                    <span>mAh</span>
+                                </div>
+                            </div>
+                            <div class="settings-card-text settings-card-note">Used only for the approximate remaining runtime estimate.</div>
                         </div>
 
                         <div class="settings-card">
@@ -996,7 +988,7 @@
                             </div>
                         </div>
 
-                        <div class="settings-card">
+                        <div class="settings-card settings-card--placeholder settings-card--system">
                             <div class="settings-card-title">🧩 System</div>
                             <div class="settings-card-text">
                                 System-level options and service information will be added later.
@@ -1459,6 +1451,19 @@
         </div>
 
         <div class="dock-section dock-right" id="dockRight">
+            <button type="button" id="appTitle" class="dock-brand" title="Click to refresh page (Ctrl+F5)" aria-label="Refresh MeshCenter">
+                <img src="{{ url_for('static', filename='meshcenter_logo.png') }}" class="dock-brand-logo" alt="">
+                <span class="dock-brand-name">MeshCenter</span>
+            </button>
+            <span class="dock-separator" aria-hidden="true">•</span>
+            <button type="button"
+                    class="dock-online-status header-status status-connecting"
+                    id="headerStatusText"
+                    title="Checking Meshtastic node status..."
+                    aria-label="Open System status">
+                <span class="status-dot"></span>
+                <span class="status-label">Checking</span>
+            </button>
             <span id="dockContextText">MeshCenter</span>
         </div>
     </div>
@@ -1579,9 +1584,9 @@
 </div>
 
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/chat.js?v=workspace-shell-21"></script>
+<script src="/static/chat.js?v=stage2c6-1-stable-dock-metrics-20260725"></script>
 <script src="/static/media.js"></script>
-<script src="/static/weather.js"></script>
+<script src="/static/weather.js?v=stage2c6-1-stable-dock-metrics-20260725"></script>
 
 <div class="modal-overlay" id="wifiConnectModal" style="display:none;" onclick="closeWifiConnectModal()">
     <div class="modal-content wifi-connect-modal" onclick="event.stopPropagation()">

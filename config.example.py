@@ -9,7 +9,7 @@ APP_HOST = "0.0.0.0"
 APP_PORT = 5000
 
 # ===== MESHTASTIC SETTINGS =====
-MESHTASTIC_CMD = "/home/directory_user_profile/.local/bin/meshtastic"  # it is necessary to change the path correctly
+MESHTASTIC_CMD = "/home/_your_profile_directory_/.local/bin/meshtastic"  # it is necessary to change the path correctly
 
 # ===== SERIAL PORT =====
 MESHTASTIC_PORT = "/dev/ttyACM0"  # or /dev/ttyUSB0
@@ -19,7 +19,7 @@ LOCAL_NODE_ID = "!xxxxxxxx"        # Your Meshtastic node ID
 LOCAL_NODE_NAME = "My Meshtastic"  # Your node display name
 
 # ===== DATA STORAGE =====
-DATA_DIR = "/home/directory_user_profile/meshcenter/data" # it is necessary to change the path correctly
+DATA_DIR = "/home/_your_profile_directory_/meshcenter/data" # it is necessary to change the path correctly
 
 # ===== FILE PATHS (auto-generated from DATA_DIR) =====
 HISTORY_FILE = f"{DATA_DIR}/messages.json"

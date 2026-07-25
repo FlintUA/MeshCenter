@@ -3,34 +3,33 @@
 <p align="center">
 A complete browser-based control center for Meshtastic® base stations running on Raspberry Pi.
 </p>
+
 <p align="center">
-Messaging | Node Management | Telemetry | Camera | Weather | Wi‑Fi | Notifications | Raspberry Pi
+Messaging · Node Management · Telemetry · Camera · Weather · Wi‑Fi · Notifications · Raspberry Pi
 </p>
 
 <p align="center">
-  <!-- Project logo -->
   <img src="docs/images/meshcenter001.png" width="480" alt="MeshCenter Logo">
 </p>
 
 <h1 align="center">Meshtastic Powered</h1>
 
 <p align="center">
-<img width="256" height="256" alt="meshtastic-powered-001" src="https://github.com/user-attachments/assets/42b4c3fe-396f-489e-82cf-fd710b235361" />
+  <img width="256" height="256" alt="meshtastic-powered" src="https://github.com/user-attachments/assets/42b4c3fe-396f-489e-82cf-fd710b235361" />
+</p>
 
 <p align="center">
-
-![Release](https://img.shields.io/github/v/release/FlintUA/MeshCenter)
-![License](https://img.shields.io/github/license/FlintUA/MeshCenter)
-![Python](https://img.shields.io/badge/Python-3.13+-blue)
-![Platform](https://img.shields.io/badge/Raspberry%20Pi-Bookworm-C51A4A)
-![Meshtastic](https://img.shields.io/badge/Meshtastic-Compatible-success)
-![Status](https://img.shields.io/badge/Status-Active%20Development-brightgreen)
-
+  <img src="https://img.shields.io/github/v/release/FlintUA/MeshCenter" alt="Release">
+  <img src="https://img.shields.io/github/license/FlintUA/MeshCenter" alt="License">
+  <img src="https://img.shields.io/badge/Python-3.13+-blue" alt="Python">
+  <img src="https://img.shields.io/badge/Raspberry%20Pi-Bookworm-C51A4A" alt="Platform">
+  <img src="https://img.shields.io/badge/Meshtastic-Compatible-success" alt="Meshtastic">
+  <img src="https://img.shields.io/badge/Status-Active%20Development-brightgreen" alt="Status">
 </p>
 
 ---
 
-# Overview
+## Overview
 
 **MeshCenter** is a modern browser-based control center designed specifically for Meshtastic base stations running on Raspberry Pi.
 
@@ -42,7 +41,7 @@ Unlike a traditional web interface, MeshCenter is designed as a complete control
 
 ---
 
-# Why MeshCenter?
+## Why MeshCenter?
 
 The official Meshtastic applications are excellent for configuration, mobile operation and everyday communication.
 
@@ -62,18 +61,16 @@ Typical use cases include:
 
 ---
 
-# Highlights
+## Highlights
 
-## 📚 Documentation
+### 📚 Documentation
 
 - UI Guidelines
 - Components
 - Architecture
 - Development Roadmap
 
----
-
-## 💬 Messaging
+### 💬 Messaging
 
 - Public channel messaging
 - Direct messages
@@ -83,74 +80,85 @@ Typical use cases include:
 - Ignore list
 - Message export
 
----
-
-## 📷 Camera
+### 📷 Camera & Media Gallery
 
 - Live MJPEG video streaming
 - High-resolution photo capture
-- Integrated photo gallery
-- Adjustable image quality
-- Adjustable FPS
+- Integrated photo gallery with thumbnails, download and delete
+- Adjustable image quality and FPS
 - Raspberry Pi Camera support
-
----
+- Media workspace to browse local captures
 
 ### 📶 Wi-Fi Manager
 
-MeshCenter includes a built-in Wi-Fi manager for Raspberry Pi.
+- View current Wi‑Fi connection (SSID, signal strength, IP, gateway)
+- Scan nearby networks with signal percentage
+- Connect to new networks with password prompt
+- Automatically reuse saved credentials
+- Forget saved profiles
 
-Features:
+### 📈 Telemetry
 
-- View current Wi-Fi connection
-- Signal strength (RSSI and %)
-- RX/TX link bitrate
-- IP address and gateway
-- Internet connectivity status
-- Scan nearby Wi-Fi networks
-- Connect to new networks
-- Automatically reuse saved Wi-Fi credentials
-- Forget saved Wi-Fi profiles
+- Device telemetry (battery, voltage, channel utilisation, uptime)
+- Environmental sensors (temperature, humidity, pressure)
+- Power monitoring (voltage, current, power)
+- Historical charts with selectable time ranges (1h to 30d)
+- Export telemetry data as CSV or JSON
 
-All Wi-Fi configuration is handled through Raspberry Pi's NetworkManager. Passwords are not stored by MeshCenter itself.
+### 🖥 Modern Desktop Interface
 
----
-
-## 📈 Telemetry
-
-- Device telemetry
-- Environmental sensors
-- Battery monitoring
-- Power monitoring
-- Historical charts
-- Automatic refresh
-
----
-
-## 🖥 Modern Desktop Interface
-
-- Professional three-column layout
-- Workspace panel
+- Professional three‑column layout
+- Workspace panel (show/hide columns, theme, compact mode)
 - Notification Center
-- Bottom status dock
+- Bottom status dock with system metrics
 - Unified component design
 - Custom node icons
-- Responsive dashboard
 
----
-
-## 📡 Node Management
+### 📡 Node Management
 
 - Automatic node discovery
-- Hardware information
+- Hardware information and role
 - RSSI / SNR monitoring
-- Favorites
-- Ignore list
-- Import / Export
+- Favorites and ignore list
+- Import / Export node database (CSV / JSON)
+- Merge duplicates
 
----
+### 🛠️ Node Tools
 
-## ⚡ Optimized for Raspberry Pi
+- Request telemetry from any visible node
+- Request position (saves coordinates)
+- Traceroute – show mesh route to a node
+
+### 🩺 System & Radio Health
+
+- Real‑time system info (hostname, uptime, CPU, RAM, disk, temperature)
+- Radio listener status, packet age, telemetry age
+- Automatic listener recovery with configurable delay
+- CPU usage history chart (30m to 24h)
+- System actions: restart MeshCenter, reboot, shutdown
+
+### 🌦️ Weather Module
+
+- Current weather and 3‑day forecast via OpenWeather
+- Location from manual coordinates or a reference node
+- Units follow global preferences
+- Auto‑refreshes every 10 minutes
+
+### ⚙️ Web Settings Editor
+
+- Units (temperature, pressure, wind)
+- Telemetry update interval
+- Battery capacity for runtime estimation
+- Listener auto‑recovery settings
+- Map provider (OpenStreetMap / Google Maps)
+- Reference location (manual or node‑based)
+
+### 🎨 Workspace & UI Preferences
+
+- Persistent panel visibility, theme and compact mode per browser
+- All preferences stored locally
+
+### ⚡ Optimized for Raspberry Pi
 
 MeshCenter has been developed with Raspberry Pi Zero 2W as the primary target platform.
 
@@ -164,27 +172,47 @@ Special attention has been paid to:
 
 ---
 
-# Screenshots
-<img width="1407" height="1292" alt="main002" src="https://github.com/user-attachments/assets/92e09683-3cd7-4dad-9af5-edfa25a050ca" />
+## Screenshots
 
-<img width="1403" height="1265" alt="main003" src="https://github.com/user-attachments/assets/55839039-c167-489e-8122-616cfa56f1af" />
+<p align="center">
+  <img width="1407" height="1292" alt="main002" src="https://github.com/user-attachments/assets/92e09683-3cd7-4dad-9af5-edfa25a050ca" />
+</p>
 
-<img width="370" height="815" alt="sidebar002" src="https://github.com/user-attachments/assets/84e56a8d-d65f-4877-a9e1-425c7da095cb" />
+<p align="center">
+  <img width="1403" height="1265" alt="main003" src="https://github.com/user-attachments/assets/55839039-c167-489e-8122-616cfa56f1af" />
+</p>
 
-<img width="771" height="556" alt="environment002" src="https://github.com/user-attachments/assets/d3922ae4-0bb3-4a37-9757-af0a5572cf45" />
+<p align="center">
+  <img width="370" height="815" alt="sidebar002" src="https://github.com/user-attachments/assets/84e56a8d-d65f-4877-a9e1-425c7da095cb" />
+</p>
 
-<img width="783" height="568" alt="power003" src="https://github.com/user-attachments/assets/ac1bb3ec-21a7-498b-8279-a5735cfe59c8" />
+<p align="center">
+  <img width="771" height="556" alt="environment002" src="https://github.com/user-attachments/assets/d3922ae4-0bb3-4a37-9757-af0a5572cf45" />
+</p>
 
-<img width="1396" height="1293" alt="system001" src="https://github.com/user-attachments/assets/4a93ab95-4e42-4b98-8d63-d6dac167a6d4" />
+<p align="center">
+  <img width="783" height="568" alt="power003" src="https://github.com/user-attachments/assets/ac1bb3ec-21a7-498b-8279-a5735cfe59c8" />
+</p>
 
-<img width="1396" height="1295" alt="photo002" src="https://github.com/user-attachments/assets/bffc4beb-da6e-40ed-8d27-9b6c5005af86" />
+<p align="center">
+  <img width="1396" height="1293" alt="system001" src="https://github.com/user-attachments/assets/4a93ab95-4e42-4b98-8d63-d6dac167a6d4" />
+</p>
 
-<img width="733" height="850" alt="media_gallery" src="https://github.com/user-attachments/assets/d02fc7cd-e2a7-4a41-936e-b0f6b72a0cf9" />
+<p align="center">
+  <img width="1396" height="1295" alt="photo002" src="https://github.com/user-attachments/assets/bffc4beb-da6e-40ed-8d27-9b6c5005af86" />
+</p>
 
+<p align="center">
+  <img width="733" height="850" alt="media_gallery" src="https://github.com/user-attachments/assets/d02fc7cd-e2a7-4a41-936e-b0f6b72a0cf9" />
+</p>
 
-# Design Philosophy
+*Additional screenshots for new features (Weather, Node Tools, Settings, System) will be added in future releases.*
 
-MeshCenter follows a few simple principles.
+---
+
+## Design Philosophy
+
+MeshCenter follows a few simple principles:
 
 - Browser-first experience
 - Fast and responsive interface
@@ -198,7 +226,7 @@ The goal is to provide a practical and reliable control center that can run cont
 
 ---
 
-# What Makes MeshCenter Different?
+## What Makes MeshCenter Different?
 
 Unlike traditional web interfaces, MeshCenter is designed as a complete operational environment for a Meshtastic base station.
 
@@ -209,6 +237,10 @@ It combines multiple independent subsystems into one application:
 - Photo Gallery
 - Telemetry
 - Node Management
+- Node Tools (telemetry request, position request, traceroute)
+- System Monitoring & Radio Health
+- Weather Integration
+- Wi‑Fi Manager
 - Local Data Storage
 - Background Services
 - REST API
@@ -216,15 +248,16 @@ It combines multiple independent subsystems into one application:
 This modular architecture makes it easy to extend the project while keeping the user interface simple and responsive.
 
 ---
-# Installation
+
+## Installation
 
 MeshCenter is designed to run on Raspberry Pi OS Bookworm and newer versions.
 
 Although it has been primarily developed and tested on Raspberry Pi Zero 2W, it also works on Raspberry Pi 3, 4 and 5.
 
-## Requirements
+### Requirements
 
-### Hardware
+#### Hardware
 
 - Raspberry Pi Zero 2W or newer
 - microSD card (16 GB or larger recommended)
@@ -232,41 +265,35 @@ Although it has been primarily developed and tested on Raspberry Pi Zero 2W, it 
 - Raspberry Pi Camera (optional)
 - Wi-Fi connection
 
-### Software
+#### Software
 
 - Raspberry Pi OS Bookworm (64-bit recommended)
 - Python 3.13 or newer
 - Meshtastic CLI
 - Git
 
----
-
-# Clone the Repository
+### Clone the Repository
 
 ```bash
 git clone https://github.com/FlintUA/MeshCenter.git
-cd meshcenter
+cd MeshCenter
 ```
 
----
-
-# Create a Virtual Environment
+### Create a Virtual Environment
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 ```
 
----
-
-# Install Dependencies
+### Install Dependencies
 
 ```bash
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Depending on your configuration you may also need to install additional packages such as:
+Depending on your configuration you may also need to install additional packages:
 
 ```bash
 pip install meshtastic pillow
@@ -274,17 +301,15 @@ pip install meshtastic pillow
 
 Camera support requires the Raspberry Pi camera stack to be installed and enabled.
 
----
+### Configuration
 
-# Configuration
-
-Copy the example configuration file.
+Copy the example configuration file:
 
 ```bash
 cp config.example.py config.py
 ```
 
-Edit the configuration.
+Edit the configuration:
 
 ```bash
 nano config.py
@@ -303,15 +328,21 @@ LOCAL_NODE_ID = "!xxxxxxxx"
 LOCAL_NODE_NAME = "My Base Station"
 
 DATA_DIR = "/home/_your_profile_directory_/meshcenter/data"
+
+# Optional: OpenWeather API key for weather module
+OPENWEATHER_API_KEY = "your_api_key_here"
+WEATHER_LATITUDE = 49.58810
+WEATHER_LONGITUDE = 11.00780
+WEATHER_LOCATION_NAME = "Erlangen, Germany"
+WEATHER_LANGUAGE = "en"
+WEATHER_CACHE_SECONDS = 600
 ```
 
 Adjust these values to match your installation.
 
----
+### Verify Meshtastic CLI
 
-# Verify Meshtastic CLI
-
-Before starting MeshCenter, make sure that Meshtastic CLI is working correctly.
+Before starting MeshCenter, make sure that Meshtastic CLI is working correctly:
 
 ```bash
 meshtastic --info
@@ -325,15 +356,12 @@ meshtastic --port /dev/ttyACM0 --info
 
 If the command displays information about your node, MeshCenter should also be able to communicate with it.
 
----
-
-# Starting MeshCenter
+### Starting MeshCenter
 
 Run manually:
 
 ```bash
 source venv/bin/activate
-
 python server.py
 ```
 
@@ -349,13 +377,11 @@ Example:
 http://192.168.2.103:5000
 ```
 
----
-
-# Running as a Service
+### Running as a Service
 
 For permanent installations, MeshCenter is intended to run as a systemd service.
 
-Example service file:
+Example service file (`/etc/systemd/system/meshcenter.service`):
 
 ```ini
 [Unit]
@@ -365,20 +391,14 @@ After=network.target
 [Service]
 Type=simple
 User=your_user_name
-
 WorkingDirectory=/home/_your_profile_directory_/meshcenter
-
 Environment="PATH=/home/_your_profile_directory_/meshcenter/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONUNBUFFERED=1"
-
 ExecStart=/home/_your_profile_directory_/meshcenter/venv/bin/python /home/_your_profile_directory_/meshcenter/server.py
-
 Restart=always
 RestartSec=10
-
 StandardOutput=journal
 StandardError=journal
-
 CPUQuota=70%
 MemoryMax=200M
 
@@ -405,61 +425,30 @@ View the log:
 journalctl -u meshcenter -f
 ```
 
----
-
-# Updating MeshCenter
-
-Update the repository:
+### Updating MeshCenter
 
 ```bash
 git pull
-```
-
-Activate the virtual environment.
-
-```bash
 source venv/bin/activate
-```
-
-Install new dependencies if required.
-
-```bash
 pip install -r requirements.txt
-```
-
-Restart the service.
-
-```bash
 sudo systemctl restart meshcenter
 ```
 
----
+### Updating Meshtastic CLI
 
-# Updating Meshtastic CLI
-
-It is recommended to keep Meshtastic CLI up to date.
-
-Upgrade using pip:
+It is recommended to keep Meshtastic CLI up to date:
 
 ```bash
 pip install --upgrade meshtastic
-```
-
-Verify the installed version:
-
-```bash
 meshtastic --version
 ```
 
----
-
-# Directory Layout
+### Directory Layout
 
 A typical installation looks like this:
 
-```text
+```
 meshcenter/
-
 ├── api/
 ├── camera/
 ├── meshsrv/
@@ -468,11 +457,9 @@ meshcenter/
 ├── telemetry/
 ├── templates/
 ├── utils/
-
 ├── data/
 ├── docs/
 ├── venv/
-
 ├── config.py
 ├── config.example.py
 ├── requirements.txt
@@ -480,32 +467,30 @@ meshcenter/
 └── README.md
 ```
 
-The `data` directory stores persistent information such as messages, telemetry history and application settings.
-
-# Core Features
-
-MeshCenter combines several independent subsystems into one control center. Each subsystem is designed to be useful on its own, but together they turn a Raspberry Pi into a practical Meshtastic base station.
+The `data` directory stores persistent information such as messages, telemetry history, node icons, screenshots and application settings.
 
 ---
 
-## 📚 Documentation
+## Core Features
+
+MeshCenter combines several independent subsystems into one control center. Each subsystem is designed to be useful on its own, but together they turn a Raspberry Pi into a practical Meshtastic base station.
+
+### 📚 Documentation
 
 - UI Guidelines
 - Components
 - Architecture
 - Development Roadmap
 
----
-
-## 💬 Messaging
+### 💬 Messaging
 
 MeshCenter provides a browser-based chat interface for Meshtastic communication.
 
 The messaging system supports both public channel messages and direct node-to-node messages.
 
-### Public Channel
+#### Public Channel
 
-Public messages are sent to the configured Meshtastic channel, usually LongFast channel index `0`.
+Public messages are sent to the configured Meshtastic channel, usually LongFast channel index 0.
 
 Typical use cases:
 
@@ -515,13 +500,13 @@ Typical use cases:
 - Test messages
 - Sensor status announcements
 
-### Direct Messages
+#### Direct Messages
 
 MeshCenter also supports direct messages between nodes.
 
 Direct messages are shown as separate chats, making it easier to work with multiple known nodes from a browser interface.
 
-### Messaging Features
+#### Messaging Features
 
 - Public channel messaging
 - Direct node-to-node messaging
@@ -534,9 +519,7 @@ Direct messages are shown as separate chats, making it easier to work with multi
 - System messages
 - Local JSON-based storage
 
----
-
-## 🖥 Modern Desktop Interface
+### 🖥 Modern Desktop Interface
 
 - Professional three-column layout
 - Workspace panel
@@ -546,15 +529,13 @@ Direct messages are shown as separate chats, making it easier to work with multi
 - Custom node icons
 - Responsive dashboard
 
----
-
-## 📡 Node Management
+### 📡 Node Management
 
 MeshCenter automatically discovers nodes from the Meshtastic mesh and stores them locally.
 
 The node list helps you understand what devices are visible in your area and when they were last heard.
 
-### Node Information
+#### Node Information
 
 Depending on the available data, MeshCenter can display:
 
@@ -569,7 +550,7 @@ Depending on the available data, MeshCenter can display:
 - Hop distance
 - Last message
 
-### Favorites
+#### Favorites
 
 Frequently used nodes can be marked as favorites.
 
@@ -581,7 +562,7 @@ Favorites are useful for:
 - Known repeaters
 - Important contacts
 
-### Ignore List
+#### Ignore List
 
 Nodes that are not relevant can be ignored.
 
@@ -589,9 +570,9 @@ Ignored nodes remain in the database, but they can be hidden from the main view 
 
 This is useful in busy areas where many nodes are visible but only a few are important for your setup.
 
-### Import and Export
+#### Import and Export
 
-MeshCenter supports importing and exporting the local node database.
+MeshCenter supports importing and exporting the local node database in CSV and JSON formats.
 
 This is useful for:
 
@@ -600,15 +581,27 @@ This is useful for:
 - Keeping a known node list
 - Sharing node information between installations
 
----
+### 🛠️ Node Tools (Remote Commands)
 
-## 📈 Telemetry
+MeshCenter can send commands to any visible node directly from the web interface:
+
+- **Request Telemetry** – Ask the node to send its current sensor readings (temperature, humidity, pressure, voltage, current, power)
+- **Request Position** – Request the node's GPS or fixed position; the result is saved and displayed
+- **Traceroute** – Show the mesh route to the destination node, both forward and return paths
+
+These tools are available from the node detail card and the Node Tools button.
+
+### Custom Node Icons
+
+You can upload a custom image (PNG, JPEG or WebP) for any node (including the local base node). The image is automatically centered and cropped into a 256×256 transparent square. Icons are stored locally on the Raspberry Pi and are served by MeshCenter.
+
+### 📈 Telemetry
 
 MeshCenter displays telemetry received from Meshtastic devices and stores historical telemetry locally.
 
 Telemetry is useful for monitoring both the radio node and connected sensors.
 
-### Device Telemetry
+#### Device Telemetry
 
 Supported device telemetry includes:
 
@@ -619,7 +612,7 @@ Supported device telemetry includes:
 - Uptime
 - Last update time
 
-### Environmental Telemetry
+#### Environmental Telemetry
 
 Environmental telemetry can include:
 
@@ -627,11 +620,9 @@ Environmental telemetry can include:
 - Humidity
 - Atmospheric pressure
 
-Typical sensor:
+Typical sensor: **BME280**
 
-- BME280
-
-### Power Monitoring
+#### Power Monitoring
 
 Power telemetry can include:
 
@@ -639,38 +630,25 @@ Power telemetry can include:
 - Current
 - Power
 
-Typical sensor:
+Typical sensor: **INA226**
 
-- INA226
+#### Telemetry History
 
-### Telemetry History
+Telemetry history is stored locally and can be displayed as charts with selectable time ranges (1 hour to 30 days). Data can be exported as CSV or JSON.
 
-Telemetry history is stored locally and can be displayed as charts.
-
-This makes it possible to observe long-term changes such as:
-
-- Temperature trends
-- Humidity changes
-- Pressure changes
-- Battery voltage
-- Current consumption
-- Power usage
-
----
-
-## 📷 Camera
+### 📷 Camera
 
 MeshCenter includes camera support based on Raspberry Pi Camera and Picamera2.
 
 The camera subsystem is designed for lightweight live viewing and photo capture on low-power hardware.
 
-### Live Video
+#### Live Video
 
 Live video is provided as an MJPEG stream.
 
 MJPEG is not the most bandwidth-efficient video format, but it has excellent browser compatibility and works reliably without additional client-side software.
 
-### Photo Capture
+#### Photo Capture
 
 MeshCenter can capture high-resolution photos and store them locally.
 
@@ -682,7 +660,7 @@ The application can use different settings for:
 
 This allows the system to keep the live view lightweight while still supporting full-resolution image capture.
 
-### Camera Settings
+#### Camera Settings
 
 Depending on the connected camera, MeshCenter can support:
 
@@ -693,21 +671,11 @@ Depending on the connected camera, MeshCenter can support:
 - Preview size
 - Save size
 
-### Gallery
+#### Gallery
 
-Captured images are saved locally and can be viewed through the browser interface.
+Captured images are saved locally and can be viewed through the Media workspace. The gallery displays thumbnails, file size, capture time and provides download and delete actions.
 
-The gallery is useful for:
-
-- Field observations
-- Remote monitoring
-- Simple documentation
-- Weather station photos
-- Project logs
-
----
-
-## 🖼️ Photo Gallery
+### 🖼️ Media Gallery
 
 MeshCenter stores captured photos inside the local data directory.
 
@@ -720,11 +688,9 @@ Typical use cases:
 - Downloading saved photos
 - Keeping a visual project log
 
-Screenshots and captured photos are stored locally and are not transmitted through Meshtastic.
+The gallery shows total image count, used space and free space. You can delete individual images or clear the entire gallery.
 
----
-
-## ⚙️ Local Storage
+### ⚙️ Local Storage
 
 MeshCenter stores application data locally using JSON files.
 
@@ -732,33 +698,111 @@ This keeps the project simple and easy to inspect, backup and repair.
 
 Typical stored files include:
 
-```text
+```
 messages.json
 nodes.json
 chats.json
 sensors.json
 telemetry_history.json
 deleted_dm.json
+settings.json
+camera_config.json
+node_icons/
 screenshots/
 ```
 
 Local storage is useful because:
 
-- no external database is required
-- backups are easy
-- files can be inspected manually
-- the system remains lightweight
-- the installation stays simple
+- No external database is required
+- Backups are easy
+- Files can be inspected manually
+- The system remains lightweight
+- The installation stays simple
 
----
+### 🩺 System Monitor & Radio Health
 
-## 🧩 Modular Architecture
+MeshCenter provides a dedicated System workspace that gives you full visibility into your Raspberry Pi and Meshtastic radio status.
+
+#### System Information
+
+- Hostname, uptime, CPU load and temperature
+- RAM usage (used / total)
+- Disk usage (used / total)
+- Raspberry Pi model and OS version
+
+#### Radio Health Dashboard
+
+- Listener status (running / stopped / paused)
+- Packet age, telemetry age and send age
+- Status level (OK, Warning, Error)
+- Restart count and fail count
+- A recommendation message for troubleshooting
+
+#### CPU History Chart
+
+- Live CPU usage graph with selectable ranges: 30m, 1h, 6h, 12h, 24h
+- Current CPU usage, RAM usage and temperature are also shown in the status dock
+
+#### System Log
+
+- A detailed event log showing listener starts, stops, errors and system actions
+- Logs are stored persistently and can be viewed directly in the System workspace
+
+#### Automatic Listener Recovery
+
+- If the Meshtastic listener stops, MeshCenter can automatically restart it after a configurable delay (30–300 seconds)
+- The recovery mechanism respects a safety limit (max 3 attempts in 30 minutes) to avoid restart loops
+
+### 🌦️ Weather Module
+
+MeshCenter integrates with OpenWeather to show current weather conditions and a 3‑day forecast for your location.
+
+- **Server-side API key** – The OpenWeather API key is stored in `config.py` and never exposed to the browser
+- **Caching** – Weather data is cached for 10 minutes to reduce API calls
+- **Location sources**:
+  - Manual coordinates (set in the web Settings)
+  - Reference node position (if the node has GPS)
+  - Static configured coordinates (fallback from `config.py`)
+- **Units** – Follow global unit preferences (temperature, pressure, wind speed)
+- **Forecast** – Shows the next three days with temperature ranges, weather condition and precipitation probability
+- **Refresh** – Click the status badge to force an immediate update
+
+The weather card is displayed in the Base panel and updates automatically every 10 minutes.
+
+### 🎨 Workspace & UI Preferences
+
+MeshCenter remembers your interface preferences per browser using local storage.
+
+- **Panel visibility** – Show or hide the Base and Nodes panels
+- **Theme** – System (follows OS), Light or Dark
+- **Compact mode** – Reduced spacing and control sizes for smaller screens
+
+All changes are saved automatically and applied on next visit.
+
+Access the Workspace menu from the bottom‑left status dock.
+
+### ⚙️ Web Settings Editor
+
+MeshCenter provides a graphical settings interface accessible from the Workspace menu.
+
+You can adjust the following without editing configuration files:
+
+- **Units** – Temperature (°C/°F), Pressure (hPa/mmHg), Wind (m/s, km/h, mph)
+- **Telemetry interval** – How often sensor readings are stored (2, 5, 10, 15, 30 minutes)
+- **Battery capacity** – Used for runtime estimation (100–50000 mAh)
+- **Listener auto‑recovery** – Enable/disable, delay (30–300 seconds)
+- **Map provider** – OpenStreetMap or Google Maps for node position links
+- **Reference location** – Set a manual coordinate or select a node as the reference for distance/bearing calculations
+
+All settings are saved immediately and persist across restarts.
+
+### 🧩 Modular Architecture
 
 MeshCenter is gradually moving from a single large server file to a modular architecture.
 
 Current modules include:
 
-```text
+```
 api/
 camera/
 meshsrv/
@@ -773,7 +817,7 @@ The goal is to keep `server.py` as the central coordinator while moving speciali
 
 ---
 
-# Camera Notes
+## Camera Notes
 
 Camera support depends on Raspberry Pi system packages.
 
@@ -807,41 +851,39 @@ except Exception as e:
 PY
 ```
 
----
-
-# Recommended Camera Settings
+### Recommended Camera Settings
 
 For Raspberry Pi Zero 2W, conservative camera settings are recommended.
 
-| Setting | Recommended |
-|---|---|
-| Video Resolution | 640 × 480 or 800 × 600 |
-| FPS | 8-15 |
-| JPEG Quality | 70-85 |
-| Photo Preview | 640 × 480 |
-| Photo Capture | 3280 × 2464 |
+| Setting            | Recommended          |
+|--------------------|----------------------|
+| Video Resolution   | 640 × 480 or 800 × 600 |
+| FPS                | 8–15                 |
+| JPEG Quality       | 70–85                |
+| Photo Preview      | 640 × 480            |
+| Photo Capture      | 3280 × 2464          |
 
 Higher settings may work, but they increase CPU usage, memory usage and heat.
 
----
-
-# Recommended Raspberry Pi Zero 2W Usage
+### Recommended Raspberry Pi Zero 2W Usage
 
 Raspberry Pi Zero 2W is powerful enough for MeshCenter, but it has limited resources.
 
 For best stability:
 
-- avoid unnecessarily high video FPS
-- avoid very high JPEG quality for live video
-- keep browser polling intervals reasonable
-- use a reliable power supply
-- use a good microSD card
-- keep the enclosure ventilated
-- monitor CPU temperature during long camera sessions
+- Avoid unnecessarily high video FPS
+- Avoid very high JPEG quality for live video
+- Keep browser polling intervals reasonable
+- Use a reliable power supply
+- Use a good microSD card
+- Keep the enclosure ventilated
+- Monitor CPU temperature during long camera sessions
 
 MeshCenter is designed to remain lightweight, but camera streaming and photo capture can still temporarily increase system load.
 
-# Project Structure
+---
+
+## Project Structure
 
 MeshCenter has been designed as a modular application. Each subsystem has its own responsibility, making the project easier to maintain, debug and extend.
 
@@ -869,7 +911,7 @@ meshcenter/
 
 ---
 
-# Application Architecture
+## Application Architecture
 
 MeshCenter consists of several independent modules that work together.
 
@@ -880,12 +922,12 @@ MeshCenter consists of several independent modules that work together.
                           ▼
                    Flask Application
                           │
-     ┌──────────────┬──────────────┬──────────────┐
+     ┌──────────────┬──────────────┬──────────────┬──────────────┐
+     │              │              │              │              │
+     ▼              ▼              ▼              ▼              ▼
+ Messaging      Camera        Telemetry      System/Health   REST API
      │              │              │              │
-     ▼              ▼              ▼              ▼
- Messaging      Camera        Telemetry      REST API
-     │              │              │
-     └──────────────┼──────────────┘
+     └──────────────┼──────────────┴──────────────┘
                     ▼
              Meshtastic CLI
                     │
@@ -897,13 +939,13 @@ The browser never communicates directly with the Meshtastic node. All communicat
 
 ---
 
-# Data Storage
+## Data Storage
 
 MeshCenter intentionally avoids using an SQL database.
 
 Instead, all application data is stored as JSON files.
 
-Advantages of this approach:
+**Advantages of this approach:**
 
 - No database server required
 - Easy backups
@@ -920,13 +962,17 @@ chats.json
 telemetry_history.json
 deleted_dm.json
 sensors.json
+settings.json
+camera_config.json
+node_icons/
+screenshots/
 ```
 
 Future versions may optionally support SQLite for installations with very large datasets, but JSON storage will remain the default.
 
 ---
 
-# REST API
+## REST API
 
 MeshCenter exposes a REST API used by the browser interface.
 
@@ -938,22 +984,38 @@ GET    /api/messages
 POST   /api/send
 
 GET    /api/telemetry
+GET    /api/telemetry/history
+POST   /api/telemetry/config
+
 GET    /api/sensors
+GET    /api/base_status
+GET    /api/radio_health
+
+GET    /api/system/info
+GET    /api/system/network
+GET    /api/system/cpu-history
+POST   /api/system/action
+
+GET    /api/nodes
+GET    /api/nodes_management
+POST   /api/nodes_import
+GET    /api/nodes_export
+
+POST   /api/node_tools
 
 GET    /api/camera/status
-GET    /api/camera/frame
+POST   /api/camera/settings
+POST   /api/photo/capture
+POST   /api/photo/save
 
-GET    /api/base_status
-GET    /api/nodes
-
-POST   /api/photo
+GET    /api/weather/current
 ```
 
 The API is primarily intended for the built-in web interface, but it also allows future integrations with third-party applications.
 
 ---
 
-# Performance
+## Performance
 
 MeshCenter has been optimized for Raspberry Pi Zero 2W.
 
@@ -961,19 +1023,20 @@ Typical resource usage depends on the enabled features.
 
 Approximate values during normal operation:
 
-| Feature | CPU | RAM |
-|----------|----:|----:|
-| Idle | Very Low | Low |
-| Messaging | Low | Low |
-| Telemetry | Low | Low |
-| Camera Preview | Medium | Medium |
-| Photo Capture | High (short peak) | Medium |
+| Feature             | CPU          | RAM    |
+|---------------------|--------------|--------|
+| Idle                | Very Low     | Low    |
+| Messaging           | Low          | Low    |
+| Telemetry           | Low          | Low    |
+| Camera Preview      | Medium       | Medium |
+| Photo Capture       | High (short peak) | Medium |
+| System Monitoring   | Low          | Low    |
 
 Live MJPEG streaming is currently the most resource-intensive component.
 
 ---
 
-# Security
+## Security
 
 MeshCenter is intended for trusted local networks.
 
@@ -993,20 +1056,21 @@ Future versions may include optional authentication.
 
 ## Recent Improvements
 
-- Redesigned desktop interface
-- Workspace
-- Notification Center
-- Custom node icons
-- Unified popovers
-- Improved node profile
-- Better Wi‑Fi manager
-- Modular documentation
+- **System & Radio Health** – Added system monitoring, radio health dashboard, CPU history chart and automatic listener recovery
+- **Weather Module** – Integrated OpenWeather with caching and location from reference node
+- **Node Tools** – Added remote telemetry, position request and traceroute
+- **Custom Node Icons** – Upload and manage icons for any node
+- **Workspace & UI** – Persistent panel visibility, theme, compact mode
+- **Web Settings Editor** – Units, telemetry interval, battery capacity, listener recovery, map provider, reference location
+- **Media Gallery** – Thumbnails, download, delete, storage info
+- **Export/Import** – Node database export/import in CSV and JSON
+- **Wi‑Fi Manager** – Scan, connect, forget with saved networks indicator
 
 ---
 
-# Troubleshooting
+## Troubleshooting
 
-## Meshtastic CLI not found
+### Meshtastic CLI not found
 
 Check that the CLI is installed:
 
@@ -1016,9 +1080,7 @@ which meshtastic
 
 Verify the configured path in `config.py`.
 
----
-
-## Radio not detected
+### Radio not detected
 
 Verify that the device is connected:
 
@@ -1032,9 +1094,7 @@ Test communication:
 meshtastic --info
 ```
 
----
-
-## Camera not working
+### Camera not working
 
 Verify that Picamera2 is available:
 
@@ -1048,9 +1108,7 @@ If the import fails, recreate the virtual environment:
 python3 -m venv --system-site-packages venv
 ```
 
----
-
-## Service does not start
+### Service does not start
 
 Check the service status:
 
@@ -1064,9 +1122,7 @@ View the logs:
 journalctl -u meshcenter -f
 ```
 
----
-
-## High CPU usage
+### High CPU usage
 
 Possible causes:
 
@@ -1078,9 +1134,7 @@ Possible causes:
 
 Reducing camera settings usually has the greatest impact.
 
----
-
-## Messages are not delivered
+### Messages are not delivered
 
 Verify:
 
@@ -1092,9 +1146,7 @@ Verify:
 
 Use the Meshtastic CLI to verify that communication works outside MeshCenter.
 
----
-
-## Browser cannot connect
+### Browser cannot connect
 
 Verify that Flask is listening:
 
@@ -1102,53 +1154,56 @@ Verify that Flask is listening:
 ss -tln
 ```
 
-Default port:
-
-```
-5000
-```
+Default port: `5000`
 
 Also check your firewall configuration.
 
----
+### Weather data not showing
 
-# Frequently Asked Questions
+- Verify that `OPENWEATHER_API_KEY` is set in `config.py`
+- Check that the reference location is configured (Settings → Reference location)
+- Ensure the Raspberry Pi has internet access
 
-## Does MeshCenter replace the official Meshtastic application?
+### Node Tools commands fail
 
-No.
+- Check that the target node is reachable (last heard time is recent)
+- Ensure the serial port is not busy (wait a few seconds and retry)
+- Check the System Log for detailed error messages
 
-MeshCenter complements the official applications by providing a permanent browser-based control center for Raspberry Pi installations.
+### Custom node icons not updating
 
----
+- Clear your browser cache or reload the page with `Ctrl+F5`
+- Verify that the uploaded image is a valid PNG, JPEG or WebP
 
-## Does MeshCenter send photos over Meshtastic?
+### Wi‑Fi connection fails
 
-No.
-
-Photos are stored locally on the Raspberry Pi and viewed through the web interface.
-
----
-
-## Can multiple browsers connect simultaneously?
-
-Yes.
-
-Multiple users on the same local network can access the interface at the same time.
+- Check that the password is correct
+- Ensure the network is visible in the scan list
+- Verify that NetworkManager is installed and running
 
 ---
 
-## Does MeshCenter require Internet access?
+## Frequently Asked Questions
 
-No.
+### Does MeshCenter replace the official Meshtastic application?
 
-Internet access is not required for normal operation.
+No. MeshCenter complements the official applications by providing a permanent browser-based control center for Raspberry Pi installations.
+
+### Does MeshCenter send photos over Meshtastic?
+
+No. Photos are stored locally on the Raspberry Pi and viewed through the web interface.
+
+### Can multiple browsers connect simultaneously?
+
+Yes. Multiple users on the same local network can access the interface at the same time.
+
+### Does MeshCenter require Internet access?
+
+No. Internet access is not required for normal operation.
 
 Some optional features, such as weather integration or software updates, may require Internet connectivity.
 
----
-
-## Which Raspberry Pi models are supported?
+### Which Raspberry Pi models are supported?
 
 Recommended:
 
@@ -1159,8 +1214,9 @@ Recommended:
 
 MeshCenter is primarily optimized for Raspberry Pi Zero 2W.
 
+---
 
-# Roadmap
+## Roadmap
 
 MeshCenter is an actively developed project.
 
@@ -1168,30 +1224,9 @@ The primary goal is to provide a lightweight, reliable and feature-rich browser-
 
 The roadmap is intentionally conservative. Features are added only after they have been tested and integrated without compromising stability.
 
----
+### Current Development
 
-## Current Development
-
-The following improvements are currently planned:
-
-### 🌦 Weather Integration
-
-Integrate current weather information using external weather APIs.
-
-Possible information:
-
-- Air temperature
-- Humidity
-- Atmospheric pressure
-- Wind speed
-- Cloud coverage
-- Weather forecast
-
-The weather widget is intended to complement environmental telemetry from local sensors.
-
----
-
-### 📈 Improved Telemetry
+#### 📈 Improved Telemetry
 
 Future versions will extend telemetry visualization with:
 
@@ -1201,23 +1236,7 @@ Future versions will extend telemetry visualization with:
 - Additional sensor support
 - Improved data export
 
----
-
-### ⚙️ Settings Editor
-
-Configure MeshCenter directly from the browser without manually editing configuration files.
-
-Possible features:
-
-- Node settings
-- Camera settings
-- Telemetry options
-- Application preferences
-- Service configuration
-
----
-
-### 🚀 Performance Improvements
+#### 🚀 Performance Improvements
 
 Continuous optimization remains an important goal.
 
@@ -1229,15 +1248,12 @@ Future work includes:
 - Better responsiveness
 - Improved camera performance
 
----
+### Future Ideas
 
-## Future Ideas
-
-These ideas are being considered for future releases.
-
+These ideas are being considered for future releases.  
 Their implementation depends on project maturity and available development time.
 
-### 🧩 Plugin Support
+#### 🧩 Plugin Support
 
 A plugin architecture could allow optional modules without increasing the complexity of the core application.
 
@@ -1250,9 +1266,7 @@ Possible plugins:
 - APRS gateway
 - Custom sensor modules
 
----
-
-### 🗺 Interactive Network Map
+#### 🗺 Interactive Network Map
 
 Display nearby nodes on an interactive map.
 
@@ -1264,9 +1278,7 @@ Potential features:
 - Routing visualization
 - Favorite nodes
 
----
-
-### 🌍 Multi-language Interface
+#### 🌍 Multi-language Interface
 
 Support additional user interface languages.
 
@@ -1279,9 +1291,7 @@ Possible languages include:
 
 English will remain the primary project language.
 
----
-
-### 📦 Additional Integrations
+#### 📦 Additional Integrations
 
 Possible future integrations include:
 
@@ -1293,7 +1303,7 @@ Possible future integrations include:
 
 ---
 
-# Contributing
+## Contributing
 
 Contributions are welcome.
 
@@ -1301,9 +1311,7 @@ If you find a bug, have an idea for an improvement or would like to contribute c
 
 Suggestions for improving the documentation are also greatly appreciated.
 
----
-
-# Reporting Issues
+### Reporting Issues
 
 When reporting a problem, please include as much information as possible.
 
@@ -1322,17 +1330,17 @@ Providing detailed information helps identify and resolve problems more quickly.
 
 ---
 
-# License
+## License
 
 This project is released under the MIT License.
 
 You are free to use, modify and distribute the software in accordance with the terms of the license.
 
-See the LICENSE file for details.
+See the [LICENSE](LICENSE) file for details.
 
 ---
 
-# Acknowledgements
+## Acknowledgements
 
 Special thanks to:
 
@@ -1345,7 +1353,7 @@ Their work and support make projects like this possible.
 
 ---
 
-# Support
+## Support
 
 If you enjoy the project, consider supporting it by:
 
@@ -1359,40 +1367,30 @@ Community feedback plays an important role in shaping future development.
 
 ---
 
-# Author
+## Author
 
-**Konstantin Vynohradov (FlintUA)**
-
+**Konstantin Vynohradov (FlintUA)**  
 Electronics engineer, embedded systems enthusiast and Meshtastic hobbyist.
 
-GitHub:
-
-https://github.com/FlintUA
-
-Project repository:
-
-https://github.com/FlintUA/MeshCenter
-
-Website:
-
-https://elektroniker.help
+- GitHub: [https://github.com/FlintUA](https://github.com/FlintUA)
+- Project repository: [https://github.com/FlintUA/MeshCenter](https://github.com/FlintUA/MeshCenter)
+- Website: [https://elektroniker.help](https://elektroniker.help)
 
 The website contains additional articles, practical projects and experiments related to Meshtastic, Raspberry Pi, embedded systems, electronics and 3D printing.
 
 ---
 
-# Disclaimer
+## Disclaimer
 
 MeshCenter is an independent open-source project created for the Meshtastic community.
 
-It is **not affiliated with or endorsed by the official Meshtastic project**.
+It is not affiliated with or endorsed by the official Meshtastic project.
 
 Meshtastic® is a trademark of its respective owners.
 
 ---
 
 <p align="center">
-
-**Made with ❤️ for the Meshtastic community**
-
+Made with ❤️ for the Meshtastic community
 </p>
+```

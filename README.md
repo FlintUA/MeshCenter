@@ -4,7 +4,7 @@
 A complete browser-based control center for Meshtastic® base stations running on Raspberry Pi.
 </p>
 <p align="center">
-Messaging | Telemetry | Camera | Photo Gallery | Raspberry Pi
+Messaging | Node Management | Telemetry | Camera | Weather | Wi‑Fi | Notifications | Raspberry Pi
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@ Messaging | Telemetry | Camera | Photo Gallery | Raspberry Pi
 
 **MeshCenter** is a modern browser-based control center designed specifically for Meshtastic base stations running on Raspberry Pi.
 
-Instead of depending solely on a mobile application, MeshCenter provides a permanent web interface that is available from any device connected to your local network. It combines messaging, telemetry, camera streaming, photo management and node administration into a single lightweight application.
+Instead of depending solely on a mobile application, MeshCenter provides a permanent web interface that is available from any device connected to your local network. It combines messaging, intelligent node management, telemetry dashboards, camera streaming, media management, Wi‑Fi administration, weather information, notifications, system monitoring and documentation into a single lightweight application.
 
 The project is optimized for Raspberry Pi Zero 2W while remaining fully compatible with more powerful Raspberry Pi models.
 
@@ -63,6 +63,15 @@ Typical use cases include:
 ---
 
 # Highlights
+
+## 📚 Documentation
+
+- UI Guidelines
+- Components
+- Architecture
+- Development Roadmap
+
+---
 
 ## 💬 Messaging
 
@@ -115,6 +124,18 @@ All Wi-Fi configuration is handled through Raspberry Pi's NetworkManager. Passwo
 - Power monitoring
 - Historical charts
 - Automatic refresh
+
+---
+
+## 🖥 Modern Desktop Interface
+
+- Professional three-column layout
+- Workspace panel
+- Notification Center
+- Bottom status dock
+- Unified component design
+- Custom node icons
+- Responsive dashboard
 
 ---
 
@@ -467,6 +488,15 @@ MeshCenter combines several independent subsystems into one control center. Each
 
 ---
 
+## 📚 Documentation
+
+- UI Guidelines
+- Components
+- Architecture
+- Development Roadmap
+
+---
+
 ## 💬 Messaging
 
 MeshCenter provides a browser-based chat interface for Meshtastic communication.
@@ -503,6 +533,18 @@ Direct messages are shown as separate chats, making it easier to work with multi
 - Emoji picker
 - System messages
 - Local JSON-based storage
+
+---
+
+## 🖥 Modern Desktop Interface
+
+- Professional three-column layout
+- Workspace panel
+- Notification Center
+- Bottom status dock
+- Unified component design
+- Custom node icons
+- Responsive dashboard
 
 ---
 
@@ -946,6 +988,19 @@ Current security model:
 If remote access is required, it is recommended to use a VPN or another secure tunnel instead of exposing the web interface directly to the Internet.
 
 Future versions may include optional authentication.
+
+---
+
+## Recent Improvements
+
+- Redesigned desktop interface
+- Workspace
+- Notification Center
+- Custom node icons
+- Unified popovers
+- Improved node profile
+- Better Wi‑Fi manager
+- Modular documentation
 
 ---
 

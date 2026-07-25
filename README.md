@@ -203,10 +203,6 @@ Special attention has been paid to:
 </p>
 
 <p align="center">
-  <img width="1403" height="1265" alt="main003" src="docs/images/MeshCenter_media_dark_theme.png" />
-</p>
-
-<p align="center">
   <img width="1403" height="1265" alt="main003" src="docs/images/MeshCenter_sensors_light_theme.png" />
 </p>
 

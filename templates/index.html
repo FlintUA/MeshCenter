@@ -232,6 +232,14 @@
 
                     <!-- Input Area -->
                     <div class="input-area">
+                        <div class="reply-composer" id="replyComposer" hidden>
+                            <div class="reply-composer-accent" aria-hidden="true"></div>
+                            <div class="reply-composer-content">
+                                <div class="reply-composer-sender" id="replyComposerSender"></div>
+                                <div class="reply-composer-text" id="replyComposerText"></div>
+                            </div>
+                            <button type="button" class="reply-composer-close" onclick="cancelReply()" title="Cancel reply" aria-label="Cancel reply">✕</button>
+                        </div>
                         <form class="input-form" id="sendForm">
                             <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
                             <button type="button" id="emojiBtn" class="emoji-btn" title="Insert emoji">😊</button>
@@ -1493,6 +1501,55 @@
 </div>
 
 <!-- Modals -->
+
+<!-- Message actions -->
+<div class="message-actions-menu" id="messageActionsMenu" role="menu" aria-hidden="true">
+    <button type="button" class="message-action-item" role="menuitem" onclick="startReplyToMessage()">
+        <span aria-hidden="true">↩</span><span>Reply</span>
+    </button>
+    <div class="message-action-divider" aria-hidden="true"></div>
+    <button type="button" class="message-action-item" role="menuitem" onclick="copyMessageText()">
+        <span aria-hidden="true">📋</span><span>Copy</span>
+    </button>
+    <button type="button" class="message-action-item" role="menuitem" onclick="showMessageInfo()">
+        <span aria-hidden="true">ⓘ</span><span>Message Info</span>
+    </button>
+    <div class="message-action-divider" aria-hidden="true"></div>
+    <button type="button" class="message-action-item danger" role="menuitem" onclick="requestDeleteMessage()">
+        <span aria-hidden="true">🗑️</span><span>Delete locally</span>
+    </button>
+</div>
+
+<div class="modal-overlay" id="messageInfoModal" style="display: none;" onclick="closeMessageInfo()">
+    <div class="modal-content message-info-modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span>ⓘ Message Info</span>
+            <button class="modal-close" onclick="closeMessageInfo()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="message-info-content" id="messageInfoContent"></div>
+            <div class="message-info-text" id="messageInfoText"></div>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="confirmDeleteMessageModal" style="display: none;" onclick="closeConfirmDeleteMessage()">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span>🗑️ Delete locally</span>
+            <button class="modal-close" onclick="closeConfirmDeleteMessage()">✕</button>
+        </div>
+        <div class="modal-body">
+            <p class="confirm-text" id="confirmDeleteMessageText">Delete this message locally?</p>
+            <p class="message-delete-note">The message will only be removed from MeshCenter history. It cannot be removed from other Meshtastic devices.</p>
+            <div class="confirm-actions">
+                <button class="confirm-btn confirm-cancel" onclick="closeConfirmDeleteMessage()">Cancel</button>
+                <button class="confirm-btn confirm-danger" id="confirmDeleteMessageBtn" onclick="executeDeleteMessage()">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="modal-overlay" id="chatActionsModal" style="display: none;" onclick="closeChatActions()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
@@ -1606,7 +1663,7 @@
 </div>
 
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/chat.js?v=stage2c7-4-unified-popovers-20260725"></script>
+<script src="/static/chat.js?v=stage2-reply-ui-20260726"></script>
 <script src="/static/media.js"></script>
 <script src="/static/weather.js?v=stage2c7-4-unified-popovers-20260725"></script>
 

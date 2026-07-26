@@ -13,6 +13,7 @@ import json
 import os
 import io
 import csv
+import uuid
 from collections import defaultdict, deque
 from datetime import datetime
 from camera import camera
@@ -426,10 +427,26 @@ def save_messages():
 
 def load_messages():
     data = safe_read_json(HISTORY_FILE, [])
+    changed = False
+
     with state_lock:
         messages.clear()
+
         if data:
-            messages.extend(data[-MAX_HISTORY_MESSAGES:])
+            loaded_messages = data[-MAX_HISTORY_MESSAGES:]
+
+            # Older MeshCenter history entries did not have a stable ID.
+            # Add one once during loading so message actions can safely
+            # address a single message even while new packets are arriving.
+            for message in loaded_messages:
+                if not message.get("id"):
+                    message["id"] = uuid.uuid4().hex
+                    changed = True
+
+            messages.extend(loaded_messages)
+
+    if changed:
+        save_messages()
 
 def save_chats():
     with state_lock:
@@ -1302,10 +1319,73 @@ def extract_field(line, names):
 
 def extract_packet_id(line):
     m = re.search(r"'id':\s*(\d+)", line)
-    if m: return m.group(1)
+    if m:
+        return int(m.group(1))
+    m = re.search(r'"id":\s*(\d+)', line)
+    if m:
+        return int(m.group(1))
     m = re.search(r"\bid:\s*(\d+)", line)
-    if m: return m.group(1)
+    if m:
+        return int(m.group(1))
     return None
+
+
+def extract_reply_id(line):
+    """Return the Meshtastic packet ID referenced by an incoming reply."""
+    patterns = [
+        r"'replyId':\s*(\d+)",
+        r'"replyId":\s*(\d+)',
+        r"'reply_id':\s*(\d+)",
+        r'"reply_id":\s*(\d+)',
+        r"\breplyId:\s*(\d+)",
+        r"\breply_id:\s*(\d+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, line)
+        if match:
+            value = int(match.group(1))
+            return value if value > 0 else None
+    return None
+
+
+def find_message_by_packet_id(packet_id, chat_id=None):
+    if packet_id is None:
+        return None
+
+    try:
+        wanted = int(packet_id)
+    except (TypeError, ValueError):
+        return None
+
+    for message in reversed(messages):
+        try:
+            current = int(message.get("packet_id"))
+        except (TypeError, ValueError):
+            continue
+
+        if current != wanted:
+            continue
+        if chat_id and message.get("chat_id") != chat_id:
+            continue
+        return message
+
+    return None
+
+
+def build_reply_reference(message):
+    if not isinstance(message, dict):
+        return None
+
+    return {
+        "id": str(message.get("id", ""))[:128],
+        "packet_id": message.get("packet_id"),
+        "sender": str(message.get("sender", "Unknown"))[:160],
+        "node_id": str(message.get("node_id", ""))[:32],
+        "text": str(message.get("text", ""))[:1000],
+        "time": str(message.get("time", ""))[:32],
+        "chat_id": str(message.get("chat_id", ""))[:32],
+        "chat_name": str(message.get("chat_name", ""))[:160],
+    }
 
 def extract_text_message(line):
     if "TEXT_MESSAGE_APP" not in line and "'text':" not in line and '"text":' not in line:
@@ -1531,7 +1611,7 @@ def process_nodeinfo(block):
         save_nodes()
     return True
 
-def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None):
+def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, reply_to=None, packet_id=None):
     with state_lock:
         if not node_id:
             node_id = infer_node_id_from_sender(sender)
@@ -1562,10 +1642,27 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None):
         if chat_type == "dm" and chat_id not in chats:
             ensure_chat(chat_id, chat_name, force=True)
         msg = {
+            "id": uuid.uuid4().hex,
             "kind": kind, "sender": sender, "node_id": node_id,
             "text": text, "time": now(),
             "chat_id": chat_id, "chat_type": chat_type, "chat_name": chat_name
         }
+        if packet_id is not None:
+            try:
+                msg["packet_id"] = int(packet_id)
+            except (TypeError, ValueError):
+                pass
+        if isinstance(reply_to, dict):
+            msg["reply_to"] = {
+                "id": str(reply_to.get("id", ""))[:128],
+                "packet_id": reply_to.get("packet_id"),
+                "sender": str(reply_to.get("sender", "Unknown"))[:160],
+                "node_id": str(reply_to.get("node_id", ""))[:32],
+                "text": str(reply_to.get("text", ""))[:1000],
+                "time": str(reply_to.get("time", ""))[:32],
+                "chat_id": str(reply_to.get("chat_id", chat_id))[:32],
+                "chat_name": str(reply_to.get("chat_name", chat_name))[:160]
+            }
         messages.append(msg)
         messages[:] = messages[-MAX_HISTORY_MESSAGES:]
         update_chat_last_message(chat_id, text, msg["time"])
@@ -2034,8 +2131,26 @@ def listen_meshtastic():
                                 force=False
                             )
 
+                    reply_to = None
+                    incoming_reply_id = extract_reply_id(line)
+                    if incoming_reply_id:
+                        with state_lock:
+                            original = (
+                                find_message_by_packet_id(incoming_reply_id, chat_id)
+                                or find_message_by_packet_id(incoming_reply_id)
+                            )
+                            reply_to = build_reply_reference(original)
+
                     with state_lock:
-                        add_message("rx", sender, text, node_id, chat_id)
+                        add_message(
+                            "rx",
+                            sender,
+                            text,
+                            node_id,
+                            chat_id,
+                            reply_to=reply_to,
+                            packet_id=pid,
+                        )
 
                 except Exception as e:
                     print(f"[LISTEN] Error processing line: {e}", flush=True)
@@ -2513,6 +2628,7 @@ register_chat_routes(
     chats,
     nodes,
     messages,
+    save_messages,
     save_chats,
     get_chats_list,
     get_chat_messages,

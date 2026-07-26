@@ -35,6 +35,9 @@ let activeNodeTabs = {}; // Active tab per node.
 let nodeRenderCache = {}; // Last rendered signature per node.
 let referenceLocationInitialState = '';
 let referenceLocationSaving = false;
+let messageActionTarget = null;
+let renderedMessagesById = new Map();
+let activeReply = null;
 
 // Registry for the selected-node card. Future core modules or plugins can
 // register an additional tab without rewriting renderNodeDetails().
@@ -2410,6 +2413,7 @@ function openChat(chatId, chatName, chatType, selectionSource = 'external') {
     currentChatId = chatId;
     currentChatName = chatName || chatId;
     currentChatType = chatType || 'dm';
+    cancelReply();
 
     if (currentChatType === 'dm' && chatId !== 'channel') {
         requestSynchronizedListScroll(chatId, selectionSource);
@@ -2475,6 +2479,7 @@ function showChatList() {
     currentChatId = null;
     currentChatName = null;
     currentChatType = null;
+    cancelReply();
 
     updateChatHeader();
 
@@ -2502,6 +2507,324 @@ function showChatList() {
 }
 
 // ============================================================
+// MESSAGE ACTIONS
+// ============================================================
+function showMessageActionStatus(text, type = 'info') {
+    const prefix = type === 'error' ? '⚠️ ' : type === 'success' ? '✓ ' : '';
+    setStatusDockContext(prefix + text);
+    window.setTimeout(() => updateStatusDock(currentMainTab), 2200);
+}
+
+function closeMessageActionsMenu() {
+    const menu = document.getElementById('messageActionsMenu');
+    if (menu) {
+        menu.classList.remove('open');
+        menu.setAttribute('aria-hidden', 'true');
+    }
+
+    document.querySelectorAll('.message.actions-open').forEach(message => {
+        message.classList.remove('actions-open');
+    });
+}
+
+function positionMessageActionsMenu(anchorElement, pointerEvent = null) {
+    const menu = document.getElementById('messageActionsMenu');
+    if (!menu) return;
+
+    menu.classList.add('open');
+    menu.setAttribute('aria-hidden', 'false');
+
+    const menuRect = menu.getBoundingClientRect();
+    const viewportPadding = 8;
+    let left;
+    let top;
+
+    if (pointerEvent) {
+        left = pointerEvent.clientX;
+        top = pointerEvent.clientY;
+    } else {
+        const anchorRect = anchorElement.getBoundingClientRect();
+        left = anchorRect.right - menuRect.width;
+        top = anchorRect.bottom + 5;
+    }
+
+    left = Math.min(
+        Math.max(viewportPadding, left),
+        window.innerWidth - menuRect.width - viewportPadding
+    );
+    top = Math.min(
+        Math.max(viewportPadding, top),
+        window.innerHeight - menuRect.height - viewportPadding
+    );
+
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+}
+
+function openMessageActions(messageId, anchorElement, pointerEvent = null) {
+    const message = renderedMessagesById.get(String(messageId));
+    if (!message) return;
+
+    closeMessageActionsMenu();
+    messageActionTarget = message;
+
+    const messageElement = document.querySelector(
+        `.message[data-message-id="${CSS.escape(String(messageId))}"]`
+    );
+    if (messageElement) messageElement.classList.add('actions-open');
+
+    positionMessageActionsMenu(anchorElement || messageElement, pointerEvent);
+}
+
+async function copyMessageText() {
+    const message = messageActionTarget;
+    closeMessageActionsMenu();
+    if (!message) return;
+
+    const sender = String(message.sender || 'Unknown').trim();
+    const body = String(message.text || '');
+    const text = sender ? `${sender}: ${body}` : body;
+
+    try {
+        await navigator.clipboard.writeText(text);
+        showMessageActionStatus('Message copied', 'success');
+    } catch (error) {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+
+        try {
+            document.execCommand('copy');
+            showMessageActionStatus('Message copied', 'success');
+        } catch (fallbackError) {
+            console.error('[MESSAGE ACTIONS] Copy failed:', fallbackError);
+            showMessageActionStatus('Could not copy message', 'error');
+        } finally {
+            textarea.remove();
+        }
+    }
+}
+
+function buildReplyPayload(message) {
+    if (!message) return null;
+
+    return {
+        id: String(message.id || ''),
+        packet_id: Number.isFinite(Number(message.packet_id)) ? Number(message.packet_id) : null,
+        sender: String(message.sender || 'Unknown'),
+        node_id: String(message.node_id || ''),
+        text: String(message.text || ''),
+        time: String(message.time || ''),
+        chat_id: String(message.chat_id || currentChatId || ''),
+        chat_name: String(message.chat_name || currentChatName || '')
+    };
+}
+
+function updateReplyComposer() {
+    const preview = document.getElementById('replyComposer');
+    const sender = document.getElementById('replyComposerSender');
+    const text = document.getElementById('replyComposerText');
+
+    if (!preview || !sender || !text) return;
+
+    if (!activeReply) {
+        preview.hidden = true;
+        sender.textContent = '';
+        text.textContent = '';
+        return;
+    }
+
+    sender.textContent = `Reply to ${activeReply.sender || 'Unknown'}`;
+    text.textContent = activeReply.text || '';
+    preview.hidden = false;
+}
+
+function startReplyToMessage() {
+    const message = messageActionTarget;
+    closeMessageActionsMenu();
+    if (!message || message.kind === 'system') return;
+
+    activeReply = buildReplyPayload(message);
+    updateReplyComposer();
+
+    const input = document.getElementById('messageInput');
+    if (input) input.focus();
+}
+
+function cancelReply() {
+    activeReply = null;
+    updateReplyComposer();
+}
+
+function showMessageInfo() {
+    const message = messageActionTarget;
+    closeMessageActionsMenu();
+    if (!message) return;
+
+    const fields = [
+        ['Sender', message.sender || 'Unknown'],
+        ['Node ID', message.node_id || '—'],
+        ['Chat', message.chat_name || currentChatName || message.chat_id || '—'],
+        ['Chat type', message.chat_type || currentChatType || '—'],
+        ['Direction', message.kind === 'me' ? 'Sent' : message.kind === 'system' ? 'System' : 'Received'],
+        ['Time', message.time || '—'],
+        ['Message ID', message.id || '—'],
+        ['Packet ID', message.packet_id ?? '—']
+    ];
+
+    const content = document.getElementById('messageInfoContent');
+    if (content) {
+        content.innerHTML = fields.map(([label, value]) => `
+            <div class="message-info-row">
+                <span class="message-info-label">${escapeHtml(label)}</span>
+                <span class="message-info-value">${escapeHtml(String(value))}</span>
+            </div>
+        `).join('');
+    }
+
+    const text = document.getElementById('messageInfoText');
+    if (text) text.textContent = String(message.text || '');
+
+    const modal = document.getElementById('messageInfoModal');
+    if (modal) modal.style.display = 'flex';
+}
+
+function closeMessageInfo() {
+    const modal = document.getElementById('messageInfoModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function requestDeleteMessage() {
+    const message = messageActionTarget;
+    closeMessageActionsMenu();
+    if (!message) return;
+
+    const preview = String(message.text || '').replace(/\s+/g, ' ').trim();
+    const text = document.getElementById('confirmDeleteMessageText');
+    if (text) {
+        text.textContent = preview
+            ? `Delete this message locally?\n\n“${preview.slice(0, 140)}${preview.length > 140 ? '…' : ''}”`
+            : 'Delete this message locally?';
+    }
+
+    const modal = document.getElementById('confirmDeleteMessageModal');
+    if (modal) modal.style.display = 'flex';
+}
+
+function closeConfirmDeleteMessage() {
+    const modal = document.getElementById('confirmDeleteMessageModal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function executeDeleteMessage() {
+    const message = messageActionTarget;
+    if (!message || !currentChatId) {
+        closeConfirmDeleteMessage();
+        return;
+    }
+
+    const button = document.getElementById('confirmDeleteMessageBtn');
+    if (button) button.disabled = true;
+
+    try {
+        const response = await fetch('/api/messages/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: currentChatId,
+                message_id: message.id
+            })
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || 'Delete failed');
+        }
+
+        invalidateCache(currentChatId);
+        lastRenderedSignature[currentChatId] = null;
+        closeConfirmDeleteMessage();
+        messageActionTarget = null;
+        await loadChatMessages(currentChatId);
+        loadChatList();
+        showMessageActionStatus('Message deleted locally', 'success');
+    } catch (error) {
+        console.error('[MESSAGE ACTIONS] Delete failed:', error);
+        showMessageActionStatus(error.message || 'Could not delete message', 'error');
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+function initializeMessageActions() {
+    const container = document.getElementById('messagesContainer');
+    if (!container || container.dataset.messageActionsReady === '1') return;
+    container.dataset.messageActionsReady = '1';
+
+    container.addEventListener('click', event => {
+        const button = event.target.closest('.message-actions-trigger');
+        if (!button) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        openMessageActions(button.dataset.messageId, button);
+    });
+
+    container.addEventListener('click', event => {
+        const quote = event.target.closest('.message-reply-quote[data-reply-message-id]');
+        if (!quote) return;
+
+        const replyId = quote.dataset.replyMessageId;
+        if (!replyId) return;
+
+        const original = container.querySelector(
+            `.message[data-message-id="${CSS.escape(replyId)}"]`
+        );
+
+        if (!original) {
+            showMessageActionStatus('Original message is not available in this chat', 'error');
+            return;
+        }
+
+        original.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        original.classList.add('message-reply-highlight');
+        window.setTimeout(() => original.classList.remove('message-reply-highlight'), 1600);
+    });
+
+    container.addEventListener('contextmenu', event => {
+        const messageElement = event.target.closest('.message[data-message-id]');
+        if (!messageElement) return;
+
+        event.preventDefault();
+        openMessageActions(
+            messageElement.dataset.messageId,
+            messageElement,
+            event
+        );
+    });
+
+    document.addEventListener('click', event => {
+        const menu = document.getElementById('messageActionsMenu');
+        if (menu && !menu.contains(event.target)) closeMessageActionsMenu();
+    });
+
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            closeMessageActionsMenu();
+            closeMessageInfo();
+            closeConfirmDeleteMessage();
+            cancelReply();
+        }
+    });
+
+    window.addEventListener('resize', closeMessageActionsMenu);
+    container.addEventListener('scroll', closeMessageActionsMenu, { passive: true });
+}
+
+// ============================================================
 // RENDER MESSAGES (with force update when container shows loading)
 // ============================================================
 function renderMessages(container, messages, chatId) {
@@ -2510,8 +2833,8 @@ function renderMessages(container, messages, chatId) {
     // Принудительно обновляем, если контейнер показывает загрузку
     const isLoading = container.innerHTML.includes('loading') || container.innerHTML.includes('Loading');
     
-    const signature = messages.map(m => 
-        [m.kind, m.sender, m.text, m.time].join('|')
+    const signature = messages.map(m =>
+        [m.id, m.packet_id, m.kind, m.sender, m.text, m.time, m.reply_to?.id, m.reply_to?.packet_id, m.reply_to?.text].join('|')
     ).join('||');
     
     if (!isLoading && lastRenderedSignature[chatId] === signature) {
@@ -2520,7 +2843,12 @@ function renderMessages(container, messages, chatId) {
     }
     
     lastRenderedSignature[chatId] = signature;
-    
+    renderedMessagesById = new Map(
+        messages
+            .filter(message => message && message.id)
+            .map(message => [String(message.id), message])
+    );
+
     if (messages.length === 0) {
         const chatName = currentChatName || chatId;
         container.innerHTML = `<div class="loading">💬 No messages yet with ${escapeHtml(chatName)}. Send the first one!</div>`;
@@ -2532,10 +2860,29 @@ function renderMessages(container, messages, chatId) {
             const text = escapeHtml(msg.text || '');
             const time = escapeHtml(msg.time || '');
 
+            const messageId = escapeHtml(String(msg.id || ''));
+            const reply = msg.reply_to && typeof msg.reply_to === 'object' ? msg.reply_to : null;
+            const replyBlock = reply ? `
+                <button type="button" class="message-reply-quote" data-reply-message-id="${escapeHtml(String(reply.id || ''))}" title="Referenced message">
+                    <span class="message-reply-label">↪ ${escapeHtml(String(reply.sender || 'Unknown'))}</span>
+                    <span class="message-reply-text">${escapeHtml(String(reply.text || ''))}</span>
+                </button>
+            ` : '';
+            const actionsButton = msg.id ? `
+                <button type="button"
+                        class="message-actions-trigger"
+                        data-message-id="${messageId}"
+                        title="Message actions"
+                        aria-label="Message actions"
+                        aria-haspopup="menu">⋮</button>
+            ` : '';
+
             if (isSystem) {
                 return `
-                    <div class="message system">
+                    <div class="message system" data-message-id="${messageId}">
                         <div class="bubble">
+                            ${actionsButton}
+                            ${replyBlock}
                             <div class="text">${text}</div>
                             <div class="time">${time}</div>
                         </div>
@@ -2544,9 +2891,11 @@ function renderMessages(container, messages, chatId) {
             }
 
             return `
-                <div class="message ${isMe ? 'me' : 'rx'}">
+                <div class="message ${isMe ? 'me' : 'rx'}" data-message-id="${messageId}">
                     <div class="bubble">
+                        ${actionsButton}
                         <div class="sender">${sender}</div>
+                        ${replyBlock}
                         <div class="text">${text}</div>
                         <div class="time">${time}</div>
                     </div>
@@ -2555,6 +2904,8 @@ function renderMessages(container, messages, chatId) {
         }).join('');
     }
     
+    initializeMessageActions();
+
     setTimeout(() => {
         container.scrollTop = container.scrollHeight;
     }, 50);
@@ -2695,6 +3046,10 @@ if (sendForm) {
                 payload.target_node = currentChatId;
             }
 
+            if (activeReply) {
+                payload.reply_to = activeReply;
+            }
+
             const response = await fetch('/api/send', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -2703,6 +3058,7 @@ if (sendForm) {
 
             if (response.ok) {
                 if (input) input.value = '';
+                cancelReply();
                 
                 invalidateCache(currentChatId);
                 lastMessagesSignature = '';

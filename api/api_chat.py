@@ -9,6 +9,7 @@ def register_chat_routes(
     chats,
     nodes,
     messages,
+    save_messages,
     save_chats,
     get_chats_list,
     get_chat_messages,
@@ -83,6 +84,59 @@ def register_chat_routes(
             "nodes": get_nodes_list()
         })
 
+
+    @app.route("/api/messages/delete", methods=["POST"])
+    @handle_errors
+    def api_delete_message():
+        data = request.get_json(force=True)
+        chat_id = str(data.get("chat_id", "")).strip()
+        message_id = str(data.get("message_id", "")).strip()
+
+        if not chat_id or not is_valid_node_id(chat_id):
+            return jsonify({"ok": False, "error": "Invalid chat_id"}), 400
+
+        if not message_id or len(message_id) > 128:
+            return jsonify({"ok": False, "error": "Invalid message_id"}), 400
+
+        deleted_message = None
+
+        with state_lock:
+            for index, message in enumerate(messages):
+                if (
+                    message.get("chat_id") == chat_id
+                    and str(message.get("id", "")) == message_id
+                ):
+                    deleted_message = messages.pop(index)
+                    break
+
+            if deleted_message is None:
+                return jsonify({"ok": False, "error": "Message not found"}), 404
+
+            save_messages()
+
+            remaining = [
+                message for message in messages
+                if message.get("chat_id") == chat_id
+            ]
+
+            if chat_id in chats:
+                if remaining:
+                    last_message = remaining[-1]
+                    chats[chat_id]["last_message"] = last_message.get("text", "")
+                    chats[chat_id]["last_time"] = last_message.get("time", "")
+                else:
+                    chats[chat_id]["last_message"] = ""
+                    chats[chat_id]["last_time"] = ""
+
+                chats[chat_id]["unread"] = 0
+                save_chats()
+
+        return jsonify({
+            "ok": True,
+            "chat_id": chat_id,
+            "message_id": message_id
+        })
+
     @app.route("/api/send", methods=["POST"])
     @handle_errors
     def api_send():
@@ -91,6 +145,28 @@ def register_chat_routes(
         text = sanitize_text(data.get("text", "").strip())
         target_node = data.get("target_node", "")
         chat_id = data.get("chat_id", "")
+        reply_to = data.get("reply_to")
+
+        if reply_to is not None and not isinstance(reply_to, dict):
+            return jsonify({"ok": False, "error": "Invalid reply_to"}), 400
+
+        if isinstance(reply_to, dict):
+            raw_packet_id = reply_to.get("packet_id")
+            try:
+                reply_packet_id = int(raw_packet_id) if raw_packet_id is not None else None
+            except (TypeError, ValueError):
+                reply_packet_id = None
+
+            reply_to = {
+                "id": str(reply_to.get("id", ""))[:128],
+                "packet_id": reply_packet_id,
+                "sender": sanitize_text(str(reply_to.get("sender", "Unknown"))[:160]),
+                "node_id": str(reply_to.get("node_id", ""))[:32],
+                "text": sanitize_text(str(reply_to.get("text", ""))[:1000]),
+                "time": str(reply_to.get("time", ""))[:32],
+                "chat_id": str(reply_to.get("chat_id", chat_id))[:32],
+                "chat_name": sanitize_text(str(reply_to.get("chat_name", ""))[:160])
+            }
 
         if not text:
             return jsonify({"ok": False, "error": "empty or invalid message"}), 400
@@ -120,17 +196,19 @@ def register_chat_routes(
             chat_name = receiver_name
             chat_type = "dm"
 
-        cmd = [MESHTASTIC_CMD, "--ch-index", "0"]
+        reply_id = reply_to.get("packet_id") if isinstance(reply_to, dict) else None
 
-        if chat_type == "dm":
-            cmd.extend(["--dest", final_chat_id])
-
-        cmd.extend(["--sendtext", text])
+        if isinstance(reply_to, dict) and reply_id is None:
+            return jsonify({
+                "ok": False,
+                "error": "This message has no Meshtastic packet ID. Reply to a newly received message."
+            }), 400
 
         try:
             print("[SEND] Preparing to send message", flush=True)
             print(
-                f"[SEND] chat_type={chat_type}, final_chat_id={final_chat_id}, receiver={receiver_name}",
+                f"[SEND] chat_type={chat_type}, final_chat_id={final_chat_id}, "
+                f"receiver={receiver_name}, reply_id={reply_id}",
                 flush=True
             )
 
@@ -140,76 +218,39 @@ def register_chat_routes(
                     "error": "serial port busy: /dev/ttyACM0"
                 }), 500
 
-            with radio_lock:
-                print("[SEND CMD]", cmd, flush=True)
+            sent_packet = None
+            packet_id = None
+            interface = None
 
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=45
-                )
+            try:
+                from meshtastic.serial_interface import SerialInterface
 
-                print("[SEND RETURN]", result.returncode, flush=True)
-                print("[SEND STDOUT]", result.stdout, flush=True)
-                print("[SEND STDERR]", result.stderr, flush=True)
+                with radio_lock:
+                    interface = SerialInterface(devPath="/dev/ttyACM0")
+                    destination = final_chat_id if chat_type == "dm" else "^all"
 
-            if result.returncode != 0:
-                err = (
-                    result.stderr.strip()
-                    or result.stdout.strip()
-                    or "unknown send error"
-                )
-
-                radio_event("send_error", err)
-
-                with state_lock:
-                    add_message(
-                        "rx",
-                        "SYSTEM ERROR",
-                        f"send: {err}",
-                        "",
-                        CHANNEL_CHAT_ID
+                    sent_packet = interface.sendText(
+                        text=text,
+                        destinationId=destination,
+                        channelIndex=0,
+                        replyId=reply_id,
                     )
 
-                return jsonify({
-                    "ok": False,
-                    "error": err,
-                    "returncode": result.returncode
-                }), 500
-            
-            send_output = (result.stdout or "") + "\n" + (result.stderr or "")
+                    packet_id = getattr(sent_packet, "id", None)
+                    if packet_id is not None:
+                        packet_id = int(packet_id)
 
-            known_nonfatal_warning = (
-                "Error processing received packet" in send_output
-                and "my_node_num" in send_output
-                and "Connected to radio" in send_output
-                and "Sending text message" in send_output
-            )
-
-            if (
-                not known_nonfatal_warning
-                and (
-                    "Traceback" in send_output
-                    or "ERROR" in send_output
-                    or (
-                        "Error" in send_output
-                        and "Warning: Error processing received packet" not in send_output
+                    print(
+                        f"[SEND API] destination={destination}, packet_id={packet_id}, "
+                        f"reply_id={reply_id}",
+                        flush=True
                     )
-                )
-            ):
-                err = send_output.strip() or "send command returned error text"
-
-                radio_event("send_error", err)
-
-                with state_lock:
-                    add_message("rx", "SYSTEM ERROR", f"send: {err}", "", CHANNEL_CHAT_ID)
-
-                return jsonify({
-                    "ok": False,
-                    "error": err,
-                    "returncode": result.returncode
-                }), 500
+            finally:
+                if interface is not None:
+                    try:
+                        interface.close()
+                    except Exception as close_error:
+                        print(f"[SEND WARN] interface.close(): {close_error}", flush=True)
 
             radio_event("send")
 
@@ -224,7 +265,16 @@ def register_chat_routes(
             )
 
             with state_lock:
-                add_message("me", sender_name, text, LOCAL_NODE_ID, final_chat_id, chat_name)
+                add_message(
+                    "me",
+                    sender_name,
+                    text,
+                    LOCAL_NODE_ID,
+                    final_chat_id,
+                    chat_name,
+                    reply_to=reply_to,
+                    packet_id=packet_id
+                )
 
                 if final_chat_id in chats:
                     reset_unread(final_chat_id)
@@ -259,7 +309,8 @@ def register_chat_routes(
                 "ok": True,
                 "chat_id": final_chat_id,
                 "chat_type": chat_type,
-                "returncode": result.returncode
+                "packet_id": packet_id,
+                "reply_id": reply_id
             })
 
         except subprocess.TimeoutExpired:

@@ -1718,10 +1718,11 @@ function getChatNodeShortName(chat) {
 // RENDER CHAT ITEM
 // ============================================================
 function renderChatItem(chat) {
+    const isDemo = Boolean(chat.is_demo);
     const isSelected = (chat.id === currentChatId);
     const selectedClass = isSelected ? 'selected' : '';
-    const icon = chat.is_channel ? '📡' : getChatNodeShortName(chat);
-    const iconClass = chat.is_channel ? 'channel' : 'dm node-short-name';
+    const icon = chat.is_channel ? (isDemo ? '🔒' : '📡') : getChatNodeShortName(chat);
+    const iconClass = chat.is_channel ? `channel${isDemo ? ' demo' : ''}` : 'dm node-short-name';
     const lastMsg = chat.last_message || 'No messages yet';
     const time = chat.last_time || '';
     const ignored = chat.ignored ? '🚫 ' : '';
@@ -1741,8 +1742,13 @@ function renderChatItem(chat) {
         lastMsgDisplay = `<span class="chat-last-text">${escapeHtml(truncateText(lastMsg, 60))}</span>`;
     }
 
+    const clickHandler = isDemo
+        ? `showToast('This channel is not configured on the radio yet', 'info')`
+        : `openChat('${escapeHtml(chat.id)}', '${escapeHtml(chat.name)}', '${escapeHtml(chat.type)}', 'chat')`;
+    const demoClass = isDemo ? 'demo-channel' : '';
+
     return `
-        <div class="chat-item ${hasUnread} ${selectedClass}" data-chat-id="${escapeHtml(chat.id)}" onclick="openChat('${escapeHtml(chat.id)}', '${escapeHtml(chat.name)}', '${escapeHtml(chat.type)}', 'chat')">
+        <div class="chat-item ${hasUnread} ${selectedClass} ${demoClass}" data-chat-id="${escapeHtml(chat.id)}" onclick="${clickHandler}" ${isDemo ? 'title="Channel is not configured on the radio"' : ''}>
             <div class="chat-icon ${iconClass}">${icon}</div>
             <div class="chat-info">
                 <div class="chat-name">${ignored}${favorite}${escapeHtml(chat.name)}</div>
@@ -1761,114 +1767,70 @@ function renderChatItem(chat) {
 // ============================================================
 async function loadChatList() {
     console.log('[CHAT] loadChatList called');
-    
-    // Скрываем индикатор загрузки
+
     const initialLoading = document.getElementById('initialLoading');
-    if (initialLoading) {
-        initialLoading.style.display = 'none';
-        console.log('[CHAT] Hidden loading indicator');
+    if (initialLoading) initialLoading.style.display = 'none';
+
+    const channelContainer = document.getElementById('channelList');
+    const dmContainer = document.getElementById('dmChatList');
+    if (!channelContainer || !dmContainer) {
+        console.error('[CHAT] Split chat containers not found');
+        return;
     }
-    
+
     try {
-        console.log('[CHAT] Fetching /api/chats...');
-        
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => {
-            console.log('[CHAT] Request timeout, aborting...');
-            controller.abort();
-        }, 10000);
-        
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
         const response = await fetch('/api/chats', {
             signal: controller.signal,
             headers: { 'Cache-Control': 'no-cache' }
         });
         clearTimeout(timeoutId);
-        
-        console.log('[CHAT] Response status:', response.status);
-        
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
         const data = await response.json();
-        console.log('[CHAT] Received data:', data.chats ? data.chats.length : 0, 'chats');
-        
         chatListCache = data.chats || [];
         totalUnreadCount = data.total_unread || 0;
 
-        const container = document.getElementById('chatList');
-        if (!container) {
-            console.error('[CHAT] Container #chatList not found');
-            return;
-        }
-
         if (!currentChatId) {
             const chatTitle = document.getElementById('chatTitle');
-            if (chatTitle) {
-                if (totalUnreadCount > 0) {
-                    chatTitle.textContent = `💬 Chats (${totalUnreadCount})`;
-                } else {
-                    chatTitle.textContent = '💬 Chats';
-                }
-            }
+            if (chatTitle) chatTitle.textContent = totalUnreadCount > 0 ? `💬 Chats (${totalUnreadCount})` : '💬 Chats';
             const subtitleEl = document.getElementById('chatSubtitle');
             if (subtitleEl) subtitleEl.textContent = '';
         }
 
-        if (chatListCache.length === 0) {
-            container.innerHTML = '<div class="loading">💬 No chats yet</div>';
-            console.log('[CHAT] No chats found');
-            return;
+        const apiChannels = Array.isArray(data.channels) ? data.channels : [];
+        const channelChatsById = new Map(
+            chatListCache.filter(chat => chat.is_channel).map(chat => [chat.id, chat])
+        );
+        const channels = apiChannels.map(channel => ({
+            ...(channelChatsById.get(channel.id) || {}),
+            ...channel,
+            type: 'channel',
+            is_channel: true
+        }));
+
+        // Backward-compatible fallback when an older backend is briefly running.
+        if (channels.length === 0) {
+            const legacyChannel = chatListCache.find(chat => chat.is_channel);
+            if (legacyChannel) channels.push(legacyChannel);
         }
 
-        const channelChat = chatListCache.find(c => c.is_channel);
-        const dmChats = chatListCache.filter(c => !c.is_channel);
+        channelContainer.innerHTML = channels.length
+            ? channels.map(renderChatItem).join('')
+            : '<div class="loading">📡 No configured channels</div>';
 
-        let html = '';
+        const dmChats = chatListCache.filter(chat => !chat.is_channel);
+        dmContainer.innerHTML = dmChats.length
+            ? dmChats.map(renderChatItem).join('')
+            : '<div class="loading">💬 No direct messages yet</div>';
 
-        if (channelChat) {
-            html += renderChatItem(channelChat);
-        }
-
-        if (dmChats.length > 0) {
-            html += `<div class="chat-section-title">💬 Direct Messages</div>`;
-            html += dmChats.map(chat => renderChatItem(chat)).join('');
-        } else if (!channelChat) {
-            html = '<div class="loading">💬 No chats yet</div>';
-        }
-
-        container.innerHTML = html;
-        console.log('[CHAT] Chat list rendered successfully');
         flushPendingSynchronizedScroll();
-
     } catch (error) {
         console.error('[CHAT] Error:', error);
-        const container = document.getElementById('chatList');
-        
-        if (container) {
-            if (error.name === 'AbortError') {
-                container.innerHTML = `
-                    <div class="loading" style="color:#ff9800;">
-                        ⏳ Request timeout - retrying...<br>
-                        <button onclick="loadChatList()" style="margin-top:8px;padding:4px 12px;border:none;border-radius:4px;background:#1a73e8;color:white;cursor:pointer;">
-                            🔄 Retry
-                        </button>
-                    </div>
-                `;
-                setTimeout(() => loadChatList(), 3000);
-            } else {
-                container.innerHTML = `
-                    <div class="loading" style="color:#c62828;">
-                        ⚠️ Error loading chats<br>
-                        <small style="font-size:12px;color:#999;">${error.message}</small>
-                        <br><br>
-                        <button onclick="loadChatList()" style="padding:6px 16px;border:none;border-radius:6px;background:#1a73e8;color:white;cursor:pointer;">
-                            🔄 Retry
-                        </button>
-                    </div>
-                `;
-            }
-        }
+        const message = error.name === 'AbortError' ? 'Request timeout' : error.message;
+        channelContainer.innerHTML = `<div class="loading" style="color:#ff9800;">⚠️ ${escapeHtml(message)}</div>`;
+        dmContainer.innerHTML = '<div class="loading">Direct messages unavailable</div>';
     }
 }
 
@@ -2308,12 +2270,15 @@ function findElementByDataValue(selector, dataKey, value) {
 }
 
 function scrollChatItemIntoView(nodeId) {
+    // Direct Messages now live in their own independently scrolling list.
+    // The old selector/container pointed at the removed combined #chatList,
+    // so selection from the Nodes panel could no longer scroll the DM list.
     const chatItem = findElementByDataValue(
-        '#chatList .chat-item',
+        '#dmChatList .chat-item',
         'chatId',
         nodeId
     );
-    const chatContainer = document.getElementById('chatListContainer');
+    const chatContainer = document.getElementById('dmChatList');
 
     return centerElementInContainerIfNeeded(chatItem, chatContainer);
 }

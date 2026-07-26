@@ -1,6 +1,8 @@
 from flask import request, jsonify
 import time
 import subprocess
+import threading
+import re
 
 
 def register_chat_routes(
@@ -35,11 +37,104 @@ def register_chat_routes(
     now,
     radio_event,
 ):
+    channel_cache = {"timestamp": 0.0, "channels": []}
+    channel_cache_lock = threading.Lock()
+
+    def channel_chat_id(index):
+        return CHANNEL_CHAT_ID if int(index) == 0 else f"channel:{int(index)}"
+
+    def is_channel_chat_id(value):
+        return value == CHANNEL_CHAT_ID or bool(re.fullmatch(r"channel:[1-7]", str(value or "")))
+
+    def discover_radio_channels(force=False):
+        now_ts = time.time()
+        with channel_cache_lock:
+            if not force and channel_cache["channels"] and now_ts - channel_cache["timestamp"] < 300:
+                return [dict(item) for item in channel_cache["channels"]]
+
+        discovered = []
+        interface = None
+        try:
+            if not prepare_radio_command("/dev/ttyACM0", timeout=10):
+                raise RuntimeError("serial port busy")
+
+            from meshtastic.serial_interface import SerialInterface
+            with radio_lock:
+                interface = SerialInterface(devPath="/dev/ttyACM0")
+                raw_channels = getattr(getattr(interface, "localNode", None), "channels", None) or []
+                for fallback_index, channel in enumerate(raw_channels):
+                    index = getattr(channel, "index", fallback_index)
+                    try:
+                        index = int(index)
+                    except (TypeError, ValueError):
+                        index = fallback_index
+
+                    settings_obj = getattr(channel, "settings", None)
+                    name = getattr(settings_obj, "name", "") if settings_obj is not None else ""
+                    role = getattr(channel, "role", None)
+                    role_text = str(role or "").upper()
+                    disabled = "DISABLED" in role_text or role == 0
+                    if disabled:
+                        continue
+                    if not name:
+                        name = CHANNEL_CHAT_NAME if index == 0 else f"Channel {index}"
+                    discovered.append({
+                        "id": channel_chat_id(index),
+                        "index": index,
+                        "name": str(name),
+                        "type": "channel",
+                        "is_channel": True,
+                        "is_demo": False,
+                        "last_message": "",
+                        "last_time": "",
+                        "unread": 0,
+                    })
+        except Exception as error:
+            print(f"[CHANNELS] Discovery warning: {error}", flush=True)
+        finally:
+            if interface is not None:
+                try:
+                    interface.close()
+                except Exception:
+                    pass
+            pause_listen.clear()
+
+        if not discovered:
+            discovered = [{
+                "id": CHANNEL_CHAT_ID, "index": 0, "name": CHANNEL_CHAT_NAME,
+                "type": "channel", "is_channel": True, "is_demo": False,
+                "last_message": "", "last_time": "", "unread": 0,
+            }]
+
+        real_indexes = {item["index"] for item in discovered}
+        demo_specs = [(1, "Private Nodes"), (2, "Family Mesh")]
+        for index, name in demo_specs:
+            if index not in real_indexes:
+                discovered.append({
+                    "id": f"demo-channel:{index}", "index": index, "name": f"{name} · Demo",
+                    "type": "channel", "is_channel": True, "is_demo": True,
+                    "last_message": "Channel is not configured on the radio",
+                    "last_time": "", "unread": 0,
+                })
+
+        discovered.sort(key=lambda item: (item.get("is_demo", False), item.get("index", 99)))
+        with channel_cache_lock:
+            channel_cache["timestamp"] = now_ts
+            channel_cache["channels"] = [dict(item) for item in discovered]
+        return discovered
     @app.route("/api/chats")
     def api_chats():
         chat_list, total_unread = get_chats_list()
+        channels = discover_radio_channels()
+        chat_by_id = {item.get("id"): item for item in chat_list}
+        for channel in channels:
+            stored = chat_by_id.get(channel.get("id"), {})
+            for key in ("last_message", "last_time", "unread", "last_sender"):
+                if stored.get(key) not in (None, "", 0):
+                    channel[key] = stored.get(key)
         return jsonify({
             "chats": chat_list,
+            "channels": channels,
             "total_unread": total_unread
         })
 
@@ -47,7 +142,7 @@ def register_chat_routes(
     def api_messages():
         chat_id = request.args.get("chat_id", "").strip()
 
-        if chat_id and not is_valid_node_id(chat_id):
+        if chat_id and not (is_valid_node_id(chat_id) or is_channel_chat_id(chat_id)):
             return jsonify({
                 "ok": False,
                 "error": "Invalid chat_id"
@@ -171,7 +266,7 @@ def register_chat_routes(
         if not text:
             return jsonify({"ok": False, "error": "empty or invalid message"}), 400
 
-        if chat_id and chat_id != CHANNEL_CHAT_ID and not is_valid_node_id(chat_id):
+        if chat_id and not is_channel_chat_id(chat_id) and not is_valid_node_id(chat_id):
             return jsonify({"ok": False, "error": "Invalid chat_id"}), 400
 
         if target_node and not is_valid_node_id(target_node):
@@ -184,8 +279,16 @@ def register_chat_routes(
         receiver_name = "Broadcast"
         chat_name = CHANNEL_CHAT_NAME
         chat_type = "channel"
+        channel_index = 0
 
-        if chat_id and chat_id != CHANNEL_CHAT_ID and chat_id.startswith("!"):
+        if is_channel_chat_id(chat_id):
+            final_chat_id = chat_id
+            channel_index = 0 if chat_id == CHANNEL_CHAT_ID else int(chat_id.split(":", 1)[1])
+            configured = next((c for c in discover_radio_channels() if c.get("id") == chat_id and not c.get("is_demo")), None)
+            if configured is None:
+                return jsonify({"ok": False, "error": "Channel is not configured on the radio"}), 400
+            chat_name = configured.get("name", f"Channel {channel_index}")
+        elif chat_id and chat_id != CHANNEL_CHAT_ID and chat_id.startswith("!"):
             final_chat_id = chat_id
             receiver_name = get_node_name(chat_id)
             chat_name = receiver_name
@@ -232,7 +335,7 @@ def register_chat_routes(
                     sent_packet = interface.sendText(
                         text=text,
                         destinationId=destination,
-                        channelIndex=0,
+                        channelIndex=channel_index,
                         replyId=reply_id,
                     )
 
@@ -241,7 +344,7 @@ def register_chat_routes(
                         packet_id = int(packet_id)
 
                     print(
-                        f"[SEND API] destination={destination}, packet_id={packet_id}, "
+                        f"[SEND API] destination={destination}, channel_index={channel_index}, packet_id={packet_id}, "
                         f"reply_id={reply_id}",
                         flush=True
                     )

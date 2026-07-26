@@ -393,7 +393,8 @@ def normalize_node_id_with_aliases(node_id):
 
 def is_valid_node_id(node_id):
     if not node_id: return False
-    if node_id == CHANNEL_CHAT_ID: return True
+    if node_id == CHANNEL_CHAT_ID or re.fullmatch(r"channel:[1-7]", str(node_id)):
+        return True
     return node_id.startswith("!") and len(node_id) >= 5
 
 def sanitize_text(text):
@@ -1330,6 +1331,23 @@ def extract_packet_id(line):
     return None
 
 
+def extract_channel_index(line):
+    patterns = (
+        r"['\"]channel['\"]\s*:\s*(\d+)",
+        r"['\"]channelIndex['\"]\s*:\s*(\d+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, line)
+        if match:
+            try:
+                return max(0, min(7, int(match.group(1))))
+            except (TypeError, ValueError):
+                pass
+    return 0
+
+def channel_chat_id(index):
+    return CHANNEL_CHAT_ID if int(index or 0) == 0 else f"channel:{int(index)}"
+
 def extract_reply_id(line):
     """Return the Meshtastic packet ID referenced by an incoming reply."""
     patterns = [
@@ -1791,7 +1809,7 @@ def get_chats_list():
                     last_sender = msg.get("sender", "")
                     last_sender_id = msg.get("node_id", "")
                     break
-            if chat_id == CHANNEL_CHAT_ID and last_sender:
+            if (chat_id == CHANNEL_CHAT_ID or chat_id.startswith("channel:")) and last_sender:
                 if last_sender_id:
                     sender_display = f"{last_sender} [{last_sender_id}]"
                 else:
@@ -1800,12 +1818,12 @@ def get_chats_list():
                 "id": chat_id, "name": chat.get("name", chat_id),
                 "type": chat.get("type", "dm"), "last_message": last_msg,
                 "last_time": chat.get("last_time", ""), "unread": unread,
-                "is_channel": chat_id == CHANNEL_CHAT_ID,
+                "is_channel": chat_id == CHANNEL_CHAT_ID or chat_id.startswith("channel:"),
                 "ignored": chat_id.startswith("!") and nodes.get(chat_id, {}).get("ignored", False),
                 "favorite": is_favorite, "last_sender": sender_display
             })
         def sort_key(c):
-            if c["is_channel"]: return (0, "", "")
+            if c["is_channel"]: return (0, c.get("id", ""), "")
             if c["favorite"]: return (1, "", c["last_time"] or "")
             if c["unread"] > 0: return (2, "", c["last_time"] or "")
             return (3, "", c["last_time"] or "")
@@ -2107,7 +2125,19 @@ def listen_meshtastic():
                         is_channel = True
 
                     if is_channel:
-                        chat_id = CHANNEL_CHAT_ID
+                        incoming_channel_index = extract_channel_index(line)
+                        chat_id = channel_chat_id(incoming_channel_index)
+                        if chat_id not in chats:
+                            with state_lock:
+                                chats[chat_id] = {
+                                    "id": chat_id,
+                                    "name": CHANNEL_CHAT_NAME if incoming_channel_index == 0 else f"Channel {incoming_channel_index}",
+                                    "type": "channel",
+                                    "last_message": "",
+                                    "last_time": "",
+                                    "unread": 0,
+                                }
+                                save_chats()
                     else:
                         if node_id and node_id.startswith("!") and node_id != LOCAL_NODE_ID:
                             chat_id = node_id

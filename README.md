@@ -21,7 +21,7 @@ Messaging · Node Management · Telemetry · Camera · Weather · Wi‑Fi · Not
 <p align="center">
   <img src="https://img.shields.io/github/v/release/FlintUA/MeshCenter" alt="Release">
   <img src="https://img.shields.io/github/license/FlintUA/MeshCenter" alt="License">
-  <img src="https://img.shields.io/badge/Python-3.13+-blue" alt="Python">
+  <img src="https://img.shields.io/badge/Python-3.11+-blue" alt="Python">
   <img src="https://img.shields.io/badge/Raspberry%20Pi-Bookworm-C51A4A" alt="Platform">
   <img src="https://img.shields.io/badge/Meshtastic-Compatible-success" alt="Meshtastic">
   <img src="https://img.shields.io/badge/Status-Active%20Development-brightgreen" alt="Status">
@@ -210,7 +210,6 @@ Special attention has been paid to:
   <img width="1403" height="1265" alt="main003" src="docs/images/MeshCenter_sensors_dark_theme.png" />
 </p>
 
-
 ---
 
 ## Design Philosophy
@@ -271,8 +270,7 @@ Although it has been primarily developed and tested on Raspberry Pi Zero 2W, it 
 #### Software
 
 - Raspberry Pi OS Bookworm (64-bit recommended)
-- Python 3.13 or newer
-- Meshtastic CLI
+- Python 3.11 or newer
 - Git
 
 ### Clone the Repository
@@ -283,6 +281,15 @@ cd MeshCenter
 ```
 
 ### Create a Virtual Environment
+
+It is recommended to create the virtual environment with access to system site packages. This is required for camera support (Picamera2 / libcamera) and is useful for other system-level libraries:
+
+```bash
+python3 -m venv --system-site-packages venv
+source venv/bin/activate
+```
+
+If you do not plan to use the camera, a regular isolated environment is also acceptable:
 
 ```bash
 python3 -m venv venv
@@ -296,13 +303,15 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Depending on your configuration you may also need to install additional packages:
+The `requirements.txt` includes the core dependencies, including `meshtastic` and `pillow`.
+
+If for any reason these packages are missing after installation, install them explicitly:
 
 ```bash
 pip install meshtastic pillow
 ```
 
-Camera support requires the Raspberry Pi camera stack to be installed and enabled.
+Camera support also requires the Raspberry Pi camera stack (Picamera2, libcamera) to be installed and enabled at the system level.
 
 ### Configuration
 
@@ -324,13 +333,18 @@ Typical configuration options include:
 APP_HOST = "0.0.0.0"
 APP_PORT = 5000
 
-MESHTASTIC_CMD = "/home/_your_profile_directory_/.local/bin/meshtastic"
+# Path to the meshtastic CLI executable.
+# Prefer the one inside the virtual environment:
+MESHTASTIC_CMD = "/home/your_username/MeshCenter/venv/bin/meshtastic"
+# Or, if meshtastic is available in PATH after activating the venv:
+# MESHTASTIC_CMD = "meshtastic"
+
 MESHTASTIC_PORT = "/dev/ttyACM0"
 
 LOCAL_NODE_ID = "!xxxxxxxx"
 LOCAL_NODE_NAME = "My Base Station"
 
-DATA_DIR = "/home/_your_profile_directory_/meshcenter/data"
+DATA_DIR = "/home/your_username/MeshCenter/data"
 
 # Optional: OpenWeather API key for weather module
 OPENWEATHER_API_KEY = "your_api_key_here"
@@ -341,23 +355,31 @@ WEATHER_LANGUAGE = "en"
 WEATHER_CACHE_SECONDS = 600
 ```
 
-Adjust these values to match your installation.
+Adjust these values to match your installation.  
+Make sure `MESHTASTIC_CMD` points to the actual location of the executable (check with `which meshtastic` after activating the venv).
 
 ### Verify Meshtastic CLI
 
-Before starting MeshCenter, make sure that Meshtastic CLI is working correctly:
+Activate the virtual environment (if not already active) and verify that the Meshtastic CLI works:
 
 ```bash
+source venv/bin/activate
 meshtastic --info
 ```
 
-or
+or with an explicit port:
 
 ```bash
 meshtastic --port /dev/ttyACM0 --info
 ```
 
-If the command displays information about your node, MeshCenter should also be able to communicate with it.
+You can also use the full path:
+
+```bash
+./venv/bin/meshtastic --info
+```
+
+If the command displays information about your node, MeshCenter should be able to communicate with it.
 
 ### Starting MeshCenter
 
@@ -393,11 +415,11 @@ After=network.target
 
 [Service]
 Type=simple
-User=your_user_name
-WorkingDirectory=/home/_your_profile_directory_/meshcenter
-Environment="PATH=/home/_your_profile_directory_/meshcenter/venv/bin:/usr/local/bin:/usr/bin:/bin"
+User=your_username
+WorkingDirectory=/home/your_username/MeshCenter
+Environment="PATH=/home/your_username/MeshCenter/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=/home/_your_profile_directory_/meshcenter/venv/bin/python /home/_your_profile_directory_/meshcenter/server.py
+ExecStart=/home/your_username/MeshCenter/venv/bin/python /home/your_username/MeshCenter/server.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -434,43 +456,59 @@ journalctl -u meshcenter -f
 git pull
 source venv/bin/activate
 pip install -r requirements.txt
+```
+
+If the update introduces new system-level requirements (for example related to the camera stack or NetworkManager), install the corresponding system packages as well (e.g. via `apt`).
+
+Then restart the service:
+
+```bash
 sudo systemctl restart meshcenter
 ```
 
 ### Updating Meshtastic CLI
 
-It is recommended to keep Meshtastic CLI up to date:
+It is recommended to keep the Meshtastic CLI up to date. Upgrade inside the virtual environment:
 
 ```bash
+source venv/bin/activate
 pip install --upgrade meshtastic
 meshtastic --version
 ```
 
-### Directory Layout
+---
+
+## Project Structure
+
+MeshCenter has been designed as a modular application. Each subsystem has its own responsibility, making the project easier to maintain, debug and extend.
 
 A typical installation looks like this:
 
 ```
-meshcenter/
-├── api/
-├── camera/
-├── meshsrv/
-├── static/
-├── storage/
-├── telemetry/
-├── templates/
-├── utils/
-├── data/
-├── docs/
-├── venv/
-├── config.py
-├── config.example.py
+MeshCenter/
+│
+├── api/                # REST API endpoints
+├── camera/             # Camera subsystem
+├── meshsrv/            # Meshtastic communication layer
+├── storage/            # JSON storage helpers
+├── telemetry/          # Telemetry processing
+├── utils/              # Shared utility functions
+│
+├── static/             # CSS, JavaScript, icons
+├── templates/          # HTML templates
+├── data/               # Persistent application data (messages, nodes, photos, icons, settings)
+├── docs/               # Documentation and images
+│
+├── venv/               # Python virtual environment
+│
+├── config.py           # Local configuration (not in git)
+├── config.example.py   # Example configuration
 ├── requirements.txt
-├── server.py
+├── server.py           # Main application entry point
 └── README.md
 ```
 
-The `data` directory stores persistent information such as messages, telemetry history, node icons, screenshots and application settings.
+The `data` directory stores persistent information such as messages, telemetry history, node icons, camera photos and application settings.
 
 ---
 
@@ -693,6 +731,10 @@ Typical use cases:
 
 The gallery shows total image count, used space and free space. You can delete individual images or clear the entire gallery.
 
+**Note:** The term “screenshots” in the storage directory and some internal references refers to photos captured by the Raspberry Pi Camera. The interface screenshots shown in this README are illustrative images of the web UI and are not stored by the application.
+
+Photos are stored locally and are **not** transmitted through Meshtastic.
+
 ### ⚙️ Local Storage
 
 MeshCenter stores application data locally using JSON files.
@@ -711,7 +753,7 @@ deleted_dm.json
 settings.json
 camera_config.json
 node_icons/
-screenshots/
+screenshots/          # camera photos
 ```
 
 Local storage is useful because:
@@ -824,21 +866,16 @@ The goal is to keep `server.py` as the central coordinator while moving speciali
 
 Camera support depends on Raspberry Pi system packages.
 
-If the camera does not work inside the virtual environment, make sure that the environment was created with:
-
-```bash
-python3 -m venv --system-site-packages venv
-```
-
-Without this option, Python inside the virtual environment may not see system packages such as:
+The recommended way to create the virtual environment (with `--system-site-packages`) is already described in the installation section. Without this option, Python inside the virtual environment may not see system packages such as:
 
 - Picamera2
-- Pillow
+- Pillow (system version)
 - libcamera-related bindings
 
 To test camera imports:
 
 ```bash
+source venv/bin/activate
 python - <<'PY'
 try:
     from picamera2 import Picamera2
@@ -883,34 +920,6 @@ For best stability:
 - Monitor CPU temperature during long camera sessions
 
 MeshCenter is designed to remain lightweight, but camera streaming and photo capture can still temporarily increase system load.
-
----
-
-## Project Structure
-
-MeshCenter has been designed as a modular application. Each subsystem has its own responsibility, making the project easier to maintain, debug and extend.
-
-```
-meshcenter/
-│
-├── api/                # REST API endpoints
-├── camera/             # Camera subsystem
-├── meshsrv/            # Meshtastic communication layer
-├── storage/            # JSON storage helpers
-├── telemetry/          # Telemetry processing
-├── utils/              # Shared utility functions
-│
-├── static/             # CSS, JavaScript, icons
-├── templates/          # HTML templates
-├── data/               # Persistent application data
-├── docs/               # Documentation
-│
-├── server.py           # Main application
-├── config.py           # Local configuration
-├── config.example.py   # Example configuration
-├── requirements.txt
-└── README.md
-```
 
 ---
 
@@ -1022,20 +1031,18 @@ The API is primarily intended for the built-in web interface, but it also allows
 
 MeshCenter has been optimized for Raspberry Pi Zero 2W.
 
-Typical resource usage depends on the enabled features.
+Typical resource usage depends on the enabled features. Approximate values measured on a Raspberry Pi Zero 2W:
 
-Approximate values during normal operation:
+| Feature             | CPU (approx.)      | RAM (approx.) |
+|---------------------|--------------------|---------------|
+| Idle                | < 5 %              | 40–60 MB      |
+| Messaging           | 5–15 %             | 50–80 MB      |
+| Telemetry           | 5–10 %             | 50–70 MB      |
+| Camera Preview      | 25–50 %            | 80–120 MB     |
+| Photo Capture       | short peak 60–90 % | 90–130 MB     |
+| System Monitoring   | 5–10 %             | 50–70 MB      |
 
-| Feature             | CPU          | RAM    |
-|---------------------|--------------|--------|
-| Idle                | Very Low     | Low    |
-| Messaging           | Low          | Low    |
-| Telemetry           | Low          | Low    |
-| Camera Preview      | Medium       | Medium |
-| Photo Capture       | High (short peak) | Medium |
-| System Monitoring   | Low          | Low    |
-
-Live MJPEG streaming is currently the most resource-intensive component.
+Live MJPEG streaming is currently the most resource-intensive component. Values can vary depending on resolution, FPS, JPEG quality and the number of connected browser clients.
 
 ---
 
@@ -1075,9 +1082,10 @@ Future versions may include optional authentication.
 
 ### Meshtastic CLI not found
 
-Check that the CLI is installed:
+Check that the CLI is installed inside the virtual environment:
 
 ```bash
+source venv/bin/activate
 which meshtastic
 ```
 
@@ -1094,6 +1102,7 @@ ls /dev/ttyACM*
 Test communication:
 
 ```bash
+source venv/bin/activate
 meshtastic --info
 ```
 
@@ -1102,13 +1111,18 @@ meshtastic --info
 Verify that Picamera2 is available:
 
 ```bash
+source venv/bin/activate
 python -c "from picamera2 import Picamera2"
 ```
 
-If the import fails, recreate the virtual environment:
+If the import fails, recreate the virtual environment with system site packages:
 
 ```bash
+deactivate
+rm -rf venv
 python3 -m venv --system-site-packages venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
 ### Service does not start
@@ -1396,4 +1410,3 @@ Meshtastic® is a trademark of its respective owners.
 <p align="center">
 Made with ❤️ for the Meshtastic community
 </p>
-```

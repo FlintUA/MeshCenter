@@ -5,7 +5,7 @@ A complete browser-based control center for Meshtastic® base stations running o
 </p>
 
 <p align="center">
-Messaging · Node Management · Telemetry · Camera · Weather · Wi‑Fi · Notifications · Raspberry Pi
+Messaging · Interactive Map · Node Management · Telemetry · Camera · Weather · Wi‑Fi · Notifications · Raspberry Pi
 </p>
 
 <p align="center">
@@ -35,7 +35,7 @@ Messaging · Node Management · Telemetry · Camera · Weather · Wi‑Fi · Not
 
 You can visit the Interactive MeshCenter Demo Center in real time - the Meshtastic Control Center: https://meshcenter.elektroniker.help/preview/
 
-Instead of depending solely on a mobile application, MeshCenter provides a permanent web interface that is available from any device connected to your local network. It combines messaging, intelligent node management, telemetry dashboards, camera streaming, media management, Wi‑Fi administration, weather information, notifications, system monitoring and documentation into a single lightweight application.
+Instead of depending solely on a mobile application, MeshCenter provides a permanent web interface that is available from any device connected to your local network. It combines messaging (with Meshtastic reply support), an interactive network map, intelligent node management, telemetry dashboards, camera streaming, media management, Wi‑Fi administration, weather information, notifications, system monitoring and documentation into a single lightweight application.
 
 The project is optimized for Raspberry Pi Zero 2W while remaining fully compatible with more powerful Raspberry Pi models.
 
@@ -76,11 +76,29 @@ Typical use cases include:
 
 - Public channel messaging
 - Direct messages
+- Native Meshtastic reply support
+- Reply composer and quoted replies
+- Jump to original message
+- Message actions (copy including sender name)
 - Automatic chat updates
 - Chat history
 - Favorite contacts
 - Ignore list
 - Message export
+
+### 🗺 Interactive Network Map
+
+- Integrated Leaflet-based map inside MeshCenter
+- Open map directly from **Show on map**
+- Display all positioned nodes
+- Reference location marker
+- Selected node highlighting and node labels
+- Node information popups
+- Distance and bearing visualization
+- Fit Nodes view
+- Synchronized node selection between map and node list
+- Automatic scrolling to selected node
+- Persistent node positions
 
 ### 📷 Camera & Media Gallery
 
@@ -110,11 +128,15 @@ Typical use cases include:
 ### 🖥 Modern Desktop Interface
 
 - Professional three‑column layout
+- Redesigned map panel
 - Workspace panel (show/hide columns, theme, compact mode)
 - Notification Center
 - Bottom status dock with system metrics
+- Improved light and dark themes
 - Unified component design
 - Custom node icons
+- Larger and clearer map markers
+- Smoother map interaction
 
 ### 📡 Node Management
 
@@ -124,6 +146,7 @@ Typical use cases include:
 - Favorites and ignore list
 - Import / Export node database (CSV / JSON)
 - Merge duplicates
+- Synchronized selection with interactive map
 
 ### 🛠️ Node Tools
 
@@ -152,7 +175,7 @@ Typical use cases include:
 - Telemetry update interval
 - Battery capacity for runtime estimation
 - Listener auto‑recovery settings
-- Map provider (OpenStreetMap / Google Maps)
+- External map links provider (OpenStreetMap / Google Maps)
 - Reference location (manual or node‑based)
 
 ### 🎨 Workspace & UI Preferences
@@ -228,7 +251,8 @@ Unlike traditional web interfaces, MeshCenter is designed as a complete operatio
 
 It combines multiple independent subsystems into one application:
 
-- Messaging
+- Messaging (including Meshtastic reply support)
+- Interactive Network Map
 - Camera
 - Photo Gallery
 - Telemetry
@@ -545,6 +569,13 @@ Direct messages are shown as separate chats, making it easier to work with multi
 
 - Public channel messaging
 - Direct node-to-node messaging
+- Native Meshtastic reply support
+- Reply composer
+- Quoted replies
+- Jump to original message
+- Message actions
+- Copy including sender name
+- Improved Direct Messages
 - Chat history
 - Automatic message refresh
 - Message timestamps
@@ -554,12 +585,52 @@ Direct messages are shown as separate chats, making it easier to work with multi
 - System messages
 - Local JSON-based storage
 
+### 🗺 Interactive Network Map
+
+MeshCenter includes an integrated Leaflet-based interactive map for visualizing the mesh network.
+
+The map is built into the application and can be opened directly from the **Show on map** action. It displays all nodes that have a known position, along with a reference location marker used for distance and bearing calculations.
+
+Node positions are stored locally on the Raspberry Pi and persist across restarts.
+
+#### Map Features
+
+- Integrated Leaflet-based map inside MeshCenter
+- Open map directly from **Show on map**
+- Display all positioned nodes
+- Reference location marker
+- Selected node highlighting
+- Node labels
+- Node information popups
+- Distance and bearing visualization
+- Fit Nodes view
+- Synchronized node selection between map and node list
+- Automatic scrolling to selected node
+- Persistent node positions
+
+#### Map UI and Performance
+
+- Redesigned map panel
+- Larger and clearer map markers
+- Better popup positioning
+- Improved selection colors and node highlighting
+- Smoother map interaction
+- Faster map updates and reduced unnecessary redraws
+- Optimized map refresh logic and node synchronization
+
+Node selection is synchronized between the map and the node list: selecting a node on the map highlights it in the list (and scrolls to it), and selecting a node in the list highlights it on the map.
+
+> **Note:** The integrated map uses Leaflet with OpenStreetMap tiles. The separate **Map provider** setting (OpenStreetMap / Google Maps) controls only external “open in maps” links for individual node positions, not the built-in map.
+
 ### 🖥 Modern Desktop Interface
 
 - Professional three-column layout
+- Redesigned map panel
 - Workspace panel
 - Notification Center
 - Bottom status dock
+- Improved light and dark themes
+- Better spacing and layout consistency
 - Unified component design
 - Custom node icons
 - Responsive dashboard
@@ -830,8 +901,8 @@ You can adjust the following without editing configuration files:
 - **Telemetry interval** – How often sensor readings are stored (2, 5, 10, 15, 30 minutes)
 - **Battery capacity** – Used for runtime estimation (100–50000 mAh)
 - **Listener auto‑recovery** – Enable/disable, delay (30–300 seconds)
-- **Map provider** – OpenStreetMap or Google Maps for node position links
-- **Reference location** – Set a manual coordinate or select a node as the reference for distance/bearing calculations
+- **Map provider** – OpenStreetMap or Google Maps for external node-position links (does not affect the integrated Leaflet map)
+- **Reference location** – Set a manual coordinate or select a node as the reference for distance/bearing calculations on the map
 
 All settings are saved immediately and persist across restarts.
 
@@ -1060,12 +1131,15 @@ Future versions may include optional authentication.
 
 ## Recent Improvements
 
+- **Interactive Network Map** – Integrated Leaflet-based map with positioned nodes, reference marker, distance/bearing, synchronized selection with the node list, persistent positions, Fit Nodes view and node information popups
+- **Messaging Improvements** – Native Meshtastic reply support, reply composer, quoted replies, jump to original message, message actions and improved Direct Messages
+- **Map UI & Performance** – Redesigned map panel, larger markers, smoother interaction, faster updates, reduced redraws and optimized refresh logic
 - **System & Radio Health** – Added system monitoring, radio health dashboard, CPU history chart and automatic listener recovery
 - **Weather Module** – Integrated OpenWeather with caching and location from reference node
 - **Node Tools** – Added remote telemetry, position request and traceroute
 - **Custom Node Icons** – Upload and manage icons for any node
-- **Workspace & UI** – Persistent panel visibility, theme, compact mode
-- **Web Settings Editor** – Units, telemetry interval, battery capacity, listener recovery, map provider, reference location
+- **Workspace & UI** – Persistent panel visibility, theme, compact mode; improved light/dark themes and layout consistency
+- **Web Settings Editor** – Units, telemetry interval, battery capacity, listener recovery, external map-link provider, reference location
 - **Media Gallery** – Thumbnails, download, delete, storage info
 - **Export/Import** – Node database export/import in CSV and JSON
 - **Wi‑Fi Manager** – Scan, connect, forget with saved networks indicator
@@ -1277,17 +1351,14 @@ Possible plugins:
 - APRS gateway
 - Custom sensor modules
 
-#### 🗺 Interactive Network Map
+#### 🗺 Network Map Enhancements
 
-Display nearby nodes on an interactive map.
+Further map improvements under consideration:
 
-Potential features:
-
-- Node locations
-- Signal quality
-- Last heard
-- Routing visualization
-- Favorite nodes
+- Signal quality overlays
+- Routing / traceroute visualization on the map
+- Favorite node emphasis
+- Last-heard indicators
 
 #### 🌍 Multi-language Interface
 

@@ -195,6 +195,22 @@ Special attention has been paid to:
 - Lightweight architecture
 - Stable 24/7 operation
 
+## Tested Hardware Setup
+
+MeshCenter is primarily developed and tested on a Raspberry Pi Zero 2 W connected to a Meshtastic radio node.
+
+The current reference setup includes:
+
+- Raspberry Pi Zero 2 W
+- RAK4631-based Meshtastic node
+- Raspberry Pi Camera via CSI interface
+- IMX219 8 MP camera
+- OV5647 5 MP camera
+- INA226 power monitor for voltage, current and power measurements
+- BME280 environmental sensor for temperature, humidity and atmospheric pressure
+
+Other Raspberry Pi models and Meshtastic-compatible radio devices may also work, but the configuration above represents the primary development and testing platform.
+
 ---
 
 ## Screenshots
@@ -529,6 +545,22 @@ MeshCenter/
 The `data` directory stores persistent information such as messages, telemetry history, node icons, camera photos and application settings.
 
 ---
+
+## Tech Stack
+
+MeshCenter is built with a lightweight and practical technology stack:
+
+- Python
+- Flask
+- HTML5
+- CSS3
+- JavaScript
+- Meshtastic Python API
+- Raspberry Pi OS / Linux
+- systemd
+- Git and GitHub
+- Leaflet
+- OpenStreetMap
 
 ## Core Features
 

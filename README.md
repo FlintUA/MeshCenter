@@ -1,4 +1,4 @@
-<h1 align="center">MeshCenter</h1>
+<h1 align="center">MeshCenter - Meshtastic Control Center</h1>
 
 <p align="center">
 A complete browser-based control center for Meshtastic® base stations running on Raspberry Pi.

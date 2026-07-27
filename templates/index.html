@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=stage2c7-4-unified-popovers-20260725">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=stage4-map-label-below-popup-20260727">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 <body>
 <div class="app-container">
@@ -937,6 +938,36 @@
 
 
 
+
+            <!-- ===== MAP VIEW ===== -->
+            <div class="map-view" id="mapView" style="display:none;">
+                <div class="map-panel mc-workspace-panel">
+                    <div class="map-header mc-workspace-header">
+                        <div>
+                            <div class="map-title workspace-page-title" id="mapViewTitle">🗺 Map</div>
+                            <div class="map-subtitle workspace-page-subtitle" id="mapViewSubtitle">Known Meshtastic node positions</div>
+                        </div>
+                        <button type="button" class="workspace-page-close-btn" onclick="closeWorkspacePage()" title="Close Map" aria-label="Close Map">
+                            <svg class="workspace-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M7 7L17 17M17 7L7 17"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="map-toolbar">
+                        <div class="map-legend">
+                            <span><i class="map-legend-dot map-legend-reference"></i>Reference</span>
+                            <span><i class="map-legend-dot map-legend-node"></i>Node</span>
+                            <span><i class="map-legend-dot map-legend-selected"></i>Selected</span>
+                        </div>
+                        <div class="map-toolbar-right">
+                            <div class="map-node-count" id="mapNodeCount">0 positioned nodes</div>
+                            <button type="button" class="map-fit-btn" onclick="fitMeshMapToNodes()" title="Show all positioned nodes">⌖ Fit nodes</button>
+                        </div>
+                    </div>
+                    <div class="mesh-map" id="meshMap" aria-label="Meshtastic node map"></div>
+                </div>
+            </div>
+
             <!-- ===== SETTINGS VIEW ===== -->
             <div class="settings-view" id="settingsView" style="display: none;">
                 <div class="settings-panel mc-workspace-panel">
@@ -1671,8 +1702,9 @@
     </div>
 </div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/chat.js?v=stage2-reply-ui-20260726"></script>
+<script src="/static/chat.js?v=stage4-map-label-below-popup-20260727"></script>
 <script src="/static/media.js"></script>
 <script src="/static/weather.js?v=stage2c7-4-unified-popovers-20260725"></script>
 

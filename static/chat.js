@@ -2030,6 +2030,10 @@ async function loadMessages() {
             renderNodeDetails(null);
         }
 
+        if (currentMainTab === 'map') {
+            renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
+        }
+
     } catch (error) {
         console.error('[MESSAGES] Error:', error);
         const statusEl = document.getElementById('statusText');
@@ -2233,6 +2237,7 @@ function updateChatHeaderStatus() {
 // ============================================================
 let pendingChatScrollNodeId = null;
 let pendingNodeScrollNodeId = null;
+let pendingNodeScrollForceCenter = false;
 
 function isElementFullyVisibleInContainer(element, container) {
     if (!element || !container) return false;
@@ -2248,14 +2253,25 @@ function isElementFullyVisibleInContainer(element, container) {
     );
 }
 
-function centerElementInContainerIfNeeded(element, container) {
+function centerElementInContainerIfNeeded(element, container, forceCenter = false) {
     if (!element || !container) return false;
 
-    if (!isElementFullyVisibleInContainer(element, container)) {
-        element.scrollIntoView({
-            behavior: 'smooth',
-            block: 'center',
-            inline: 'nearest'
+    if (forceCenter || !isElementFullyVisibleInContainer(element, container)) {
+        const containerRect = container.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+        const currentScrollTop = container.scrollTop;
+        const elementCenterWithinContainer =
+            (elementRect.top - containerRect.top) +
+            currentScrollTop +
+            (elementRect.height / 2);
+        const targetScrollTop = Math.max(
+            0,
+            elementCenterWithinContainer - (container.clientHeight / 2)
+        );
+
+        container.scrollTo({
+            top: targetScrollTop,
+            behavior: 'smooth'
         });
     }
 
@@ -2283,7 +2299,7 @@ function scrollChatItemIntoView(nodeId) {
     return centerElementInContainerIfNeeded(chatItem, chatContainer);
 }
 
-function scrollNodeCardIntoView(nodeId) {
+function scrollNodeCardIntoView(nodeId, forceCenter = false) {
     const nodeCard = findElementByDataValue(
         '#nodesList .node-card',
         'nodeId',
@@ -2291,7 +2307,11 @@ function scrollNodeCardIntoView(nodeId) {
     );
     const nodesContainer = document.querySelector('.nodes-scroll');
 
-    return centerElementInContainerIfNeeded(nodeCard, nodesContainer);
+    return centerElementInContainerIfNeeded(
+        nodeCard,
+        nodesContainer,
+        forceCenter
+    );
 }
 
 function flushPendingSynchronizedScroll() {
@@ -2304,24 +2324,32 @@ function flushPendingSynchronizedScroll() {
             }
 
             if (pendingNodeScrollNodeId) {
-                if (scrollNodeCardIntoView(pendingNodeScrollNodeId)) {
+                if (scrollNodeCardIntoView(
+                    pendingNodeScrollNodeId,
+                    pendingNodeScrollForceCenter
+                )) {
                     pendingNodeScrollNodeId = null;
+                    pendingNodeScrollForceCenter = false;
                 }
             }
         });
     });
 }
 
-function requestSynchronizedListScroll(nodeId, source) {
+function requestSynchronizedListScroll(nodeId, source, options = {}) {
     if (!nodeId) return;
+
+    const forceNodeCenter = Boolean(options?.forceNodeCenter);
 
     if (source === 'chat') {
         pendingNodeScrollNodeId = String(nodeId);
+        pendingNodeScrollForceCenter = forceNodeCenter;
     } else if (source === 'nodes') {
         pendingChatScrollNodeId = String(nodeId);
     } else {
         pendingChatScrollNodeId = String(nodeId);
         pendingNodeScrollNodeId = String(nodeId);
+        pendingNodeScrollForceCenter = forceNodeCenter;
     }
 
     flushPendingSynchronizedScroll();
@@ -3357,6 +3385,275 @@ function getMapProvider() {
     return provider === 'google' ? 'google' : 'osm';
 }
 
+
+let meshMap = null;
+let meshMapTileLayer = null;
+let meshMapMarkers = new Map();
+let meshMapReferenceMarker = null;
+let meshMapReferenceLine = null;
+let meshMapTargetNodeId = null;
+let meshMapResizeObserver = null;
+let meshMapResizeTimer = null;
+
+function getNodePosition(node) {
+    const latitude = Number(node?.position?.latitude);
+    const longitude = Number(node?.position?.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    return { latitude, longitude };
+}
+
+function getNodeDisplayName(node) {
+    return String(node?.clean_name || node?.name || node?.long_name || node?.short_name || node?.node_id || 'Unknown node');
+}
+
+function escapeJsString(value) {
+    return String(value ?? '')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n');
+}
+
+function createMeshMapIcon(kind = 'node') {
+    return L.divIcon({
+        className: `meshcenter-map-marker ${kind}`,
+        html: '<div class="meshcenter-map-marker-dot"></div>',
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+        popupAnchor: [0, -11]
+    });
+}
+
+function scheduleMeshMapResize(delay = 0) {
+    if (!meshMap) return;
+    if (meshMapResizeTimer) clearTimeout(meshMapResizeTimer);
+
+    meshMapResizeTimer = setTimeout(() => {
+        meshMapResizeTimer = null;
+        requestAnimationFrame(() => {
+            if (meshMap) meshMap.invalidateSize({ animate:false, pan:false });
+        });
+    }, Math.max(0, Number(delay) || 0));
+}
+
+function ensureMeshMap() {
+    if (meshMap || typeof L === 'undefined') return meshMap;
+    const container = document.getElementById('meshMap');
+    if (!container) return null;
+
+    const reference = getReferenceLocation();
+    const initialCenter = reference
+        ? [reference.latitude, reference.longitude]
+        : [49.5881, 11.0078];
+
+    meshMap = L.map(container, {
+        zoomControl: true,
+        preferCanvas: true
+    }).setView(initialCenter, 13);
+
+    meshMapTileLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(meshMap);
+
+    // Keep Leaflet synchronized with workspace width changes. This removes
+    // the visible delay when either sidebar is shown or hidden.
+    if (typeof ResizeObserver !== 'undefined') {
+        meshMapResizeObserver = new ResizeObserver(() => scheduleMeshMapResize(0));
+        meshMapResizeObserver.observe(container);
+        const mapView = document.getElementById('mapView');
+        if (mapView && mapView !== container) meshMapResizeObserver.observe(mapView);
+    }
+
+    scheduleMeshMapResize(0);
+    return meshMap;
+}
+
+function buildMapPopup(node) {
+    const pos = getNodePosition(node);
+    const navigation = pos ? getNodeDistanceAndBearing(pos.latitude, pos.longitude) : { distanceText:'--', bearingText:'--' };
+    const source = node?.position?.source || 'Radio';
+    const updated = formatNodePositionUpdated(node?.position);
+    const age = node?.age || node?.last_seen || '--';
+    const nodeId = escapeJsString(node?.node_id || '');
+    const nodeName = escapeJsString(getNodeDisplayName(node));
+
+    return `
+        <div class="map-popup-name">${escapeHtml(getNodeDisplayName(node))}</div>
+        <div class="map-popup-grid">
+            <span>Distance</span><strong>${escapeHtml(navigation.distanceText)}</strong>
+            <span>Bearing</span><strong>${escapeHtml(navigation.bearingText)}</strong>
+            <span>Source</span><strong>${escapeHtml(source)}</strong>
+            <span>Last update</span><strong>${escapeHtml(updated || age)}</strong>
+        </div>
+        <button class="map-popup-details-btn" onclick="selectNode('${nodeId}', '${nodeName}', 'map')">Open node details</button>
+    `;
+}
+
+function renderMeshMap(targetNodeId = null, options = {}) {
+    const map = ensureMeshMap();
+    if (!map) {
+        showToast('Map library could not be loaded', 'error');
+        return;
+    }
+
+    const preserveViewport = Boolean(options && options.preserveViewport);
+    const openTargetPopup = options?.openPopup !== false;
+    const savedCenter = preserveViewport ? map.getCenter() : null;
+    const savedZoom = preserveViewport ? map.getZoom() : null;
+
+    meshMapTargetNodeId = targetNodeId ? String(targetNodeId) : meshMapTargetNodeId;
+    meshMapMarkers.forEach(marker => marker.remove());
+    meshMapMarkers.clear();
+    if (meshMapReferenceMarker) { meshMapReferenceMarker.remove(); meshMapReferenceMarker = null; }
+    if (meshMapReferenceLine) { meshMapReferenceLine.remove(); meshMapReferenceLine = null; }
+
+    const positionedNodes = nodeCache.filter(node => getNodePosition(node));
+    const bounds = [];
+
+    positionedNodes.forEach(node => {
+        const pos = getNodePosition(node);
+        const selected = String(node.node_id) === String(meshMapTargetNodeId);
+        const marker = L.marker([pos.latitude, pos.longitude], {
+            icon: createMeshMapIcon(selected ? 'selected' : 'node'),
+            title: getNodeDisplayName(node),
+            riseOnHover: true,
+            zIndexOffset: selected ? 1000 : 0
+        }).addTo(map);
+
+        marker.bindPopup(buildMapPopup(node), {
+            className: 'meshcenter-map-popup',
+            maxWidth: 300,
+            offset: L.point(0, -10)
+        });
+
+        // Keep the map clean: only the currently selected node receives
+        // a permanent name callout. Other node names remain available via
+        // the marker title and popup.
+        if (selected) {
+            marker.bindTooltip(escapeHtml(getNodeDisplayName(node)), {
+                permanent: true,
+                direction: 'bottom',
+                offset: [0, 14],
+                opacity: 1,
+                className: 'meshcenter-map-selected-label'
+            });
+        }
+
+        marker.on('click', () => {
+            const selectedId = String(node.node_id);
+            meshMapTargetNodeId = selectedId;
+
+            // Update the orange marker and reference line immediately instead
+            // of waiting for the next 6-second node refresh.
+            renderMeshMap(selectedId, {
+                preserveViewport: true,
+                openPopup: true
+            });
+            selectNode(node.node_id, getNodeDisplayName(node), 'map');
+        });
+        meshMapMarkers.set(String(node.node_id), marker);
+        bounds.push([pos.latitude, pos.longitude]);
+    });
+
+    const reference = getReferenceLocation();
+    if (reference) {
+        meshMapReferenceMarker = L.marker([reference.latitude, reference.longitude], {
+            icon: createMeshMapIcon('reference'),
+            title: reference.name || 'Reference location',
+            zIndexOffset: 700
+        }).addTo(map).bindPopup(`<div class="map-popup-name">${escapeHtml(reference.name || 'Reference location')}</div><div class="map-popup-grid"><span>Type</span><strong>Reference</strong><span>Latitude</span><strong>${reference.latitude.toFixed(6)}</strong><span>Longitude</span><strong>${reference.longitude.toFixed(6)}</strong></div>`, { className:'meshcenter-map-popup' });
+        bounds.push([reference.latitude, reference.longitude]);
+
+        const targetNode = positionedNodes.find(node => String(node.node_id) === String(meshMapTargetNodeId));
+        const targetPos = getNodePosition(targetNode);
+        if (targetPos) {
+            meshMapReferenceLine = L.polyline([
+                [reference.latitude, reference.longitude],
+                [targetPos.latitude, targetPos.longitude]
+            ], {
+                color:'#df5d68', weight:2, opacity:.88, dashArray:'7 7'
+            }).addTo(map);
+        }
+    }
+
+    const countEl = document.getElementById('mapNodeCount');
+    if (countEl) countEl.textContent = `${positionedNodes.length} positioned node${positionedNodes.length === 1 ? '' : 's'}`;
+
+    const targetNode = positionedNodes.find(node => String(node.node_id) === String(meshMapTargetNodeId));
+    const targetMarker = targetNode ? meshMapMarkers.get(String(targetNode.node_id)) : null;
+    const targetPos = getNodePosition(targetNode);
+    const title = document.getElementById('mapViewTitle');
+    const subtitle = document.getElementById('mapViewSubtitle');
+
+    if (targetNode && targetPos && targetMarker) {
+        if (title) title.textContent = `🗺 Map — ${getNodeDisplayName(targetNode)}`;
+        if (subtitle) {
+            const nav = getNodeDistanceAndBearing(targetPos.latitude, targetPos.longitude);
+            subtitle.textContent = `${nav.distanceText} · ${nav.bearingText} · ${targetNode.position?.source || 'Radio'}`;
+        }
+
+        if (preserveViewport && savedCenter && Number.isFinite(savedZoom)) {
+            map.setView(savedCenter, savedZoom, { animate:false });
+        } else {
+            map.flyTo([targetPos.latitude, targetPos.longitude], Math.max(map.getZoom(), 15), { duration:.45 });
+        }
+
+        if (openTargetPopup) {
+            setTimeout(() => {
+                const currentMarker = meshMapMarkers.get(String(targetNode.node_id));
+                if (currentMarker) currentMarker.openPopup();
+            }, preserveViewport ? 40 : 360);
+        }
+    } else {
+        if (title) title.textContent = '🗺 Map';
+        if (subtitle) subtitle.textContent = 'Known Meshtastic node positions';
+
+        if (preserveViewport && savedCenter && Number.isFinite(savedZoom)) {
+            map.setView(savedCenter, savedZoom, { animate:false });
+        } else if (bounds.length === 1) {
+            map.setView(bounds[0], 15);
+        } else if (bounds.length > 1) {
+            map.fitBounds(bounds, { padding:[45,45], maxZoom:15 });
+        }
+    }
+
+    scheduleMeshMapResize(0);
+    scheduleMeshMapResize(120);
+}
+
+function fitMeshMapToNodes() {
+    const map = ensureMeshMap();
+    if (!map) return;
+    const points = nodeCache.map(getNodePosition).filter(Boolean).map(pos => [pos.latitude, pos.longitude]);
+    const reference = getReferenceLocation();
+    if (reference) points.push([reference.latitude, reference.longitude]);
+    if (points.length === 1) map.flyTo(points[0], 15, { duration:.6 });
+    else if (points.length > 1) map.fitBounds(points, { padding:[45,45], maxZoom:15 });
+}
+
+function openEmbeddedNodeMap(latitude, longitude, nodeId = null) {
+    const lat = Number(latitude);
+    const lon = Number(longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        showToast('Position coordinates are unavailable', 'error');
+        return;
+    }
+
+    let targetId = nodeId ? String(nodeId) : '';
+    if (!targetId && currentChatType === 'dm' && currentChatId) targetId = String(currentChatId);
+    if (!targetId) {
+        const match = nodeCache.find(node => {
+            const pos = getNodePosition(node);
+            return pos && Math.abs(pos.latitude - lat) < 1e-7 && Math.abs(pos.longitude - lon) < 1e-7;
+        });
+        targetId = match ? String(match.node_id) : '';
+    }
+
+    meshMapTargetNodeId = targetId;
+    switchMainTab('map');
+}
+
 function buildNodeMapUrl(latitude, longitude) {
     const lat = Number(latitude);
     const lon = Number(longitude);
@@ -3377,15 +3674,8 @@ function buildNodeMapUrl(latitude, longitude) {
     );
 }
 
-function openNodeMap(latitude, longitude) {
-    const url = buildNodeMapUrl(latitude, longitude);
-
-    if (!url) {
-        showToast('Position coordinates are unavailable', 'error');
-        return;
-    }
-
-    window.open(url, '_blank', 'noopener,noreferrer');
+function openNodeMap(latitude, longitude, nodeId = null) {
+    openEmbeddedNodeMap(latitude, longitude, nodeId);
 }
 
 function renderNodePositionBlock(node) {
@@ -3462,7 +3752,7 @@ function renderNodePositionBlock(node) {
             <div class="node-position-actions">
                 <button type="button"
                         class="node-position-map-btn"
-                        onclick="openNodeMap(${latitude}, ${longitude})">
+                        onclick='openNodeMap(${latitude}, ${longitude}, ${JSON.stringify(String(node?.node_id || ""))})'>
                     🗺 Show on map
                 </button>
 
@@ -3919,7 +4209,7 @@ function renderPositionPane(node) {
                 <div class="coord"><span class="label">Precision</span><span class="value">${escapeHtml(precision)}</span></div>
             </div>
             <div class="position-actions">
-                <button onclick="openNodeMap(${pos.latitude}, ${pos.longitude})">🗺 Show on map</button>
+                <button onclick='openNodeMap(${pos.latitude}, ${pos.longitude}, ${JSON.stringify(String(node.node_id || ""))})'>🗺 Show on map</button>
                 <button onclick="copyCoordinates('${pos.latitude}', '${pos.longitude}')">📋 Copy coordinates</button>
                 <button onclick="setNodeAsReference('${escapeHtml(node.node_id)}')">📍 Set as reference</button>
                 <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">📡 Request new position</button>
@@ -4788,9 +5078,24 @@ function installCompactNodeCardStyles() {
         .node-card.selected,
         .node-card.favorite.selected,
         .node-card.ignored.selected {
-            background: #eaf3fb !important;
-            border-color: #9bbfda !important;
-            box-shadow: 0 0 0 1px rgba(75, 132, 175, 0.14), 0 3px 10px rgba(54, 92, 120, 0.08) !important;
+            background: #fff0f1 !important;
+            border-color: #d96a73 !important;
+            box-shadow:
+                0 0 0 1px rgba(217, 106, 115, 0.16),
+                0 3px 10px rgba(132, 53, 61, 0.10) !important;
+        }
+
+        body[data-theme="dark"] .node-card.selected,
+        body[data-theme="dark"] .node-card.favorite.selected,
+        body[data-theme="dark"] .node-card.ignored.selected,
+        html[data-theme="dark"] .node-card.selected,
+        html[data-theme="dark"] .node-card.favorite.selected,
+        html[data-theme="dark"] .node-card.ignored.selected {
+            background: linear-gradient(135deg, #43252d, #38222a) !important;
+            border-color: #df6b76 !important;
+            box-shadow:
+                0 0 0 1px rgba(223, 107, 118, 0.18),
+                0 3px 12px rgba(0, 0, 0, 0.20) !important;
         }
 
         .node-hop-count {
@@ -4836,22 +5141,64 @@ function installNodeCardClickHandler() {
         const node = nodeCache.find(item => String(item.node_id) === String(nodeId));
         const nodeName = node?.clean_name || node?.name || nodeId;
 
-        selectNode(nodeId, nodeName);
+        selectNode(nodeId, nodeName, 'nodes');
     });
 }
 
-function selectNode(nodeId, nodeName) {
+function selectNode(nodeId, nodeName, selectionSource = 'nodes') {
+    const normalizedNodeId = String(nodeId || '');
+    const mapIsOpen = currentMainTab === 'map';
+
+    // On the Map workspace, selecting a card in the right Nodes panel must
+    // immediately update the selected marker and reference route.
+    if (mapIsOpen && normalizedNodeId) {
+        meshMapTargetNodeId = normalizedNodeId;
+        renderMeshMap(normalizedNodeId, {
+            preserveViewport: true,
+            openPopup: true
+        });
+    }
+
     // Даже если эта нода уже выбрана сверху, восстанавливаем выделение
     // компактной карточки. Раньше ранний return оставлял карточку без фона.
-    if (currentChatId === nodeId && currentChatType === 'dm') {
+    if (String(currentChatId || '') === normalizedNodeId && currentChatType === 'dm') {
         syncSelectedNodeCard();
-        requestSynchronizedListScroll(nodeId, 'nodes');
-        updateNodeDetails(nodeId);
+
+        if (selectionSource === 'map') {
+            requestSynchronizedListScroll(normalizedNodeId, 'external', {
+                forceNodeCenter: true
+            });
+        } else {
+            requestSynchronizedListScroll(normalizedNodeId, 'nodes');
+        }
+
+        updateNodeDetails(normalizedNodeId);
         return;
     }
 
-    openChat(nodeId, nodeName, 'dm', 'nodes');
-    updateNodeDetails(nodeId);
+    openChat(
+        normalizedNodeId,
+        nodeName,
+        'dm',
+        selectionSource === 'map' ? 'external' : 'nodes'
+    );
+
+    if (selectionSource === 'map') {
+        requestSynchronizedListScroll(normalizedNodeId, 'external', {
+            forceNodeCenter: true
+        });
+    }
+    updateNodeDetails(normalizedNodeId);
+
+    // openChat refreshes chat state, but Map remains the active workspace.
+    // Re-assert the visual selection after those synchronous UI updates.
+    if (mapIsOpen) {
+        meshMapTargetNodeId = normalizedNodeId;
+        renderMeshMap(normalizedNodeId, {
+            preserveViewport: true,
+            openPopup: true
+        });
+    }
 }
 
 // ============================================================
@@ -5135,6 +5482,13 @@ function applyPanelState(panel, button, isHidden, panelName) {
     panel.classList.remove('hidden');
 }
 
+function refreshMapAfterWorkspaceResize() {
+    if (currentMainTab !== 'map' || !meshMap) return;
+    scheduleMeshMapResize(0);
+    scheduleMeshMapResize(90);
+    scheduleMeshMapResize(240);
+}
+
 function setBasePanelVisible(isVisible, persist = true) {
     applyPanelState(
         document.getElementById('baseSidebar'),
@@ -5142,6 +5496,7 @@ function setBasePanelVisible(isVisible, persist = true) {
         !Boolean(isVisible),
         'Base'
     );
+    refreshMapAfterWorkspaceResize();
     if (persist) Workspace.update({ leftPanel: Boolean(isVisible) });
 }
 
@@ -5152,6 +5507,7 @@ function setNodesPanelVisible(isVisible, persist = true) {
         !Boolean(isVisible),
         'Nodes'
     );
+    refreshMapAfterWorkspaceResize();
     if (persist) Workspace.update({ rightPanel: Boolean(isVisible) });
 }
 
@@ -5177,7 +5533,7 @@ function setWorkspacePopover(open) {
 }
 
 function openWorkspacePage(page) {
-    const allowedPages = new Set(['system', 'settings', 'about']);
+    const allowedPages = new Set(['system', 'settings', 'about', 'map']);
     if (!allowedPages.has(page)) return;
     setWorkspacePopover(false);
     switchMainTab(page);
@@ -8166,6 +8522,7 @@ function switchMainTab(tab) {
         document.getElementById('systemView').style.display = 'none';
         document.getElementById('settingsView').style.display = 'none';
         document.getElementById('aboutView').style.display = 'none';
+        document.getElementById('mapView').style.display = 'none';
         document.getElementById('devicesView').style.display = 'none';
 
         document.getElementById('chatListContainer').style.display = currentChatId ? 'none' : 'block';
@@ -8202,6 +8559,7 @@ function switchMainTab(tab) {
     const systemView = document.getElementById('systemView');    
     const settingsView = document.getElementById('settingsView');
     const aboutView = document.getElementById('aboutView');
+    const mapView = document.getElementById('mapView');
 
     if (messagesView) messagesView.style.display = 'none';
     if (videoView) videoView.style.display = 'none';
@@ -8211,6 +8569,7 @@ function switchMainTab(tab) {
     if (systemView) systemView.style.display = 'none';
     if (settingsView) settingsView.style.display = 'none';
     if (aboutView) aboutView.style.display = 'none';
+    if (mapView) mapView.style.display = 'none';
 
     if (tab !== 'video') {
         stopCameraStream();
@@ -8349,6 +8708,16 @@ function switchMainTab(tab) {
         loadSystemInfo();
         loadRadioHealth();
 
+    } else if (tab === 'map') {
+        if (chatHeader) chatHeader.style.display = 'none';
+        if (chatListContainer) chatListContainer.style.display = 'none';
+        if (messagesView) messagesView.style.display = 'none';
+        if (mapView) mapView.style.display = 'flex';
+
+        stopMessagePolling();
+        updateStatusDock('map');
+        requestAnimationFrame(() => renderMeshMap(meshMapTargetNodeId));
+
     } else if (tab === 'settings') {
         if (settingsView) settingsView.style.display = 'flex';
 
@@ -8422,6 +8791,10 @@ function updateStatusDock(tab) {
         workspaceLabel.textContent = 'System';
         centerText.textContent = 'System Monitor';
         setStatusDockContext('MeshCenter');
+    } else if (tab === 'map') {
+        workspaceLabel.textContent = 'Map';
+        centerText.textContent = 'Node Positions';
+        setStatusDockContext('OpenStreetMap');
     } else if (tab === 'settings') {
         workspaceLabel.textContent = 'Settings';
         centerText.textContent = 'Ready';
@@ -9772,3 +10145,7 @@ if (document.readyState === 'loading') {
 }
 
 window.updateBatteryCapacitySetting = updateBatteryCapacitySetting;
+
+window.openEmbeddedNodeMap = openEmbeddedNodeMap;
+window.fitMeshMapToNodes = fitMeshMapToNodes;
+window.renderMeshMap = renderMeshMap;

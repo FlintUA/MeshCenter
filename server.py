@@ -1498,7 +1498,10 @@ def update_node(line, sender, text):
             "hw_model": info.get("hw_model") or old.get("hw_model", ""),
             "role": role or old.get("role", "CLIENT"),
             "ignored": old.get("ignored", False),
-            "favorite": old.get("favorite", False)
+            "favorite": old.get("favorite", False),
+            # Keep the last known position. Text packets do not contain
+            # coordinates and must not erase a position obtained earlier.
+            "position": old.get("position")
         }
 
         new_snapshot = {
@@ -1599,7 +1602,10 @@ def process_nodeinfo(block):
             "hw_model": info.get("hw_model") or hw_model or old.get("hw_model", ""),
             "role": role or old.get("role", "CLIENT"),
             "ignored": old.get("ignored", False),
-            "favorite": old.get("favorite", False)
+            "favorite": old.get("favorite", False),
+            # NODEINFO refreshes identity/radio metadata only. Preserve the
+            # latest known coordinates across NODEINFO broadcasts/restarts.
+            "position": old.get("position")
         }
         if node_id.startswith("!"):
             ensure_chat(node_id, name, force=True)
@@ -3096,7 +3102,9 @@ def api_nodes_export():
                 "rssi": node.get("rssi", ""), "snr": node.get("snr", ""),
                 "role": node.get("role", "CLIENT"),
                 "short_name": node.get("short_name", ""),
-                "hw_model": node.get("hw_model", "")
+                "hw_model": node.get("hw_model", ""),
+                # Keep coordinates in backups/exports as durable node data.
+                "position": node.get("position")
             })
     return jsonify({"nodes": nodes_list})
 
@@ -3126,7 +3134,9 @@ def api_nodes_import():
                 "hw_model": node_data.get("hw_model", old.get("hw_model", "")),
                 "role": node_data.get("role", old.get("role", "CLIENT")),
                 "ignored": old.get("ignored", False),
-                "favorite": old.get("favorite", False)
+                "favorite": old.get("favorite", False),
+                # Importing metadata must not discard a stored position.
+                "position": node_data.get("position", old.get("position"))
             }
             ensure_chat(node_id, name, force=True)
             imported_count += 1
@@ -3153,8 +3163,16 @@ def api_nodes_merge_duplicates():
             dup = nodes.get(dup_id, {})
             main = nodes.get(main_id, {})
             if dup.get("last_seen", 0) > main.get("last_seen", 0):
-                nodes[main_id] = dup
+                merged_node = dict(dup)
+                # Prefer the newer record, but retain coordinates from either
+                # duplicate so merging cannot silently erase a known position.
+                merged_node["position"] = (
+                    dup.get("position") or main.get("position")
+                )
+                nodes[main_id] = merged_node
                 nodes[main_id]["node_id"] = main_id
+            elif not main.get("position") and dup.get("position"):
+                nodes[main_id]["position"] = dup.get("position")
             if dup_id in chats:
                 del chats[dup_id]
             del nodes[dup_id]

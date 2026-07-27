@@ -403,7 +403,10 @@ def register_chat_routes(
                     "hw_model": info.get("hw_model", old.get("hw_model", "")),
                     "role": old.get("role", "CLIENT_BASE"),
                     "ignored": old.get("ignored", False),
-                    "favorite": old.get("favorite", False)
+                    "favorite": old.get("favorite", False),
+                    # Sending a message refreshes transient fields only.
+                    # Never erase the locally stored position.
+                    "position": old.get("position")
                 }
 
                 save_nodes()

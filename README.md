@@ -195,7 +195,7 @@ Special attention has been paid to:
 - Lightweight architecture
 - Stable 24/7 operation
 
-## Tested Hardware Setup
+### Tested Hardware Setup
 
 MeshCenter is primarily developed and tested on a Raspberry Pi Zero 2 W connected to a Meshtastic radio node.
 

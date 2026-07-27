@@ -181,11 +181,11 @@ Special attention has been paid to:
 </p>
 
 <p align="center">
-  <img width="1407" height="1292" alt="main002" src="docs/images/MeshCenter_main_dark_theme.png" />
+  <img width="1407" height="1292" alt="main002" src="docs/images/MeshCenter_map_dark_theme.png" />
 </p>
 
 <p align="center">
-  <img width="1407" height="1292" alt="main002" src="docs/images/MeshCenter_chats_light_theme.png" />
+  <img width="1407" height="1292" alt="main002" src="docs/images/MeshCenter_map_light_theme.png" />
 </p>
 
 <p align="center">

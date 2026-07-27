@@ -31,7 +31,7 @@ Messaging · Node Management · Telemetry · Camera · Weather · Wi‑Fi · Not
 
 ## Overview
 
-**MeshCenter** is a modern browser-based control center designed specifically for Meshtastic base stations running on Raspberry Pi.
+**MeshCenter - Meshtastic Control Center** is a modern browser-based control center designed specifically for Meshtastic base stations running on Raspberry Pi.
 
 Instead of depending solely on a mobile application, MeshCenter provides a permanent web interface that is available from any device connected to your local network. It combines messaging, intelligent node management, telemetry dashboards, camera streaming, media management, Wi‑Fi administration, weather information, notifications, system monitoring and documentation into a single lightweight application.
 
@@ -41,7 +41,7 @@ Unlike a traditional web interface, MeshCenter is designed as a complete control
 
 ---
 
-## Why MeshCenter?
+## Why MeshCenter - Meshtastic Control Center?
 
 The official Meshtastic applications are excellent for configuration, mobile operation and everyday communication.
 
@@ -1389,6 +1389,8 @@ Community feedback plays an important role in shaping future development.
 **Konstantin Vynohradov (FlintUA)**  
 Electronics engineer, embedded systems enthusiast and Meshtastic hobbyist.
 
+- Interactive Live Demo MeshCenter - Meshtastic Control Center: https://meshcenter.elektroniker.help/preview/
+- Information Center MeshCenter - Meshtastic Control Center: https://meshcenter.elektroniker.help/
 - GitHub: [https://github.com/FlintUA](https://github.com/FlintUA)
 - Project repository: [https://github.com/FlintUA/MeshCenter](https://github.com/FlintUA/MeshCenter)
 - Website: [https://elektroniker.help](https://elektroniker.help)

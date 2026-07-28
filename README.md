@@ -229,8 +229,6 @@ MeshCenter is primarily developed and tested on a Raspberry Pi Zero 2 W connecte
 
 The current reference setup includes:
 
-The current reference setup includes:
-
 - Raspberry Pi Zero 2 W
 - RAK4631-based Meshtastic node
 - Raspberry Pi Camera via CSI interface

@@ -31,9 +31,11 @@ A complete browser-based control center for Meshtastic® base stations running o
 
 ## Overview
 
-**MeshCenter** is a browser-based control center for Meshtastic base stations running on Raspberry Pi, providing messaging, telemetry, monitoring and interactive node management through a modern web interface.
+**MeshCenter** is an open-source browser-based control and monitoring platform for Meshtastic nodes running on Raspberry Pi.
 
-## Live Demo
+Unlike traditional clients, MeshCenter combines messaging, interactive maps, telemetry, camera support, media management and system monitoring into a single responsive web interface.
+
+## 🌐 Live Demo
 
 Explore MeshCenter in your browser:
 https://meshcenter.elektroniker.help/preview/
@@ -66,14 +68,23 @@ Typical use cases include:
 
 ---
 
-## Highlights
+## ✨ Highlights
+
+***Key Features***
+
+- Browser-based interface
+- No additional software required on client devices
+- Access from PC, tablet or smartphone
+- Responsive desktop UI
+- Open source
+- Designed for Raspberry Pi
+- Works with standard Meshtastic firmware
 
 ### 📚 Documentation
 
-- UI Guidelines
-- Components
-- Architecture
-- Development Roadmap
+- [Installation Guide](#installation)
+- [Architecture Overview](#application-architecture)
+- [Development Roadmap](#roadmap)
 
 ### 💬 Messaging
 
@@ -82,24 +93,36 @@ Typical use cases include:
 - Native Meshtastic reply support
 - Reply composer and quoted replies
 - Jump to original message
-- Message actions (copy including sender name)
+- Message actions (copy message with sender information)
 - Automatic chat updates
 - Chat history
 - Favorite contacts
 - Ignore list
 - Message export
 
-### 🗺 Interactive Network Map
+### 🧩 Workspace Map
 
-- Integrated Leaflet-based map inside MeshCenter
-- Open map directly from **Show on map**
+MeshCenter includes a fully integrated interactive map directly inside the workspace.
+
+***Features include:***
+
+- Embedded map without leaving the main interface
+- Hide, Split and Full Screen map layouts
+- Split layout with top or bottom positioning
+- Live node locations
+- Quick actions directly from map popups
+- Automatic synchronization with node details
+- External map provider support when needed
+
+### 🗺 Network Visualization
+
 - Display all positioned nodes
-- Reference location marker
-- Selected node highlighting and node labels
+- Selected node highlighting
+- Node labels
 - Node information popups
 - Distance and bearing visualization
+- Reference location marker
 - Fit Nodes view
-- Synchronized node selection between map and node list
 - Automatic scrolling to selected node
 - Persistent node positions
 
@@ -131,7 +154,7 @@ Typical use cases include:
 ### 🖥 Modern Desktop Interface
 
 - Professional three‑column layout
-- Redesigned map panel
+- Responsive workspace layout
 - Workspace panel (show/hide columns, theme, compact mode)
 - Notification Center
 - Bottom status dock with system metrics
@@ -150,6 +173,8 @@ Typical use cases include:
 - Import / Export node database (CSV / JSON)
 - Merge duplicates
 - Synchronized selection with interactive map
+- Interactive node popups with quick actions
+- Locate nodes directly on the embedded map
 
 ### 🛠️ Node Tools
 
@@ -178,7 +203,7 @@ Typical use cases include:
 - Telemetry update interval
 - Battery capacity for runtime estimation
 - Listener auto‑recovery settings
-- External map links provider (OpenStreetMap / Google Maps)
+- External map service
 - Reference location (manual or node‑based)
 
 ### 🎨 Workspace & UI Preferences

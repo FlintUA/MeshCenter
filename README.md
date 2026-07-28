@@ -223,7 +223,7 @@ Special attention has been paid to:
 - Lightweight architecture
 - Stable 24/7 operation
 
-### Tested Hardware Setup
+### 🧪 Tested Hardware Setup
 
 MeshCenter is primarily developed and tested on a Raspberry Pi Zero 2 W connected to a Meshtastic radio node.
 
@@ -233,12 +233,10 @@ The current reference setup includes:
 - RAK4631-based Meshtastic node
 - Raspberry Pi Camera via CSI interface
 - Supported cameras:
-  - IMX219 8 MP (current)
+  - IMX219 8 MP (currently installed)
   - OV5647 5 MP (tested)
 - INA226 power monitor
 - BME280 environmental sensor
-
-The IMX219 camera is currently used as the primary camera. The OV5647 has also been tested and is supported.
 
 Other Raspberry Pi models and Meshtastic-compatible radio devices may also work, but the configuration above represents the primary development and testing platform.
 

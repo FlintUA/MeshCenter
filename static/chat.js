@@ -3486,7 +3486,13 @@ function buildMapPopup(node) {
             <span>Source</span><strong>${escapeHtml(source)}</strong>
             <span>Last update</span><strong>${escapeHtml(updated || age)}</strong>
         </div>
-        <button class="map-popup-details-btn" onclick="selectNode('${nodeId}', '${nodeName}', 'map')">Open node details</button>
+        <div class="map-popup-actions">
+            <button class="map-popup-primary-btn" onclick="openChat('${nodeId}', '${nodeName}', 'dm')">💬 Message</button>
+            <button class="map-popup-action-btn" onclick="runNodeTool('request_telemetry', '${nodeId}', '${nodeName}', this)">📊 Telemetry</button>
+            <button class="map-popup-action-btn" onclick="runNodeTool('request_position', '${nodeId}', '${nodeName}', this)">📍 Position</button>
+            <button class="map-popup-action-btn" onclick="setNodeAsReference('${nodeId}')">📌 Reference</button>
+            <button class="map-popup-action-btn" onclick="copyCoordinates('${pos ? pos.latitude : ''}', '${pos ? pos.longitude : ''}')">📋 Coordinates</button>
+        </div>
     `;
 }
 
@@ -3651,7 +3657,13 @@ function openEmbeddedNodeMap(latitude, longitude, nodeId = null) {
     }
 
     meshMapTargetNodeId = targetId;
-    switchMainTab('map');
+    if (typeof setMapLayoutMode === 'function') {
+        if (MapLayout.state.mode === 'off') setMapLayoutMode('full', false);
+        else applyMapLayout();
+    } else {
+        switchMainTab('map');
+    }
+    requestAnimationFrame(() => renderMeshMap(meshMapTargetNodeId));
 }
 
 function buildNodeMapUrl(latitude, longitude) {
@@ -3676,6 +3688,15 @@ function buildNodeMapUrl(latitude, longitude) {
 
 function openNodeMap(latitude, longitude, nodeId = null) {
     openEmbeddedNodeMap(latitude, longitude, nodeId);
+}
+
+function openExternalNodeMap(latitude, longitude) {
+    const url = buildNodeMapUrl(latitude, longitude);
+    if (!url) {
+        showToast('Position coordinates are unavailable', 'error');
+        return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 function renderNodePositionBlock(node) {
@@ -3894,6 +3915,18 @@ function renderOrPatchNodeDetailCard(details, html, nodeId) {
     }
 }
 
+let closedNodeDetailId = null;
+
+function closeNodeDetails() {
+    const currentCard = document.querySelector('#nodeDetails > .node-detail-card');
+    closedNodeDetailId = currentCard?.dataset?.nodeId || null;
+    const details = document.getElementById('nodeDetails');
+    if (!details) return;
+    details.className = 'node-details-placeholder';
+    details.innerHTML = '';
+    document.getElementById('nodeActionsMenu')?.remove();
+}
+
 function renderNodeDetails(node) {
     const details = document.getElementById('nodeDetails');
     if (!details) return;
@@ -3905,6 +3938,11 @@ function renderNodeDetails(node) {
     }
 
     const nodeId = node.node_id;
+    if (closedNodeDetailId && String(closedNodeDetailId) === String(nodeId)) {
+        details.className = 'node-details-placeholder';
+        details.innerHTML = '';
+        return;
+    }
     const signature = generateNodeDetailSignature(node);
     const existingCard = details.querySelector(':scope > .node-detail-card');
 
@@ -3953,6 +3991,7 @@ function renderNodeDetails(node) {
                     <span class="node-detail-activity ${getNodeActivityPresentation(node).activityClass}" title="Activity status" aria-hidden="true"></span>
                     <span class="node-detail-name">${escapeHtml(displayName)}</span>
                 </div>
+                <button type="button" class="node-detail-close" onclick="closeNodeDetails()" title="Close node details" aria-label="Close node details">×</button>
             </div>
 
             <!-- Вторая строка: ID, модель, роль + node actions -->
@@ -4120,7 +4159,7 @@ function renderOverviewPane(node) {
             </div>` : ''}
             <div class="node-detail-quick-actions">
                 <button class="quick-action" onclick="openChat('${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', 'dm')">💬 Message</button>
-                <button class="quick-action" onclick="openNodeMap(${node.position?.latitude || 0}, ${node.position?.longitude || 0})" ${!hasPosition ? 'disabled' : ''}>🗺️ Map</button>
+                <button class="quick-action" onclick="openExternalNodeMap(${node.position?.latitude || 0}, ${node.position?.longitude || 0})" ${!hasPosition ? 'disabled' : ''}>🗺 External Map</button>
                 <button class="quick-action" onclick="toggleNodeActionsMenu(event)">⚡ More</button>
             </div>
         </div>
@@ -4209,7 +4248,7 @@ function renderPositionPane(node) {
                 <div class="coord"><span class="label">Precision</span><span class="value">${escapeHtml(precision)}</span></div>
             </div>
             <div class="position-actions">
-                <button onclick='openNodeMap(${pos.latitude}, ${pos.longitude}, ${JSON.stringify(String(node.node_id || ""))})'>🗺 Show on map</button>
+                <button onclick='openNodeMap(${pos.latitude}, ${pos.longitude}, ${JSON.stringify(String(node.node_id || ""))})'>🗺 Locate on Map</button>
                 <button onclick="copyCoordinates('${pos.latitude}', '${pos.longitude}')">📋 Copy coordinates</button>
                 <button onclick="setNodeAsReference('${escapeHtml(node.node_id)}')">📍 Set as reference</button>
                 <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">📡 Request new position</button>
@@ -5147,7 +5186,8 @@ function installNodeCardClickHandler() {
 
 function selectNode(nodeId, nodeName, selectionSource = 'nodes') {
     const normalizedNodeId = String(nodeId || '');
-    const mapIsOpen = currentMainTab === 'map';
+    closedNodeDetailId = null;
+    const mapIsOpen = typeof MapLayout !== 'undefined' && MapLayout.state.mode !== 'off';
 
     // On the Map workspace, selecting a card in the right Nodes panel must
     // immediately update the selected marker and reference route.
@@ -5385,6 +5425,178 @@ const WORKSPACE_DEFAULTS = Object.freeze({
     compactMode: false
 });
 
+const MAP_LAYOUT_STORAGE_KEY = 'meshcenter.mapLayout.v1';
+
+const MapLayout = {
+    state: { mode: 'off', position: 'bottom' },
+    load() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(MAP_LAYOUT_STORAGE_KEY) || '{}');
+            this.state.mode = ['off', 'full', 'split'].includes(saved.mode) ? saved.mode : 'off';
+            this.state.position = ['top', 'bottom'].includes(saved.position) ? saved.position : 'bottom';
+        } catch (error) {
+            console.warn('[MAP] Unable to load map layout:', error);
+        }
+    },
+    save() {
+        try { localStorage.setItem(MAP_LAYOUT_STORAGE_KEY, JSON.stringify(this.state)); }
+        catch (error) { console.warn('[MAP] Unable to save map layout:', error); }
+    }
+};
+
+function setMapLayoutPopover(open) {
+    const popover = document.getElementById('mapLayoutPopover');
+    const button = document.getElementById('mapMenuBtn');
+    if (!popover || !button) return;
+    popover.hidden = !open;
+    button.classList.toggle('active', open);
+    button.setAttribute('aria-expanded', String(open));
+}
+
+function syncMapLayoutControls() {
+    document.querySelectorAll('input[name="mapLayoutMode"]').forEach(input => {
+        input.checked = input.value === MapLayout.state.mode;
+    });
+    document.querySelectorAll('input[name="mapSplitPosition"]').forEach(input => {
+        input.checked = input.value === MapLayout.state.position;
+    });
+    const split = document.getElementById('mapSplitPosition');
+    if (split) split.classList.toggle('disabled', MapLayout.state.mode !== 'split');
+    document.getElementById('mapMenuBtn')?.classList.toggle('map-active', MapLayout.state.mode !== 'off');
+}
+
+function setMapLayoutMode(mode, persist = true) {
+    if (!['off', 'full', 'split'].includes(mode)) return;
+    MapLayout.state.mode = mode;
+    if (persist) MapLayout.save();
+    setMapLayoutPopover(false);
+
+    if (currentMainTab === 'map' && mode !== 'full') {
+        const fallback = ['chats', 'video', 'media', 'devices'].includes(lastOperationalMainTab)
+            ? lastOperationalMainTab
+            : 'chats';
+        switchMainTab(fallback);
+        return;
+    }
+    applyMapLayout();
+}
+
+function setMapSplitPosition(position) {
+    if (!['top', 'bottom'].includes(position)) return;
+    MapLayout.state.position = position;
+    MapLayout.save();
+    applyMapLayout();
+}
+
+function getOperationalViewElements() {
+    return {
+        chatHeader: document.getElementById('chatHeader'),
+        chatPanels: document.querySelector('.chat-panels'),
+        video: document.getElementById('videoView'),
+        media: document.getElementById('mediaView'),
+        devices: document.getElementById('devicesView')
+    };
+}
+
+function restoreOperationalView() {
+    const views = getOperationalViewElements();
+    const messagesView = document.getElementById('messagesView');
+    const chatListContainer = document.getElementById('chatListContainer');
+
+    // First hide every operational workspace. This prevents stale inline
+    // display values left by Full Map from leaking into another tab.
+    if (views.chatHeader) views.chatHeader.style.display = 'none';
+    if (document.querySelector('.chat-panels')) document.querySelector('.chat-panels').style.display = 'none';
+    if (views.video) views.video.style.display = 'none';
+    if (views.media) views.media.style.display = 'none';
+    if (views.devices) views.devices.style.display = 'none';
+
+    if (currentMainTab === 'chats') {
+        if (views.chatHeader) views.chatHeader.style.display = 'flex';
+        const chatPanels = document.querySelector('.chat-panels');
+        if (chatPanels) chatPanels.style.display = 'flex';
+        if (chatListContainer) chatListContainer.style.display = 'block';
+        if (messagesView) messagesView.style.display = 'flex';
+    } else if (currentMainTab === 'video') {
+        if (views.video) views.video.style.display = 'flex';
+    } else if (currentMainTab === 'media') {
+        if (views.media) views.media.style.display = 'flex';
+    } else if (currentMainTab === 'devices') {
+        if (views.devices) views.devices.style.display = 'flex';
+    }
+}
+
+function hideOperationalViewsForFullMap() {
+    const views = getOperationalViewElements();
+    const chatPanels = document.querySelector('.chat-panels');
+    if (views.chatHeader) views.chatHeader.style.display = 'none';
+    if (chatPanels) chatPanels.style.display = 'none';
+    if (views.video) views.video.style.display = 'none';
+    if (views.media) views.media.style.display = 'none';
+    if (views.devices) views.devices.style.display = 'none';
+}
+
+function applyMapLayout() {
+    const area = document.querySelector('.chat-area');
+    const mapView = document.getElementById('mapView');
+    if (!area || !mapView) return;
+
+    const mode = MapLayout.state.mode;
+    const position = MapLayout.state.position;
+    const isOperational = ['chats', 'video', 'media', 'devices'].includes(currentMainTab);
+    const shouldShowMap = mode !== 'off' && (isOperational || currentMainTab === 'map');
+
+    area.classList.toggle('map-layout-full', shouldShowMap && mode === 'full');
+    area.classList.toggle('map-layout-split', shouldShowMap && mode === 'split');
+    area.classList.toggle('map-on-top', shouldShowMap && mode === 'split' && position === 'top');
+    area.classList.toggle('map-on-bottom', shouldShowMap && mode === 'split' && position === 'bottom');
+
+    // Full Map intentionally covers the active workspace. Split and Hide must
+    // always restore it; previously inline display:none values remained and
+    // caused blank Camera/Chats views and a chat header without chat panels.
+    if (isOperational) {
+        if (shouldShowMap && mode === 'full') hideOperationalViewsForFullMap();
+        else restoreOperationalView();
+    }
+
+    if (shouldShowMap) {
+        mapView.style.display = 'flex';
+        if (mode === 'full') updateStatusDock('map');
+        else updateStatusDock(currentMainTab);
+        requestAnimationFrame(() => renderMeshMap(meshMapTargetNodeId, { preserveViewport: true, openPopup: false }));
+    } else if (currentMainTab !== 'map') {
+        mapView.style.display = 'none';
+        if (isOperational) updateStatusDock(currentMainTab);
+    }
+
+    syncMapLayoutControls();
+    scheduleMeshMapResize(0);
+    scheduleMeshMapResize(120);
+}
+
+function initializeMapLayout() {
+    MapLayout.load();
+    syncMapLayoutControls();
+
+    document.getElementById('mapMenuBtn')?.addEventListener('click', event => {
+        event.stopPropagation();
+        const popover = document.getElementById('mapLayoutPopover');
+        setWorkspacePopover(false);
+        setMapLayoutPopover(Boolean(popover?.hidden));
+    });
+    document.getElementById('mapLayoutPopoverClose')?.addEventListener('click', () => setMapLayoutPopover(false));
+    document.querySelectorAll('input[name="mapLayoutMode"]').forEach(input => {
+        input.addEventListener('change', () => setMapLayoutMode(input.value));
+    });
+    document.querySelectorAll('input[name="mapSplitPosition"]').forEach(input => {
+        input.addEventListener('change', () => setMapSplitPosition(input.value));
+    });
+    document.addEventListener('click', event => {
+        if (!event.target.closest('.dock-map-wrap')) setMapLayoutPopover(false);
+    });
+    applyMapLayout();
+}
+
 const Workspace = {
     state: { ...WORKSPACE_DEFAULTS },
 
@@ -5483,7 +5695,7 @@ function applyPanelState(panel, button, isHidden, panelName) {
 }
 
 function refreshMapAfterWorkspaceResize() {
-    if (currentMainTab !== 'map' || !meshMap) return;
+    if (MapLayout.state.mode === 'off' || !meshMap) return;
     scheduleMeshMapResize(0);
     scheduleMeshMapResize(90);
     scheduleMeshMapResize(240);
@@ -5549,6 +5761,7 @@ function closeWorkspacePage() {
 function initializeWorkspace() {
     Workspace.load();
     Workspace.apply();
+    initializeMapLayout();
 
     document.getElementById('toggleBaseSidebarBtn')?.addEventListener('click', () => {
         Workspace.update({ leftPanel: !Workspace.state.leftPanel });
@@ -8709,6 +8922,8 @@ function switchMainTab(tab) {
         loadRadioHealth();
 
     } else if (tab === 'map') {
+        MapLayout.state.mode = 'full';
+        MapLayout.save();
         if (chatHeader) chatHeader.style.display = 'none';
         if (chatListContainer) chatListContainer.style.display = 'none';
         if (messagesView) messagesView.style.display = 'none';
@@ -8735,6 +8950,12 @@ function switchMainTab(tab) {
         stopMessagePolling();
         switchAboutTab(window.meshcenterAboutTab || 'overview');
         updateStatusDock('about');
+    }
+
+    if (['chats', 'video', 'media', 'devices', 'map'].includes(tab)) {
+        applyMapLayout();
+    } else {
+        document.querySelector('.chat-area')?.classList.remove('map-layout-full', 'map-layout-split', 'map-on-top', 'map-on-bottom');
     }
 }
 

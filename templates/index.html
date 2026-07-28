@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=stage4-map-label-below-popup-20260727">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=map-layout-restore-fix-20260729">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -947,7 +947,7 @@
                             <div class="map-title workspace-page-title" id="mapViewTitle">🗺 Map</div>
                             <div class="map-subtitle workspace-page-subtitle" id="mapViewSubtitle">Known Meshtastic node positions</div>
                         </div>
-                        <button type="button" class="workspace-page-close-btn" onclick="closeWorkspacePage()" title="Close Map" aria-label="Close Map">
+                        <button type="button" class="workspace-page-close-btn" onclick="setMapLayoutMode('off')" title="Hide Map" aria-label="Hide Map">
                             <svg class="workspace-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                 <path d="M7 7L17 17M17 7L7 17"></path>
                             </svg>
@@ -1050,7 +1050,7 @@
 
                             <div class="map-settings-row">
                                 <div>
-                                    <div class="map-settings-label">Map provider</div>
+                                    <div class="map-settings-label">External map provider</div>
                                     <div class="map-settings-description">
                                         Used when opening a saved node position.
                                     </div>
@@ -1407,6 +1407,36 @@
                 </button>
             </div>
 
+            <div class="dock-map-wrap">
+                <button class="dock-workspace-btn dock-map-btn"
+                        id="mapMenuBtn"
+                        type="button"
+                        title="Map layout"
+                        aria-label="Open Map layout settings"
+                        aria-haspopup="menu"
+                        aria-expanded="false">
+                    <span class="dock-workspace-btn-icon" aria-hidden="true">🗺</span>
+                    <span>Map</span>
+                    <span class="dock-workspace-chevron" aria-hidden="true">▴</span>
+                </button>
+                <div class="map-layout-popover" id="mapLayoutPopover" role="menu" aria-label="Map layout" hidden>
+                    <div class="workspace-popover-header">
+                        <div><strong>Map</strong><span>Choose how the map is displayed</span></div>
+                        <button type="button" class="workspace-popover-close" id="mapLayoutPopoverClose" title="Close" aria-label="Close Map settings">×</button>
+                    </div>
+                    <div class="map-layout-options" role="radiogroup" aria-label="Map display mode">
+                        <label class="map-layout-option"><input type="radio" name="mapLayoutMode" value="off"><span>○ Hide map</span></label>
+                        <label class="map-layout-option"><input type="radio" name="mapLayoutMode" value="full"><span>▣ Full map</span></label>
+                        <label class="map-layout-option"><input type="radio" name="mapLayoutMode" value="split"><span>▤ Split view</span></label>
+                    </div>
+                    <div class="map-split-position" id="mapSplitPosition">
+                        <div class="workspace-menu-title">Split position</div>
+                        <label class="map-layout-option"><input type="radio" name="mapSplitPosition" value="top"><span>Map on top</span></label>
+                        <label class="map-layout-option"><input type="radio" name="mapSplitPosition" value="bottom"><span>Map on bottom</span></label>
+                    </div>
+                </div>
+            </div>
+
             <button class="dock-workspace-btn"
                     id="workspaceMenuBtn"
                     type="button"
@@ -1704,7 +1734,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/chat.js?v=stage4-map-label-below-popup-20260727"></script>
+<script src="/static/chat.js?v=map-layout-restore-fix-20260729"></script>
 <script src="/static/media.js"></script>
 <script src="/static/weather.js?v=stage2c7-4-unified-popovers-20260725"></script>
 

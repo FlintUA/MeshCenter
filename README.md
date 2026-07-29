@@ -74,7 +74,7 @@ Typical use cases include:
 
 - Browser-based interface
 - No additional software required on client devices
-- Access from PC, tablet or smartphone
+- Access from PC or tablet
 - Responsive desktop UI
 - Open source
 - Designed for Raspberry Pi

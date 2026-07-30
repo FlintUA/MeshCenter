@@ -44,7 +44,7 @@ Instead of depending solely on a mobile application, MeshCenter provides a perma
 
 The project is optimized for Raspberry Pi Zero 2W while remaining fully compatible with more powerful Raspberry Pi models.
 
-Unlike a traditional web interface, MeshCenter is designed as a complete control center that continuously runs alongside a Meshtastic node, providing real-time monitoring and convenient management through any modern web browser.
+MeshCenter is designed as a complete control center that continuously runs alongside a Meshtastic node, providing real-time monitoring and convenient management through any modern web browser.
 
 ---
 
@@ -52,9 +52,8 @@ Unlike a traditional web interface, MeshCenter is designed as a complete control
 
 The official Meshtastic applications are excellent for configuration, mobile operation and everyday communication.
 
-MeshCenter is **not intended to replace them**.
-
-Instead, it complements the official ecosystem by providing a permanent browser-based control center for fixed stations, gateways and Raspberry Pi based installations.
+MeshCenter is **not intended to replace them**. It complements the official ecosystem by providing a permanent browser-based control center for fixed stations, gateways and Raspberry Pi based installations.
+MeshCenter relies on the official Meshtastic configuration stored on the connected radio. Channel management and radio configuration are performed using the official Meshtastic applications, while MeshCenter automatically detects, synchronizes and works with the configured channels.
 
 Typical use cases include:
 
@@ -88,6 +87,7 @@ Typical use cases include:
 
 ### 💬 Messaging
 
+- MeshCenter automatically detects all channels configured on the connected Meshtastic node. Channel creation, editing and radio configuration remain the responsibility of the official Meshtastic applications.
 - Public channel messaging
 - Direct messages
 - Compatible with the official Meshtastic reply feature.

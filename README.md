@@ -89,8 +89,8 @@ Typical use cases include:
 ### 💬 Messaging
 
 - Public channel messaging
-- Compatible with the official Meshtastic reply feature.
 - Direct messages
+- Compatible with the official Meshtastic reply feature.
 - Reply composer and quoted replies
 - Jump to original message
 - Message actions (copy message with sender information)

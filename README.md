@@ -87,7 +87,7 @@ Typical use cases include:
 
 ### 💬 Messaging
 
-- MeshCenter automatically detects all channels configured on the connected Meshtastic node. Channel creation, editing and radio configuration remain the responsibility of the official Meshtastic applications.
+- MeshCenter automatically detects and synchronizes all channels configured on the connected Meshtastic node. The interface supports Meshtastic channel indexes 0–7, allowing up to eight configured channels, including the primary channel. Channel creation and radio configuration are handled by the official Meshtastic applications.
 - Public channel messaging
 - Direct messages
 - Compatible with the official Meshtastic reply feature.

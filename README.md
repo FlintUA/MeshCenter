@@ -73,7 +73,7 @@ Typical use cases include:
 
 - Browser-based interface
 - No additional software required on client devices
-- Access from PC or tablet
+- Optimized for desktop web browsers
 - Responsive desktop UI
 - Open source
 - Designed for Raspberry Pi
@@ -1330,6 +1330,10 @@ Also check your firewall configuration.
 ---
 
 ## Frequently Asked Questions
+
+### Does MeshCenter support mobile devices?
+
+MeshCenter is currently optimized for desktop web browsers. It is usable on many tablets, while full mobile optimization is planned for a future release.
 
 ### Does MeshCenter replace the official Meshtastic application?
 

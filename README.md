@@ -1333,7 +1333,7 @@ Also check your firewall configuration.
 
 ### Does MeshCenter support mobile devices?
 
-MeshCenter is currently optimized for desktop web browsers. It is usable on many tablets, while full mobile optimization is planned for a future release.
+MeshCenter is currently optimized for desktop web browsers. It is usable partialle on many tablets, while full mobile optimization is planned for a future release.
 
 ### Does MeshCenter replace the official Meshtastic application?
 

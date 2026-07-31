@@ -81,7 +81,8 @@ Typical use cases include:
 
 ### 📚 Documentation
 
-- [Installation Guide](#installation)
+- [Practical User Guide](docs/User_Guide.md)
+- [Quick Installation](#installation)
 - [Architecture Overview](#application-architecture)
 - [Development Roadmap](#roadmap)
 
@@ -199,7 +200,7 @@ MeshCenter includes a fully integrated interactive map directly inside the works
 
 ### ⚙️ Web Settings Editor
 
-- Units (temperature, pressure, wind)
+- Units (temperature and pressure)
 - Telemetry update interval
 - Battery capacity for runtime estimation
 - Listener auto‑recovery settings
@@ -225,12 +226,12 @@ Special attention has been paid to:
 
 ### 🧪 Tested Hardware Setup
 
-MeshCenter is primarily developed and tested on a Raspberry Pi Zero 2 W connected to a Meshtastic radio node.
+MeshCenter is primarily developed and tested on a Raspberry Pi Zero 2 W connected by USB to a standard Meshtastic radio node. The radio uses standard Meshtastic firmware and does not require hardware modification or its own Wi-Fi connection.
 
 The current reference setup includes:
 
 - Raspberry Pi Zero 2 W
-- RAK4631-based Meshtastic node
+- RAK4631-based Meshtastic node connected by USB
 - Raspberry Pi Camera via CSI interface
 - Supported cameras:
   - IMX219 8 MP (currently installed)
@@ -238,7 +239,7 @@ The current reference setup includes:
 - INA226 power monitor
 - BME280 environmental sensor
 
-Other Raspberry Pi models and Meshtastic-compatible radio devices may also work, but the configuration above represents the primary development and testing platform.
+Other Raspberry Pi models and standard Meshtastic-compatible radios with a supported USB serial connection may also work. The radio must first be configured with an official Meshtastic application. MeshCenter then uses the region, channels and channel keys already stored on it.
 
 ---
 
@@ -320,15 +321,17 @@ MeshCenter is designed to run on Raspberry Pi OS Bookworm and newer versions.
 
 Although it has been primarily developed and tested on Raspberry Pi Zero 2W, it also works on Raspberry Pi 3, 4 and 5.
 
+For complete explanations, first-run checks, interface operation, backups and troubleshooting, see the **[Practical User Guide](docs/User_Guide.md)**.
+
 ### Requirements
 
 #### Hardware
 
 - Raspberry Pi Zero 2W or newer
 - microSD card (16 GB or larger recommended)
-- Meshtastic compatible LoRa device
+- Meshtastic-compatible radio with a supported USB serial connection
 - Raspberry Pi Camera (optional)
-- Wi-Fi connection
+- Wi-Fi or Ethernet connection for access to the web interface
 
 #### Software
 
@@ -336,45 +339,47 @@ Although it has been primarily developed and tested on Raspberry Pi Zero 2W, it 
 - Python 3.11 or newer
 - Git
 
+### Prepare Raspberry Pi OS
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip network-manager iw
+sudo usermod -aG dialout "$USER"
+sudo reboot
+```
+
+For optional camera support, install `python3-picamera2` and `rpicam-apps` before creating the virtual environment.
+
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/FlintUA/MeshCenter.git
-cd MeshCenter
+cd ~
+git clone https://github.com/FlintUA/MeshCenter.git meshcenter
+cd ~/meshcenter
 ```
 
 ### Create a Virtual Environment
 
-It is recommended to create the virtual environment with access to system site packages. This is required for camera support (Picamera2 / libcamera) and is useful for other system-level libraries:
+Create the virtual environment with access to system packages. This is required for Picamera2 camera support:
 
 ```bash
 python3 -m venv --system-site-packages venv
 source venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
 ```
 
-If you do not plan to use the camera, a regular isolated environment is also acceptable:
+The requirements install Flask, Pillow, Requests, psutil and the Meshtastic Python package and CLI.
+
+### Verify the USB radio
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+ls -l /dev/ttyACM* /dev/ttyUSB* 2>/dev/null
+source ~/meshcenter/venv/bin/activate
+meshtastic --port /dev/ttyACM0 --info
 ```
 
-### Install Dependencies
-
-```bash
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-The `requirements.txt` includes the core dependencies, including `meshtastic` and `pillow`.
-
-If for any reason these packages are missing after installation, install them explicitly:
-
-```bash
-pip install meshtastic pillow
-```
-
-Camera support also requires the Raspberry Pi camera stack (Picamera2, libcamera) to be installed and enabled at the system level.
+Do not continue until the CLI can read the connected radio without permission or serial-port errors. Replace `/dev/ttyACM0` if the radio uses another device path.
 
 ### Configuration
 
@@ -382,73 +387,28 @@ Copy the example configuration file:
 
 ```bash
 cp config.example.py config.py
+mkdir -p data
 ```
 
-Edit the configuration:
-
-```bash
-nano config.py
-```
-
-Typical configuration options include:
+Open `config.py` in your preferred editor and set the serial port and local-node information:
 
 ```python
-APP_HOST = "0.0.0.0"
-APP_PORT = 5000
-
-# Path to the meshtastic CLI executable.
-# Prefer the one inside the virtual environment:
-MESHTASTIC_CMD = "/home/your_username/MeshCenter/venv/bin/meshtastic"
-# Or, if meshtastic is available in PATH after activating the venv:
-# MESHTASTIC_CMD = "meshtastic"
-
 MESHTASTIC_PORT = "/dev/ttyACM0"
 
 LOCAL_NODE_ID = "!xxxxxxxx"
 LOCAL_NODE_NAME = "My Base Station"
-
-DATA_DIR = "/home/your_username/MeshCenter/data"
-
-# Optional: OpenWeather API key for weather module
-OPENWEATHER_API_KEY = "your_api_key_here"
-WEATHER_LATITUDE = 49.58810
-WEATHER_LONGITUDE = 11.00780
-WEATHER_LOCATION_NAME = "Erlangen, Germany"
-WEATHER_LANGUAGE = "en"
-WEATHER_CACHE_SECONDS = 600
 ```
 
-Adjust these values to match your installation.  
-Make sure `MESHTASTIC_CMD` points to the actual location of the executable (check with `which meshtastic` after activating the venv).
+The example configuration resolves `MESHTASTIC_CMD` and `DATA_DIR` automatically from the project directory. `config.py`, `weather_secrets.py` and `data/` are local files and are not changed by normal Git updates.
 
-### Verify Meshtastic CLI
-
-Activate the virtual environment (if not already active) and verify that the Meshtastic CLI works:
-
-```bash
-source venv/bin/activate
-meshtastic --info
-```
-
-or with an explicit port:
-
-```bash
-meshtastic --port /dev/ttyACM0 --info
-```
-
-You can also use the full path:
-
-```bash
-./venv/bin/meshtastic --info
-```
-
-If the command displays information about your node, MeshCenter should be able to communicate with it.
+For optional weather support, copy `weather_secrets.example.py` to `weather_secrets.py` and place the OpenWeather API key there.
 
 ### Starting MeshCenter
 
 Run manually:
 
 ```bash
+cd ~/meshcenter
 source venv/bin/activate
 python server.py
 ```
@@ -459,85 +419,48 @@ The web interface will be available at:
 http://<raspberry-pi-ip>:5000
 ```
 
-Example:
-
-```
-http://192.168.2.103:5000
-```
-
 ### Running as a Service
 
-For permanent installations, MeshCenter is intended to run as a systemd service.
-
-Example service file (`/etc/systemd/system/meshcenter.service`):
-
-```ini
-[Unit]
-Description=MeshCenter
-After=network.target
-
-[Service]
-Type=simple
-User=your_username
-WorkingDirectory=/home/your_username/MeshCenter
-Environment="PATH=/home/your_username/MeshCenter/venv/bin:/usr/local/bin:/usr/bin:/bin"
-Environment="PYTHONUNBUFFERED=1"
-ExecStart=/home/your_username/MeshCenter/venv/bin/python /home/your_username/MeshCenter/server.py
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-CPUQuota=70%
-MemoryMax=200M
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable the service:
+Render the supplied systemd template with the current username and home directory:
 
 ```bash
-sudo systemctl enable meshcenter
-sudo systemctl start meshcenter
+cd ~/meshcenter
+MESH_USER="$(id -un)"
+MESH_HOME="$HOME"
+sed -e "s|__MESH_USER__|$MESH_USER|g" \
+    -e "s|__MESH_HOME__|$MESH_HOME|g" \
+    deploy/meshcenter.service \
+    | sudo tee /etc/systemd/system/meshcenter.service >/dev/null
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now meshcenter.service
+sudo systemctl status meshcenter.service --no-pager -l
 ```
 
-Check its status:
+The optional System and Wi-Fi actions also require the narrowly scoped rules in `deploy/meshcenter.sudoers` and `deploy/meshcenter-wifi.sudoers`. The complete rendering and validation commands are in the [Practical User Guide](docs/User_Guide.md#enable-system-and-wi-fi-actions).
+
+### Updating MeshCenter Safely
+
+Check for local changes before updating:
 
 ```bash
-systemctl status meshcenter
+cd ~/meshcenter
+git status --short --branch
 ```
 
-View the log:
+If tracked files are modified, review them before continuing. Then back up `config.py` and `data/` and run:
 
 ```bash
-journalctl -u meshcenter -f
-```
-
-### Updating MeshCenter
-
-```bash
-git pull
+git pull --ff-only origin main
 source venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+python -m compileall -q server.py api camera meshsrv storage telemetry utils
+sudo systemctl restart meshcenter.service
+sudo systemctl is-active meshcenter.service
+git status --short --branch
 ```
 
-If the update introduces new system-level requirements (for example related to the camera stack or NetworkManager), install the corresponding system packages as well (e.g. via `apt`).
-
-Then restart the service:
-
-```bash
-sudo systemctl restart meshcenter
-```
-
-### Updating Meshtastic CLI
-
-It is recommended to keep the Meshtastic CLI up to date. Upgrade inside the virtual environment:
-
-```bash
-source venv/bin/activate
-pip install --upgrade meshtastic
-meshtastic --version
-```
+Use `Ctrl+F5` in the browser after an interface update. This update sequence was verified on a clean second Raspberry Pi installation.
 
 ---
 
@@ -548,7 +471,7 @@ MeshCenter has been designed as a modular application. Each subsystem has its ow
 A typical installation looks like this:
 
 ```
-MeshCenter/
+meshcenter/
 │
 ├── api/                # REST API endpoints
 ├── camera/             # Camera subsystem
@@ -561,6 +484,7 @@ MeshCenter/
 ├── templates/          # HTML templates
 ├── data/               # Persistent application data (messages, nodes, photos, icons, settings)
 ├── docs/               # Documentation and images
+│   └── User_Guide.md   # Installation and practical operation guide
 │
 ├── venv/               # Python virtual environment
 │
@@ -928,7 +852,7 @@ MeshCenter provides a dedicated System workspace that gives you full visibility 
 
 MeshCenter integrates with OpenWeather to show current weather conditions and a 3‑day forecast for your location.
 
-- **Server-side API key** – The OpenWeather API key is stored in `config.py` and never exposed to the browser
+- **Server-side API key** - The OpenWeather API key is stored in the local `weather_secrets.py` file and never exposed to the browser
 - **Caching** – Weather data is cached for 10 minutes to reduce API calls
 - **Location sources**:
   - Manual coordinates (set in the web Settings)
@@ -958,7 +882,7 @@ MeshCenter provides a graphical settings interface accessible from the Workspace
 
 You can adjust the following without editing configuration files:
 
-- **Units** – Temperature (°C/°F), Pressure (hPa/mmHg), Wind (m/s, km/h, mph)
+- **Units** - Temperature (°C/°F) and pressure (hPa/mmHg)
 - **Telemetry interval** – How often sensor readings are stored (2, 5, 10, 15, 30 minutes)
 - **Battery capacity** – Used for runtime estimation (100–50000 mAh)
 - **Listener auto‑recovery** – Enable/disable, delay (30–300 seconds)
@@ -1306,7 +1230,7 @@ Also check your firewall configuration.
 
 ### Weather data not showing
 
-- Verify that `OPENWEATHER_API_KEY` is set in `config.py`
+- Verify that `OPENWEATHER_API_KEY` is set in `weather_secrets.py`
 - Check that the reference location is configured (Settings → Reference location)
 - Ensure the Raspberry Pi has internet access
 
@@ -1333,7 +1257,7 @@ Also check your firewall configuration.
 
 ### Does MeshCenter support mobile devices?
 
-MeshCenter is currently optimized for desktop web browsers. It is usable partialle on many tablets, while full mobile optimization is planned for a future release.
+MeshCenter is currently optimized for desktop web browsers. It is partially usable on many tablets, while full mobile optimization is planned for a future release.
 
 ### Does MeshCenter replace the official Meshtastic application?
 
@@ -1351,7 +1275,7 @@ Yes. Multiple users on the same local network can access the interface at the sa
 
 No. Internet access is not required for normal operation.
 
-Some optional features, such as weather integration or software updates, may require Internet connectivity.
+Some optional features, such as weather integration, external map tiles and software updates, require Internet connectivity.
 
 ### Which Raspberry Pi models are supported?
 

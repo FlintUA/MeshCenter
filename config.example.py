@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """
-Configuration file for Meshtastic Web UI
+Configuration file for MeshCenter
 Copy this file to config.py and edit your settings
 """
+
+from pathlib import Path
+
+# Resolve installation-specific paths automatically. This keeps the example
+# valid when MeshCenter is installed under a user other than "pi".
+PROJECT_DIR = Path(__file__).resolve().parent
 
 # ===== SERVER SETTINGS =====
 APP_HOST = "0.0.0.0"
 APP_PORT = 5000
 
 # ===== MESHTASTIC SETTINGS =====
-MESHTASTIC_CMD = "/home/_your_profile_directory_/.local/bin/meshtastic"  # it is necessary to change the path correctly
+MESHTASTIC_CMD = str(PROJECT_DIR / "venv" / "bin" / "meshtastic")
 
 # ===== SERIAL PORT =====
 MESHTASTIC_PORT = "/dev/ttyACM0"  # or /dev/ttyUSB0
@@ -19,7 +25,7 @@ LOCAL_NODE_ID = "!xxxxxxxx"        # Your Meshtastic node ID
 LOCAL_NODE_NAME = "My Meshtastic"  # Your node display name
 
 # ===== DATA STORAGE =====
-DATA_DIR = "/home/_your_profile_directory_/meshcenter/data" # it is necessary to change the path correctly
+DATA_DIR = str(PROJECT_DIR / "data")
 
 # ===== FILE PATHS (auto-generated from DATA_DIR) =====
 HISTORY_FILE = f"{DATA_DIR}/messages.json"
@@ -48,8 +54,10 @@ try:
 except ImportError:
     OPENWEATHER_API_KEY = ""
 
-WEATHER_LATITUDE = 49.58810
-WEATHER_LONGITUDE = 11.00780
-WEATHER_LOCATION_NAME = "Erlangen"
+# Optional static fallback. Leave unset and choose a reference location in the
+# web Settings, or enter fallback coordinates here.
+WEATHER_LATITUDE = None
+WEATHER_LONGITUDE = None
+WEATHER_LOCATION_NAME = ""
 WEATHER_LANGUAGE = "en"
 WEATHER_CACHE_SECONDS = 600

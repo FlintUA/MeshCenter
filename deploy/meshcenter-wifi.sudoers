@@ -1,2 +1,2 @@
-pi ALL=(root) NOPASSWD: /usr/sbin/iw
-pi ALL=(root) NOPASSWD: /usr/bin/nmcli
+__MESH_USER__ ALL=(root) NOPASSWD: /usr/sbin/iw
+__MESH_USER__ ALL=(root) NOPASSWD: /usr/bin/nmcli

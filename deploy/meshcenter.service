@@ -1,14 +1,19 @@
 [Unit]
 Description=MeshCenter
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/MeshCenter
-ExecStart=/home/pi/MeshCenter/venv/bin/python server.py
-Restart=always
+User=__MESH_USER__
+WorkingDirectory=__MESH_HOME__/meshcenter
+Environment="PATH=__MESH_HOME__/meshcenter/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=__MESH_HOME__/meshcenter/venv/bin/python __MESH_HOME__/meshcenter/server.py
+Restart=on-failure
 RestartSec=5
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

@@ -37,6 +37,106 @@ MeshCenter reads and uses the channels already stored on the radio. Channel crea
 
 ## 2. Clean installation
 
+### Install Raspberry Pi OS and enable SSH
+
+MeshCenter normally runs as a headless system, without a dedicated monitor, keyboard or mouse. The Raspberry Pi can be prepared and accessed remotely from another computer on the same local network.
+
+Download and install the official [Raspberry Pi Imager](https://www.raspberrypi.com/software/) on a Windows, macOS or Linux computer.
+
+Insert the microSD card into the computer and open Raspberry Pi Imager.
+
+Configure the image as follows:
+
+1. Under **Device**, select your Raspberry Pi model.
+2. Under **Operating System**, select **Raspberry Pi OS Lite (64-bit)**. Raspberry Pi OS with Desktop can also be used, but the desktop environment is not required for MeshCenter.
+3. Under **Storage**, select the correct microSD card.
+4. Open **OS Customisation** and configure the following items:
+
+   - **Hostname** – choose a unique network name, for example `meshcenter`.
+   - **Localisation** – select the correct time zone, country and keyboard layout.
+   - **User** – create a Linux username and a strong password. Remember these credentials because they are required for SSH and `sudo` commands.
+   - **Wi-Fi** – enter the Wi-Fi network name and password. For Raspberry Pi Zero 2 W, use a 2.4 GHz Wi-Fi network.
+   - **Remote Access** – enable **SSH** and select **Use password authentication**.
+
+The examples below assume:
+
+```text
+Hostname: meshcenter
+Username: flint
+```
+
+Use the hostname and username that you actually entered in Raspberry Pi Imager.
+
+Review the settings, select **Write**, and wait until writing and verification are complete. Writing the image erases all existing data on the selected microSD card.
+
+For additional information, see the official [Raspberry Pi headless setup documentation](https://www.raspberrypi.com/documentation/computers/remote-access.html).
+
+#### First boot and SSH connection
+
+Remove the microSD card from the computer, insert it into the Raspberry Pi and connect the power supply.
+
+On first boot, Raspberry Pi OS applies the settings created in Raspberry Pi Imager and connects to the configured network. Allow several minutes for the first startup.
+
+Make sure that the computer and Raspberry Pi are connected to the same local network.
+
+On Windows, open PowerShell or Windows Terminal. On Linux or macOS, open a terminal. Connect using the hostname configured in Raspberry Pi Imager:
+
+```bash
+ssh <username>@<hostname>.local
+```
+
+Example:
+
+```bash
+ssh flint@meshcenter.local
+```
+
+At the first connection, SSH displays a host authenticity warning. Enter:
+
+```text
+yes
+```
+
+Then enter the password created in Raspberry Pi Imager. The password is not displayed while typing — this is normal.
+
+A successful connection shows a prompt similar to:
+
+```text
+flint@meshcenter:~ $
+```
+
+You are now working in the Raspberry Pi terminal and can continue with the MeshCenter installation.
+
+#### If the hostname does not work
+
+Some local networks do not resolve `.local` hostnames correctly. Find the Raspberry Pi IP address in the router's list of connected devices and connect directly to that address:
+
+```bash
+ssh <username>@<raspberry-pi-ip>
+```
+
+Example:
+
+```bash
+ssh flint@192.168.1.50
+```
+
+If a monitor and keyboard are connected to the Raspberry Pi, its IP address can also be displayed locally with:
+
+```bash
+hostname -I
+```
+
+After connecting, verify the system identity and network address:
+
+```bash
+whoami
+hostname
+hostname -I
+```
+
+Do not expose SSH port 22 directly to the public internet. The installation procedure assumes access from a trusted local network.
+
 ### Prepare Raspberry Pi OS
 
 Install the required system packages:

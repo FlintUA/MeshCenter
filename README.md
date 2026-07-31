@@ -81,7 +81,7 @@ Typical use cases include:
 
 ### 📚 Documentation
 
-- **[Installation and User Guide](docs/User_Guide.md)** - installation, configuration, daily use, updates, backup and troubleshooting.
+- [Practical User Guide](docs/User_Guide.md)
 - [Quick Installation](#installation)
 - [Architecture Overview](#application-architecture)
 - [Development Roadmap](#roadmap)

@@ -327,6 +327,7 @@ This section is a complete beginner-friendly install path from a fresh Pi to a w
 
 - Raspberry Pi Zero 2W or newer
 - microSD card (16 GB minimum, 32 GB recommended)
+- Computer with a microSD card reader for preparing Raspberry Pi OS
 - Stable power supply
 - Meshtastic-compatible radio with a **data-capable** USB cable (serial connection)
 - Wi-Fi or Ethernet (for access to the web interface)
@@ -335,6 +336,7 @@ This section is a complete beginner-friendly install path from a fresh Pi to a w
 **Software**
 
 - Raspberry Pi OS Bookworm (64-bit recommended)
+- Raspberry Pi Imager
 - Python 3.11 or newer
 - Git
 
@@ -347,7 +349,48 @@ This section is a complete beginner-friendly install path from a fresh Pi to a w
 
 MeshCenter reads the channels already stored on the radio. It does not create or edit channels itself.
 
-### 1. Prepare Raspberry Pi OS
+### 1. Write Raspberry Pi OS and enable SSH
+
+MeshCenter can run headless, without a monitor or keyboard. Use the official [Raspberry Pi Imager](https://www.raspberrypi.com/software/) to prepare the microSD card.
+
+1. Select your Raspberry Pi model.
+2. Select **Raspberry Pi OS Lite (64-bit)**.
+3. Select the correct microSD card.
+4. In **OS Customisation**, configure:
+
+   - A unique hostname, for example `meshcenter`
+   - Your time zone, country and keyboard layout
+   - A Linux username and strong password
+   - Wi-Fi SSID and password
+   - **Remote Access > Enable SSH > Use password authentication**
+
+Write and verify the image, insert the microSD card into the Raspberry Pi and connect the power supply. Allow several minutes for the first boot.
+
+From a computer on the same local network, open PowerShell, Windows Terminal or another terminal and connect with:
+
+```bash
+ssh <username>@<hostname>.local
+```
+
+Example:
+
+```bash
+ssh flint@meshcenter.local
+```
+
+At the first connection, enter `yes`, then enter the password created in Raspberry Pi Imager. The password is not displayed while typing.
+
+If the `.local` hostname does not work, find the Raspberry Pi address in the router's connected-device list:
+
+```bash
+ssh <username>@<raspberry-pi-ip>
+```
+
+After a successful connection, the Raspberry Pi terminal is ready for the commands below.
+
+For more detailed instructions, see the [Practical User Guide](docs/User_Guide.md).
+
+### 2. Prepare Raspberry Pi OS
 
 ```bash
 sudo apt update
@@ -369,7 +412,7 @@ sudo reboot
 
 After reboot, reconnect (SSH or local terminal) and continue.
 
-### 2. Clone the repository
+### 3. Clone the repository
 
 ```bash
 cd ~
@@ -377,7 +420,7 @@ git clone https://github.com/FlintUA/MeshCenter.git meshcenter
 cd ~/meshcenter
 ```
 
-### 3. Create the Python environment
+### 4. Create the Python environment
 
 `--system-site-packages` is required so Picamera2 and other Raspberry Pi system packages are visible inside the virtual environment.
 
@@ -397,7 +440,7 @@ meshtastic --version
 
 `which meshtastic` should show a path under `~/meshcenter/venv/bin/`.
 
-### 4. Find and test the USB radio
+### 5. Find and test the USB radio
 
 Connect the Meshtastic radio and list serial devices:
 
@@ -416,7 +459,7 @@ meshtastic --port /dev/ttyACM0 --info
 
 **Do not continue** until this command shows local node information without permission or serial-port errors. Note the local node ID, long name and short name from the output — you will need them in the next step.
 
-### 5. Create the local configuration
+### 6. Create the local configuration
 
 ```bash
 cd ~/meshcenter
@@ -440,7 +483,7 @@ Replace the example values with those reported by `meshtastic --info`.
 
 **Optional weather:** copy `weather_secrets.example.py` to `weather_secrets.py` and insert your OpenWeather API key. The location can later be chosen in **Workspace → Settings → Reference location**.
 
-### 6. First manual start
+### 7. First manual start
 
 ```bash
 cd ~/meshcenter
@@ -462,7 +505,7 @@ http://<raspberry-pi-ip>:5000
 
 Stop the manual server with `Ctrl+C` before installing the systemd service.
 
-### 7. Run as a system service (recommended)
+### 8. Run as a system service (recommended)
 
 Render and install the service template for the current user:
 

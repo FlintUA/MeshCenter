@@ -317,40 +317,59 @@ This modular architecture makes it easy to extend the project while keeping the 
 
 ## Installation
 
-MeshCenter is designed to run on Raspberry Pi OS Bookworm and newer versions.
+MeshCenter runs on **Raspberry Pi OS Bookworm** (or newer). It is primarily tested on Raspberry Pi Zero 2W and also works on Raspberry Pi 3, 4 and 5.
 
-Although it has been primarily developed and tested on Raspberry Pi Zero 2W, it also works on Raspberry Pi 3, 4 and 5.
-
-For complete explanations, first-run checks, interface operation, backups and troubleshooting, see the **[Practical User Guide](docs/User_Guide.md)**.
+This section is a complete beginner-friendly install path from a fresh Pi to a working web interface. For first-run checks, interface usage, backup, safe update details and extended troubleshooting, see the **[Practical User Guide](docs/User_Guide.md)**.
 
 ### Requirements
 
-#### Hardware
+**Hardware**
 
 - Raspberry Pi Zero 2W or newer
-- microSD card (16 GB or larger recommended)
-- Meshtastic-compatible radio with a supported USB serial connection
+- microSD card (16 GB minimum, 32 GB recommended)
+- Stable power supply
+- Meshtastic-compatible radio with a **data-capable** USB cable (serial connection)
+- Wi-Fi or Ethernet (for access to the web interface)
 - Raspberry Pi Camera (optional)
-- Wi-Fi or Ethernet connection for access to the web interface
 
-#### Software
+**Software**
 
 - Raspberry Pi OS Bookworm (64-bit recommended)
 - Python 3.11 or newer
 - Git
 
-### Prepare Raspberry Pi OS
+**Before installing MeshCenter**, configure the radio with an official Meshtastic app (Android or Desktop):
+
+1. Set the correct LoRa region.
+2. Configure channels and channel keys.
+3. Set the node long name and short name.
+4. Confirm that the radio can exchange messages with another node.
+
+MeshCenter reads the channels already stored on the radio. It does not create or edit channels itself.
+
+### 1. Prepare Raspberry Pi OS
 
 ```bash
 sudo apt update
 sudo apt install -y git python3 python3-venv python3-pip network-manager iw
+```
+
+Optional camera support (install **before** creating the virtual environment):
+
+```bash
+sudo apt install -y python3-picamera2 rpicam-apps
+```
+
+Allow the current user to access the USB serial port, then reboot:
+
+```bash
 sudo usermod -aG dialout "$USER"
 sudo reboot
 ```
 
-For optional camera support, install `python3-picamera2` and `rpicam-apps` before creating the virtual environment.
+After reboot, reconnect (SSH or local terminal) and continue.
 
-### Clone the Repository
+### 2. Clone the repository
 
 ```bash
 cd ~
@@ -358,9 +377,9 @@ git clone https://github.com/FlintUA/MeshCenter.git meshcenter
 cd ~/meshcenter
 ```
 
-### Create a Virtual Environment
+### 3. Create the Python environment
 
-Create the virtual environment with access to system packages. This is required for Picamera2 camera support:
+`--system-site-packages` is required so Picamera2 and other Raspberry Pi system packages are visible inside the virtual environment.
 
 ```bash
 python3 -m venv --system-site-packages venv
@@ -369,28 +388,43 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r requirements.txt
 ```
 
-The requirements install Flask, Pillow, Requests, psutil and the Meshtastic Python package and CLI.
+Confirm that the Meshtastic CLI is installed inside the venv:
 
-### Verify the USB radio
+```bash
+which meshtastic
+meshtastic --version
+```
+
+`which meshtastic` should show a path under `~/meshcenter/venv/bin/`.
+
+### 4. Find and test the USB radio
+
+Connect the Meshtastic radio and list serial devices:
 
 ```bash
 ls -l /dev/ttyACM* /dev/ttyUSB* 2>/dev/null
+```
+
+Most RAK4631-based nodes appear as `/dev/ttyACM0`. Some radios use `/dev/ttyUSB0`.
+
+Test communication (replace the port if needed):
+
+```bash
 source ~/meshcenter/venv/bin/activate
 meshtastic --port /dev/ttyACM0 --info
 ```
 
-Do not continue until the CLI can read the connected radio without permission or serial-port errors. Replace `/dev/ttyACM0` if the radio uses another device path.
+**Do not continue** until this command shows local node information without permission or serial-port errors. Note the local node ID, long name and short name from the output — you will need them in the next step.
 
-### Configuration
-
-Copy the example configuration file:
+### 5. Create the local configuration
 
 ```bash
+cd ~/meshcenter
 cp config.example.py config.py
 mkdir -p data
 ```
 
-Open `config.py` in your preferred editor and set the serial port and local-node information:
+Open `config.py` and set at least:
 
 ```python
 MESHTASTIC_PORT = "/dev/ttyACM0"
@@ -399,13 +433,14 @@ LOCAL_NODE_ID = "!xxxxxxxx"
 LOCAL_NODE_NAME = "My Base Station"
 ```
 
-The example configuration resolves `MESHTASTIC_CMD` and `DATA_DIR` automatically from the project directory. `config.py`, `weather_secrets.py` and `data/` are local files and are not changed by normal Git updates.
+Replace the example values with those reported by `meshtastic --info`.  
+`MESHTASTIC_CMD` and `DATA_DIR` are resolved automatically from the project directory.
 
-For optional weather support, copy `weather_secrets.example.py` to `weather_secrets.py` and place the OpenWeather API key there.
+`config.py`, optional `weather_secrets.py` and the `data/` folder are local files and are **not** overwritten by normal Git updates.
 
-### Starting MeshCenter
+**Optional weather:** copy `weather_secrets.example.py` to `weather_secrets.py` and insert your OpenWeather API key. The location can later be chosen in **Workspace → Settings → Reference location**.
 
-Run manually:
+### 6. First manual start
 
 ```bash
 cd ~/meshcenter
@@ -413,15 +448,23 @@ source venv/bin/activate
 python server.py
 ```
 
-The web interface will be available at:
+On the Pi, find the IP address:
 
+```bash
+hostname -I
 ```
+
+From another device on the same local network open:
+
+```text
 http://<raspberry-pi-ip>:5000
 ```
 
-### Running as a Service
+Stop the manual server with `Ctrl+C` before installing the systemd service.
 
-Render the supplied systemd template with the current username and home directory:
+### 7. Run as a system service (recommended)
+
+Render and install the service template for the current user:
 
 ```bash
 cd ~/meshcenter
@@ -437,30 +480,41 @@ sudo systemctl enable --now meshcenter.service
 sudo systemctl status meshcenter.service --no-pager -l
 ```
 
-The optional System and Wi-Fi actions also require the narrowly scoped rules in `deploy/meshcenter.sudoers` and `deploy/meshcenter-wifi.sudoers`. The complete rendering and validation commands are in the [Practical User Guide](docs/User_Guide.md#enable-system-and-wi-fi-actions).
+Expected state: `active (running)`.
 
-### Updating MeshCenter Safely
+**System and Wi‑Fi actions** (restart MeshCenter, reboot/shutdown Pi, scan/connect Wi‑Fi) need extra narrowly scoped sudo rules. Full commands are in the [Practical User Guide → Enable System and Wi‑Fi actions](docs/User_Guide.md#enable-system-and-wi-fi-actions).
 
-Check for local changes before updating:
+### Configuring the Radio (after install)
+
+MeshCenter automatically reads channel configuration from the connected node.
+
+To change channels or other radio settings with the official Meshtastic app:
+
+```bash
+sudo systemctl stop meshcenter
+# Configure the node using the official Meshtastic Android or Desktop app
+sudo systemctl start meshcenter
+```
+
+After restart, MeshCenter synchronizes the channels stored on the radio (indexes 0–7).
+
+### Updating MeshCenter
+
+Full safe-update procedure (backup, checks, verification): **[User Guide → Update MeshCenter safely](docs/User_Guide.md#13-update-meshcenter-safely)**.
+
+Short version when the working tree is clean:
 
 ```bash
 cd ~/meshcenter
-git status --short --branch
-```
-
-If tracked files are modified, review them before continuing. Then back up `config.py` and `data/` and run:
-
-```bash
+git status --short --branch          # review any local changes first
+# back up config.py and data/ if needed
 git pull --ff-only origin main
 source venv/bin/activate
 python -m pip install -r requirements.txt
-python -m compileall -q server.py api camera meshsrv storage telemetry utils
 sudo systemctl restart meshcenter.service
-sudo systemctl is-active meshcenter.service
-git status --short --branch
 ```
 
-Use `Ctrl+F5` in the browser after an interface update. This update sequence was verified on a clean second Raspberry Pi installation.
+Reload the browser with `Ctrl+F5` after a UI update.
 
 ---
 

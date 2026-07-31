@@ -2780,7 +2780,12 @@ weather_service = OpenWeatherService(WeatherConfig(
     language=WEATHER_LANGUAGE,
     cache_seconds=WEATHER_CACHE_SECONDS,
 ))
-register_weather_routes(app, weather_service, resolve_weather_location)
+register_weather_routes(
+    app,
+    weather_service,
+    resolve_weather_location,
+    secrets_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "weather_secrets.py"),
+)
 
 register_node_tools_routes(
     app=app,

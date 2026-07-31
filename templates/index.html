@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=map-layout-restore-fix-20260729">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=openweather-setup-20260731">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -146,7 +146,7 @@
                         </div>
                     </div>
 
-                    <button class="weather-state-badge weather-summary-state" id="weatherStateBadge" type="button" onclick="loadWeather(true)" title="Refresh weather">Loading</button>
+                    <button class="weather-state-badge weather-summary-state" id="weatherStateBadge" type="button" onclick="handleWeatherBadgeClick()" title="Refresh weather or configure OpenWeather">Loading</button>
                 </div>
 
                 <div class="weather-metrics">
@@ -1732,11 +1732,53 @@
     </div>
 </div>
 
+
+<div class="modal-overlay" id="weatherSetupModal" style="display:none;" aria-hidden="true" onclick="closeWeatherSetup()">
+    <div class="modal-content weather-setup-modal" role="dialog" aria-modal="true" aria-labelledby="weatherSetupTitle" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span id="weatherSetupTitle">🌦️ OpenWeather Setup</span>
+            <button class="modal-close" type="button" onclick="closeWeatherSetup()" aria-label="Close OpenWeather setup">✕</button>
+        </div>
+        <div class="modal-body">
+            <p class="weather-setup-copy">
+                Enter an OpenWeather API key to enable current weather and the 3-day forecast.
+                The key is stored only on this Raspberry Pi and is never returned to the browser.
+            </p>
+
+            <label class="weather-setup-label" for="weatherApiKeyInput">OpenWeather API key</label>
+            <div class="weather-key-input-wrap">
+                <input
+                    type="password"
+                    id="weatherApiKeyInput"
+                    class="weather-setup-input"
+                    placeholder="Paste API key"
+                    autocomplete="off"
+                    spellcheck="false">
+                <button class="weather-key-visibility" type="button" onclick="toggleWeatherKeyVisibility(this)" aria-label="Show or hide API key">Show</button>
+            </div>
+
+            <div class="weather-setup-help">
+                Get a free key at
+                <a href="https://openweathermap.org/api" target="_blank" rel="noopener noreferrer">openweathermap.org/api</a>.
+                Newly created keys may require some time before activation.
+            </div>
+
+            <div class="weather-setup-result" id="weatherSetupResult" aria-live="polite"></div>
+
+            <div class="weather-setup-actions">
+                <button class="confirm-btn confirm-cancel" type="button" onclick="closeWeatherSetup()">Cancel</button>
+                <button class="confirm-btn weather-test-btn" id="weatherTestKeyBtn" type="button" onclick="testWeatherApiKey()">Test key</button>
+                <button class="confirm-btn weather-save-btn" id="weatherSaveKeyBtn" type="button" onclick="saveWeatherApiKey()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/chat.js?v=map-layout-restore-fix-20260729"></script>
+<script src="/static/chat.js?v=openweather-setup-20260731"></script>
 <script src="/static/media.js"></script>
-<script src="/static/weather.js?v=stage2c7-4-unified-popovers-20260725"></script>
+<script src="/static/weather.js?v=openweather-setup-20260731"></script>
 
 <div class="modal-overlay" id="wifiConnectModal" style="display:none;" onclick="closeWifiConnectModal()">
     <div class="modal-content wifi-connect-modal" onclick="event.stopPropagation()">

@@ -165,6 +165,7 @@ function setWeatherState(state, label) {
 
 function renderWeather(data) {
     weatherLastData = data;
+    weatherSetupRequired = false;
 
     weatherText('weatherLocation', [data.location, data.country].filter(Boolean).join(', '));
     weatherText('weatherIcon', weatherEmoji(data.icon_code, data.condition));
@@ -188,14 +189,15 @@ function renderWeather(data) {
 
 function renderWeatherError(data) {
     weatherLastData = null;
-    setWeatherState('error', data?.configured === false ? 'Setup' : 'Offline');
+    weatherSetupRequired = data?.configured === false;
+    setWeatherState('error', weatherSetupRequired ? 'Setup' : 'Offline');
     weatherText('weatherTemperature', `--${weatherTemperatureUnit()}`);
     weatherText('weatherCondition', data?.error || 'Weather data unavailable');
     weatherText('weatherHumidity', '--%');
     weatherText('weatherPressure', `-- ${weatherPressureUnit()}`);
     weatherText('weatherWind', '-- m/s');
     weatherText('weatherFeelsLike', 'OpenWeather');
-    weatherText('weatherUpdated', 'Retry later');
+    weatherText('weatherUpdated', weatherSetupRequired ? 'Click Setup' : 'Retry later');
     renderWeatherForecast([]);
 }
 
@@ -246,3 +248,142 @@ function startWeatherModule() {
 
 document.addEventListener('meshcenter:settings-updated', handleWeatherSettingsUpdated);
 document.addEventListener('DOMContentLoaded', startWeatherModule);
+
+// ============================================================
+// OPENWEATHER SETUP
+// The API key is sent only to the MeshCenter backend and is never
+// returned to the browser after it has been saved.
+// ============================================================
+
+let weatherSetupRequired = false;
+let weatherSetupBusy = false;
+
+function handleWeatherBadgeClick() {
+    if (weatherSetupRequired) {
+        openWeatherSetup();
+        return;
+    }
+    loadWeather(true);
+}
+
+function setWeatherSetupResult(message = '', state = '') {
+    const result = document.getElementById('weatherSetupResult');
+    if (!result) return;
+    result.textContent = message;
+    result.className = 'weather-setup-result';
+    if (state) result.classList.add(`is-${state}`);
+}
+
+function setWeatherSetupBusy(busy, action = '') {
+    weatherSetupBusy = Boolean(busy);
+    const input = document.getElementById('weatherApiKeyInput');
+    const testButton = document.getElementById('weatherTestKeyBtn');
+    const saveButton = document.getElementById('weatherSaveKeyBtn');
+    if (input) input.disabled = weatherSetupBusy;
+    if (testButton) {
+        testButton.disabled = weatherSetupBusy;
+        testButton.textContent = weatherSetupBusy && action === 'test' ? 'Testing…' : 'Test key';
+    }
+    if (saveButton) {
+        saveButton.disabled = weatherSetupBusy;
+        saveButton.textContent = weatherSetupBusy && action === 'save' ? 'Saving…' : 'Save';
+    }
+}
+
+function openWeatherSetup() {
+    const modal = document.getElementById('weatherSetupModal');
+    const input = document.getElementById('weatherApiKeyInput');
+    if (!modal) return;
+
+    setWeatherSetupBusy(false);
+    setWeatherSetupResult('');
+    if (input) input.value = '';
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => input?.focus(), 40);
+}
+
+function closeWeatherSetup() {
+    if (weatherSetupBusy) return;
+    const modal = document.getElementById('weatherSetupModal');
+    const input = document.getElementById('weatherApiKeyInput');
+    if (modal) {
+        modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
+    }
+    if (input) input.value = '';
+    setWeatherSetupResult('');
+}
+
+function weatherSetupKey() {
+    return String(document.getElementById('weatherApiKeyInput')?.value || '').trim();
+}
+
+async function submitWeatherKey(endpoint, action) {
+    const apiKey = weatherSetupKey();
+    if (!apiKey) {
+        setWeatherSetupResult('Enter your OpenWeather API key.', 'error');
+        document.getElementById('weatherApiKeyInput')?.focus();
+        return null;
+    }
+
+    setWeatherSetupBusy(true, action);
+    setWeatherSetupResult(action === 'test' ? 'Checking the key…' : 'Checking and saving the key…', 'pending');
+
+    try {
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: apiKey }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || 'OpenWeather setup failed.');
+        }
+        return data;
+    } catch (error) {
+        setWeatherSetupResult(error.message || 'OpenWeather setup failed.', 'error');
+        return null;
+    } finally {
+        setWeatherSetupBusy(false);
+    }
+}
+
+async function testWeatherApiKey() {
+    const data = await submitWeatherKey('/api/weather/config/test', 'test');
+    if (!data) return;
+    const suffix = data.location ? ` Location: ${data.location}.` : '';
+    setWeatherSetupResult(`API key is valid.${suffix}`, 'success');
+}
+
+async function saveWeatherApiKey() {
+    const data = await submitWeatherKey('/api/weather/config', 'save');
+    if (!data) return;
+
+    setWeatherSetupResult('API key saved. Loading weather…', 'success');
+    weatherSetupRequired = false;
+    setTimeout(async () => {
+        closeWeatherSetup();
+        await loadWeather(true);
+    }, 450);
+}
+
+document.addEventListener('keydown', event => {
+    const modal = document.getElementById('weatherSetupModal');
+    if (!modal || modal.style.display === 'none') return;
+
+    if (event.key === 'Escape') {
+        closeWeatherSetup();
+    } else if (event.key === 'Enter' && !weatherSetupBusy) {
+        event.preventDefault();
+        saveWeatherApiKey();
+    }
+});
+
+function toggleWeatherKeyVisibility(button) {
+    const input = document.getElementById('weatherApiKeyInput');
+    if (!input) return;
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    if (button) button.textContent = show ? 'Hide' : 'Show';
+}

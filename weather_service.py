@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -40,6 +40,48 @@ class OpenWeatherService:
         self._cache: dict[str, Any] | None = None
         self._cache_time = 0.0
         self._cache_key: tuple[float, float] | None = None
+
+    def is_configured(self) -> bool:
+        return bool(str(self.config.api_key or "").strip())
+
+    def set_api_key(self, api_key: str) -> None:
+        """Update the provider key without restarting MeshCenter."""
+        with self._lock:
+            self.config = replace(self.config, api_key=str(api_key or "").strip())
+            self._cache = None
+            self._cache_time = 0.0
+            self._cache_key = None
+
+    def test_api_key(
+        self,
+        api_key: str,
+        latitude: float | None = None,
+        longitude: float | None = None,
+    ) -> dict[str, Any]:
+        """Validate a candidate key against OpenWeather without storing it."""
+        try:
+            latitude = float(self.config.latitude if latitude is None else latitude)
+            longitude = float(self.config.longitude if longitude is None else longitude)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Reference location has invalid coordinates."}
+
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            return {"ok": False, "error": "Reference location coordinates are out of range."}
+
+        try:
+            payload = self._request(
+                self.CURRENT_URL,
+                latitude,
+                longitude,
+                api_key=api_key,
+            )
+            return {
+                "ok": True,
+                "location": payload.get("name") or self.config.location_name,
+                "message": "OpenWeather API key is valid.",
+            }
+        except Exception as exc:
+            return {"ok": False, "error": self._friendly_error(exc)}
 
     def get_current(
         self,
@@ -118,11 +160,17 @@ class OpenWeatherService:
                     "error": self._friendly_error(exc),
                 }
 
-    def _request(self, endpoint: str, latitude: float, longitude: float) -> dict[str, Any]:
+    def _request(
+        self,
+        endpoint: str,
+        latitude: float,
+        longitude: float,
+        api_key: str | None = None,
+    ) -> dict[str, Any]:
         params = urllib.parse.urlencode({
             "lat": latitude,
             "lon": longitude,
-            "appid": self.config.api_key,
+            "appid": self.config.api_key if api_key is None else api_key,
             "units": "metric",
             "lang": self.config.language,
         })

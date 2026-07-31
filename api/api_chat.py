@@ -37,6 +37,7 @@ def register_chat_routes(
     now,
     radio_event,
 ):
+    CHANNEL_CACHE_TTL_SECONDS = 30
     channel_cache = {"timestamp": 0.0, "channels": []}
     channel_cache_lock = threading.Lock()
 
@@ -47,13 +48,22 @@ def register_chat_routes(
         return value == CHANNEL_CHAT_ID or bool(re.fullmatch(r"channel:[1-7]", str(value or "")))
 
     def discover_radio_channels(force=False):
+        """Read the active channel configuration from the connected radio.
+
+        The short cache prevents the 10-second UI poll from reopening the serial
+        connection on every request.  A failed refresh never replaces a known-good
+        channel list, so a temporarily busy radio does not make channels disappear.
+        """
         now_ts = time.time()
         with channel_cache_lock:
-            if not force and channel_cache["channels"] and now_ts - channel_cache["timestamp"] < 300:
-                return [dict(item) for item in channel_cache["channels"]]
+            cached_channels = [dict(item) for item in channel_cache["channels"]]
+            cache_age = now_ts - channel_cache["timestamp"]
+            if not force and cached_channels and cache_age < CHANNEL_CACHE_TTL_SECONDS:
+                return cached_channels
 
         discovered = []
         interface = None
+        discovery_error = None
         try:
             if not prepare_radio_command("/dev/ttyACM0", timeout=10):
                 raise RuntimeError("serial port busy")
@@ -62,12 +72,17 @@ def register_chat_routes(
             with radio_lock:
                 interface = SerialInterface(devPath="/dev/ttyACM0")
                 raw_channels = getattr(getattr(interface, "localNode", None), "channels", None) or []
+
                 for fallback_index, channel in enumerate(raw_channels):
                     index = getattr(channel, "index", fallback_index)
                     try:
                         index = int(index)
                     except (TypeError, ValueError):
                         index = fallback_index
+
+                    # Meshtastic currently exposes channel slots 0 through 7.
+                    if index < 0 or index > 7:
+                        continue
 
                     settings_obj = getattr(channel, "settings", None)
                     name = getattr(settings_obj, "name", "") if settings_obj is not None else ""
@@ -76,8 +91,10 @@ def register_chat_routes(
                     disabled = "DISABLED" in role_text or role == 0
                     if disabled:
                         continue
+
                     if not name:
                         name = CHANNEL_CHAT_NAME if index == 0 else f"Channel {index}"
+
                     discovered.append({
                         "id": channel_chat_id(index),
                         "index": index,
@@ -90,6 +107,7 @@ def register_chat_routes(
                         "unread": 0,
                     })
         except Exception as error:
+            discovery_error = error
             print(f"[CHANNELS] Discovery warning: {error}", flush=True)
         finally:
             if interface is not None:
@@ -99,33 +117,41 @@ def register_chat_routes(
                     pass
             pause_listen.clear()
 
-        if not discovered:
-            discovered = [{
-                "id": CHANNEL_CHAT_ID, "index": 0, "name": CHANNEL_CHAT_NAME,
-                "type": "channel", "is_channel": True, "is_demo": False,
-                "last_message": "", "last_time": "", "unread": 0,
-            }]
+        if discovered:
+            # One item per slot, ordered exactly as on the radio.
+            by_index = {item["index"]: item for item in discovered}
+            discovered = [by_index[index] for index in sorted(by_index)]
+            with channel_cache_lock:
+                channel_cache["timestamp"] = now_ts
+                channel_cache["channels"] = [dict(item) for item in discovered]
+            return discovered
 
-        real_indexes = {item["index"] for item in discovered}
-        demo_specs = [(1, "Private Nodes"), (2, "Family Mesh")]
-        for index, name in demo_specs:
-            if index not in real_indexes:
-                discovered.append({
-                    "id": f"demo-channel:{index}", "index": index, "name": f"{name} · Demo",
-                    "type": "channel", "is_channel": True, "is_demo": True,
-                    "last_message": "Channel is not configured on the radio",
-                    "last_time": "", "unread": 0,
-                })
+        # Keep the previous valid configuration during a temporary serial conflict.
+        if cached_channels and discovery_error is not None:
+            return cached_channels
 
-        discovered.sort(key=lambda item: (item.get("is_demo", False), item.get("index", 99)))
+        # A primary channel is always a safe final fallback on first startup.
+        fallback = [{
+            "id": CHANNEL_CHAT_ID,
+            "index": 0,
+            "name": CHANNEL_CHAT_NAME,
+            "type": "channel",
+            "is_channel": True,
+            "is_demo": False,
+            "last_message": "",
+            "last_time": "",
+            "unread": 0,
+        }]
         with channel_cache_lock:
             channel_cache["timestamp"] = now_ts
-            channel_cache["channels"] = [dict(item) for item in discovered]
-        return discovered
+            channel_cache["channels"] = [dict(item) for item in fallback]
+        return fallback
+
     @app.route("/api/chats")
     def api_chats():
         chat_list, total_unread = get_chats_list()
-        channels = discover_radio_channels()
+        force_channel_refresh = request.args.get("refresh_channels", "").lower() in {"1", "true", "yes"}
+        channels = discover_radio_channels(force=force_channel_refresh)
         chat_by_id = {item.get("id"): item for item in chat_list}
         for channel in channels:
             stored = chat_by_id.get(channel.get("id"), {})

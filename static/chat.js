@@ -1765,6 +1765,8 @@ function renderChatItem(chat) {
 // ============================================================
 // LOAD CHAT LIST
 // ============================================================
+let lastForcedChannelRefreshAt = 0;
+const CHANNEL_REFRESH_INTERVAL_MS = 30000;
 async function loadChatList() {
     console.log('[CHAT] loadChatList called');
 
@@ -1781,10 +1783,19 @@ async function loadChatList() {
     try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000);
-        const response = await fetch('/api/chats', {
+        const nowMs = Date.now();
+        const forceChannelRefresh = (nowMs - lastForcedChannelRefreshAt) >= CHANNEL_REFRESH_INTERVAL_MS;
+        const chatsUrl = forceChannelRefresh
+            ? '/api/chats?refresh_channels=1'
+            : '/api/chats';
+
+        const response = await fetch(chatsUrl, {
             signal: controller.signal,
             headers: { 'Cache-Control': 'no-cache' }
         });
+        if (forceChannelRefresh && response.ok) {
+            lastForcedChannelRefreshAt = nowMs;
+        }
         clearTimeout(timeoutId);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -1819,6 +1830,24 @@ async function loadChatList() {
         channelContainer.innerHTML = channels.length
             ? channels.map(renderChatItem).join('')
             : '<div class="loading">📡 No configured channels</div>';
+
+        // If the active radio channel was removed externally, leave the stale
+        // conversation and switch to the first channel that still exists.
+        if (currentChatType === 'channel' && currentChatId) {
+            const activeChannelStillExists = channels.some(channel => channel.id === currentChatId);
+            if (!activeChannelStillExists) {
+                const fallbackChannel = channels[0] || null;
+                showToast('The selected channel was removed from the radio', 'info');
+
+                if (fallbackChannel) {
+                    window.setTimeout(() => {
+                        openChat(fallbackChannel.id, fallbackChannel.name, 'channel', 'channel-sync');
+                    }, 0);
+                } else {
+                    showChatList();
+                }
+            }
+        }
 
         const dmChats = chatListCache.filter(chat => !chat.is_channel);
         dmContainer.innerHTML = dmChats.length

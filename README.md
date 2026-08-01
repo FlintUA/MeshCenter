@@ -527,19 +527,63 @@ Expected state: `active (running)`.
 
 **System and Wi‑Fi actions** (restart MeshCenter, reboot/shutdown Pi, scan/connect Wi‑Fi) need extra narrowly scoped sudo rules. Full commands are in the [Practical User Guide → Enable System and Wi‑Fi actions](docs/User_Guide.md#enable-system-and-wi-fi-actions).
 
-### Configuring the Radio (after install)
+### Radio Configuration Mode (after install)
 
-MeshCenter automatically reads channel configuration from the connected node.
+MeshCenter normally maintains an active USB connection to the Meshtastic radio in order to provide:
 
-To change channels or other radio settings with the official Meshtastic app:
+- Real-time messaging
+- Node telemetry
+- Node management
+- Interactive maps
+- Node Tools
+- Automatic channel synchronization
 
-```bash
-sudo systemctl stop meshcenter
-# Configure the node using the official Meshtastic Android or Desktop app
-sudo systemctl start meshcenter
-```
+Since only one application can access the radio at a time, the official Meshtastic mobile application cannot connect while MeshCenter is using the USB interface.
 
-After restart, MeshCenter synchronizes the channels stored on the radio (indexes 0–7).
+### Temporary Radio Release
+
+To configure the radio using the official Meshtastic Android application:
+
+1. Open **Settings → Meshtastic Radio**.
+2. Click **Release Radio**.
+3. Wait until the status changes to **Released**.
+   - Releasing the USB connection may take up to **1–2 minutes**, depending on the current listener state.
+4. Connect to the node using the official Meshtastic Android application via Bluetooth.
+5. Make any required changes (channels, encryption keys, LoRa settings, etc.).
+6. Disconnect from the Android application.
+7. Return to MeshCenter and click **Reconnect Radio**.
+
+MeshCenter automatically reconnects to the radio and resumes normal operation without restarting the service.
+
+### Automatic Synchronization
+
+After reconnecting, MeshCenter automatically:
+
+- Detects newly added channels
+- Removes deleted channels
+- Updates channel names
+- Restores messaging and telemetry
+- Resumes node monitoring
+
+No restart or manual refresh is required.
+
+> **Note**
+>
+> While the radio is released, messaging, telemetry, node management and Node Tools are temporarily unavailable because the radio is intentionally disconnected from MeshCenter.
+
+### Design Philosophy
+
+MeshCenter intentionally does **not** modify the radio configuration itself.
+
+Radio configuration is performed using the official Meshtastic application, while MeshCenter automatically synchronizes with the current radio configuration after reconnecting.
+
+This approach provides several advantages:
+
+- Full compatibility with standard Meshtastic firmware
+- No custom firmware required
+- Complete compatibility with the official Meshtastic applications
+- Safe configuration using the official tools
+- Automatic synchronization of channels and radio state
 
 ### Updating MeshCenter
 

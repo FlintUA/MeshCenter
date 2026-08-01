@@ -317,6 +317,12 @@ This modular architecture makes it easy to extend the project while keeping the 
 
 ## Installation
 
+### Installation Validation
+
+The installation procedure described in this repository has been successfully validated on a clean Raspberry Pi Zero 2 W using a **RAK WisMesh TAP v2 (RAK3312)** with standard Meshtastic firmware.
+
+The system was installed entirely from the documentation, confirming that no undocumented configuration steps are required.
+
 MeshCenter runs on **Raspberry Pi OS Bookworm** (or newer). It is primarily tested on Raspberry Pi Zero 2W and also works on Raspberry Pi 3, 4 and 5.
 
 This section is a complete beginner-friendly install path from a fresh Pi to a working web interface. For first-run checks, interface usage, backup, safe update details and extended troubleshooting, see the **[Practical User Guide](docs/User_Guide.md)**.

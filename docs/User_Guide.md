@@ -73,13 +73,29 @@ For additional information, see the official [Raspberry Pi headless setup docume
 
 #### First boot and SSH connection
 
-Remove the microSD card from the computer, insert it into the Raspberry Pi and connect the power supply.
-
-On first boot, Raspberry Pi OS applies the settings created in Raspberry Pi Imager and connects to the configured network. Allow several minutes for the first startup.
+1. Remove the microSD card from the computer.
+2. Insert the microSD card into a **fully powered-off** Raspberry Pi. Do not connect power yet.
+3. On a Raspberry Pi Zero 2 W, leave additional expansion boards or HATs (for example TAP2) disconnected until the first boot and SSH access are confirmed.
+4. Connect power through the **PWR IN** connector (or the normal power input for your Pi model).
+5. Wait **3–5 minutes**. The first boot applies the Imager settings, expands the filesystem and joins the configured network; it often takes longer than later startups.
 
 Make sure that the computer and Raspberry Pi are connected to the same local network.
 
-On Windows, open PowerShell or Windows Terminal. On Linux or macOS, open a terminal. Connect using the hostname configured in Raspberry Pi Imager:
+On Windows, open PowerShell or Windows Terminal. On Linux or macOS, open a terminal.
+
+First check that the Raspberry Pi is reachable on the network:
+
+```bash
+ping <hostname>.local
+```
+
+Example:
+
+```bash
+ping meshcenter.local
+```
+
+If the Pi responds to ping, connect with SSH:
 
 ```bash
 ssh <username>@<hostname>.local
@@ -91,7 +107,13 @@ Example:
 ssh flint@meshcenter.local
 ```
 
-At the first connection, SSH displays a host authenticity warning. Enter:
+At the first connection, SSH displays a host authenticity warning similar to:
+
+```text
+Are you sure you want to continue connecting (yes/no/[fingerprint])?
+```
+
+Enter:
 
 ```text
 yes

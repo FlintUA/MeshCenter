@@ -19,6 +19,7 @@ from datetime import datetime
 from camera import camera
 from telemetry import telemetry
 from meshsrv import meshsrv
+from meshsrv.radio_manager import RadioConnectionManager
 from api.api_camera import register_camera_routes
 from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes
@@ -198,6 +199,7 @@ base_status = {
 
 listen_process = None
 pause_listen = threading.Event()
+radio_connection_manager = None
 
 radio_health = {
     "status": "STARTING",
@@ -260,6 +262,9 @@ def radio_event(event, error=""):
 
             radio_health["listener_running"] = True
 
+            if radio_connection_manager is not None:
+                radio_connection_manager.listener_started()
+
             # Не создаём повторные записи, если состояние уже было True
             if not was_running:
                 _radio_history_locked(
@@ -274,6 +279,9 @@ def radio_event(event, error=""):
             )
 
             radio_health["listener_running"] = False
+
+            if radio_connection_manager is not None:
+                radio_connection_manager.listener_stopped()
 
             if was_running:
                 if pause_listen.is_set():
@@ -1905,6 +1913,13 @@ def wait_serial_release(device=None, timeout=8):
 
 
 def prepare_radio_command(device=None, timeout=8):
+    if (
+        radio_connection_manager is not None
+        and not radio_connection_manager.commands_allowed()
+    ):
+        print("[RADIO] Command rejected while radio is released", flush=True)
+        return False
+
     pause_listen.set()
     stop_listener()
 
@@ -1912,6 +1927,19 @@ def prepare_radio_command(device=None, timeout=8):
         return False
 
     return True
+
+
+radio_connection_manager = RadioConnectionManager(
+    pause_event=pause_listen,
+    stop_listener=stop_listener,
+    wait_serial_release=wait_serial_release,
+    serial_port=MESHTASTIC_PORT,
+    log_event=log_system_event,
+)
+
+
+def is_radio_available():
+    return radio_connection_manager.commands_allowed()
 
 def update_base_status_from_info():
     global base_status
@@ -2540,7 +2568,13 @@ def radio_health_worker():
                     if last_send else None
                 )
 
-                if pause_listen.is_set():
+                if radio_connection_manager.is_released():
+                    status = "RELEASED"
+                    reason = "Radio released for external configuration"
+                    level = "WARNING"
+                    recommendation = "Reconnect the radio from Settings when configuration is complete"
+
+                elif pause_listen.is_set():
                     status = "PAUSED"
                     reason = "Listener temporarily paused for a radio command"
                     level = "WARNING"
@@ -2689,6 +2723,7 @@ register_chat_routes(
     save_nodes,
     now,
     radio_event,
+    is_radio_available,
 )
 
 register_settings_routes(
@@ -2800,6 +2835,7 @@ register_node_tools_routes(
     pause_listen=pause_listen,
     prepare_radio_command=prepare_radio_command,
     log_system_event=log_system_event,
+    is_radio_available=is_radio_available,
 )
 register_node_icon_routes(app, DATA_DIR, LOCAL_NODE_ID, is_valid_node_id)
 
@@ -2866,10 +2902,51 @@ def api_cleanup_nodes():
         save_chats()
     return jsonify({"ok": True, "message": "Nodes cleaned up", "node_count": len(nodes)})
 
+@app.route("/api/radio_connection/status")
+@handle_errors
+def api_radio_connection_status():
+    with state_lock:
+        listener_running = bool(radio_health.get("listener_running", False))
+    return jsonify({
+        "ok": True,
+        "radio": radio_connection_manager.status(listener_running)
+    })
+
+
+@app.route("/api/radio_connection/release", methods=["POST"])
+@handle_errors
+def api_radio_connection_release():
+    ok, status = radio_connection_manager.release(timeout=12)
+    return jsonify({
+        "ok": ok,
+        "radio": status,
+        "message": status.get("message", "")
+    }), (200 if ok else 409)
+
+
+@app.route("/api/radio_connection/reconnect", methods=["POST"])
+@handle_errors
+def api_radio_connection_reconnect():
+    ok, status = radio_connection_manager.reconnect()
+    if ok:
+        radio_event("restart")
+    return jsonify({
+        "ok": ok,
+        "radio": status,
+        "message": status.get("message", "")
+    }), (200 if ok else 409)
+
+
 @app.route("/api/restart_listener", methods=["POST"])
 @handle_errors
 def api_restart_listener():
     global listen_process
+
+    if radio_connection_manager.is_released():
+        return jsonify({
+            "ok": False,
+            "error": "The radio is released for external configuration"
+        }), 409
 
     try:
         stop_listener()
@@ -2892,6 +2969,12 @@ def api_restart_listener():
 @app.route("/api/rescan_nodes", methods=["POST"])
 @handle_errors
 def api_rescan_nodes():
+    if radio_connection_manager.is_released():
+        return jsonify({
+            "ok": False,
+            "error": "Reconnect the radio before rescanning the network"
+        }), 409
+
     try:
         pause_listen.set()
         stop_listener()

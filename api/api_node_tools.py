@@ -133,6 +133,7 @@ def register_node_tools_routes(
     pause_listen,
     prepare_radio_command,
     log_system_event,
+    is_radio_available,
 ):
     """Safe, whitelisted Meshtastic commands for a selected node."""
     node_tools_lock = threading.Lock()
@@ -140,6 +141,13 @@ def register_node_tools_routes(
     @app.route("/api/node_tools", methods=["POST"])
     @handle_errors
     def api_node_tools():
+        if not is_radio_available():
+            return jsonify({
+                "ok": False,
+                "error": "The radio is released for external configuration",
+                "error_code": "radio_released",
+            }), 409
+
         data = request.get_json(force=True) or {}
 
         action = str(data.get("action", "")).strip()
@@ -358,7 +366,8 @@ def register_node_tools_routes(
 
         finally:
             time.sleep(2)
-            pause_listen.clear()
+            if is_radio_available():
+                pause_listen.clear()
 
             if node_tools_lock.locked():
                 node_tools_lock.release()

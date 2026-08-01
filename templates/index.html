@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=openweather-setup-20260731">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=radio-config-mode-20260801">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -1036,11 +1036,32 @@
                             </div>
                         </div>
 
-                        <div class="settings-card settings-card--placeholder settings-card--system">
-                            <div class="settings-card-title">🧩 System</div>
-                            <div class="settings-card-text">
-                                System-level options and service information will be added later.
+                        <div class="settings-card settings-card--radio" id="radioConnectionCard">
+                            <div class="radio-connection-heading">
+                                <div>
+                                    <div class="settings-card-title">📡 Meshtastic Radio</div>
+                                    <div class="settings-card-text">
+                                        Temporarily release the USB serial connection for configuration with the official Meshtastic application.
+                                    </div>
+                                </div>
+                                <span class="radio-connection-badge is-loading" id="radioConnectionBadge">Checking</span>
                             </div>
+
+                            <div class="radio-connection-status" id="radioConnectionStatus">
+                                Reading radio connection status...
+                            </div>
+
+                            <div class="radio-connection-note" id="radioConnectionNote">
+                                Messaging, telemetry and Node Tools are unavailable while the radio is released.
+                            </div>
+
+                            <button type="button"
+                                    class="radio-connection-action"
+                                    id="radioConnectionAction"
+                                    onclick="toggleRadioConnectionMode()"
+                                    disabled>
+                                Release Radio
+                            </button>
                         </div>
 
                         <div class="map-settings-card settings-card settings-card--map">
@@ -1776,7 +1797,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/chat.js?v=openweather-setup-20260731"></script>
+<script src="/static/chat.js?v=radio-config-mode-20260801"></script>
 <script src="/static/media.js"></script>
 <script src="/static/weather.js?v=openweather-setup-20260731"></script>
 

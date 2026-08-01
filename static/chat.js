@@ -10401,3 +10401,201 @@ window.updateBatteryCapacitySetting = updateBatteryCapacitySetting;
 window.openEmbeddedNodeMap = openEmbeddedNodeMap;
 window.fitMeshMapToNodes = fitMeshMapToNodes;
 window.renderMeshMap = renderMeshMap;
+
+// ============================================================
+// RADIO CONFIGURATION MODE
+// ============================================================
+let radioConnectionState = null;
+let radioConnectionPollTimer = null;
+let radioConnectionActionBusy = false;
+
+function radioConnectionLabel(mode) {
+    const labels = {
+        connected: 'Connected',
+        releasing: 'Releasing',
+        released: 'Released',
+        reconnecting: 'Reconnecting',
+        error: 'Error'
+    };
+    return labels[mode] || 'Checking';
+}
+
+function renderRadioConnectionState(radio) {
+    radioConnectionState = radio || {};
+
+    const badge = document.getElementById('radioConnectionBadge');
+    const status = document.getElementById('radioConnectionStatus');
+    const note = document.getElementById('radioConnectionNote');
+    const action = document.getElementById('radioConnectionAction');
+
+    if (!badge || !status || !action) return;
+
+    const mode = String(radioConnectionState.mode || 'error').toLowerCase();
+    badge.className = `radio-connection-badge is-${mode}`;
+    badge.textContent = radioConnectionLabel(mode);
+
+    let message = radioConnectionState.message || 'Radio connection status is unavailable.';
+    if (radioConnectionState.last_error) {
+        message += ` ${radioConnectionState.last_error}`;
+    }
+    status.textContent = message;
+
+    if (note) {
+        note.textContent = mode === 'released'
+            ? 'Open the official Meshtastic application now. When configuration is complete, return here and reconnect the radio.'
+            : 'Messaging, telemetry and Node Tools are unavailable while the radio is released.';
+    }
+
+    const transitional = mode === 'releasing' || mode === 'reconnecting';
+    action.disabled = transitional || radioConnectionActionBusy;
+    action.classList.toggle('is-reconnect', mode === 'released' || mode === 'error');
+    action.textContent = mode === 'released' || mode === 'error'
+        ? 'Reconnect Radio'
+        : transitional
+            ? radioConnectionLabel(mode) + '...'
+            : 'Release Radio';
+
+    document.documentElement.dataset.radioMode = mode;
+}
+
+async function loadRadioConnectionStatus({ silent = false } = {}) {
+    try {
+        const response = await fetch('/api/radio_connection/status', {
+            cache: 'no-store'
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || 'Unable to read radio status');
+        }
+
+        renderRadioConnectionState(data.radio);
+        return data.radio;
+    } catch (error) {
+        console.warn('[RADIO MODE] Status error:', error);
+        renderRadioConnectionState({
+            mode: 'error',
+            message: 'Unable to read the radio connection status.',
+            last_error: error.message
+        });
+        if (!silent) showToast('Unable to read radio status', 'error');
+        return null;
+    }
+}
+
+async function releaseRadioConnection() {
+    const confirmed = window.confirm(
+        'Release the Meshtastic radio?\n\n' +
+        'Messaging, telemetry, node discovery and Node Tools will be temporarily unavailable. ' +
+        'MeshCenter itself will continue running.\n\n' +
+        'After the radio is released, connect to it using the official Meshtastic application.'
+    );
+
+    if (!confirmed) return;
+
+    radioConnectionActionBusy = true;
+    renderRadioConnectionState({
+        ...(radioConnectionState || {}),
+        mode: 'releasing',
+        message: 'Stopping the listener and releasing the serial port...'
+    });
+
+    try {
+        const response = await fetch('/api/radio_connection/release', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || data.message || 'Unable to release the radio');
+        }
+
+        renderRadioConnectionState(data.radio);
+        showToast('Radio released for external configuration', 'success');
+    } catch (error) {
+        showToast(`Unable to release radio: ${error.message}`, 'error');
+        await loadRadioConnectionStatus({ silent: true });
+    } finally {
+        radioConnectionActionBusy = false;
+        await loadRadioConnectionStatus({ silent: true });
+    }
+}
+
+async function reconnectRadioConnection() {
+    radioConnectionActionBusy = true;
+    renderRadioConnectionState({
+        ...(radioConnectionState || {}),
+        mode: 'reconnecting',
+        message: 'Reconnecting MeshCenter to the Meshtastic radio...'
+    });
+
+    try {
+        const response = await fetch('/api/radio_connection/reconnect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || data.message || 'Unable to reconnect the radio');
+        }
+
+        renderRadioConnectionState(data.radio);
+        showToast('Radio reconnect requested', 'success');
+
+        // Give the existing listener loop time to reopen the serial port, then
+        // force the normal chat/channel refresh to pick up configuration changes.
+        window.setTimeout(async () => {
+            await loadRadioConnectionStatus({ silent: true });
+            try {
+                lastForcedChannelRefreshAt = 0;
+                await loadChatList();
+            } catch (error) {
+                console.warn('[RADIO MODE] Channel refresh after reconnect failed:', error);
+            }
+        }, 1800);
+    } catch (error) {
+        showToast(`Unable to reconnect radio: ${error.message}`, 'error');
+        await loadRadioConnectionStatus({ silent: true });
+    } finally {
+        radioConnectionActionBusy = false;
+        window.setTimeout(() => loadRadioConnectionStatus({ silent: true }), 2200);
+    }
+}
+
+function toggleRadioConnectionMode() {
+    const mode = String(radioConnectionState?.mode || '').toLowerCase();
+    if (mode === 'released' || mode === 'error') {
+        reconnectRadioConnection();
+    } else if (mode === 'connected') {
+        releaseRadioConnection();
+    }
+}
+
+function initializeRadioConnectionMode() {
+    loadRadioConnectionStatus({ silent: true });
+
+    if (radioConnectionPollTimer) {
+        window.clearInterval(radioConnectionPollTimer);
+    }
+
+    radioConnectionPollTimer = window.setInterval(() => {
+        if (document.visibilityState === 'visible') {
+            loadRadioConnectionStatus({ silent: true });
+        }
+    }, 5000);
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeRadioConnectionMode, { once: true });
+} else {
+    initializeRadioConnectionMode();
+}
+
+window.loadRadioConnectionStatus = loadRadioConnectionStatus;
+window.releaseRadioConnection = releaseRadioConnection;
+window.reconnectRadioConnection = reconnectRadioConnection;
+window.toggleRadioConnectionMode = toggleRadioConnectionMode;

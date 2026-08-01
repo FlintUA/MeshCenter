@@ -36,6 +36,7 @@ def register_chat_routes(
     save_nodes,
     now,
     radio_event,
+    is_radio_available,
 ):
     CHANNEL_CACHE_TTL_SECONDS = 30
     channel_cache = {"timestamp": 0.0, "channels": []}
@@ -64,6 +65,22 @@ def register_chat_routes(
         discovered = []
         interface = None
         discovery_error = None
+
+        if not is_radio_available():
+            if cached_channels:
+                return cached_channels
+            return [{
+                "id": CHANNEL_CHAT_ID,
+                "index": 0,
+                "name": CHANNEL_CHAT_NAME,
+                "type": "channel",
+                "is_channel": True,
+                "is_demo": False,
+                "last_message": "",
+                "last_time": "",
+                "unread": 0,
+            }]
+
         try:
             if not prepare_radio_command("/dev/ttyACM0", timeout=10):
                 raise RuntimeError("serial port busy")
@@ -115,7 +132,8 @@ def register_chat_routes(
                     interface.close()
                 except Exception:
                     pass
-            pause_listen.clear()
+            if is_radio_available():
+                pause_listen.clear()
 
         if discovered:
             # One item per slot, ordered exactly as on the radio.
@@ -261,6 +279,13 @@ def register_chat_routes(
     @app.route("/api/send", methods=["POST"])
     @handle_errors
     def api_send():
+        if not is_radio_available():
+            return jsonify({
+                "ok": False,
+                "error": "The radio is released for external configuration",
+                "error_code": "radio_released"
+            }), 409
+
         data = request.get_json(force=True)
 
         text = sanitize_text(data.get("text", "").strip())

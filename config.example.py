@@ -24,11 +24,13 @@ MESHTASTIC_PORT = "/dev/ttyACM0"  # or /dev/ttyUSB0
 # ===== YOUR NODE SETTINGS =====
 LOCAL_NODE_ID = "!xxxxxxxx"        # Your Meshtastic node ID
 LOCAL_NODE_NAME = "My Meshtastic"  # Your node display name
+INSTANCE_NAME = ""                 # Optional MeshCenter installation name; defaults to hostname
 
 # ===== DATA STORAGE =====
 DATA_DIR = str(PROJECT_DIR / "data")
 
-# ===== FILE PATHS (auto-generated from DATA_DIR) =====
+# ===== LEGACY / BOOTSTRAP FILE PATHS =====
+# MeshCenter redirects radio-specific files into data/profiles/<node-id>/ at runtime.
 HISTORY_FILE = f"{DATA_DIR}/messages.json"
 NODES_FILE = f"{DATA_DIR}/nodes.json"
 SENSORS_FILE = f"{DATA_DIR}/sensors.json"

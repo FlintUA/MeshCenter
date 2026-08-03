@@ -16,6 +16,7 @@ import io
 import csv
 import uuid
 import ast
+import sqlite3
 from collections import defaultdict, deque
 from datetime import datetime
 from camera import camera
@@ -23,12 +24,16 @@ from telemetry import telemetry
 from meshsrv import meshsrv
 from meshsrv.radio_manager import RadioConnectionManager
 from meshsrv.runtime_identity import resolve_meshtastic_cli, resolve_serial_port, meshtastic_command
+from meshsrv.instance_manager import InstanceManager
+from meshsrv.radio_identity import detect_radio_identity, compare_radio_identity
 from api.api_camera import register_camera_routes
 from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes
 from api.api_system import register_system_routes
 from system_log import log_system_event
 from storage.waypoint_store import WaypointStore
+from storage.profile_manager import ProfileManager
+from storage.device_manager import DeviceManager
 from api.api_node_tools import register_node_tools_routes
 from api.api_node_icons import register_node_icon_routes
 from api.api_weather import register_weather_routes
@@ -52,9 +57,13 @@ required_vars = [
 ]
 
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
-WAYPOINTS_DB_FILE = os.path.join(DATA_DIR, "waypoints.db")
-
-NODE_DEBUG_LOG = os.path.join(DATA_DIR, "nodes_debug.log")
+# Radio-scoped paths are resolved after the accepted instance identity loads.
+WAYPOINTS_DB_FILE = ""
+NODE_DEBUG_LOG = ""
+DELETED_DM_FILE = ""
+PROFILE_DATA_DIR = ""
+ACTIVE_PROFILE_ID = ""
+PROFILE_CONTEXT = {}
 
 try:
     MESHTASTIC_PORT
@@ -91,6 +100,130 @@ if missing_vars:
 
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR, exist_ok=True)
+
+# Persistent identity of this MeshCenter installation. This stage only
+# normalizes and stores accepted identity data; it does not switch radios.
+INSTANCE_FILE = os.path.join(DATA_DIR, "instance.json")
+try:
+    configured_instance_name = str(globals().get("INSTANCE_NAME", "") or "").strip()
+    instance_manager = InstanceManager(INSTANCE_FILE)
+    INSTANCE_IDENTITY = instance_manager.load_or_create({
+        "instance_name": configured_instance_name,
+        "hostname": os.uname().nodename if hasattr(os, "uname") else "",
+        "active_profile_id": "",
+        "radio": {
+            "node_id": LOCAL_NODE_ID,
+            "long_name": LOCAL_NODE_NAME,
+            "short_name": "",
+            "hardware": "",
+            "role": "",
+            "port": MESHTASTIC_PORT,
+        },
+        "runtime": {
+            "cli_path": MESHTASTIC_CMD,
+            "last_detected_at": None,
+            "identity_status": "NOT_CHECKED",
+            "last_error": None,
+            "last_detected_radio": {},
+        },
+    })
+    saved_radio = INSTANCE_IDENTITY.get("radio", {})
+    print(
+        "[INSTANCE] "
+        f"{INSTANCE_IDENTITY.get('instance_name', 'MeshCenter')} | "
+        f"hostname={INSTANCE_IDENTITY.get('hostname', '')} | "
+        f"radio={saved_radio.get('long_name') or 'Unknown'} "
+        f"({saved_radio.get('node_id') or 'unknown'}) | "
+        f"port={saved_radio.get('port') or MESHTASTIC_PORT}",
+        flush=True,
+    )
+except Exception as error:
+    print(f"[INSTANCE] Initialization failed: {error}", flush=True)
+    raise SystemExit(1)
+
+# Resolve the accepted radio profile before any radio-specific storage is opened.
+try:
+    profile_manager = ProfileManager(DATA_DIR)
+    accepted_radio = dict(INSTANCE_IDENTITY.get("radio", {}))
+    PROFILE_CONTEXT = profile_manager.ensure_profile(accepted_radio, migrate_legacy=True)
+    ACTIVE_PROFILE_ID = PROFILE_CONTEXT["profile_id"]
+    PROFILE_DATA_DIR = PROFILE_CONTEXT["profile_dir"]
+    profile_paths = PROFILE_CONTEXT["paths"]
+
+    HISTORY_FILE = profile_paths["messages"]
+    NODES_FILE = profile_paths["nodes"]
+    SENSORS_FILE = profile_paths["sensors"]
+    CHATS_FILE = profile_paths["chats"]
+    DELETED_DM_FILE = profile_paths["deleted_dm"]
+    WAYPOINTS_DB_FILE = profile_paths["waypoints_db"]
+    NODE_DEBUG_LOG = profile_paths["node_debug"]
+    telemetry.configure_storage(profile_paths["telemetry_history"])
+
+    updated_instance = dict(INSTANCE_IDENTITY)
+    updated_instance["active_profile_id"] = ACTIVE_PROFILE_ID
+    INSTANCE_IDENTITY = instance_manager.save(updated_instance)
+
+    migration = PROFILE_CONTEXT.get("migration", {})
+    if migration.get("performed"):
+        if migration.get("errors"):
+            print(f"[PROFILE] Migration completed with errors: {migration.get('errors')}", flush=True)
+        else:
+            print(
+                f"[PROFILE] Legacy radio data migrated to {PROFILE_DATA_DIR}; "
+                f"backups={len(migration.get('backups', []))}",
+                flush=True,
+            )
+    print(
+        f"[PROFILE] Active profile={ACTIVE_PROFILE_ID} | path={PROFILE_DATA_DIR}",
+        flush=True,
+    )
+    device_manager = DeviceManager(PROFILE_DATA_DIR)
+    PROFILE_DEVICES = device_manager.load_or_create()
+except Exception as error:
+    print(f"[PROFILE] Initialization failed: {error}", flush=True)
+    raise SystemExit(1)
+
+RADIO_IDENTITY_RESULT = {
+    "status": "NOT_CHECKED",
+    "checked_at": None,
+    "configured": dict(INSTANCE_IDENTITY.get("radio", {})),
+    "detected": {},
+    "error": None,
+}
+
+def verify_radio_identity():
+    """Probe the configured serial radio once and persist read-only verification state."""
+    global INSTANCE_IDENTITY, RADIO_IDENTITY_RESULT
+    result, output = detect_radio_identity(MESHTASTIC_CMD, MESHTASTIC_PORT, timeout=25)
+    configured = dict(INSTANCE_IDENTITY.get("radio", {}))
+    detected = dict(result.get("detected") or {})
+    result["configured"] = configured
+    result["status"] = compare_radio_identity(configured, detected) if detected.get("node_id") else result.get("status", "NOT_FOUND")
+    RADIO_IDENTITY_RESULT = result
+
+    updated = dict(INSTANCE_IDENTITY)
+    runtime = dict(updated.get("runtime", {}))
+    runtime.update({
+        "cli_path": MESHTASTIC_CMD,
+        "last_detected_at": result.get("checked_at"),
+        "identity_status": result.get("status"),
+        "last_error": result.get("error"),
+        "last_detected_radio": detected,
+    })
+    updated["runtime"] = runtime
+    INSTANCE_IDENTITY = instance_manager.save(updated)
+
+    configured_label = configured.get("long_name") or "Unknown"
+    configured_id = configured.get("node_id") or "unknown"
+    detected_label = detected.get("long_name") or "Unknown"
+    detected_id = detected.get("node_id") or "unknown"
+    print(f"[IDENTITY] Configured: {configured_label} ({configured_id})", flush=True)
+    print(f"[IDENTITY] Detected: {detected_label} ({detected_id})", flush=True)
+    suffix = " - automatic replacement blocked" if result.get("status") == "MISMATCH" else ""
+    print(f"[IDENTITY] Status: {result.get('status')}{suffix}", flush=True)
+    if result.get("error"):
+        print(f"[IDENTITY] Detail: {result.get('error')}", flush=True)
+    return output
 
 # Папка для скриншотов
 SCREENSHOTS_DIR = os.path.join(DATA_DIR, "screenshots")
@@ -280,6 +413,7 @@ def radio_event(event, error=""):
             )
 
             radio_health["listener_running"] = True
+            radio_health["last_restart"] = now_ts
 
             if radio_connection_manager is not None:
                 radio_connection_manager.listener_started()
@@ -646,7 +780,7 @@ def ensure_chat(node_id, node_name=None, force=False):
     if node_id == CHANNEL_CHAT_ID or not node_id or not node_id.startswith("!"):
         return
 
-    deleted_file = os.path.join(DATA_DIR, "deleted_dm.json")
+    deleted_file = DELETED_DM_FILE
 
     if not force and os.path.exists(deleted_file):
         try:
@@ -1300,12 +1434,15 @@ def process_telemetry_line(line):
 
     return updated
 
-def get_telemetry_from_info():
+def get_telemetry_from_info(info_output=None):
     global base_status
 
     try:
-        result = meshsrv.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
-        output = result.stdout + result.stderr
+        if info_output is None:
+            result = meshsrv.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
+            output = result.stdout + result.stderr
+        else:
+            output = str(info_output)
 
         node_pos = output.find(f'"{LOCAL_NODE_ID}"')
         if node_pos < 0:
@@ -1376,7 +1513,7 @@ def get_telemetry_export_records(
     series="",
     node_id=""
     ):
-    data = safe_read_json(os.path.join(DATA_DIR, "telemetry_history.json"), {})
+    data = safe_read_json(telemetry.TELEMETRY_FILE, {})
     records = data.get("history", [])
 
     if not isinstance(records, list):
@@ -1514,11 +1651,14 @@ def records_to_csv(records):
 
     return output.getvalue()
 
-def parse_nodes_from_info():
+def parse_nodes_from_info(info_output=None):
     global nodes
     try:
-        result = subprocess.run(meshtastic_command(MESHTASTIC_CMD, MESHTASTIC_PORT, "--info"), capture_output=True, text=True, timeout=30)
-        output = result.stdout + result.stderr
+        if info_output is None:
+            result = subprocess.run(meshtastic_command(MESHTASTIC_CMD, MESHTASTIC_PORT, "--info"), capture_output=True, text=True, timeout=30)
+            output = result.stdout + result.stderr
+        else:
+            output = str(info_output)
         mesh_pos = output.find("Nodes in mesh: {")
         if mesh_pos < 0:
             mesh_pos = output.find("Nodes in mesh:")
@@ -2360,13 +2500,17 @@ radio_connection_manager = RadioConnectionManager(
 
 
 def is_radio_available():
-    return radio_connection_manager.commands_allowed()
+    identity_ok = RADIO_IDENTITY_RESULT.get("status") in {"MATCH", "NOT_CHECKED"}
+    return identity_ok and radio_connection_manager.commands_allowed()
 
-def update_base_status_from_info():
+def update_base_status_from_info(info_output=None):
     global base_status
     try:
-        result = meshsrv.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
-        output = result.stdout + result.stderr
+        if info_output is None:
+            result = meshsrv.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
+            output = result.stdout + result.stderr
+        else:
+            output = str(info_output)
         node_pos = output.find(f'"{LOCAL_NODE_ID}"')
         if node_pos < 0:
             print("Base status: local node id not found")
@@ -2411,6 +2555,13 @@ def cleanup_seen_ids():
 
 def listen_meshtastic():
     global listen_process, base_status
+
+    if RADIO_IDENTITY_RESULT.get("status") != "MATCH":
+        print(
+            f"[IDENTITY] Listener start blocked: status={RADIO_IDENTITY_RESULT.get('status')}",
+            flush=True,
+        )
+        return
 
     nodeinfo_buffer = []
     collecting_nodeinfo = False
@@ -3276,7 +3427,79 @@ register_node_tools_routes(
     log_system_event=log_system_event,
     is_radio_available=is_radio_available,
 )
-register_node_icon_routes(app, DATA_DIR, LOCAL_NODE_ID, is_valid_node_id)
+register_node_icon_routes(app, PROFILE_DATA_DIR, LOCAL_NODE_ID, is_valid_node_id)
+
+
+
+def _format_bytes(value):
+    size = float(value or 0)
+    units = ("B", "KB", "MB", "GB")
+    for unit in units:
+        if size < 1024.0 or unit == units[-1]:
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024.0
+
+
+def _json_item_count(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if isinstance(data, list):
+            return len(data)
+        if isinstance(data, dict):
+            for key in ("messages", "nodes", "chats", "items", "history"):
+                value = data.get(key)
+                if isinstance(value, (list, dict)):
+                    return len(value)
+            return len(data)
+    except Exception:
+        return 0
+    return 0
+
+
+def _waypoint_count(path):
+    if not path or not os.path.exists(path):
+        return 0
+    try:
+        connection = sqlite3.connect(path, timeout=2)
+        try:
+            row = connection.execute("SELECT COUNT(*) FROM waypoints").fetchone()
+            return int(row[0] or 0) if row else 0
+        finally:
+            connection.close()
+    except Exception:
+        return 0
+
+
+def _profile_storage_summary(profile_dir):
+    summary = {
+        "total_bytes": 0,
+        "messages_bytes": 0,
+        "telemetry_bytes": 0,
+        "waypoints_bytes": 0,
+        "icons_bytes": 0,
+    }
+    if not profile_dir or not os.path.isdir(profile_dir):
+        return summary
+
+    for current_root, _, filenames in os.walk(profile_dir):
+        for filename in filenames:
+            path = os.path.join(current_root, filename)
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                continue
+            summary["total_bytes"] += size
+            relative = os.path.relpath(path, profile_dir)
+            if relative == "messages.json":
+                summary["messages_bytes"] += size
+            elif relative == "telemetry_history.json":
+                summary["telemetry_bytes"] += size
+            elif relative == "waypoints.db":
+                summary["waypoints_bytes"] += size
+            elif relative.startswith("node_icons" + os.sep):
+                summary["icons_bytes"] += size
+    return summary
 
 
 # ============================================================
@@ -3290,6 +3513,213 @@ def index():
 @app.route("/api/sensors")
 def api_sensors():
     return jsonify(sensor_data)
+
+@app.route("/api/instance")
+def api_instance_identity():
+    identity = instance_manager.get()
+    result = dict(RADIO_IDENTITY_RESULT)
+    return jsonify({
+        "ok": True,
+        "instance_name": identity.get("instance_name", "MeshCenter"),
+        "hostname": identity.get("hostname", ""),
+        "active_profile_id": identity.get("active_profile_id", ""),
+        "profile_path": PROFILE_DATA_DIR,
+        "configured": dict(identity.get("radio", {})),
+        "detected": dict(result.get("detected") or identity.get("runtime", {}).get("last_detected_radio", {})),
+        "status": result.get("status") or identity.get("runtime", {}).get("identity_status", "NOT_CHECKED"),
+        "checked_at": result.get("checked_at") or identity.get("runtime", {}).get("last_detected_at"),
+        "error": result.get("error") or identity.get("runtime", {}).get("last_error"),
+    })
+
+@app.route("/api/node-manager/dashboard")
+@app.route("/api/devices/dashboard")
+def api_devices_dashboard():
+    identity = instance_manager.get()
+    configured = dict(identity.get("radio", {}))
+    runtime = dict(identity.get("runtime", {}))
+    detected = dict(
+        RADIO_IDENTITY_RESULT.get("detected")
+        or runtime.get("last_detected_radio", {})
+        or {}
+    )
+
+    with state_lock:
+        listener_running = bool(radio_health.get("listener_running", False))
+        last_restart = float(radio_health.get("last_restart", 0) or 0)
+        listener_pid = (
+            int(listen_process.pid)
+            if listen_process is not None and listen_process.poll() is None
+            else None
+        )
+
+    connection = radio_connection_manager.status(listener_running)
+    profile_metadata = {}
+    profile_json = os.path.join(PROFILE_DATA_DIR, "profile.json")
+    try:
+        with open(profile_json, "r", encoding="utf-8") as handle:
+            loaded = json.load(handle)
+        if isinstance(loaded, dict):
+            profile_metadata = loaded
+    except Exception:
+        profile_metadata = {}
+
+    paths = PROFILE_CONTEXT.get("paths", {}) if isinstance(PROFILE_CONTEXT, dict) else {}
+    storage = _profile_storage_summary(PROFILE_DATA_DIR)
+    counts = {
+        "messages": _json_item_count(paths.get("messages", "")),
+        "nodes": _json_item_count(paths.get("nodes", "")),
+        "chats": _json_item_count(paths.get("chats", "")),
+        "telemetry_records": _json_item_count(paths.get("telemetry_history", "")),
+        "waypoints": _waypoint_count(paths.get("waypoints_db", "")),
+    }
+
+    connected_since = None
+    if listener_running and last_restart:
+        connected_since = datetime.fromtimestamp(last_restart).astimezone().isoformat(timespec="seconds")
+
+    profiles = []
+    profiles_root = os.path.join(DATA_DIR, "profiles")
+    try:
+        for entry in sorted(os.scandir(profiles_root), key=lambda item: item.name.lower()):
+            if not entry.is_dir():
+                continue
+            metadata = {}
+            try:
+                with open(os.path.join(entry.path, "profile.json"), "r", encoding="utf-8") as handle:
+                    loaded = json.load(handle)
+                if isinstance(loaded, dict):
+                    metadata = loaded
+            except Exception:
+                metadata = {}
+            profile_radio = dict(metadata.get("radio", {}))
+            profile_id = metadata.get("profile_id") or entry.name
+            active = profile_id == identity.get("active_profile_id", "")
+            profiles.append({
+                "profile_id": profile_id,
+                "active": active,
+                "radio": {
+                    "node_id": profile_radio.get("node_id", ""),
+                    "long_name": profile_radio.get("long_name", profile_id),
+                    "short_name": profile_radio.get("short_name", ""),
+                    "hardware": profile_radio.get("hardware", ""),
+                    "identity_status": (RADIO_IDENTITY_RESULT.get("status") or runtime.get("identity_status", "NOT_CHECKED")) if active else "NOT_CHECKED",
+                },
+                "connection": {
+                    "mode": connection.get("mode", "unknown") if active else "offline",
+                    "listener_running": listener_running if active else False,
+                },
+            })
+    except FileNotFoundError:
+        profiles = []
+
+    return jsonify({
+        "ok": True,
+        "instance": {
+            "name": identity.get("instance_name", "MeshCenter"),
+            "hostname": identity.get("hostname", ""),
+        },
+        "radio": {
+            "node_id": detected.get("node_id") or configured.get("node_id", ""),
+            "long_name": detected.get("long_name") or configured.get("long_name", ""),
+            "short_name": detected.get("short_name") or configured.get("short_name", ""),
+            "hardware": detected.get("hardware") or configured.get("hardware", ""),
+            "role": detected.get("role") or configured.get("role", ""),
+            "port": connection.get("serial_port") or configured.get("port", ""),
+            "identity_status": RADIO_IDENTITY_RESULT.get("status")
+                or runtime.get("identity_status", "NOT_CHECKED"),
+            "identity_checked_at": RADIO_IDENTITY_RESULT.get("checked_at")
+                or runtime.get("last_detected_at"),
+        },
+        "connection": {
+            **connection,
+            "listener_pid": listener_pid,
+            "connected_since": connected_since,
+        },
+        "profiles": profiles,
+        "profile": {
+            "profile_id": identity.get("active_profile_id", ""),
+            "path": PROFILE_DATA_DIR,
+            "created_at": profile_metadata.get("created_at"),
+            "last_used_at": profile_metadata.get("last_used_at"),
+            "counts": counts,
+            "storage": {
+                **storage,
+                "total": _format_bytes(storage["total_bytes"]),
+                "messages": _format_bytes(storage["messages_bytes"]),
+                "telemetry": _format_bytes(storage["telemetry_bytes"]),
+                "waypoints": _format_bytes(storage["waypoints_bytes"]),
+                "icons": _format_bytes(storage["icons_bytes"]),
+            },
+        },
+    })
+
+
+@app.route("/api/devices")
+def api_profile_devices():
+    assignments = device_manager.load_or_create()
+    configured_devices = assignments.get("devices", {})
+
+    try:
+        camera_status = camera.get_camera_status()
+    except Exception as error:
+        camera_status = {"ok": False, "started": False, "error": str(error)}
+
+    env_fields = ("temperature", "humidity", "pressure")
+    power_fields = ("voltage", "current", "power")
+    environment_values = {key: sensor_data.get(key) for key in env_fields}
+    power_values = {key: sensor_data.get(key) for key in power_fields}
+    environment_detected = any(value is not None for value in environment_values.values())
+    power_detected = any(value is not None for value in power_values.values())
+
+    camera_cfg = dict(configured_devices.get("camera", {}))
+    environment_cfg = dict(configured_devices.get("environment", {}))
+    power_cfg = dict(configured_devices.get("power", {}))
+
+    return jsonify({
+        "ok": True,
+        "profile_id": ACTIVE_PROFILE_ID,
+        "devices_file": device_manager.path,
+        "devices": [
+            {
+                "id": "camera",
+                "name": "Camera",
+                "kind": "camera",
+                "assigned": bool(camera_cfg.get("assigned", True)),
+                "enabled": bool(camera_cfg.get("enabled", True)),
+                "detected": bool(camera_status.get("ok", False)),
+                "active": bool(camera_status.get("started", False)),
+                "source": camera_cfg.get("source", "csi"),
+                "model": camera_cfg.get("model") or "Raspberry Pi Camera",
+                "status": "active" if camera_status.get("started") else ("available" if camera_status.get("ok") else "unavailable"),
+                "action": {"label": "Open Camera", "tab": "video"},
+            },
+            {
+                "id": "environment",
+                "name": "Environmental sensor",
+                "kind": "sensor",
+                "assigned": bool(environment_cfg.get("assigned", True)),
+                "enabled": bool(environment_cfg.get("enabled", True)),
+                "detected": environment_detected,
+                "driver": environment_cfg.get("driver") or "Environmental telemetry",
+                "status": "data" if environment_detected else "no_data",
+                "values": environment_values,
+                "last_update": sensor_data.get("last_update"),
+            },
+            {
+                "id": "power",
+                "name": "Power monitor",
+                "kind": "sensor",
+                "assigned": bool(power_cfg.get("assigned", True)),
+                "enabled": bool(power_cfg.get("enabled", True)),
+                "detected": power_detected,
+                "driver": power_cfg.get("driver") or "Power telemetry",
+                "status": "data" if power_detected else "no_data",
+                "values": power_values,
+                "last_update": sensor_data.get("last_update"),
+            },
+        ],
+    })
+
 
 @app.route("/api/base_status")
 def api_base_status():
@@ -3366,6 +3796,11 @@ def api_radio_connection_release():
 @app.route("/api/radio_connection/reconnect", methods=["POST"])
 @handle_errors
 def api_radio_connection_reconnect():
+    if RADIO_IDENTITY_RESULT.get("status") != "MATCH":
+        return jsonify({
+            "ok": False,
+            "error": "Radio identity mismatch - reconnect is blocked for the active profile"
+        }), 409
     ok, status = radio_connection_manager.reconnect()
     if ok:
         radio_event("restart")
@@ -3380,6 +3815,12 @@ def api_radio_connection_reconnect():
 @handle_errors
 def api_restart_listener():
     global listen_process
+
+    if RADIO_IDENTITY_RESULT.get("status") != "MATCH":
+        return jsonify({
+            "ok": False,
+            "error": "Radio identity mismatch - listener restart is blocked"
+        }), 409
 
     if radio_connection_manager.is_released():
         return jsonify({
@@ -3408,6 +3849,11 @@ def api_restart_listener():
 @app.route("/api/rescan_nodes", methods=["POST"])
 @handle_errors
 def api_rescan_nodes():
+    if RADIO_IDENTITY_RESULT.get("status") != "MATCH":
+        return jsonify({
+            "ok": False,
+            "error": "Radio identity mismatch - network rescan is blocked"
+        }), 409
     if radio_connection_manager.is_released():
         return jsonify({
             "ok": False,
@@ -3972,7 +4418,7 @@ def api_delete_all_dm():
             for chat_id in dm_chat_ids:
                 if chat_id in chats:
                     del chats[chat_id]
-            deleted_file = os.path.join(DATA_DIR, "deleted_dm.json")
+            deleted_file = DELETED_DM_FILE
             try:
                 with open(deleted_file, "w") as f:
                     json.dump({"deleted": dm_chat_ids}, f)
@@ -3989,7 +4435,7 @@ def api_delete_all_dm():
 @app.route("/api/restore_deleted_dm", methods=["POST"])
 @handle_errors
 def api_restore_deleted_dm():
-    deleted_file = os.path.join(DATA_DIR, "deleted_dm.json")
+    deleted_file = DELETED_DM_FILE
     if os.path.exists(deleted_file):
         os.remove(deleted_file)
         with state_lock:
@@ -4177,21 +4623,34 @@ def api_system_cpu_history():
 # ============================================================
 
 if __name__ == "__main__":
-    # Загружаем данные
+    # Verify the physical radio before loading or mutating radio-profile data.
+    startup_info_output = verify_radio_identity()
+    identity_status = RADIO_IDENTITY_RESULT.get("status", "NOT_CHECKED")
+    identity_match = identity_status == "MATCH"
+
+    # Load the accepted profile regardless of radio availability so history
+    # remains visible.  A mismatched radio is never allowed to write into it.
     load_messages()
     load_nodes()
     load_sensors_data()
     load_chats()
     ensure_known_nodes()
     normalize_unknown_nodes()
-    parse_nodes_from_info()
+    if identity_match:
+        parse_nodes_from_info(startup_info_output)
+    else:
+        print(
+            f"[PROFILE] Radio writes blocked for profile {ACTIVE_PROFILE_ID}: identity={identity_status}",
+            flush=True,
+        )
     load_settings()
     _load_cpu_history()
 
-    try:
-        update_base_status_from_info()
-    except Exception as e:
-        print(f"[WARN] Base status update failed: {e}")
+    if identity_match:
+        try:
+            update_base_status_from_info(startup_info_output)
+        except Exception as e:
+            print(f"[WARN] Base status update failed: {e}")
     
     telemetry.load_telemetry()
     camera.load_camera_settings()    # <--- вызов через модуль
@@ -4201,36 +4660,47 @@ if __name__ == "__main__":
             ensure_chat(node_id, KNOWN_NODES[node_id], force=True)
     save_chats()
     
-    try:
-        print("[INIT] Initial telemetry fetch...")
-        get_telemetry_from_info()
-    except Exception as e:
-        print(f"[INIT] Telemetry fetch error: {e}")
+    if identity_match:
+        try:
+            print("[INIT] Initial telemetry fetch...")
+            get_telemetry_from_info(startup_info_output)
+        except Exception as e:
+            print(f"[INIT] Telemetry fetch error: {e}")
     
     # Инициализация камеры
     print("[CAMERA] 🔍 Initializing...", flush=True)
     camera.init_camera()   # <--- вызов через модуль
     
-    # Запуск потоков
-    threading.Thread(target=listen_meshtastic, daemon=True).start()
-    threading.Thread(target=cleanup_seen_ids, daemon=True).start()
-    threading.Thread(target=telemetry_worker, daemon=True).start()
-    threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
-    threading.Thread(target=radio_health_worker, daemon=True).start()
+    # Start radio workers only for the accepted physical radio.  This prevents
+    # another USB node from contaminating the active profile.
+    if identity_match:
+        threading.Thread(target=listen_meshtastic, daemon=True).start()
+        threading.Thread(target=cleanup_seen_ids, daemon=True).start()
+        threading.Thread(target=telemetry_worker, daemon=True).start()
+        threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
+        threading.Thread(target=radio_health_worker, daemon=True).start()
+    else:
+        pause_listen.set()
+        print(f"[IDENTITY] Listener not started because status={identity_status}", flush=True)
     threading.Thread(target=cpu_history_worker, daemon=True).start()
     
-    print(f"""
-    ╔══════════════════════════════════════════════╗
-    ║   MeshCenter (Pi Zero 2W)                    ║
-    ╠══════════════════════════════════════════════╣
-    ║  URL: http://{APP_HOST}:{APP_PORT}       ║
-    ║  Node: {LOCAL_NODE_NAME}                     ║
-    ║  Port: {MESHTASTIC_PORT}                    ║
-    ║  Camera: {'✅' if camera.CAMERA_AVAILABLE else '❌'} Available        ║
-    ║  Video: {camera.VIDEO_CONFIG['resolution']} @ {camera.VIDEO_CONFIG['fps']}fps {camera.VIDEO_CONFIG['quality']}% ║
-    ║  Photo: {camera.PHOTO_CONFIG['resolution']} preview, {camera.PHOTO_SAVE_CONFIG['resolution']} save ║
-    ╚══════════════════════════════════════════════╝
-    """)
-    
+    identity_status = RADIO_IDENTITY_RESULT.get("status", "NOT_CHECKED")
+    detected_radio = RADIO_IDENTITY_RESULT.get("detected") or {}
+    banner_radio_name = detected_radio.get("long_name") or LOCAL_NODE_NAME
+    banner_instance_name = INSTANCE_IDENTITY.get("instance_name", "MeshCenter")
+    banner_hostname = INSTANCE_IDENTITY.get("hostname", "")
+    print(
+        "\n"
+        f"    {banner_instance_name}\n"
+        f"    Host: {banner_hostname}\n"
+        f"    URL: http://{APP_HOST}:{APP_PORT}\n"
+        f"    Radio: {banner_radio_name}\n"
+        f"    Port: {MESHTASTIC_PORT}\n"
+        f"    Identity: {identity_status}\n"
+        f"    Camera: {'Available' if camera.CAMERA_AVAILABLE else 'Unavailable'}\n"
+        f"    Video: {camera.VIDEO_CONFIG['resolution']} @ {camera.VIDEO_CONFIG['fps']}fps {camera.VIDEO_CONFIG['quality']}%\n"
+        f"    Photo: {camera.PHOTO_CONFIG['resolution']} preview, {camera.PHOTO_SAVE_CONFIG['resolution']} save\n"
+    )
+
     app.run(host=APP_HOST, port=APP_PORT, debug=False, threaded=True)
 

@@ -1459,13 +1459,21 @@ function initializeNotificationCenter() {
 // ============================================================
 
 function initBaseNodeAvatar() {
-    const button = document.getElementById('baseNodeAvatarBtn');
     const input = document.getElementById('baseNodeAvatarInput');
-    const image = document.getElementById('baseNodeAvatar');
-    if (!button || !input || !image) return;
+    const baseImage = document.getElementById('baseNodeAvatar');
+    if (!input || !baseImage) return;
 
     let localNodeId = '';
-    const fallbackSrc = image.getAttribute('src') || '/static/meshcenter_logo.png';
+    let currentIconUrl = '';
+    const fallbackSrc = baseImage.getAttribute('src') || '/static/meshcenter_logo.png';
+
+    const applyIcon = (src) => {
+        const safeSrc = src || fallbackSrc;
+        currentIconUrl = safeSrc;
+        baseImage.src = safeSrc;
+        const managerImage = document.getElementById('nodeManagerAvatar');
+        if (managerImage) managerImage.src = safeSrc;
+    };
 
     const loadServerIcon = async () => {
         try {
@@ -1475,14 +1483,12 @@ function initBaseNodeAvatar() {
             localNodeId = String(status.node_id || '').trim();
             if (!localNodeId) throw new Error('Local node ID is unavailable.');
 
-            const iconResponse = await fetch(`/api/nodes/${encodeURIComponent(localNodeId)}/icon`, {
-                cache: 'no-store'
-            });
+            const iconResponse = await fetch(`/api/nodes/${encodeURIComponent(localNodeId)}/icon`, { cache: 'no-store' });
             if (iconResponse.ok) {
                 const blob = await iconResponse.blob();
-                image.src = URL.createObjectURL(blob);
+                applyIcon(URL.createObjectURL(blob));
             } else if (iconResponse.status === 404) {
-                image.src = fallbackSrc;
+                applyIcon(fallbackSrc);
             }
         } catch (error) {
             console.warn('Unable to load node icon from MeshCenter:', error);
@@ -1502,16 +1508,13 @@ function initBaseNodeAvatar() {
                 canvas.height = size;
                 const ctx = canvas.getContext('2d', { alpha: true });
                 if (!ctx) return reject(new Error('Canvas is unavailable.'));
-
                 ctx.clearRect(0, 0, size, size);
                 const inset = 10;
                 const available = size - inset * 2;
                 const scale = Math.min(available / source.naturalWidth, available / source.naturalHeight);
                 const width = Math.max(1, Math.round(source.naturalWidth * scale));
                 const height = Math.max(1, Math.round(source.naturalHeight * scale));
-                const x = Math.round((size - width) / 2);
-                const y = Math.round((size - height) / 2);
-                ctx.drawImage(source, x, y, width, height);
+                ctx.drawImage(source, Math.round((size - width) / 2), Math.round((size - height) / 2), width, height);
                 canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Unable to create PNG.')), 'image/png');
             };
             source.src = String(reader.result || '');
@@ -1519,7 +1522,10 @@ function initBaseNodeAvatar() {
         reader.readAsDataURL(file);
     });
 
-    button.addEventListener('click', () => input.click());
+    document.addEventListener('click', event => {
+        if (event.target.closest('#nodeManagerChangeImageBtn')) input.click();
+    });
+
     input.addEventListener('change', async () => {
         const file = input.files && input.files[0];
         if (!file) return;
@@ -1540,23 +1546,25 @@ function initBaseNodeAvatar() {
             const pngBlob = await prepareTransparentNodeImage(file);
             const formData = new FormData();
             formData.append('icon', pngBlob, 'node-icon.png');
-            const response = await fetch(`/api/nodes/${encodeURIComponent(localNodeId)}/icon`, {
-                method: 'POST',
-                body: formData
-            });
+            const response = await fetch(`/api/nodes/${encodeURIComponent(localNodeId)}/icon`, { method: 'POST', body: formData });
             const result = await response.json().catch(() => ({}));
             if (!response.ok || !result.ok) throw new Error(result.error || 'Upload failed.');
-            image.src = `${result.icon_url}&t=${Date.now()}`;
+            applyIcon(`${result.icon_url}&t=${Date.now()}`);
             localStorage.removeItem('meshcenter.baseNodeAvatar');
-            showToast('✅ Node icon saved on MeshCenter', 'success');
+            showToast('Node image saved', 'success');
         } catch (error) {
             console.warn('Unable to save node image:', error);
-            showToast(`❌ ${error.message || 'Unable to save node image'}`, 'error');
+            showToast(error.message || 'Unable to save node image', 'error');
         } finally {
             input.value = '';
         }
     });
 
+    window.MeshCenterNodeAvatar = {
+        refresh: loadServerIcon,
+        current: () => currentIconUrl || fallbackSrc,
+        apply: applyIcon
+    };
     loadServerIcon();
 }
 
@@ -3438,6 +3446,7 @@ let meshMapWaypointSignature = '';
 let meshMapWaypointExpiryTimer = null;
 let meshMapWaypointKnownIds = new Set();
 let meshMapWaypointInitialLoadDone = false;
+let selectedWaypointId = null;
 
 function getNodePosition(node) {
     const latitude = Number(node?.position?.latitude);
@@ -3478,8 +3487,9 @@ function waypointIconCharacter(iconValue) {
 
 function createWaypointMapIcon(waypoint) {
     const iconChar = waypointIconCharacter(waypoint?.icon);
+    const expired = waypoint?.is_active === false || formatWaypointExpiryDetails(waypoint?.expire_at).expired;
     return L.divIcon({
-        className: 'meshcenter-waypoint-marker',
+        className: `meshcenter-waypoint-marker${expired ? ' is-expired' : ''}`,
         html: `<div class="meshcenter-waypoint-pin"><span>${escapeHtml(iconChar)}</span></div>`,
         iconSize: [30, 36],
         iconAnchor: [15, 34],
@@ -3540,7 +3550,6 @@ function waypointExpiryHtml(expireAt) {
 }
 
 function updateOpenWaypointExpiryLabels() {
-    let hasExpired = false;
     document.querySelectorAll('[data-waypoint-expire]').forEach(element => {
         const formatted = formatWaypointExpiryDetails(element.dataset.waypointExpire);
         const relative = element.querySelector('.waypoint-expire-relative');
@@ -3548,9 +3557,7 @@ function updateOpenWaypointExpiryLabels() {
         if (relative) relative.textContent = formatted.relative;
         if (absolute) absolute.textContent = formatted.absolute;
         element.classList.toggle('is-expired', formatted.expired);
-        hasExpired = hasExpired || formatted.expired;
     });
-    if (hasExpired) refreshMeshMapWaypoints(true);
 }
 
 function startWaypointExpiryTimer() {
@@ -3569,10 +3576,12 @@ function buildWaypointPopup(waypoint) {
     const sender = waypoint?.sender_name || waypoint?.sender_id || 'Unknown';
     const description = waypoint?.description || 'No description';
     const channel = Number.isFinite(Number(waypoint?.channel_index)) ? Number(waypoint.channel_index) : '--';
+    const expired = waypoint?.is_active === false || formatWaypointExpiryDetails(waypoint?.expire_at).expired;
     return `
         <div class="map-popup-name waypoint-popup-name">${escapeHtml(waypointIconCharacter(waypoint?.icon))} ${escapeHtml(name)}</div>
         <div class="map-popup-subtitle">${escapeHtml(description)}</div>
         <div class="map-popup-grid">
+            <span>Status</span><strong class="${expired ? 'waypoint-status-expired' : 'waypoint-status-active'}">${expired ? 'Expired' : 'Active'}</strong>
             <span>Sender</span><strong>${escapeHtml(sender)}</strong>
             <span>Distance</span><strong>${escapeHtml(nav.distanceText)}</strong>
             <span>Bearing</span><strong>${escapeHtml(nav.bearingText)}</strong>
@@ -3582,10 +3591,11 @@ function buildWaypointPopup(waypoint) {
             <span>Coordinates</span><strong>${Number.isFinite(lat) ? lat.toFixed(6) : '--'}, ${Number.isFinite(lon) ? lon.toFixed(6) : '--'}</strong>
         </div>
         <div class="map-popup-actions">
-            <button class="map-popup-primary-btn" onclick="centerMapOnWaypoint('${escapeJsString(waypoint?.waypoint_id)}')">⌖ Center</button>
-            <button class="map-popup-action-btn" onclick="openExternalNodeMap('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')">↗ Navigate</button>
-            <button class="map-popup-action-btn" onclick="copyCoordinates('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')">📋 Coordinates</button>
-            <button class="map-popup-action-btn danger" onclick="setWaypointHidden('${escapeJsString(waypoint?.waypoint_id)}', true)">🙈 Hide</button>
+            <button class="map-popup-primary-btn" type="button" onclick="centerMapOnWaypoint('${escapeJsString(waypoint?.waypoint_id)}')">⌖ Center</button>
+            <button class="map-popup-action-btn" type="button" onclick="openExternalNodeMap('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')">↗ Navigate</button>
+            <button class="map-popup-action-btn" type="button" title="Copy coordinates to clipboard" onclick="copyCoordinates('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')">📋 Coordinates</button>
+            <button class="map-popup-action-btn danger" type="button" onclick="setWaypointHidden('${escapeJsString(waypoint?.waypoint_id)}', true)">🙈 Hide</button>
+            <button class="map-popup-action-btn map-popup-close-btn" type="button" onclick="closeWaypointPopup()">✕ Close</button>
         </div>
     `;
 }
@@ -3635,11 +3645,12 @@ function renderWaypointToolsList() {
         const sender = item?.sender_name || item?.sender_id || 'Unknown';
         const expiry = formatWaypointExpiryDetails(item?.expire_at);
         const hidden = Boolean(item?.is_hidden);
-        const expired = item?.is_active === false;
+        const expired = item?.is_active === false || expiry.expired;
         const pending = waypointVisibilityPending.has(id);
-        return `<div class="waypoint-tools-item ${expired ? 'is-expired' : ''} ${hidden ? 'is-hidden' : ''} ${pending ? 'is-pending' : ''}">` +
+        const selected = id === String(selectedWaypointId || '');
+        return `<div class="waypoint-tools-item ${expired ? 'is-expired' : ''} ${hidden ? 'is-hidden' : ''} ${pending ? 'is-pending' : ''} ${selected ? 'is-selected' : ''}" data-waypoint-id="${escapeHtml(id)}">` +
             `<label class="waypoint-tools-select" title="Select"><input type="checkbox" ${waypointToolsSelectedIds.has(id) ? 'checked' : ''} onchange="toggleWaypointSelection('${escapeJsString(id)}', this.checked)"></label>` +
-            `<button type="button" class="waypoint-tools-main" onclick="showWaypointOnMap('${escapeJsString(id)}')" ${expired || hidden ? 'disabled' : ''}>` +
+            `<button type="button" class="waypoint-tools-main" onclick="showWaypointOnMap('${escapeJsString(id)}')" title="Open waypoint on map">` +
             `<span class="waypoint-tools-icon">${escapeHtml(waypointIconCharacter(item?.icon))}</span>` +
             `<span class="waypoint-tools-copy"><strong>${escapeHtml(name)}</strong>` +
             `<small>${escapeHtml(sender)} · ${escapeHtml(expired ? 'Expired' : expiry.relative)}</small></span></button>` +
@@ -3674,9 +3685,9 @@ function toggleWaypointArchive(show) {
     refreshWaypointToolsList(true);
 }
 
-async function setWaypointHidden(waypointId, hidden) {
+async function setWaypointHidden(waypointId, hidden, options = {}) {
     const id = String(waypointId);
-    if (waypointVisibilityPending.has(id)) return;
+    if (waypointVisibilityPending.has(id)) return false;
     const toolsIndex = waypointToolsItems.findIndex(item => String(item?.waypoint_id) === id);
     const mapIndex = meshMapWaypoints.findIndex(item => String(item?.waypoint_id) === id);
     const previousTools = toolsIndex >= 0 ? { ...waypointToolsItems[toolsIndex] } : null;
@@ -3684,9 +3695,13 @@ async function setWaypointHidden(waypointId, hidden) {
 
     waypointVisibilityPending.add(id);
     if (toolsIndex >= 0) waypointToolsItems[toolsIndex] = { ...waypointToolsItems[toolsIndex], is_hidden: Boolean(hidden) };
-    if (hidden) meshMapWaypoints = meshMapWaypoints.filter(item => String(item?.waypoint_id) !== id);
-    else if (toolsIndex >= 0 && waypointToolsItems[toolsIndex]?.is_active !== false) {
-        meshMapWaypoints = [waypointToolsItems[toolsIndex], ...meshMapWaypoints.filter(item => String(item?.waypoint_id) !== id)];
+    if (hidden) {
+        meshMapWaypoints = meshMapWaypoints.filter(item => String(item?.waypoint_id) !== id);
+    } else if (toolsIndex >= 0) {
+        meshMapWaypoints = [
+            { ...waypointToolsItems[toolsIndex], is_hidden:false },
+            ...meshMapWaypoints.filter(item => String(item?.waypoint_id) !== id)
+        ];
     }
     renderWaypointToolsList();
     if (meshMap) renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
@@ -3700,16 +3715,29 @@ async function setWaypointHidden(waypointId, hidden) {
         const payload = await response.json();
         if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Waypoint update failed');
         if (payload.waypoint) {
-            const item = payload.waypoint;
+            const item = { ...payload.waypoint, is_hidden:Boolean(hidden) };
             const idx = waypointToolsItems.findIndex(row => String(row?.waypoint_id) === id);
             if (idx >= 0) waypointToolsItems[idx] = item;
+            if (!hidden) {
+                meshMapWaypoints = [item, ...meshMapWaypoints.filter(row => String(row?.waypoint_id) !== id)];
+            }
         }
-        showToast(hidden ? 'Waypoint hidden locally' : 'Waypoint is visible again', 'success');
+
+        // Always synchronize both views after a visibility change. This is
+        // essential for expired waypoints because the map and Tools use
+        // different API filters.
+        await Promise.all([
+            refreshMeshMapWaypoints(true),
+            refreshWaypointToolsList(true)
+        ]);
+        if (!options.silent) showToast(hidden ? 'Waypoint hidden locally' : 'Waypoint is visible again', 'success');
+        return true;
     } catch (error) {
         if (toolsIndex >= 0 && previousTools) waypointToolsItems[toolsIndex] = previousTools;
         if (previousMap) meshMapWaypoints = [previousMap, ...meshMapWaypoints.filter(item => String(item?.waypoint_id) !== id)];
         else meshMapWaypoints = meshMapWaypoints.filter(item => String(item?.waypoint_id) !== id);
         showToast(error.message || 'Waypoint update failed', 'error');
+        return false;
     } finally {
         waypointVisibilityPending.delete(id);
         renderWaypointToolsList();
@@ -3850,15 +3878,91 @@ async function submitCreateWaypoint() {
     }
 }
 
-function showWaypointOnMap(waypointId) {
-    switchSidebarTab('nodes');
-    const waypoint = meshMapWaypoints.find(item => String(item.waypoint_id) === String(waypointId)) || waypointToolsItems.find(item => String(item.waypoint_id) === String(waypointId));
-    if (!waypoint) return;
+
+function scrollWaypointToolsItemIntoView(waypointId, behavior = 'smooth') {
+    const id = String(waypointId);
+    const container = document.getElementById('waypointToolsList');
+    if (!container) return;
+    const item = [...container.querySelectorAll('.waypoint-tools-item')]
+        .find(row => String(row.dataset.waypointId || '') === id);
+    if (!item) return;
+    item.scrollIntoView({ behavior, block:'center', inline:'nearest' });
+}
+
+async function selectWaypointInTools(waypointId, options = {}) {
+    const id = String(waypointId);
+    selectedWaypointId = id;
+
+    let item = waypointToolsItems.find(row => String(row?.waypoint_id) === id);
+    const mapItem = meshMapWaypoints.find(row => String(row?.waypoint_id) === id);
+    const expired = Boolean(
+        (item || mapItem)?.is_active === false
+        || formatWaypointExpiryDetails((item || mapItem)?.expire_at).expired
+    );
+
+    // Archived entries are not present in the active-only Tools query.
+    if (!item && expired && !waypointToolsShowExpired) {
+        waypointToolsShowExpired = true;
+        const archiveToggle = document.getElementById('waypointArchiveToggle');
+        if (archiveToggle) archiveToggle.checked = true;
+        await refreshWaypointToolsList(true);
+        item = waypointToolsItems.find(row => String(row?.waypoint_id) === id);
+    }
+
+    renderWaypointToolsList();
+    requestAnimationFrame(() => scrollWaypointToolsItemIntoView(id, options.behavior || 'smooth'));
+}
+
+function handleWaypointMarkerSelected(waypointId) {
+    const id = String(waypointId);
+    selectedWaypointId = id;
+    selectWaypointInTools(id).catch(error => {
+        console.debug('Waypoint list selection failed:', error);
+    });
+}
+
+async function showWaypointOnMap(waypointId) {
+    const id = String(waypointId);
+    selectedWaypointId = id;
+    let waypoint = meshMapWaypoints.find(item => String(item?.waypoint_id) === id)
+        || waypointToolsItems.find(item => String(item?.waypoint_id) === id);
+    if (!waypoint) {
+        await refreshWaypointToolsList(true);
+        waypoint = waypointToolsItems.find(item => String(item?.waypoint_id) === id);
+    }
+    if (!waypoint) {
+        showToast('Waypoint is no longer available', 'error');
+        return;
+    }
+
+    // Clicking a saved entry is the primary navigation action. Hidden entries
+    // are restored first, including archived/expired waypoints.
+    if (waypoint?.is_hidden) {
+        const restored = await setWaypointHidden(id, false, { silent:true });
+        if (!restored) return;
+    } else {
+        await refreshMeshMapWaypoints(true);
+    }
+
     meshMapWaypointsVisible = true;
     const toggle = document.getElementById('mapWaypointsToggle');
     if (toggle) toggle.checked = true;
-    openMapView();
-    setTimeout(() => centerMapOnWaypoint(waypointId), 220);
+
+    // Keep the Tools sidebar open on desktop. openMapView only changes the
+    // central workspace; it must not select the waypoint sender node.
+    switchMainTab('map');
+    await selectWaypointInTools(id);
+    requestAnimationFrame(() => {
+        renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
+        scheduleMeshMapResize(0);
+        scheduleMeshMapResize(120);
+    });
+
+    // Wait until Leaflet has rebuilt the waypoint marker, then center and open
+    // its popup. A second attempt covers slower mobile/tablet layouts.
+    const focus = () => centerMapOnWaypoint(id);
+    setTimeout(focus, 180);
+    setTimeout(focus, 520);
 }
 
 function getWaypointSignature(items) {
@@ -3872,7 +3976,7 @@ async function refreshMeshMapWaypoints(forceRender = false) {
     if (waypointMapRefreshInFlight && !forceRender) return;
     waypointMapRefreshInFlight = true;
     try {
-        const response = await fetch('/api/waypoints', { cache:'no-store' });
+        const response = await fetch('/api/waypoints?include_expired=1', { cache:'no-store' });
         if (!response.ok) return;
         const payload = await response.json();
         const items = Array.isArray(payload?.waypoints) ? payload.waypoints : [];
@@ -3916,13 +4020,56 @@ function toggleMeshMapWaypoints(visible) {
 }
 
 function centerMapOnWaypoint(waypointId) {
-    const waypoint = meshMapWaypoints.find(item => String(item.waypoint_id) === String(waypointId)) || waypointToolsItems.find(item => String(item.waypoint_id) === String(waypointId));
-    if (!waypoint || !meshMap) return;
+    const id = String(waypointId);
+    const waypoint = meshMapWaypoints.find(item => String(item?.waypoint_id) === id)
+        || waypointToolsItems.find(item => String(item?.waypoint_id) === id);
+    if (!waypoint) return;
+
+    selectedWaypointId = id;
+    selectWaypointInTools(id).catch(() => {});
+
+    const map = ensureMeshMap();
+    if (!map) return;
     const lat = Number(waypoint.latitude);
     const lon = Number(waypoint.longitude);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-    meshMap.flyTo([lat, lon], Math.max(meshMap.getZoom(), 16), { duration:.45 });
-    setTimeout(() => meshMapWaypointMarkers.get(String(waypointId))?.openPopup(), 420);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        showToast('Waypoint coordinates are unavailable', 'error');
+        return;
+    }
+
+    if (!meshMapWaypointMarkers.has(id) && !waypoint?.is_hidden) {
+        renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
+    }
+
+    const target = L.latLng(lat, lon);
+    const currentCenter = map.getCenter();
+    const distanceMeters = currentCenter.distanceTo(target);
+    const currentZoom = Number(map.getZoom()) || 13;
+    const targetZoom = Math.min(15, Math.max(13, currentZoom));
+
+    const openPopup = () => {
+        const marker = meshMapWaypointMarkers.get(id);
+        if (marker) marker.openPopup();
+    };
+
+    map.stop();
+
+    // Nearby points move without zoom changes. Distant points use a short,
+    // restrained fly animation and never zoom in beyond level 15.
+    if (distanceMeters <= 4500) {
+        map.once('moveend', openPopup);
+        map.panTo(target, { animate:true, duration:.45, easeLinearity:.35, noMoveStart:false });
+        setTimeout(openPopup, 520);
+    } else {
+        map.once('moveend', openPopup);
+        map.flyTo(target, targetZoom, {
+            animate:true,
+            duration:.58,
+            easeLinearity:.32,
+            noMoveStart:false
+        });
+        setTimeout(openPopup, 680);
+    }
 }
 
 function scheduleMeshMapResize(delay = 0) {
@@ -4074,19 +4221,26 @@ function renderMeshMap(targetNodeId = null, options = {}) {
         meshMapWaypoints.forEach(waypoint => {
             const latitude = Number(waypoint?.latitude);
             const longitude = Number(waypoint?.longitude);
-            if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || waypoint?.is_hidden || waypoint?.is_active === false) return;
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || waypoint?.is_hidden) return;
+            const expired = waypoint?.is_active === false || formatWaypointExpiryDetails(waypoint?.expire_at).expired;
             const marker = L.marker([latitude, longitude], {
                 icon: createWaypointMapIcon(waypoint),
                 title: waypoint?.name || 'Waypoint',
                 riseOnHover: true,
-                zIndexOffset: 850
+                zIndexOffset: expired ? 720 : 850,
+                opacity: expired ? 0.72 : 1
             }).addTo(map);
             marker.bindPopup(buildWaypointPopup(waypoint), {
                 className:'meshcenter-map-popup meshcenter-waypoint-popup',
                 maxWidth:320,
-                offset:L.point(0, -12)
+                offset:L.point(0, -12),
+                closeButton:false
+            });
+            marker.on('click', () => {
+                handleWaypointMarkerSelected(waypoint.waypoint_id);
             });
             marker.on('popupopen', () => {
+                handleWaypointMarkerSelected(waypoint.waypoint_id);
                 setTimeout(updateOpenWaypointExpiryLabels, 0);
             });
             meshMapWaypointMarkers.set(String(waypoint.waypoint_id), marker);
@@ -4117,10 +4271,15 @@ function renderMeshMap(targetNodeId = null, options = {}) {
 
     const countEl = document.getElementById('mapNodeCount');
     if (countEl) {
-        const waypointCount = meshMapWaypointsVisible
-            ? meshMapWaypoints.filter(item => item?.is_active !== false && !item?.is_hidden).length
-            : 0;
-        countEl.textContent = `${positionedNodes.length} node${positionedNodes.length === 1 ? '' : 's'} · ${waypointCount} waypoint${waypointCount === 1 ? '' : 's'}`;
+        const visibleWaypoints = meshMapWaypointsVisible
+            ? meshMapWaypoints.filter(item => !item?.is_hidden)
+            : [];
+        const activeWaypointCount = visibleWaypoints.filter(item => item?.is_active !== false && !formatWaypointExpiryDetails(item?.expire_at).expired).length;
+        const expiredWaypointCount = visibleWaypoints.length - activeWaypointCount;
+        const waypointSummary = expiredWaypointCount > 0
+            ? `${visibleWaypoints.length} waypoints (${activeWaypointCount} active, ${expiredWaypointCount} expired)`
+            : `${visibleWaypoints.length} waypoint${visibleWaypoints.length === 1 ? '' : 's'}`;
+        countEl.textContent = `${positionedNodes.length} node${positionedNodes.length === 1 ? '' : 's'} · ${waypointSummary}`;
     }
 
     const targetNode = positionedNodes.find(node => String(node.node_id) === String(meshMapTargetNodeId));
@@ -4173,7 +4332,7 @@ function fitMeshMapToNodes() {
         meshMapWaypoints.forEach(item => {
             const lat = Number(item?.latitude);
             const lon = Number(item?.longitude);
-            if (Number.isFinite(lat) && Number.isFinite(lon) && item?.is_active !== false && !item?.is_hidden) points.push([lat, lon]);
+            if (Number.isFinite(lat) && Number.isFinite(lon) && !item?.is_hidden) points.push([lat, lon]);
         });
     }
     const reference = getReferenceLocation();
@@ -5030,13 +5189,50 @@ async function copyNodeId(nodeId) {
     }
 }
 
-function copyCoordinates(lat, lon) {
-    const coords = `${lat}, ${lon}`;
-    navigator.clipboard.writeText(coords).then(() => {
+async function copyCoordinates(lat, lon) {
+    const latitude = Number(lat);
+    const longitude = Number(lon);
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        showToast('❌ Coordinates unavailable', 'error');
+        return;
+    }
+
+    const coordinates = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(coordinates);
+        } else {
+            const textArea = document.createElement('textarea');
+            textArea.value = coordinates;
+            textArea.setAttribute('readonly', '');
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-9999px';
+            textArea.style.top = '0';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+
+            const copied = document.execCommand('copy');
+            textArea.remove();
+
+            if (!copied) {
+                throw new Error('Fallback clipboard copy failed');
+            }
+        }
+
         showToast('✅ Coordinates copied', 'success');
-    }).catch(() => {
-        showToast('❌ Failed to copy', 'error');
-    });
+    } catch (error) {
+        console.warn('[WAYPOINT] Failed to copy coordinates:', error);
+        showToast('❌ Failed to copy coordinates', 'error');
+    }
+}
+
+function closeWaypointPopup() {
+    if (meshMap && typeof meshMap.closePopup === 'function') {
+        meshMap.closePopup();
+    }
 }
 
 function setNodeAsReference(nodeId) {
@@ -6407,7 +6603,7 @@ function setWorkspacePopover(open) {
 }
 
 function openWorkspacePage(page) {
-    const allowedPages = new Set(['system', 'settings', 'about', 'map']);
+    const allowedPages = new Set(['system', 'settings', 'about', 'map', 'node-manager']);
     if (!allowedPages.has(page)) return;
     setWorkspacePopover(false);
     switchMainTab(page);
@@ -9510,6 +9706,332 @@ function refreshPhoto() {
 // ============================================================
 // SWITCH MAIN TAB (MODIFIED)
 // ============================================================
+
+function deviceDashboardValue(value, fallback = '—') {
+    if (value === null || value === undefined || value === '') return fallback;
+    return escapeHtml(String(value));
+}
+
+function formatDeviceDashboardDate(value) {
+    if (!value) return '—';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return escapeHtml(String(value));
+    return parsed.toLocaleString();
+}
+
+function deviceStatusClass(mode, identityStatus) {
+    if (identityStatus === 'MISMATCH') return 'device-status-danger';
+    if (mode === 'connected') return 'device-status-ok';
+    if (mode === 'released' || mode === 'releasing' || mode === 'reconnecting') return 'device-status-warning';
+    return 'device-status-danger';
+}
+
+function deviceConnectionLabel(mode, listenerRunning) {
+    if (mode === 'released') return 'Released';
+    if (mode === 'releasing') return 'Releasing';
+    if (mode === 'reconnecting') return 'Reconnecting';
+    if (mode === 'error') return 'Connection error';
+    return listenerRunning ? 'Connected' : 'Listener stopped';
+}
+
+async function loadNodeManagerDashboard(showFeedback = false) {
+    const container = document.getElementById('nodeManagerDashboard');
+    if (!container) return;
+
+    if (!container.dataset.loaded) {
+        container.innerHTML = '<div class="device-dashboard-loading">Loading node information...</div>';
+    }
+
+    try {
+        const response = await fetch('/api/node-manager/dashboard', { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Unable to load node information');
+
+        const radio = data.radio || {};
+        const connection = data.connection || {};
+        const profile = data.profile || {};
+        const profiles = Array.isArray(data.profiles) && data.profiles.length
+            ? data.profiles
+            : [{ profile_id: profile.profile_id, radio, active: true, connection }];
+        const counts = profile.counts || {};
+        const storage = profile.storage || {};
+        const statusClass = deviceStatusClass(connection.mode, radio.identity_status);
+        const connectionLabel = deviceConnectionLabel(connection.mode, connection.listener_running);
+        const canRelease = connection.mode === 'connected' && connection.listener_running;
+        const canReconnect = connection.mode === 'released' || connection.mode === 'error' || (!connection.listener_running && connection.mode !== 'reconnecting');
+        const iconSrc = window.MeshCenterNodeAvatar?.current?.() || '/static/meshcenter_logo.png';
+
+        const profileCards = profiles.map(item => {
+            const itemRadio = item.radio || {};
+            const itemConnection = item.connection || {};
+            const active = Boolean(item.active || item.profile_id === profile.profile_id);
+            const connected = Boolean(itemConnection.listener_running && itemConnection.mode === 'connected');
+            const identity = itemRadio.identity_status || 'NOT_CHECKED';
+            return `
+                <button type="button" class="node-profile-card ${active ? 'is-active' : ''}"
+                        data-profile-id="${deviceDashboardValue(item.profile_id)}"
+                        ${active ? 'aria-current="true"' : 'disabled'}>
+                    <span class="node-profile-icon">📻</span>
+                    <span class="node-profile-main">
+                        <strong>${deviceDashboardValue(itemRadio.long_name, item.profile_id || 'Radio profile')}</strong>
+                        <small>${deviceDashboardValue(itemRadio.hardware)} · ${deviceDashboardValue(itemRadio.node_id)}</small>
+                    </span>
+                    <span class="node-profile-badges">
+                        ${active ? '<span class="node-profile-badge active">Active</span>' : ''}
+                        <span class="node-profile-badge ${connected ? 'connected' : 'offline'}">${connected ? 'Connected' : 'Offline'}</span>
+                        <span class="node-profile-badge identity">${deviceDashboardValue(identity)}</span>
+                    </span>
+                </button>`;
+        }).join('');
+
+        container.dataset.loaded = '1';
+        container.innerHTML = `
+            <section class="node-profile-selector-section">
+                <div class="node-manager-section-heading">
+                    <div>
+                        <h3>Radios and profiles</h3>
+                        <p>Select the radio profile to inspect or activate.</p>
+                    </div>
+                    <span class="node-manager-profile-count">${profiles.length}</span>
+                </div>
+                <div class="node-profile-list">${profileCards}</div>
+            </section>
+
+            <section class="device-hero-card node-manager-hero-card">
+                <div class="node-manager-avatar-wrap">
+                    <img id="nodeManagerAvatar" class="node-manager-avatar" src="${escapeHtml(iconSrc)}" alt="">
+                    <button type="button" class="node-manager-change-image-btn" id="nodeManagerChangeImageBtn">Change image</button>
+                </div>
+                <div class="device-hero-main">
+                    <div class="device-card-eyebrow">Selected radio</div>
+                    <h3>${deviceDashboardValue(radio.long_name, 'Meshtastic radio')}</h3>
+                    <div class="device-hero-meta">
+                        <span>${deviceDashboardValue(radio.short_name)}</span>
+                        <span>${deviceDashboardValue(radio.hardware)}</span>
+                        <span>${deviceDashboardValue(radio.node_id)}</span>
+                    </div>
+                </div>
+                <div class="node-manager-status-stack">
+                    <div class="device-status-pill ${statusClass}"><span class="device-status-dot"></span>${escapeHtml(connectionLabel)}</div>
+                    <span class="node-manager-active-label">Active profile</span>
+                </div>
+            </section>
+
+            <div class="device-dashboard-grid">
+                <section class="device-info-card">
+                    <div class="device-card-title">📡 Radio</div>
+                    <dl class="device-detail-list">
+                        <div><dt>Long name</dt><dd>${deviceDashboardValue(radio.long_name)}</dd></div>
+                        <div><dt>Short name</dt><dd>${deviceDashboardValue(radio.short_name)}</dd></div>
+                        <div><dt>Node ID</dt><dd class="device-monospace copyable-value" title="Click to copy" onclick="copyTextToClipboard('${String(radio.node_id || '').replace(/'/g, "\\'")}', 'Node ID copied')">${deviceDashboardValue(radio.node_id)}</dd></div>
+                        <div><dt>Hardware</dt><dd>${deviceDashboardValue(radio.hardware)}</dd></div>
+                        <div><dt>Role</dt><dd>${deviceDashboardValue(radio.role)}</dd></div>
+                        <div><dt>Identity</dt><dd>${deviceDashboardValue(radio.identity_status)}</dd></div>
+                        <div><dt>Last verified</dt><dd>${formatDeviceDashboardDate(radio.identity_checked_at)}</dd></div>
+                    </dl>
+                </section>
+
+                <section class="device-info-card">
+                    <div class="device-card-title">🔌 Connection</div>
+                    <dl class="device-detail-list">
+                        <div><dt>USB port</dt><dd class="device-monospace">${deviceDashboardValue(radio.port)}</dd></div>
+                        <div><dt>Status</dt><dd>${escapeHtml(connectionLabel)}</dd></div>
+                        <div><dt>Listener</dt><dd>${connection.listener_running ? 'Running' : 'Stopped'}</dd></div>
+                        <div><dt>Listener PID</dt><dd>${deviceDashboardValue(connection.listener_pid)}</dd></div>
+                        <div><dt>Connected since</dt><dd>${formatDeviceDashboardDate(connection.connected_since)}</dd></div>
+                        <div><dt>Message</dt><dd>${deviceDashboardValue(connection.message)}</dd></div>
+                    </dl>
+                    <div class="device-action-row">
+                        <button type="button" class="device-action-btn device-action-secondary"
+                            onclick="releaseRadioConnection(); setTimeout(() => loadNodeManagerDashboard(), 1200);"
+                            ${canRelease ? '' : 'disabled'}>Release Radio</button>
+                        <button type="button" class="device-action-btn device-action-primary"
+                            onclick="reconnectRadioConnection(); setTimeout(() => loadNodeManagerDashboard(), 1800);"
+                            ${canReconnect ? '' : 'disabled'}>Reconnect</button>
+                    </div>
+                </section>
+
+                <section class="device-info-card">
+                    <div class="device-card-title">🗂 Profile</div>
+                    <dl class="device-detail-list">
+                        <div><dt>Profile ID</dt><dd class="device-monospace">${deviceDashboardValue(profile.profile_id)}</dd></div>
+                        <div><dt>Created</dt><dd>${formatDeviceDashboardDate(profile.created_at)}</dd></div>
+                        <div><dt>Last used</dt><dd>${formatDeviceDashboardDate(profile.last_used_at)}</dd></div>
+                        <div><dt>Messages</dt><dd>${deviceDashboardValue(counts.messages, '0')}</dd></div>
+                        <div><dt>Chats</dt><dd>${deviceDashboardValue(counts.chats, '0')}</dd></div>
+                        <div><dt>Nodes</dt><dd>${deviceDashboardValue(counts.nodes, '0')}</dd></div>
+                        <div><dt>Waypoints</dt><dd>${deviceDashboardValue(counts.waypoints, '0')}</dd></div>
+                        <div><dt>Telemetry records</dt><dd>${deviceDashboardValue(counts.telemetry_records, '0')}</dd></div>
+                    </dl>
+                </section>
+
+                <section class="device-info-card">
+                    <div class="device-card-title">💾 Profile storage</div>
+                    <dl class="device-detail-list">
+                        <div><dt>Total</dt><dd>${deviceDashboardValue(storage.total)}</dd></div>
+                        <div><dt>Messages</dt><dd>${deviceDashboardValue(storage.messages)}</dd></div>
+                        <div><dt>Telemetry</dt><dd>${deviceDashboardValue(storage.telemetry)}</dd></div>
+                        <div><dt>Waypoints</dt><dd>${deviceDashboardValue(storage.waypoints)}</dd></div>
+                        <div><dt>Node icons</dt><dd>${deviceDashboardValue(storage.icons)}</dd></div>
+                        <div><dt>Path</dt><dd class="device-path-value copyable-value" title="${deviceDashboardValue(profile.path)}">${deviceDashboardValue(profile.path)}</dd></div>
+                    </dl>
+                </section>
+            </div>`;
+
+        if (showFeedback) showToast('Node information refreshed', 'success');
+    } catch (error) {
+        console.error('[NODE MANAGER] Dashboard load failed:', error);
+        container.innerHTML = `<div class="device-dashboard-error"><strong>Unable to load node information</strong><span>${escapeHtml(error.message || String(error))}</span><button type="button" class="mc-refresh-btn" onclick="loadNodeManagerDashboard(true)">Try again</button></div>`;
+        if (showFeedback) showToast('Node information could not be loaded', 'error');
+    }
+}
+
+async function copyTextToClipboard(text, successMessage = 'Copied') {
+    if (!text) return;
+    try {
+        if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+        else {
+            const area = document.createElement('textarea');
+            area.value = text;
+            area.style.position = 'fixed';
+            area.style.opacity = '0';
+            document.body.appendChild(area);
+            area.select();
+            document.execCommand('copy');
+            area.remove();
+        }
+        showToast(successMessage, 'success');
+    } catch (error) {
+        showToast('Copy failed', 'error');
+    }
+}
+
+
+function openNodeManager(event) {
+    event?.preventDefault?.();
+    switchMainTab('node-manager');
+}
+
+function handleNodeManagerHeaderKey(event) {
+    if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openNodeManager(event);
+    }
+}
+
+function peripheralStatusLabel(device) {
+    if (!device.assigned) return 'Not assigned';
+    if (!device.enabled) return 'Disabled';
+    if (device.status === 'active') return 'Active';
+    if (device.status === 'available') return 'Available';
+    if (device.status === 'data') return 'Connected';
+    if (device.status === 'no_data') return 'No data';
+    return 'Unavailable';
+}
+
+function peripheralStatusClass(device) {
+    if (!device.assigned || !device.enabled) return 'device-status-warning';
+    if (device.status === 'active' || device.status === 'available' || device.status === 'data') return 'device-status-ok';
+    return 'device-status-warning';
+}
+
+function formatPeripheralMetric(value, unit = '') {
+    if (value === null || value === undefined || value === '') return '—';
+    const number = Number(value);
+    const text = Number.isFinite(number) ? (Math.round(number * 100) / 100).toString() : String(value);
+    return `${escapeHtml(text)}${unit}`;
+}
+
+async function loadPeripheralDevices(showFeedback = false) {
+    const container = document.getElementById('devicesDashboard');
+    if (!container) return;
+    if (!container.dataset.loaded) {
+        container.innerHTML = '<div class="device-dashboard-loading">Loading peripheral devices...</div>';
+    }
+
+    try {
+        const response = await fetch('/api/devices', { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Unable to load peripheral devices');
+        const devices = Array.isArray(data.devices) ? data.devices : [];
+
+        const cards = devices.map(device => {
+            const values = device.values || {};
+            let details = '';
+            let action = '';
+            if (device.id === 'camera') {
+                details = `
+                    <div><dt>Source</dt><dd>${deviceDashboardValue(device.source)}</dd></div>
+                    <div><dt>Model</dt><dd>${deviceDashboardValue(device.model)}</dd></div>
+                    <div><dt>Assigned</dt><dd>${device.assigned ? 'Yes' : 'No'}</dd></div>`;
+                action = `<button type="button" class="device-action-btn device-action-primary" onclick="switchMainTab('video')">Open Camera</button>`;
+            } else if (device.id === 'environment') {
+                details = `
+                    <div><dt>Driver</dt><dd>${deviceDashboardValue(device.driver)}</dd></div>
+                    <div><dt>Temperature</dt><dd>${formatPeripheralMetric(values.temperature, '°')}</dd></div>
+                    <div><dt>Humidity</dt><dd>${formatPeripheralMetric(values.humidity, '%')}</dd></div>
+                    <div><dt>Pressure</dt><dd>${formatPeripheralMetric(values.pressure, ' hPa')}</dd></div>`;
+            } else if (device.id === 'power') {
+                details = `
+                    <div><dt>Driver</dt><dd>${deviceDashboardValue(device.driver)}</dd></div>
+                    <div><dt>Voltage</dt><dd>${formatPeripheralMetric(values.voltage, ' V')}</dd></div>
+                    <div><dt>Current</dt><dd>${formatPeripheralMetric(values.current, ' mA')}</dd></div>
+                    <div><dt>Power</dt><dd>${formatPeripheralMetric(values.power, ' mW')}</dd></div>`;
+            }
+            return `
+                <section class="peripheral-card">
+                    <div class="peripheral-card-header">
+                        <div>
+                            <div class="device-card-eyebrow">Active profile ${deviceDashboardValue(data.profile_id)}</div>
+                            <h3>${deviceDashboardValue(device.name)}</h3>
+                        </div>
+                        <div class="device-status-pill ${peripheralStatusClass(device)}">
+                            <span class="device-status-dot"></span>${escapeHtml(peripheralStatusLabel(device))}
+                        </div>
+                    </div>
+                    <dl class="device-detail-list">${details}</dl>
+                    ${action ? `<div class="device-action-row device-action-row-single">${action}</div>` : ''}
+                </section>`;
+        }).join('');
+
+        container.dataset.loaded = '1';
+        container.innerHTML = `
+            <div class="peripheral-grid">${cards}</div>
+            <section class="peripheral-card peripheral-add-card" aria-disabled="true">
+                <div class="peripheral-add-icon">＋</div>
+                <h3>Add device</h3>
+                <p>Support for additional modules and actuators is planned.</p>
+            </section>`;
+        if (showFeedback) showToast('Device information refreshed', 'success');
+    } catch (error) {
+        console.error('[DEVICES] Peripheral load failed:', error);
+        container.innerHTML = `<div class="device-dashboard-error"><strong>Unable to load devices</strong><span>${escapeHtml(error.message || String(error))}</span><button type="button" class="mc-refresh-btn" onclick="loadPeripheralDevices(true)">Try again</button></div>`;
+        if (showFeedback) showToast('Device information could not be loaded', 'error');
+    }
+}
+
+
+function setChatWorkspaceChromeVisible(visible) {
+    const chatHeader = document.getElementById('chatHeader');
+    const chatListContainer = document.getElementById('chatListContainer');
+    const messagesView = document.getElementById('messagesView');
+    const chatPanels = document.querySelector('.chat-panels');
+
+    [chatHeader, chatListContainer, messagesView].forEach(element => {
+        if (!element) return;
+        element.hidden = !visible;
+        element.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    });
+
+    if (chatPanels) {
+        chatPanels.classList.toggle('node-manager-layout', !visible && currentMainTab === 'node-manager');
+        if (!visible) {
+            chatPanels.scrollTop = 0;
+            chatPanels.scrollLeft = 0;
+        }
+    }
+}
+
 function switchMainTab(tab) {
     const transitionSequence = ++mainTabTransitionSequence;
     const operationalTabs = new Set(['chats', 'video', 'media', 'devices']);
@@ -9535,6 +10057,7 @@ function switchMainTab(tab) {
         document.getElementById('aboutView').style.display = 'none';
         document.getElementById('mapView').style.display = 'none';
         document.getElementById('devicesView').style.display = 'none';
+        document.getElementById('nodeManagerView')?.style && (document.getElementById('nodeManagerView').style.display = 'none');
 
         document.getElementById('chatListContainer').style.display = currentChatId ? 'none' : 'block';
         document.getElementById('messagesView').style.display = currentChatId ? 'flex' : 'none';
@@ -9548,6 +10071,9 @@ function switchMainTab(tab) {
     }
 
     currentMainTab = tab;
+    const nodeManagerOpen = tab === 'node-manager';
+    document.body.classList.toggle('node-manager-open', nodeManagerOpen);
+    document.querySelector('.chat-panels')?.classList.toggle('node-manager-layout', nodeManagerOpen);
 
     document.querySelectorAll('.main-content-tab').forEach(btn => {
         btn.classList.toggle(
@@ -9564,6 +10090,7 @@ function switchMainTab(tab) {
     const videoView = document.getElementById('videoView');
     const mediaView = document.getElementById('mediaView');
     const devicesView = document.getElementById('devicesView');
+    const nodeManagerView = document.getElementById('nodeManagerView');
     const photoView = document.getElementById('photoView');
     const chatHeader = document.getElementById('chatHeader');
     const chatListContainer = document.getElementById('chatListContainer');
@@ -9572,10 +10099,13 @@ function switchMainTab(tab) {
     const aboutView = document.getElementById('aboutView');
     const mapView = document.getElementById('mapView');
 
+    if (tab !== 'chats') setChatWorkspaceChromeVisible(false);
+
     if (messagesView) messagesView.style.display = 'none';
     if (videoView) videoView.style.display = 'none';
     if (mediaView) mediaView.style.display = 'none';
     if (devicesView) devicesView.style.display = 'none';
+    if (nodeManagerView) nodeManagerView.style.display = 'none';
     if (photoView) photoView.style.display = 'none';
     if (systemView) systemView.style.display = 'none';
     if (settingsView) settingsView.style.display = 'none';
@@ -9588,6 +10118,7 @@ function switchMainTab(tab) {
     }
 
     if (tab === 'chats') {
+        setChatWorkspaceChromeVisible(true);
         const chatHeader = document.getElementById('chatHeader');
         const chatListContainer = document.getElementById('chatListContainer');
         const messagesView = document.getElementById('messagesView');
@@ -9693,6 +10224,41 @@ function switchMainTab(tab) {
 
         updateStatusDock('devices');
         stopMessagePolling();
+        loadPeripheralDevices();
+
+    } else if (tab === 'node-manager') {
+        const chatArea = document.querySelector('.chat-area');
+        const chatPanels = document.querySelector('.chat-panels');
+
+        setChatWorkspaceChromeVisible(false);
+
+        if (chatArea) {
+            chatArea.scrollTop = 0;
+            chatArea.classList.remove('chat-workspace-active');
+        }
+        if (chatPanels) {
+            chatPanels.scrollTop = 0;
+            chatPanels.scrollLeft = 0;
+            chatPanels.classList.add('node-manager-layout');
+        }
+        if (nodeManagerView) {
+            nodeManagerView.scrollTop = 0;
+            nodeManagerView.style.display = 'flex';
+        }
+
+        // Run once more after layout calculation. This prevents the previous
+        // Chats header/list geometry from leaving a transient top offset.
+        requestAnimationFrame(() => {
+            if (currentMainTab !== 'node-manager') return;
+            setChatWorkspaceChromeVisible(false);
+            if (chatArea) chatArea.scrollTop = 0;
+            if (chatPanels) chatPanels.scrollTop = 0;
+            if (nodeManagerView) nodeManagerView.scrollTop = 0;
+        });
+
+        updateStatusDock('node-manager');
+        stopMessagePolling();
+        loadNodeManagerDashboard();
 
     } else if (tab === 'photo') {
         if (chatHeader) chatHeader.style.display = 'none';
@@ -9717,6 +10283,7 @@ function switchMainTab(tab) {
         updateStatusDock('system');
         loadSystemNetwork();
         loadSystemInfo();
+        loadInstanceInfo();
         loadRadioHealth();
 
     } else if (tab === 'map') {
@@ -9804,8 +10371,12 @@ function updateStatusDock(tab) {
         setStatusDockContext('Images');
     } else if (tab === 'devices') {
         workspaceLabel.textContent = 'Devices';
-        centerText.textContent = 'Ready';
-        setStatusDockContext('Connected hardware');
+        centerText.textContent = 'Peripherals';
+        setStatusDockContext('Active profile');
+    } else if (tab === 'node-manager') {
+        workspaceLabel.textContent = 'Node Manager';
+        centerText.textContent = 'Active Radio';
+        setStatusDockContext('Profile');
     } else if (tab === 'system') {
         workspaceLabel.textContent = 'System';
         centerText.textContent = 'System Monitor';
@@ -10079,6 +10650,7 @@ function exitSplitView() {
     const mediaView = document.getElementById('mediaView');
     const systemView = document.getElementById('systemView');
     const settingsView = document.getElementById('settingsView');
+    const nodeManagerView = document.getElementById('nodeManagerView');
 
     if (chatList) chatList.style.display = 'flex';
     if (messagesView) messagesView.style.display = 'none';
@@ -10086,6 +10658,7 @@ function exitSplitView() {
     if (mediaView) mediaView.style.display = 'none';
     if (systemView) systemView.style.display = 'none';
     if (settingsView) settingsView.style.display = 'none';
+    if (nodeManagerView) nodeManagerView.style.display = 'none';
 
     document.querySelectorAll('.main-content-tab').forEach(tab => {
         tab.classList.remove('active');
@@ -10542,6 +11115,65 @@ function startCpuMonitoringUi() {
     clearInterval(cpuChartTimer);
     cpuStatusTimer = setInterval(loadCpuStatus, 2000);
     cpuChartTimer = setInterval(() => loadCpuHistory(false), 5000);
+}
+
+function formatIdentityRadio(radio) {
+    if (!radio || typeof radio !== 'object') return '--';
+    const name = radio.long_name || radio.short_name || 'Unknown';
+    const nodeId = radio.node_id || '';
+    return nodeId ? `${name} (${nodeId})` : name;
+}
+
+function formatIdentityCheckedAt(value) {
+    if (!value) return '--';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString();
+}
+
+async function loadInstanceInfo() {
+    try {
+        const response = await fetch('/api/instance', { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok || data.ok === false) throw new Error(data.error || 'Identity request failed');
+
+        const setText = (id, value) => {
+            const element = document.getElementById(id);
+            if (element) element.textContent = value || '--';
+        };
+        setText('instanceName', data.instance_name);
+        setText('instanceHostname', data.hostname);
+        setText('instanceConfiguredRadio', formatIdentityRadio(data.configured));
+        setText('instanceDetectedRadio', formatIdentityRadio(data.detected));
+        setText('instanceLastCheck', formatIdentityCheckedAt(data.checked_at));
+
+        const status = String(data.status || 'NOT_CHECKED').toUpperCase();
+        const labels = {
+            MATCH: 'Verified',
+            MISMATCH: 'Different radio detected',
+            NOT_FOUND: 'Radio identity not found',
+            DETECTION_ERROR: 'Detection error',
+            NOT_CHECKED: 'Not checked',
+        };
+        const statusElement = document.getElementById('instanceIdentityStatus');
+        if (statusElement) {
+            statusElement.textContent = labels[status] || status;
+            statusElement.className = `identity-status identity-${status.toLowerCase().replaceAll('_', '-')}`;
+        }
+
+        const errorElement = document.getElementById('instanceIdentityError');
+        if (errorElement) {
+            errorElement.textContent = data.error || '';
+            errorElement.hidden = !data.error;
+        }
+    } catch (error) {
+        console.error('Instance identity load error:', error);
+        const statusElement = document.getElementById('instanceIdentityStatus');
+        if (statusElement) {
+            statusElement.textContent = 'Unavailable';
+            statusElement.className = 'identity-status identity-detection-error';
+        }
+    }
 }
 
 async function loadSystemInfo() {

@@ -7,6 +7,13 @@ from utils.helpers import now
 
 TELEMETRY_FILE = os.path.join(DATA_DIR, "telemetry_history.json")
 
+
+def configure_storage(filepath):
+    """Point telemetry persistence at the active radio profile before loading data."""
+    global TELEMETRY_FILE
+    TELEMETRY_FILE = str(filepath)
+
+
 telemetry_history = []
 telemetry_config = {"interval": 300, "enabled": True}
 telemetry_current = {

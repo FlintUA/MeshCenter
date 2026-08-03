@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=radio-config-mode-20260801">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=node-manager-transition-fix-20260803">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -25,17 +25,20 @@
             <!-- Unified local node information block -->
             <section class="node-info-panel" id="nodeInfoPanel" aria-label="Local node status and telemetry">
             <!-- Local node dashboard header -->
-            <div class="base-card" id="baseCard">
-                <div class="base-card-title node-dashboard-heading">
-                    <span class="base-card-name">
-                        <button type="button" class="base-node-avatar" id="baseNodeAvatarBtn" title="Choose node image" aria-label="Choose node image">
-                            <img id="baseNodeAvatar" src="{{ url_for('static', filename='meshcenter_logo.png') }}" alt="">
-                        </button>
-                        <input type="file" id="baseNodeAvatarInput" accept="image/png,image/jpeg,image/webp" hidden>
+            <div class="base-card base-card-node-manager" id="baseCard">
+                <button type="button" class="base-node-manager-entry" id="baseNodeManagerEntry"
+                        aria-label="Open Node Manager" title="Open Node Manager"
+                        onclick="openNodeManager(event)">
+                    <span class="base-node-avatar base-node-avatar-static" aria-hidden="true">
+                        <img id="baseNodeAvatar" src="{{ url_for('static', filename='meshcenter_logo.png') }}" alt="">
+                    </span>
+                    <span class="base-node-name-stack">
                         <span id="baseNodeName">Loading...</span>
                     </span>
-                    <span class="node-uptime-badge" id="baseUptimeBadge">Uptime --</span>
-                </div>
+                    <span class="base-node-header-actions">
+                        <span class="node-uptime-badge" id="baseUptimeBadge">Uptime --</span>
+                    </span>
+                </button>
             </div>
 
             <!-- Live local-node telemetry -->
@@ -613,18 +616,39 @@
                     <header class="devices-header mc-workspace-header">
                         <div>
                             <h2 class="workspace-page-title" id="devicesWorkspaceTitle">🔌 Devices</h2>
-                            <p class="workspace-page-subtitle">Sensors, actuators and connected hardware</p>
+                            <p class="workspace-page-subtitle">Peripheral devices and modules assigned to the active radio profile</p>
+                        </div>
+                        <div class="workspace-page-actions">
+                            <button type="button" class="mc-refresh-btn" onclick="loadPeripheralDevices(true)">↻ Refresh</button>
                         </div>
                     </header>
-                    <div class="devices-content">
-                        <div class="devices-empty-state">
-                            <div class="devices-empty-icon">🔌</div>
-                            <h3>Devices workspace is ready</h3>
-                            <p>Connected sensors, power monitors, relays and other hardware modules will appear here.</p>
-                            <div class="devices-empty-tags" aria-label="Planned device types">
-                                <span>Sensors</span><span>Power</span><span>GPIO</span><span>Relays</span><span>Displays</span>
-                            </div>
+
+                    <div class="devices-dashboard" id="devicesDashboard">
+                        <div class="device-dashboard-loading">Loading peripheral devices...</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== NODE MANAGER WORKSPACE ===== -->
+            <section class="node-manager-view workspace-view" id="nodeManagerView" style="display: none;" aria-labelledby="nodeManagerWorkspaceTitle">
+                <div class="node-manager-panel mc-workspace-panel">
+                    <header class="node-manager-header mc-workspace-header">
+                        <div class="workspace-page-heading">
+                            <h2 class="workspace-page-title" id="nodeManagerWorkspaceTitle">📡 Node Manager</h2>
+                            <p class="workspace-page-subtitle">Manage Meshtastic radios, profiles and connections</p>
                         </div>
+                        <div class="workspace-page-actions">
+                            <button type="button" class="mc-refresh-btn" onclick="loadNodeManagerDashboard(true)">↻ Refresh</button>
+                            <button type="button" class="workspace-page-close-btn" onclick="closeWorkspacePage()" title="Close Node Manager" aria-label="Close Node Manager">
+                                <svg class="workspace-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <path d="M7 7L17 17M17 7L7 17"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </header>
+                    <input type="file" id="baseNodeAvatarInput" accept="image/png,image/jpeg,image/webp" hidden>
+                    <div class="devices-dashboard node-manager-dashboard" id="nodeManagerDashboard">
+                        <div class="device-dashboard-loading">Loading node information...</div>
                     </div>
                 </div>
             </section>
@@ -637,7 +661,7 @@
                             <div class="system-subtitle workspace-page-subtitle">Raspberry Pi and network status</div>
                         </div>
                         <div class="workspace-page-actions">
-                            <button class="system-refresh-btn mc-refresh-btn" onclick="loadSystemNetwork(); loadSystemInfo();">↻ Refresh</button>
+                            <button class="system-refresh-btn mc-refresh-btn" onclick="loadSystemNetwork(); loadSystemInfo(); loadInstanceInfo();">↻ Refresh</button>
                             <button type="button" class="workspace-page-close-btn" onclick="closeWorkspacePage()" title="Close System" aria-label="Close System">
                                 <svg class="workspace-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                     <path d="M7 7L17 17M17 7L7 17"></path>
@@ -807,6 +831,17 @@
 
                         <div class="system-right-column">
 
+                            <div class="system-card instance-identity-card">
+                                <div class="system-card-title">🆔 MeshCenter Instance</div>
+                                <div class="system-row"><span>Instance</span><strong id="instanceName">--</strong></div>
+                                <div class="system-row"><span>Hostname</span><strong id="instanceHostname">--</strong></div>
+                                <div class="system-row"><span>Configured radio</span><strong id="instanceConfiguredRadio">--</strong></div>
+                                <div class="system-row"><span>Detected radio</span><strong id="instanceDetectedRadio">--</strong></div>
+                                <div class="system-row"><span>Identity</span><strong id="instanceIdentityStatus" class="identity-status identity-not-checked">Not checked</strong></div>
+                                <div class="system-row"><span>Last check</span><strong id="instanceLastCheck">--</strong></div>
+                                <div id="instanceIdentityError" class="identity-error" hidden></div>
+                            </div>
+
                             <div class="system-card">
 
                                 <div class="system-card-title">
@@ -960,7 +995,7 @@
                             <span><i class="map-legend-dot map-legend-selected"></i>Selected</span>
                             <label class="map-layer-toggle" title="Show or hide received Meshtastic waypoints">
                                 <input type="checkbox" id="mapWaypointsToggle" checked onchange="toggleMeshMapWaypoints(this.checked)">
-                                <i class="map-legend-dot map-legend-waypoint"></i>Waypoints
+                                <i class="map-legend-dot map-legend-waypoint"></i>Waypoints <i class="map-legend-dot map-legend-waypoint-expired"></i>Expired
                             </label>
                         </div>
                         <div class="map-toolbar-right">

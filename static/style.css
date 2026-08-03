@@ -11811,6 +11811,8 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 
 /* Waypoints v1.3 - archive, local visibility and creation */
 .waypoint-tools-actions{display:flex;align-items:center;gap:8px}.waypoint-archive-toggle{font-size:11px;color:#66788f;display:flex;align-items:center;gap:4px}.waypoint-tools-item{display:flex;align-items:stretch;padding:0;overflow:hidden}.waypoint-tools-main{flex:1;display:flex;align-items:center;gap:8px;border:0;background:transparent;text-align:left;padding:9px;min-width:0;color:inherit}.waypoint-tools-main:disabled{cursor:default}.waypoint-tools-visibility{width:36px;border:0;border-left:1px solid rgba(127,145,166,.22);background:transparent;cursor:pointer}.waypoint-tools-item.is-expired{opacity:.68}.waypoint-tools-item.is-hidden{opacity:.58}.map-popup-action-btn.danger{color:#b83b47}
+.map-popup-close-btn{color:var(--mc-text,#dce7f1)}
+[data-theme="light"] .map-popup-close-btn{color:#24425e}
 .waypoint-create-modal{position:fixed;inset:0;z-index:12000;background:rgba(12,20,31,.58);backdrop-filter:blur(3px);align-items:center;justify-content:center;padding:20px}.waypoint-create-dialog{width:min(460px,96vw);background:var(--panel-bg,#fff);border:1px solid rgba(120,140,165,.3);border-radius:16px;box-shadow:0 22px 60px rgba(0,0,0,.35);overflow:hidden}.waypoint-create-header{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px;border-bottom:1px solid rgba(120,140,165,.22)}.waypoint-create-header>div{display:flex;flex-direction:column;gap:3px}.waypoint-create-header small{color:#78899e;font-size:11px}.waypoint-create-header button{border:0;background:transparent;font-size:18px;cursor:pointer;color:inherit}.waypoint-create-body{display:flex;flex-direction:column;gap:12px;padding:16px 18px}.waypoint-create-body label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600}.waypoint-create-body input,.waypoint-create-body textarea,.waypoint-create-body select{width:100%;box-sizing:border-box;border:1px solid #cad5e2;border-radius:9px;padding:9px 10px;background:var(--input-bg,#fff);color:inherit;font:inherit}.waypoint-create-body textarea{resize:vertical}.waypoint-create-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.waypoint-create-coordinates{display:flex;justify-content:space-between;gap:12px;padding:10px;border-radius:9px;background:rgba(100,130,165,.08);font-size:12px}.waypoint-create-note{font-size:11px;color:#7a8ba0}.waypoint-create-footer{display:flex;justify-content:flex-end;gap:10px;padding:13px 18px;border-top:1px solid rgba(120,140,165,.22)}.waypoint-create-footer button{border-radius:9px;padding:9px 18px;cursor:pointer;font-weight:600}.waypoint-create-footer .secondary{border:1px solid #c8d3df;background:transparent;color:inherit}.waypoint-create-footer .primary{border:1px solid #1f6fd1;background:#1f6fd1;color:#fff}.waypoint-create-footer button:disabled{opacity:.6;cursor:wait}@media(max-width:560px){.waypoint-create-grid{grid-template-columns:1fr}}
 
 /* Waypoints v1.3.1 */
@@ -11889,3 +11891,878 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 }
 .waypoint-tools-bulk-actions button:disabled{opacity:.45;cursor:not-allowed;}
 .waypoint-tools-bulk-actions .danger{color:#b83b47;background:rgba(205,54,68,.07);}
+
+/* Waypoints v1.3.3 - expired waypoint visualization */
+.meshcenter-waypoint-marker.is-expired .meshcenter-waypoint-pin {
+    background:#b79ad9;
+    border-color:rgba(255,255,255,.88);
+    box-shadow:0 4px 11px rgba(77,55,112,.28);
+    opacity:.76;
+    filter:saturate(.78);
+}
+.meshcenter-waypoint-marker.is-expired .meshcenter-waypoint-pin span { opacity:.88; }
+.waypoint-status-active { color:#2ca56c; }
+.waypoint-status-expired { color:#9b78c4; }
+.waypoint-tools-item.is-expired {
+    opacity:.78;
+    background:rgba(183,154,217,.10);
+    border-color:rgba(155,120,196,.30);
+}
+.waypoint-tools-item.is-expired:hover {
+    opacity:.92;
+    background:rgba(183,154,217,.16);
+    border-color:#a784ce;
+}
+.waypoint-tools-item.is-expired .waypoint-tools-icon { opacity:.78; }
+
+.map-legend-waypoint-expired { background:#b79ad9; opacity:.76; }
+
+
+/* MeshCenter instance identity */
+.identity-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 24px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: right;
+}
+.identity-match { color: #176b3a; background: rgba(34, 197, 94, 0.14); }
+.identity-mismatch { color: #9a5b00; background: rgba(245, 158, 11, 0.18); }
+.identity-not-found,
+.identity-detection-error { color: #a12b2b; background: rgba(239, 68, 68, 0.14); }
+.identity-not-checked { color: var(--text-muted, #6b7280); background: rgba(107, 114, 128, 0.12); }
+.identity-error {
+    margin-top: 10px;
+    padding: 9px 10px;
+    border-radius: 8px;
+    background: rgba(239, 68, 68, 0.10);
+    color: #a12b2b;
+    font-size: 12px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+body[data-theme="dark"] .identity-match,
+html[data-theme="dark"] .identity-match { color: #86efac; }
+body[data-theme="dark"] .identity-mismatch,
+html[data-theme="dark"] .identity-mismatch { color: #fcd34d; }
+body[data-theme="dark"] .identity-not-found,
+body[data-theme="dark"] .identity-detection-error,
+html[data-theme="dark"] .identity-not-found,
+html[data-theme="dark"] .identity-detection-error,
+body[data-theme="dark"] .identity-error,
+html[data-theme="dark"] .identity-error { color: #fca5a5; }
+
+
+/* ===== Devices dashboard ===== */
+.devices-view {
+    min-height: 0;
+}
+
+.devices-panel {
+    min-height: 0;
+}
+
+.devices-dashboard {
+    padding: 14px;
+    overflow: auto;
+    min-height: 0;
+}
+
+.device-dashboard-loading,
+.device-dashboard-error {
+    min-height: 220px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--text-secondary, #64748b);
+    text-align: center;
+}
+
+.device-hero-card,
+.device-info-card {
+    border: 1px solid var(--border-color, #d8e1ec);
+    background: var(--card-bg, #ffffff);
+    border-radius: 14px;
+}
+
+.device-hero-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px;
+    margin-bottom: 14px;
+}
+
+.device-hero-icon {
+    width: 50px;
+    height: 50px;
+    flex: 0 0 50px;
+    display: grid;
+    place-items: center;
+    border-radius: 14px;
+    font-size: 25px;
+    background: var(--surface-secondary, #eef4fb);
+}
+
+.device-hero-main {
+    min-width: 0;
+    flex: 1;
+}
+
+.device-card-eyebrow {
+    color: var(--text-secondary, #64748b);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 3px;
+}
+
+.device-hero-main h3 {
+    margin: 0;
+    font-size: 21px;
+    color: var(--text-primary, #172033);
+}
+
+.device-hero-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 7px;
+}
+
+.device-hero-meta span {
+    border-radius: 999px;
+    padding: 3px 8px;
+    background: var(--surface-secondary, #eef4fb);
+    color: var(--text-secondary, #64748b);
+    font-size: 12px;
+}
+
+.device-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border-radius: 999px;
+    padding: 7px 11px;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.device-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.device-status-ok {
+    color: #168447;
+    background: rgba(34, 197, 94, .12);
+}
+
+.device-status-warning {
+    color: #a16207;
+    background: rgba(245, 158, 11, .14);
+}
+
+.device-status-danger {
+    color: #b42318;
+    background: rgba(239, 68, 68, .12);
+}
+
+.device-dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.device-info-card {
+    padding: 15px;
+    min-width: 0;
+}
+
+.device-card-title {
+    font-size: 15px;
+    font-weight: 800;
+    margin-bottom: 12px;
+    color: var(--text-primary, #172033);
+}
+
+.device-detail-list {
+    margin: 0;
+}
+
+.device-detail-list > div {
+    display: grid;
+    grid-template-columns: minmax(110px, .8fr) minmax(0, 1.2fr);
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-light, #edf1f6);
+}
+
+.device-detail-list > div:last-child {
+    border-bottom: 0;
+}
+
+.device-detail-list dt {
+    color: var(--text-secondary, #64748b);
+    font-size: 12px;
+}
+
+.device-detail-list dd {
+    margin: 0;
+    text-align: right;
+    font-size: 12px;
+    font-weight: 650;
+    color: var(--text-primary, #172033);
+    overflow-wrap: anywhere;
+}
+
+.device-monospace,
+.device-path-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.device-path-value {
+    font-size: 11px !important;
+}
+
+.device-action-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 9px;
+    margin-top: 14px;
+}
+
+.device-action-btn {
+    min-height: 38px;
+    border-radius: 9px;
+    border: 1px solid var(--border-color, #d8e1ec);
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.device-action-btn:disabled {
+    opacity: .48;
+    cursor: not-allowed;
+}
+
+.device-action-primary {
+    background: var(--primary-color, #1769e0);
+    border-color: var(--primary-color, #1769e0);
+    color: #fff;
+}
+
+.device-action-secondary {
+    color: var(--text-primary, #172033);
+    background: var(--surface-secondary, #f4f7fb);
+}
+
+@media (max-width: 820px) {
+    .device-dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .device-hero-card {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .device-status-pill {
+        margin-left: 64px;
+    }
+}
+
+@media (max-width: 520px) {
+    .devices-dashboard {
+        padding: 10px;
+    }
+
+    .device-hero-card {
+        padding: 14px;
+    }
+
+    .device-status-pill {
+        margin-left: 0;
+        width: 100%;
+        justify-content: center;
+    }
+
+    .device-detail-list > div {
+        grid-template-columns: 1fr;
+        gap: 3px;
+    }
+
+    .device-detail-list dd {
+        text-align: left;
+    }
+}
+
+/* ===== Node Manager entry point and profile-scoped peripherals ===== */
+.base-card-node-manager:hover .base-node-manager-hint,
+.base-card-node-manager:focus-visible .base-card-node-manager:hover .base-node-manager-chevron,
+.base-card-node-manager:focus-visible .node-manager-view,
+.node-manager-panel {
+    min-height: 0;
+}
+
+.peripheral-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.peripheral-card {
+    min-width: 0;
+    padding: 16px;
+    border: 1px solid var(--border-color, #d8e1ec);
+    background: var(--card-bg, #fff);
+    border-radius: 14px;
+}
+
+.peripheral-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.peripheral-card-header h3,
+.peripheral-add-card h3 {
+    margin: 0;
+    color: var(--text-primary, #172033);
+    font-size: 17px;
+}
+
+.device-action-row-single {
+    grid-template-columns: 1fr;
+}
+
+.peripheral-add-card {
+    margin-top: 14px;
+    min-height: 150px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    border-style: dashed;
+    color: var(--text-secondary, #64748b);
+    background: color-mix(in srgb, var(--card-bg, #fff) 95%, var(--surface-secondary, #eef4fb));
+}
+
+.peripheral-add-card[aria-disabled="true"] {
+    opacity: .72;
+}
+
+.peripheral-add-icon {
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    margin-bottom: 8px;
+    border-radius: 12px;
+    background: var(--surface-secondary, #eef4fb);
+    font-size: 24px;
+}
+
+.peripheral-add-card p {
+    max-width: 360px;
+    margin: 7px 0 0;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+@media (max-width: 980px) {
+    .peripheral-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 650px) {
+    .peripheral-grid {
+        grid-template-columns: 1fr;
+    }
+
+    }
+
+/* ===== Node Manager v1 - workspace polish and multi-profile foundation ===== */
+.base-node-manager-entry:hover .base-node-manager-hint,
+.base-node-manager-entry:focus-visible .base-node-manager-entry:hover .base-node-manager-chevron,
+.base-node-manager-entry:focus-visible .node-manager-view.workspace-view {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    padding: var(--mc-page-pad, 14px);
+    overflow: hidden;
+    background: var(--color-bg, #f5f7fa);
+}
+
+.node-manager-panel.mc-workspace-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    border: 1px solid var(--mc-border, #d8e1ec);
+    border-radius: var(--mc-card-radius, 12px);
+    background: var(--mc-card-bg, #fff);
+}
+
+.node-manager-header.mc-workspace-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    height: var(--mc-workspace-header-height, 72px);
+    min-height: var(--mc-workspace-header-height, 72px);
+    flex: 0 0 var(--mc-workspace-header-height, 72px);
+    padding: var(--mc-workspace-header-padding-y, 14px) var(--mc-workspace-header-padding-x, 16px);
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--mc-workspace-header-border, var(--mc-border, #d8e1ec));
+    background: var(--mc-workspace-header-bg, linear-gradient(180deg, #fff 0%, #fbfcfe 100%));
+}
+
+.node-manager-header .workspace-page-heading {
+    min-width: 0;
+}
+
+.node-manager-header .workspace-page-title {
+    margin: 0;
+    color: var(--mc-text);
+    font-size: var(--mc-page-title-size);
+    font-weight: var(--mc-page-title-weight, 700);
+    line-height: var(--mc-page-title-line-height, 1.25);
+}
+
+.node-manager-header .workspace-page-subtitle {
+    margin: var(--mc-page-subtitle-gap, 4px) 0 0;
+    color: var(--mc-muted);
+    font-size: var(--mc-body-size);
+    line-height: var(--mc-page-subtitle-line-height, 1.4);
+}
+
+.node-manager-header .workspace-page-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.node-manager-dashboard {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 14px;
+}
+
+body.node-manager-open #chatHeader,
+body.node-manager-open #chatListContainer,
+body.node-manager-open #messagesView {
+    display: none !important;
+}
+
+.node-profile-selector-section {
+    margin-bottom: 14px;
+    padding: 14px;
+    border: 1px solid var(--border-color, #d8e1ec);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--card-bg, #fff) 96%, var(--surface-secondary, #eef4fb));
+}
+
+.node-manager-section-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.node-manager-section-heading h3 {
+    margin: 0;
+    color: var(--text-primary, #172033);
+    font-size: 14px;
+}
+
+.node-manager-section-heading p {
+    margin: 3px 0 0;
+    color: var(--text-secondary, #64748b);
+    font-size: 11px;
+}
+
+.node-manager-profile-count {
+    min-width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    background: var(--surface-secondary, #eef4fb);
+    color: var(--text-secondary, #64748b);
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.node-profile-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 10px;
+}
+
+.node-profile-card {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 11px 12px;
+    border: 1px solid var(--border-color, #d8e1ec);
+    border-radius: 11px;
+    background: var(--card-bg, #fff);
+    color: inherit;
+    text-align: left;
+}
+
+.node-profile-card.is-active {
+    border-color: color-mix(in srgb, var(--primary-color, #1769e0) 55%, var(--border-color, #d8e1ec));
+    box-shadow: 0 3px 12px rgba(23, 105, 224, .08);
+}
+
+.node-profile-card:disabled {
+    opacity: 1;
+    cursor: default;
+}
+
+.node-profile-icon {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    border-radius: 10px;
+    background: var(--surface-secondary, #eef4fb);
+}
+
+.node-profile-main {
+    min-width: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.node-profile-main strong,
+.node-profile-main small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.node-profile-main strong { font-size: 13px; }
+.node-profile-main small { color: var(--text-secondary, #64748b); font-size: 10px; }
+
+.node-profile-badges {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px;
+}
+
+.node-profile-badge {
+    padding: 3px 6px;
+    border-radius: 999px;
+    background: var(--surface-secondary, #eef4fb);
+    color: var(--text-secondary, #64748b);
+    font-size: 8px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.node-profile-badge.active { background: #e6f7ec; color: #16803c; }
+.node-profile-badge.connected { background: #e6f7ec; color: #16803c; }
+.node-profile-badge.offline { background: #fff4d8; color: #986500; }
+
+.node-manager-hero-card {
+    align-items: center;
+}
+
+.node-manager-avatar-wrap {
+    width: 76px;
+    flex: 0 0 76px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+}
+
+.node-manager-avatar {
+    width: 52px;
+    height: 52px;
+    display: block;
+    object-fit: contain;
+    border-radius: 13px;
+    background: var(--surface-secondary, #eef4fb);
+}
+
+.node-manager-change-image-btn {
+    padding: 3px 6px;
+    border: 1px solid var(--border-color, #d8e1ec);
+    border-radius: 7px;
+    background: var(--card-bg, #fff);
+    color: var(--text-secondary, #64748b);
+    font-size: 8px;
+    cursor: pointer;
+}
+
+.node-manager-change-image-btn:hover {
+    border-color: var(--primary-color, #1769e0);
+    color: var(--primary-color, #1769e0);
+}
+
+.node-manager-status-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+}
+
+.node-manager-active-label {
+    color: var(--text-secondary, #64748b);
+    font-size: 9px;
+    font-weight: 650;
+}
+
+.copyable-value { cursor: copy; }
+.copyable-value:hover { color: var(--primary-color, #1769e0); }
+
+.device-path-value {
+    max-width: 260px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10px;
+}
+
+.device-action-btn:disabled {
+    opacity: .48;
+    cursor: not-allowed;
+    filter: grayscale(.18);
+}
+
+@media (max-width: 700px) {
+    .node-manager-header.mc-workspace-header {
+        height: auto;
+        min-height: 72px;
+        flex-basis: auto;
+        align-items: flex-start;
+    }
+    .node-manager-dashboard { padding: 10px; }
+    .node-manager-hero-card { align-items: flex-start; }
+    .node-manager-status-stack { align-items: flex-start; }
+    .node-profile-badges { display: none; }
+}
+
+/* ===== Consolidated local-node header, Node Manager layout and waypoint selection ===== */
+
+/* The whole local-node header is one accessible Node Manager entry point. */
+.base-card-node-manager {
+    padding: 0;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease;
+}
+
+.base-card-node-manager:hover,
+.base-card-node-manager:focus-within {
+    border-color: color-mix(in srgb, var(--primary-color, #1769e0) 36%, var(--border-color, #d8e1ec));
+    background: color-mix(in srgb, var(--card-bg, #fff) 96%, var(--primary-color, #1769e0));
+    box-shadow: 0 5px 14px rgba(15, 23, 42, .07);
+}
+
+.base-node-manager-entry {
+    width: 100%;
+    min-width: 0;
+    min-height: 66px;
+    margin: 0;
+    padding: 7px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.base-node-manager-entry:hover,
+.base-node-manager-entry:focus-visible {
+    background: transparent;
+    box-shadow: none;
+    outline: none;
+}
+
+.base-node-avatar,
+.base-node-avatar-static {
+    flex: 0 0 51px;
+    width: 51px;
+    height: 51px;
+    margin: 0;
+    border-radius: 13px;
+}
+
+.base-node-avatar img,
+.base-node-avatar-static img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 3px;
+    border-radius: 11px;
+    object-fit: cover;
+}
+
+.base-node-name-stack {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    margin: 0 0 0 2px;
+    padding: 0;
+    line-height: 1;
+}
+
+.base-node-name-stack #baseNodeName {
+    display: block;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    color: var(--text-primary, #172033);
+    font-size: 1.45em;
+    font-weight: 750;
+    line-height: 1;
+    letter-spacing: -0.015em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.base-node-header-actions {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin-left: auto;
+    padding-left: 8px;
+}
+
+.node-uptime-badge {
+    margin-left: auto;
+}
+
+/* Node Manager occupies the complete central workspace instead of inheriting chat geometry. */
+body.node-manager-open #chatHeader,
+body.node-manager-open #chatListContainer,
+body.node-manager-open #messagesView,
+body.node-manager-open #chatHeader[hidden],
+body.node-manager-open #chatListContainer[hidden],
+body.node-manager-open #messagesView[hidden] {
+    display: none !important;
+    min-height: 0 !important;
+    height: 0 !important;
+    max-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    overflow: hidden !important;
+}
+
+.chat-panels.node-manager-layout {
+    display: flex !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: auto !important;
+    flex-direction: row !important;
+    align-items: stretch !important;
+    overflow: hidden !important;
+}
+
+.chat-panels.node-manager-layout > #nodeManagerView {
+    display: flex;
+    flex: 1 1 auto;
+    align-self: stretch;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    margin: 0 !important;
+    transform: none !important;
+}
+
+body.node-manager-open .node-manager-view.workspace-view {
+    padding: var(--mc-page-pad, 14px) !important;
+    margin: 0 !important;
+}
+
+/* The main waypoint row remains navigable, including hidden and expired entries. */
+.waypoint-tools-main:disabled {
+    opacity: 1;
+    cursor: pointer;
+}
+
+.waypoint-tools-item.is-hidden .waypoint-tools-main {
+    cursor: pointer;
+}
+
+.waypoint-tools-item.is-expired .waypoint-tools-main:hover,
+.waypoint-tools-item.is-hidden .waypoint-tools-main:hover {
+    background: rgba(183, 154, 217, .10);
+}
+
+/* Persistent selection shared by the map and the Tools list. */
+.waypoint-tools-item.is-selected {
+    border-color: #e14d68 !important;
+    background: color-mix(in srgb, #e14d68 8%, var(--card-bg, #fff)) !important;
+    box-shadow: inset 3px 0 0 #e14d68, 0 0 0 1px rgba(225, 77, 104, .08);
+}
+
+.waypoint-tools-item.is-selected.is-expired {
+    border-color: #9e7bc7 !important;
+    background: color-mix(in srgb, #b79ad9 18%, var(--card-bg, #fff)) !important;
+    box-shadow: inset 3px 0 0 #9e7bc7, 0 0 0 1px rgba(158, 123, 199, .12);
+}
+
+.waypoint-tools-item.is-selected .waypoint-tools-main {
+    background: transparent;
+}
+
+@media (max-width: 768px) {
+    .chat-panels.node-manager-layout {
+        flex-direction: column !important;
+    }
+}
+
+@media (max-width: 650px) {
+    .base-node-manager-entry {
+        min-height: 60px;
+        padding: 7px 8px;
+        gap: 7px;
+    }
+
+    .base-node-avatar,
+    .base-node-avatar-static {
+        flex-basis: 45px;
+        width: 45px;
+        height: 45px;
+    }
+
+    .base-node-name-stack #baseNodeName {
+        font-size: 1.25em;
+    }
+}

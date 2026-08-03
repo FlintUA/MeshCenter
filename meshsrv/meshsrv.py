@@ -13,27 +13,27 @@ def run_command(cmd, timeout=30):
     )
 
 
-def get_info(meshtastic_cmd, timeout=30):
+def get_info(meshtastic_cmd, serial_port=None, timeout=30):
     """
     Run: meshtastic --info
     """
-    return run_command(
-        [meshtastic_cmd, "--info"],
-        timeout=timeout
-    )
+    cmd = [meshtastic_cmd]
+    if serial_port:
+        cmd.extend(["--port", serial_port])
+    cmd.append("--info")
+    return run_command(cmd, timeout=timeout)
 
 
-def send_text(meshtastic_cmd, text, channel=0, dest=None, timeout=45):
+def send_text(meshtastic_cmd, text, channel=0, dest=None, timeout=45, serial_port=None):
     """
     Send text through Meshtastic CLI.
     If dest is provided, sends a direct message.
     Otherwise sends to the selected channel.
     """
-    cmd = [
-        meshtastic_cmd,
-        "--ch-index",
-        str(channel)
-    ]
+    cmd = [meshtastic_cmd]
+    if serial_port:
+        cmd.extend(["--port", serial_port])
+    cmd.extend(["--ch-index", str(channel)])
 
     if dest:
         cmd.extend(["--dest", dest])

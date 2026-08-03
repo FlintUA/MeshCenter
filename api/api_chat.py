@@ -38,7 +38,7 @@ def register_chat_routes(
     radio_event,
     is_radio_available,
 ):
-    CHANNEL_CACHE_TTL_SECONDS = 30
+    CHANNEL_CACHE_TTL_SECONDS = 300
     channel_cache = {"timestamp": 0.0, "channels": []}
     channel_cache_lock = threading.Lock()
 
@@ -47,6 +47,18 @@ def register_chat_routes(
 
     def is_channel_chat_id(value):
         return value == CHANNEL_CHAT_ID or bool(re.fullmatch(r"channel:[1-7]", str(value or "")))
+
+    def is_radio_lock_busy():
+        """Return True when another thread currently owns the shared radio lock.
+
+        threading.RLock does not expose locked() on all supported Python
+        versions, so use a non-blocking acquire test instead.
+        """
+        acquired = radio_lock.acquire(blocking=False)
+        if acquired:
+            radio_lock.release()
+            return False
+        return True
 
     def discover_radio_channels(force=False):
         """Read the active channel configuration from the connected radio.
@@ -59,14 +71,14 @@ def register_chat_routes(
         with channel_cache_lock:
             cached_channels = [dict(item) for item in channel_cache["channels"]]
             cache_age = now_ts - channel_cache["timestamp"]
-            if not force and cached_channels and cache_age < CHANNEL_CACHE_TTL_SECONDS:
+            if cached_channels and cache_age < CHANNEL_CACHE_TTL_SECONDS:
                 return cached_channels
 
         discovered = []
         interface = None
         discovery_error = None
 
-        if not is_radio_available():
+        if not is_radio_available() or is_radio_lock_busy():
             if cached_channels:
                 return cached_channels
             return [{

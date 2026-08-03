@@ -15,7 +15,8 @@ APP_HOST = "0.0.0.0"
 APP_PORT = 5000
 
 # ===== MESHTASTIC SETTINGS =====
-MESHTASTIC_CMD = str(PROJECT_DIR / "venv" / "bin" / "meshtastic")
+# Empty enables safe runtime discovery; an explicit absolute path is also accepted.
+MESHTASTIC_CMD = ""
 
 # ===== SERIAL PORT =====
 MESHTASTIC_PORT = "/dev/ttyACM0"  # or /dev/ttyUSB0

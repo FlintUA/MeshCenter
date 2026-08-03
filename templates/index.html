@@ -945,7 +945,7 @@
                     <div class="map-header mc-workspace-header">
                         <div>
                             <div class="map-title workspace-page-title" id="mapViewTitle">🗺 Map</div>
-                            <div class="map-subtitle workspace-page-subtitle" id="mapViewSubtitle">Known Meshtastic node positions</div>
+                            <div class="map-subtitle workspace-page-subtitle" id="mapViewSubtitle">Known Meshtastic nodes and waypoints</div>
                         </div>
                         <button type="button" class="workspace-page-close-btn" onclick="setMapLayoutMode('off')" title="Hide Map" aria-label="Hide Map">
                             <svg class="workspace-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -958,10 +958,14 @@
                             <span><i class="map-legend-dot map-legend-reference"></i>Reference</span>
                             <span><i class="map-legend-dot map-legend-node"></i>Node</span>
                             <span><i class="map-legend-dot map-legend-selected"></i>Selected</span>
+                            <label class="map-layer-toggle" title="Show or hide received Meshtastic waypoints">
+                                <input type="checkbox" id="mapWaypointsToggle" checked onchange="toggleMeshMapWaypoints(this.checked)">
+                                <i class="map-legend-dot map-legend-waypoint"></i>Waypoints
+                            </label>
                         </div>
                         <div class="map-toolbar-right">
-                            <div class="map-node-count" id="mapNodeCount">0 positioned nodes</div>
-                            <button type="button" class="map-fit-btn" onclick="fitMeshMapToNodes()" title="Show all positioned nodes">⌖ Fit nodes</button>
+                            <div class="map-node-count" id="mapNodeCount">0 nodes · 0 waypoints</div>
+                            <button type="button" class="map-fit-btn" onclick="fitMeshMapToNodes()" title="Show all positioned nodes and waypoints">⌖ Fit map</button>
                         </div>
                     </div>
                     <div class="mesh-map" id="meshMap" aria-label="Meshtastic node map"></div>
@@ -1337,6 +1341,23 @@
             <div class="sidebar-tab-content" id="tab-tools" style="display:none;">
                 <div class="nodes-tools">
                     <div class="nodes-tools-title">🔧 Management Tools</div>
+                    <div class="waypoint-tools-panel">
+                        <div class="waypoint-tools-header">
+                            <strong>📍 Waypoints</strong>
+                            <div class="waypoint-tools-actions">
+                                <label class="waypoint-select-all" title="Select all shown"><input id="waypointSelectAll" type="checkbox" onchange="toggleSelectAllWaypoints(this.checked)"> All</label>
+                                <label class="waypoint-archive-toggle"><input type="checkbox" onchange="toggleWaypointArchive(this.checked)"> Archive</label>
+                                <button type="button" class="waypoint-tools-refresh" onclick="refreshWaypointToolsList(true)">↻ Refresh</button>
+                            </div>
+                        </div>
+                        <div id="waypointToolsList" class="waypoint-tools-list">
+                            <div class="waypoint-tools-empty">No active waypoints</div>
+                        </div>
+                        <div class="waypoint-tools-bulk-actions">
+                            <button type="button" id="waypointDeleteSelected" onclick="deleteSelectedWaypoints()" disabled>🗑 Selected</button>
+                            <button type="button" class="danger" onclick="deleteAllWaypoints()">🗑 All</button>
+                        </div>
+                    </div>
                     <div class="nodes-tools-grid">
                         <button class="nodes-tool-btn export" onclick="showExportOptions()">📤 Export</button>
                         <button class="nodes-tool-btn import" onclick="showImportOptions()">📥 Import</button>
@@ -1709,35 +1730,7 @@
             <button class="modal-close" onclick="closeTelemetryModal()">✕</button>
         </div>
         <div class="modal-body">
-            <div class="telemetry-cards" id="telemetryCards">
-                <div class="telemetry-card">
-                    <div class="card-label">🌡️ Temperature</div>
-                    <div class="card-value" id="cardTemp">--</div>
-                    <div class="card-range">
-                        <span class="range-min" id="cardTempMin">--</span>
-                        <span class="range-sep">—</span>
-                        <span class="range-max" id="cardTempMax">--</span>
-                    </div>
-                </div>
-                <div class="telemetry-card">
-                    <div class="card-label">💧 Humidity</div>
-                    <div class="card-value" id="cardHum">--</div>
-                    <div class="card-range">
-                        <span class="range-min" id="cardHumMin">--</span>
-                        <span class="range-sep">—</span>
-                        <span class="range-max" id="cardHumMax">--</span>
-                    </div>
-                </div>
-                <div class="telemetry-card">
-                    <div class="card-label">📊 Pressure</div>
-                    <div class="card-value" id="cardPress">--</div>
-                    <div class="card-range">
-                        <span class="range-min" id="cardPressMin">--</span>
-                        <span class="range-sep">—</span>
-                        <span class="range-max" id="cardPressMax">--</span>
-                    </div>
-                </div>
-            </div>
+            <div class="telemetry-cards" id="telemetryCards"></div>
             <div class="telemetry-chart-container" id="telemetryChartContainer"><div class="loading">Loading...</div></div>
             <div class="telemetry-footer" id="telemetryFooter">
                 <div class="telemetry-time-controls">
@@ -1827,5 +1820,36 @@
     </div>
 </div>
 
+
+<div id="waypointCreateModal" class="waypoint-create-modal" style="display:none;" onclick="if(event.target===this) closeCreateWaypointDialog()">
+    <div class="waypoint-create-dialog" role="dialog" aria-modal="true" aria-labelledby="waypointCreateTitle">
+        <div class="waypoint-create-header">
+            <div><strong id="waypointCreateTitle">📍 Create Waypoint</strong><small>Send a map point through the Meshtastic network</small></div>
+            <button type="button" onclick="closeCreateWaypointDialog()">✕</button>
+        </div>
+        <div class="waypoint-create-body">
+            <label>Name<input id="waypointCreateName" maxlength="30" placeholder="Meeting point"></label>
+            <label>Description<textarea id="waypointCreateDescription" maxlength="100" rows="3" placeholder="Optional details"></textarea></label>
+            <div class="waypoint-create-grid">
+                <label>Channel<select id="waypointCreateChannel">
+                    <option value="0">Channel 0</option><option value="1">Channel 1</option><option value="2">Channel 2</option><option value="3">Channel 3</option>
+                    <option value="4">Channel 4</option><option value="5">Channel 5</option><option value="6">Channel 6</option><option value="7">Channel 7</option>
+                </select></label>
+                <label>Expires<select id="waypointCreateDuration">
+                    <option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600" selected>1 hour</option>
+                    <option value="10800">3 hours</option><option value="21600">6 hours</option><option value="43200">12 hours</option>
+                    <option value="86400">1 day</option><option value="172800">2 days</option><option value="604800">7 days</option>
+                </select></label>
+            </div>
+            <label class="waypoint-create-notify"><input type="checkbox" id="waypointCreatePostNotification" checked> Post a text notification to the selected channel</label>
+            <div class="waypoint-create-coordinates"><span>Coordinates</span><strong id="waypointCreateCoordinates">--</strong></div>
+            <div class="waypoint-create-note">Right-click anywhere on the map to choose another location.</div>
+        </div>
+        <div class="waypoint-create-footer">
+            <button type="button" class="secondary" onclick="closeCreateWaypointDialog()">Cancel</button>
+            <button type="button" id="waypointCreateSend" class="primary" onclick="submitCreateWaypoint()">Send</button>
+        </div>
+    </div>
+</div>
 </body>
 </html>

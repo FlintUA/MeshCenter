@@ -76,6 +76,8 @@ let telemetryInterval = 300;
 let telemetryUpdateInterval = null;
 let telemetryTimeRange = 60;
 let telemetryFullHistory = [];
+const telemetryHistoryCache = new Map();
+const TELEMETRY_HISTORY_CACHE_TTL_MS = 120000;
 let batteryCurrentSamples = [];
 let latestBatteryPercent = null;
 let appSettings = {
@@ -1765,8 +1767,7 @@ function renderChatItem(chat) {
 // ============================================================
 // LOAD CHAT LIST
 // ============================================================
-let lastForcedChannelRefreshAt = 0;
-const CHANNEL_REFRESH_INTERVAL_MS = 30000;
+let initialChannelRefreshPending = true;
 async function loadChatList() {
     console.log('[CHAT] loadChatList called');
 
@@ -1783,8 +1784,7 @@ async function loadChatList() {
     try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000);
-        const nowMs = Date.now();
-        const forceChannelRefresh = (nowMs - lastForcedChannelRefreshAt) >= CHANNEL_REFRESH_INTERVAL_MS;
+        const forceChannelRefresh = initialChannelRefreshPending;
         const chatsUrl = forceChannelRefresh
             ? '/api/chats?refresh_channels=1'
             : '/api/chats';
@@ -1794,7 +1794,7 @@ async function loadChatList() {
             headers: { 'Cache-Control': 'no-cache' }
         });
         if (forceChannelRefresh && response.ok) {
-            lastForcedChannelRefreshAt = nowMs;
+            initialChannelRefreshPending = false;
         }
         clearTimeout(timeoutId);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -3423,6 +3423,21 @@ let meshMapReferenceLine = null;
 let meshMapTargetNodeId = null;
 let meshMapResizeObserver = null;
 let meshMapResizeTimer = null;
+let meshMapWaypointMarkers = new Map();
+let meshMapWaypoints = [];
+let waypointToolsItems = [];
+let waypointToolsSelectedIds = new Set();
+let waypointVisibilityPending = new Set();
+let meshMapWaypointsVisible = true;
+let waypointToolsShowExpired = false;
+let waypointToolsRefreshInFlight = false;
+let waypointMapRefreshInFlight = false;
+let pendingWaypointCoordinates = null;
+let meshMapWaypointPollTimer = null;
+let meshMapWaypointSignature = '';
+let meshMapWaypointExpiryTimer = null;
+let meshMapWaypointKnownIds = new Set();
+let meshMapWaypointInitialLoadDone = false;
 
 function getNodePosition(node) {
     const latitude = Number(node?.position?.latitude);
@@ -3451,6 +3466,463 @@ function createMeshMapIcon(kind = 'node') {
         iconAnchor: [10, 10],
         popupAnchor: [0, -11]
     });
+}
+
+function waypointIconCharacter(iconValue) {
+    const value = Number(iconValue);
+    if (Number.isInteger(value) && value > 0) {
+        try { return String.fromCodePoint(value); } catch (error) { /* fall through */ }
+    }
+    return '📍';
+}
+
+function createWaypointMapIcon(waypoint) {
+    const iconChar = waypointIconCharacter(waypoint?.icon);
+    return L.divIcon({
+        className: 'meshcenter-waypoint-marker',
+        html: `<div class="meshcenter-waypoint-pin"><span>${escapeHtml(iconChar)}</span></div>`,
+        iconSize: [30, 36],
+        iconAnchor: [15, 34],
+        popupAnchor: [0, -32]
+    });
+}
+
+function formatWaypointTime(timestamp) {
+    const seconds = Number(timestamp);
+    if (!Number.isFinite(seconds) || seconds <= 0) return '--';
+    return new Date(seconds * 1000).toLocaleString();
+}
+
+function formatWaypointExpiryDetails(expireAt) {
+    const seconds = Number(expireAt);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+        return { relative:'No expiration', absolute:'', expired:false };
+    }
+
+    let remaining = Math.floor(seconds - Date.now() / 1000);
+    const expiresDate = new Date(seconds * 1000);
+    const absoluteTime = expiresDate.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+    const absoluteDateTime = expiresDate.toLocaleString([], {
+        day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'
+    });
+
+    if (remaining <= 0) {
+        return { relative:'Expired', absolute:absoluteDateTime, expired:true };
+    }
+
+    const days = Math.floor(remaining / 86400);
+    remaining %= 86400;
+    const hours = Math.floor(remaining / 3600);
+    remaining %= 3600;
+    const minutes = Math.floor(remaining / 60);
+
+    if (days > 0) {
+        const tail = hours > 0 ? ` ${hours} h` : (minutes > 0 ? ` ${minutes} min` : '');
+        return { relative:`in ${days} d${tail}`, absolute:absoluteDateTime, expired:false };
+    }
+    if (hours > 0) {
+        return {
+            relative:`in ${hours} h${minutes > 0 ? ` ${minutes} min` : ''}`,
+            absolute:absoluteTime,
+            expired:false
+        };
+    }
+    return { relative:`in ${Math.max(1, minutes)} min`, absolute:absoluteTime, expired:false };
+}
+
+function waypointExpiryHtml(expireAt) {
+    const value = Number(expireAt) || 0;
+    const formatted = formatWaypointExpiryDetails(value);
+    return `<span class="waypoint-expire-value" data-waypoint-expire="${value}">` +
+        `<span class="waypoint-expire-relative">${escapeHtml(formatted.relative)}</span>` +
+        (formatted.absolute ? `<small class="waypoint-expire-absolute">${escapeHtml(formatted.absolute)}</small>` : '') +
+        `</span>`;
+}
+
+function updateOpenWaypointExpiryLabels() {
+    let hasExpired = false;
+    document.querySelectorAll('[data-waypoint-expire]').forEach(element => {
+        const formatted = formatWaypointExpiryDetails(element.dataset.waypointExpire);
+        const relative = element.querySelector('.waypoint-expire-relative');
+        const absolute = element.querySelector('.waypoint-expire-absolute');
+        if (relative) relative.textContent = formatted.relative;
+        if (absolute) absolute.textContent = formatted.absolute;
+        element.classList.toggle('is-expired', formatted.expired);
+        hasExpired = hasExpired || formatted.expired;
+    });
+    if (hasExpired) refreshMeshMapWaypoints(true);
+}
+
+function startWaypointExpiryTimer() {
+    if (meshMapWaypointExpiryTimer) return;
+    updateOpenWaypointExpiryLabels();
+    meshMapWaypointExpiryTimer = setInterval(updateOpenWaypointExpiryLabels, 30000);
+}
+
+function buildWaypointPopup(waypoint) {
+    const lat = Number(waypoint?.latitude);
+    const lon = Number(waypoint?.longitude);
+    const nav = Number.isFinite(lat) && Number.isFinite(lon)
+        ? getNodeDistanceAndBearing(lat, lon)
+        : { distanceText:'--', bearingText:'--' };
+    const name = waypoint?.name || `Waypoint ${waypoint?.waypoint_id || ''}`;
+    const sender = waypoint?.sender_name || waypoint?.sender_id || 'Unknown';
+    const description = waypoint?.description || 'No description';
+    const channel = Number.isFinite(Number(waypoint?.channel_index)) ? Number(waypoint.channel_index) : '--';
+    return `
+        <div class="map-popup-name waypoint-popup-name">${escapeHtml(waypointIconCharacter(waypoint?.icon))} ${escapeHtml(name)}</div>
+        <div class="map-popup-subtitle">${escapeHtml(description)}</div>
+        <div class="map-popup-grid">
+            <span>Sender</span><strong>${escapeHtml(sender)}</strong>
+            <span>Distance</span><strong>${escapeHtml(nav.distanceText)}</strong>
+            <span>Bearing</span><strong>${escapeHtml(nav.bearingText)}</strong>
+            <span>Channel</span><strong>${escapeHtml(channel)}</strong>
+            <span>Received</span><strong>${escapeHtml(formatWaypointTime(waypoint?.received_at))}</strong>
+            <span>Expires</span><strong>${waypointExpiryHtml(waypoint?.expire_at)}</strong>
+            <span>Coordinates</span><strong>${Number.isFinite(lat) ? lat.toFixed(6) : '--'}, ${Number.isFinite(lon) ? lon.toFixed(6) : '--'}</strong>
+        </div>
+        <div class="map-popup-actions">
+            <button class="map-popup-primary-btn" onclick="centerMapOnWaypoint('${escapeJsString(waypoint?.waypoint_id)}')">⌖ Center</button>
+            <button class="map-popup-action-btn" onclick="openExternalNodeMap('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')">↗ Navigate</button>
+            <button class="map-popup-action-btn" onclick="copyCoordinates('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')">📋 Coordinates</button>
+            <button class="map-popup-action-btn danger" onclick="setWaypointHidden('${escapeJsString(waypoint?.waypoint_id)}', true)">🙈 Hide</button>
+        </div>
+    `;
+}
+
+function updateWaypointBulkControls() {
+    const deleteButton = document.getElementById('waypointDeleteSelected');
+    if (deleteButton) deleteButton.disabled = waypointToolsSelectedIds.size === 0;
+    const selectAll = document.getElementById('waypointSelectAll');
+    if (selectAll) {
+        const shownIds = waypointToolsItems.map(item => String(item?.waypoint_id));
+        const selectedShown = shownIds.filter(id => waypointToolsSelectedIds.has(id)).length;
+        selectAll.checked = shownIds.length > 0 && selectedShown === shownIds.length;
+        selectAll.indeterminate = selectedShown > 0 && selectedShown < shownIds.length;
+    }
+}
+
+function toggleWaypointSelection(waypointId, selected) {
+    const id = String(waypointId);
+    if (selected) waypointToolsSelectedIds.add(id);
+    else waypointToolsSelectedIds.delete(id);
+    updateWaypointBulkControls();
+}
+
+function toggleSelectAllWaypoints(selected) {
+    waypointToolsItems.forEach(item => {
+        const id = String(item?.waypoint_id);
+        if (selected) waypointToolsSelectedIds.add(id);
+        else waypointToolsSelectedIds.delete(id);
+    });
+    renderWaypointToolsList();
+}
+
+function renderWaypointToolsList() {
+    const container = document.getElementById('waypointToolsList');
+    if (!container) return;
+    const items = Array.isArray(waypointToolsItems) ? waypointToolsItems : [];
+    const validIds = new Set(items.map(item => String(item?.waypoint_id)));
+    waypointToolsSelectedIds = new Set([...waypointToolsSelectedIds].filter(id => validIds.has(id)));
+    if (!items.length) {
+        container.innerHTML = `<div class="waypoint-tools-empty">${waypointToolsShowExpired ? 'No saved waypoints' : 'No active waypoints'}</div>`;
+        updateWaypointBulkControls();
+        return;
+    }
+    container.innerHTML = items.map(item => {
+        const id = String(item?.waypoint_id);
+        const name = item?.name || `Waypoint ${id}`;
+        const sender = item?.sender_name || item?.sender_id || 'Unknown';
+        const expiry = formatWaypointExpiryDetails(item?.expire_at);
+        const hidden = Boolean(item?.is_hidden);
+        const expired = item?.is_active === false;
+        const pending = waypointVisibilityPending.has(id);
+        return `<div class="waypoint-tools-item ${expired ? 'is-expired' : ''} ${hidden ? 'is-hidden' : ''} ${pending ? 'is-pending' : ''}">` +
+            `<label class="waypoint-tools-select" title="Select"><input type="checkbox" ${waypointToolsSelectedIds.has(id) ? 'checked' : ''} onchange="toggleWaypointSelection('${escapeJsString(id)}', this.checked)"></label>` +
+            `<button type="button" class="waypoint-tools-main" onclick="showWaypointOnMap('${escapeJsString(id)}')" ${expired || hidden ? 'disabled' : ''}>` +
+            `<span class="waypoint-tools-icon">${escapeHtml(waypointIconCharacter(item?.icon))}</span>` +
+            `<span class="waypoint-tools-copy"><strong>${escapeHtml(name)}</strong>` +
+            `<small>${escapeHtml(sender)} · ${escapeHtml(expired ? 'Expired' : expiry.relative)}</small></span></button>` +
+            `<button type="button" class="waypoint-tools-visibility" title="${hidden ? 'Show waypoint' : 'Hide waypoint'}" ` +
+            `onclick="setWaypointHidden('${escapeJsString(id)}', ${hidden ? 'false' : 'true'})" ${pending ? 'disabled' : ''}>${pending ? '…' : (hidden ? '👁' : '🙈')}</button>` +
+            `<button type="button" class="waypoint-tools-delete" title="Delete locally" onclick="deleteWaypoint('${escapeJsString(id)}')">🗑</button></div>`;
+    }).join('');
+    updateWaypointBulkControls();
+}
+
+async function refreshWaypointToolsList(force = false) {
+    if (waypointToolsRefreshInFlight && !force) return;
+    waypointToolsRefreshInFlight = true;
+    try {
+        const url = waypointToolsShowExpired
+            ? '/api/waypoints?include_expired=1&include_hidden=1'
+            : '/api/waypoints';
+        const response = await fetch(url, { cache:'no-store' });
+        const payload = await response.json();
+        if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Could not load waypoints');
+        waypointToolsItems = Array.isArray(payload.waypoints) ? payload.waypoints : [];
+        renderWaypointToolsList();
+    } catch (error) {
+        showToast(error.message || 'Could not load waypoints', 'error');
+    } finally {
+        waypointToolsRefreshInFlight = false;
+    }
+}
+
+function toggleWaypointArchive(show) {
+    waypointToolsShowExpired = Boolean(show);
+    refreshWaypointToolsList(true);
+}
+
+async function setWaypointHidden(waypointId, hidden) {
+    const id = String(waypointId);
+    if (waypointVisibilityPending.has(id)) return;
+    const toolsIndex = waypointToolsItems.findIndex(item => String(item?.waypoint_id) === id);
+    const mapIndex = meshMapWaypoints.findIndex(item => String(item?.waypoint_id) === id);
+    const previousTools = toolsIndex >= 0 ? { ...waypointToolsItems[toolsIndex] } : null;
+    const previousMap = mapIndex >= 0 ? { ...meshMapWaypoints[mapIndex] } : null;
+
+    waypointVisibilityPending.add(id);
+    if (toolsIndex >= 0) waypointToolsItems[toolsIndex] = { ...waypointToolsItems[toolsIndex], is_hidden: Boolean(hidden) };
+    if (hidden) meshMapWaypoints = meshMapWaypoints.filter(item => String(item?.waypoint_id) !== id);
+    else if (toolsIndex >= 0 && waypointToolsItems[toolsIndex]?.is_active !== false) {
+        meshMapWaypoints = [waypointToolsItems[toolsIndex], ...meshMapWaypoints.filter(item => String(item?.waypoint_id) !== id)];
+    }
+    renderWaypointToolsList();
+    if (meshMap) renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
+
+    try {
+        const response = await fetch(`/api/waypoints/${encodeURIComponent(id)}/hidden`, {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({ hidden:Boolean(hidden) })
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Waypoint update failed');
+        if (payload.waypoint) {
+            const item = payload.waypoint;
+            const idx = waypointToolsItems.findIndex(row => String(row?.waypoint_id) === id);
+            if (idx >= 0) waypointToolsItems[idx] = item;
+        }
+        showToast(hidden ? 'Waypoint hidden locally' : 'Waypoint is visible again', 'success');
+    } catch (error) {
+        if (toolsIndex >= 0 && previousTools) waypointToolsItems[toolsIndex] = previousTools;
+        if (previousMap) meshMapWaypoints = [previousMap, ...meshMapWaypoints.filter(item => String(item?.waypoint_id) !== id)];
+        else meshMapWaypoints = meshMapWaypoints.filter(item => String(item?.waypoint_id) !== id);
+        showToast(error.message || 'Waypoint update failed', 'error');
+    } finally {
+        waypointVisibilityPending.delete(id);
+        renderWaypointToolsList();
+        if (meshMap) renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
+    }
+}
+
+async function deleteWaypoint(waypointId) {
+    const id = String(waypointId);
+    const item = waypointToolsItems.find(row => String(row?.waypoint_id) === id);
+    const name = item?.name || `Waypoint ${id}`;
+    if (!window.confirm(`Delete "${name}" from MeshCenter local storage?`)) return;
+    try {
+        const response = await fetch(`/api/waypoints/${encodeURIComponent(id)}`, { method:'DELETE' });
+        const payload = await response.json();
+        if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Waypoint delete failed');
+        waypointToolsItems = waypointToolsItems.filter(row => String(row?.waypoint_id) !== id);
+        meshMapWaypoints = meshMapWaypoints.filter(row => String(row?.waypoint_id) !== id);
+        waypointToolsSelectedIds.delete(id);
+        renderWaypointToolsList();
+        if (meshMap) renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
+        showToast('Waypoint deleted locally', 'success');
+    } catch (error) {
+        showToast(error.message || 'Waypoint delete failed', 'error');
+    }
+}
+
+async function deleteSelectedWaypoints() {
+    const ids = [...waypointToolsSelectedIds];
+    if (!ids.length) return;
+    if (!window.confirm(`Delete ${ids.length} selected waypoint${ids.length === 1 ? '' : 's'} from local storage?`)) return;
+    try {
+        const response = await fetch('/api/waypoints/delete', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({ waypoint_ids: ids.map(Number) })
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Waypoint delete failed');
+        const idSet = new Set(ids);
+        waypointToolsItems = waypointToolsItems.filter(row => !idSet.has(String(row?.waypoint_id)));
+        meshMapWaypoints = meshMapWaypoints.filter(row => !idSet.has(String(row?.waypoint_id)));
+        waypointToolsSelectedIds.clear();
+        renderWaypointToolsList();
+        if (meshMap) renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
+        showToast(`${payload.deleted || ids.length} waypoint(s) deleted locally`, 'success');
+    } catch (error) {
+        showToast(error.message || 'Waypoint delete failed', 'error');
+    }
+}
+
+async function deleteAllWaypoints() {
+    if (!window.confirm('Delete ALL saved waypoints from MeshCenter local storage? This cannot be undone.')) return;
+    try {
+        const response = await fetch('/api/waypoints', { method:'DELETE' });
+        const payload = await response.json();
+        if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Waypoint cleanup failed');
+        waypointToolsItems = [];
+        meshMapWaypoints = [];
+        waypointToolsSelectedIds.clear();
+        renderWaypointToolsList();
+        if (meshMap) renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
+        showToast(`${payload.deleted || 0} waypoint(s) deleted locally`, 'success');
+    } catch (error) {
+        showToast(error.message || 'Waypoint cleanup failed', 'error');
+    }
+}
+
+function openCreateWaypointDialog(lat, lon) {
+    const latitude = Number(lat);
+    const longitude = Number(lon);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+    pendingWaypointCoordinates = { latitude, longitude };
+    const modal = document.getElementById('waypointCreateModal');
+    if (!modal) return;
+    document.getElementById('waypointCreateName').value = '';
+    document.getElementById('waypointCreateDescription').value = '';
+    document.getElementById('waypointCreateChannel').value = '0';
+    document.getElementById('waypointCreateDuration').value = '3600';
+    const notifyToggle = document.getElementById('waypointCreatePostNotification');
+    if (notifyToggle) notifyToggle.checked = true;
+    document.getElementById('waypointCreateCoordinates').textContent = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+    modal.style.display = 'flex';
+    setTimeout(() => document.getElementById('waypointCreateName')?.focus(), 50);
+}
+
+function closeCreateWaypointDialog() {
+    const modal = document.getElementById('waypointCreateModal');
+    if (modal) modal.style.display = 'none';
+    pendingWaypointCoordinates = null;
+}
+
+async function submitCreateWaypoint() {
+    if (!pendingWaypointCoordinates) return;
+    const button = document.getElementById('waypointCreateSend');
+    const name = document.getElementById('waypointCreateName').value.trim();
+    const description = document.getElementById('waypointCreateDescription').value.trim();
+    const channelIndex = Number(document.getElementById('waypointCreateChannel').value || 0);
+    const duration = Number(document.getElementById('waypointCreateDuration').value || 3600);
+    const postNotification = Boolean(document.getElementById('waypointCreatePostNotification')?.checked);
+    if (!name) {
+        showToast('Enter a waypoint name', 'warning');
+        return;
+    }
+    const payload = {
+        name,
+        description,
+        latitude:pendingWaypointCoordinates.latitude,
+        longitude:pendingWaypointCoordinates.longitude,
+        channel_index:channelIndex,
+        icon:128205,
+        expire_at:Math.floor(Date.now() / 1000) + duration,
+        post_notification:postNotification
+    };
+    try {
+        if (button) { button.disabled = true; button.textContent = 'Sending...'; }
+        const response = await fetch('/api/waypoints/send', {
+            method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (!response.ok || !result?.ok) throw new Error(result?.error || 'Waypoint send failed');
+        closeCreateWaypointDialog();
+        showToast(`📍 Waypoint sent: ${name}`, 'success');
+        if (result?.waypoint) {
+            const id = String(result.waypoint.waypoint_id);
+            meshMapWaypoints = [result.waypoint, ...meshMapWaypoints.filter(item => String(item.waypoint_id) !== id)];
+            waypointToolsItems = [result.waypoint, ...waypointToolsItems.filter(item => String(item.waypoint_id) !== id)];
+            meshMapWaypointSignature = getWaypointSignature(meshMapWaypoints);
+            meshMapWaypointKnownIds.add(id);
+            renderWaypointToolsList();
+            if (meshMap) renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
+            setTimeout(() => centerMapOnWaypoint(id), 250);
+        }
+        await Promise.all([refreshMeshMapWaypoints(true), refreshWaypointToolsList(true)]);
+    } catch (error) {
+        showToast(error.message || 'Waypoint send failed', 'error');
+    } finally {
+        if (button) { button.disabled = false; button.textContent = 'Send'; }
+    }
+}
+
+function showWaypointOnMap(waypointId) {
+    switchSidebarTab('nodes');
+    const waypoint = meshMapWaypoints.find(item => String(item.waypoint_id) === String(waypointId)) || waypointToolsItems.find(item => String(item.waypoint_id) === String(waypointId));
+    if (!waypoint) return;
+    meshMapWaypointsVisible = true;
+    const toggle = document.getElementById('mapWaypointsToggle');
+    if (toggle) toggle.checked = true;
+    openMapView();
+    setTimeout(() => centerMapOnWaypoint(waypointId), 220);
+}
+
+function getWaypointSignature(items) {
+    return JSON.stringify((items || []).map(item => [
+        item.waypoint_id, item.updated_at, item.is_active, item.is_hidden,
+        item.latitude, item.longitude, item.sender_id
+    ]));
+}
+
+async function refreshMeshMapWaypoints(forceRender = false) {
+    if (waypointMapRefreshInFlight && !forceRender) return;
+    waypointMapRefreshInFlight = true;
+    try {
+        const response = await fetch('/api/waypoints', { cache:'no-store' });
+        if (!response.ok) return;
+        const payload = await response.json();
+        const items = Array.isArray(payload?.waypoints) ? payload.waypoints : [];
+        const signature = getWaypointSignature(items);
+        const changed = signature !== meshMapWaypointSignature;
+        const incomingIds = new Set(items.map(item => String(item?.waypoint_id)));
+
+        if (meshMapWaypointInitialLoadDone) {
+            items.forEach(item => {
+                const id = String(item?.waypoint_id);
+                if (id && !meshMapWaypointKnownIds.has(id)) {
+                    const sender = item?.sender_name || item?.sender_id || 'Unknown';
+                    showToast(`📍 Waypoint received: ${item?.name || 'Unnamed'} · ${sender}`, 'info');
+                }
+            });
+        }
+        meshMapWaypointInitialLoadDone = true;
+        meshMapWaypointKnownIds = incomingIds;
+        meshMapWaypointSignature = signature;
+        meshMapWaypoints = items;
+        if ((changed || forceRender) && meshMap && document.getElementById('mapView')?.style.display !== 'none') {
+            renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
+        }
+    } catch (error) {
+        console.debug('Waypoint refresh failed:', error);
+    } finally {
+        waypointMapRefreshInFlight = false;
+    }
+}
+
+function startMeshMapWaypointPolling() {
+    if (meshMapWaypointPollTimer) return;
+    refreshMeshMapWaypoints(false);
+    startWaypointExpiryTimer();
+    meshMapWaypointPollTimer = setInterval(() => refreshMeshMapWaypoints(false), 5000);
+}
+
+function toggleMeshMapWaypoints(visible) {
+    meshMapWaypointsVisible = Boolean(visible);
+    renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
+}
+
+function centerMapOnWaypoint(waypointId) {
+    const waypoint = meshMapWaypoints.find(item => String(item.waypoint_id) === String(waypointId)) || waypointToolsItems.find(item => String(item.waypoint_id) === String(waypointId));
+    if (!waypoint || !meshMap) return;
+    const lat = Number(waypoint.latitude);
+    const lon = Number(waypoint.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    meshMap.flyTo([lat, lon], Math.max(meshMap.getZoom(), 16), { duration:.45 });
+    setTimeout(() => meshMapWaypointMarkers.get(String(waypointId))?.openPopup(), 420);
 }
 
 function scheduleMeshMapResize(delay = 0) {
@@ -3485,6 +3957,10 @@ function ensureMeshMap() {
         attribution: '&copy; OpenStreetMap contributors'
     }).addTo(meshMap);
 
+    meshMap.on('contextmenu', event => {
+        openCreateWaypointDialog(event.latlng.lat, event.latlng.lng);
+    });
+
     // Keep Leaflet synchronized with workspace width changes. This removes
     // the visible delay when either sidebar is shown or hidden.
     if (typeof ResizeObserver !== 'undefined') {
@@ -3495,6 +3971,7 @@ function ensureMeshMap() {
     }
 
     scheduleMeshMapResize(0);
+    startMeshMapWaypointPolling();
     return meshMap;
 }
 
@@ -3540,6 +4017,8 @@ function renderMeshMap(targetNodeId = null, options = {}) {
     meshMapTargetNodeId = targetNodeId ? String(targetNodeId) : meshMapTargetNodeId;
     meshMapMarkers.forEach(marker => marker.remove());
     meshMapMarkers.clear();
+    meshMapWaypointMarkers.forEach(marker => marker.remove());
+    meshMapWaypointMarkers.clear();
     if (meshMapReferenceMarker) { meshMapReferenceMarker.remove(); meshMapReferenceMarker = null; }
     if (meshMapReferenceLine) { meshMapReferenceLine.remove(); meshMapReferenceLine = null; }
 
@@ -3591,6 +4070,30 @@ function renderMeshMap(targetNodeId = null, options = {}) {
         bounds.push([pos.latitude, pos.longitude]);
     });
 
+    if (meshMapWaypointsVisible) {
+        meshMapWaypoints.forEach(waypoint => {
+            const latitude = Number(waypoint?.latitude);
+            const longitude = Number(waypoint?.longitude);
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || waypoint?.is_hidden || waypoint?.is_active === false) return;
+            const marker = L.marker([latitude, longitude], {
+                icon: createWaypointMapIcon(waypoint),
+                title: waypoint?.name || 'Waypoint',
+                riseOnHover: true,
+                zIndexOffset: 850
+            }).addTo(map);
+            marker.bindPopup(buildWaypointPopup(waypoint), {
+                className:'meshcenter-map-popup meshcenter-waypoint-popup',
+                maxWidth:320,
+                offset:L.point(0, -12)
+            });
+            marker.on('popupopen', () => {
+                setTimeout(updateOpenWaypointExpiryLabels, 0);
+            });
+            meshMapWaypointMarkers.set(String(waypoint.waypoint_id), marker);
+            bounds.push([latitude, longitude]);
+        });
+    }
+
     const reference = getReferenceLocation();
     if (reference) {
         meshMapReferenceMarker = L.marker([reference.latitude, reference.longitude], {
@@ -3613,7 +4116,12 @@ function renderMeshMap(targetNodeId = null, options = {}) {
     }
 
     const countEl = document.getElementById('mapNodeCount');
-    if (countEl) countEl.textContent = `${positionedNodes.length} positioned node${positionedNodes.length === 1 ? '' : 's'}`;
+    if (countEl) {
+        const waypointCount = meshMapWaypointsVisible
+            ? meshMapWaypoints.filter(item => item?.is_active !== false && !item?.is_hidden).length
+            : 0;
+        countEl.textContent = `${positionedNodes.length} node${positionedNodes.length === 1 ? '' : 's'} · ${waypointCount} waypoint${waypointCount === 1 ? '' : 's'}`;
+    }
 
     const targetNode = positionedNodes.find(node => String(node.node_id) === String(meshMapTargetNodeId));
     const targetMarker = targetNode ? meshMapMarkers.get(String(targetNode.node_id)) : null;
@@ -3642,7 +4150,7 @@ function renderMeshMap(targetNodeId = null, options = {}) {
         }
     } else {
         if (title) title.textContent = '🗺 Map';
-        if (subtitle) subtitle.textContent = 'Known Meshtastic node positions';
+        if (subtitle) subtitle.textContent = 'Known Meshtastic nodes and waypoints';
 
         if (preserveViewport && savedCenter && Number.isFinite(savedZoom)) {
             map.setView(savedCenter, savedZoom, { animate:false });
@@ -3661,6 +4169,13 @@ function fitMeshMapToNodes() {
     const map = ensureMeshMap();
     if (!map) return;
     const points = nodeCache.map(getNodePosition).filter(Boolean).map(pos => [pos.latitude, pos.longitude]);
+    if (meshMapWaypointsVisible) {
+        meshMapWaypoints.forEach(item => {
+            const lat = Number(item?.latitude);
+            const lon = Number(item?.longitude);
+            if (Number.isFinite(lat) && Number.isFinite(lon) && item?.is_active !== false && !item?.is_hidden) points.push([lat, lon]);
+        });
+    }
     const reference = getReferenceLocation();
     if (reference) points.push([reference.latitude, reference.longitude]);
     if (points.length === 1) map.flyTo(points[0], 15, { duration:.6 });
@@ -4293,74 +4808,129 @@ function renderPositionPane(node) {
     `;
 }
 
+function telemetryValuePresent(value) {
+    return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
+}
+
+function formatTelemetryNumber(value, decimals, fallback = '--') {
+    if (!telemetryValuePresent(value)) return fallback;
+    return Number(value).toFixed(decimals);
+}
+
+function formatBatteryPercent(value) {
+    if (!telemetryValuePresent(value)) return '--';
+    const number = Number(value);
+    return String(Math.min(100, Math.max(0, Math.round(number))));
+}
+
+function formatPowerWattsFromMilliwatts(value) {
+    if (!telemetryValuePresent(value)) return '--';
+    return (Number(value) / 1000).toFixed(3);
+}
+
+function nodeMetricPresent(node, metricName, groupName = '') {
+    if (!node || !telemetryValuePresent(node[metricName])) return false;
+
+    const numericValue = Number(node[metricName]);
+    const group = groupName && node[groupName] && typeof node[groupName] === 'object'
+        ? node[groupName]
+        : null;
+    const explicitlyReceived = Boolean(
+        group &&
+        Object.prototype.hasOwnProperty.call(group, metricName) &&
+        telemetryValuePresent(group[metricName]) &&
+        (group.updated || group.source)
+    );
+
+    // A live Meshtastic node cannot meaningfully report 0 V. Old versions of
+    // MeshCenter stored missing metrics as zero, so suppress those placeholders.
+    if (metricName === 'voltage') return numericValue > 0;
+
+    // Zero battery is valid. Environment zeroes can also be valid readings.
+    if (['battery_level', 'temperature', 'humidity', 'pressure', 'channel_utilization', 'air_util_tx', 'uptime_seconds'].includes(metricName)) {
+        return true;
+    }
+
+    // Current and power can genuinely be zero, but only when the corresponding
+    // Power Metrics packet was explicitly observed.
+    if (['current', 'power'].includes(metricName)) {
+        return numericValue !== 0 || explicitlyReceived;
+    }
+
+    return explicitlyReceived || numericValue !== 0;
+}
+
+function queueTelemetryHistoryPrefetch(nodeId) {
+    if (!nodeId || telemetryHistoryCache.has(nodeId)) return;
+
+    window.setTimeout(() => {
+        fetchTelemetryHistoryData(nodeId).catch(error => {
+            console.debug('[TELEMETRY] History prefetch skipped:', error);
+        });
+    }, 250);
+}
+
 function renderDataPane(node) {
-    // Группировка данных
-    const device = {
-        battery: node.battery_level ?? '--',
-        voltage: node.voltage ?? '--',
-        channel_util: node.channel_utilization ?? '--',
-        air_util_tx: node.air_util_tx ?? '--',
-        uptime: node.uptime_seconds ? formatUptime(node.uptime_seconds) : '--'
-    };
+    queueTelemetryHistoryPrefetch(node.node_id);
 
-    const environment = {
-        temperature: node.temperature ?? '--',
-        humidity: node.humidity ?? '--',
-        pressure: node.pressure ?? '--'
-    };
+    const hasBattery = nodeMetricPresent(node, 'battery_level', 'device_metrics');
+    const hasDeviceVoltage = nodeMetricPresent(node, 'voltage', 'device_metrics');
+    const hasChannelUtil = nodeMetricPresent(node, 'channel_utilization', 'device_metrics');
+    const hasAirUtil = nodeMetricPresent(node, 'air_util_tx', 'device_metrics');
+    const hasUptime = nodeMetricPresent(node, 'uptime_seconds', 'device_metrics');
 
-    const power = {
-        voltage: node.voltage ?? '--',
-        current: node.current ?? '--',
-        power: node.power ?? '--'
-    };
+    const hasTemperature = nodeMetricPresent(node, 'temperature', 'environment_metrics');
+    const hasHumidity = nodeMetricPresent(node, 'humidity', 'environment_metrics');
+    const hasPressure = nodeMetricPresent(node, 'pressure', 'environment_metrics');
 
-    const hasEnv = environment.temperature !== '--' || environment.humidity !== '--' || environment.pressure !== '--';
-    const hasPower = power.voltage !== '--' || power.current !== '--' || power.power !== '--';
+    const hasPowerVoltage = nodeMetricPresent(node, 'voltage', 'power_metrics') || hasDeviceVoltage;
+    const hasCurrent = nodeMetricPresent(node, 'current', 'power_metrics');
+    const hasPowerValue = nodeMetricPresent(node, 'power', 'power_metrics') ||
+        (hasPowerVoltage && hasCurrent);
+
+    const hasEnv = hasTemperature || hasHumidity || hasPressure;
+    const hasPower = hasPowerVoltage || hasCurrent || hasPowerValue;
+    const nodeId = escapeHtml(node.node_id);
+    const nodeName = escapeHtml(node.clean_name || node.name || node.node_id);
+
+    const deviceRows = [
+        hasBattery ? `<div><span class="label">Battery</span><span class="value">${escapeHtml(formatBatteryPercent(node.battery_level))}%</span></div>` : '',
+        hasDeviceVoltage ? `<div><span class="label">Voltage</span><span class="value">${escapeHtml(formatTelemetryNumber(node.voltage, 3))} V</span></div>` : '',
+        hasChannelUtil ? `<div><span class="label">Channel utilization</span><span class="value">${escapeHtml(formatTelemetryNumber(node.channel_utilization, 2))}%</span></div>` : '',
+        hasAirUtil ? `<div><span class="label">Air utilization TX</span><span class="value">${escapeHtml(formatTelemetryNumber(node.air_util_tx, 2))}%</span></div>` : '',
+        hasUptime ? `<div><span class="label">Uptime</span><span class="value">${escapeHtml(formatUptime(node.uptime_seconds))}</span></div>` : ''
+    ].filter(Boolean).join('');
+
+    const environmentRows = [
+        hasTemperature ? `<div><span class="label">Temperature</span><span class="value">${formatTemperature(node.temperature)}</span></div>` : '',
+        hasHumidity ? `<div><span class="label">Humidity</span><span class="value">${escapeHtml(formatTelemetryNumber(node.humidity, 1))}%</span></div>` : '',
+        hasPressure ? `<div><span class="label">Pressure</span><span class="value">${formatPressure(node.pressure)}</span></div>` : ''
+    ].filter(Boolean).join('');
+
+    const powerRows = [
+        hasPowerVoltage ? `<div><span class="label">Voltage</span><span class="value">${escapeHtml(formatTelemetryNumber(node.voltage, 3))} V</span></div>` : '',
+        hasCurrent ? `<div><span class="label">Current</span><span class="value">${escapeHtml(formatTelemetryNumber(node.current, 1))} mA</span></div>` : '',
+        hasPowerValue ? `<div><span class="label">Power</span><span class="value">${escapeHtml(formatPowerWattsFromMilliwatts(node.power))} W</span></div>` : ''
+    ].filter(Boolean).join('');
 
     return `
         <div class="node-detail-data">
             <div class="data-group">
                 <div class="data-group-title">📟 Device</div>
-                <div class="data-grid">
-                    <div><span class="label">Battery</span><span class="value">${escapeHtml(device.battery)}%</span></div>
-                    <div><span class="label">Voltage</span><span class="value">${escapeHtml(device.voltage)} V</span></div>
-                    <div><span class="label">Channel utilization</span><span class="value">${escapeHtml(device.channel_util)}%</span></div>
-                    <div><span class="label">Air utilization TX</span><span class="value">${escapeHtml(device.air_util_tx)}%</span></div>
-                    <div><span class="label">Uptime</span><span class="value">${escapeHtml(device.uptime)}</span></div>
-                </div>
+                ${deviceRows ? `<div class="data-grid">${deviceRows}</div>` : '<div class="data-no-data">No device metrics received</div>'}
             </div>
-            ${hasEnv ? `
             <div class="data-group">
                 <div class="data-group-title">🌡️ Environment</div>
-                <div class="data-grid">
-                    <div><span class="label">Temperature</span><span class="value">${formatTemperature(environment.temperature)}</span></div>
-                    <div><span class="label">Humidity</span><span class="value">${environment.humidity !== '--' ? environment.humidity + '%' : '--'}</span></div>
-                    <div><span class="label">Pressure</span><span class="value">${formatPressure(environment.pressure)}</span></div>
-                </div>
-            </div>` : `
-            <div class="data-group">
-                <div class="data-group-title">🌡️ Environment</div>
-                <div class="data-no-data">No environment data</div>
-                <button class="data-request" onclick="runNodeTool('request_telemetry', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">Request telemetry</button>
-            </div>`}
-            ${hasPower ? `
+                ${hasEnv ? `<div class="data-grid">${environmentRows}</div>` : '<div class="data-no-data">No environment metrics received</div>'}
+            </div>
             <div class="data-group">
                 <div class="data-group-title">⚡ Power</div>
-                <div class="data-grid">
-                    <div><span class="label">Voltage</span><span class="value">${escapeHtml(power.voltage)} V</span></div>
-                    <div><span class="label">Current</span><span class="value">${escapeHtml(power.current)} mA</span></div>
-                    <div><span class="label">Power</span><span class="value">${escapeHtml(power.power)} mW</span></div>
-                </div>
-            </div>` : `
-            <div class="data-group">
-                <div class="data-group-title">⚡ Power</div>
-                <div class="data-no-data">No power data</div>
-                <button class="data-request" onclick="runNodeTool('request_telemetry', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">Request telemetry</button>
-            </div>`}
+                ${hasPower ? `<div class="data-grid">${powerRows}</div>` : '<div class="data-no-data">No power metrics received</div>'}
+            </div>
             <div class="data-actions">
-                <button onclick="runNodeTool('request_telemetry', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">📊 Request telemetry</button>
-                <button onclick="viewTelemetryHistory('${escapeHtml(node.node_id)}')">📈 View history</button>
+                <button onclick="runNodeTool('request_telemetry', '${nodeId}', '${nodeName}', this)">📊 Request telemetry</button>
+                ${hasPower ? `<button onclick="viewTelemetryHistory('${nodeId}', 'power')">⚡ Power history</button>` : ''}
+                ${hasEnv ? `<button onclick="viewTelemetryHistory('${nodeId}', 'environment')">🌡️ Environment history</button>` : ''}
             </div>
         </div>
     `;
@@ -4504,11 +5074,11 @@ function refreshNodeMetrics(nodeId) {
     showToast('↻ Refreshing local node data', 'info');
 }
 
-function viewTelemetryHistory(nodeId) {
-    // Открыть модалку телеметрии с фильтром по ноде
-    openTelemetryModal('environment');
-    showToast('History currently shows all telemetry records; node filtering is planned', 'info');
-    // TODO(plugin): add node_id filtering to the telemetry history API and modal
+function viewTelemetryHistory(nodeId, type = 'power') {
+    const node = nodeCache.find(item => item.node_id === nodeId);
+    const nodeName = node?.clean_name || node?.name || nodeId;
+    const historyType = type === 'environment' ? 'environment' : 'power';
+    openTelemetryModal(historyType, nodeId, nodeName);
 }
 
 let nodeActionsCloserInstalled = false;
@@ -4864,6 +5434,35 @@ function scheduleNodeToolResultClose(nodeId, delay = 20000) {
     }, delay);
 }
 
+async function waitForNodeTelemetryResponse(nodeId, requestedAt, timeoutMs = 50000) {
+    const deadline = Date.now() + timeoutMs;
+    const requestTimestamp = Number(requestedAt || 0);
+
+    while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 2500));
+
+        try {
+            await loadMessages();
+        } catch (error) {
+            console.warn('[NODE TOOLS] Telemetry refresh failed:', error);
+            continue;
+        }
+
+        const refreshedNode = nodeCache.find(item => item.node_id === nodeId);
+        const telemetryTimestamp = Number(refreshedNode?.last_telemetry_time || 0);
+
+        if (refreshedNode && telemetryTimestamp >= requestTimestamp) {
+            if (currentChatId === nodeId) {
+                renderNodeDetails(refreshedNode);
+            }
+            return refreshedNode;
+        }
+    }
+
+    return null;
+}
+
+
 async function runNodeTool(action, nodeId, nodeName, button) {
 
     if (!action || !nodeId) return;
@@ -5002,38 +5601,70 @@ async function runNodeTool(action, nodeId, nodeName, button) {
         }
 
         else if (action === 'request_telemetry') {
-            const rawOutput = String(data.output || '').trim();
-            const displayOutput = formatTelemetryCliOutput(rawOutput);
+            const requestedAt = Number(data.requested_at || (Date.now() / 1000));
+            const responseTimeoutMs = Number(data.response_timeout_seconds || 50) * 1000;
 
-            const telemetryDetails = rawOutput
-                ? `
+            renderNodeToolResult(
+                nodeId,
+                'pending',
+                `📊 Telemetry request sent to ${data.node_name || nodeName}`,
+                'The radio listener is active again and is waiting for the node response.'
+            );
+
+            showToast(
+                `📡 Telemetry request sent: ${data.node_name || nodeName}`,
+                'info'
+            );
+
+            const refreshedNode = await waitForNodeTelemetryResponse(
+                nodeId,
+                requestedAt,
+                responseTimeoutMs
+            );
+
+            if (refreshedNode) {
+                // A fresh response may have created or merged a history record.
+                // Discard the two-minute prefetch cache so View History reads it.
+                telemetryHistoryCache.delete(nodeId);
+                telemetryHistoryCache.delete('__local__');
+
+                const device = refreshedNode.device_metrics || {};
+                const details = `
                     <div class="telemetry-request-output">
                         <div class="telemetry-request-status">
-                            Request completed by Meshtastic CLI
+                            Response received through the MeshCenter listener
                         </div>
-
-                        <pre>${escapeHtml(displayOutput)}</pre>
-                    </div>
-                `
-                : `
-                    <div class="telemetry-request-output">
-                        <div class="telemetry-request-status">
-                            Request sent successfully
-                        </div>
-
                         <div class="telemetry-request-note">
-                            The response may arrive asynchronously through the listener.
+                            Battery: ${device.battery_level ?? '--'}% ·
+                            Voltage: ${device.voltage ?? '--'} V ·
+                            Updated: ${refreshedNode.last_telemetry_time_text || 'just now'}
                         </div>
                     </div>
                 `;
 
-            renderNodeToolResult(
-                nodeId,
-                'success',
-                `📊 Telemetry from ${data.node_name || nodeName}`,
-                '',
-                telemetryDetails
-            );
+                renderNodeToolResult(
+                    nodeId,
+                    'success',
+                    `📊 Telemetry received from ${data.node_name || nodeName}`,
+                    '',
+                    details
+                );
+                showToast(
+                    `✅ Telemetry received: ${data.node_name || nodeName}`,
+                    'success'
+                );
+            } else {
+                renderNodeToolResult(
+                    nodeId,
+                    'error',
+                    '⚠️ No fresh telemetry response',
+                    'The request was transmitted, but the node did not provide fresh telemetry before the waiting period ended.'
+                );
+                showToast(
+                    `⚠️ Telemetry request sent, but no fresh response: ${data.node_name || nodeName}`,
+                    'info'
+                );
+            }
 
             scheduleNodeToolResultClose(nodeId, 20000);
         }
@@ -5100,12 +5731,14 @@ async function runNodeTool(action, nodeId, nodeName, button) {
         if (action === 'traceroute') {
             successMessage = `✅ Traceroute completed: ${completedName}`;
         } else if (action === 'request_telemetry') {
-            successMessage = `✅ Telemetry request completed: ${completedName}`;
+            successMessage = '';
         } else if (action === 'request_position') {
             successMessage = `✅ Position request completed: ${completedName}`;
         }
 
-        showToast(successMessage, 'success');
+        if (successMessage) {
+            showToast(successMessage, 'success');
+        }
 
     } catch (error) {
         console.error('[NODE TOOLS] Error:', error);
@@ -6075,6 +6708,7 @@ document.addEventListener('DOMContentLoaded', function() {
 // SWITCH SIDEBAR TAB
 // ============================================================
 function switchSidebarTab(tab) {
+    if (tab === 'tools') setTimeout(() => refreshWaypointToolsList(false), 0);
     document.querySelectorAll('.sidebar-tab').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tab);
     });
@@ -6579,6 +7213,84 @@ document.addEventListener('click', function(e) {
 // ============================================================
 // TELEMETRY FUNCTIONS
 // ============================================================
+let telemetryModalRequestId = 0;
+
+function renderTelemetryCardsLayout(type) {
+    const cards = document.getElementById('telemetryCards');
+    if (!cards) return;
+
+    if (type === 'power') {
+        cards.innerHTML = `
+            <div class="telemetry-card" id="powerVoltageCard">
+                <div class="card-label">⚡ Voltage</div>
+                <div class="card-value" id="powerVoltageValue">--</div>
+                <div class="card-range">
+                    <span class="range-min" id="powerVoltageMin">--</span>
+                    <span class="range-sep">—</span>
+                    <span class="range-max" id="powerVoltageMax">--</span>
+                </div>
+            </div>
+            <div class="telemetry-card" id="powerCurrentCard">
+                <div class="card-label">🔌 Current</div>
+                <div class="card-value" id="powerCurrentValue">--</div>
+                <div class="card-range">
+                    <span class="range-min" id="powerCurrentMin">--</span>
+                    <span class="range-sep">—</span>
+                    <span class="range-max" id="powerCurrentMax">--</span>
+                </div>
+            </div>
+            <div class="telemetry-card" id="powerPowerCard">
+                <div class="card-label">⚡ Power</div>
+                <div class="card-value" id="powerPowerValue">--</div>
+                <div class="card-range">
+                    <span class="range-min" id="powerPowerMin">--</span>
+                    <span class="range-sep">—</span>
+                    <span class="range-max" id="powerPowerMax">--</span>
+                </div>
+            </div>`;
+        return;
+    }
+
+    cards.innerHTML = `
+        <div class="telemetry-card" id="environmentTemperatureCard">
+            <div class="card-label">🌡️ Temperature</div>
+            <div class="card-value" id="environmentTemperatureValue">--</div>
+            <div class="card-range">
+                <span class="range-min" id="environmentTemperatureMin">--</span>
+                <span class="range-sep">—</span>
+                <span class="range-max" id="environmentTemperatureMax">--</span>
+            </div>
+        </div>
+        <div class="telemetry-card" id="environmentHumidityCard">
+            <div class="card-label">💧 Humidity</div>
+            <div class="card-value" id="environmentHumidityValue">--</div>
+            <div class="card-range">
+                <span class="range-min" id="environmentHumidityMin">--</span>
+                <span class="range-sep">—</span>
+                <span class="range-max" id="environmentHumidityMax">--</span>
+            </div>
+        </div>
+        <div class="telemetry-card" id="environmentPressureCard">
+            <div class="card-label">📊 Pressure</div>
+            <div class="card-value" id="environmentPressureValue">--</div>
+            <div class="card-range">
+                <span class="range-min" id="environmentPressureMin">--</span>
+                <span class="range-sep">—</span>
+                <span class="range-max" id="environmentPressureMax">--</span>
+            </div>
+        </div>`;
+}
+
+function latestTelemetryValue(records, key) {
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+        const value = records[index]?.[key];
+        if (value !== null && value !== undefined && Number.isFinite(Number(value))) {
+            return Number(value);
+        }
+    }
+    return null;
+}
+
 async function loadTelemetry() {
     console.log('[TELEMETRY] loadTelemetry called');
     try {
@@ -6591,10 +7303,52 @@ async function loadTelemetry() {
     }
 }
 
-async function loadTelemetryHistory() {
+async function fetchTelemetryHistoryData(nodeId = '', force = false) {
+    const cacheKey = nodeId || '__local__';
+    const cached = telemetryHistoryCache.get(cacheKey);
+    const now = Date.now();
+
+    if (!force && cached && cached.data && now - cached.timestamp < TELEMETRY_HISTORY_CACHE_TTL_MS) {
+        return cached.data;
+    }
+
+    if (!force && cached && cached.promise) {
+        return cached.promise;
+    }
+
+    const requestPromise = (async () => {
+        const params = new URLSearchParams({ limit: '5000' });
+        if (nodeId) params.set('node_id', nodeId);
+
+        const response = await fetch(`/api/telemetry/history?${params.toString()}`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        telemetryHistoryCache.set(cacheKey, {
+            timestamp: Date.now(),
+            data
+        });
+        return data;
+    })();
+
+    telemetryHistoryCache.set(cacheKey, {
+        timestamp: now,
+        promise: requestPromise
+    });
+
     try {
-        const historyResponse = await fetch('/api/telemetry/history?limit=5000');
-        const historyData = await historyResponse.json();
+        return await requestPromise;
+    } catch (error) {
+        telemetryHistoryCache.delete(cacheKey);
+        throw error;
+    }
+}
+
+async function loadTelemetryHistory(nodeId = '', force = false) {
+    try {
+        const historyData = await fetchTelemetryHistoryData(nodeId, force);
 
         telemetryFullHistory = historyData.history || [];
         telemetryHistory = telemetryFullHistory;
@@ -6602,14 +7356,13 @@ async function loadTelemetryHistory() {
         if (historyData.config) {
             telemetryInterval = historyData.config.interval || 300;
             const select = document.getElementById('telemetryInterval');
-            if (select) {
-                select.value = telemetryInterval;
-            }
+            if (select) select.value = telemetryInterval;
         }
 
         console.log('[TELEMETRY] History records:', telemetryHistory.length);
     } catch (error) {
         console.error('[TELEMETRY] Error loading telemetry history:', error);
+        throw error;
     }
 }
 
@@ -6643,7 +7396,7 @@ function updateTelemetryUI() {
             parts.push(`${data.voltage.toFixed(3)}V`);
         }
         if (data.current !== null && data.current !== undefined && data.current > 0) {
-            parts.push(`${data.current.toFixed(0)}mA`);
+            parts.push(`${data.current.toFixed(1)}mA`);
         }
         powerValue.textContent = parts.length > 0 ? parts.join('  ') : '—';
     }
@@ -6695,7 +7448,7 @@ async function updateTelemetryConfig() {
     }
 }
 
-async function openTelemetryModal(type) {
+async function openTelemetryModal(type, nodeId = '', nodeName = '') {
     const modal = document.getElementById('telemetryModal');
     const title = document.getElementById('telemetryModalTitle');
     const container = document.getElementById('telemetryChartContainer');
@@ -6705,7 +7458,13 @@ async function openTelemetryModal(type) {
         return;
     }
 
+    const requestId = ++telemetryModalRequestId;
+
     modal.dataset.type = type;
+    modal.dataset.nodeId = nodeId || '';
+    modal.dataset.nodeName = nodeName || '';
+    modal.dataset.requestId = String(requestId);
+    renderTelemetryCardsLayout(type);
     modal.style.display = 'flex';
     container.innerHTML = '<div class="loading">⏳ Loading telemetry data...</div>';
 
@@ -6713,7 +7472,9 @@ async function openTelemetryModal(type) {
         'environment': '🌡️ Environment Sensors',
         'power': '⚡ Power Sensors'
     };
-    title.textContent = labels[type] || '📊 Telemetry';
+    title.textContent = nodeName
+        ? `${labels[type] || '📊 Telemetry'} - ${nodeName}`
+        : (labels[type] || '📊 Telemetry');
 
     const footer = document.getElementById('telemetryFooter');
     if (footer) {
@@ -6735,9 +7496,18 @@ async function openTelemetryModal(type) {
     }
 
     try {
-        await loadTelemetry();
-        await loadTelemetryHistory();
-        renderTelemetryWithRange(type, telemetryTimeRange);    
+        if (!nodeId) {
+            await loadTelemetry();
+        }
+        await loadTelemetryHistory(nodeId);
+
+        if (requestId !== telemetryModalRequestId
+            || modal.dataset.type !== type
+            || modal.dataset.nodeId !== (nodeId || '')) {
+            return;
+        }
+
+        renderTelemetryWithRange(type, telemetryTimeRange);
         } catch (error) {
         console.error('Error loading telemetry modal:', error);
         container.innerHTML = '<div class="loading">⚠️ Error loading telemetry data</div>';
@@ -6931,7 +7701,11 @@ function runCustomTelemetryExport() {
         .filter(key => telemetryVisibleSeries[type][key])
         .join(',');
 
+    const nodeId = modal?.dataset?.nodeId || '';
     let url = `/api/export/telemetry?type=${encodeURIComponent(type)}&format=${encodeURIComponent(format)}&series=${encodeURIComponent(series)}`;
+    if (nodeId) {
+        url += `&node_id=${encodeURIComponent(nodeId)}`;
+    }
 
     if (mode === 'custom') {
         const startValue = document.getElementById('exportStartDate')?.value;
@@ -6970,6 +7744,19 @@ function downloadTelemetryExport(format) {
     window.location.href = url;
 }
 
+function telemetryRecordHasType(record, type) {
+    if (!record || typeof record !== 'object') return false;
+
+    if (type === 'environment') {
+        return [record.temperature, record.humidity, record.pressure]
+            .some(value => value !== null && value !== undefined && Number.isFinite(Number(value)));
+    }
+
+    // Voltage is the baseline power/device metric and is available on most nodes.
+    return [record.voltage, record.current, record.power]
+        .some(value => value !== null && value !== undefined && Number.isFinite(Number(value)));
+}
+
 function renderTelemetryWithRange(type, minutes) {
     const container = document.getElementById('telemetryChartContainer');
     const recordsCount = document.getElementById('telemetryRecordsCount');
@@ -6979,7 +7766,12 @@ function renderTelemetryWithRange(type, minutes) {
     const now = Date.now() / 1000;
     const cutoff = now - (minutes * 60);
     
-    const filteredRecords = telemetryFullHistory.filter(r => r.timestamp >= cutoff);
+    const filteredRecords = telemetryFullHistory.filter(record => {
+        const timestamp = Number(record?.timestamp);
+        return Number.isFinite(timestamp)
+            && timestamp >= cutoff
+            && telemetryRecordHasType(record, type);
+    });
     
 const rangeLabel = minutes < 1440
     ? `${minutes / 60}h`
@@ -7022,12 +7814,12 @@ function renderTelemetryChart(container, records, type) {
         if (tempData.length > 0 && telemetryVisibleSeries.environment.temperature) {
             datasets.push({
                 label: 'Temperature ' + temperatureChartUnit(),
-                data: records.map(r => temperatureChartValue(r.temperature)),
+                data: records.map(r => telemetryValuePresent(r.temperature) ? temperatureChartValue(r.temperature) : null),
                 borderColor: SENSOR_COLORS.temperature,
                 backgroundColor: SENSOR_BG_COLORS.temperature,
                 fill: true,
                 tension: 0.3,
-                spanGaps: true,
+                spanGaps: false,
                 yAxisID: 'y'
             });
         }
@@ -7036,12 +7828,12 @@ function renderTelemetryChart(container, records, type) {
         if (humData.length > 0 && telemetryVisibleSeries.environment.humidity) {
             datasets.push({
                 label: 'Humidity %',
-                data: records.map(r => r.humidity),
+                data: records.map(r => telemetryValuePresent(r.humidity) ? Number(r.humidity) : null),
                 borderColor: SENSOR_COLORS.humidity,
                 backgroundColor: SENSOR_BG_COLORS.humidity,
                 fill: true,
                 tension: 0.3,
-                spanGaps: true,
+                spanGaps: false,
                 yAxisID: 'y'
             });
         }
@@ -7051,12 +7843,12 @@ function renderTelemetryChart(container, records, type) {
             hasPressure = true;
             datasets.push({
                 label: 'Pressure ' + pressureChartUnit(),
-                data: records.map(r => pressureChartValue(r.pressure)),
+                data: records.map(r => telemetryValuePresent(r.pressure) ? pressureChartValue(r.pressure) : null),
                 borderColor: SENSOR_COLORS.pressure,
                 backgroundColor: SENSOR_BG_COLORS.pressure,
                 fill: true,
                 tension: 0.3,
-                spanGaps: true,
+                spanGaps: false,
                 yAxisID: 'y1'
             });
         }
@@ -7066,12 +7858,12 @@ function renderTelemetryChart(container, records, type) {
         if (voltData.length > 0 && telemetryVisibleSeries.power.voltage) {
             datasets.push({
                 label: 'Voltage V',
-                data: records.map(r => r.voltage),
+                data: records.map(r => telemetryValuePresent(r.voltage) ? Number(r.voltage) : null),
                 borderColor: SENSOR_COLORS.voltage,
                 backgroundColor: SENSOR_BG_COLORS.voltage,
                 fill: true,
                 tension: 0.3,
-                spanGaps: true,
+                spanGaps: false,
                 yAxisID: 'y'
             });
         }
@@ -7081,20 +7873,20 @@ function renderTelemetryChart(container, records, type) {
             hasCurrent = true;
             datasets.push({
                 label: 'Current mA',
-                data: records.map(r => r.current),
+                data: records.map(r => telemetryValuePresent(r.current) ? Number(r.current) : null),
                 borderColor: SENSOR_COLORS.current,
                 backgroundColor: SENSOR_BG_COLORS.current,
                 fill: true,
                 tension: 0.3,
-                spanGaps: true,
+                spanGaps: false,
                 yAxisID: 'y1'
             });
         }
 
         const powerSeries = records.map(r => {
-            if (r.power !== null && r.power !== undefined) return r.power / 1000;
-            if (r.voltage !== null && r.voltage !== undefined && r.current !== null && r.current !== undefined) {
-                return (r.voltage * r.current) / 1000;
+            if (telemetryValuePresent(r.power)) return Number(r.power) / 1000;
+            if (telemetryValuePresent(r.voltage) && telemetryValuePresent(r.current)) {
+                return (Number(r.voltage) * Number(r.current)) / 1000;
             }
             return null;
         });
@@ -7109,7 +7901,7 @@ function renderTelemetryChart(container, records, type) {
                 backgroundColor: SENSOR_BG_COLORS.power,
                 fill: true,
                 tension: 0.3,
-                spanGaps: true,
+                spanGaps: false,
                 yAxisID: 'y2'
             });
         }
@@ -7250,133 +8042,109 @@ function renderTelemetryChart(container, records, type) {
 }
 
 function updateTelemetryCards(records, type) {
+    const modal = document.getElementById('telemetryModal');
+    if (!modal || modal.dataset.type !== type) return;
+
+    const remoteNodeHistory = Boolean(modal.dataset.nodeId);
+
     if (type === 'environment') {
-        const historyLast = records[records.length - 1] || {};
-        const last = {
-            temperature: telemetryData.temperature ?? historyLast.temperature,
-            humidity: telemetryData.humidity ?? historyLast.humidity,
-            pressure: telemetryData.pressure ?? historyLast.pressure
-        };
+        const lastTemperature = remoteNodeHistory
+            ? latestTelemetryValue(records, 'temperature')
+            : (telemetryData.temperature ?? latestTelemetryValue(records, 'temperature'));
+        const lastHumidity = remoteNodeHistory
+            ? latestTelemetryValue(records, 'humidity')
+            : (telemetryData.humidity ?? latestTelemetryValue(records, 'humidity'));
+        const lastPressure = remoteNodeHistory
+            ? latestTelemetryValue(records, 'pressure')
+            : (telemetryData.pressure ?? latestTelemetryValue(records, 'pressure'));
 
-        const tempValues = records.map(r => r.temperature).filter(v => v !== null && v !== undefined);
-        const humValues = records.map(r => r.humidity).filter(v => v !== null && v !== undefined);
-        const pressValues = records.map(r => r.pressure).filter(v => v !== null && v !== undefined);
+        const tempValues = records.map(r => Number(r.temperature)).filter(Number.isFinite);
+        const humValues = records.map(r => Number(r.humidity)).filter(Number.isFinite);
+        const pressValues = records.map(r => Number(r.pressure)).filter(Number.isFinite);
 
-        const card1 = document.getElementById('cardTemp').parentElement;
-        card1.onclick = () => toggleTelemetrySeries('temperature');
-        card1.classList.toggle('inactive', !telemetryVisibleSeries.environment.temperature);
-        card1.querySelector('.card-label').textContent = '🌡️ Temperature';
-        document.getElementById('cardTemp').textContent = formatTemperature(last.temperature);
-        document.getElementById('cardTemp').style.color = SENSOR_COLORS.temperature;
+        const tempCard = document.getElementById('environmentTemperatureCard');
+        const humCard = document.getElementById('environmentHumidityCard');
+        const pressureCard = document.getElementById('environmentPressureCard');
+        if (!tempCard || !humCard || !pressureCard) return;
 
-        if (tempValues.length > 0) {
-            document.getElementById('cardTempMin').textContent = formatTemperature(Math.min(...tempValues));
-            document.getElementById('cardTempMax').textContent = formatTemperature(Math.max(...tempValues));
+        tempCard.onclick = () => toggleTelemetrySeries('temperature');
+        tempCard.classList.toggle('inactive', !telemetryVisibleSeries.environment.temperature);
+        document.getElementById('environmentTemperatureValue').textContent = formatTemperature(lastTemperature);
+        document.getElementById('environmentTemperatureValue').style.color = SENSOR_COLORS.temperature;
+        document.getElementById('environmentTemperatureMin').textContent = tempValues.length ? formatTemperature(Math.min(...tempValues)) : '--';
+        document.getElementById('environmentTemperatureMax').textContent = tempValues.length ? formatTemperature(Math.max(...tempValues)) : '--';
+
+        humCard.onclick = () => toggleTelemetrySeries('humidity');
+        humCard.classList.toggle('inactive', !telemetryVisibleSeries.environment.humidity);
+        document.getElementById('environmentHumidityValue').textContent = lastHumidity !== null ? lastHumidity.toFixed(1) + '%' : '--';
+        document.getElementById('environmentHumidityValue').style.color = SENSOR_COLORS.humidity;
+        document.getElementById('environmentHumidityMin').textContent = humValues.length ? Math.min(...humValues).toFixed(1) + '%' : '--';
+        document.getElementById('environmentHumidityMax').textContent = humValues.length ? Math.max(...humValues).toFixed(1) + '%' : '--';
+
+        pressureCard.onclick = () => toggleTelemetrySeries('pressure');
+        pressureCard.classList.toggle('inactive', !telemetryVisibleSeries.environment.pressure);
+        document.getElementById('environmentPressureValue').textContent = formatPressure(lastPressure);
+        document.getElementById('environmentPressureValue').style.color = SENSOR_COLORS.pressure;
+        document.getElementById('environmentPressureMin').textContent = pressValues.length ? formatPressure(Math.min(...pressValues)) : '--';
+        document.getElementById('environmentPressureMax').textContent = pressValues.length ? formatPressure(Math.max(...pressValues)) : '--';
+        return;
+    }
+
+    if (type === 'power') {
+        const lastVoltage = remoteNodeHistory
+            ? latestTelemetryValue(records, 'voltage')
+            : (telemetryData.voltage ?? latestTelemetryValue(records, 'voltage'));
+        const lastCurrent = remoteNodeHistory
+            ? latestTelemetryValue(records, 'current')
+            : (telemetryData.current ?? latestTelemetryValue(records, 'current'));
+        let lastPower = remoteNodeHistory
+            ? latestTelemetryValue(records, 'power')
+            : (telemetryData.power ?? latestTelemetryValue(records, 'power'));
+
+        if (lastPower === null && lastVoltage !== null && lastCurrent !== null) {
+            lastPower = lastVoltage * lastCurrent;
         }
-        card1.querySelector('.card-range').style.display = 'flex';
 
-        const card2 = document.getElementById('cardHum').parentElement;
-        card2.onclick = () => toggleTelemetrySeries('humidity');
-        card2.classList.toggle('inactive', !telemetryVisibleSeries.environment.humidity);
-        card2.querySelector('.card-label').textContent = '💧 Humidity';
-        document.getElementById('cardHum').textContent =
-            last.humidity !== null && last.humidity !== undefined ? last.humidity.toFixed(1) + '%' : '--';
-        document.getElementById('cardHum').style.color = SENSOR_COLORS.humidity;
-
-        if (humValues.length > 0) {
-            document.getElementById('cardHumMin').textContent = Math.min(...humValues).toFixed(1) + '%';
-            document.getElementById('cardHumMax').textContent = Math.max(...humValues).toFixed(1) + '%';
-        }
-        card2.querySelector('.card-range').style.display = 'flex';
-
-        const card3 = document.getElementById('cardPress').parentElement;
-        card3.onclick = () => toggleTelemetrySeries('pressure');
-        card3.classList.toggle('inactive', !telemetryVisibleSeries.environment.pressure);
-        card3.querySelector('.card-label').textContent = '📊 Pressure';
-        document.getElementById('cardPress').textContent = formatPressure(last.pressure);
-        document.getElementById('cardPress').style.color = SENSOR_COLORS.pressure;
-
-        if (pressValues.length > 0) {
-            document.getElementById('cardPressMin').textContent = formatPressure(Math.min(...pressValues));
-            document.getElementById('cardPressMax').textContent = formatPressure(Math.max(...pressValues));
-        }
-        card3.querySelector('.card-range').style.display = 'flex';
-
-    } else if (type === 'power') {
-        const historyLast = records[records.length - 1] || {};
-        const last = {
-            voltage: telemetryData.voltage ?? historyLast.voltage,
-            current: telemetryData.current ?? historyLast.current,
-            power: telemetryData.power ?? historyLast.power
-        };
-
-        const voltValues = records.map(r => r.voltage).filter(v => v !== null && v !== undefined);
-        const currValues = records.map(r => r.current).filter(v => v !== null && v !== undefined);
+        const voltValues = records.map(r => Number(r.voltage)).filter(Number.isFinite);
+        const currValues = records.map(r => Number(r.current)).filter(Number.isFinite);
         const powerValues = records.map(r => {
-            if (r.power !== null && r.power !== undefined) return r.power;
-            if (r.voltage !== null && r.voltage !== undefined && r.current !== null && r.current !== undefined) {
-                return r.voltage * r.current;
-            }
-            return null;
-        }).filter(v => v !== null && v !== undefined);
+            const power = Number(r.power);
+            if (Number.isFinite(power)) return power;
+            const voltage = Number(r.voltage);
+            const current = Number(r.current);
+            return Number.isFinite(voltage) && Number.isFinite(current) ? voltage * current : null;
+        }).filter(Number.isFinite);
 
-        const card1 = document.getElementById('cardTemp').parentElement;
-        card1.onclick = () => toggleTelemetrySeries('voltage');
-        card1.classList.toggle('inactive', !telemetryVisibleSeries.power.voltage);
-        card1.querySelector('.card-label').textContent = '⚡ Voltage';
-        document.getElementById('cardTemp').textContent =
-            last.voltage !== null && last.voltage !== undefined ? last.voltage.toFixed(3) + ' V' : '--';
-        document.getElementById('cardTemp').style.color = SENSOR_COLORS.voltage;
+        const voltageCard = document.getElementById('powerVoltageCard');
+        const currentCard = document.getElementById('powerCurrentCard');
+        const powerCard = document.getElementById('powerPowerCard');
+        if (!voltageCard || !currentCard || !powerCard) return;
 
-        if (voltValues.length > 0) {
-            document.getElementById('cardTempMin').textContent = Math.min(...voltValues).toFixed(3) + ' V';
-            document.getElementById('cardTempMax').textContent = Math.max(...voltValues).toFixed(3) + ' V';
-        }
-        card1.querySelector('.card-range').style.display = 'flex';
+        voltageCard.onclick = () => toggleTelemetrySeries('voltage');
+        voltageCard.classList.toggle('inactive', !telemetryVisibleSeries.power.voltage);
+        document.getElementById('powerVoltageValue').textContent = lastVoltage !== null ? lastVoltage.toFixed(3) + ' V' : '--';
+        document.getElementById('powerVoltageValue').style.color = SENSOR_COLORS.voltage;
+        document.getElementById('powerVoltageMin').textContent = voltValues.length ? Math.min(...voltValues).toFixed(3) + ' V' : '--';
+        document.getElementById('powerVoltageMax').textContent = voltValues.length ? Math.max(...voltValues).toFixed(3) + ' V' : '--';
 
-        const card2 = document.getElementById('cardHum').parentElement;
-        card2.onclick = () => toggleTelemetrySeries('current');
-        card2.classList.toggle('inactive', !telemetryVisibleSeries.power.current);
-        card2.querySelector('.card-label').textContent = '🔌 Current';
-        document.getElementById('cardHum').textContent =
-            last.current !== null && last.current !== undefined ? last.current.toFixed(1) + ' mA' : '--';
-        document.getElementById('cardHum').style.color = SENSOR_COLORS.current;
+        currentCard.onclick = () => toggleTelemetrySeries('current');
+        currentCard.classList.toggle('inactive', !telemetryVisibleSeries.power.current);
+        document.getElementById('powerCurrentValue').textContent = lastCurrent !== null ? lastCurrent.toFixed(1) + ' mA' : '--';
+        document.getElementById('powerCurrentValue').style.color = SENSOR_COLORS.current;
+        document.getElementById('powerCurrentMin').textContent = currValues.length ? Math.min(...currValues).toFixed(1) + ' mA' : '--';
+        document.getElementById('powerCurrentMax').textContent = currValues.length ? Math.max(...currValues).toFixed(1) + ' mA' : '--';
 
-        if (currValues.length > 0) {
-            document.getElementById('cardHumMin').textContent = Math.min(...currValues).toFixed(1) + ' mA';
-            document.getElementById('cardHumMax').textContent = Math.max(...currValues).toFixed(1) + ' mA';
-        }
-        card2.querySelector('.card-range').style.display = 'flex';
-
-        const card3 = document.getElementById('cardPress').parentElement;
-        card3.onclick = () => toggleTelemetrySeries('power');
-        card3.classList.toggle('inactive', !telemetryVisibleSeries.power.power);
-        card3.querySelector('.card-label').textContent = '⚡ Power';
-
-        const powerValue =
-            last.power !== null && last.power !== undefined
-                ? last.power
-                : (last.voltage !== null && last.voltage !== undefined && last.current !== null && last.current !== undefined
-                    ? last.voltage * last.current
-                    : null);
-
-        document.getElementById('cardPress').textContent =
-            powerValue !== null && powerValue !== undefined ? (powerValue / 1000).toFixed(3) + ' W' : '--';
-        document.getElementById('cardPress').style.color = SENSOR_COLORS.power;
-
-        if (powerValues.length > 0) {
-            document.getElementById('cardPressMin').textContent = (Math.min(...powerValues) / 1000).toFixed(3) + ' W';
-            document.getElementById('cardPressMax').textContent = (Math.max(...powerValues) / 1000).toFixed(3) + ' W';
-            card3.querySelector('.card-range').style.display = 'flex';
-        } else {
-            document.getElementById('cardPressMin').textContent = '--';
-            document.getElementById('cardPressMax').textContent = '--';
-            card3.querySelector('.card-range').style.display = 'none';
-        }
+        powerCard.onclick = () => toggleTelemetrySeries('power');
+        powerCard.classList.toggle('inactive', !telemetryVisibleSeries.power.power);
+        document.getElementById('powerPowerValue').textContent = lastPower !== null ? (lastPower / 1000).toFixed(3) + ' W' : '--';
+        document.getElementById('powerPowerValue').style.color = SENSOR_COLORS.power;
+        document.getElementById('powerPowerMin').textContent = powerValues.length ? (Math.min(...powerValues) / 1000).toFixed(3) + ' W' : '--';
+        document.getElementById('powerPowerMax').textContent = powerValues.length ? (Math.max(...powerValues) / 1000).toFixed(3) + ' W' : '--';
     }
 }
 
 function closeTelemetryModal() {
+    telemetryModalRequestId += 1;
     const modal = document.getElementById('telemetryModal');
     if (modal) {
         modal.style.display = 'none';

@@ -11,20 +11,24 @@ import time
 import re
 import json
 import os
+import sys
 import io
 import csv
 import uuid
+import ast
 from collections import defaultdict, deque
 from datetime import datetime
 from camera import camera
 from telemetry import telemetry
 from meshsrv import meshsrv
 from meshsrv.radio_manager import RadioConnectionManager
+from meshsrv.runtime_identity import resolve_meshtastic_cli, resolve_serial_port, meshtastic_command
 from api.api_camera import register_camera_routes
 from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes
 from api.api_system import register_system_routes
 from system_log import log_system_event
+from storage.waypoint_store import WaypointStore
 from api.api_node_tools import register_node_tools_routes
 from api.api_node_icons import register_node_icon_routes
 from api.api_weather import register_weather_routes
@@ -48,6 +52,7 @@ required_vars = [
 ]
 
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
+WAYPOINTS_DB_FILE = os.path.join(DATA_DIR, "waypoints.db")
 
 NODE_DEBUG_LOG = os.path.join(DATA_DIR, "nodes_debug.log")
 
@@ -55,6 +60,22 @@ try:
     MESHTASTIC_PORT
 except NameError:
     MESHTASTIC_PORT = "/dev/ttyACM0"
+
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+try:
+    MESHTASTIC_CMD = resolve_meshtastic_cli(MESHTASTIC_CMD, PROJECT_DIR)
+    MESHTASTIC_PORT = resolve_serial_port(MESHTASTIC_PORT)
+    print(
+        f"[INIT] Meshtastic CLI resolved: {MESHTASTIC_CMD}; "
+        f"serial port: {MESHTASTIC_PORT}",
+        flush=True,
+    )
+except RuntimeError as error:
+    print("=" * 60, flush=True)
+    print(f"❌ MESHTASTIC INITIALIZATION ERROR: {error}", flush=True)
+    print("=" * 60, flush=True)
+    raise SystemExit(1)
 
 missing_vars = []
 for var in required_vars:
@@ -68,9 +89,6 @@ if missing_vars:
     print("=" * 60)
     exit(1)
 
-if not os.path.exists(MESHTASTIC_CMD):
-    print(f"⚠️ WARNING: meshtastic not found at: {MESHTASTIC_CMD}")
-
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -80,6 +98,7 @@ if not os.path.exists(SCREENSHOTS_DIR):
     os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
 
 app = Flask(__name__)
+waypoint_store = WaypointStore(WAYPOINTS_DB_FILE)
 
 def handle_errors(f):
     """Декоратор для обработки ошибок в API"""
@@ -708,24 +727,172 @@ def _regex_number(line, patterns):
             return _float_or_none(m.group(1))
     return None
 
-def _telemetry_from_local_node(line):
+def _telemetry_sender_node_id(line):
+    """Resolve the sender of a Meshtastic telemetry listener line."""
     try:
-        from_id = extract_field(line, ["fromId"])
+        from_id = extract_field(line, ["fromId", "from_id"])
         if from_id:
-            return normalize_node_id(from_id) == LOCAL_NODE_ID
+            normalized = normalize_node_id(from_id)
+            if normalized:
+                return normalized
 
-        m = re.search(r"['\"]from['\"]:\s*(\d+)", line)
-        if m:
-            return node_num_to_id(m.group(1)) == LOCAL_NODE_ID
+        match = re.search(r"['\"]from['\"]:\s*(\d+)", line)
+        if match:
+            return node_num_to_id(match.group(1))
+
+        match = re.search(r"['\"]fromId['\"]:\s*['\"](![0-9a-fA-F]+)['\"]", line)
+        if match:
+            return normalize_node_id(match.group(1))
     except Exception:
         pass
-    return LOCAL_NODE_ID in line
 
-def parse_telemetry_from_listen_line(line):
-    if "TELEMETRY_APP" not in line and "environmentMetrics" not in line and "powerMetrics" not in line and "deviceMetrics" not in line:
+    if LOCAL_NODE_ID and LOCAL_NODE_ID in line:
+        return LOCAL_NODE_ID
+    return None
+
+
+def _telemetry_from_local_node(line):
+    return _telemetry_sender_node_id(line) == LOCAL_NODE_ID
+
+
+
+def _decode_waypoint_text(value):
+    """Decode only explicit Python-style Unicode escapes from CLI output."""
+    text = str(value or "")
+    def replace_escape(match):
+        try:
+            return chr(int(match.group(1), 16))
+        except (TypeError, ValueError, OverflowError):
+            return match.group(0)
+    text = re.sub(r"\\U([0-9a-fA-F]{8})", replace_escape, text)
+    text = re.sub(r"\\u([0-9a-fA-F]{4})", replace_escape, text)
+    return text
+
+
+def _waypoint_string(line, keys):
+    for key in keys:
+        patterns = (
+            rf"['\"]{re.escape(key)}['\"]\s*:\s*['\"]([^'\"]*)['\"]",
+            rf"\b{re.escape(key)}\s*:\s*['\"]([^'\"]*)['\"]",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, line, re.IGNORECASE)
+            if match:
+                return _decode_waypoint_text(match.group(1))
+    return ""
+
+
+def _waypoint_number(line, keys):
+    for key in keys:
+        value = _regex_number(line, (
+            rf"['\"]{re.escape(key)}['\"]\s*:\s*(-?\d+(?:\.\d+)?)",
+            rf"\b{re.escape(key)}\s*:\s*(-?\d+(?:\.\d+)?)",
+        ))
+        if value is not None:
+            return value
+    return None
+
+
+def parse_waypoint_from_listen_line(line):
+    """Parse a decoded WAYPOINT_APP listener line.
+
+    Meshtastic CLI output differs slightly between releases.  The parser
+    accepts both Python-dict output and protobuf-style field names.
+    """
+    if "WAYPOINT_APP" not in line and "'waypoint':" not in line and '"waypoint":' not in line:
         return None
 
-    if not _telemetry_from_local_node(line):
+    sender_id = _telemetry_sender_node_id(line) or ""
+    marker_positions = [
+        position for position in (
+            line.find("'waypoint':"),
+            line.find('"waypoint":'),
+            line.find("WAYPOINT_APP"),
+        ) if position >= 0
+    ]
+    waypoint_text = line[min(marker_positions):] if marker_positions else line
+
+    waypoint_id = _waypoint_number(waypoint_text, ("id", "waypointId", "waypoint_id"))
+    latitude_i = _waypoint_number(waypoint_text, ("latitudeI", "latitude_i"))
+    longitude_i = _waypoint_number(waypoint_text, ("longitudeI", "longitude_i"))
+    latitude = _waypoint_number(waypoint_text, ("latitude",))
+    longitude = _waypoint_number(waypoint_text, ("longitude",))
+
+    if latitude_i is not None:
+        latitude = latitude_i / 1e7
+    if longitude_i is not None:
+        longitude = longitude_i / 1e7
+
+    if waypoint_id is None:
+        packet_id = extract_packet_id(line)
+        waypoint_id = packet_id if packet_id is not None else 0
+
+    if not waypoint_id or latitude is None or longitude is None:
+        # Meshtastic CLI emits short intermediary lines such as
+        # "portnum: WAYPOINT_APP" before the decoded object. They are not errors.
+        return None
+
+    channel_index = extract_channel_index(line)
+    expire_at = _waypoint_number(waypoint_text, ("expire", "expireAt", "expire_at"))
+    icon = _waypoint_number(waypoint_text, ("icon",))
+
+    return {
+        "waypoint_id": int(waypoint_id),
+        "sender_id": sender_id,
+        "name": _waypoint_string(waypoint_text, ("name",)),
+        "description": _waypoint_string(waypoint_text, ("description",)),
+        "latitude": float(latitude),
+        "longitude": float(longitude),
+        "icon": int(icon) if icon is not None else None,
+        "expire_at": int(expire_at) if expire_at is not None else None,
+        "channel_index": int(channel_index) if channel_index is not None else None,
+        "received_at": time.time(),
+        "raw_packet": line,
+    }
+
+
+def process_waypoint_line(line):
+    waypoint = parse_waypoint_from_listen_line(line)
+    if not waypoint:
+        return False
+
+    saved = waypoint_store.upsert(waypoint)
+    event = saved.pop("_event", "created")
+    if event == "duplicate":
+        return True
+
+    sender_name = get_node_name(saved.get("sender_id")) if saved.get("sender_id") else "Unknown"
+    name = saved.get("name") or f"Waypoint {saved.get('waypoint_id')}"
+    action = "Updated" if event == "updated" else "Received"
+    print(
+        f"[WAYPOINT] {action}: {name}; sender={sender_name} "
+        f"({saved.get('sender_id') or 'unknown'}); "
+        f"lat={saved.get('latitude')}; lon={saved.get('longitude')}; "
+        f"channel={saved.get('channel_index')}",
+        flush=True,
+    )
+    log_system_event(
+        "INFO",
+        "waypoint",
+        f"Waypoint {event}",
+        f"{name}; sender: {sender_name}; "
+        f"coordinates: {saved.get('latitude')}, {saved.get('longitude')}",
+    )
+    return True
+
+def parse_telemetry_from_listen_line(line):
+    """Parse passive Meshtastic telemetry for local or remote nodes."""
+    if (
+        "TELEMETRY_APP" not in line
+        and "environmentMetrics" not in line
+        and "powerMetrics" not in line
+        and "deviceMetrics" not in line
+    ):
+        return None
+
+    node_id = _telemetry_sender_node_id(line)
+    if not node_id:
+        print(f"[TELEMETRY RAW] Sender not resolved: {line[:500]}", flush=True)
         return None
 
     temp = _regex_number(line, [
@@ -742,7 +909,6 @@ def parse_telemetry_from_listen_line(line):
         r"barometric_pressure:\s*(-?\d+(?:\.\d+)?)",
         r"barometricPressure:\s*(-?\d+(?:\.\d+)?)"
     ])
-
     voltage = _regex_number(line, [
         r"['\"]ch1Voltage['\"]:\s*(-?\d+(?:\.\d+)?)",
         r"ch1_voltage:\s*(-?\d+(?:\.\d+)?)",
@@ -755,7 +921,6 @@ def parse_telemetry_from_listen_line(line):
         r"['\"]current['\"]:\s*(-?\d+(?:\.\d+)?)",
         r"current:\s*(-?\d+(?:\.\d+)?)"
     ])
-
     battery_level = _regex_number(line, [
         r"['\"]batteryLevel['\"]:\s*(-?\d+(?:\.\d+)?)",
         r"battery_level:\s*(-?\d+(?:\.\d+)?)"
@@ -779,15 +944,228 @@ def parse_telemetry_from_listen_line(line):
         "pressure": pressure,
         "voltage": voltage,
         "current": current,
-        "battery_level": battery_level,
+        "battery_level": 100.0 if battery_level and battery_level > 100 else battery_level,
         "channel_utilization": channel_utilization,
         "air_util_tx": air_util_tx,
-        "uptime_seconds": uptime_seconds
+        "uptime_seconds": int(uptime_seconds) if uptime_seconds is not None else None,
+    }
+    if all(value is None for value in values.values()):
+        print(f"[TELEMETRY RAW] Metrics not parsed for {node_id}: {line[:500]}", flush=True)
+        return None
+
+    return {"node_id": node_id, "values": values}
+
+
+def apply_node_telemetry(node_id, values, source="passive"):
+    """Merge normalized telemetry into the persistent node model."""
+    if not node_id or not values:
+        return False
+
+    timestamp = time.time()
+    with state_lock:
+        node = nodes.setdefault(node_id, {
+            "node_id": node_id,
+            "name": get_node_name(node_id),
+        })
+
+        for key, value in values.items():
+            if value is not None:
+                node[key] = value
+
+        voltage = values.get("voltage")
+        current_ma = values.get("current")
+        if voltage is not None and current_ma is not None:
+            node["power"] = float(voltage) * float(current_ma)
+
+        device = node.setdefault("device_metrics", {})
+        for key in ("battery_level", "voltage", "channel_utilization", "air_util_tx", "uptime_seconds"):
+            if values.get(key) is not None:
+                device[key] = values[key]
+        if any(values.get(key) is not None for key in ("battery_level", "voltage", "channel_utilization", "air_util_tx", "uptime_seconds")):
+            device.update({"updated": timestamp, "source": source})
+
+        environment = node.setdefault("environment_metrics", {})
+        for key in ("temperature", "humidity", "pressure"):
+            if values.get(key) is not None:
+                environment[key] = values[key]
+        if any(values.get(key) is not None for key in ("temperature", "humidity", "pressure")):
+            environment.update({"updated": timestamp, "source": source})
+
+        power = node.setdefault("power_metrics", {})
+        for key in ("voltage", "current", "power"):
+            value = node.get(key) if key == "power" else values.get(key)
+            if value is not None:
+                power[key] = value
+        if any(values.get(key) is not None for key in ("voltage", "current")):
+            power.update({"updated": timestamp, "source": source})
+
+        node["last_telemetry_time"] = timestamp
+        node["last_telemetry_time_text"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+        node["telemetry_source"] = source
+
+    if node_id != LOCAL_NODE_ID:
+        history_values = dict(values)
+        # Never copy an old calculated power value into a new Device-only
+        # sample. Power packets and Device packets arrive independently; stale
+        # carry-over would create a false continuous power line in History.
+        if values.get("voltage") is not None and values.get("current") is not None:
+            try:
+                history_values["power"] = float(values["voltage"]) * float(values["current"])
+            except (TypeError, ValueError):
+                history_values["power"] = None
+        else:
+            history_values["power"] = values.get("power")
+        try:
+            telemetry.add_node_telemetry_record(node_id, history_values, source=source)
+        except Exception as error:
+            print(f"[TELEMETRY HISTORY] Could not save {node_id}: {error}", flush=True)
+
+    save_nodes()
+    print(f"[TELEMETRY NODE] {source} update for {node_id}: "
+          f"{', '.join(k for k, v in values.items() if v is not None)}", flush=True)
+    return True
+
+
+
+def _normalize_nodeinfo_position(position):
+    if not isinstance(position, dict):
+        return None
+
+    lat = position.get("latitude")
+    lon = position.get("longitude")
+    if lat is None and position.get("latitudeI") is not None:
+        lat = float(position.get("latitudeI")) / 1e7
+    if lon is None and position.get("longitudeI") is not None:
+        lon = float(position.get("longitudeI")) / 1e7
+
+    if lat is None or lon is None:
+        return None
+
+    result = {
+        "latitude": lat,
+        "longitude": lon,
+    }
+    for source_key, target_key in (
+        ("altitude", "altitude"),
+        ("time", "time"),
+        ("locationSource", "source"),
+        ("precisionBits", "precision_bits"),
+    ):
+        if position.get(source_key) is not None:
+            result[target_key] = position.get(source_key)
+    return result
+
+
+def process_received_nodeinfo_line(line):
+    """Parse Meshtastic's complete 'Received nodeinfo' dictionary safely."""
+    marker = "Received nodeinfo:"
+    if marker not in line:
+        return False
+
+    payload = line.split(marker, 1)[1].strip()
+    if not payload:
+        return False
+
+    try:
+        info = ast.literal_eval(payload)
+    except (ValueError, SyntaxError):
+        print(f"[NODEINFO RAW] Could not parse nodeinfo: {payload[:500]}", flush=True)
+        return False
+
+    if not isinstance(info, dict):
+        return False
+
+    user = info.get("user") if isinstance(info.get("user"), dict) else {}
+    node_id = user.get("id")
+    if not node_id:
+        num = info.get("num")
+        if isinstance(num, int):
+            node_id = f"!{num:08x}"
+
+    if not node_id:
+        print(f"[NODEINFO RAW] Node id missing: {payload[:500]}", flush=True)
+        return False
+
+    device_metrics = info.get("deviceMetrics")
+    environment_metrics = info.get("environmentMetrics")
+    power_metrics = info.get("powerMetrics")
+    if not isinstance(device_metrics, dict):
+        device_metrics = {}
+    if not isinstance(environment_metrics, dict):
+        environment_metrics = {}
+    if not isinstance(power_metrics, dict):
+        power_metrics = {}
+
+    values = {
+        "battery_level": device_metrics.get("batteryLevel"),
+        "voltage": device_metrics.get("voltage"),
+        "channel_utilization": device_metrics.get("channelUtilization"),
+        "air_util_tx": device_metrics.get("airUtilTx"),
+        "uptime_seconds": device_metrics.get("uptimeSeconds"),
+        "temperature": environment_metrics.get("temperature"),
+        "humidity": environment_metrics.get("relativeHumidity"),
+        "pressure": environment_metrics.get("barometricPressure"),
+        "current": (
+            power_metrics.get("ch1Current")
+            if power_metrics.get("ch1Current") is not None
+            else power_metrics.get("current")
+        ),
     }
 
-    if all(v is None for v in values.values()):
-        return None
-    return values
+    position = _normalize_nodeinfo_position(info.get("position"))
+    last_heard = info.get("lastHeard")
+    long_name = (user.get("longName") or "").strip()
+    short_name = (user.get("shortName") or "").strip()
+    hw_model = user.get("hwModel") or ""
+    role = user.get("role") or ""
+    snr = info.get("snr")
+    hops_away = info.get("hopsAway")
+
+    with state_lock:
+        old = nodes.get(node_id, {})
+        node = dict(old)
+        node.update({
+            "node_id": node_id,
+            "name": KNOWN_NODES.get(node_id) or long_name or old.get("name") or short_name or friendly_unknown_node_name(node_id),
+            "short_name": short_name or old.get("short_name", "") or node_id[-4:],
+            "hw_model": hw_model or old.get("hw_model", ""),
+            "role": role or old.get("role", "CLIENT"),
+            "snr": snr if snr is not None else old.get("snr"),
+            "hop_start": str(hops_away) if hops_away is not None else old.get("hop_start", ""),
+            "last_seen": last_heard if last_heard is not None else old.get("last_seen", time.time()),
+            "last_time": (
+                time.strftime("%H:%M:%S", time.localtime(last_heard))
+                if isinstance(last_heard, (int, float)) and last_heard > 0
+                else old.get("last_time", now())
+            ),
+            "ignored": old.get("ignored", False),
+            "favorite": old.get("favorite", False),
+            "last_text": old.get("last_text", ""),
+            "relay_node": old.get("relay_node", ""),
+        })
+        if position is not None:
+            old_position = old.get("position") if isinstance(old.get("position"), dict) else {}
+            node["position"] = {**old_position, **position}
+        elif "position" in old:
+            node["position"] = old.get("position")
+        nodes[node_id] = node
+        if node_id.startswith("!"):
+            ensure_chat(node_id, node["name"], force=True)
+
+    metric_keys = [key for key, value in values.items() if value is not None]
+    if metric_keys:
+        apply_node_telemetry(node_id, values, source="nodeinfo")
+    else:
+        save_nodes()
+
+    save_chats()
+    print(
+        f"[NODEINFO] updated {node_id}: "
+        f"name={nodes.get(node_id, {}).get('name')}, "
+        f"metrics={','.join(metric_keys) if metric_keys else 'none'}",
+        flush=True,
+    )
+    return True
 
 def apply_telemetry_values(values, save_history=True):
     global sensor_data, base_status
@@ -907,16 +1285,26 @@ def telemetry_buffer_worker():
             print(f"[TELEMETRY] Buffer worker error: {e}", flush=True)
 
 def process_telemetry_line(line):
-    values = parse_telemetry_from_listen_line(line)
-    if values:
-        return queue_telemetry_values(values)
-    return False
+    parsed = parse_telemetry_from_listen_line(line)
+    if not parsed:
+        return False
+
+    node_id = parsed["node_id"]
+    values = parsed["values"]
+    updated = apply_node_telemetry(node_id, values, source="passive")
+
+    # Local radio telemetry also feeds the existing left-side sensor cards
+    # and telemetry history. Remote-node telemetry must not overwrite them.
+    if node_id == LOCAL_NODE_ID:
+        queue_telemetry_values(values)
+
+    return updated
 
 def get_telemetry_from_info():
     global base_status
 
     try:
-        result = meshsrv.get_info(MESHTASTIC_CMD, timeout=15)
+        result = meshsrv.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
         output = result.stdout + result.stderr
 
         node_pos = output.find(f'"{LOCAL_NODE_ID}"')
@@ -985,13 +1373,29 @@ def get_telemetry_export_records(
     range_minutes="all",
     start_ts=None,
     end_ts=None,
-    series=""
+    series="",
+    node_id=""
     ):
     data = safe_read_json(os.path.join(DATA_DIR, "telemetry_history.json"), {})
     records = data.get("history", [])
 
     if not isinstance(records, list):
         records = []
+
+    node_id = str(node_id or "").strip()
+    if node_id:
+        if node_id == LOCAL_NODE_ID:
+            records = [
+                record for record in records
+                if isinstance(record, dict)
+                and record.get("node_id") in (None, "", LOCAL_NODE_ID)
+            ]
+        else:
+            records = [
+                record for record in records
+                if isinstance(record, dict)
+                and record.get("node_id") == node_id
+            ]
 
     now = time.time()
 
@@ -1113,7 +1517,7 @@ def records_to_csv(records):
 def parse_nodes_from_info():
     global nodes
     try:
-        result = subprocess.run([MESHTASTIC_CMD, "--info"], capture_output=True, text=True, timeout=30)
+        result = subprocess.run(meshtastic_command(MESHTASTIC_CMD, MESHTASTIC_PORT, "--info"), capture_output=True, text=True, timeout=30)
         output = result.stdout + result.stderr
         mesh_pos = output.find("Nodes in mesh: {")
         if mesh_pos < 0:
@@ -1799,6 +2203,23 @@ def get_nodes_list():
                 "age": age_display,
                 "ignored": ignored,
                 "favorite": favorite,
+
+                # Normalized telemetry used by the node detail panes.
+                "battery_level": n.get("battery_level"),
+                "voltage": n.get("voltage"),
+                "channel_utilization": n.get("channel_utilization"),
+                "air_util_tx": n.get("air_util_tx"),
+                "uptime_seconds": n.get("uptime_seconds"),
+                "temperature": n.get("temperature"),
+                "humidity": n.get("humidity"),
+                "pressure": n.get("pressure"),
+                "current": n.get("current"),
+                "power": n.get("power"),
+                "last_telemetry_time": n.get("last_telemetry_time"),
+                "device_metrics": n.get("device_metrics", {}),
+                "environment_metrics": n.get("environment_metrics", {}),
+                "power_metrics": n.get("power_metrics", {}),
+
                 # последняя сохранённая позиция
                 "position": n.get("position")
             })
@@ -1944,7 +2365,7 @@ def is_radio_available():
 def update_base_status_from_info():
     global base_status
     try:
-        result = meshsrv.get_info(MESHTASTIC_CMD, timeout=15)
+        result = meshsrv.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
         output = result.stdout + result.stderr
         node_pos = output.find(f'"{LOCAL_NODE_ID}"')
         if node_pos < 0:
@@ -2012,8 +2433,12 @@ def listen_meshtastic():
                 if pause_listen.is_set():
                     continue
 
+                listener_cmd = meshtastic_command(
+                    MESHTASTIC_CMD, MESHTASTIC_PORT, "--listen"
+                )
+                print(f"[DEBUG] Listener command: {listener_cmd}", flush=True)
                 listen_process = subprocess.Popen(
-                    [MESHTASTIC_CMD, "--listen"],
+                    listener_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -2044,6 +2469,19 @@ def listen_meshtastic():
                         or "multiple access" in line.lower()
                     ):
                         print(f"[LISTEN WARN] {line}", flush=True)
+
+                    if "Received nodeinfo:" in line:
+                        try:
+                            if process_received_nodeinfo_line(line):
+                                continue
+                        except Exception as e:
+                            print(f"[NODEINFO] Parse error: {e}", flush=True)
+
+                    if "WAYPOINT_APP" in line or "'waypoint':" in line or '"waypoint":' in line:
+                        try:
+                            process_waypoint_line(line)
+                        except Exception as e:
+                            print(f"[WAYPOINT] Parse error: {e}", flush=True)
 
                     if (
                         "TELEMETRY_APP" in line
@@ -2834,6 +3272,7 @@ register_node_tools_routes(
     radio_lock=radio_lock,
     pause_listen=pause_listen,
     prepare_radio_command=prepare_radio_command,
+    wait_serial_release=wait_serial_release,
     log_system_event=log_system_event,
     is_radio_available=is_radio_available,
 )
@@ -3039,15 +3478,258 @@ def api_delete_chat():
 def api_telemetry():
     return jsonify(telemetry.telemetry_current)
 
+@app.route("/api/waypoints", methods=["GET"])
+@handle_errors
+def api_waypoints():
+    include_expired = request.args.get("include_expired", "0").lower() in ("1", "true", "yes")
+    include_hidden = request.args.get("include_hidden", "0").lower() in ("1", "true", "yes")
+    include_raw = request.args.get("include_raw", "0").lower() in ("1", "true", "yes")
+    waypoints = waypoint_store.list(
+        include_expired=include_expired,
+        include_hidden=include_hidden,
+    )
+    for waypoint in waypoints:
+        sender_id = waypoint.get("sender_id") or ""
+        waypoint["sender_name"] = get_node_name(sender_id) if sender_id else "Unknown"
+        if not include_raw:
+            waypoint.pop("raw_packet", None)
+    return jsonify({
+        "ok": True,
+        "waypoints": waypoints,
+        "total": len(waypoints),
+    })
+
+
+@app.route("/api/waypoints/<int:waypoint_id>", methods=["GET"])
+@handle_errors
+def api_waypoint_detail(waypoint_id):
+    waypoint = waypoint_store.get(waypoint_id)
+    if not waypoint:
+        return jsonify({"ok": False, "error": "Waypoint not found"}), 404
+
+    sender_id = waypoint.get("sender_id") or ""
+    waypoint["sender_name"] = get_node_name(sender_id) if sender_id else "Unknown"
+    include_raw = request.args.get("include_raw", "0").lower() in ("1", "true", "yes")
+    if not include_raw:
+        waypoint.pop("raw_packet", None)
+    return jsonify({"ok": True, "waypoint": waypoint})
+
+
+@app.route("/api/waypoints/<int:waypoint_id>/hidden", methods=["POST"])
+@handle_errors
+def api_waypoint_hidden(waypoint_id):
+    data = request.get_json(silent=True) or {}
+    hidden = bool(data.get("hidden", True))
+    waypoint = waypoint_store.set_hidden(waypoint_id, hidden)
+    if not waypoint:
+        return jsonify({"ok": False, "error": "Waypoint not found"}), 404
+    sender_id = waypoint.get("sender_id") or ""
+    waypoint["sender_name"] = get_node_name(sender_id) if sender_id else "Unknown"
+    waypoint.pop("raw_packet", None)
+    return jsonify({"ok": True, "waypoint": waypoint})
+
+
+@app.route("/api/waypoints/<int:waypoint_id>", methods=["DELETE"])
+@handle_errors
+def api_waypoint_delete(waypoint_id):
+    deleted = waypoint_store.delete(waypoint_id)
+    if not deleted:
+        return jsonify({"ok": False, "error": "Waypoint not found"}), 404
+    return jsonify({"ok": True, "deleted": 1, "waypoint_id": waypoint_id})
+
+
+@app.route("/api/waypoints/delete", methods=["POST"])
+@handle_errors
+def api_waypoints_delete_many():
+    data = request.get_json(silent=True) or {}
+    raw_ids = data.get("waypoint_ids") or []
+    if not isinstance(raw_ids, list):
+        return jsonify({"ok": False, "error": "waypoint_ids must be a list"}), 400
+    try:
+        waypoint_ids = [int(value) for value in raw_ids]
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Invalid waypoint ID"}), 400
+    deleted = waypoint_store.delete_many(waypoint_ids)
+    return jsonify({"ok": True, "deleted": deleted})
+
+
+@app.route("/api/waypoints", methods=["DELETE"])
+@handle_errors
+def api_waypoints_delete_all():
+    deleted = waypoint_store.delete_all()
+    return jsonify({"ok": True, "deleted": deleted})
+
+
+@app.route("/api/waypoints/send", methods=["POST"])
+@handle_errors
+def api_waypoint_send():
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name") or "").strip()
+    description = str(data.get("description") or "").strip()
+    latitude = data.get("latitude")
+    longitude = data.get("longitude")
+    channel_index = data.get("channel_index", 0)
+    icon = data.get("icon", 128205)
+    expire_at = data.get("expire_at")
+    post_notification = bool(data.get("post_notification", True))
+
+    if not name or len(name) > 30:
+        return jsonify({"ok": False, "error": "Name is required and must be at most 30 characters"}), 400
+    if len(description) > 100:
+        return jsonify({"ok": False, "error": "Description must be at most 100 characters"}), 400
+    try:
+        latitude = float(latitude)
+        longitude = float(longitude)
+        channel_index = int(channel_index)
+        icon = int(icon)
+        expire_at = int(expire_at)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Invalid waypoint data"}), 400
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        return jsonify({"ok": False, "error": "Coordinates are outside the valid range"}), 400
+    if not (0 <= channel_index <= 7):
+        return jsonify({"ok": False, "error": "Channel index must be between 0 and 7"}), 400
+    if expire_at <= int(time.time()) + 30:
+        return jsonify({"ok": False, "error": "Expiration must be in the future"}), 400
+    if not is_radio_available():
+        return jsonify({"ok": False, "error": "Meshtastic radio is currently unavailable"}), 503
+    if not prepare_radio_command(MESHTASTIC_PORT, timeout=10):
+        return jsonify({"ok": False, "error": "Meshtastic serial port is busy"}), 503
+
+    cli_path = str(MESHTASTIC_CMD or "")
+    python_path = os.path.join(os.path.dirname(cli_path), "python3")
+    if not os.path.exists(python_path):
+        python_path = sys.executable
+    sender_script = os.path.join(PROJECT_DIR, "storage", "waypoint_sender.py")
+
+    expires_text = datetime.fromtimestamp(expire_at).strftime("%d.%m.%Y %H:%M")
+    notification_text = f"📍 Waypoint: {name}"
+    if description:
+        notification_text += f"\n{description}"
+    notification_text += f"\n{latitude:.6f}, {longitude:.6f}\nExpires: {expires_text}"
+
+    payload = {
+        "port": MESHTASTIC_PORT,
+        "name": name,
+        "description": description,
+        "latitude": latitude,
+        "longitude": longitude,
+        "channel_index": channel_index,
+        "icon": icon,
+        "expire_at": expire_at,
+        "post_notification": post_notification,
+        "notification_text": notification_text,
+    }
+
+    try:
+        with radio_lock:
+            result = subprocess.run(
+                [python_path, sender_script],
+                input=json.dumps(payload, ensure_ascii=False),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=35,
+            )
+        output = (result.stdout or "").strip()
+        if result.returncode != 0:
+            print(f"[WAYPOINT SEND] Failed: {output}", flush=True)
+            return jsonify({"ok": False, "error": output[-1000:] or "Waypoint send failed"}), 500
+
+        try:
+            sender_result = json.loads(output.splitlines()[-1])
+            waypoint_id = int(sender_result["waypoint_id"])
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"Waypoint sender returned invalid result: {output[-1000:]}") from error
+
+        saved = waypoint_store.upsert({
+            "waypoint_id": waypoint_id,
+            "sender_id": LOCAL_NODE_ID,
+            "name": name,
+            "description": description,
+            "latitude": latitude,
+            "longitude": longitude,
+            "icon": icon,
+            "expire_at": expire_at,
+            "channel_index": channel_index,
+            "received_at": time.time(),
+            "raw_packet": json.dumps({"source": "local-send", **sender_result}, ensure_ascii=False),
+        })
+        saved.pop("_event", None)
+        saved.pop("raw_packet", None)
+        saved["sender_name"] = LOCAL_NODE_NAME
+
+        if post_notification:
+            channel_id = channel_chat_id(channel_index)
+            channel_name = CHANNEL_CHAT_NAME if channel_index == 0 else f"Channel {channel_index}"
+            add_message(
+                "tx",
+                LOCAL_NODE_NAME,
+                notification_text,
+                node_id=LOCAL_NODE_ID,
+                chat_id=channel_id,
+                chat_name=channel_name,
+                packet_id=sender_result.get("notification_packet_id"),
+            )
+
+        print(
+            f"[WAYPOINT SEND] Sent and saved: {name}; waypoint_id={waypoint_id}; "
+            f"lat={latitude}; lon={longitude}; channel={channel_index}",
+            flush=True,
+        )
+        log_system_event(
+            "OK", "waypoint", "Waypoint sent",
+            f"{name}; id {waypoint_id}; {latitude:.6f}, {longitude:.6f}; channel {channel_index}",
+        )
+        return jsonify({
+            "ok": True,
+            "message": "Waypoint sent",
+            "waypoint": saved,
+            "notification_posted": post_notification,
+            "sender_result": sender_result,
+        })
+    finally:
+        pause_listen.clear()
+
+
 @app.route("/api/telemetry/history")
 def api_telemetry_history():
     limit = request.args.get("limit", 100, type=int)
+    node_id = request.args.get("node_id", "").strip()
+
+    if node_id and not is_valid_node_id(node_id):
+        return jsonify({"ok": False, "error": "Invalid node_id"}), 400
+
     with state_lock:
-        history = telemetry.telemetry_history[-limit:] if limit > 0 else telemetry.telemetry_history
+        all_history = [
+            record for record in telemetry.telemetry_history
+            if isinstance(record, dict)
+        ]
+
+        if node_id:
+            if node_id == LOCAL_NODE_ID:
+                filtered = [
+                    record for record in all_history
+                    if record.get("node_id") in (None, "", LOCAL_NODE_ID)
+                ]
+            else:
+                filtered = [
+                    record for record in all_history
+                    if record.get("node_id") == node_id
+                ]
+        else:
+            # The main telemetry cards and charts remain local-node only.
+            filtered = [
+                record for record in all_history
+                if record.get("node_id") in (None, "", LOCAL_NODE_ID)
+            ]
+
+        history = filtered[-limit:] if limit > 0 else filtered
 
     return jsonify({
         "history": history,
-        "total": len(telemetry.telemetry_history),
+        "total": len(filtered),
+        "node_id": node_id or LOCAL_NODE_ID,
         "config": telemetry.telemetry_config
     })
 
@@ -3060,6 +3742,10 @@ def api_export_telemetry():
     start_ts = request.args.get("start")
     end_ts = request.args.get("end")
     series = request.args.get("series", "")
+    node_id = request.args.get("node_id", "").strip()
+
+    if node_id and not is_valid_node_id(node_id):
+        return jsonify({"ok": False, "error": "Invalid node_id"}), 400
 
     if data_type not in ("environment", "power", "all"):
         return jsonify({"ok": False, "error": "Invalid type"}), 400
@@ -3072,7 +3758,8 @@ def api_export_telemetry():
         range_minutes=range_minutes,
         start_ts=start_ts,
         end_ts=end_ts,
-        series=series
+        series=series,
+        node_id=node_id
     )
 
     series_part = "-".join(

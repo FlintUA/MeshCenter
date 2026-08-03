@@ -115,6 +115,19 @@ MeshCenter includes a fully integrated interactive map directly inside the works
 - Automatic synchronization with node details
 - External map provider support when needed
 
+### 📍 Waypoints
+
+MeshCenter includes integrated waypoint management fully compatible with Meshtastic.
+
+Waypoints can be created, stored, managed and transmitted directly from the browser interface without leaving MeshCenter.
+
+- Create and edit waypoints
+- Persistent waypoint storage
+- Send waypoints to Meshtastic nodes
+- Waypoint management workspace
+- Local JSON-based storage
+- Ready for future waypoint synchronization
+
 ### 🗺 Network Visualization
 
 - Display all positioned nodes
@@ -725,13 +738,11 @@ The map is built into the application and can be opened directly from the **Show
 
 Node positions are stored locally on the Raspberry Pi and persist across restarts.
 
-## 📍 Waypoints
+### 📍 Waypoints Features
 
 MeshCenter includes integrated waypoint management fully compatible with Meshtastic.
 
 Waypoints can be created, stored, managed and transmitted directly from the browser interface without leaving MeshCenter.
-
-### Features
 
 - Create and edit waypoints
 - Persistent waypoint storage

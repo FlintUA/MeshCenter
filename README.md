@@ -725,6 +725,21 @@ The map is built into the application and can be opened directly from the **Show
 
 Node positions are stored locally on the Raspberry Pi and persist across restarts.
 
+## 📍 Waypoints
+
+MeshCenter includes integrated waypoint management fully compatible with Meshtastic.
+
+Waypoints can be created, stored, managed and transmitted directly from the browser interface without leaving MeshCenter.
+
+### Features
+
+- Create and edit waypoints
+- Persistent waypoint storage
+- Send waypoints to Meshtastic nodes
+- Waypoint management workspace
+- Local JSON-based storage
+- Ready for future waypoint synchronization
+
 #### Map Features
 
 - Integrated Leaflet-based map inside MeshCenter
@@ -832,6 +847,17 @@ These tools are available from the node detail card and the Node Tools button.
 ### Custom Node Icons
 
 You can upload a custom image (PNG, JPEG or WebP) for any node (including the local base node). The image is automatically centered and cropped into a 256×256 transparent square. Icons are stored locally on the Raspberry Pi and are served by MeshCenter.
+
+## 🔔 Notifications
+
+MeshCenter includes a notification system that helps operators stay informed without constantly watching the active chat.
+
+Features include:
+
+- Channel activity notifications
+- Unread message indicators
+- Conversation highlighting
+- Improved notification synchronization
 
 ### 📈 Telemetry
 
@@ -1057,6 +1083,28 @@ This makes the project easier to maintain and extend.
 
 The goal is to keep `server.py` as the central coordinator while moving specialized logic into dedicated modules.
 
+## ⚙ Action Engine
+
+MeshCenter now includes an internal Action Engine responsible for processing interactive operations between the user interface and backend services.
+
+The Action Engine provides:
+
+- Centralized action handling
+- Extensible architecture
+- Better separation between UI and backend
+- Foundation for future automation features
+
+## 🆔 Runtime Identity
+
+MeshCenter automatically detects the connected local Meshtastic node and maintains a runtime identity.
+
+This improves:
+
+- Local node detection
+- Backend synchronization
+- Message handling
+- Future multi-node support
+
 ---
 
 ## Camera Notes
@@ -1261,7 +1309,7 @@ Future versions may include optional authentication.
 
 ---
 
-## Recent Improvements
+## Major Features
 
 - **Interactive Network Map** – Integrated Leaflet-based map with positioned nodes, reference marker, distance/bearing, synchronized selection with the node list, persistent positions, Fit Nodes view and node information popups
 - **Messaging Improvements** – Native Meshtastic reply support, reply composer, quoted replies, jump to original message, message actions and improved Direct Messages
@@ -1518,6 +1566,14 @@ Possible future integrations include:
 - MQTT brokers
 - REST integrations
 - Additional environmental sensors
+
+## Version History
+
+| Version | Highlights |
+|----------|------------|
+| v1.3.0 | Waypoints, Notifications, Action Engine |
+| v1.2.0 | Interactive Map |
+| v1.0.0 | First Stable Release |
 
 ---
 

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import glob
 import os
 import shutil
 import sys
@@ -58,18 +59,68 @@ def resolve_meshtastic_cli(configured_path: str = "", project_dir: str | os.Path
     )
 
 
-def resolve_serial_port(configured_port: str = "") -> str:
-    """Return the configured serial port unchanged after basic validation.
+def discover_serial_ports() -> list[str]:
+    """Return likely Meshtastic serial ports in a stable, deduplicated order.
 
-    The configured port is intentionally preferred to prevent two MeshCenter
-    instances from attaching to the wrong radio through CLI auto-detection.
+    Persistent /dev/serial/by-id links are preferred because ttyACM numbers can
+    change when a different radio is connected.
+    """
+    patterns = (
+        "/dev/serial/by-id/*",
+        "/dev/ttyACM*",
+        "/dev/ttyUSB*",
+    )
+    result: list[str] = []
+    seen_real: set[str] = set()
+
+    for pattern in patterns:
+        for candidate in sorted(glob.glob(pattern)):
+            if not os.path.exists(candidate):
+                continue
+            real = os.path.realpath(candidate)
+            if real in seen_real:
+                continue
+            seen_real.add(real)
+            result.append(candidate)
+
+    return result
+
+
+def resolve_serial_port(configured_port: str = "") -> str:
+    """Resolve a usable serial port without silently choosing among many radios.
+
+    The configured port is preferred. If it disappeared after a physical radio
+    replacement, a single discovered serial device is accepted. Multiple
+    candidates remain an error because MeshCenter currently controls one active
+    radio at a time.
     """
     port = str(configured_port or "").strip()
+    if port and os.path.exists(port):
+        return port
+
+    candidates = discover_serial_ports()
+    if len(candidates) == 1:
+        return candidates[0]
+
     if not port:
-        raise RuntimeError("MESHTASTIC_PORT is empty in config.py")
-    if not os.path.exists(port):
-        raise RuntimeError(f"Configured Meshtastic serial port does not exist: {port}")
-    return port
+        if not candidates:
+            raise RuntimeError("MESHTASTIC_PORT is empty and no serial radio was found")
+        raise RuntimeError(
+            "MESHTASTIC_PORT is empty and multiple serial devices were found: "
+            + ", ".join(candidates)
+        )
+
+    if not candidates:
+        raise RuntimeError(
+            f"Configured Meshtastic serial port does not exist: {port}; "
+            "no replacement serial radio was found"
+        )
+
+    raise RuntimeError(
+        f"Configured Meshtastic serial port does not exist: {port}; "
+        "multiple replacement serial devices were found: "
+        + ", ".join(candidates)
+    )
 
 
 def meshtastic_command(cli_path: str, serial_port: str, *arguments: str) -> list[str]:

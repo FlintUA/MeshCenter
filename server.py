@@ -23,9 +23,9 @@ from camera import camera
 from telemetry import telemetry
 from meshsrv import meshsrv
 from meshsrv.radio_manager import RadioConnectionManager
-from meshsrv.runtime_identity import resolve_meshtastic_cli, resolve_serial_port, meshtastic_command
+from meshsrv.runtime_identity import resolve_meshtastic_cli, resolve_serial_port, meshtastic_command, discover_serial_ports
 from meshsrv.instance_manager import InstanceManager
-from meshsrv.radio_identity import detect_radio_identity, compare_radio_identity
+from meshsrv.radio_identity import detect_radio_identity, detect_connected_radio, compare_radio_identity
 from api.api_camera import register_camera_routes
 from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes
@@ -128,6 +128,18 @@ try:
         },
     })
     saved_radio = INSTANCE_IDENTITY.get("radio", {})
+    saved_port = str(saved_radio.get("port") or "").strip()
+    if saved_port and os.path.exists(saved_port):
+        MESHTASTIC_PORT = saved_port
+
+    # The accepted instance identity is the source of truth after a radio
+    # profile switch. config.py values are only bootstrap fallbacks.
+    saved_node_id = str(saved_radio.get("node_id") or "").strip()
+    saved_long_name = str(saved_radio.get("long_name") or "").strip()
+    if saved_node_id:
+        LOCAL_NODE_ID = saved_node_id
+    if saved_long_name:
+        LOCAL_NODE_NAME = saved_long_name
     print(
         "[INSTANCE] "
         f"{INSTANCE_IDENTITY.get('instance_name', 'MeshCenter')} | "
@@ -3602,6 +3614,8 @@ def api_devices_dashboard():
                     "long_name": profile_radio.get("long_name", profile_id),
                     "short_name": profile_radio.get("short_name", ""),
                     "hardware": profile_radio.get("hardware", ""),
+                    "role": profile_radio.get("role", ""),
+                    "port": profile_radio.get("port", ""),
                     "identity_status": (RADIO_IDENTITY_RESULT.get("status") or runtime.get("identity_status", "NOT_CHECKED")) if active else "NOT_CHECKED",
                 },
                 "connection": {
@@ -3652,6 +3666,372 @@ def api_devices_dashboard():
             },
         },
     })
+
+
+
+def _restart_meshcenter_after_profile_switch():
+    """Restart the service after the activation response reaches the browser."""
+    time.sleep(1.2)
+    try:
+        subprocess.run(
+            ["sudo", "-n", "/usr/bin/systemctl", "restart", "meshcenter.service"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except Exception as error:
+        log_system_event(
+            "Radio profile restart failed",
+            "ERROR",
+            str(error),
+            source="radio",
+        )
+
+
+
+def _save_detected_radio_runtime(detection, status=None, error=None):
+    """Persist the latest read-only detection result."""
+    global INSTANCE_IDENTITY, RADIO_IDENTITY_RESULT
+
+    detected = dict(detection.get("detected") or {})
+    checked_at = detection.get("checked_at")
+    configured = dict(INSTANCE_IDENTITY.get("radio", {}))
+    resolved_status = status or (
+        compare_radio_identity(configured, detected)
+        if detected.get("node_id")
+        else "NOT_FOUND"
+    )
+
+    RADIO_IDENTITY_RESULT = {
+        "status": resolved_status,
+        "checked_at": checked_at,
+        "configured": configured,
+        "detected": detected,
+        "error": error or detection.get("error"),
+    }
+
+    updated = dict(INSTANCE_IDENTITY)
+    runtime = dict(updated.get("runtime") or {})
+    runtime.update({
+        "cli_path": MESHTASTIC_CMD,
+        "last_detected_at": checked_at,
+        "identity_status": resolved_status,
+        "last_error": error or detection.get("error"),
+        "last_detected_radio": detected,
+    })
+    updated["runtime"] = runtime
+    INSTANCE_IDENTITY = instance_manager.save(updated)
+
+
+@app.route("/api/node-manager/radio/detect", methods=["POST"])
+def api_detect_new_radio():
+    """Release the listener and inspect any currently connected serial radio."""
+    with state_lock:
+        listener_running = bool(radio_health.get("listener_running", False))
+
+    connection = radio_connection_manager.status(listener_running)
+    if connection.get("mode") != "released":
+        released, connection = radio_connection_manager.release(timeout=18)
+        if not released:
+            return jsonify({
+                "ok": False,
+                "error": connection.get("last_error") or "The radio could not be released.",
+                "connection": connection,
+            }), 409
+
+    detection = detect_connected_radio(
+        MESHTASTIC_CMD,
+        preferred_port=MESHTASTIC_PORT,
+        timeout_per_port=35,
+        settle_seconds=2.5,
+    )
+
+    if not detection.get("ok"):
+        log_system_event(
+            "Radio detection failed",
+            "WARNING",
+            detection.get("error") or "No Meshtastic radio identity could be read.",
+            source="radio",
+        )
+        return jsonify({
+            "ok": False,
+            "code": "RADIO_NOT_FOUND",
+            "error": detection.get("error"),
+            "attempts": detection.get("attempts", []),
+            "candidates": detection.get("candidates", []),
+            "connection": radio_connection_manager.status(False),
+        }), 409
+
+    detected = dict(detection.get("detected") or {})
+    profile_id = profile_manager.profile_id_from_node_id(detected.get("node_id"))
+    profile_exists = True
+    try:
+        existing = profile_manager.get_profile(profile_id)
+        profile = {
+            "profile_id": existing["profile_id"],
+            "metadata": existing["metadata"],
+        }
+    except FileNotFoundError:
+        profile_exists = False
+        profile = None
+
+    configured = dict(INSTANCE_IDENTITY.get("radio", {}))
+    identity_status = compare_radio_identity(configured, detected)
+
+    # Detection is provisional until the user confirms it. Keep the active
+    # profile identity untouched so the UI never mixes old profile storage
+    # with the newly detected physical radio.
+    return jsonify({
+        "ok": True,
+        "detected": detected,
+        "profile_id": profile_id,
+        "profile_exists": profile_exists,
+        "profile": profile,
+        "identity_status": identity_status,
+        "connection": radio_connection_manager.status(False),
+        "message": (
+            "Known radio detected."
+            if profile_exists else
+            "New radio detected. A clean profile can now be created."
+        ),
+    })
+
+
+@app.route("/api/node-manager/radio/accept", methods=["POST"])
+def api_accept_detected_radio():
+    """Verify the connected radio again, create/use its profile and restart."""
+    global INSTANCE_IDENTITY
+
+    data = request.get_json(silent=True) or {}
+    requested_node_id = str(data.get("node_id") or "").strip().lower()
+    requested_port = str(data.get("port") or "").strip()
+
+    detection = detect_connected_radio(
+        MESHTASTIC_CMD,
+        preferred_port=requested_port or MESHTASTIC_PORT,
+        timeout_per_port=35,
+        settle_seconds=1.5,
+    )
+    if not detection.get("ok"):
+        log_system_event(
+            "Radio confirmation failed",
+            "WARNING",
+            detection.get("error") or "The radio could not be verified.",
+            source="radio",
+        )
+        return jsonify({
+            "ok": False,
+            "code": "RADIO_NOT_FOUND",
+            "error": detection.get("error"),
+            "attempts": detection.get("attempts", []),
+            "candidates": detection.get("candidates", []),
+        }), 409
+
+    detected = dict(detection.get("detected") or {})
+    detected_node_id = str(detected.get("node_id") or "").strip().lower()
+    if requested_node_id and requested_node_id != detected_node_id:
+        return jsonify({
+            "ok": False,
+            "code": "RADIO_CHANGED",
+            "error": (
+                "The connected radio changed during confirmation. "
+                f"Expected {requested_node_id}, detected {detected_node_id}."
+            ),
+            "detected": detected,
+        }), 409
+
+    profile_id = profile_manager.profile_id_from_node_id(detected_node_id)
+    created = False
+    try:
+        profile = profile_manager.get_profile(profile_id)
+    except FileNotFoundError:
+        profile = profile_manager.create_clean_profile(detected)
+        created = True
+
+    identity = instance_manager.get()
+    updated = dict(identity)
+    updated["active_profile_id"] = profile_id
+    updated["radio"] = {
+        "node_id": detected.get("node_id", ""),
+        "long_name": detected.get("long_name", ""),
+        "short_name": detected.get("short_name", ""),
+        "hardware": detected.get("hardware", ""),
+        "role": detected.get("role", ""),
+        "port": detected.get("port") or requested_port or MESHTASTIC_PORT,
+    }
+    runtime = dict(updated.get("runtime") or {})
+    runtime.update({
+        "last_detected_at": detection.get("checked_at"),
+        "identity_status": "MATCH",
+        "last_error": None,
+        "last_detected_radio": dict(updated["radio"]),
+    })
+    updated["runtime"] = runtime
+    INSTANCE_IDENTITY = instance_manager.save(updated)
+    _save_detected_radio_runtime(detection, status="MATCH")
+
+    log_system_event(
+        "New radio profile created" if created else "Radio profile selected",
+        "ACTION",
+        (
+            f"{updated['radio'].get('long_name') or detected_node_id} "
+            f"({detected_node_id}) on {updated['radio'].get('port')}"
+        ),
+        source="radio",
+    )
+
+    threading.Thread(
+        target=_restart_meshcenter_after_profile_switch,
+        daemon=True,
+    ).start()
+
+    return jsonify({
+        "ok": True,
+        "created": created,
+        "profile_id": profile_id,
+        "radio": updated["radio"],
+        "restart_required": True,
+        "message": (
+            "A clean radio profile was created. MeshCenter is restarting."
+            if created else
+            "The saved radio profile was selected. MeshCenter is restarting."
+        ),
+    }), 202
+
+
+@app.route("/api/node-manager/profiles/<profile_id>/activate", methods=["POST"])
+def api_activate_radio_profile(profile_id):
+    """Activate a saved radio profile only when the connected USB radio matches it."""
+    global INSTANCE_IDENTITY
+
+    try:
+        profile = profile_manager.get_profile(profile_id)
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except FileNotFoundError as error:
+        return jsonify({"ok": False, "error": str(error)}), 404
+    except Exception as error:
+        return jsonify({"ok": False, "error": f"Could not read radio profile: {error}"}), 500
+
+    identity = instance_manager.get()
+    current_profile_id = str(identity.get("active_profile_id") or "").strip().lower()
+    selected_profile_id = str(profile.get("profile_id") or "").strip().lower()
+
+    if selected_profile_id == current_profile_id:
+        return jsonify({
+            "ok": True,
+            "already_active": True,
+            "profile_id": selected_profile_id,
+            "message": "This radio profile is already active.",
+        })
+
+    metadata = dict(profile.get("metadata") or {})
+    expected_radio = dict(metadata.get("radio") or {})
+    expected_node_id = str(expected_radio.get("node_id") or "").strip().lower()
+    if not expected_node_id:
+        return jsonify({"ok": False, "error": "The selected profile has no Meshtastic node ID."}), 409
+
+    # Stop the listener first so the CLI can safely probe the USB serial radio.
+    with state_lock:
+        listener_running = bool(radio_health.get("listener_running", False))
+
+    connection = radio_connection_manager.status(listener_running)
+    if connection.get("mode") != "released":
+        released, connection = radio_connection_manager.release(timeout=15)
+        if not released:
+            return jsonify({
+                "ok": False,
+                "error": connection.get("last_error") or "The active radio could not be released.",
+                "connection": connection,
+            }), 409
+
+    detection = detect_connected_radio(
+        MESHTASTIC_CMD,
+        preferred_port=expected_radio.get("port") or MESHTASTIC_PORT,
+        timeout_per_port=35,
+        settle_seconds=2.0,
+    )
+    detected_radio = dict(detection.get("detected") or {})
+    detected_node_id = str(detected_radio.get("node_id") or "").strip().lower()
+
+    if not detected_node_id:
+        return jsonify({
+            "ok": False,
+            "code": "RADIO_NOT_FOUND",
+            "error": (
+                "No Meshtastic radio was detected. Connect the radio assigned to "
+                f"{expected_radio.get('long_name') or selected_profile_id} and try again."
+            ),
+            "expected": expected_radio,
+            "detected": detected_radio,
+            "attempts": detection.get("attempts", []),
+            "candidates": detection.get("candidates", []),
+            "connection": radio_connection_manager.status(False),
+        }), 409
+
+    if detected_node_id != expected_node_id:
+        return jsonify({
+            "ok": False,
+            "code": "RADIO_MISMATCH",
+            "error": (
+                "The connected radio does not match the selected profile. "
+                f"Expected {expected_radio.get('long_name') or expected_node_id} "
+                f"({expected_node_id}), detected "
+                f"{detected_radio.get('long_name') or detected_node_id} ({detected_node_id})."
+            ),
+            "expected": expected_radio,
+            "detected": detected_radio,
+            "connection": radio_connection_manager.status(False),
+        }), 409
+
+    updated = dict(identity)
+    updated["active_profile_id"] = selected_profile_id
+    updated["radio"] = {
+        "node_id": detected_radio.get("node_id") or expected_radio.get("node_id", ""),
+        "long_name": detected_radio.get("long_name") or expected_radio.get("long_name", ""),
+        "short_name": detected_radio.get("short_name") or expected_radio.get("short_name", ""),
+        "hardware": detected_radio.get("hardware") or expected_radio.get("hardware", ""),
+        "role": detected_radio.get("role") or expected_radio.get("role", ""),
+        "port": detected_radio.get("port") or expected_radio.get("port") or MESHTASTIC_PORT,
+    }
+    runtime = dict(updated.get("runtime") or {})
+    runtime.update({
+        "last_detected_at": detection.get("checked_at"),
+        "identity_status": "MATCH",
+        "last_error": None,
+        "last_detected_radio": dict(updated["radio"]),
+    })
+    updated["runtime"] = runtime
+
+    try:
+        INSTANCE_IDENTITY = instance_manager.save(updated)
+    except Exception as error:
+        return jsonify({"ok": False, "error": f"Could not save active radio profile: {error}"}), 500
+
+    log_system_event(
+        "Radio profile activated",
+        "ACTION",
+        (
+            f"Profile {selected_profile_id} selected for "
+            f"{updated['radio'].get('long_name') or updated['radio'].get('node_id')}"
+        ),
+        source="radio",
+    )
+
+    threading.Thread(
+        target=_restart_meshcenter_after_profile_switch,
+        daemon=True,
+    ).start()
+
+    return jsonify({
+        "ok": True,
+        "accepted": True,
+        "restart_required": True,
+        "profile_id": selected_profile_id,
+        "radio": updated["radio"],
+        "message": "Radio profile activated. MeshCenter is restarting.",
+    }), 202
 
 
 @app.route("/api/devices")
@@ -3723,10 +4103,16 @@ def api_profile_devices():
 
 @app.route("/api/base_status")
 def api_base_status():
+    identity = instance_manager.get()
+    radio = dict(identity.get("radio") or {})
     status = base_status.copy()
-    status["node_name"] = LOCAL_NODE_NAME
-    status["node_id"] = LOCAL_NODE_ID
-    return jsonify(status)
+    status["node_name"] = radio.get("long_name") or LOCAL_NODE_NAME
+    status["node_id"] = radio.get("node_id") or LOCAL_NODE_ID
+    status["profile_id"] = identity.get("active_profile_id", "")
+    response = jsonify(status)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 @app.route("/api/node_status")
 def api_node_status():
@@ -4293,24 +4679,6 @@ def api_nodes_management():
         nodes_list.sort(key=lambda x: x.get("name", "").lower())
     return jsonify({"nodes": nodes_list, "total": len(nodes_list)})
 
-@app.route("/api/cleanup_all_nodes", methods=["POST"])
-@handle_errors
-def api_cleanup_all_nodes():
-    global nodes, chats
-    try:
-        with state_lock:
-            deleted_count = len(nodes)
-            dm_chat_ids = [c for c in chats.keys() if c != CHANNEL_CHAT_ID and c.startswith("!")]
-            for chat_id in dm_chat_ids:
-                if chat_id in chats:
-                    del chats[chat_id]
-            nodes = {}
-            save_nodes()
-            save_chats()
-        return jsonify({"ok": True, "deleted_count": deleted_count})
-    except Exception as e:
-        print(f"[ERROR] Cleanup all nodes: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/nodes_export", methods=["GET"])
 def api_nodes_export():
@@ -4365,43 +4733,6 @@ def api_nodes_import():
         save_chats()
     return jsonify({"ok": True, "imported_count": imported_count})
 
-@app.route("/api/nodes_merge_duplicates", methods=["POST"])
-@handle_errors
-def api_nodes_merge_duplicates():
-    merged = 0
-    with state_lock:
-        name_map = {}
-        duplicates = []
-        for node_id, node in nodes.items():
-            name = node.get("name", "")
-            if not name:
-                continue
-            if name in name_map:
-                duplicates.append((name, node_id, name_map[name]))
-            else:
-                name_map[name] = node_id
-        for name, dup_id, main_id in duplicates:
-            dup = nodes.get(dup_id, {})
-            main = nodes.get(main_id, {})
-            if dup.get("last_seen", 0) > main.get("last_seen", 0):
-                merged_node = dict(dup)
-                # Prefer the newer record, but retain coordinates from either
-                # duplicate so merging cannot silently erase a known position.
-                merged_node["position"] = (
-                    dup.get("position") or main.get("position")
-                )
-                nodes[main_id] = merged_node
-                nodes[main_id]["node_id"] = main_id
-            elif not main.get("position") and dup.get("position"):
-                nodes[main_id]["position"] = dup.get("position")
-            if dup_id in chats:
-                del chats[dup_id]
-            del nodes[dup_id]
-            merged += 1
-        if merged:
-            save_nodes()
-            save_chats()
-    return jsonify({"ok": True, "merged_count": merged})
 
 @app.route("/api/delete_all_dm", methods=["POST"])
 @handle_errors

@@ -86,6 +86,22 @@ Typical use cases include:
 - [Architecture Overview](#application-architecture)
 - [Development Roadmap](#roadmap)
 
+## Switching to another Meshtastic radio
+
+1. Open Node Manager.
+2. Click Release Radio.
+3. Disconnect the current radio.
+4. Connect the replacement radio by USB.
+5. Wait a few seconds for Linux to create the serial device.
+6. Click Detect radio.
+7. Confirm the detected radio.
+8. For a new radio, MeshCenter creates a clean separate profile.
+9. For a known radio, MeshCenter activates its saved profile.
+10. MeshCenter restarts automatically.
+
+Each radio profile keeps its own messages, nodes, telemetry, waypoints and icons.
+Data from different radios is not merged.
+
 ### 💬 Messaging
 
 - MeshCenter automatically detects and synchronizes all channels configured on the connected Meshtastic node. The interface supports Meshtastic channel indexes 0–7, allowing up to eight configured channels, including the primary channel. Channel creation and radio configuration are handled by the official Meshtastic applications.
@@ -329,6 +345,31 @@ This modular architecture makes it easy to extend the project while keeping the 
 ---
 
 ## Installation
+
+## ⚠ IMPORTANT: Enable Serial access on the Meshtastic radio
+
+Before connecting a Meshtastic radio to MeshCenter, make sure that
+**Serial access is enabled in the Meshtastic settings**.
+
+Open the Meshtastic app and enable:
+
+Settings → Security → Serial enabled
+
+Depending on the app or firmware version, the option may also appear under:
+
+Settings → Device → Serial enabled
+
+Do not confuse this option with the Serial module.
+
+If Serial access is disabled, Linux may still detect the USB device and create
+`/dev/ttyACM0`, but MeshCenter and the Meshtastic CLI will not be able to read
+the radio identity. Typical symptoms are:
+
+- `Connection timed out`
+- `No Meshtastic radio identity could be read`
+- `Unable to detect radio`
+
+This is the most common cause of USB detection failure.
 
 ### Installation Validation
 

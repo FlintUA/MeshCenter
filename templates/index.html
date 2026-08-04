@@ -1352,7 +1352,7 @@
             <!-- Sidebar Tabs -->
             <div class="sidebar-tabs">
                 <button class="sidebar-tab active" data-tab="nodes" onclick="switchSidebarTab('nodes')">📡 Nodes</button>
-                <button class="sidebar-tab" data-tab="tools" onclick="switchSidebarTab('tools')">🔧 Tools</button>
+                <button class="sidebar-tab" data-tab="tools" onclick="switchSidebarTab('tools')">🧰 Toolkit</button>
             </div>
 
             <!-- Nodes Tab -->
@@ -1372,10 +1372,9 @@
                 </div>
             </div>
 
-            <!-- Tools Tab -->
+            <!-- Network Tab -->
             <div class="sidebar-tab-content" id="tab-tools" style="display:none;">
                 <div class="nodes-tools">
-                    <div class="nodes-tools-title">🔧 Management Tools</div>
                     <div class="waypoint-tools-panel">
                         <div class="waypoint-tools-header">
                             <strong>📍 Waypoints</strong>
@@ -1393,15 +1392,9 @@
                             <button type="button" class="danger" onclick="deleteAllWaypoints()">🗑 All</button>
                         </div>
                     </div>
-                    <div class="nodes-tools-grid">
+                    <div class="nodes-tools-grid nodes-tools-grid-compact">
                         <button class="nodes-tool-btn export" onclick="showExportOptions()">📤 Export</button>
                         <button class="nodes-tool-btn import" onclick="showImportOptions()">📥 Import</button>
-                        <button class="nodes-tool-btn merge" onclick="mergeDuplicates()">🔄 Merge Duplicates</button>
-                        <button class="nodes-tool-btn show" onclick="toggleShowDuplicates()">📋 Show Duplicates</button>
-                        <button class="nodes-tool-btn cleanup" onclick="cleanupAllNodes()" style="grid-column: span 2;">🗑️ Cleanup All</button>
-                        <button class="nodes-tool-btn" onclick="restartListener()" style="grid-column: span 2;">
-                            🔄 Restart Listener
-                        </button>
                     </div>
                     
                     <div id="exportOptionsMenu" class="format-menu" style="display:none;">
@@ -1825,7 +1818,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/chat.js?v=radio-config-mode-20260801"></script>
+<script src="/static/chat.js?v=radio-profile-sync-20260804"></script>
 <script src="/static/media.js"></script>
 <script src="/static/weather.js?v=openweather-setup-20260731"></script>
 
@@ -1876,7 +1869,10 @@
                     <option value="86400">1 day</option><option value="172800">2 days</option><option value="604800">7 days</option>
                 </select></label>
             </div>
-            <label class="waypoint-create-notify"><input type="checkbox" id="waypointCreatePostNotification" checked> Post a text notification to the selected channel</label>
+            <label class="waypoint-create-notify" for="waypointCreatePostNotification">
+                <input type="checkbox" id="waypointCreatePostNotification" checked>
+                <span>Post a text notification to the selected channel</span>
+            </label>
             <div class="waypoint-create-coordinates"><span>Coordinates</span><strong id="waypointCreateCoordinates">--</strong></div>
             <div class="waypoint-create-note">Right-click anywhere on the map to choose another location.</div>
         </div>

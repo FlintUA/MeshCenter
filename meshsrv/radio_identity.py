@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from meshsrv import meshsrv
+from meshsrv.runtime_identity import discover_serial_ports
 
 IDENTITY_MATCH = "MATCH"
 IDENTITY_MISMATCH = "MISMATCH"
@@ -164,3 +165,75 @@ def detect_radio_identity(cli_path: str, serial_port: str, timeout: int = 25) ->
             "detected": {},
             "error": str(error),
         }, "")
+
+def detect_connected_radio(
+    cli_path: str,
+    preferred_port: str = "",
+    timeout_per_port: int = 35,
+    settle_seconds: float = 1.5,
+) -> dict[str, Any]:
+    """Probe available serial ports and return the first detected local radio.
+
+    The preferred port is tried first, followed by persistent by-id links and
+    ttyACM/ttyUSB devices. Errors are returned for diagnostics instead of being
+    discarded.
+    """
+    import os
+    import time
+
+    preferred = str(preferred_port or "").strip()
+    ports: list[str] = []
+    seen_real: set[str] = set()
+
+    for candidate in ([preferred] if preferred else []) + discover_serial_ports():
+        candidate = str(candidate or "").strip()
+        if not candidate or not os.path.exists(candidate):
+            continue
+        real = os.path.realpath(candidate)
+        if real in seen_real:
+            continue
+        seen_real.add(real)
+        ports.append(candidate)
+
+    if settle_seconds > 0:
+        time.sleep(settle_seconds)
+
+    attempts: list[dict[str, Any]] = []
+    for port in ports:
+        result, _ = detect_radio_identity(
+            cli_path,
+            port,
+            timeout=max(10, int(timeout_per_port)),
+        )
+        detected = dict(result.get("detected") or {})
+        attempts.append({
+            "port": port,
+            "status": result.get("status"),
+            "error": result.get("error"),
+        })
+        if detected.get("node_id"):
+            detected["port"] = port
+            return {
+                "ok": True,
+                "detected": detected,
+                "checked_at": result.get("checked_at"),
+                "port": port,
+                "attempts": attempts,
+                "candidates": ports,
+            }
+
+    return {
+        "ok": False,
+        "detected": {},
+        "checked_at": utc_now_iso(),
+        "port": "",
+        "attempts": attempts,
+        "candidates": ports,
+        "error": (
+            "No Meshtastic radio identity could be read from the available "
+            "serial ports."
+            if ports else
+            "No serial radio ports were found."
+        ),
+    }
+

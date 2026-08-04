@@ -1170,12 +1170,6 @@ body {
 .nodes-tool-btn.export:hover { background: #d0e8d0; }
 .nodes-tool-btn.import { background: #e8ecf5; color: #2a4a7a; }
 .nodes-tool-btn.import:hover { background: #d0d8ec; }
-.nodes-tool-btn.merge { background: #f5f0e8; color: #7a6a3a; }
-.nodes-tool-btn.merge:hover { background: #ece0d0; }
-.nodes-tool-btn.show { background: #f0e8f5; color: #5a3a7a; }
-.nodes-tool-btn.show:hover { background: #e0d0ec; }
-.nodes-tool-btn.cleanup { background: #f5e8e8; color: #8a3a3a; }
-.nodes-tool-btn.cleanup:hover { background: #ecd0d0; }
 
 .nodes-stats {
     font-size: 12px;
@@ -12764,5 +12758,863 @@ body.node-manager-open .node-manager-view.workspace-view {
 
     .base-node-name-stack #baseNodeName {
         font-size: 1.25em;
+    }
+}
+/* ============================================================
+   UNIFIED LIGHT / DARK THEME LAYER
+   Final cascade for workspace cards, Node Manager, Devices,
+   Tools and local-node header.
+   ============================================================ */
+
+:root {
+    --theme-app-bg: #eef3f8;
+    --theme-workspace-bg: #f7f9fc;
+    --theme-panel-bg: #ffffff;
+    --theme-card-bg: #ffffff;
+    --theme-card-hover: #f4f8fd;
+    --theme-elevated-bg: #edf4fb;
+    --theme-border: #d5dfeb;
+    --theme-border-soft: #e7edf4;
+    --theme-text: #14243a;
+    --theme-text-secondary: #506983;
+    --theme-text-muted: #7d91a7;
+    --theme-accent: #1769e0;
+    --theme-focus: #4f8cff;
+    --theme-shadow: 0 8px 24px rgba(29, 53, 87, .08);
+
+    /* Compatibility tokens used by existing components. */
+    --card-bg: var(--theme-card-bg);
+    --surface-secondary: var(--theme-elevated-bg);
+    --border-color: var(--theme-border);
+    --border-light: var(--theme-border-soft);
+    --text-primary: var(--theme-text);
+    --text-secondary: var(--theme-text-secondary);
+    --primary-color: var(--theme-accent);
+    --mc-card-bg: var(--theme-panel-bg);
+    --mc-border: var(--theme-border);
+    --mc-text: var(--theme-text);
+    --mc-muted: var(--theme-text-secondary);
+    --mc-bg-workspace: var(--theme-workspace-bg);
+    --mc-bg-panel: var(--theme-panel-bg);
+    --mc-workspace-header-bg: var(--theme-panel-bg);
+    --mc-workspace-header-border: var(--theme-border);
+}
+
+[data-theme="dark"] {
+    color-scheme: dark;
+
+    --theme-app-bg: #09111a;
+    --theme-workspace-bg: #0f1a26;
+    --theme-panel-bg: #162433;
+    --theme-card-bg: #1c2c3d;
+    --theme-card-hover: #24374b;
+    --theme-elevated-bg: #25394d;
+    --theme-border: #344a61;
+    --theme-border-soft: #2a3e53;
+    --theme-text: #f3f7fb;
+    --theme-text-secondary: #c3d3e3;
+    --theme-text-muted: #91a7bc;
+    --theme-accent: #65a3ff;
+    --theme-focus: #73adff;
+    --theme-shadow: 0 12px 30px rgba(0, 0, 0, .24);
+
+    --card-bg: var(--theme-card-bg);
+    --surface-secondary: var(--theme-elevated-bg);
+    --border-color: var(--theme-border);
+    --border-light: var(--theme-border-soft);
+    --text-primary: var(--theme-text);
+    --text-secondary: var(--theme-text-secondary);
+    --primary-color: var(--theme-accent);
+    --mc-card-bg: var(--theme-panel-bg);
+    --mc-border: var(--theme-border);
+    --mc-text: var(--theme-text);
+    --mc-muted: var(--theme-text-secondary);
+    --mc-bg-workspace: var(--theme-workspace-bg);
+    --mc-bg-panel: var(--theme-panel-bg);
+    --mc-workspace-header-bg: var(--theme-panel-bg);
+    --mc-workspace-header-border: var(--theme-border);
+}
+
+/* Main application surfaces. */
+[data-theme="dark"] body,
+body[data-theme="dark"] {
+    background: var(--theme-app-bg);
+    color: var(--theme-text);
+}
+
+[data-theme="dark"] .app-container,
+[data-theme="dark"] .main-layout,
+[data-theme="dark"] .chat-area,
+[data-theme="dark"] .workspace-view,
+[data-theme="dark"] .devices-view,
+[data-theme="dark"] .node-manager-view {
+    background: var(--theme-workspace-bg);
+    color: var(--theme-text);
+}
+
+/* Workspace panels and headers. */
+[data-theme="dark"] .mc-workspace-panel,
+[data-theme="dark"] .node-manager-panel,
+[data-theme="dark"] .devices-panel,
+[data-theme="dark"] .settings-panel,
+[data-theme="dark"] .system-panel,
+[data-theme="dark"] .media-panel,
+[data-theme="dark"] .camera-panel {
+    background: var(--theme-panel-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+    box-shadow: var(--theme-shadow);
+}
+
+[data-theme="dark"] .mc-workspace-header,
+[data-theme="dark"] .node-manager-header,
+[data-theme="dark"] .workspace-page-header {
+    background: var(--theme-panel-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .workspace-page-title,
+[data-theme="dark"] .workspace-page-heading h2,
+[data-theme="dark"] .workspace-page-heading h3 {
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .workspace-page-subtitle {
+    color: var(--theme-text-secondary) !important;
+}
+
+/* Node Manager cards. */
+[data-theme="dark"] .node-profile-selector-section,
+[data-theme="dark"] .node-profile-card,
+[data-theme="dark"] .device-hero-card,
+[data-theme="dark"] .device-info-card,
+[data-theme="dark"] .node-manager-hero-card {
+    background: var(--theme-card-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .node-profile-selector-section,
+[data-theme="dark"] .device-hero-card,
+[data-theme="dark"] .device-info-card,
+[data-theme="dark"] .node-manager-hero-card {
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .12);
+}
+
+[data-theme="dark"] .node-profile-card:hover,
+[data-theme="dark"] .device-info-card:hover {
+    background: var(--theme-card-hover) !important;
+}
+
+[data-theme="dark"] .node-profile-card.is-active {
+    border-color: var(--theme-focus) !important;
+    box-shadow: 0 0 0 1px rgba(101, 163, 255, .22);
+}
+
+[data-theme="dark"] .node-manager-section-heading h3,
+[data-theme="dark"] .device-card-title,
+[data-theme="dark"] .device-hero-main h3,
+[data-theme="dark"] .peripheral-card-header h3,
+[data-theme="dark"] .peripheral-add-card h3,
+[data-theme="dark"] .node-profile-main strong,
+[data-theme="dark"] .node-manager-hero-card h2,
+[data-theme="dark"] .node-manager-hero-card h3 {
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .node-manager-section-heading p,
+[data-theme="dark"] .node-profile-main small,
+[data-theme="dark"] .device-card-eyebrow,
+[data-theme="dark"] .node-manager-active-label {
+    color: var(--theme-text-secondary) !important;
+}
+
+[data-theme="dark"] .node-manager-profile-count,
+[data-theme="dark"] .node-profile-icon,
+[data-theme="dark"] .node-manager-avatar,
+[data-theme="dark"] .device-hero-icon,
+[data-theme="dark"] .device-hero-meta span,
+[data-theme="dark"] .node-profile-badge {
+    background: var(--theme-elevated-bg) !important;
+    color: var(--theme-text-secondary) !important;
+}
+
+/* Detail rows in Node Manager and Devices. */
+[data-theme="dark"] .device-detail-list > div {
+    border-color: var(--theme-border-soft) !important;
+}
+
+[data-theme="dark"] .device-detail-list dt {
+    color: var(--theme-text-secondary) !important;
+}
+
+[data-theme="dark"] .device-detail-list dd,
+[data-theme="dark"] .device-detail-list .copyable-value,
+[data-theme="dark"] .device-path-value {
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .copyable-value:hover {
+    color: var(--theme-accent) !important;
+}
+
+/* Peripheral Devices page. */
+[data-theme="dark"] .peripheral-card {
+    background: var(--theme-card-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .12);
+}
+
+[data-theme="dark"] .peripheral-add-card {
+    background: color-mix(in srgb, var(--theme-card-bg) 84%, var(--theme-elevated-bg)) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text-secondary) !important;
+}
+
+[data-theme="dark"] .peripheral-add-icon {
+    background: var(--theme-elevated-bg) !important;
+    color: var(--theme-text-secondary) !important;
+}
+
+/* Buttons. */
+[data-theme="dark"] .device-action-btn,
+[data-theme="dark"] .node-manager-change-image-btn,
+[data-theme="dark"] .workspace-page-actions button,
+[data-theme="dark"] .mc-close-btn {
+    background: var(--theme-elevated-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .device-action-btn:hover:not(:disabled),
+[data-theme="dark"] .node-manager-change-image-btn:hover,
+[data-theme="dark"] .workspace-page-actions button:hover:not(:disabled),
+[data-theme="dark"] .mc-close-btn:hover {
+    background: var(--theme-card-hover) !important;
+    border-color: var(--theme-focus) !important;
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .device-action-btn.primary,
+[data-theme="dark"] .device-action-btn.is-primary {
+    background: #2168d7 !important;
+    border-color: #4f8fff !important;
+    color: #ffffff !important;
+}
+
+/* Tools and Waypoints surfaces. */
+[data-theme="dark"] .management-tools,
+[data-theme="dark"] .tools-panel,
+[data-theme="dark"] .waypoints-tools-card,
+[data-theme="dark"] .waypoint-tools-panel,
+[data-theme="dark"] .waypoint-tools-list {
+    background: var(--theme-panel-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .management-tools h3,
+[data-theme="dark"] .management-tools h4,
+[data-theme="dark"] .waypoints-tools-card h3,
+[data-theme="dark"] .waypoint-tools-panel h3 {
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .waypoint-tools-item {
+    background: var(--theme-card-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .waypoint-tools-main,
+[data-theme="dark"] .waypoint-tools-main strong {
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .waypoint-tools-main small,
+[data-theme="dark"] .waypoint-tools-meta {
+    color: var(--theme-text-secondary) !important;
+}
+
+[data-theme="dark"] .waypoint-tools-item:hover {
+    background: var(--theme-card-hover) !important;
+}
+
+[data-theme="dark"] .waypoint-tools-item.is-selected {
+    background: color-mix(in srgb, #e14d68 18%, var(--theme-card-bg)) !important;
+}
+
+[data-theme="dark"] .waypoint-tools-item.is-selected.is-expired {
+    background: color-mix(in srgb, #a985d3 24%, var(--theme-card-bg)) !important;
+}
+
+/* Local node title. */
+[data-theme="dark"] .base-node-manager-entry,
+[data-theme="dark"] .base-card,
+[data-theme="dark"] .base-card-title {
+    background: var(--theme-panel-bg) !important;
+    border-color: var(--theme-border) !important;
+}
+
+[data-theme="dark"] .base-node-name-stack #baseNodeName,
+[data-theme="dark"] .base-card-name {
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .node-uptime-badge,
+[data-theme="dark"] .base-status-uptime {
+    color: var(--theme-text-secondary) !important;
+}
+
+/* Light theme remains inverse: pale surfaces and dark readable text. */
+:root:not([data-theme="dark"]) .node-profile-selector-section,
+:root:not([data-theme="dark"]) .node-profile-card,
+:root:not([data-theme="dark"]) .device-hero-card,
+:root:not([data-theme="dark"]) .device-info-card,
+:root:not([data-theme="dark"]) .peripheral-card {
+    background: var(--theme-card-bg);
+    border-color: var(--theme-border);
+    color: var(--theme-text);
+}
+
+:root:not([data-theme="dark"]) .device-card-title,
+:root:not([data-theme="dark"]) .node-manager-section-heading h3,
+:root:not([data-theme="dark"]) .peripheral-card-header h3,
+:root:not([data-theme="dark"]) .device-detail-list dd {
+    color: var(--theme-text);
+}
+
+:root:not([data-theme="dark"]) .device-detail-list dt,
+:root:not([data-theme="dark"]) .node-manager-section-heading p,
+:root:not([data-theme="dark"]) .device-card-eyebrow {
+    color: var(--theme-text-secondary);
+}
+/* ============================================================
+   WAYPOINT CREATE DIALOG - LIGHT / DARK THEME FIX
+   ============================================================ */
+
+.waypoint-create-dialog {
+    background: var(--theme-card-bg, #ffffff);
+    border-color: var(--theme-border, #d5dfeb);
+    color: var(--theme-text, #14243a);
+}
+
+.waypoint-create-header,
+.waypoint-create-footer {
+    background: var(--theme-card-bg, #ffffff);
+    border-color: var(--theme-border-soft, #e7edf4);
+}
+
+.waypoint-create-header strong,
+.waypoint-create-body label {
+    color: var(--theme-text, #14243a);
+}
+
+.waypoint-create-header small,
+.waypoint-create-note,
+.waypoint-create-notify {
+    color: var(--theme-text-secondary, #506983);
+}
+
+.waypoint-create-header button {
+    color: var(--theme-text-secondary, #506983);
+}
+
+.waypoint-create-header button:hover {
+    color: var(--theme-text, #14243a);
+}
+
+.waypoint-create-body input,
+.waypoint-create-body textarea,
+.waypoint-create-body select {
+    background: var(--theme-workspace-bg, #f7f9fc);
+    border-color: var(--theme-border, #d5dfeb);
+    color: var(--theme-text, #14243a);
+}
+
+.waypoint-create-body input::placeholder,
+.waypoint-create-body textarea::placeholder {
+    color: var(--theme-text-muted, #7d91a7);
+}
+
+.waypoint-create-body input:focus,
+.waypoint-create-body textarea:focus,
+.waypoint-create-body select:focus {
+    border-color: var(--theme-focus, #4f8cff);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-focus, #4f8cff) 24%, transparent);
+    outline: none;
+}
+
+.waypoint-create-coordinates {
+    background: var(--theme-elevated-bg, #edf4fb);
+    color: var(--theme-text-secondary, #506983);
+}
+
+.waypoint-create-footer .secondary {
+    background: transparent;
+    border-color: var(--theme-border, #d5dfeb);
+    color: var(--theme-text-secondary, #506983);
+}
+
+.waypoint-create-footer .secondary:hover:not(:disabled) {
+    background: var(--theme-card-hover, #f4f8fd);
+    border-color: var(--theme-focus, #4f8cff);
+    color: var(--theme-text, #14243a);
+}
+
+.waypoint-create-footer .primary {
+    background: var(--theme-accent, #1769e0);
+    border-color: var(--theme-accent, #1769e0);
+    color: #ffffff;
+}
+
+.waypoint-create-footer .primary:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+
+[data-theme="dark"] .waypoint-create-modal {
+    background: rgba(3, 8, 14, .72);
+    backdrop-filter: blur(5px);
+}
+
+[data-theme="dark"] .waypoint-create-dialog,
+body[data-theme="dark"] .waypoint-create-dialog {
+    background: var(--theme-card-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .52);
+}
+
+[data-theme="dark"] .waypoint-create-header,
+[data-theme="dark"] .waypoint-create-footer,
+body[data-theme="dark"] .waypoint-create-header,
+body[data-theme="dark"] .waypoint-create-footer {
+    background: var(--theme-card-bg) !important;
+    border-color: var(--theme-border-soft) !important;
+}
+
+[data-theme="dark"] .waypoint-create-header strong,
+[data-theme="dark"] .waypoint-create-body label,
+body[data-theme="dark"] .waypoint-create-header strong,
+body[data-theme="dark"] .waypoint-create-body label {
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .waypoint-create-header small,
+[data-theme="dark"] .waypoint-create-note,
+[data-theme="dark"] .waypoint-create-notify,
+body[data-theme="dark"] .waypoint-create-header small,
+body[data-theme="dark"] .waypoint-create-note,
+body[data-theme="dark"] .waypoint-create-notify {
+    color: var(--theme-text-secondary) !important;
+}
+
+[data-theme="dark"] .waypoint-create-header button,
+body[data-theme="dark"] .waypoint-create-header button {
+    color: var(--theme-text-secondary) !important;
+}
+
+[data-theme="dark"] .waypoint-create-header button:hover,
+body[data-theme="dark"] .waypoint-create-header button:hover {
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .waypoint-create-body input,
+[data-theme="dark"] .waypoint-create-body textarea,
+[data-theme="dark"] .waypoint-create-body select,
+body[data-theme="dark"] .waypoint-create-body input,
+body[data-theme="dark"] .waypoint-create-body textarea,
+body[data-theme="dark"] .waypoint-create-body select {
+    background: #0f1a26 !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .waypoint-create-body input::placeholder,
+[data-theme="dark"] .waypoint-create-body textarea::placeholder,
+body[data-theme="dark"] .waypoint-create-body input::placeholder,
+body[data-theme="dark"] .waypoint-create-body textarea::placeholder {
+    color: var(--theme-text-muted) !important;
+}
+
+[data-theme="dark"] .waypoint-create-coordinates,
+body[data-theme="dark"] .waypoint-create-coordinates {
+    background: var(--theme-elevated-bg) !important;
+    color: var(--theme-text-secondary) !important;
+}
+
+[data-theme="dark"] .waypoint-create-footer .secondary,
+body[data-theme="dark"] .waypoint-create-footer .secondary {
+    background: transparent !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text-secondary) !important;
+}
+
+[data-theme="dark"] .waypoint-create-footer .secondary:hover:not(:disabled),
+body[data-theme="dark"] .waypoint-create-footer .secondary:hover:not(:disabled) {
+    background: var(--theme-card-hover) !important;
+    border-color: var(--theme-focus) !important;
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .waypoint-create-footer .primary,
+body[data-theme="dark"] .waypoint-create-footer .primary {
+    background: #2168d7 !important;
+    border-color: #4f8fff !important;
+    color: #ffffff !important;
+}
+/* Waypoint notification checkbox - final inline alignment */
+.waypoint-create-body .waypoint-create-notify {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: center;
+    align-self: center;
+    gap: 9px;
+    width: auto;
+    max-width: 100%;
+    margin: 2px auto 4px;
+    padding: 2px 0;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.35;
+    cursor: pointer;
+    user-select: none;
+    text-align: left;
+}
+
+.waypoint-create-body .waypoint-create-notify input[type="checkbox"] {
+    flex: 0 0 auto;
+    width: 16px !important;
+    height: 16px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    accent-color: var(--theme-accent, #1769e0);
+    cursor: pointer;
+}
+
+.waypoint-create-body .waypoint-create-notify span {
+    display: inline-block;
+    min-width: 0;
+    color: inherit;
+}
+
+@media (max-width: 560px) {
+    .waypoint-create-body .waypoint-create-notify {
+        justify-content: flex-start;
+        align-self: stretch;
+        margin-left: 0;
+        margin-right: 0;
+    }
+}
+
+/* Tools node list - compact maintenance actions */
+.nodes-tools-grid-compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (max-width: 520px) {
+    .nodes-tools-grid-compact {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ============================================================
+   NODE DETAILS - COMPLETE DARK THEME
+   Overview / Radio / Position / Data / Log
+   ============================================================ */
+
+[data-theme="dark"] .node-detail-card,
+body[data-theme="dark"] .node-detail-card {
+    background: var(--theme-panel-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .node-detail-tabs,
+body[data-theme="dark"] .node-detail-tabs {
+    border-bottom-color: var(--theme-border) !important;
+}
+
+[data-theme="dark"] .node-detail-tab,
+body[data-theme="dark"] .node-detail-tab {
+    background: transparent !important;
+    color: var(--theme-text-secondary) !important;
+    border-color: transparent !important;
+}
+
+[data-theme="dark"] .node-detail-tab:hover,
+body[data-theme="dark"] .node-detail-tab:hover {
+    background: var(--theme-card-hover) !important;
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .node-detail-tab.active,
+body[data-theme="dark"] .node-detail-tab.active {
+    background: var(--theme-elevated-bg) !important;
+    color: var(--theme-accent) !important;
+    border-bottom-color: var(--theme-accent) !important;
+}
+
+/* Main cards across all detail tabs. */
+[data-theme="dark"] .node-detail-card .tile,
+[data-theme="dark"] .node-detail-card .node-detail-last-msg,
+[data-theme="dark"] .node-detail-card .radio-history,
+[data-theme="dark"] .node-detail-card .data-group,
+[data-theme="dark"] .node-detail-card .log-summary,
+[data-theme="dark"] .node-detail-card .log-events,
+body[data-theme="dark"] .node-detail-card .tile,
+body[data-theme="dark"] .node-detail-card .node-detail-last-msg,
+body[data-theme="dark"] .node-detail-card .radio-history,
+body[data-theme="dark"] .node-detail-card .data-group,
+body[data-theme="dark"] .node-detail-card .log-summary,
+body[data-theme="dark"] .node-detail-card .log-events {
+    background: var(--theme-card-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+}
+
+/* Titles and values. */
+[data-theme="dark"] .node-detail-card .tile-value,
+[data-theme="dark"] .node-detail-card .last-msg-text,
+[data-theme="dark"] .node-detail-card .radio-param .value,
+[data-theme="dark"] .node-detail-card .coord .value,
+[data-theme="dark"] .node-detail-card .data-group-title,
+[data-theme="dark"] .node-detail-card .data-grid .value,
+[data-theme="dark"] .node-detail-card .log-summary-item .value,
+[data-theme="dark"] .node-detail-card .log-event strong,
+body[data-theme="dark"] .node-detail-card .tile-value,
+body[data-theme="dark"] .node-detail-card .last-msg-text,
+body[data-theme="dark"] .node-detail-card .radio-param .value,
+body[data-theme="dark"] .node-detail-card .coord .value,
+body[data-theme="dark"] .node-detail-card .data-group-title,
+body[data-theme="dark"] .node-detail-card .data-grid .value,
+body[data-theme="dark"] .node-detail-card .log-summary-item .value,
+body[data-theme="dark"] .node-detail-card .log-event strong {
+    color: var(--theme-text) !important;
+}
+
+/* Labels, secondary information and empty states. */
+[data-theme="dark"] .node-detail-card .tile-label,
+[data-theme="dark"] .node-detail-card .last-msg-label,
+[data-theme="dark"] .node-detail-card .last-msg-time,
+[data-theme="dark"] .node-detail-card .radio-param .label,
+[data-theme="dark"] .node-detail-card .radio-history-header,
+[data-theme="dark"] .node-detail-card .radio-history-range,
+[data-theme="dark"] .node-detail-card .radio-history-placeholder,
+[data-theme="dark"] .node-detail-card .coord .label,
+[data-theme="dark"] .node-detail-card .position-reference,
+[data-theme="dark"] .node-detail-card .position-no-data,
+[data-theme="dark"] .node-detail-card .data-grid .label,
+[data-theme="dark"] .node-detail-card .data-no-data,
+[data-theme="dark"] .node-detail-card .log-summary-item .label,
+[data-theme="dark"] .node-detail-card .log-event,
+body[data-theme="dark"] .node-detail-card .tile-label,
+body[data-theme="dark"] .node-detail-card .last-msg-label,
+body[data-theme="dark"] .node-detail-card .last-msg-time,
+body[data-theme="dark"] .node-detail-card .radio-param .label,
+body[data-theme="dark"] .node-detail-card .radio-history-header,
+body[data-theme="dark"] .node-detail-card .radio-history-range,
+body[data-theme="dark"] .node-detail-card .radio-history-placeholder,
+body[data-theme="dark"] .node-detail-card .coord .label,
+body[data-theme="dark"] .node-detail-card .position-reference,
+body[data-theme="dark"] .node-detail-card .position-no-data,
+body[data-theme="dark"] .node-detail-card .data-grid .label,
+body[data-theme="dark"] .node-detail-card .data-no-data,
+body[data-theme="dark"] .node-detail-card .log-summary-item .label,
+body[data-theme="dark"] .node-detail-card .log-event {
+    color: var(--theme-text-secondary) !important;
+}
+
+/* Internal separators. */
+[data-theme="dark"] .node-detail-card .radio-param,
+[data-theme="dark"] .node-detail-card .coord,
+[data-theme="dark"] .node-detail-card .data-grid > div,
+[data-theme="dark"] .node-detail-card .log-summary-item,
+body[data-theme="dark"] .node-detail-card .radio-param,
+body[data-theme="dark"] .node-detail-card .coord,
+body[data-theme="dark"] .node-detail-card .data-grid > div,
+body[data-theme="dark"] .node-detail-card .log-summary-item {
+    border-bottom-color: var(--theme-border-soft) !important;
+}
+
+/* Action buttons at the bottom of Overview, Radio, Position and Data. */
+[data-theme="dark"] .node-detail-card .quick-action,
+[data-theme="dark"] .node-detail-card .radio-action,
+[data-theme="dark"] .node-detail-card .position-actions button,
+[data-theme="dark"] .node-detail-card .data-actions button,
+[data-theme="dark"] .node-detail-card .data-request,
+[data-theme="dark"] .node-detail-card .position-no-data button,
+body[data-theme="dark"] .node-detail-card .quick-action,
+body[data-theme="dark"] .node-detail-card .radio-action,
+body[data-theme="dark"] .node-detail-card .position-actions button,
+body[data-theme="dark"] .node-detail-card .data-actions button,
+body[data-theme="dark"] .node-detail-card .data-request,
+body[data-theme="dark"] .node-detail-card .position-no-data button {
+    background: var(--theme-elevated-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .node-detail-card .quick-action:hover:not(:disabled),
+[data-theme="dark"] .node-detail-card .radio-action:hover:not(:disabled),
+[data-theme="dark"] .node-detail-card .position-actions button:hover:not(:disabled),
+[data-theme="dark"] .node-detail-card .data-actions button:hover:not(:disabled),
+[data-theme="dark"] .node-detail-card .data-request:hover:not(:disabled),
+[data-theme="dark"] .node-detail-card .position-no-data button:hover:not(:disabled),
+body[data-theme="dark"] .node-detail-card .quick-action:hover:not(:disabled),
+body[data-theme="dark"] .node-detail-card .radio-action:hover:not(:disabled),
+body[data-theme="dark"] .node-detail-card .position-actions button:hover:not(:disabled),
+body[data-theme="dark"] .node-detail-card .data-actions button:hover:not(:disabled),
+body[data-theme="dark"] .node-detail-card .data-request:hover:not(:disabled),
+body[data-theme="dark"] .node-detail-card .position-no-data button:hover:not(:disabled) {
+    background: var(--theme-card-hover) !important;
+    border-color: var(--theme-focus) !important;
+    color: var(--theme-text) !important;
+}
+
+/* Preserve blue informational emphasis without returning to a light card. */
+[data-theme="dark"] .node-detail-card .node-detail-last-msg,
+body[data-theme="dark"] .node-detail-card .node-detail-last-msg {
+    border-left-color: var(--theme-accent) !important;
+}
+
+[data-theme="dark"] .node-detail-card .data-request,
+[data-theme="dark"] .node-detail-card .position-no-data button,
+body[data-theme="dark"] .node-detail-card .data-request,
+body[data-theme="dark"] .node-detail-card .position-no-data button {
+    color: var(--theme-accent) !important;
+}
+
+/* Disabled controls remain readable but clearly inactive. */
+[data-theme="dark"] .node-detail-card button:disabled,
+body[data-theme="dark"] .node-detail-card button:disabled {
+    background: color-mix(in srgb, var(--theme-card-bg) 78%, #000000) !important;
+    border-color: var(--theme-border-soft) !important;
+    color: var(--theme-text-muted) !important;
+    opacity: .66;
+}
+
+/* Light theme keeps the inverse relationship explicitly. */
+:root:not([data-theme="dark"]) .node-detail-card .data-group,
+:root:not([data-theme="dark"]) .node-detail-card .radio-history,
+:root:not([data-theme="dark"]) .node-detail-card .log-summary,
+:root:not([data-theme="dark"]) .node-detail-card .log-events,
+:root:not([data-theme="dark"]) .node-detail-card .tile {
+    background: var(--theme-card-bg, #ffffff);
+    border-color: var(--theme-border, #d5dfeb);
+    color: var(--theme-text, #14243a);
+}
+
+/* ============================================================
+   NODE DETAILS LOG - FINAL DARK THEME POLISH
+   ============================================================ */
+
+[data-theme="dark"] .node-detail-card .log-events-title,
+body[data-theme="dark"] .node-detail-card .log-events-title {
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .node-detail-card .log-history-placeholder,
+body[data-theme="dark"] .node-detail-card .log-history-placeholder {
+    background: var(--theme-elevated-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text-secondary) !important;
+}
+
+[data-theme="dark"] .node-detail-card .log-time,
+body[data-theme="dark"] .node-detail-card .log-time {
+    color: var(--theme-text-muted) !important;
+}
+
+[data-theme="dark"] .node-detail-card .log-text,
+body[data-theme="dark"] .node-detail-card .log-text {
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .node-detail-card .log-event,
+body[data-theme="dark"] .node-detail-card .log-event {
+    border-bottom-color: var(--theme-border-soft) !important;
+}
+
+/* Toolkit tab and radio profile activation */
+.node-profile-card:not(.is-active) {
+    cursor: pointer;
+}
+
+.node-profile-card:not(.is-active):hover {
+    border-color: var(--theme-focus, #4f8cff);
+    background: var(--theme-card-hover, #f4f8fd);
+}
+
+.node-profile-card.is-switching {
+    opacity: .72;
+    cursor: wait;
+}
+
+.node-profile-badge.saved {
+    background: var(--theme-elevated-bg, #edf4fb);
+    color: var(--theme-text-secondary, #506983);
+}
+
+[data-theme="dark"] .node-profile-card:not(.is-active):hover,
+body[data-theme="dark"] .node-profile-card:not(.is-active):hover {
+    border-color: var(--theme-focus) !important;
+    background: var(--theme-card-hover) !important;
+}
+
+[data-theme="dark"] .node-profile-badge.saved,
+body[data-theme="dark"] .node-profile-badge.saved {
+    background: var(--theme-elevated-bg) !important;
+    color: var(--theme-text-secondary) !important;
+}
+
+/* Node Manager - radio discovery controls */
+.node-manager-profile-heading-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.node-manager-detect-radio-btn {
+    min-height: 30px;
+    padding: 5px 11px;
+    border: 1px solid var(--theme-border, #d5dfeb);
+    border-radius: 9px;
+    background: var(--theme-elevated-bg, #edf4fb);
+    color: var(--theme-text, #14243a);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.node-manager-detect-radio-btn:hover {
+    border-color: var(--theme-focus, #4f8cff);
+    background: var(--theme-card-hover, #f4f8fd);
+}
+
+[data-theme="dark"] .node-manager-detect-radio-btn,
+body[data-theme="dark"] .node-manager-detect-radio-btn {
+    background: var(--theme-elevated-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .node-manager-detect-radio-btn:hover,
+body[data-theme="dark"] .node-manager-detect-radio-btn:hover {
+    background: var(--theme-card-hover) !important;
+    border-color: var(--theme-focus) !important;
+}
+
+@media (max-width: 700px) {
+    .node-manager-section-heading {
+        align-items: flex-start;
+    }
+
+    .node-manager-profile-heading-actions {
+        flex-direction: column;
+        align-items: flex-end;
     }
 }

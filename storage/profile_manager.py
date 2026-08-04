@@ -89,6 +89,8 @@ class ProfileManager:
                 "long_name": str(radio.get("long_name") or "").strip(),
                 "short_name": str(radio.get("short_name") or "").strip(),
                 "hardware": str(radio.get("hardware") or "").strip(),
+                "role": str(radio.get("role") or "").strip(),
+                "port": str(radio.get("port") or "").strip(),
             },
             "created_at": created_at,
             "last_used_at": now_iso(),
@@ -130,6 +132,58 @@ class ProfileManager:
                 "migration": migration_result,
                 "paths": {key: self.path(profile_id, key) for key in PROFILE_FILES},
                 "directories": {key: self.directory(profile_id, key) for key in PROFILE_DIRECTORIES},
+            }
+
+
+    def create_clean_profile(self, radio: Mapping[str, Any]) -> dict[str, Any]:
+        """Create a new empty profile without copying another radio's data."""
+        context = self.ensure_profile(radio, migrate_legacy=False)
+        profile_dir = Path(context["profile_dir"])
+
+        empty_json_defaults = {
+            "messages.json": [],
+            "nodes.json": {},
+            "sensors.json": {},
+            "chats.json": {},
+            "deleted_dm.json": [],
+            "telemetry_history.json": [],
+        }
+        for filename, default in empty_json_defaults.items():
+            path = profile_dir / filename
+            if not path.exists() and not safe_write_json(str(path), default):
+                raise RuntimeError(f"Could not initialize profile file: {path}")
+
+        debug_path = profile_dir / "nodes_debug.log"
+        if not debug_path.exists():
+            debug_path.touch()
+
+        # waypoints.db is created lazily by WaypointStore after restart.
+        return self.get_profile(context["profile_id"])
+
+
+
+    def get_profile(self, profile_id: str) -> dict[str, Any]:
+        """Return validated profile metadata and paths for an existing profile."""
+        with self._lock:
+            profile_dir = self._profile_dir(profile_id)
+            metadata_path = profile_dir / "profile.json"
+            if not profile_dir.is_dir() or not metadata_path.is_file():
+                raise FileNotFoundError(f"Radio profile not found: {profile_id}")
+
+            metadata = safe_read_json(str(metadata_path), {})
+            if not isinstance(metadata, dict):
+                raise RuntimeError(f"Invalid radio profile metadata: {metadata_path}")
+
+            stored_id = str(metadata.get("profile_id") or profile_id).strip().lower()
+            if stored_id != str(profile_id).strip().lower():
+                raise RuntimeError("Radio profile ID does not match its directory")
+
+            return {
+                "profile_id": stored_id,
+                "profile_dir": str(profile_dir),
+                "metadata": metadata,
+                "paths": {key: self.path(stored_id, key) for key in PROFILE_FILES},
+                "directories": {key: self.directory(stored_id, key) for key in PROFILE_DIRECTORIES},
             }
 
     def _migrate_legacy(self, profile_id: str) -> dict[str, Any]:

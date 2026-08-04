@@ -16,7 +16,6 @@ let nodeCache = [];
 let deleteTargetChatId = null;
 let clearTargetChatId = null;
 let totalUnreadCount = 0;
-let showDuplicatesOnly = false;
 let currentMainTab = 'chats';
 let lastOperationalMainTab = 'chats';
 let mainTabTransitionSequence = 0;
@@ -1293,7 +1292,9 @@ let currentPhotoData = null;
 // ===== MESSAGE CACHE =====
 let messageCache = {};
 let currentLoadRequest = null;
+let currentMessageAbortController = null;
 const CACHE_TTL = 30000;
+const ACTIVE_CHAT_POLL_INTERVAL_MS = 2000;
 
 // ===== RENDER SIGNATURES =====
 let lastRenderedSignature = {};
@@ -1808,8 +1809,36 @@ async function loadChatList() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const data = await response.json();
-        chatListCache = data.chats || [];
+
+        const previousActiveChat = currentChatId
+            ? chatListCache.find(chat => chat.id === currentChatId)
+            : null;
+        const nextChatList = Array.isArray(data.chats) ? data.chats : [];
+        const nextActiveChat = currentChatId
+            ? nextChatList.find(chat => chat.id === currentChatId)
+            : null;
+
+        const previousActivitySignature = previousActiveChat
+            ? `${previousActiveChat.last_time || ''}|${previousActiveChat.last_message || ''}`
+            : '';
+        const nextActivitySignature = nextActiveChat
+            ? `${nextActiveChat.last_time || ''}|${nextActiveChat.last_message || ''}`
+            : '';
+
+        chatListCache = nextChatList;
         totalUnreadCount = data.total_unread || 0;
+
+        if (
+            currentChatId &&
+            previousActivitySignature &&
+            nextActivitySignature &&
+            previousActivitySignature !== nextActivitySignature
+        ) {
+            loadChatMessages(currentChatId, {
+                forceRefresh: true,
+                suppressErrorPlaceholder: true
+            });
+        }
 
         if (!currentChatId) {
             const chatTitle = document.getElementById('chatTitle');
@@ -2460,7 +2489,7 @@ function openChat(chatId, chatName, chatType, selectionSource = 'external') {
     if (container) {
         container.innerHTML = '<div class="loading">⏳ Loading messages...</div>';
     }
-    loadChatMessages(chatId);
+    loadChatMessages(chatId, { forceRefresh: false });
     startMessagePolling(chatId);
 
     // Если это DM, обновить детали ноды
@@ -2951,66 +2980,126 @@ function invalidateCache(chatId) {
     }
 }
 
-async function loadChatMessages(chatId) {
+async function loadChatMessages(chatId, options = {}) {
     if (!chatId) return;
+
+    const {
+        forceRefresh = false,
+        suppressErrorPlaceholder = false
+    } = options;
 
     const container = document.getElementById('messagesContainer');
     if (!container) return;
-    
-    if (currentLoadRequest) {
-        currentLoadRequest = null;
+
+    /*
+     * Cache is used only for an immediate first paint.
+     * Even when the cached copy is fresh, continue with a network request so
+     * an open conversation can never remain stale for CACHE_TTL milliseconds.
+     */
+    const cached = messageCache[chatId];
+    const cacheIsFresh = Boolean(
+        cached && (Date.now() - cached.timestamp) < CACHE_TTL
+    );
+
+    if (!forceRefresh && cacheIsFresh && currentChatId === chatId) {
+        console.log(
+            `[CACHE] Rendering cached messages for: ${chatId} ` +
+            `(${cached.messages.length} messages), then revalidating`
+        );
+        renderMessages(container, cached.messages, chatId);
     }
-    
-    const requestId = Date.now() + '_' + chatId;
+
+    // Cancel the previous message request instead of merely forgetting its ID.
+    if (currentMessageAbortController) {
+        currentMessageAbortController.abort();
+    }
+
+    const controller = new AbortController();
+    currentMessageAbortController = controller;
+
+    const requestId = `${Date.now()}_${chatId}_${Math.random().toString(16).slice(2)}`;
     currentLoadRequest = requestId;
-    
-    if (messageCache[chatId]) {
-        const cached = messageCache[chatId];
-        const isFresh = (Date.now() - cached.timestamp) < CACHE_TTL;
-        
-        if (isFresh && currentChatId === chatId) {
-            console.log(`[CACHE] Using cached messages for: ${chatId} (${cached.messages.length} messages)`);
-            renderMessages(container, cached.messages, chatId);
-            currentLoadRequest = null;
-            return;
-        }
-    }
+
+    const timeoutId = window.setTimeout(() => controller.abort(), 12000);
 
     try {
-        const response = await fetch(`/api/messages?chat_id=${encodeURIComponent(chatId)}`);
+        const response = await fetch(
+            `/api/messages?chat_id=${encodeURIComponent(chatId)}&_=${Date.now()}`,
+            {
+                signal: controller.signal,
+                cache: 'no-store',
+                headers: {
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache'
+                }
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
         const data = await response.json();
 
-        if (currentChatId !== chatId || currentLoadRequest !== requestId) {
-            console.log(`[DEBUG] Chat changed or request cancelled: ${chatId} → ${currentChatId}`);
-            currentLoadRequest = null;
+        if (
+            currentChatId !== chatId ||
+            currentLoadRequest !== requestId ||
+            controller.signal.aborted
+        ) {
             return;
         }
 
-        const messages = data.messages || [];
-        
+        const messages = Array.isArray(data.messages) ? data.messages : [];
+
         messageCache[chatId] = {
-            messages: messages,
+            messages,
             timestamp: Date.now()
         };
-        
+
         const keys = Object.keys(messageCache);
         if (keys.length > 20) {
-            const sortedKeys = keys.sort((a, b) => {
-                return (messageCache[a].timestamp || 0) - (messageCache[b].timestamp || 0);
-            });
-            delete messageCache[sortedKeys[0]];
-            console.log(`[CACHE] Removed oldest entry: ${sortedKeys[0]}`);
+            const oldestKey = keys.sort((a, b) => {
+                return (messageCache[a].timestamp || 0) -
+                       (messageCache[b].timestamp || 0);
+            })[0];
+
+            delete messageCache[oldestKey];
+            console.log(`[CACHE] Removed oldest entry: ${oldestKey}`);
         }
 
         renderMessages(container, messages, chatId);
-        currentLoadRequest = null;
 
     } catch (error) {
-        console.error('Error loading messages:', error);
-        if (currentChatId === chatId && currentLoadRequest === requestId) {
-            container.innerHTML = '<div class="loading">⚠️ Error loading messages</div>';
+        if (error && error.name === 'AbortError') {
+            return;
         }
-        currentLoadRequest = null;
+
+        console.error('Error loading messages:', error);
+
+        /*
+         * Do not replace already rendered messages with an error during a
+         * temporary polling failure. Show the placeholder only when there is
+         * no usable cached content.
+         */
+        if (
+            !suppressErrorPlaceholder &&
+            currentChatId === chatId &&
+            currentLoadRequest === requestId &&
+            !messageCache[chatId]
+        ) {
+            container.innerHTML =
+                '<div class="loading">⚠️ Error loading messages</div>';
+        }
+    } finally {
+        window.clearTimeout(timeoutId);
+
+        if (currentLoadRequest === requestId) {
+            currentLoadRequest = null;
+        }
+
+        if (currentMessageAbortController === controller) {
+            currentMessageAbortController = null;
+        }
     }
 }
 
@@ -3018,19 +3107,40 @@ let messagePollingInterval = null;
 
 function startMessagePolling(chatId) {
     stopMessagePolling();
-    messagePollingInterval = setInterval(() => {
-        if (currentChatId === chatId) {
-            loadChatMessages(chatId);
+
+    messagePollingInterval = window.setInterval(() => {
+        if (currentChatId === chatId && !document.hidden) {
+            loadChatMessages(chatId, {
+                forceRefresh: true,
+                suppressErrorPlaceholder: true
+            });
         }
-    }, 5000);
+    }, ACTIVE_CHAT_POLL_INTERVAL_MS);
 }
 
 function stopMessagePolling() {
     if (messagePollingInterval) {
-        clearInterval(messagePollingInterval);
+        window.clearInterval(messagePollingInterval);
         messagePollingInterval = null;
     }
+
+    if (currentMessageAbortController) {
+        currentMessageAbortController.abort();
+        currentMessageAbortController = null;
+    }
+
+    currentLoadRequest = null;
 }
+
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && currentChatId) {
+        loadChatMessages(currentChatId, {
+            forceRefresh: true,
+            suppressErrorPlaceholder: true
+        });
+    }
+});
 
 // ============================================================
 // SEND FORM
@@ -3661,14 +3771,19 @@ function renderWaypointToolsList() {
     updateWaypointBulkControls();
 }
 
+function waypointToolsListUrl() {
+    // Archive controls only expired records. Map visibility is independent:
+    // hidden active waypoints must remain available in the Tools list.
+    return waypointToolsShowExpired
+        ? '/api/waypoints?include_expired=1&include_hidden=1'
+        : '/api/waypoints?include_hidden=1';
+}
+
 async function refreshWaypointToolsList(force = false) {
     if (waypointToolsRefreshInFlight && !force) return;
     waypointToolsRefreshInFlight = true;
     try {
-        const url = waypointToolsShowExpired
-            ? '/api/waypoints?include_expired=1&include_hidden=1'
-            : '/api/waypoints';
-        const response = await fetch(url, { cache:'no-store' });
+        const response = await fetch(waypointToolsListUrl(), { cache:'no-store' });
         const payload = await response.json();
         if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Could not load waypoints');
         waypointToolsItems = Array.isArray(payload.waypoints) ? payload.waypoints : [];
@@ -4805,7 +4920,7 @@ function renderOverviewPane(node) {
     const rssi = node.rssi ?? '--';
     const snr = node.snr ?? '--';
     const hops = node.hop_start ?? node.hops_away ?? '?';
-    const battery = node.battery_level ?? '--';
+    const battery = formatBatteryPercent(node.battery_level);
     const voltage = node.voltage ?? '--';
     const lastText = node.last_text || '';
     const hasPosition = Number.isFinite(node.position?.latitude) && Number.isFinite(node.position?.longitude);
@@ -5831,7 +5946,7 @@ async function runNodeTool(action, nodeId, nodeName, button) {
                             Response received through the MeshCenter listener
                         </div>
                         <div class="telemetry-request-note">
-                            Battery: ${device.battery_level ?? '--'}% ·
+                            Battery: ${formatBatteryPercent(device.battery_level)}% ·
                             Voltage: ${device.voltage ?? '--'} V ·
                             Updated: ${refreshedNode.last_telemetry_time_text || 'just now'}
                         </div>
@@ -6239,7 +6354,7 @@ async function loadSensors() {
 
 async function loadBaseStatus() {
     try {
-        const response = await fetch('/api/base_status');
+        const response = await fetch('/api/base_status', { cache: 'no-store' });
         const data = await response.json();
 
         const nameEl = document.getElementById('baseNodeName');
@@ -6942,26 +7057,10 @@ async function loadNodesManagement() {
             return;
         }
         
-        const nameMap = {};
-        const duplicates = new Set();
-        data.nodes.forEach(n => {
-            if (nameMap[n.name]) {
-                duplicates.add(n.name);
-            } else {
-                nameMap[n.name] = true;
-            }
-        });
-        
-        let filteredNodes = data.nodes;
-        if (showDuplicatesOnly) {
-            filteredNodes = data.nodes.filter(n => duplicates.has(n.name));
-        }
-        
-        container.innerHTML = filteredNodes.map(node => {
-            const isDuplicate = duplicates.has(node.name);
-            const statusClass = node.ignored ? 'ignored' : (isDuplicate ? 'duplicate' : 'normal');
-            const statusText = node.ignored ? '🚫 Ignored' : (isDuplicate ? '⚠️ Duplicate' : '✅ Normal');
-            
+        container.innerHTML = data.nodes.map(node => {
+            const statusClass = node.ignored ? 'ignored' : 'normal';
+            const statusText = node.ignored ? '🚫 Ignored' : '✅ Normal';
+
             return `
                 <div class="nodes-management-item">
                     <div class="name-wrapper">
@@ -7134,76 +7233,6 @@ async function importNodesJSON(event) {
     };
     reader.readAsText(file);
     event.target.value = '';
-}
-
-async function mergeDuplicates() {
-    if (!confirm('⚠️ Merge duplicate nodes?\n\nThis will merge nodes with the same name, keeping the most recent one.\n\nThis action cannot be undone!')) {
-        return;
-    }
-    
-    try {
-        const response = await fetch('/api/nodes_merge_duplicates', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        
-        const data = await response.json();
-        
-        if (data.ok) {
-            showToast(`✅ Merged ${data.merged_count} duplicates`, 'success');
-            loadMessages();
-            loadNodesManagement();
-        } else {
-            showToast('❌ Error: ' + (data.error || 'Unknown error'), 'error');
-        }
-    } catch (error) {
-        console.error('Merge duplicates error:', error);
-        showToast('❌ Network error', 'error');
-    }
-}
-
-function toggleShowDuplicates() {
-    showDuplicatesOnly = !showDuplicatesOnly;
-    const btn = document.querySelector('.nodes-tool-btn.show');
-    if (btn) {
-        btn.style.background = showDuplicatesOnly ? '#d0c0e0' : '';
-        btn.textContent = showDuplicatesOnly ? '📋 Hide Duplicates' : '📋 Show Duplicates';
-    }
-    loadNodesManagement();
-}
-
-async function cleanupAllNodes() {
-    if (!confirm('⚠️ Delete ALL nodes?\n\nThis will delete all nodes and their chats.\nThe LongFast channel will remain.\n\nThis action cannot be undone!')) {
-        return;
-    }
-    
-    if (!confirm('Are you sure? All nodes and DM chats will be permanently deleted!')) {
-        return;
-    }
-    
-    try {
-        const response = await fetch('/api/cleanup_all_nodes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        
-        const data = await response.json();
-        
-        if (data.ok) {
-            showToast(`✅ Deleted ${data.deleted_count} nodes`, 'success');
-            loadMessages();
-            loadChatList();
-            loadNodesManagement();
-            if (currentChatType === 'dm') {
-                showChatList();
-            }
-        } else {
-            showToast('❌ Error: ' + (data.error || 'Unknown error'), 'error');
-        }
-    } catch (error) {
-        console.error('Cleanup all nodes error:', error);
-        showToast('❌ Network error', 'error');
-    }
 }
 
 function escapeCsv(value) {
@@ -9770,15 +9799,15 @@ async function loadNodeManagerDashboard(showFeedback = false) {
             return `
                 <button type="button" class="node-profile-card ${active ? 'is-active' : ''}"
                         data-profile-id="${deviceDashboardValue(item.profile_id)}"
-                        ${active ? 'aria-current="true"' : 'disabled'}>
+                        ${active ? 'aria-current="true" disabled' : `onclick="activateNodeManagerProfile('${String(item.profile_id || '').replace(/'/g, "\\'")}')"`}>
                     <span class="node-profile-icon">📻</span>
                     <span class="node-profile-main">
                         <strong>${deviceDashboardValue(itemRadio.long_name, item.profile_id || 'Radio profile')}</strong>
                         <small>${deviceDashboardValue(itemRadio.hardware)} · ${deviceDashboardValue(itemRadio.node_id)}</small>
                     </span>
                     <span class="node-profile-badges">
-                        ${active ? '<span class="node-profile-badge active">Active</span>' : ''}
-                        <span class="node-profile-badge ${connected ? 'connected' : 'offline'}">${connected ? 'Connected' : 'Offline'}</span>
+                        ${active ? '<span class="node-profile-badge active">Active</span>' : '<span class="node-profile-badge saved">Saved</span>'}
+                        ${active ? `<span class="node-profile-badge ${connected ? 'connected' : 'offline'}">${connected ? 'Connected' : 'Offline'}</span>` : ''}
                         <span class="node-profile-badge identity">${deviceDashboardValue(identity)}</span>
                     </span>
                 </button>`;
@@ -9792,7 +9821,14 @@ async function loadNodeManagerDashboard(showFeedback = false) {
                         <h3>Radios and profiles</h3>
                         <p>Select the radio profile to inspect or activate.</p>
                     </div>
-                    <span class="node-manager-profile-count">${profiles.length}</span>
+                    <div class="node-manager-profile-heading-actions">
+                        <span class="node-manager-profile-count">${profiles.length}</span>
+                        <button type="button"
+                            class="node-manager-detect-radio-btn"
+                            onclick="detectAndAddNodeManagerRadio()">
+                            Detect radio
+                        </button>
+                    </div>
                 </div>
                 <div class="node-profile-list">${profileCards}</div>
             </section>
@@ -9883,6 +9919,187 @@ async function loadNodeManagerDashboard(showFeedback = false) {
         console.error('[NODE MANAGER] Dashboard load failed:', error);
         container.innerHTML = `<div class="device-dashboard-error"><strong>Unable to load node information</strong><span>${escapeHtml(error.message || String(error))}</span><button type="button" class="mc-refresh-btn" onclick="loadNodeManagerDashboard(true)">Try again</button></div>`;
         if (showFeedback) showToast('Node information could not be loaded', 'error');
+    }
+}
+
+
+
+async function waitForNodeManagerProfile(profileId, timeoutMs = 60000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        try {
+            const response = await fetch('/api/node-manager/dashboard', {
+                cache: 'no-store'
+            });
+            if (!response.ok) continue;
+            const dashboard = await response.json();
+            if (
+                dashboard.ok &&
+                String(dashboard.profile?.profile_id || '') === String(profileId)
+            ) {
+                window.location.reload();
+                return;
+            }
+        } catch (_) {
+            // The service is expected to be unavailable briefly during restart.
+        }
+    }
+    window.location.reload();
+}
+
+
+async function detectAndAddNodeManagerRadio() {
+    const confirmed = window.confirm(
+        'Detect the currently connected Meshtastic radio?\n\n' +
+        'MeshCenter will stop the listener and release the USB connection. ' +
+        'Connect the replacement radio before continuing.\n\n' +
+        'No existing profile data will be deleted or merged.'
+    );
+    if (!confirmed) return;
+
+    showToast('Releasing listener and scanning serial ports...', 'info');
+
+    try {
+        const response = await fetch('/api/node-manager/radio/detect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store'
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || !data.ok) {
+            const attempts = Array.isArray(data.attempts)
+                ? data.attempts.map(item =>
+                    `${item.port}: ${item.error || item.status || 'no response'}`
+                ).join('\n')
+                : '';
+            throw new Error(
+                (data.error || `Radio detection failed (HTTP ${response.status})`) +
+                (attempts ? `\n\nProbe results:\n${attempts}` : '')
+            );
+        }
+
+        const radio = data.detected || {};
+        const label = radio.long_name || radio.node_id || 'Meshtastic radio';
+        const details = [
+            radio.short_name,
+            radio.hardware,
+            radio.node_id,
+            radio.port
+        ].filter(Boolean).join(' · ');
+
+        const action = data.profile_exists
+            ? 'use its saved profile'
+            : 'create a new clean profile';
+
+        const accept = window.confirm(
+            `${data.profile_exists ? 'Known' : 'New'} radio detected:\n\n` +
+            `${label}\n${details}\n\n` +
+            `Do you want to ${action} and restart MeshCenter?`
+        );
+        if (!accept) {
+            showToast('Radio detected. Listener remains released.', 'info');
+            await loadNodeManagerDashboard();
+            return;
+        }
+
+        showToast(
+            data.profile_exists
+                ? `Selecting profile for ${label}...`
+                : `Creating a clean profile for ${label}...`,
+            'info'
+        );
+
+        const acceptResponse = await fetch('/api/node-manager/radio/accept', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store',
+            body: JSON.stringify({
+                node_id: radio.node_id,
+                port: radio.port
+            })
+        });
+        const accepted = await acceptResponse.json().catch(() => ({}));
+        if (!acceptResponse.ok || !accepted.ok) {
+            throw new Error(
+                accepted.error ||
+                `Radio profile creation failed (HTTP ${acceptResponse.status})`
+            );
+        }
+
+        showToast(
+            accepted.message || 'Radio accepted. MeshCenter is restarting...',
+            'success'
+        );
+        waitForNodeManagerProfile(accepted.profile_id);
+    } catch (error) {
+        console.error('[NODE MANAGER] Radio detection failed:', error);
+        window.alert(error.message || String(error));
+        showToast('Radio was not added', 'error');
+        await loadNodeManagerDashboard();
+    }
+}
+
+async function activateNodeManagerProfile(profileId) {
+    const cleanProfileId = String(profileId || '').trim();
+    if (!cleanProfileId) return;
+
+    const card = document.querySelector(
+        `.node-profile-card[data-profile-id="${CSS.escape(cleanProfileId)}"]`
+    );
+    const radioName = card?.querySelector('.node-profile-main strong')?.textContent?.trim()
+        || cleanProfileId;
+
+    const confirmed = window.confirm(
+        `Switch MeshCenter to "${radioName}"?\n\n` +
+        `Connect that Meshtastic radio to the configured USB port. ` +
+        `MeshCenter will release the current radio, verify the connected node, ` +
+        `activate its saved profile and restart the service.\n\n` +
+        `No profile data will be deleted or merged.`
+    );
+    if (!confirmed) return;
+
+    document.querySelectorAll('.node-profile-card').forEach(button => {
+        button.disabled = true;
+    });
+    card?.classList.add('is-switching');
+    showToast(`Checking connected radio for ${radioName}...`, 'info');
+
+    try {
+        const response = await fetch(
+            `/api/node-manager/profiles/${encodeURIComponent(cleanProfileId)}/activate`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                cache: 'no-store'
+            }
+        );
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || `Profile activation failed (HTTP ${response.status})`);
+        }
+
+        if (data.already_active) {
+            showToast(data.message || 'This profile is already active', 'info');
+            await loadNodeManagerDashboard();
+            return;
+        }
+
+        showToast(data.message || 'Profile activated. MeshCenter is restarting...', 'success');
+
+        waitForNodeManagerProfile(cleanProfileId, 60000);
+    } catch (error) {
+        console.error('[NODE MANAGER] Profile activation failed:', error);
+        window.alert(error.message || String(error));
+        showToast('Radio profile was not changed', 'error');
+        await loadNodeManagerDashboard();
+    } finally {
+        card?.classList.remove('is-switching');
+        document.querySelectorAll('.node-profile-card').forEach(button => {
+            if (!button.classList.contains('is-active')) button.disabled = false;
+        });
     }
 }
 
@@ -11553,9 +11770,6 @@ window.selectNode = selectNode;
 window.clearNodeSearch = clearNodeSearch;
 window.rescanNodes = rescanNodes;
 window.restartListener = restartListener;
-window.mergeDuplicates = mergeDuplicates;
-window.cleanupAllNodes = cleanupAllNodes;
-window.toggleShowDuplicates = toggleShowDuplicates;
 window.showExportOptions = showExportOptions;
 window.showImportOptions = showImportOptions;
 window.closeFormatMenus = closeFormatMenus;
@@ -11678,9 +11892,6 @@ window.selectNode = selectNode;
 window.clearNodeSearch = clearNodeSearch;
 window.rescanNodes = rescanNodes;
 window.restartListener = restartListener;
-window.mergeDuplicates = mergeDuplicates;
-window.cleanupAllNodes = cleanupAllNodes;
-window.toggleShowDuplicates = toggleShowDuplicates;
 window.showExportOptions = showExportOptions;
 window.showImportOptions = showImportOptions;
 window.closeFormatMenus = closeFormatMenus;

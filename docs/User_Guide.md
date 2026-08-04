@@ -355,6 +355,31 @@ Check the following items in order:
 
 If the interface still shows an older version after an update, use `Ctrl+F5` in the browser.
 
+## ⚠ IMPORTANT: Enable Serial access on the Meshtastic radio
+
+Before connecting a Meshtastic radio to MeshCenter, make sure that
+**Serial access is enabled in the Meshtastic settings**.
+
+Open the Meshtastic app and enable:
+
+Settings → Security → Serial enabled
+
+Depending on the app or firmware version, the option may also appear under:
+
+Settings → Device → Serial enabled
+
+Do not confuse this option with the Serial module.
+
+If Serial access is disabled, Linux may still detect the USB device and create
+`/dev/ttyACM0`, but MeshCenter and the Meshtastic CLI will not be able to read
+the radio identity. Typical symptoms are:
+
+- `Connection timed out`
+- `No Meshtastic radio identity could be read`
+- `Unable to detect radio`
+
+This is the most common cause of USB detection failure.
+
 ## 5. Interface overview
 
 MeshCenter uses four main areas:

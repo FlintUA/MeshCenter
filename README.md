@@ -255,6 +255,28 @@ Special attention has been paid to:
 
 ### 🧪 Tested Hardware Setup
 
+# IMPORTANT
+
+## Enable Serial Interface on your Meshtastic device
+
+MeshCenter communicates with the radio over the USB serial interface.
+
+Before connecting your Meshtastic node to Raspberry Pi, make sure the serial interface is enabled in the official Meshtastic application.
+
+Without the USB serial interface MeshCenter will not be able to detect or communicate with the radio.
+
+Official Meshtastic App:
+
+Settings → Serial → Enabled
+
+Tested with:
+
+RAK4631
+RAK WisMesh TAP v2 (RAK3312)
+LilyGO T-Echo Plus
+
+The USB serial interface must be enabled.
+
 MeshCenter is primarily developed and tested on a Raspberry Pi Zero 2 W connected by USB to a standard Meshtastic radio node. The radio uses standard Meshtastic firmware and does not require hardware modification or its own Wi-Fi connection.
 
 The current reference setup includes:

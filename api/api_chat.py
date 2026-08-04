@@ -22,6 +22,7 @@ def register_chat_routes(
     CHANNEL_CHAT_ID,
     CHANNEL_CHAT_NAME,
     MESHTASTIC_CMD,
+    get_meshtastic_port,
     LOCAL_NODE_ID,
     LOCAL_NODE_NAME,
     pause_listen,
@@ -38,6 +39,12 @@ def register_chat_routes(
     radio_event,
     is_radio_available,
 ):
+    def active_serial_port():
+        port = str(get_meshtastic_port() or "").strip()
+        if not port:
+            raise RuntimeError("Active Meshtastic serial port is not configured")
+        return port
+
     CHANNEL_CACHE_TTL_SECONDS = 300
     channel_cache = {"timestamp": 0.0, "channels": []}
     channel_cache_lock = threading.Lock()
@@ -94,12 +101,12 @@ def register_chat_routes(
             }]
 
         try:
-            if not prepare_radio_command("/dev/ttyACM0", timeout=10):
+            if not prepare_radio_command(active_serial_port(), timeout=10):
                 raise RuntimeError("serial port busy")
 
             from meshtastic.serial_interface import SerialInterface
             with radio_lock:
-                interface = SerialInterface(devPath="/dev/ttyACM0")
+                interface = SerialInterface(devPath=active_serial_port())
                 raw_channels = getattr(getattr(interface, "localNode", None), "channels", None) or []
 
                 for fallback_index, channel in enumerate(raw_channels):
@@ -378,10 +385,10 @@ def register_chat_routes(
                 flush=True
             )
 
-            if not prepare_radio_command("/dev/ttyACM0", timeout=10):
+            if not prepare_radio_command(active_serial_port(), timeout=10):
                 return jsonify({
                     "ok": False,
-                    "error": "serial port busy: /dev/ttyACM0"
+                    "error": f"serial port busy: {active_serial_port()}"
                 }), 500
 
             sent_packet = None
@@ -392,7 +399,7 @@ def register_chat_routes(
                 from meshtastic.serial_interface import SerialInterface
 
                 with radio_lock:
-                    interface = SerialInterface(devPath="/dev/ttyACM0")
+                    interface = SerialInterface(devPath=active_serial_port())
                     destination = final_chat_id if chat_type == "dm" else "^all"
 
                     sent_packet = interface.sendText(

@@ -1461,30 +1461,6 @@ body {
 .modal-action-btn:not(.danger) { background: #e8e8e8; color: #555; }
 .modal-action-btn:not(.danger):hover { background: #d5d5d5; }
 
-/* ===== TOAST ===== */
-.toast {
-    position: fixed;
-    bottom: 80px;
-    left: 50%;
-    transform: translateX(-50%) translateY(100px);
-    padding: 12px 24px;
-    border-radius: 12px;
-    font-size: 14px;
-    font-weight: 500;
-    color: white;
-    z-index: 9999;
-    opacity: 0;
-    transition: all 0.3s ease;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-    max-width: 90%;
-    text-align: center;
-}
-
-.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-.toast.success { background: #2e7d32; }
-.toast.error { background: #c62828; }
-.toast.info { background: #1a73e8; }
-
 /* ===== ANIMATIONS ===== */
 @keyframes dots {
     0% { content: ''; }
@@ -13616,5 +13592,622 @@ body[data-theme="dark"] .node-manager-detect-radio-btn:hover {
     .node-manager-profile-heading-actions {
         flex-direction: column;
         align-items: flex-end;
+    }
+}
+
+
+/* Waypoint optimistic send status */
+.waypoint-action-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 56px;
+    z-index: 10050;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: min(420px, calc(100vw - 28px));
+    max-width: min(620px, calc(100vw - 28px));
+    padding: 12px 14px;
+    border: 1px solid var(--theme-border, #cbd8e6);
+    border-radius: 12px;
+    background: var(--theme-elevated-bg, #ffffff);
+    color: var(--theme-text, #14243a);
+    box-shadow: 0 14px 38px rgba(10, 25, 45, .24);
+    opacity: 0;
+    transform: translate(-50%, 16px);
+    transition: opacity .18s ease, transform .18s ease;
+}
+
+.waypoint-action-toast.show {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+.waypoint-action-toast.sending {
+    border-color: var(--theme-focus, #4f8cff);
+}
+
+.waypoint-action-toast.success {
+    border-color: #2a9a60;
+}
+
+.waypoint-action-toast.error {
+    border-color: #d34f5d;
+}
+
+.waypoint-action-toast-icon {
+    flex: 0 0 auto;
+    font-size: 16px;
+    font-weight: 800;
+}
+
+.waypoint-action-toast-copy {
+    min-width: 0;
+    flex: 1 1 auto;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.waypoint-action-toast-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 7px;
+}
+
+.waypoint-action-toast button {
+    min-height: 34px;
+    padding: 6px 12px;
+    border: 1px solid var(--theme-border, #cbd8e6);
+    border-radius: 8px;
+    background: var(--theme-card-bg, #f6f9fc);
+    color: var(--theme-text, #14243a);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.waypoint-action-toast button.retry {
+    border-color: var(--theme-focus, #4f8cff);
+    background: var(--theme-focus, #2b72dc);
+    color: #fff;
+}
+
+[data-theme="dark"] .waypoint-action-toast,
+body[data-theme="dark"] .waypoint-action-toast {
+    background: var(--theme-elevated-bg) !important;
+    border-color: var(--theme-border) !important;
+    color: var(--theme-text) !important;
+}
+
+[data-theme="dark"] .waypoint-action-toast.error,
+body[data-theme="dark"] .waypoint-action-toast.error {
+    border-color: #e05d68 !important;
+}
+
+@media (max-width: 600px) {
+    .waypoint-action-toast {
+        bottom: 18px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .waypoint-action-toast-actions {
+        width: 100%;
+        justify-content: flex-end;
+        padding-left: 26px;
+    }
+
+    .waypoint-action-toast button {
+        min-height: 42px;
+    }
+}
+
+
+/* ============================================================
+   NOTIFICATION CENTER IN STATUS DOCK
+   ============================================================ */
+.dock-center.dock-notification-wrap {
+    position: relative;
+    min-width: 0;
+    overflow: visible;
+}
+
+.dock-notification-status {
+    width: min(520px, 42vw);
+    min-width: 170px;
+    height: 28px;
+    display: grid;
+    grid-template-columns: 12px minmax(0, 1fr) 18px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 8px 0 10px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-weight: 650;
+    cursor: pointer;
+    transition: background .16s ease, border-color .16s ease;
+}
+
+.dock-notification-status:hover,
+.dock-notification-status[aria-expanded="true"] {
+    background: var(--mc-surface-alt, #edf2f7);
+    border-color: var(--mc-border, #d7e0e9);
+}
+
+.dock-notification-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+}
+
+.dock-notification-chevron {
+    color: var(--mc-muted, #77869a);
+    font-size: 10px;
+    transition: transform .16s ease;
+}
+
+.dock-notification-status[aria-expanded="true"] .dock-notification-chevron {
+    transform: rotate(180deg);
+}
+
+.dock-notification-state {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+}
+
+.dock-state-online,
+.dock-state-success {
+    background: #22c55e;
+    box-shadow: 0 0 7px rgba(34, 197, 94, .55);
+}
+
+.dock-state-info {
+    background: #3b82f6;
+    box-shadow: 0 0 7px rgba(59, 130, 246, .48);
+}
+
+.dock-state-progress {
+    border: 2px solid rgba(59, 130, 246, .28);
+    border-top-color: #3b82f6;
+    background: transparent;
+    animation: dock-notification-spin .8s linear infinite;
+}
+
+.dock-state-warning {
+    background: #f59e0b;
+    box-shadow: 0 0 7px rgba(245, 158, 11, .45);
+}
+
+.dock-state-error {
+    background: #ef4444;
+    box-shadow: 0 0 7px rgba(239, 68, 68, .48);
+}
+
+@keyframes dock-notification-spin {
+    to { transform: rotate(360deg); }
+}
+
+.notification-popover-center {
+    left: 50%;
+    bottom: 34px;
+    transform: translateX(-50%);
+    width: min(420px, calc(100vw - 24px));
+}
+
+.notification-item {
+    display: flex;
+    align-items: stretch;
+    gap: 5px;
+    padding: 4px;
+}
+
+.notification-item-main {
+    min-width: 0;
+    flex: 1 1 auto;
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    padding: 6px 5px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.notification-item-main:hover {
+    background: var(--mc-surface-alt, #f4f7fa);
+}
+
+.notification-item-action {
+    align-self: center;
+    min-height: 28px;
+    padding: 4px 9px;
+    border: 1px solid var(--mc-border, #d8e0e8);
+    border-radius: 7px;
+    background: var(--mc-surface-alt, #eef3f8);
+    color: var(--mc-accent, #1769d2);
+    font-size: 10px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+[data-theme="dark"] .dock-notification-status:hover,
+[data-theme="dark"] .dock-notification-status[aria-expanded="true"] {
+    background: #1d3043;
+    border-color: #385069;
+}
+
+[data-theme="dark"] .notification-item-main:hover {
+    background: #203449;
+}
+
+[data-theme="dark"] .notification-item-action {
+    background: #20364b;
+    border-color: #3b5670;
+    color: #9bc7ff;
+}
+
+/* ============================================================
+   MESSAGE ACTIONS AND LEGACY MODALS - UNIFIED THEMES
+   ============================================================ */
+[data-theme="dark"] .message-actions-menu {
+    background: rgba(23, 38, 56, .99);
+    border-color: #3a526a;
+    box-shadow: 0 18px 42px rgba(0, 0, 0, .48);
+}
+
+[data-theme="dark"] .message-action-item {
+    color: #d9e7f5;
+}
+
+[data-theme="dark"] .message-action-item:hover,
+[data-theme="dark"] .message-action-item:focus-visible {
+    background: #243c54;
+    color: #ffffff;
+}
+
+[data-theme="dark"] .message-action-item.danger {
+    color: #ff9da4;
+}
+
+[data-theme="dark"] .message-action-item.danger:hover,
+[data-theme="dark"] .message-action-item.danger:focus-visible {
+    background: rgba(190, 54, 66, .18);
+    color: #ffbbc0;
+}
+
+[data-theme="dark"] .message-action-divider {
+    background: #344b61;
+}
+
+[data-theme="dark"] .modal-overlay {
+    background: rgba(3, 10, 18, .72);
+    backdrop-filter: blur(3px);
+}
+
+[data-theme="dark"] .modal-content {
+    background: #1b2d40;
+    border: 1px solid #3a526a;
+    color: #d9e7f5;
+    box-shadow: 0 22px 55px rgba(0, 0, 0, .52);
+}
+
+[data-theme="dark"] .modal-header {
+    border-bottom-color: #344b61;
+}
+
+[data-theme="dark"] .modal-header span {
+    color: #f4f8fc;
+}
+
+[data-theme="dark"] .modal-close {
+    color: #a9bed1;
+}
+
+[data-theme="dark"] .modal-close:hover {
+    color: #ffffff;
+}
+
+[data-theme="dark"] .confirm-text {
+    color: #c6d7e8;
+}
+
+[data-theme="dark"] .message-delete-note,
+[data-theme="dark"] .message-info-label {
+    color: #9eb3c8;
+}
+
+[data-theme="dark"] .message-info-content {
+    border-color: #385068;
+}
+
+[data-theme="dark"] .message-info-row {
+    border-bottom-color: #31485e;
+}
+
+[data-theme="dark"] .message-info-value {
+    color: #e5eff8;
+}
+
+[data-theme="dark"] .message-info-text {
+    background: #132334;
+    border-color: #385068;
+    color: #e5eff8;
+}
+
+[data-theme="dark"] .confirm-cancel,
+[data-theme="dark"] .modal-action-btn:not(.danger) {
+    background: #263b50;
+    color: #dbe8f5;
+    border: 1px solid #415a72;
+}
+
+[data-theme="dark"] .confirm-cancel:hover,
+[data-theme="dark"] .modal-action-btn:not(.danger):hover {
+    background: #304a62;
+}
+
+[data-theme="dark"] .confirm-danger,
+[data-theme="dark"] .modal-action-btn.danger {
+    background: #813842;
+    color: #fff2f3;
+    border: 1px solid #ad5360;
+}
+
+[data-theme="dark"] .confirm-danger:hover,
+[data-theme="dark"] .modal-action-btn.danger:hover {
+    background: #99434e;
+}
+
+@media (max-width: 720px) {
+    .dock-notification-status {
+        width: min(48vw, 360px);
+        min-width: 120px;
+        padding-inline: 7px;
+        grid-template-columns: 10px minmax(0, 1fr) 15px;
+        gap: 5px;
+        font-size: 10px;
+    }
+
+    .notification-popover-center {
+        position: fixed;
+        left: 8px;
+        right: 8px;
+        bottom: 40px;
+        width: auto;
+        max-height: min(56vh, 430px);
+        transform: none;
+        border-radius: 15px;
+    }
+
+    .notification-list {
+        max-height: calc(min(56vh, 430px) - 60px);
+    }
+}
+
+
+.dock-center.dock-notification-wrap {
+    display: flex;
+    justify-content: center;
+    gap: 5px;
+}
+
+.dock-notification-inline-action,
+.dock-notification-inline-dismiss {
+    height: 24px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 750;
+    cursor: pointer;
+}
+
+.dock-notification-inline-action {
+    padding: 0 9px;
+    border: 1px solid #8bb7eb;
+    background: #e7f1fd;
+    color: #155fae;
+}
+
+.dock-notification-inline-dismiss {
+    width: 24px;
+    padding: 0;
+    border: 1px solid var(--mc-border, #d7e0e9);
+    background: var(--mc-surface-alt, #eef3f8);
+    color: var(--mc-muted, #68788b);
+    font-size: 15px;
+}
+
+.dock-notification-inline-action:hover {
+    background: #d5e9fc;
+}
+
+.dock-notification-inline-dismiss:hover {
+    color: #b42318;
+    background: #fff0ef;
+    border-color: #efb6b1;
+}
+
+[data-theme="dark"] .dock-notification-inline-action {
+    border-color: #4d7fb5;
+    background: #214469;
+    color: #c9e3ff;
+}
+
+[data-theme="dark"] .dock-notification-inline-action:hover {
+    background: #2a5684;
+}
+
+[data-theme="dark"] .dock-notification-inline-dismiss {
+    border-color: #3b526a;
+    background: #1f3347;
+    color: #afc2d5;
+}
+
+[data-theme="dark"] .dock-notification-inline-dismiss:hover {
+    background: rgba(190, 54, 66, .18);
+    border-color: #8d4650;
+    color: #ffb4ba;
+}
+
+@media (max-width: 720px) {
+    .dock-notification-inline-action {
+        max-width: 72px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+}
+
+/* ============================================================
+   MAP LABELS
+   Progressive node names and navigation-friendly waypoint names.
+   Node colours exactly match .node-activity-square in node cards.
+   ============================================================ */
+
+.meshcenter-map-node-label.leaflet-tooltip,
+.meshcenter-map-waypoint-label.leaflet-tooltip {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0 !important;
+    transform: translateX(-3px);
+    transition:
+        opacity .20s ease,
+        transform .20s ease;
+}
+
+.meshcenter-map-node-label.leaflet-tooltip::before,
+.meshcenter-map-waypoint-label.leaflet-tooltip::before {
+    display: none;
+}
+
+/* Node names - compact, unadorned and readable over map tiles. */
+.meshcenter-map-node-label.leaflet-tooltip {
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: .01em;
+    text-shadow:
+        -1px -1px 0 rgba(255, 255, 255, .92),
+         1px -1px 0 rgba(255, 255, 255, .92),
+        -1px  1px 0 rgba(255, 255, 255, .92),
+         1px  1px 0 rgba(255, 255, 255, .92),
+         0 1px 3px rgba(255, 255, 255, .95);
+}
+
+/*
+ * Exact status colours from the node cards:
+ * .node-activity-square.activity-online  #58b76c
+ * .node-activity-square.activity-away    #e8b437
+ * .node-activity-square.activity-offline #df5b64
+ * .node-activity-square.activity-unknown #aeb7c1
+ *
+ * !important prevents Leaflet/theme tooltip rules from flattening all
+ * labels into one colour.
+ */
+.meshcenter-map-node-label.activity-online {
+    color: #58b76c !important;
+}
+
+.meshcenter-map-node-label.activity-away {
+    color: #e8b437 !important;
+}
+
+.meshcenter-map-node-label.activity-offline {
+    color: #df5b64 !important;
+}
+
+.meshcenter-map-node-label.activity-unknown {
+    color: #7f8d9d !important;
+}
+
+/* Zoom 13 - recently active nodes. */
+.mesh-map[data-node-label-level="online"]
+    .meshcenter-map-node-label.activity-online,
+
+/* Zoom 14 - recently active and away nodes. */
+.mesh-map[data-node-label-level="away"]
+    .meshcenter-map-node-label.activity-online,
+.mesh-map[data-node-label-level="away"]
+    .meshcenter-map-node-label.activity-away,
+
+/* Zoom 15+ - every positioned node. */
+.mesh-map[data-node-label-level="all"]
+    .meshcenter-map-node-label {
+    opacity: 1 !important;
+    transform: translateX(0);
+}
+
+/* Waypoint names - visible from zoom 12 when their marker is visible. */
+.meshcenter-map-waypoint-label.leaflet-tooltip {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.12;
+    letter-spacing: .01em;
+    color: #f2385a !important;
+    text-shadow:
+        -1px -1px 0 rgba(255, 255, 255, 1),
+         1px -1px 0 rgba(255, 255, 255, 1),
+        -1px  1px 0 rgba(255, 255, 255, 1),
+         1px  1px 0 rgba(255, 255, 255, 1),
+         0 0 2px rgba(255, 255, 255, 1),
+         0 1px 4px rgba(255, 255, 255, .98);
+}
+
+.meshcenter-map-waypoint-label.is-expired {
+    color: #927FB2 !important;
+    font-weight: 600;
+}
+
+/* Labels sharing almost identical coordinates are deliberately staggered. */
+.meshcenter-map-node-label.is-coordinate-grouped {
+    letter-spacing: .015em;
+}
+
+.mesh-map[data-waypoint-label-level="visible"]
+    .meshcenter-map-waypoint-label {
+    opacity: 1 !important;
+    transform: translateX(0);
+}
+
+/* Dark theme - dark outline preserves the actual semantic colour. */
+[data-theme="dark"] .meshcenter-map-node-label.leaflet-tooltip,
+[data-theme="dark"] .meshcenter-map-waypoint-label.leaflet-tooltip {
+    text-shadow:
+        -1px -1px 0 #d3d3d3,
+        1px -1px 0 #d3d3d3,
+        -1px  1px 0 #d3d3d3,
+        1px  1px 0 #d3d3d3,
+        0 0 2px rgba(211,211,211,.9);
+}
+
+[data-theme="dark"] .meshcenter-map-waypoint-label.leaflet-tooltip {
+    text-shadow:
+        -1px -1px 0 #d3d3d3,
+        1px -1px 0 #d3d3d3,
+        -1px  1px 0 #d3d3d3,
+        1px  1px 0 #d3d3d3,
+        0 0 2px rgba(211,211,211,.9);
+}
+
+/* Touch layouts need slightly smaller labels to limit overlap. */
+@media (max-width: 720px) {
+    .meshcenter-map-node-label.leaflet-tooltip,
+    .meshcenter-map-waypoint-label.leaflet-tooltip {
+        font-size: 10px;
     }
 }

@@ -565,10 +565,16 @@ def normalize_node_id_with_aliases(node_id):
     return normalize_node_id(node_id)
 
 def is_valid_node_id(node_id):
-    if not node_id: return False
-    if node_id == CHANNEL_CHAT_ID or re.fullmatch(r"channel:[1-7]", str(node_id)):
-        return True
-    return node_id.startswith("!") and len(node_id) >= 5
+    value = str(node_id or "").strip()
+    return re.fullmatch(r"![0-9a-fA-F]{8}", value) is not None
+
+def is_valid_chat_id(chat_id):
+    value = str(chat_id or "").strip()
+    return (
+        value == CHANNEL_CHAT_ID
+        or re.fullmatch(r"channel:[0-7]", value) is not None
+        or is_valid_node_id(value)
+    )
 
 def sanitize_text(text):
     if not text: return ""
@@ -616,6 +622,29 @@ def load_messages():
                 if not message.get("id"):
                     message["id"] = uuid.uuid4().hex
                     changed = True
+
+                # Preserve which local radio originally transmitted a message.
+                # Older records only stored kind="me"/"tx" and node_id.  Without
+                # this ownership field, switching radio profiles could make a
+                # message from another local radio appear as if it was sent by
+                # the currently active one.
+                if message.get("kind") in ("me", "tx"):
+                    owner_node_id = str(
+                        message.get("owner_node_id")
+                        or message.get("node_id")
+                        or ""
+                    ).strip()
+                    if owner_node_id and not message.get("owner_node_id"):
+                        message["owner_node_id"] = owner_node_id
+                        changed = True
+
+                    owner_profile_id = str(
+                        message.get("owner_profile_id") or ""
+                    ).strip().lower()
+                    if not owner_profile_id and owner_node_id:
+                        owner_profile_id = owner_node_id.lstrip("!").lower()
+                        message["owner_profile_id"] = owner_profile_id
+                        changed = True
 
             messages.extend(loaded_messages)
 
@@ -2200,6 +2229,12 @@ def process_nodeinfo(block):
     return True
 
 def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, reply_to=None, packet_id=None):
+    # Store all locally transmitted messages under one canonical direction.
+    # Older waypoint notifications used "tx", while the rest of the chat
+    # subsystem and UI use "me" for outgoing messages.
+    if kind == "tx":
+        kind = "me"
+
     with state_lock:
         if not node_id:
             node_id = infer_node_id_from_sender(sender)
@@ -2235,6 +2270,20 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
             "text": text, "time": now(),
             "chat_id": chat_id, "chat_type": chat_type, "chat_name": chat_name
         }
+
+        # Record the real local-radio owner of every transmitted message.
+        # The value remains stable when another saved radio profile becomes
+        # active, so chat direction is never reassigned retroactively.
+        if kind == "me":
+            owner_node_id = str(node_id or LOCAL_NODE_ID or "").strip()
+            owner_profile_id = str(ACTIVE_PROFILE_ID or "").strip().lower()
+            if not owner_profile_id and owner_node_id:
+                owner_profile_id = owner_node_id.lstrip("!").lower()
+
+            if owner_node_id:
+                msg["owner_node_id"] = owner_node_id
+            if owner_profile_id:
+                msg["owner_profile_id"] = owner_profile_id
         if packet_id is not None:
             try:
                 msg["packet_id"] = int(packet_id)
@@ -2261,25 +2310,34 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
     return msg
 
 def is_duplicate_text(sender, text, node_id=""):
-    cleaned_text = text.strip()
+    cleaned_text = str(text or "").strip()
     if not cleaned_text:
         return True
-    
-    if node_id:
-        key = f"{sender}|{node_id}|{cleaned_text}"
-    else:
-        key = f"{sender}|{cleaned_text}"
-    
+
+    sender_value = str(sender or "").strip()
+    node_value = str(node_id or "").strip()
+    key = (
+        f"{sender_value}|{node_value}|{cleaned_text}"
+        if node_value
+        else f"{sender_value}|{cleaned_text}"
+    )
     current_time = time.time()
-    old_keys = [k for k, ts in seen_recent_texts.items() if current_time - ts > 15]
-    for key_old in old_keys:
-        del seen_recent_texts[key_old]
-    
-    old_time = seen_recent_texts.get(key)
-    if old_time and current_time - old_time < 15:
-        return True
-    
-    seen_recent_texts[key] = current_time
+
+    with state_lock:
+        expired_keys = [
+            old_key
+            for old_key, timestamp in seen_recent_texts.items()
+            if current_time - timestamp > 15
+        ]
+        for old_key in expired_keys:
+            seen_recent_texts.pop(old_key, None)
+
+        previous_time = seen_recent_texts.get(key)
+        if previous_time is not None and current_time - previous_time < 15:
+            return True
+
+        seen_recent_texts[key] = current_time
+
     return False
 
 def node_status_icon(last_seen):
@@ -2555,15 +2613,23 @@ def read_sensors_from_meshtastic():
     return sensor_data
 
 def cleanup_seen_ids():
-    global seen_ids, seen_recent_texts
+    global seen_ids
+
     while True:
         time.sleep(300)
-        if len(seen_ids) > 1000:
-            seen_ids = set(list(seen_ids)[-500:])
         current_time = time.time()
-        old_keys = [k for k, ts in seen_recent_texts.items() if current_time - ts > 60]
-        for key in old_keys:
-            del seen_recent_texts[key]
+
+        with state_lock:
+            if len(seen_ids) > 1000:
+                seen_ids = set(list(seen_ids)[-500:])
+
+            expired_keys = [
+                key
+                for key, timestamp in seen_recent_texts.items()
+                if current_time - timestamp > 60
+            ]
+            for key in expired_keys:
+                seen_recent_texts.pop(key, None)
 
 def listen_meshtastic():
     global listen_process, base_status
@@ -2719,9 +2785,10 @@ def listen_meshtastic():
                     pid = extract_packet_id(line)
 
                     if pid:
-                        if pid in seen_ids:
-                            continue
-                        seen_ids.add(pid)
+                        with state_lock:
+                            if pid in seen_ids:
+                                continue
+                            seen_ids.add(pid)
 
                     sender = extract_sender(line)
                     node_id = update_node(line, sender, text)
@@ -3310,6 +3377,7 @@ register_chat_routes(
     CHANNEL_CHAT_ID,
     CHANNEL_CHAT_NAME,
     MESHTASTIC_CMD,
+    lambda: MESHTASTIC_PORT,
     LOCAL_NODE_ID,
     LOCAL_NODE_NAME,
     pause_listen,
@@ -4495,7 +4563,7 @@ def api_waypoint_send():
             channel_id = channel_chat_id(channel_index)
             channel_name = CHANNEL_CHAT_NAME if channel_index == 0 else f"Channel {channel_index}"
             add_message(
-                "tx",
+                "me",
                 LOCAL_NODE_NAME,
                 notification_text,
                 node_id=LOCAL_NODE_ID,

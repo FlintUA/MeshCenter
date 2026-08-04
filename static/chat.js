@@ -90,6 +90,15 @@ let appSettings = {
     }
 };
 
+let waypointActiveProfileId = "";
+let waypointComposerChannels = [];
+
+// Active radio identity used to determine message ownership.  Message kind
+// alone is not enough because saved profiles may contain historical records
+// transmitted by another local radio.
+let activeLocalNodeId = "";
+let activeLocalProfileId = "";
+
 const SENSOR_COLORS = {
     temperature: '#ef4444',
     humidity: '#3b82f6',
@@ -1300,36 +1309,39 @@ const ACTIVE_CHAT_POLL_INTERVAL_MS = 2000;
 let lastRenderedSignature = {};
 
 // ============================================================
-// NOTIFICATION CENTER / TOAST SYSTEM
+// NOTIFICATION CENTER / STATUS DOCK
 // ============================================================
-const NOTIFICATION_STORAGE_KEY = 'meshcenter.notifications.v1';
-const NOTIFICATION_MAX_ITEMS = 50;
+const NOTIFICATION_STORAGE_KEY = 'meshcenter.notifications.v2';
+const NOTIFICATION_MAX_ITEMS = 100;
+const NOTIFICATION_VISIBLE_MS = {
+    success: 3200,
+    info: 3800,
+    warning: 5200,
+    error: 7000
+};
+
 let notificationItems = [];
-let notificationQueue = [];
-let notificationToastActive = false;
+let notificationCurrent = null;
+let notificationTimer = null;
+let notificationDockBaseline = {
+    message: 'Ready',
+    type: 'online'
+};
 
 function normalizeNotificationType(type) {
-    return ['success', 'warning', 'error', 'info'].includes(type) ? type : 'info';
+    return ['success', 'warning', 'error', 'info', 'progress'].includes(type)
+        ? type
+        : 'info';
 }
 
 function notificationIcon(type) {
-    return ({ success: '✓', warning: '⚠', error: '✕', info: 'ⓘ' })[type] || 'ⓘ';
-}
-
-function loadNotificationHistory() {
-    try {
-        const saved = JSON.parse(localStorage.getItem(NOTIFICATION_STORAGE_KEY) || '[]');
-        notificationItems = Array.isArray(saved) ? saved.slice(0, NOTIFICATION_MAX_ITEMS) : [];
-    } catch (_) {
-        notificationItems = [];
-    }
-    renderNotificationCenter();
-}
-
-function saveNotificationHistory() {
-    try {
-        localStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify(notificationItems.slice(0, NOTIFICATION_MAX_ITEMS)));
-    } catch (_) {}
+    return ({
+        success: '✓',
+        warning: '⚠',
+        error: '✕',
+        info: 'ⓘ',
+        progress: '…'
+    })[type] || 'ⓘ';
 }
 
 function cleanNotificationMessage(message) {
@@ -1341,14 +1353,42 @@ function cleanNotificationMessage(message) {
         .trim();
 }
 
-function addNotification(message, type = 'info') {
+function loadNotificationHistory() {
+    try {
+        const saved = JSON.parse(
+            sessionStorage.getItem(NOTIFICATION_STORAGE_KEY) || '[]'
+        );
+        notificationItems = Array.isArray(saved)
+            ? saved.slice(0, NOTIFICATION_MAX_ITEMS)
+            : [];
+    } catch (_) {
+        notificationItems = [];
+    }
+    renderNotificationCenter();
+    renderDockNotification();
+}
+
+function saveNotificationHistory() {
+    try {
+        sessionStorage.setItem(
+            NOTIFICATION_STORAGE_KEY,
+            JSON.stringify(notificationItems.slice(0, NOTIFICATION_MAX_ITEMS))
+        );
+    } catch (_) {}
+}
+
+function addNotification(message, type = 'info', options = {}) {
     const item = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         message: cleanNotificationMessage(message),
         type: normalizeNotificationType(type),
         timestamp: Date.now(),
-        read: false
+        read: false,
+        persistent: Boolean(options.persistent),
+        actionLabel: String(options.actionLabel || ''),
+        action: typeof options.action === 'function' ? options.action : null
     };
+
     notificationItems.unshift(item);
     notificationItems = notificationItems.slice(0, NOTIFICATION_MAX_ITEMS);
     saveNotificationHistory();
@@ -1362,7 +1402,7 @@ function formatNotificationTime(timestamp) {
     const sameDay = date.toDateString() === today.toDateString();
     return sameDay
         ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : date.toLocaleDateString([], { day: '2-digit', month: '2-digit' }) + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        : `${date.toLocaleDateString([], { day: '2-digit', month: '2-digit' })} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 function renderNotificationCenter() {
@@ -1371,16 +1411,159 @@ function renderNotificationCenter() {
     if (!list) return;
 
     list.innerHTML = notificationItems.map(item => `
-        <button type="button" class="notification-item notification-${escapeHtml(item.type)} ${item.read ? 'is-read' : ''}" onclick="markNotificationRead('${escapeHtml(item.id)}')">
-            <span class="notification-item-icon" aria-hidden="true">${notificationIcon(item.type)}</span>
-            <span class="notification-item-copy">
-                <strong>${escapeHtml(item.message)}</strong>
-                <small>${escapeHtml(formatNotificationTime(item.timestamp))}</small>
-            </span>
-        </button>
+        <div class="notification-item notification-${escapeHtml(item.type)} ${item.read ? 'is-read' : ''}">
+            <button type="button"
+                    class="notification-item-main"
+                    onclick="markNotificationRead('${escapeJsString(item.id)}')">
+                <span class="notification-item-icon" aria-hidden="true">${notificationIcon(item.type)}</span>
+                <span class="notification-item-copy">
+                    <strong>${escapeHtml(item.message)}</strong>
+                    <small>${escapeHtml(formatNotificationTime(item.timestamp))}</small>
+                </span>
+            </button>
+            ${item.actionLabel && item.action ? `
+                <button type="button"
+                        class="notification-item-action"
+                        onclick="runNotificationAction('${escapeJsString(item.id)}')">${escapeHtml(item.actionLabel)}</button>
+            ` : ''}
+        </div>
     `).join('');
 
     if (empty) empty.hidden = notificationItems.length !== 0;
+}
+
+function setDockStatusBaseline(message, type = 'online') {
+    notificationDockBaseline = {
+        message: String(message || 'Ready'),
+        type: String(type || 'online')
+    };
+    if (!notificationCurrent) renderDockNotification();
+}
+
+function renderDockNotification() {
+    const text = document.getElementById('dockStatusText');
+    const state = document.getElementById('dockNotificationState');
+    const button = document.getElementById('notificationCenterBtn');
+    const actionButton = document.getElementById('dockNotificationAction');
+    const dismissButton = document.getElementById('dockNotificationDismiss');
+    if (!text || !state || !button) return;
+
+    const displayed = notificationCurrent || notificationDockBaseline;
+    const type = normalizeNotificationType(displayed.type) === displayed.type
+        ? displayed.type
+        : 'online';
+
+    text.textContent = displayed.message || 'Ready';
+    button.dataset.notificationType = type;
+    button.title = notificationCurrent
+        ? `${displayed.message} - open notifications`
+        : 'Open notifications';
+
+    state.className = `dock-notification-state dock-state-${type}`;
+
+    const hasAction = Boolean(notificationCurrent?.action);
+    if (actionButton) {
+        actionButton.hidden = !hasAction;
+        actionButton.textContent = notificationCurrent?.actionLabel || 'Retry';
+    }
+    if (dismissButton) {
+        dismissButton.hidden = !notificationCurrent;
+    }
+}
+
+function runCurrentNotificationAction(event) {
+    event?.stopPropagation();
+    if (!notificationCurrent?.action) return;
+    const action = notificationCurrent.action;
+    clearCurrentNotification();
+    action();
+}
+
+function dismissCurrentNotification(event) {
+    event?.stopPropagation();
+    if (notificationCurrent?.id) {
+        dismissNotification(notificationCurrent.id);
+    } else {
+        clearCurrentNotification();
+    }
+}
+
+function clearCurrentNotification() {
+    if (notificationTimer) {
+        clearTimeout(notificationTimer);
+        notificationTimer = null;
+    }
+    notificationCurrent = null;
+    renderDockNotification();
+}
+
+function presentNotification(item, options = {}) {
+    if (notificationTimer) {
+        clearTimeout(notificationTimer);
+        notificationTimer = null;
+    }
+
+    notificationCurrent = item;
+    renderDockNotification();
+
+    const persistent = options.persistent
+        ?? item.persistent
+        ?? item.type === 'progress';
+
+    if (!persistent) {
+        const duration = Number(options.duration)
+            || NOTIFICATION_VISIBLE_MS[item.type]
+            || NOTIFICATION_VISIBLE_MS.info;
+        notificationTimer = setTimeout(clearCurrentNotification, duration);
+    }
+
+    return item.id;
+}
+
+function showToast(message, type = 'info', options = {}) {
+    const item = addNotification(message, type, options);
+    return presentNotification(item, options);
+}
+
+function showProgressNotification(message) {
+    return showToast(message, 'progress', { persistent: true });
+}
+
+function updateNotification(id, message, type = 'info', options = {}) {
+    const item = notificationItems.find(entry => entry.id === id);
+    if (!item) return showToast(message, type, options);
+
+    item.message = cleanNotificationMessage(message);
+    item.type = normalizeNotificationType(type);
+    item.timestamp = Date.now();
+    item.persistent = Boolean(options.persistent);
+    item.actionLabel = String(options.actionLabel || '');
+    item.action = typeof options.action === 'function' ? options.action : null;
+
+    notificationItems = [
+        item,
+        ...notificationItems.filter(entry => entry.id !== id)
+    ];
+    saveNotificationHistory();
+    renderNotificationCenter();
+    return presentNotification(item, options);
+}
+
+function dismissNotification(id) {
+    if (notificationCurrent?.id === id) clearCurrentNotification();
+    const item = notificationItems.find(entry => entry.id === id);
+    if (item) {
+        item.read = true;
+        saveNotificationHistory();
+        renderNotificationCenter();
+    }
+}
+
+function runNotificationAction(id) {
+    const item = notificationItems.find(entry => entry.id === id);
+    if (!item?.action) return;
+    closeNotificationCenter();
+    item.action();
 }
 
 function toggleNotificationCenter(event) {
@@ -1388,9 +1571,11 @@ function toggleNotificationCenter(event) {
     const popover = document.getElementById('notificationPopover');
     const button = document.getElementById('notificationCenterBtn');
     if (!popover || !button) return;
+
     const willOpen = popover.hidden;
     popover.hidden = !willOpen;
     button.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+
     if (willOpen) {
         notificationItems.forEach(item => { item.read = true; });
         saveNotificationHistory();
@@ -1418,38 +1603,13 @@ function clearNotifications() {
     renderNotificationCenter();
 }
 
-function showNextNotificationToast() {
-    if (notificationToastActive || notificationQueue.length === 0) return;
-    notificationToastActive = true;
-    const item = notificationQueue.shift();
-    const toast = document.createElement('div');
-    toast.className = `toast notification-toast ${item.type}`;
-    toast.setAttribute('role', item.type === 'error' ? 'alert' : 'status');
-    toast.innerHTML = `<span class="notification-toast-icon" aria-hidden="true">${notificationIcon(item.type)}</span><span>${escapeHtml(item.message)}</span>`;
-    document.body.appendChild(toast);
-
-    requestAnimationFrame(() => toast.classList.add('show'));
-    const duration = item.type === 'error' ? 5200 : item.type === 'warning' ? 4200 : 3200;
-    setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => {
-            toast.remove();
-            notificationToastActive = false;
-            showNextNotificationToast();
-        }, 260);
-    }, duration);
-}
-
-function showToast(message, type = 'info') {
-    const item = addNotification(message, type);
-    notificationQueue.push(item);
-    showNextNotificationToast();
-}
-
 function initializeNotificationCenter() {
     loadNotificationHistory();
     document.addEventListener('click', event => {
-        if (!event.target.closest('#notificationPopover') && !event.target.closest('#notificationCenterBtn')) {
+        if (
+            !event.target.closest('#notificationPopover')
+            && !event.target.closest('#notificationCenterBtn')
+        ) {
             closeNotificationCenter();
         }
     });
@@ -2423,7 +2583,11 @@ function requestSynchronizedListScroll(nodeId, source, options = {}) {
 
 function syncSelectedNodeCard() {
     const selectedNodeId =
-        currentChatType === 'dm' && currentChatId ? String(currentChatId) : '';
+        !nodeVisualSelectionCleared &&
+        currentChatType === 'dm' &&
+        currentChatId
+            ? String(currentChatId)
+            : '';
 
     document.querySelectorAll('#nodesList .node-card').forEach(card => {
         const isSelected =
@@ -2472,6 +2636,9 @@ function openChat(chatId, chatName, chatType, selectionSource = 'external') {
     currentChatId = chatId;
     currentChatName = chatName || chatId;
     currentChatType = chatType || 'dm';
+    if (currentChatType === 'dm') {
+        nodeVisualSelectionCleared = false;
+    }
     cancelReply();
 
     if (currentChatType === 'dm' && chatId !== 'channel') {
@@ -2701,6 +2868,46 @@ function updateReplyComposer() {
     preview.hidden = false;
 }
 
+function normalizeMessageIdentity(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+function messageBelongsToActiveRadio(message) {
+    if (!message || !['me', 'tx'].includes(message.kind)) return false;
+
+    const activeProfile = normalizeMessageIdentity(activeLocalProfileId);
+    const activeNode = normalizeMessageIdentity(activeLocalNodeId);
+
+    const ownerProfile = normalizeMessageIdentity(
+        message.owner_profile_id
+    );
+    const ownerNode = normalizeMessageIdentity(
+        message.owner_node_id || message.node_id
+    );
+
+    // Prefer the explicit profile owner written by the backend.
+    if (ownerProfile && activeProfile) {
+        return ownerProfile === activeProfile;
+    }
+
+    // Legacy messages are safely resolved by their original transmitting
+    // node ID.  This also fixes existing histories without manual migration.
+    if (ownerNode && activeNode) {
+        return ownerNode === activeNode;
+    }
+
+    // Do not claim ownership when identity is unknown.  It is safer to show
+    // such a record as received than to attribute it to the wrong radio.
+    return false;
+}
+
+function messageDirectionLabel(message) {
+    if (message?.kind === 'system' || message?.sender === 'SYSTEM ERROR') {
+        return 'System';
+    }
+    return messageBelongsToActiveRadio(message) ? 'Sent' : 'Received';
+}
+
 function startReplyToMessage() {
     const message = messageActionTarget;
     closeMessageActionsMenu();
@@ -2728,7 +2935,7 @@ function showMessageInfo() {
         ['Node ID', message.node_id || '—'],
         ['Chat', message.chat_name || currentChatName || message.chat_id || '—'],
         ['Chat type', message.chat_type || currentChatType || '—'],
-        ['Direction', message.kind === 'me' ? 'Sent' : message.kind === 'system' ? 'System' : 'Received'],
+        ['Direction', messageDirectionLabel(message)],
         ['Time', message.time || '—'],
         ['Message ID', message.id || '—'],
         ['Packet ID', message.packet_id ?? '—']
@@ -2892,9 +3099,26 @@ function renderMessages(container, messages, chatId) {
     // Принудительно обновляем, если контейнер показывает загрузку
     const isLoading = container.innerHTML.includes('loading') || container.innerHTML.includes('Loading');
     
-    const signature = messages.map(m =>
-        [m.id, m.packet_id, m.kind, m.sender, m.text, m.time, m.reply_to?.id, m.reply_to?.packet_id, m.reply_to?.text].join('|')
-    ).join('||');
+    const signature = [
+        normalizeMessageIdentity(activeLocalProfileId),
+        normalizeMessageIdentity(activeLocalNodeId),
+        ...messages.map(m =>
+            [
+                m.id,
+                m.packet_id,
+                m.kind,
+                m.sender,
+                m.node_id,
+                m.owner_profile_id,
+                m.owner_node_id,
+                m.text,
+                m.time,
+                m.reply_to?.id,
+                m.reply_to?.packet_id,
+                m.reply_to?.text
+            ].join('|')
+        )
+    ].join('||');
     
     if (!isLoading && lastRenderedSignature[chatId] === signature) {
         console.log(`[RENDER] No changes for chat: ${chatId}, skipping render`);
@@ -2913,7 +3137,10 @@ function renderMessages(container, messages, chatId) {
         container.innerHTML = `<div class="loading">💬 No messages yet with ${escapeHtml(chatName)}. Send the first one!</div>`;
     } else {
         container.innerHTML = messages.map(msg => {
-            const isMe = msg.kind === 'me';
+            // A transmitted record is outgoing only for the radio profile
+            // that actually sent it.  Messages from another saved local radio
+            // are rendered as received after a profile switch.
+            const isMe = messageBelongsToActiveRadio(msg);
             const isSystem = msg.kind === 'system' || msg.sender === 'SYSTEM ERROR';
             const sender = escapeHtml(msg.sender || 'Unknown');
             const text = escapeHtml(msg.text || '');
@@ -3551,6 +3778,9 @@ let waypointToolsShowExpired = false;
 let waypointToolsRefreshInFlight = false;
 let waypointMapRefreshInFlight = false;
 let pendingWaypointCoordinates = null;
+let waypointSendOperation = null;
+let waypointSendNotificationId = null;
+
 let meshMapWaypointPollTimer = null;
 let meshMapWaypointSignature = '';
 let meshMapWaypointExpiryTimer = null;
@@ -3585,6 +3815,36 @@ function createMeshMapIcon(kind = 'node') {
         iconAnchor: [10, 10],
         popupAnchor: [0, -11]
     });
+}
+
+function updateMeshMapNodeLabelLevel() {
+    if (!meshMap) return;
+
+    const container = meshMap.getContainer();
+    if (!container) return;
+
+    const zoom = Number(meshMap.getZoom()) || 0;
+    let nodeLevel = 'none';
+
+    // Progressive map detail, shifted two zoom steps earlier:
+    //  - below 13: selected node label only
+    //  - 13: recently active nodes
+    //  - 14: active and away nodes
+    //  - 15+: all visible node names
+    if (zoom >= 15) {
+        nodeLevel = 'all';
+    } else if (zoom >= 14) {
+        nodeLevel = 'away';
+    } else if (zoom >= 13) {
+        nodeLevel = 'online';
+    }
+
+    container.dataset.nodeLabelLevel = nodeLevel;
+
+    // Waypoint labels are navigation aids, so they appear earlier than
+    // ordinary node names. Only waypoints already visible by the current
+    // map filters receive a label.
+    container.dataset.waypointLabelLevel = zoom >= 12 ? 'visible' : 'none';
 }
 
 function waypointIconCharacter(iconValue) {
@@ -3920,22 +4180,245 @@ async function deleteAllWaypoints() {
     }
 }
 
-function openCreateWaypointDialog(lat, lon) {
+function normalizeWaypointProfileId(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+function waypointFallbackChannel(index = 0) {
+    const safeIndex = Number.isInteger(Number(index))
+        ? Math.max(0, Math.min(7, Number(index)))
+        : 0;
+    return {
+        id: safeIndex === 0 ? 'channel' : `channel:${safeIndex}`,
+        index: safeIndex,
+        name: 'Channel'
+    };
+}
+
+function normalizeWaypointChannels(channels) {
+    if (!Array.isArray(channels)) return [waypointFallbackChannel(0)];
+
+    const byIndex = new Map();
+    channels.forEach((channel, fallbackIndex) => {
+        const index = Number(channel?.index ?? fallbackIndex);
+        if (!Number.isInteger(index) || index < 0 || index > 7) return;
+
+        let name = String(channel?.name || '').trim();
+        if (!name || /^channel\s+\d+$/i.test(name)) {
+            name = 'Channel';
+        }
+
+        byIndex.set(index, {
+            id: String(channel?.id || (index === 0 ? 'channel' : `channel:${index}`)),
+            index,
+            name
+        });
+    });
+
+    const normalized = [...byIndex.values()]
+        .sort((a, b) => a.index - b.index);
+
+    return normalized.length ? normalized : [waypointFallbackChannel(0)];
+}
+
+function renderWaypointChannelOptions(channels, preferredIndex = 0) {
+    const select = document.getElementById('waypointCreateChannel');
+    if (!select) return 0;
+
+    const normalized = normalizeWaypointChannels(channels);
+    waypointComposerChannels = normalized;
+
+    select.innerHTML = normalized.map(channel => {
+        const label = `${channel.name} [${channel.index}]`;
+        return `<option value="${channel.index}">${escapeHtml(label)}</option>`;
+    }).join('');
+
+    const preferred = Number(preferredIndex);
+    const selected = normalized.some(channel => channel.index === preferred)
+        ? preferred
+        : (normalized.find(channel => channel.index === 0)?.index
+            ?? normalized[0].index);
+
+    select.value = String(selected);
+    return selected;
+}
+
+function getWaypointComposerDefaults(profileId = waypointActiveProfileId) {
+    const waypointSettings = appSettings?.waypoints || {};
+    const normalizedProfileId = normalizeWaypointProfileId(profileId);
+    const profileDefaults = normalizedProfileId
+        ? waypointSettings?.profile_defaults?.[normalizedProfileId]
+        : null;
+    const saved = profileDefaults && typeof profileDefaults === 'object'
+        ? profileDefaults
+        : waypointSettings;
+
+    const channelIndex = Number(saved?.last_channel_index);
+    const durationSeconds = Number(saved?.last_duration_seconds);
+
+    return {
+        channelIndex: Number.isInteger(channelIndex) && channelIndex >= 0 && channelIndex <= 7
+            ? channelIndex
+            : 0,
+        durationSeconds: [
+            900, 1800, 3600, 10800, 21600,
+            43200, 86400, 172800, 604800
+        ].includes(durationSeconds) ? durationSeconds : 3600,
+        postNotification: saved?.post_notification !== false
+    };
+}
+
+async function loadWaypointComposerContext() {
+    const [baseResult, chatsResult] = await Promise.allSettled([
+        fetch('/api/base_status', { cache: 'no-store' })
+            .then(response => response.ok ? response.json() : Promise.reject(
+                new Error(`Base status HTTP ${response.status}`)
+            )),
+        fetch('/api/chats', { cache: 'no-store' })
+            .then(response => response.ok ? response.json() : Promise.reject(
+                new Error(`Channels HTTP ${response.status}`)
+            ))
+    ]);
+
+    if (baseResult.status === 'fulfilled') {
+        waypointActiveProfileId = normalizeWaypointProfileId(
+            baseResult.value?.profile_id
+        );
+    }
+
+    const defaults = getWaypointComposerDefaults(waypointActiveProfileId);
+    const channels = chatsResult.status === 'fulfilled'
+        ? chatsResult.value?.channels
+        : waypointComposerChannels;
+
+    const selectedChannelIndex = renderWaypointChannelOptions(
+        channels,
+        defaults.channelIndex
+    );
+
+    const durationSelect = document.getElementById('waypointCreateDuration');
+    if (durationSelect) {
+        durationSelect.value = String(defaults.durationSeconds);
+    }
+
+    const notifyToggle = document.getElementById(
+        'waypointCreatePostNotification'
+    );
+    if (notifyToggle) {
+        notifyToggle.checked = defaults.postNotification;
+    }
+
+    return {
+        profileId: waypointActiveProfileId,
+        selectedChannelIndex,
+        defaults
+    };
+}
+
+async function saveWaypointComposerDefaults(
+    channelIndex,
+    durationSeconds,
+    postNotification
+) {
+    const profileId = normalizeWaypointProfileId(waypointActiveProfileId);
+    const waypointSettings = {
+        ...(appSettings?.waypoints || {}),
+        // Keep the legacy values as a safe fallback for old installations.
+        last_channel_index: Number(channelIndex),
+        last_duration_seconds: Number(durationSeconds),
+        post_notification: Boolean(postNotification),
+        profile_defaults: {
+            ...(appSettings?.waypoints?.profile_defaults || {})
+        }
+    };
+
+    if (profileId) {
+        waypointSettings.profile_defaults[profileId] = {
+            last_channel_index: Number(channelIndex),
+            last_duration_seconds: Number(durationSeconds),
+            post_notification: Boolean(postNotification)
+        };
+    }
+
+    appSettings = {
+        ...(appSettings || {}),
+        waypoints: waypointSettings
+    };
+
+    try {
+        const response = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store',
+            body: JSON.stringify({ waypoints: waypointSettings })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data?.ok) {
+            throw new Error(
+                data?.error || 'Unable to save waypoint defaults'
+            );
+        }
+        appSettings = data.settings || appSettings;
+    } catch (error) {
+        console.warn(
+            '[WAYPOINT] Unable to save composer defaults:',
+            error
+        );
+    }
+}
+
+async function openCreateWaypointDialog(lat, lon) {
     const latitude = Number(lat);
     const longitude = Number(lon);
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+
     pendingWaypointCoordinates = { latitude, longitude };
+
     const modal = document.getElementById('waypointCreateModal');
     if (!modal) return;
+
     document.getElementById('waypointCreateName').value = '';
     document.getElementById('waypointCreateDescription').value = '';
-    document.getElementById('waypointCreateChannel').value = '0';
-    document.getElementById('waypointCreateDuration').value = '3600';
-    const notifyToggle = document.getElementById('waypointCreatePostNotification');
-    if (notifyToggle) notifyToggle.checked = true;
-    document.getElementById('waypointCreateCoordinates').textContent = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+    document.getElementById('waypointCreateCoordinates').textContent =
+        `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+
+    // Open immediately, then populate profile-specific channels and defaults.
+    renderWaypointChannelOptions(
+        waypointComposerChannels,
+        getWaypointComposerDefaults().channelIndex
+    );
     modal.style.display = 'flex';
-    setTimeout(() => document.getElementById('waypointCreateName')?.focus(), 50);
+
+    try {
+        await loadWaypointComposerContext();
+    } catch (error) {
+        console.warn(
+            '[WAYPOINT] Unable to load channel/profile context:',
+            error
+        );
+        const defaults = getWaypointComposerDefaults();
+        renderWaypointChannelOptions(
+            waypointComposerChannels,
+            defaults.channelIndex
+        );
+        const durationSelect = document.getElementById(
+            'waypointCreateDuration'
+        );
+        if (durationSelect) {
+            durationSelect.value = String(defaults.durationSeconds);
+        }
+        const notifyToggle = document.getElementById(
+            'waypointCreatePostNotification'
+        );
+        if (notifyToggle) {
+            notifyToggle.checked = defaults.postNotification;
+        }
+    }
+
+    setTimeout(
+        () => document.getElementById('waypointCreateName')?.focus(),
+        50
+    );
 }
 
 function closeCreateWaypointDialog() {
@@ -3944,53 +4427,155 @@ function closeCreateWaypointDialog() {
     pendingWaypointCoordinates = null;
 }
 
-async function submitCreateWaypoint() {
+function showWaypointActionStatus(message, state = 'sending', operation = null) {
+    const type = state === 'sending'
+        ? 'progress'
+        : state === 'success'
+            ? 'success'
+            : 'error';
+
+    const options = state === 'error' && operation
+        ? {
+            persistent: true,
+            actionLabel: 'Retry',
+            action: () => sendWaypointOperation(operation)
+        }
+        : {
+            persistent: state === 'sending'
+        };
+
+    if (waypointSendNotificationId) {
+        waypointSendNotificationId = updateNotification(
+            waypointSendNotificationId,
+            message,
+            type,
+            options
+        );
+    } else {
+        waypointSendNotificationId = showToast(message, type, options);
+    }
+}
+
+async function applySuccessfulWaypointResult(result, operation) {
+    const waypoint = result?.waypoint;
+    if (waypoint) {
+        const id = String(waypoint.waypoint_id);
+        meshMapWaypoints = [
+            waypoint,
+            ...meshMapWaypoints.filter(item => String(item.waypoint_id) !== id)
+        ];
+        waypointToolsItems = [
+            waypoint,
+            ...waypointToolsItems.filter(item => String(item.waypoint_id) !== id)
+        ];
+        meshMapWaypointSignature = getWaypointSignature(meshMapWaypoints);
+        meshMapWaypointKnownIds.add(id);
+        selectedWaypointId = id;
+
+        renderWaypointToolsList();
+        if (meshMap) {
+            renderMeshMap(meshMapTargetNodeId, {
+                preserveViewport: true,
+                openPopup: false
+            });
+        }
+        setTimeout(() => centerMapOnWaypoint(id), 250);
+    }
+
+    await Promise.allSettled([
+        refreshMeshMapWaypoints(true),
+        refreshWaypointToolsList(true)
+    ]);
+
+    waypointSendOperation = null;
+    showWaypointActionStatus(
+        `Waypoint sent: ${operation.payload.name}`,
+        'success'
+    );
+    waypointSendNotificationId = null;
+}
+
+async function sendWaypointOperation(operation) {
+    if (!operation?.payload) return;
+
+    waypointSendOperation = operation;
+    operation.attempts = Number(operation.attempts || 0) + 1;
+
+    showWaypointActionStatus(
+        operation.attempts > 1
+            ? `Retrying waypoint: ${operation.payload.name}`
+            : `Sending waypoint: ${operation.payload.name}`,
+        'sending'
+    );
+
+    try {
+        const response = await fetch('/api/waypoints/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store',
+            body: JSON.stringify(operation.payload)
+        });
+        const result = await response.json().catch(() => ({}));
+
+        if (!response.ok || !result?.ok) {
+            throw new Error(result?.error || 'Waypoint send failed');
+        }
+
+        await applySuccessfulWaypointResult(result, operation);
+    } catch (error) {
+        console.error('[WAYPOINT] Send failed:', error);
+        showWaypointActionStatus(
+            error?.message || 'Waypoint was not sent',
+            'error',
+            operation
+        );
+    }
+}
+
+function submitCreateWaypoint() {
     if (!pendingWaypointCoordinates) return;
-    const button = document.getElementById('waypointCreateSend');
+
     const name = document.getElementById('waypointCreateName').value.trim();
     const description = document.getElementById('waypointCreateDescription').value.trim();
     const channelIndex = Number(document.getElementById('waypointCreateChannel').value || 0);
     const duration = Number(document.getElementById('waypointCreateDuration').value || 3600);
-    const postNotification = Boolean(document.getElementById('waypointCreatePostNotification')?.checked);
+    const postNotification = Boolean(
+        document.getElementById('waypointCreatePostNotification')?.checked
+    );
+
     if (!name) {
         showToast('Enter a waypoint name', 'warning');
         return;
     }
+
+    const coordinates = { ...pendingWaypointCoordinates };
     const payload = {
         name,
         description,
-        latitude:pendingWaypointCoordinates.latitude,
-        longitude:pendingWaypointCoordinates.longitude,
-        channel_index:channelIndex,
-        icon:128205,
-        expire_at:Math.floor(Date.now() / 1000) + duration,
-        post_notification:postNotification
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+        channel_index: channelIndex,
+        icon: 128205,
+        expire_at: Math.floor(Date.now() / 1000) + duration,
+        post_notification: postNotification
     };
-    try {
-        if (button) { button.disabled = true; button.textContent = 'Sending...'; }
-        const response = await fetch('/api/waypoints/send', {
-            method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
-        });
-        const result = await response.json();
-        if (!response.ok || !result?.ok) throw new Error(result?.error || 'Waypoint send failed');
-        closeCreateWaypointDialog();
-        showToast(`📍 Waypoint sent: ${name}`, 'success');
-        if (result?.waypoint) {
-            const id = String(result.waypoint.waypoint_id);
-            meshMapWaypoints = [result.waypoint, ...meshMapWaypoints.filter(item => String(item.waypoint_id) !== id)];
-            waypointToolsItems = [result.waypoint, ...waypointToolsItems.filter(item => String(item.waypoint_id) !== id)];
-            meshMapWaypointSignature = getWaypointSignature(meshMapWaypoints);
-            meshMapWaypointKnownIds.add(id);
-            renderWaypointToolsList();
-            if (meshMap) renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
-            setTimeout(() => centerMapOnWaypoint(id), 250);
-        }
-        await Promise.all([refreshMeshMapWaypoints(true), refreshWaypointToolsList(true)]);
-    } catch (error) {
-        showToast(error.message || 'Waypoint send failed', 'error');
-    } finally {
-        if (button) { button.disabled = false; button.textContent = 'Send'; }
-    }
+
+    const operation = {
+        payload,
+        attempts: 0,
+        createdAt: Date.now()
+    };
+
+    // Save only reusable controls. Name, description and coordinates remain one-time values.
+    saveWaypointComposerDefaults(
+        channelIndex,
+        duration,
+        postNotification
+    );
+
+    // Free the interface immediately. The network operation continues in the background.
+    closeCreateWaypointDialog();
+    sendWaypointOperation(operation);
 }
 
 
@@ -4223,6 +4808,12 @@ function ensureMeshMap() {
         openCreateWaypointDialog(event.latlng.lat, event.latlng.lng);
     });
 
+    // Reveal node labels progressively as the operator zooms in.
+    // Updating a data attribute is intentionally lightweight and avoids
+    // rebuilding all Leaflet markers during every zoom step.
+    meshMap.on('zoom zoomend', updateMeshMapNodeLabelLevel);
+    updateMeshMapNodeLabelLevel();
+
     // Keep Leaflet synchronized with workspace width changes. This removes
     // the visible delay when either sidebar is shown or hidden.
     if (typeof ResizeObserver !== 'undefined') {
@@ -4276,7 +4867,11 @@ function renderMeshMap(targetNodeId = null, options = {}) {
     const savedCenter = preserveViewport ? map.getCenter() : null;
     const savedZoom = preserveViewport ? map.getZoom() : null;
 
-    meshMapTargetNodeId = targetNodeId ? String(targetNodeId) : meshMapTargetNodeId;
+    if (options?.clearSelection) {
+        meshMapTargetNodeId = null;
+    } else if (targetNodeId) {
+        meshMapTargetNodeId = String(targetNodeId);
+    }
     meshMapMarkers.forEach(marker => marker.remove());
     meshMapMarkers.clear();
     meshMapWaypointMarkers.forEach(marker => marker.remove());
@@ -4286,6 +4881,19 @@ function renderMeshMap(targetNodeId = null, options = {}) {
 
     const positionedNodes = nodeCache.filter(node => getNodePosition(node));
     const bounds = [];
+
+    // Group nodes that occupy the same visual location. Four decimal places
+    // are about 11 metres in latitude and are appropriate for labels that
+    // would otherwise overlap at city-level zooms.
+    const nodeCoordinateGroups = new Map();
+    positionedNodes.forEach(node => {
+        const pos = getNodePosition(node);
+        const groupKey = `${Number(pos.latitude).toFixed(4)},${Number(pos.longitude).toFixed(4)}`;
+        if (!nodeCoordinateGroups.has(groupKey)) {
+            nodeCoordinateGroups.set(groupKey, []);
+        }
+        nodeCoordinateGroups.get(groupKey).push(String(node.node_id));
+    });
 
     positionedNodes.forEach(node => {
         const pos = getNodePosition(node);
@@ -4303,9 +4911,9 @@ function renderMeshMap(targetNodeId = null, options = {}) {
             offset: L.point(0, -10)
         });
 
-        // Keep the map clean: only the currently selected node receives
-        // a permanent name callout. Other node names remain available via
-        // the marker title and popup.
+        // The selected node keeps its prominent callout at every zoom level.
+        // Other node names appear progressively and reuse exactly the same
+        // activity classification as the node cards.
         if (selected) {
             marker.bindTooltip(escapeHtml(getNodeDisplayName(node)), {
                 permanent: true,
@@ -4313,6 +4921,27 @@ function renderMeshMap(targetNodeId = null, options = {}) {
                 offset: [0, 14],
                 opacity: 1,
                 className: 'meshcenter-map-selected-label'
+            });
+        } else {
+            const activity = getNodeActivityPresentation(node);
+            const coordinateGroupKey =
+                `${Number(pos.latitude).toFixed(4)},${Number(pos.longitude).toFixed(4)}`;
+            const coordinateGroup = nodeCoordinateGroups.get(coordinateGroupKey) || [];
+            const groupIndex = Math.max(
+                0,
+                coordinateGroup.indexOf(String(node.node_id))
+            );
+            const groupCount = Math.max(1, coordinateGroup.length);
+            const verticalOffset = (groupIndex - ((groupCount - 1) / 2)) * 15;
+
+            marker.bindTooltip(escapeHtml(activity.displayName), {
+                permanent: true,
+                direction: 'right',
+                offset: [9, verticalOffset],
+                opacity: 1,
+                className:
+                    `meshcenter-map-node-label ${activity.activityClass}` +
+                    `${groupCount > 1 ? ' is-coordinate-grouped' : ''}`
             });
         }
 
@@ -4351,6 +4980,19 @@ function renderMeshMap(targetNodeId = null, options = {}) {
                 offset:L.point(0, -12),
                 closeButton:false
             });
+
+            marker.bindTooltip(
+                escapeHtml(String(waypoint?.name || 'Waypoint').trim()),
+                {
+                    permanent: true,
+                    direction: 'right',
+                    offset: [15, 0],
+                    opacity: 1,
+                    className:
+                        `meshcenter-map-waypoint-label${expired ? ' is-expired' : ' is-active'}`
+                }
+            );
+
             marker.on('click', () => {
                 handleWaypointMarkerSelected(waypoint.waypoint_id);
             });
@@ -4384,6 +5026,8 @@ function renderMeshMap(targetNodeId = null, options = {}) {
         }
     }
 
+    updateMeshMapNodeLabelLevel();
+
     const countEl = document.getElementById('mapNodeCount');
     if (countEl) {
         const visibleWaypoints = meshMapWaypointsVisible
@@ -4397,32 +5041,59 @@ function renderMeshMap(targetNodeId = null, options = {}) {
         countEl.textContent = `${positionedNodes.length} node${positionedNodes.length === 1 ? '' : 's'} · ${waypointSummary}`;
     }
 
-    const targetNode = positionedNodes.find(node => String(node.node_id) === String(meshMapTargetNodeId));
-    const targetMarker = targetNode ? meshMapMarkers.get(String(targetNode.node_id)) : null;
-    const targetPos = getNodePosition(targetNode);
-    const title = document.getElementById('mapViewTitle');
-    const subtitle = document.getElementById('mapViewSubtitle');
+const targetNode = positionedNodes.find(
+    node => String(node.node_id) === String(meshMapTargetNodeId)
+);
 
-    if (targetNode && targetPos && targetMarker) {
-        if (title) title.textContent = `🗺 Map — ${getNodeDisplayName(targetNode)}`;
-        if (subtitle) {
-            const nav = getNodeDistanceAndBearing(targetPos.latitude, targetPos.longitude);
-            subtitle.textContent = `${nav.distanceText} · ${nav.bearingText} · ${targetNode.position?.source || 'Radio'}`;
-        }
+const targetPos = getNodePosition(targetNode);
 
-        if (preserveViewport && savedCenter && Number.isFinite(savedZoom)) {
-            map.setView(savedCenter, savedZoom, { animate:false });
-        } else {
-            map.flyTo([targetPos.latitude, targetPos.longitude], Math.max(map.getZoom(), 15), { duration:.45 });
-        }
+const title = document.getElementById("mapViewTitle");
+const subtitle = document.getElementById("mapViewSubtitle");
 
-        if (openTargetPopup) {
-            setTimeout(() => {
-                const currentMarker = meshMapMarkers.get(String(targetNode.node_id));
-                if (currentMarker) currentMarker.openPopup();
-            }, preserveViewport ? 40 : 360);
-        }
+if (targetNode && targetPos) {
+    if (title)
+        title.textContent = `🗺 Map — ${getNodeDisplayName(targetNode)}`;
+    if (subtitle) {
+        const nav = getNodeDistanceAndBearing(
+            targetPos.latitude,
+            targetPos.longitude
+        );
+        subtitle.textContent =
+            `${nav.distanceText} · ${nav.bearingText} · ` +
+            `${targetNode.position?.source || "Radio"}`;
+    }
+    if (preserveViewport &&
+        savedCenter &&
+        Number.isFinite(savedZoom)) {
+        map.setView(savedCenter, savedZoom, {
+            animate: false
+        });
     } else {
+        map.flyTo(
+            [targetPos.latitude, targetPos.longitude],
+            Math.max(map.getZoom(), 15),
+            {
+                animate: true,
+                duration: 0.55,
+                easeLinearity: 0.25
+            }
+        );
+    }
+    if (openTargetPopup) {
+        const openPopup = () => {
+            const marker =
+                meshMapMarkers.get(String(targetNode.node_id));
+            if (marker)
+                marker.openPopup();
+        };
+        if (preserveViewport) {
+            requestAnimationFrame(openPopup);
+        } else {
+            map.once("moveend", openPopup);
+            setTimeout(openPopup, 700);
+        }
+    }
+} else {
         if (title) title.textContent = '🗺 Map';
         if (subtitle) subtitle.textContent = 'Known Meshtastic nodes and waypoints';
 
@@ -4734,15 +5405,40 @@ function renderOrPatchNodeDetailCard(details, html, nodeId) {
 }
 
 let closedNodeDetailId = null;
+// The active DM may remain open after the operator closes node details,
+// but the map/card selection should be visually cleared until a node is
+// explicitly selected again.
+let nodeVisualSelectionCleared = false;
 
 function closeNodeDetails() {
     const currentCard = document.querySelector('#nodeDetails > .node-detail-card');
     closedNodeDetailId = currentCard?.dataset?.nodeId || null;
+    nodeVisualSelectionCleared = true;
+
     const details = document.getElementById('nodeDetails');
-    if (!details) return;
-    details.className = 'node-details-placeholder';
-    details.innerHTML = '';
+    if (details) {
+        details.className = 'node-details-placeholder';
+        details.innerHTML = '';
+    }
+
     document.getElementById('nodeActionsMenu')?.remove();
+
+    // Remove the visual focus from the compact card immediately and prevent
+    // the next node-list refresh from restoring it automatically.
+    document.querySelectorAll('#nodesList .node-card.selected').forEach(card => {
+        card.classList.remove('selected');
+    });
+
+    // Clear only the map selection. Keep the current DM open and preserve
+    // the current map viewport.
+    meshMapTargetNodeId = null;
+    if (typeof MapLayout !== 'undefined' && MapLayout.state.mode !== 'off') {
+        renderMeshMap(null, {
+            preserveViewport: true,
+            openPopup: false,
+            clearSelection: true
+        });
+    }
 }
 
 function renderNodeDetails(node) {
@@ -6159,56 +6855,53 @@ function installNodeCardClickHandler() {
 
 function selectNode(nodeId, nodeName, selectionSource = 'nodes') {
     const normalizedNodeId = String(nodeId || '');
+    if (!normalizedNodeId) return;
+
     closedNodeDetailId = null;
-    const mapIsOpen = typeof MapLayout !== 'undefined' && MapLayout.state.mode !== 'off';
+    nodeVisualSelectionCleared = false;
 
-    // On the Map workspace, selecting a card in the right Nodes panel must
-    // immediately update the selected marker and reference route.
-    if (mapIsOpen && normalizedNodeId) {
-        meshMapTargetNodeId = normalizedNodeId;
-        renderMeshMap(normalizedNodeId, {
-            preserveViewport: true,
-            openPopup: true
-        });
-    }
+    const mapIsOpen =
+        typeof MapLayout !== 'undefined' && MapLayout.state.mode !== 'off';
+    const selectedFromMap = selectionSource === 'map';
 
-    // Даже если эта нода уже выбрана сверху, восстанавливаем выделение
-    // компактной карточки. Раньше ранний return оставлял карточку без фона.
-    if (String(currentChatId || '') === normalizedNodeId && currentChatType === 'dm') {
+    // A click on the map must keep the current viewport. A click on the
+    // compact Nodes list must move the map to the selected node.
+    const preserveMapViewport = selectedFromMap;
+
+    // Even when the DM is already open, repeat the map navigation. This is
+    // important when the operator selects the same node again after panning
+    // the map elsewhere.
+    const sameOpenDirectMessage =
+        String(currentChatId || '') === normalizedNodeId &&
+        currentChatType === 'dm';
+
+    if (!sameOpenDirectMessage) {
+        openChat(
+            normalizedNodeId,
+            nodeName,
+            'dm',
+            selectedFromMap ? 'external' : 'nodes'
+        );
+    } else {
         syncSelectedNodeCard();
-
-        if (selectionSource === 'map') {
-            requestSynchronizedListScroll(normalizedNodeId, 'external', {
-                forceNodeCenter: true
-            });
-        } else {
-            requestSynchronizedListScroll(normalizedNodeId, 'nodes');
-        }
-
         updateNodeDetails(normalizedNodeId);
-        return;
     }
 
-    openChat(
-        normalizedNodeId,
-        nodeName,
-        'dm',
-        selectionSource === 'map' ? 'external' : 'nodes'
-    );
-
-    if (selectionSource === 'map') {
+    if (selectedFromMap) {
         requestSynchronizedListScroll(normalizedNodeId, 'external', {
             forceNodeCenter: true
         });
+    } else {
+        requestSynchronizedListScroll(normalizedNodeId, 'nodes');
     }
-    updateNodeDetails(normalizedNodeId);
 
-    // openChat refreshes chat state, but Map remains the active workspace.
-    // Re-assert the visual selection after those synchronous UI updates.
+    // Render only once. Previously two preserveViewport renders were issued
+    // around openChat(), so selecting a card changed the marker/popup but left
+    // the map at its old position.
     if (mapIsOpen) {
         meshMapTargetNodeId = normalizedNodeId;
         renderMeshMap(normalizedNodeId, {
-            preserveViewport: true,
+            preserveViewport: preserveMapViewport,
             openPopup: true
         });
     }
@@ -6356,6 +7049,27 @@ async function loadBaseStatus() {
     try {
         const response = await fetch('/api/base_status', { cache: 'no-store' });
         const data = await response.json();
+
+        const previousNodeId = activeLocalNodeId;
+        const previousProfileId = activeLocalProfileId;
+
+        activeLocalNodeId = String(data.node_id || '').trim();
+        activeLocalProfileId = String(
+            data.profile_id || activeLocalNodeId.replace(/^!/, '')
+        ).trim().toLowerCase();
+
+        const identityChanged =
+            normalizeMessageIdentity(previousNodeId)
+                !== normalizeMessageIdentity(activeLocalNodeId)
+            || normalizeMessageIdentity(previousProfileId)
+                !== normalizeMessageIdentity(activeLocalProfileId);
+
+        if (identityChanged) {
+            // Force the current chat to be redrawn using the new active-radio
+            // ownership context.  The next normal message poll performs the
+            // render, so no additional network request is required here.
+            lastRenderedSignature = {};
+        }
 
         const nameEl = document.getElementById('baseNodeName');
         const uptimeEl = document.getElementById('baseUptimeBadge');
@@ -10570,49 +11284,52 @@ function updateStatusDock(tab) {
 
     if (tab === 'chats') {
         workspaceLabel.textContent = 'Chats';
-        centerText.textContent = 'Mesh Online';
+        setDockStatusBaseline('Mesh Online', 'online');
         setStatusDockContext('Nodes');
     } else if (tab === 'video') {
         workspaceLabel.textContent = 'Camera';
 
-        centerText.textContent = cameraPowerEnabled
-            ? (cameraActive ? 'Camera Online' : 'Camera Ready')
-            : 'Camera Off';
+        setDockStatusBaseline(
+            cameraPowerEnabled
+                ? (cameraActive ? 'Camera Online' : 'Camera Ready')
+                : 'Camera Off',
+            cameraPowerEnabled ? 'online' : 'warning'
+        );
 
         setStatusDockContext(cameraPowerEnabled
             ? getCurrentVideoInfoText()
             : 'Power-saving mode');
     } else if (tab === 'media') {
         workspaceLabel.textContent = 'Media';
-        centerText.textContent = 'Local Gallery';
+        setDockStatusBaseline('Local Gallery', 'online');
         setStatusDockContext('Images');
     } else if (tab === 'devices') {
         workspaceLabel.textContent = 'Devices';
-        centerText.textContent = 'Peripherals';
+        setDockStatusBaseline('Peripherals', 'online');
         setStatusDockContext('Active profile');
     } else if (tab === 'node-manager') {
         workspaceLabel.textContent = 'Node Manager';
-        centerText.textContent = 'Active Radio';
+        setDockStatusBaseline('Active Radio', 'online');
         setStatusDockContext('Profile');
     } else if (tab === 'system') {
         workspaceLabel.textContent = 'System';
-        centerText.textContent = 'System Monitor';
+        setDockStatusBaseline('System Monitor', 'online');
         setStatusDockContext('MeshCenter');
     } else if (tab === 'map') {
         workspaceLabel.textContent = 'Map';
-        centerText.textContent = 'Node Positions';
+        setDockStatusBaseline('Node Positions', 'online');
         setStatusDockContext('OpenStreetMap');
     } else if (tab === 'settings') {
         workspaceLabel.textContent = 'Settings';
-        centerText.textContent = 'Ready';
+        setDockStatusBaseline('Ready', 'online');
         setStatusDockContext('MeshCenter');
     } else if (tab === 'about') {
         workspaceLabel.textContent = 'About';
-        centerText.textContent = 'MeshCenter';
+        setDockStatusBaseline('MeshCenter', 'online');
         setStatusDockContext('v1.1.0');
     } else {
         workspaceLabel.textContent = 'Workspace';
-        centerText.textContent = 'Ready';
+        setDockStatusBaseline('Ready', 'online');
         setStatusDockContext('MeshCenter');
     }
 }

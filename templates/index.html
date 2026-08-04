@@ -1518,27 +1518,6 @@
                 <span>Workspace</span>
                 <span class="dock-workspace-chevron" aria-hidden="true">▴</span>
             </button>
-            <div class="dock-notification-wrap">
-                <button type="button"
-                        class="dock-notification-btn"
-                        id="notificationCenterBtn"
-                        title="Notifications"
-                        aria-label="Open notifications"
-                        aria-haspopup="dialog"
-                        aria-expanded="false"
-                        onclick="toggleNotificationCenter(event)">
-                    <span aria-hidden="true">🔔</span>
-                </button>
-                <section class="notification-popover" id="notificationPopover" aria-label="Notifications" hidden onclick="event.stopPropagation()">
-                    <header class="notification-popover-header">
-                        <div><strong>Notifications</strong><span>Recent MeshCenter activity</span></div>
-                        <button type="button" class="notification-clear-btn" onclick="clearNotifications()">Clear</button>
-                    </header>
-                    <div class="notification-list" id="notificationList"></div>
-                    <div class="notification-empty" id="notificationEmpty">No notifications yet</div>
-                </section>
-            </div>
-
             <span class="dock-workspace-label" id="dockWorkspaceLabel">Chats</span>
 
             <div class="workspace-popover" id="workspacePopover" role="menu" aria-label="Workspace settings" hidden>
@@ -1615,9 +1594,43 @@
             </div>
         </div>
 
-        <div class="dock-section dock-center" id="dockCenter">
-            <span class="dock-dot"></span>
-            <span id="dockStatusText">Ready</span>
+        <div class="dock-section dock-center dock-notification-wrap" id="dockCenter">
+            <button type="button"
+                    class="dock-notification-status"
+                    id="notificationCenterBtn"
+                    title="Open notifications"
+                    aria-label="Open notifications"
+                    aria-haspopup="dialog"
+                    aria-expanded="false"
+                    onclick="toggleNotificationCenter(event)">
+                <span class="dock-notification-state dock-dot" id="dockNotificationState" aria-hidden="true"></span>
+                <span class="dock-notification-text" id="dockStatusText">Ready</span>
+                <span class="dock-notification-chevron" aria-hidden="true">▴</span>
+            </button>
+            <button type="button"
+                    class="dock-notification-inline-action"
+                    id="dockNotificationAction"
+                    hidden
+                    onclick="runCurrentNotificationAction(event)">Retry</button>
+            <button type="button"
+                    class="dock-notification-inline-dismiss"
+                    id="dockNotificationDismiss"
+                    hidden
+                    title="Dismiss"
+                    aria-label="Dismiss notification"
+                    onclick="dismissCurrentNotification(event)">×</button>
+            <section class="notification-popover notification-popover-center"
+                     id="notificationPopover"
+                     aria-label="Notifications"
+                     hidden
+                     onclick="event.stopPropagation()">
+                <header class="notification-popover-header">
+                    <div><strong>Notifications</strong><span>Recent MeshCenter activity</span></div>
+                    <button type="button" class="notification-clear-btn" onclick="clearNotifications()">Clear</button>
+                </header>
+                <div class="notification-list" id="notificationList"></div>
+                <div class="notification-empty" id="notificationEmpty">No notifications yet</div>
+            </section>
         </div>
 
         <div class="dock-section dock-right" id="dockRight">
@@ -1818,7 +1831,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/chat.js?v=radio-profile-sync-20260804"></script>
+<script src="/static/chat.js?v=20260804-waypoint-ux1"></script>
 <script src="/static/media.js"></script>
 <script src="/static/weather.js?v=openweather-setup-20260731"></script>
 
@@ -1860,8 +1873,7 @@
             <label>Description<textarea id="waypointCreateDescription" maxlength="100" rows="3" placeholder="Optional details"></textarea></label>
             <div class="waypoint-create-grid">
                 <label>Channel<select id="waypointCreateChannel">
-                    <option value="0">Channel 0</option><option value="1">Channel 1</option><option value="2">Channel 2</option><option value="3">Channel 3</option>
-                    <option value="4">Channel 4</option><option value="5">Channel 5</option><option value="6">Channel 6</option><option value="7">Channel 7</option>
+                    <option value="0">Channel [0]</option>
                 </select></label>
                 <label>Expires<select id="waypointCreateDuration">
                     <option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600" selected>1 hour</option>

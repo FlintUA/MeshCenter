@@ -4,6 +4,7 @@ from flask import jsonify, request
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 import json
+import re
 
 
 DEFAULT_SETTINGS = {
@@ -30,6 +31,15 @@ DEFAULT_SETTINGS = {
         },
         "node_id": "",
         "place_name": "",
+    },
+
+    "waypoints": {
+        # Legacy/global fallback used until a radio-specific preference exists.
+        "last_channel_index": 0,
+        "last_duration_seconds": 3600,
+        "post_notification": True,
+        # Preferences are keyed by active radio profile ID.
+        "profile_defaults": {},
     },
 }
 
@@ -196,6 +206,83 @@ def normalize_settings(settings):
         180.0,
     )
 
+    # ---------------- Waypoint composer defaults ----------------
+
+    waypoint_settings = settings.get("waypoints", {})
+    if not isinstance(waypoint_settings, dict):
+        waypoint_settings = {}
+
+    try:
+        waypoint_channel_index = int(
+            waypoint_settings.get("last_channel_index", 0)
+        )
+    except (TypeError, ValueError):
+        waypoint_channel_index = 0
+
+    waypoint_channel_index = max(0, min(7, waypoint_channel_index))
+
+    allowed_waypoint_durations = {
+        900, 1800, 3600, 10800, 21600,
+        43200, 86400, 172800, 604800,
+    }
+
+    try:
+        waypoint_duration_seconds = int(
+            waypoint_settings.get("last_duration_seconds", 3600)
+        )
+    except (TypeError, ValueError):
+        waypoint_duration_seconds = 3600
+
+    if waypoint_duration_seconds not in allowed_waypoint_durations:
+        waypoint_duration_seconds = 3600
+
+    waypoint_post_notification = bool(
+        waypoint_settings.get("post_notification", True)
+    )
+
+    raw_profile_defaults = waypoint_settings.get("profile_defaults", {})
+    if not isinstance(raw_profile_defaults, dict):
+        raw_profile_defaults = {}
+
+    waypoint_profile_defaults = {}
+    for raw_profile_id, raw_defaults in raw_profile_defaults.items():
+        profile_id = str(raw_profile_id or "").strip().lower()
+        if not profile_id or not re.fullmatch(r"[a-z0-9_-]{1,64}", profile_id):
+            continue
+        if not isinstance(raw_defaults, dict):
+            continue
+
+        try:
+            profile_channel_index = int(
+                raw_defaults.get("last_channel_index", waypoint_channel_index)
+            )
+        except (TypeError, ValueError):
+            profile_channel_index = waypoint_channel_index
+        profile_channel_index = max(0, min(7, profile_channel_index))
+
+        try:
+            profile_duration_seconds = int(
+                raw_defaults.get(
+                    "last_duration_seconds",
+                    waypoint_duration_seconds,
+                )
+            )
+        except (TypeError, ValueError):
+            profile_duration_seconds = waypoint_duration_seconds
+        if profile_duration_seconds not in allowed_waypoint_durations:
+            profile_duration_seconds = waypoint_duration_seconds
+
+        waypoint_profile_defaults[profile_id] = {
+            "last_channel_index": profile_channel_index,
+            "last_duration_seconds": profile_duration_seconds,
+            "post_notification": bool(
+                raw_defaults.get(
+                    "post_notification",
+                    waypoint_post_notification,
+                )
+            ),
+        }
+
     return {
         "units": {
             "temperature": temperature,
@@ -224,6 +311,13 @@ def normalize_settings(settings):
             },
             "node_id": reference_node_id,
             "place_name": reference_place_name,
+        },
+
+        "waypoints": {
+            "last_channel_index": waypoint_channel_index,
+            "last_duration_seconds": waypoint_duration_seconds,
+            "post_notification": waypoint_post_notification,
+            "profile_defaults": waypoint_profile_defaults,
         },
     }
 

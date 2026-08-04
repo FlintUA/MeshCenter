@@ -350,6 +350,7 @@ It combines multiple independent subsystems into one application:
 
 - Messaging (including Meshtastic reply support)
 - Interactive Network Map
+- Waypoints
 - Camera
 - Photo Gallery
 - Telemetry
@@ -363,6 +364,73 @@ It combines multiple independent subsystems into one application:
 - REST API
 
 This modular architecture makes it easy to extend the project while keeping the user interface simple and responsive.
+
+## Working with Multiple Radios
+
+MeshCenter automatically manages independent profiles for every Meshtastic radio connected to the Raspberry Pi.
+
+Each radio receives its own dedicated profile containing:
+
+- Messages
+- Direct messages
+- Node database
+- Telemetry history
+- Waypoints
+- Device configuration
+- Node icons
+- Profile-specific settings
+
+This means you can disconnect one Meshtastic device, connect another one and continue working with its own independent data without affecting the previous radio.
+
+### Connecting a new radio
+
+1. Disconnect the current radio.
+2. Connect another supported Meshtastic device via USB.
+3. Make sure **USB Serial** is enabled in the Meshtastic firmware.
+4. Open **Node Manager**.
+5. Press **Detect radio**.
+
+If the radio has never been used before, MeshCenter will offer to create a new clean profile.
+
+If the radio has been used previously, MeshCenter will automatically detect its existing profile and offer to activate it.
+
+No existing profile data is overwritten.
+
+### Switching between radios
+
+After a profile has been created, switching is simple:
+
+1. Open **Node Manager**.
+2. Click the desired saved radio.
+3. Connect that radio to the Raspberry Pi.
+4. Confirm the activation.
+
+MeshCenter will:
+
+- release the current radio;
+- verify the newly connected radio;
+- activate its saved profile;
+- restart the internal listener;
+- continue using the selected profile.
+
+The switch normally takes only a few seconds.
+
+### Waypoints
+
+Waypoints belong to the active radio profile.
+
+Each Meshtastic device keeps its own independent waypoint database.
+
+Switching between radios automatically switches to that radio's waypoint collection.
+
+No waypoint data is shared or mixed between different radio profiles.
+
+### Notes
+
+- One USB radio can be active at a time.
+- Profiles are never merged automatically.
+- Existing data is preserved when switching between radios.
+- Profiles can be backed up simply by copying the corresponding folder from `data/profiles/`.
 
 ---
 

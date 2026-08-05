@@ -1885,6 +1885,19 @@ function getChatNodeShortName(chat) {
     return (fallback || '?').toUpperCase();
 }
 
+// Appends "[index]" to a channel name, stripping a redundant trailing
+// "Channel <index>" fragment from the name first (e.g. the primary channel's
+// resolved name "LongFast Channel 0" becomes "LongFast [0]" instead of
+// "LongFast Channel 0 [0]"). Shared by the main chat channel list and the
+// Waypoint composer's channel picker so both stay in sync.
+function formatChannelIndexLabel(name, index) {
+    const trimmedName = String(name || '').trim();
+    const suffixPattern = new RegExp(`^(.*?)\\s*channel\\s+${index}$`, 'i');
+    const match = trimmedName.match(suffixPattern);
+    const displayName = (match ? match[1].trim() : trimmedName) || 'Channel';
+    return `${displayName} [${index}]`;
+}
+
 // ============================================================
 // RENDER CHAT ITEM
 // ============================================================
@@ -1917,12 +1930,15 @@ function renderChatItem(chat) {
         ? `showToast('This channel is not configured on the radio yet', 'info')`
         : `openChat('${escapeHtml(chat.id)}', '${escapeHtml(chat.name)}', '${escapeHtml(chat.type)}', 'chat')`;
     const demoClass = isDemo ? 'demo-channel' : '';
+    const displayName = chat.is_channel && Number.isInteger(chat.index)
+        ? formatChannelIndexLabel(chat.name, chat.index)
+        : chat.name;
 
     return `
         <div class="chat-item ${hasUnread} ${selectedClass} ${demoClass}" data-chat-id="${escapeHtml(chat.id)}" onclick="${clickHandler}" ${isDemo ? 'title="Channel is not configured on the radio"' : ''}>
             <div class="chat-icon ${iconClass}">${icon}</div>
             <div class="chat-info">
-                <div class="chat-name">${ignored}${favorite}${escapeHtml(chat.name)}</div>
+                <div class="chat-name">${ignored}${favorite}${escapeHtml(displayName)}</div>
                 <div class="chat-last-msg">${lastMsgDisplay}</div>
             </div>
             <div class="chat-meta">
@@ -4410,7 +4426,7 @@ function renderWaypointChannelOptions(channels, preferredIndex = 0) {
     waypointComposerChannels = normalized;
 
     select.innerHTML = normalized.map(channel => {
-        const label = `${channel.name} [${channel.index}]`;
+        const label = formatChannelIndexLabel(channel.name, channel.index);
         return `<option value="${channel.index}">${escapeHtml(label)}</option>`;
     }).join('');
 

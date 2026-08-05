@@ -47,6 +47,6 @@ echo "==> Pushing to remote"
 git push
 
 echo "==> Deploying to $REMOTE_HOST"
-ssh "$REMOTE_USER@$REMOTE_HOST" "cd $REMOTE_PATH && git pull && sudo systemctl restart meshcenter"
+ssh "$REMOTE_USER@$REMOTE_HOST" "cd $REMOTE_PATH && git pull && sudo systemctl restart meshcenter.service"
 
 echo "==> Deployment to $ENVIRONMENT complete"

@@ -2614,6 +2614,15 @@ function syncSelectedNodeCard() {
     });
 }
 
+// Mirrors the "channel" / "channel:N" chat id convention used across the
+// frontend (see waypointFallbackChannel/normalizeWaypointChannels above and
+// CHANNEL_CHAT_ID on the backend) to recover the numeric channel index.
+function channelIndexFromChatId(chatId) {
+    if (chatId === 'channel') return 0;
+    const match = /^channel:(\d+)$/.exec(String(chatId || ''));
+    return match ? Number(match[1]) : 0;
+}
+
 // ============================================================
 // UPDATE CHAT HEADER (NEW)
 // ============================================================
@@ -2632,7 +2641,8 @@ function updateChatHeader() {
     }
 
     if (currentChatType === 'channel') {
-        titleEl.textContent = '📡 ' + currentChatName;
+        const channelLabel = formatChannelIndexLabel(currentChatName, channelIndexFromChatId(currentChatId));
+        titleEl.textContent = '📡 ' + channelLabel;
         if (subtitleEl) {
             subtitleEl.textContent = 'Channel • All messages are broadcast';
             subtitleEl.style.color = '#1a73e8';

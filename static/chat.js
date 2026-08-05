@@ -2107,6 +2107,7 @@ async function loadMessages() {
         
         const data = await response.json();
         console.log('[MESSAGES] Received', data.nodes ? data.nodes.length : 0, 'nodes');
+        notifyFailedOutgoingMessages(data.messages);
 
         nodeCache = mergeNodeCachePreservingPosition(
             data.nodes || []
@@ -3341,6 +3342,7 @@ async function loadChatMessages(chatId, options = {}) {
         }
 
         const messages = Array.isArray(data.messages) ? data.messages : [];
+        notifyFailedOutgoingMessages(messages);
 
         messageCache[chatId] = {
             messages,
@@ -3450,6 +3452,42 @@ const sendForm = document.getElementById('sendForm');
 // ------------------------------------------------------------------
 let pendingOptimisticMessages = {}; // chatId -> Map(clientId -> message)
 
+// Server-confirmed sends that failed in the background (radio busy, serial
+// timeout, etc.) surface as status:"failed" on the message itself once
+// polling picks it up - this used to also post a "SYSTEM ERROR" chat
+// message into the primary channel regardless of which chat actually
+// failed, which was both confusing and noisy. Instead, report it once via
+// the Notifications log/toast (addNotification/showToast) and remember the
+// id so the same failure isn't re-announced on every subsequent poll.
+let notifiedFailedMessageIds = new Set();
+
+function notifyFailedOutgoingMessages(messageList) {
+    if (!Array.isArray(messageList)) return;
+
+    for (const msg of messageList) {
+        if (!msg || msg.kind !== 'me' || msg.status !== 'failed') continue;
+        if (!msg.id || notifiedFailedMessageIds.has(msg.id)) continue;
+
+        notifiedFailedMessageIds.add(msg.id);
+
+        const where = msg.chat_name || (msg.chat_type === 'dm' ? 'direct message' : 'channel');
+        const preview = String(msg.text || '').trim().slice(0, 60);
+        const reason = msg.error || 'send failed';
+
+        if (typeof showToast === 'function') {
+            showToast(
+                `Message not delivered in ${where}: ${reason}${preview ? ` — "${preview}"` : ''}`,
+                'error'
+            );
+        }
+    }
+
+    // Keep the dedup set from growing forever across a long session.
+    if (notifiedFailedMessageIds.size > 500) {
+        notifiedFailedMessageIds = new Set(Array.from(notifiedFailedMessageIds).slice(-200));
+    }
+}
+
 function getActiveLocalSenderName() {
     const el = document.getElementById('baseNodeName');
     const text = el ? el.textContent.trim() : '';
@@ -3544,6 +3582,14 @@ async function submitOutgoingMessage(chatId, chatType, chatName, text, replyTo) 
         tempMsg.status = 'failed';
         tempMsg.error = (error && error.message) ? error.message : 'Network error';
         renderChatIfActive(chatId);
+
+        if (typeof showToast === 'function') {
+            const preview = String(text || '').trim().slice(0, 60);
+            showToast(
+                `Message not delivered in ${chatName || (chatType === 'dm' ? 'direct message' : 'channel')}: ${tempMsg.error}${preview ? ` — "${preview}"` : ''}`,
+                'error'
+            );
+        }
     }
 }
 

@@ -64,14 +64,19 @@ def register_chat_routes(
     send_queue = queue.Queue()
 
     def _mark_failed(message_id, chat_id, error_text):
+        # Only update the message's own status/error field. This used to
+        # also post a synthetic "SYSTEM ERROR" chat message into the
+        # primary channel regardless of which chat/channel actually failed
+        # - confusing (the error showed up in an unrelated conversation)
+        # and redundant now that the frontend surfaces failures both on the
+        # message bubble itself (pending/failed badge + Retry) and as an
+        # entry in the Notifications log.
         try:
             update_message_status(message_id, chat_id, "failed", error=error_text)
         except Exception as status_error:
             print(f"[SEND WORKER] Failed to update message status: {status_error}", flush=True)
-        with state_lock:
-            add_message("rx", "SYSTEM ERROR", f"send: {error_text}", "", CHANNEL_CHAT_ID)
 
-    def _process_send_job(job):
+    def _send_one(interface, job):
         text = job["text"]
         final_chat_id = job["final_chat_id"]
         chat_type = job["chat_type"]
@@ -80,48 +85,25 @@ def register_chat_routes(
         message_id = job["message_id"]
         receiver_name = job["receiver_name"]
 
-        if not is_radio_available():
-            _mark_failed(message_id, final_chat_id, "radio released for external configuration")
-            return
-
         try:
-            if not prepare_radio_command(active_serial_port(), timeout=10):
-                _mark_failed(message_id, final_chat_id, f"serial port busy: {active_serial_port()}")
-                return
+            destination = final_chat_id if chat_type == "dm" else "^all"
 
-            sent_packet = None
-            packet_id = None
-            interface = None
+            sent_packet = interface.sendText(
+                text=text,
+                destinationId=destination,
+                channelIndex=channel_index,
+                replyId=reply_id,
+            )
 
-            try:
-                from meshtastic.serial_interface import SerialInterface
+            packet_id = getattr(sent_packet, "id", None)
+            if packet_id is not None:
+                packet_id = int(packet_id)
 
-                with radio_lock:
-                    interface = SerialInterface(devPath=active_serial_port())
-                    destination = final_chat_id if chat_type == "dm" else "^all"
-
-                    sent_packet = interface.sendText(
-                        text=text,
-                        destinationId=destination,
-                        channelIndex=channel_index,
-                        replyId=reply_id,
-                    )
-
-                    packet_id = getattr(sent_packet, "id", None)
-                    if packet_id is not None:
-                        packet_id = int(packet_id)
-
-                    print(
-                        f"[SEND WORKER] destination={destination}, channel_index={channel_index}, "
-                        f"packet_id={packet_id}, reply_id={reply_id}",
-                        flush=True
-                    )
-            finally:
-                if interface is not None:
-                    try:
-                        interface.close()
-                    except Exception as close_error:
-                        print(f"[SEND WARN] interface.close(): {close_error}", flush=True)
+            print(
+                f"[SEND WORKER] destination={destination}, channel_index={channel_index}, "
+                f"packet_id={packet_id}, reply_id={reply_id}",
+                flush=True
+            )
 
             radio_event("send")
             update_message_status(message_id, final_chat_id, "sent", packet_id=packet_id)
@@ -167,6 +149,47 @@ def register_chat_routes(
             radio_event("send_error", str(e))
             _mark_failed(message_id, final_chat_id, str(e))
 
+    def _process_send_batch(batch):
+        """Send every job already queued in one pause/connect/resume cycle.
+
+        Pausing the listener (prepare_radio_command -> stop_listener) alone
+        costs at least ~1.5s, plus wait_serial_release polling, plus the 2s
+        cooldown before the listener resumes - all before any actual serial
+        I/O. Doing that separately for every message in a quick burst (e.g.
+        three messages sent back to back) repeatedly kills and restarts the
+        --listen subprocess and reopens the serial connection in rapid
+        succession, which is what produced occasional "Timed out waiting
+        for connection completion" failures. Draining the queue and sharing
+        a single SerialInterface across the whole batch avoids that.
+        """
+        if not batch:
+            return
+
+        if not is_radio_available():
+            for job in batch:
+                _mark_failed(job["message_id"], job["final_chat_id"], "radio released for external configuration")
+            return
+
+        try:
+            if not prepare_radio_command(active_serial_port(), timeout=10):
+                for job in batch:
+                    _mark_failed(job["message_id"], job["final_chat_id"], f"serial port busy: {active_serial_port()}")
+                return
+
+            interface = None
+            try:
+                from meshtastic.serial_interface import SerialInterface
+
+                with radio_lock:
+                    interface = SerialInterface(devPath=active_serial_port())
+                    for job in batch:
+                        _send_one(interface, job)
+            finally:
+                if interface is not None:
+                    try:
+                        interface.close()
+                    except Exception as close_error:
+                        print(f"[SEND WARN] interface.close(): {close_error}", flush=True)
         finally:
             time.sleep(2.0)
             pause_listen.clear()
@@ -175,18 +198,34 @@ def register_chat_routes(
     def send_worker():
         while True:
             job = send_queue.get()
+            send_queue.task_done()
+            if job is None:
+                continue
+
+            batch = [job]
+
+            # Pick up anything else that arrived while we were still
+            # queueing this job (e.g. several messages typed and sent in
+            # quick succession) so they all share the same pause/connect
+            # cycle instead of each paying for their own.
+            while True:
+                try:
+                    extra = send_queue.get_nowait()
+                except queue.Empty:
+                    break
+                send_queue.task_done()
+                if extra is not None:
+                    batch.append(extra)
+
             try:
-                if job is None:
-                    continue
-                _process_send_job(job)
+                _process_send_batch(batch)
             except Exception as worker_error:
                 print(f"[SEND WORKER] Unexpected error: {worker_error}", flush=True)
-                try:
-                    _mark_failed(job.get("message_id"), job.get("final_chat_id"), str(worker_error))
-                except Exception:
-                    pass
-            finally:
-                send_queue.task_done()
+                for failed_job in batch:
+                    try:
+                        _mark_failed(failed_job.get("message_id"), failed_job.get("final_chat_id"), str(worker_error))
+                    except Exception:
+                        pass
 
     threading.Thread(target=send_worker, daemon=True, name="mc-send-worker").start()
 

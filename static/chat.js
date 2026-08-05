@@ -2976,6 +2976,12 @@ function requestDeleteMessage() {
             : 'Delete this message locally?';
     }
 
+    const errorEl = document.getElementById('confirmDeleteMessageError');
+    if (errorEl) {
+        errorEl.textContent = '';
+        errorEl.style.display = 'none';
+    }
+
     const modal = document.getElementById('confirmDeleteMessageModal');
     if (modal) modal.style.display = 'flex';
 }
@@ -2983,6 +2989,12 @@ function requestDeleteMessage() {
 function closeConfirmDeleteMessage() {
     const modal = document.getElementById('confirmDeleteMessageModal');
     if (modal) modal.style.display = 'none';
+
+    const errorEl = document.getElementById('confirmDeleteMessageError');
+    if (errorEl) {
+        errorEl.textContent = '';
+        errorEl.style.display = 'none';
+    }
 }
 
 async function executeDeleteMessage() {
@@ -2993,7 +3005,15 @@ async function executeDeleteMessage() {
     }
 
     const button = document.getElementById('confirmDeleteMessageBtn');
-    if (button) button.disabled = true;
+    const errorEl = document.getElementById('confirmDeleteMessageError');
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Deleting…';
+    }
+    if (errorEl) {
+        errorEl.textContent = '';
+        errorEl.style.display = 'none';
+    }
 
     try {
         const response = await fetch('/api/messages/delete', {
@@ -3007,7 +3027,7 @@ async function executeDeleteMessage() {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            throw new Error(data.error || 'Delete failed');
+            throw new Error(data.error || `Delete failed (HTTP ${response.status})`);
         }
 
         invalidateCache(currentChatId);
@@ -3019,9 +3039,22 @@ async function executeDeleteMessage() {
         showMessageActionStatus('Message deleted locally', 'success');
     } catch (error) {
         console.error('[MESSAGE ACTIONS] Delete failed:', error);
+        // The modal stays open on failure by design (so the user can see
+        // what went wrong and decide whether to retry or cancel), so the
+        // error has to be shown *inside* it - the status dock this used to
+        // rely on exclusively sits behind the modal overlay and is
+        // invisible while it's open, which made failures look like the
+        // dialog had simply frozen.
+        if (errorEl) {
+            errorEl.textContent = error.message || 'Could not delete message';
+            errorEl.style.display = 'block';
+        }
         showMessageActionStatus(error.message || 'Could not delete message', 'error');
     } finally {
-        if (button) button.disabled = false;
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'Delete';
+        }
     }
 }
 
@@ -3037,6 +3070,15 @@ function initializeMessageActions() {
         event.preventDefault();
         event.stopPropagation();
         openMessageActions(button.dataset.messageId, button);
+    });
+
+    container.addEventListener('click', event => {
+        const retryBtn = event.target.closest('.message-retry-btn[data-retry-message-id]');
+        if (!retryBtn) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        retryFailedMessage(retryBtn.dataset.retryMessageId);
     });
 
     container.addEventListener('click', event => {
@@ -3115,7 +3157,9 @@ function renderMessages(container, messages, chatId) {
                 m.time,
                 m.reply_to?.id,
                 m.reply_to?.packet_id,
-                m.reply_to?.text
+                m.reply_to?.text,
+                m.status,
+                m.error
             ].join('|')
         )
     ].join('||');
@@ -3176,6 +3220,26 @@ function renderMessages(container, messages, chatId) {
                 `;
             }
 
+            // Outgoing messages go through /api/send asynchronously now:
+            // the HTTP response comes back before the radio has actually
+            // transmitted anything, so the bubble shows its own lifecycle
+            // (pending -> sent / failed) independently of the request.
+            let statusBadge = '';
+            if (isMe) {
+                if (msg.status === 'pending') {
+                    statusBadge = '<span class="message-status pending" title="Sending…">⏳</span>';
+                } else if (msg.status === 'failed') {
+                    const errText = escapeHtml(String(msg.error || 'Send failed'));
+                    statusBadge = `
+                        <span class="message-status failed" title="${errText}">⚠️
+                            <button type="button" class="message-retry-btn" data-retry-message-id="${messageId}">Retry</button>
+                        </span>
+                    `;
+                } else {
+                    statusBadge = '<span class="message-status sent" title="Sent">✓</span>';
+                }
+            }
+
             return `
                 <div class="message ${isMe ? 'me' : 'rx'}" data-message-id="${messageId}">
                     <div class="bubble">
@@ -3183,7 +3247,7 @@ function renderMessages(container, messages, chatId) {
                         <div class="sender">${sender}</div>
                         ${replyBlock}
                         <div class="text">${text}</div>
-                        <div class="time">${time}</div>
+                        <div class="time">${time}${statusBadge}</div>
                     </div>
                 </div>
             `;
@@ -3233,7 +3297,7 @@ async function loadChatMessages(chatId, options = {}) {
             `[CACHE] Rendering cached messages for: ${chatId} ` +
             `(${cached.messages.length} messages), then revalidating`
         );
-        renderMessages(container, cached.messages, chatId);
+        renderMessages(container, mergeOptimisticMessages(chatId, cached.messages), chatId);
     }
 
     // Cancel the previous message request instead of merely forgetting its ID.
@@ -3294,7 +3358,7 @@ async function loadChatMessages(chatId, options = {}) {
             console.log(`[CACHE] Removed oldest entry: ${oldestKey}`);
         }
 
-        renderMessages(container, messages, chatId);
+        renderMessages(container, mergeOptimisticMessages(chatId, messages), chatId);
 
     } catch (error) {
         if (error && error.name === 'AbortError') {
@@ -3373,6 +3437,147 @@ document.addEventListener('visibilitychange', () => {
 // SEND FORM
 // ============================================================
 const sendForm = document.getElementById('sendForm');
+
+// ------------------------------------------------------------------
+// Optimistic outgoing messages.
+//
+// /api/send now answers as soon as the message is validated and queued
+// (no more waiting for a fresh serial connection + the radio round trip),
+// but the actual transmission still finishes in the background. Track
+// locally-created bubbles here so they can be shown instantly and later
+// reconciled (or dropped) once the authoritative copy shows up through
+// normal polling of /api/messages.
+// ------------------------------------------------------------------
+let pendingOptimisticMessages = {}; // chatId -> Map(clientId -> message)
+
+function getActiveLocalSenderName() {
+    const el = document.getElementById('baseNodeName');
+    const text = el ? el.textContent.trim() : '';
+    return text || 'Me';
+}
+
+function mergeOptimisticMessages(chatId, serverMessages) {
+    const pending = pendingOptimisticMessages[chatId];
+    if (!pending || pending.size === 0) return serverMessages;
+
+    // Once the authoritative message (matched by the client_id we
+    // generated) appears in a poll response, the local placeholder has
+    // done its job and can be dropped.
+    const serverClientIds = new Set(
+        serverMessages.map(m => m.client_id).filter(Boolean)
+    );
+    for (const clientId of Array.from(pending.keys())) {
+        if (serverClientIds.has(clientId)) {
+            pending.delete(clientId);
+        }
+    }
+
+    if (pending.size === 0) return serverMessages;
+    return serverMessages.concat(Array.from(pending.values()));
+}
+
+function renderChatIfActive(chatId) {
+    if (currentChatId !== chatId) return;
+    const container = document.getElementById('messagesContainer');
+    if (!container) return;
+    const base = (messageCache[chatId] && messageCache[chatId].messages) || [];
+    renderMessages(container, mergeOptimisticMessages(chatId, base), chatId);
+}
+
+function buildOptimisticMessage(clientId, chatId, chatType, chatName, text, replyTo) {
+    return {
+        id: `local-${clientId}`,
+        client_id: clientId,
+        kind: 'me',
+        sender: getActiveLocalSenderName(),
+        node_id: activeLocalNodeId || '',
+        owner_node_id: activeLocalNodeId || '',
+        owner_profile_id: activeLocalProfileId || '',
+        text: text,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        chat_id: chatId,
+        chat_type: chatType,
+        chat_name: chatName,
+        reply_to: replyTo || null,
+        status: 'pending'
+    };
+}
+
+async function submitOutgoingMessage(chatId, chatType, chatName, text, replyTo) {
+    const clientId = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const tempMsg = buildOptimisticMessage(clientId, chatId, chatType, chatName, text, replyTo);
+
+    if (!pendingOptimisticMessages[chatId]) {
+        pendingOptimisticMessages[chatId] = new Map();
+    }
+    pendingOptimisticMessages[chatId].set(clientId, tempMsg);
+
+    // Paint the bubble before any network round trip happens.
+    renderChatIfActive(chatId);
+    loadChatList();
+
+    try {
+        const payload = { text: text, chat_id: chatId, client_id: clientId };
+        if (chatType === 'dm') payload.target_node = chatId;
+        if (replyTo) payload.reply_to = replyTo;
+
+        const response = await fetch('/api/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `HTTP ${response.status}`);
+        }
+
+        // The server has already stored the real message (status
+        // "pending"); pull it in now instead of waiting for the next poll
+        // tick, then drop the local placeholder.
+        invalidateCache(chatId);
+        await loadChatMessages(chatId, { forceRefresh: true, suppressErrorPlaceholder: true });
+        loadChatList();
+
+    } catch (error) {
+        console.error('Error sending message:', error);
+        tempMsg.status = 'failed';
+        tempMsg.error = (error && error.message) ? error.message : 'Network error';
+        renderChatIfActive(chatId);
+    }
+}
+
+function retryFailedMessage(messageId) {
+    // Case 1: the message never made it past the browser (network error,
+    // request never reached the server) - it only exists as a local
+    // placeholder.
+    for (const pending of Object.values(pendingOptimisticMessages)) {
+        for (const [clientId, msg] of pending.entries()) {
+            if (msg.id === messageId) {
+                pending.delete(clientId);
+                submitOutgoingMessage(msg.chat_id, msg.chat_type, msg.chat_name, msg.text, msg.reply_to);
+                return;
+            }
+        }
+    }
+
+    // Case 2: the server accepted and stored the message, but the
+    // background send worker could not actually transmit it (radio busy,
+    // timeout, etc). Resend using the stored copy.
+    const chatId = currentChatId;
+    const cachedMessages = (messageCache[chatId] && messageCache[chatId].messages) || [];
+    const serverMsg = cachedMessages.find(m => String(m.id) === String(messageId));
+    if (serverMsg) {
+        submitOutgoingMessage(
+            chatId,
+            serverMsg.chat_type,
+            serverMsg.chat_name,
+            serverMsg.text,
+            serverMsg.reply_to || null
+        );
+    }
+}
+
 if (sendForm) {
     sendForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -3390,91 +3595,21 @@ if (sendForm) {
             }
         }
 
-        const button = e.target.querySelector('button[type="submit"]');
-        const originalHtml = button ? button.innerHTML : 'Send';
+        const chatId = currentChatId;
+        const chatType = currentChatType;
+        const chatName = currentChatName;
+        const replyTo = activeReply;
 
-        if (button) {
-            button.disabled = true;
-            const currentWidth = button.offsetWidth;
-            button.style.minWidth = '100px';
-            button.style.width = currentWidth + 'px';
-            button.classList.add('sending');
-            button.innerHTML = `<span style="display:inline-block;min-width:80px;text-align:left;">Sending<span class="dots"></span></span>`;
-            button.style.animation = 'pulse 1s ease-in-out infinite';
+        // Clear the composer immediately - the message is already rendered
+        // as a pending bubble by submitOutgoingMessage below, there is
+        // nothing left in this handler worth blocking input for.
+        if (input) {
+            input.value = '';
+            input.focus();
         }
+        cancelReply();
 
-        try {
-            const payload = {
-                text: text,
-                chat_id: currentChatId
-            };
-
-            if (currentChatType === 'dm') {
-                payload.target_node = currentChatId;
-            }
-
-            if (activeReply) {
-                payload.reply_to = activeReply;
-            }
-
-            const response = await fetch('/api/send', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
-            });
-
-            if (response.ok) {
-                if (input) input.value = '';
-                cancelReply();
-                
-                invalidateCache(currentChatId);
-                lastMessagesSignature = '';
-                await loadChatMessages(currentChatId);
-                loadChatList();
-                
-                if (button) {
-                    button.innerHTML = '✓ Sent!';
-                    button.style.background = '#4caf50';
-                    button.style.borderColor = '#4caf50';
-                    button.style.animation = '';
-                    button.classList.remove('sending');
-                    setTimeout(() => {
-                        button.disabled = false;
-                        button.style.width = '';
-                        button.style.minWidth = '';
-                        button.style.background = '';
-                        button.style.borderColor = '';
-                        button.innerHTML = originalHtml;
-                        button.classList.remove('sending');
-                    }, 1200);
-                }
-            } else {
-                const error = await response.json();
-                alert('Failed to send: ' + (error.error || 'Unknown error'));
-                if (button) {
-                    button.disabled = false;
-                    button.style.width = '';
-                    button.style.minWidth = '';
-                    button.style.animation = '';
-                    button.classList.remove('sending');
-                    button.innerHTML = originalHtml;
-                }
-            }
-
-        } catch (error) {
-            console.error('Error sending message:', error);
-            alert('Network error');
-            if (button) {
-                button.disabled = false;
-                button.style.width = '';
-                button.style.minWidth = '';
-                button.style.animation = '';
-                button.classList.remove('sending');
-                button.innerHTML = originalHtml;
-            }
-        } finally {
-            if (input) input.focus();
-        }
+        submitOutgoingMessage(chatId, chatType, chatName, text, replyTo);
     });
 }
 
@@ -10954,12 +11089,9 @@ function setChatWorkspaceChromeVisible(visible) {
         element.setAttribute('aria-hidden', visible ? 'false' : 'true');
     });
 
-    if (chatPanels) {
-        chatPanels.classList.toggle('node-manager-layout', !visible && currentMainTab === 'node-manager');
-        if (!visible) {
-            chatPanels.scrollTop = 0;
-            chatPanels.scrollLeft = 0;
-        }
+    if (chatPanels && !visible) {
+        chatPanels.scrollTop = 0;
+        chatPanels.scrollLeft = 0;
     }
 }
 
@@ -11004,7 +11136,6 @@ function switchMainTab(tab) {
     currentMainTab = tab;
     const nodeManagerOpen = tab === 'node-manager';
     document.body.classList.toggle('node-manager-open', nodeManagerOpen);
-    document.querySelector('.chat-panels')?.classList.toggle('node-manager-layout', nodeManagerOpen);
 
     document.querySelectorAll('.main-content-tab').forEach(btn => {
         btn.classList.toggle(
@@ -11158,34 +11289,10 @@ function switchMainTab(tab) {
         loadPeripheralDevices();
 
     } else if (tab === 'node-manager') {
-        const chatArea = document.querySelector('.chat-area');
-        const chatPanels = document.querySelector('.chat-panels');
-
-        setChatWorkspaceChromeVisible(false);
-
-        if (chatArea) {
-            chatArea.scrollTop = 0;
-            chatArea.classList.remove('chat-workspace-active');
-        }
-        if (chatPanels) {
-            chatPanels.scrollTop = 0;
-            chatPanels.scrollLeft = 0;
-            chatPanels.classList.add('node-manager-layout');
-        }
-        if (nodeManagerView) {
-            nodeManagerView.scrollTop = 0;
-            nodeManagerView.style.display = 'flex';
-        }
-
-        // Run once more after layout calculation. This prevents the previous
-        // Chats header/list geometry from leaving a transient top offset.
-        requestAnimationFrame(() => {
-            if (currentMainTab !== 'node-manager') return;
-            setChatWorkspaceChromeVisible(false);
-            if (chatArea) chatArea.scrollTop = 0;
-            if (chatPanels) chatPanels.scrollTop = 0;
-            if (nodeManagerView) nodeManagerView.scrollTop = 0;
-        });
+        if (chatHeader) chatHeader.style.display = 'none';
+        if (chatListContainer) chatListContainer.style.display = 'none';
+        if (messagesView) messagesView.style.display = 'none';
+        if (nodeManagerView) nodeManagerView.style.display = 'flex';
 
         updateStatusDock('node-manager');
         stopMessagePolling();

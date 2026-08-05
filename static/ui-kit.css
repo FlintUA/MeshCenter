@@ -4,46 +4,18 @@
 
 :root {
     /* Surfaces and text */
-    --mc-surface: #ffffff;
-    --mc-surface-soft: #f8fafc;
-    --mc-text: #0f172a;
-    --mc-muted: #64748b;
-    --mc-border: #dfe5ee;
-    --mc-accent: #1e4f8f;
+
+    /* Compatibility surfaces used by feature-specific rules. */
 
     /* Spacing and geometry */
-    --mc-page-pad: 14px;
-    --mc-card-pad: 16px;
-    --mc-card-radius: 12px;
-    --mc-control-height: 36px;
-    --mc-control-radius: 8px;
 
     /* Typography */
-    --mc-page-title-size: 18px;
-    --mc-page-title-weight: 700;
-    --mc-page-title-line-height: 1.25;
-    --mc-card-title-size: 14px;
-    --mc-body-size: 12px;
-    --mc-caption-size: 10px;
-    --mc-control-font-size: 12px;
 
     /* Workspace headers */
-    --mc-workspace-header-height: 72px;
-    --mc-workspace-header-padding-x: 16px;
-    --mc-workspace-header-padding-y: 14px;
-    --mc-workspace-header-bg: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
-    --mc-page-subtitle-gap: 4px;
-    --mc-page-subtitle-line-height: 1.4;
 
     /* Secondary buttons - Media Refresh is the visual reference */
-    --mc-button-secondary-bg: #edf3f9;
-    --mc-button-secondary-bg-hover: #e2ebf5;
-    --mc-button-secondary-border: #cbd8e6;
-    --mc-button-secondary-border-hover: #bdccdc;
-    --mc-button-secondary-text: #274766;
 
     /* Camera controls */
-    --mc-camera-control-label-offset: 18px;
 }
 
 /* ============================================================
@@ -53,59 +25,22 @@
 
 :root {
     /* Application surfaces */
-    --mc-bg-app: #eef2f7;
-    --mc-bg-workspace: #f5f7fa;
-    --mc-bg-panel: #ffffff;
-    --mc-bg-subtle: #f7f9fc;
-    --mc-bg-muted: #eef3f8;
-    --mc-bg-media-stage: #e9edf2;
 
     /* Borders */
-    --mc-border: #d7e0ea;
-    --mc-border-soft: #e4eaf1;
-    --mc-border-active: #2f73d9;
-    --mc-border-focus: #1f6feb;
 
     /* Brand / interaction */
-    --mc-primary: #1f6fdb;
-    --mc-primary-hover: #175fc0;
-    --mc-primary-soft: #eaf3ff;
-    --mc-primary-muted: #dbeafd;
+
+    /* Feature compatibility surfaces */
 
     /* Text */
-    --mc-text-primary: #10233f;
-    --mc-text-secondary: #58708f;
-    --mc-text-muted: #8798ad;
-    --mc-text-inverse: #ffffff;
 
     /* Status */
-    --mc-success: #27b96f;
-    --mc-success-soft: #e9f8f0;
-    --mc-warning: #e6ad22;
-    --mc-warning-soft: #fff7df;
-    --mc-danger: #e6505d;
-    --mc-danger-soft: #fdecee;
-    --mc-info: #2f80ed;
-    --mc-info-soft: #eaf3ff;
 
     /* Tabs */
-    --mc-tab-bg: #f7f9fc;
-    --mc-tab-bg-hover: #ffffff;
-    --mc-tab-bg-active: #ffffff;
-    --mc-tab-text: #334b68;
-    --mc-tab-text-active: #102f5c;
-    --mc-tab-line-active: #214f91;
 
     /* Elevation */
-    --mc-shadow-panel: 0 2px 8px rgba(15, 35, 63, 0.045);
-    --mc-shadow-hover: 0 6px 16px rgba(15, 35, 63, 0.09);
 
     /* Backward-compatible aliases */
-    --mc-surface: var(--mc-bg-panel);
-    --mc-surface-soft: var(--mc-bg-subtle);
-    --mc-text: var(--mc-text-primary);
-    --mc-muted: var(--mc-text-secondary);
-    --mc-accent: var(--mc-tab-line-active);
 }
 
 /* ---------- Global surfaces ---------- */
@@ -662,15 +597,8 @@ a:focus-visible,
    ============================================================ */
 :root {
     /* Scrollbars */
-    --mc-scrollbar-size: 8px;
-    --mc-scrollbar-track: var(--mc-bg-subtle);
-    --mc-scrollbar-thumb: #9fb3c8;
-    --mc-scrollbar-thumb-hover: #829bb5;
 
     /* Shared workspace surfaces */
-    --mc-workspace-panel-bg: var(--mc-bg-panel);
-    --mc-workspace-content-bg: var(--mc-bg-subtle);
-    --mc-workspace-border: var(--mc-border);
 }
 
 /* Camera must start at exactly the same top offset as System/Media. */
@@ -799,8 +727,6 @@ a:focus-visible,
    Camera, Media, System and Settings use one visual component.
    ============================================================ */
 :root {
-    --mc-workspace-header-bg: #f4f7fb;
-    --mc-workspace-header-border: #d7e0ea;
 }
 
 .video-header.mc-workspace-header,
@@ -1084,12 +1010,6 @@ body.workspace-compact .sidebar-tab {
 /* Dark theme. It is scoped to Workspace and does not alter application data. */
 html[data-theme="dark"] {
     color-scheme: dark;
-    --mc-workspace-header-bg: #202936;
-    --mc-workspace-header-border: #364253;
-    --mc-border: #364253;
-    --mc-scrollbar-track: #202936;
-    --mc-scrollbar-thumb: #526174;
-    --mc-scrollbar-thumb-hover: #67788d;
 }
 
 html[data-theme="dark"] body {
@@ -1622,41 +1542,14 @@ body.workspace-compact .sidebar-tab {
    through the shared UI tokens whenever dark mode is active.
    ============================================================ */
 html[data-theme="dark"] {
-    --mc-bg-app: #0d1723;
-    --mc-bg-workspace: #111c29;
-    --mc-bg-panel: #1b2837;
-    --mc-bg-subtle: #162231;
-    --mc-bg-muted: #202f40;
-    --mc-bg-media-stage: #101923;
 
-    --mc-border: #3a4a5d;
-    --mc-border-soft: #2b3a4b;
-    --mc-border-active: #6aa7ff;
-    --mc-border-focus: #73b2ff;
 
-    --mc-primary: #66a8ff;
-    --mc-primary-hover: #8abeff;
-    --mc-primary-soft: #203d5d;
-    --mc-primary-muted: #294967;
 
-    --mc-text-primary: #f2f7fc;
-    --mc-text-secondary: #c3d1df;
-    --mc-text-muted: #90a5ba;
-    --mc-text-inverse: #0b1520;
 
-    --mc-tab-bg: #f7f9fc;
-    --mc-tab-bg-hover: #ffffff;
-    --mc-tab-bg-active: #ffffff;
-    --mc-tab-text: #314763;
-    --mc-tab-text-active: #102f5c;
-    --mc-tab-line-active: #245b9f;
+    /* Status colors tuned for dark surfaces. */
 
-    --mc-surface: var(--mc-bg-panel);
-    --mc-surface-soft: var(--mc-bg-subtle);
-    --mc-text: var(--mc-text-primary);
-    --mc-muted: var(--mc-text-secondary);
-    --mc-accent: var(--mc-primary);
-    --mc-workspace-header-bg: linear-gradient(180deg, #202e3e 0%, #1a2736 100%);
+
+
 }
 
 html[data-theme="dark"] body,
@@ -1826,14 +1719,6 @@ html[data-theme="light"] { color-scheme: light; }
    and higher contrast About content.
    ============================================================ */
 html[data-theme="dark"] {
-    --mc-tab-bg: #121c28;
-    --mc-tab-bg-hover: #182535;
-    --mc-tab-bg-active: #1d2b3b;
-    --mc-tab-text: #b7c6d6;
-    --mc-tab-text-active: #f4f8fc;
-    --mc-tab-line-active: #4f9cff;
-    --mc-border: #2f3e50;
-    --mc-border-soft: #243243;
 }
 
 /* Primary and right-side navigation use the same dark treatment. */
@@ -1983,13 +1868,6 @@ html[data-theme="dark"] #nodesManagementList::-webkit-scrollbar-thumb:hover {
    DARK THEME — chat workspace, controls and residual contrast
    ========================================================== */
 html[data-theme="dark"] {
-    --mc-chat-bg: #111c29;
-    --mc-chat-surface: #182636;
-    --mc-chat-surface-raised: #203044;
-    --mc-chat-border: #2e4258;
-    --mc-chat-input: #1b2b3d;
-    --mc-chat-text: #eef6ff;
-    --mc-chat-muted: #9fb0c3;
 }
 
 /* Darken the complete conversation workspace. */
@@ -2130,10 +2008,6 @@ html[data-theme="dark"] .nodes-tools-total {
    DARK THEME — node position actions and search controls
    ========================================================== */
 html[data-theme="dark"] {
-    --mc-dark-control-bg: #223349;
-    --mc-dark-control-bg-hover: #2b4059;
-    --mc-dark-control-border: #3a526d;
-    --mc-dark-control-text: #eef6ff;
 }
 
 /* Position action buttons: keep labels readable and use the standard dark control surface. */
@@ -2851,6 +2725,37 @@ body[data-theme="dark"] .workspace-page-close-btn:hover {
     box-shadow: var(--mc-shadow-panel);
 }
 
+/* Node Manager never went through the pass above that aligned Devices with
+   System/Settings, so it was still relying on the older, incomplete
+   .workspace-view rule in style.css (no height:100%, no explicit
+   display:flex) - the whole panel ended up shorter than its column and
+   drifted down/away from the top edge instead of filling it. Mirrors the
+   Devices treatment exactly since the two share the same markup shape
+   (<section class="X-view workspace-view"><div class="X-panel
+   mc-workspace-panel">...). */
+.node-manager-view {
+    height: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
+    padding: var(--mc-page-pad, 10px);
+    box-sizing: border-box;
+    overflow: hidden;
+    background: var(--mc-bg-workspace);
+}
+
+.node-manager-panel.mc-workspace-panel {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--mc-border);
+    border-radius: var(--mc-card-radius, 12px);
+    background: var(--mc-bg-panel);
+    box-shadow: var(--mc-shadow-panel);
+}
+
 .devices-header.mc-workspace-header {
     flex: 0 0 var(--mc-workspace-header-height, 64px);
     min-height: var(--mc-workspace-header-height, 64px);
@@ -2997,16 +2902,6 @@ html[data-theme="dark"] .settings-select {
    Workspace and Notifications use one shared visual language.
    ============================================================ */
 :root {
-    --mc-popover-bg: #ffffff;
-    --mc-popover-header-bg: #f7f9fc;
-    --mc-popover-item-hover: #eef3f8;
-    --mc-popover-border: #d7dee8;
-    --mc-popover-divider: #e5eaf0;
-    --mc-popover-text: #26364b;
-    --mc-popover-muted: #7a8798;
-    --mc-popover-control-bg: #eef3f8;
-    --mc-popover-control-hover: #e1e9f2;
-    --mc-popover-shadow: 0 14px 34px rgba(15, 23, 42, .20);
 }
 
 /* Shared shell */
@@ -3128,3 +3023,250 @@ body[data-theme="dark"] .workspace-popover::after {
     background: var(--mc-popover-bg);
     border-color: var(--mc-popover-border);
 }
+
+/* ============================================================
+   MESHCENTER CANONICAL DESIGN TOKENS
+   This is the only global source of truth for --mc-* variables.
+   Keep light values in :root and dark overrides in the following
+   html[data-theme="dark"] block.
+   ============================================================ */
+
+:root {
+    /* Application surfaces */
+    --mc-bg-app: #eef2f7;
+    --mc-bg-workspace: #f5f7fa;
+    --mc-bg-panel: #ffffff;
+    --mc-bg-subtle: #f7f9fc;
+    --mc-bg-muted: #eef3f8;
+    --mc-bg-media-stage: #e9edf2;
+
+    --mc-surface: var(--mc-bg-panel);
+    --mc-surface-soft: var(--mc-bg-subtle);
+    --mc-surface-2: var(--mc-bg-muted);
+    --mc-surface-alt: var(--mc-bg-subtle);
+    --mc-panel: var(--mc-bg-subtle);
+    --mc-input-bg: var(--mc-bg-panel);
+    --mc-card-bg: var(--mc-bg-panel);
+
+    /* Text */
+    --mc-text-primary: #10233f;
+    --mc-text-secondary: #58708f;
+    --mc-text-muted: #8798ad;
+    --mc-text-inverse: #ffffff;
+    --mc-text: var(--mc-text-primary);
+    --mc-muted: var(--mc-text-secondary);
+
+    /* Borders */
+    --mc-border: #d7e0ea;
+    --mc-border-soft: #e4eaf1;
+    --mc-border-active: #2f73d9;
+    --mc-border-focus: #1f6feb;
+
+    /* Primary accent */
+    --mc-primary: #1f6fdb;
+    --mc-primary-hover: #175fc0;
+    --mc-primary-soft: #eaf3ff;
+    --mc-primary-muted: #dbeafd;
+    --mc-accent: #214f91;
+    --mc-accent-soft: var(--mc-primary-soft);
+
+    /* Semantic states */
+    --mc-success: #27b96f;
+    --mc-success-soft: #e9f8f0;
+    --mc-warning: #e6ad22;
+    --mc-warning-soft: #fff7df;
+    --mc-danger: #e6505d;
+    --mc-danger-soft: #fdecee;
+    --mc-info: #2f80ed;
+    --mc-info-soft: #eaf3ff;
+
+    /* Secondary controls */
+    --mc-button-secondary-bg: #edf3f9;
+    --mc-button-secondary-bg-hover: #e2ebf5;
+    --mc-button-secondary-border: #cbd8e6;
+    --mc-button-secondary-border-hover: #bdccdc;
+    --mc-button-secondary-text: #274766;
+
+    /* Tabs */
+    --mc-tab-bg: #f7f9fc;
+    --mc-tab-bg-hover: #ffffff;
+    --mc-tab-bg-active: #ffffff;
+    --mc-tab-text: #334b68;
+    --mc-tab-text-active: #102f5c;
+    --mc-tab-line-active: #214f91;
+
+    /* Shared popovers and menus */
+    --mc-popover-bg: #ffffff;
+    --mc-popover-header-bg: #f7f9fc;
+    --mc-popover-item-hover: #eef3f8;
+    --mc-popover-divider: #e5eaf0;
+    --mc-popover-border: #d7dee8;
+    --mc-popover-text: #26364b;
+    --mc-popover-muted: #7a8798;
+    --mc-popover-control-bg: #eef3f8;
+    --mc-popover-control-hover: #e1e9f2;
+    --mc-popover-shadow: 0 14px 34px rgba(15, 23, 42, .20);
+
+    /* Chat */
+    --mc-chat-bg: var(--mc-bg-workspace);
+    --mc-chat-surface: var(--mc-bg-subtle);
+    --mc-chat-surface-raised: var(--mc-bg-panel);
+    --mc-chat-border: var(--mc-border);
+    --mc-chat-input: var(--mc-input-bg);
+    --mc-chat-text: var(--mc-text-primary);
+    --mc-chat-muted: var(--mc-text-secondary);
+
+    /* Dark-control aliases also receive safe light values */
+    --mc-dark-control-bg: var(--mc-button-secondary-bg);
+    --mc-dark-control-bg-hover: var(--mc-button-secondary-bg-hover);
+    --mc-dark-control-border: var(--mc-button-secondary-border);
+    --mc-dark-control-text: var(--mc-button-secondary-text);
+
+    /* Workspace */
+    --mc-workspace-panel-bg: var(--mc-bg-panel);
+    --mc-workspace-content-bg: var(--mc-bg-subtle);
+    --mc-workspace-border: var(--mc-border);
+    --mc-workspace-header-bg: #f4f7fb;
+    --mc-workspace-header-border: #d7e0ea;
+
+    /* Scrollbars */
+    --mc-scrollbar-track: var(--mc-bg-subtle);
+    --mc-scrollbar-thumb: #9fb3c8;
+    --mc-scrollbar-thumb-hover: #829bb5;
+
+    /* Shadows */
+    --mc-shadow-panel: 0 2px 8px rgba(15, 35, 63, .045);
+    --mc-shadow-hover: 0 6px 16px rgba(15, 35, 63, .09);
+
+    /* Geometry and typography - shared by both themes */
+    --mc-body-size: 12px;
+    --mc-caption-size: 10px;
+    --mc-card-title-size: 14px;
+    --mc-page-title-size: 18px;
+    --mc-page-title-weight: 700;
+    --mc-page-title-line-height: 1.25;
+    --mc-page-subtitle-gap: 4px;
+    --mc-page-subtitle-line-height: 1.4;
+    --mc-control-font-size: 12px;
+
+    --mc-page-pad: 14px;
+    --mc-card-pad: 16px;
+    --mc-card-radius: 12px;
+    --mc-control-height: 36px;
+    --mc-control-radius: 8px;
+    --mc-workspace-header-height: 72px;
+    --mc-workspace-header-padding-x: 16px;
+    --mc-workspace-header-padding-y: 14px;
+    --mc-camera-control-label-offset: 18px;
+    --mc-scrollbar-size: 8px;
+}
+
+html[data-theme="dark"] {
+    /* Application surfaces */
+    --mc-bg-app: #0d1723;
+    --mc-bg-workspace: #111c29;
+    --mc-bg-panel: #1b2837;
+    --mc-bg-subtle: #162231;
+    --mc-bg-muted: #202f40;
+    --mc-bg-media-stage: #101923;
+
+    --mc-surface: var(--mc-bg-panel);
+    --mc-surface-soft: var(--mc-bg-subtle);
+    --mc-surface-2: var(--mc-bg-muted);
+    --mc-surface-alt: var(--mc-bg-subtle);
+    --mc-panel: var(--mc-bg-subtle);
+    --mc-input-bg: #172535;
+    --mc-card-bg: #162433;
+
+    /* Text */
+    --mc-text-primary: #f2f7fc;
+    --mc-text-secondary: #c3d1df;
+    --mc-text-muted: #90a5ba;
+    --mc-text-inverse: #0b1520;
+    --mc-text: var(--mc-text-primary);
+    --mc-muted: var(--mc-text-secondary);
+
+    /* Borders */
+    --mc-border: #2f3e50;
+    --mc-border-soft: #243243;
+    --mc-border-active: #6aa7ff;
+    --mc-border-focus: #73b2ff;
+
+    /* Primary accent */
+    --mc-primary: #66a8ff;
+    --mc-primary-hover: #8abeff;
+    --mc-primary-soft: #203d5d;
+    --mc-primary-muted: #294967;
+    --mc-accent: var(--mc-primary);
+    --mc-accent-soft: var(--mc-primary-soft);
+
+    /* Semantic states */
+    --mc-success: #72d69a;
+    --mc-success-soft: #173c2a;
+    --mc-warning: #f0c86a;
+    --mc-warning-soft: #433719;
+    --mc-danger: #ff7b85;
+    --mc-danger-soft: #49252b;
+    --mc-info: #78b6ff;
+    --mc-info-soft: #203d5d;
+
+    /* Secondary controls */
+    --mc-button-secondary-bg: #223349;
+    --mc-button-secondary-bg-hover: #2b4059;
+    --mc-button-secondary-border: #3a526d;
+    --mc-button-secondary-border-hover: #4b6685;
+    --mc-button-secondary-text: #eef6ff;
+
+    /* Tabs */
+    --mc-tab-bg: #121c28;
+    --mc-tab-bg-hover: #182535;
+    --mc-tab-bg-active: #1d2b3b;
+    --mc-tab-text: #b7c6d6;
+    --mc-tab-text-active: #f4f8fc;
+    --mc-tab-line-active: #4f9cff;
+
+    /* Shared popovers and menus */
+    --mc-popover-bg: #1b2837;
+    --mc-popover-header-bg: #162231;
+    --mc-popover-item-hover: #223349;
+    --mc-popover-divider: #2f3e50;
+    --mc-popover-border: #3a526d;
+    --mc-popover-text: #eef6ff;
+    --mc-popover-muted: #9fb0c3;
+    --mc-popover-control-bg: #223349;
+    --mc-popover-control-hover: #2b4059;
+    --mc-popover-shadow: 0 16px 38px rgba(0, 0, 0, .48);
+
+    /* Chat */
+    --mc-chat-bg: #111c29;
+    --mc-chat-surface: #182636;
+    --mc-chat-surface-raised: #203044;
+    --mc-chat-border: #2e4258;
+    --mc-chat-input: #1b2b3d;
+    --mc-chat-text: #eef6ff;
+    --mc-chat-muted: #9fb0c3;
+
+    /* Dark controls */
+    --mc-dark-control-bg: #223349;
+    --mc-dark-control-bg-hover: #2b4059;
+    --mc-dark-control-border: #3a526d;
+    --mc-dark-control-text: #eef6ff;
+
+    /* Workspace */
+    --mc-workspace-panel-bg: var(--mc-bg-panel);
+    --mc-workspace-content-bg: var(--mc-bg-subtle);
+    --mc-workspace-border: var(--mc-border);
+    --mc-workspace-header-bg:
+        linear-gradient(180deg, #202e3e 0%, #1a2736 100%);
+    --mc-workspace-header-border: #364253;
+
+    /* Scrollbars */
+    --mc-scrollbar-track: #202936;
+    --mc-scrollbar-thumb: #526174;
+    --mc-scrollbar-thumb-hover: #67788d;
+
+    /* Shadows */
+    --mc-shadow-panel: 0 3px 10px rgba(0, 0, 0, .24);
+    --mc-shadow-hover: 0 8px 20px rgba(0, 0, 0, .32);
+}
+

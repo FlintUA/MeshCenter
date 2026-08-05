@@ -2,6 +2,7 @@ from flask import request, jsonify
 import time
 import subprocess
 import threading
+import queue
 import re
 
 
@@ -38,12 +39,156 @@ def register_chat_routes(
     now,
     radio_event,
     is_radio_available,
+    update_message_status,
 ):
     def active_serial_port():
         port = str(get_meshtastic_port() or "").strip()
         if not port:
             raise RuntimeError("Active Meshtastic serial port is not configured")
         return port
+
+    # ------------------------------------------------------------------
+    # Background send worker.
+    #
+    # Talking to the radio (opening a fresh SerialInterface, waiting for the
+    # listener to release the port, the mandatory cooldown before resuming
+    # --listen) reliably takes several seconds. /api/send used to do all of
+    # that inline and only answer the HTTP request once it was done, so the
+    # UI sat on a disabled "Sending..." button for the whole round trip.
+    #
+    # Now /api/send only validates the request, stores the message with
+    # status="pending" and hands the actual transmission to this worker.
+    # The frontend renders the message immediately and later sees it flip
+    # to "sent"/"failed" through the existing message-polling endpoint.
+    # ------------------------------------------------------------------
+    send_queue = queue.Queue()
+
+    def _mark_failed(message_id, chat_id, error_text):
+        try:
+            update_message_status(message_id, chat_id, "failed", error=error_text)
+        except Exception as status_error:
+            print(f"[SEND WORKER] Failed to update message status: {status_error}", flush=True)
+        with state_lock:
+            add_message("rx", "SYSTEM ERROR", f"send: {error_text}", "", CHANNEL_CHAT_ID)
+
+    def _process_send_job(job):
+        text = job["text"]
+        final_chat_id = job["final_chat_id"]
+        chat_type = job["chat_type"]
+        channel_index = job["channel_index"]
+        reply_id = job["reply_id"]
+        message_id = job["message_id"]
+        receiver_name = job["receiver_name"]
+
+        if not is_radio_available():
+            _mark_failed(message_id, final_chat_id, "radio released for external configuration")
+            return
+
+        try:
+            if not prepare_radio_command(active_serial_port(), timeout=10):
+                _mark_failed(message_id, final_chat_id, f"serial port busy: {active_serial_port()}")
+                return
+
+            sent_packet = None
+            packet_id = None
+            interface = None
+
+            try:
+                from meshtastic.serial_interface import SerialInterface
+
+                with radio_lock:
+                    interface = SerialInterface(devPath=active_serial_port())
+                    destination = final_chat_id if chat_type == "dm" else "^all"
+
+                    sent_packet = interface.sendText(
+                        text=text,
+                        destinationId=destination,
+                        channelIndex=channel_index,
+                        replyId=reply_id,
+                    )
+
+                    packet_id = getattr(sent_packet, "id", None)
+                    if packet_id is not None:
+                        packet_id = int(packet_id)
+
+                    print(
+                        f"[SEND WORKER] destination={destination}, channel_index={channel_index}, "
+                        f"packet_id={packet_id}, reply_id={reply_id}",
+                        flush=True
+                    )
+            finally:
+                if interface is not None:
+                    try:
+                        interface.close()
+                    except Exception as close_error:
+                        print(f"[SEND WARN] interface.close(): {close_error}", flush=True)
+
+            radio_event("send")
+            update_message_status(message_id, final_chat_id, "sent", packet_id=packet_id)
+
+            with state_lock:
+                old = nodes.get(LOCAL_NODE_ID, {})
+                info = get_node_info(LOCAL_NODE_ID)
+
+                # Merge on top of the existing record instead of replacing it
+                # outright, so telemetry collected between messages
+                # (device_metrics / environment_metrics / power_metrics)
+                # survives every outgoing send instead of being wiped here.
+                node = dict(old)
+                node.update({
+                    "name": LOCAL_NODE_NAME,
+                    "node_id": LOCAL_NODE_ID,
+                    "last_seen": time.time(),
+                    "last_time": now(),
+                    "rssi": old.get("rssi"),
+                    "snr": old.get("snr"),
+                    "hop_start": old.get("hop_start", ""),
+                    "relay_node": old.get("relay_node", ""),
+                    "last_text": (
+                        f"sent to {receiver_name}: {text}"
+                        if chat_type == "dm"
+                        else f"sent: {text}"
+                    ),
+                    "short_name": info.get("short_name", old.get("short_name", "")),
+                    "hw_model": info.get("hw_model", old.get("hw_model", "")),
+                    "role": old.get("role", "CLIENT_BASE"),
+                    "ignored": old.get("ignored", False),
+                    "favorite": old.get("favorite", False),
+                    "position": old.get("position"),
+                })
+                nodes[LOCAL_NODE_ID] = node
+                save_nodes()
+
+        except subprocess.TimeoutExpired:
+            radio_event("send_error", "Meshtastic send timeout")
+            _mark_failed(message_id, final_chat_id, "timeout")
+
+        except Exception as e:
+            radio_event("send_error", str(e))
+            _mark_failed(message_id, final_chat_id, str(e))
+
+        finally:
+            time.sleep(2.0)
+            pause_listen.clear()
+            print("[SEND] Listener resumed", flush=True)
+
+    def send_worker():
+        while True:
+            job = send_queue.get()
+            try:
+                if job is None:
+                    continue
+                _process_send_job(job)
+            except Exception as worker_error:
+                print(f"[SEND WORKER] Unexpected error: {worker_error}", flush=True)
+                try:
+                    _mark_failed(job.get("message_id"), job.get("final_chat_id"), str(worker_error))
+                except Exception:
+                    pass
+            finally:
+                send_queue.task_done()
+
+    threading.Thread(target=send_worker, daemon=True, name="mc-send-worker").start()
 
     CHANNEL_CACHE_TTL_SECONDS = 300
     channel_cache = {"timestamp": 0.0, "channels": []}
@@ -78,7 +223,11 @@ def register_chat_routes(
         with channel_cache_lock:
             cached_channels = [dict(item) for item in channel_cache["channels"]]
             cache_age = now_ts - channel_cache["timestamp"]
-            if cached_channels and cache_age < CHANNEL_CACHE_TTL_SECONDS:
+            # `force` used to be accepted but never actually consulted here,
+            # so the frontend's "give me a fresh read on first load"
+            # (?refresh_channels=1) request silently returned whatever was
+            # already cached instead of re-reading the radio.
+            if not force and cached_channels and cache_age < CHANNEL_CACHE_TTL_SECONDS:
                 return cached_channels
 
         discovered = []
@@ -107,6 +256,23 @@ def register_chat_routes(
             from meshtastic.serial_interface import SerialInterface
             with radio_lock:
                 interface = SerialInterface(devPath=active_serial_port())
+
+                # SerialInterface() returns as soon as the initial handshake
+                # (myInfo) is in, but the channel list keeps trickling in
+                # afterwards as part of the same config stream. Reading
+                # interface.localNode.channels immediately after connecting
+                # can catch it half-populated - primary (index 0) tends to
+                # arrive first, so it looked fine while secondary channels
+                # briefly reported role=DISABLED (their unset default) and
+                # got filtered out below, only to show up on a later
+                # discovery call once the full config had synced.
+                wait_for_config = getattr(interface, "waitForConfig", None)
+                if callable(wait_for_config):
+                    try:
+                        wait_for_config()
+                    except Exception as wait_error:
+                        print(f"[CHANNELS] waitForConfig() warning: {wait_error}", flush=True)
+
                 raw_channels = getattr(getattr(interface, "localNode", None), "channels", None) or []
 
                 for fallback_index, channel in enumerate(raw_channels):
@@ -250,7 +416,7 @@ def register_chat_routes(
         chat_id = str(data.get("chat_id", "")).strip()
         message_id = str(data.get("message_id", "")).strip()
 
-        if not chat_id or not is_valid_node_id(chat_id):
+        if not chat_id or not (is_valid_node_id(chat_id) or is_channel_chat_id(chat_id)):
             return jsonify({"ok": False, "error": "Invalid chat_id"}), 400
 
         if not message_id or len(message_id) > 128:
@@ -311,6 +477,10 @@ def register_chat_routes(
         target_node = data.get("target_node", "")
         chat_id = data.get("chat_id", "")
         reply_to = data.get("reply_to")
+        # Optional id generated by the frontend for its optimistic bubble.
+        # Echoed back (and stored on the message) purely so the UI can match
+        # its local placeholder to the authoritative server copy.
+        client_id = str(data.get("client_id", "")).strip()[:64]
 
         if reply_to is not None and not isinstance(reply_to, dict):
             return jsonify({"ok": False, "error": "Invalid reply_to"}), 400
@@ -377,159 +547,55 @@ def register_chat_routes(
                 "error": "This message has no Meshtastic packet ID. Reply to a newly received message."
             }), 400
 
-        try:
-            print("[SEND] Preparing to send message", flush=True)
-            print(
-                f"[SEND] chat_type={chat_type}, final_chat_id={final_chat_id}, "
-                f"receiver={receiver_name}, reply_id={reply_id}",
-                flush=True
+        print("[SEND] Queueing message", flush=True)
+        print(
+            f"[SEND] chat_type={chat_type}, final_chat_id={final_chat_id}, "
+            f"receiver={receiver_name}, reply_id={reply_id}",
+            flush=True
+        )
+
+        sender_name = (
+            f"{LOCAL_NODE_NAME} → {receiver_name}"
+            if chat_type == "dm"
+            else LOCAL_NODE_NAME
+        )
+
+        # Everything below is in-memory bookkeeping only (no serial I/O), so
+        # it stays on the request thread and returns fast. The message is
+        # visible immediately (status="pending"); the actual radio
+        # transmission happens on the background send_worker() thread.
+        with state_lock:
+            msg = add_message(
+                "me",
+                sender_name,
+                text,
+                LOCAL_NODE_ID,
+                final_chat_id,
+                chat_name,
+                reply_to=reply_to,
+                status="pending",
+                client_id=client_id or None,
             )
 
-            if not prepare_radio_command(active_serial_port(), timeout=10):
-                return jsonify({
-                    "ok": False,
-                    "error": f"serial port busy: {active_serial_port()}"
-                }), 500
+            if final_chat_id in chats:
+                reset_unread(final_chat_id)
 
-            sent_packet = None
-            packet_id = None
-            interface = None
+        send_queue.put({
+            "text": text,
+            "final_chat_id": final_chat_id,
+            "chat_type": chat_type,
+            "channel_index": channel_index,
+            "reply_id": reply_id,
+            "message_id": msg["id"],
+            "receiver_name": receiver_name,
+        })
 
-            try:
-                from meshtastic.serial_interface import SerialInterface
-
-                with radio_lock:
-                    interface = SerialInterface(devPath=active_serial_port())
-                    destination = final_chat_id if chat_type == "dm" else "^all"
-
-                    sent_packet = interface.sendText(
-                        text=text,
-                        destinationId=destination,
-                        channelIndex=channel_index,
-                        replyId=reply_id,
-                    )
-
-                    packet_id = getattr(sent_packet, "id", None)
-                    if packet_id is not None:
-                        packet_id = int(packet_id)
-
-                    print(
-                        f"[SEND API] destination={destination}, channel_index={channel_index}, packet_id={packet_id}, "
-                        f"reply_id={reply_id}",
-                        flush=True
-                    )
-            finally:
-                if interface is not None:
-                    try:
-                        interface.close()
-                    except Exception as close_error:
-                        print(f"[SEND WARN] interface.close(): {close_error}", flush=True)
-
-            radio_event("send")
-
-            if chat_type == "dm" and final_chat_id not in chats:
-                with state_lock:
-                    ensure_chat(final_chat_id, chat_name, force=True)
-
-            sender_name = (
-                f"{LOCAL_NODE_NAME} → {receiver_name}"
-                if chat_type == "dm"
-                else LOCAL_NODE_NAME
-            )
-
-            with state_lock:
-                add_message(
-                    "me",
-                    sender_name,
-                    text,
-                    LOCAL_NODE_ID,
-                    final_chat_id,
-                    chat_name,
-                    reply_to=reply_to,
-                    packet_id=packet_id
-                )
-
-                if final_chat_id in chats:
-                    reset_unread(final_chat_id)
-
-                old = nodes.get(LOCAL_NODE_ID, {})
-                info = get_node_info(LOCAL_NODE_ID)
-
-                nodes[LOCAL_NODE_ID] = {
-                    "name": LOCAL_NODE_NAME,
-                    "node_id": LOCAL_NODE_ID,
-                    "last_seen": time.time(),
-                    "last_time": now(),
-                    "rssi": old.get("rssi"),
-                    "snr": old.get("snr"),
-                    "hop_start": old.get("hop_start", ""),
-                    "relay_node": old.get("relay_node", ""),
-                    "last_text": (
-                        f"sent to {receiver_name}: {text}"
-                        if chat_type == "dm"
-                        else f"sent: {text}"
-                    ),
-                    "short_name": info.get("short_name", old.get("short_name", "")),
-                    "hw_model": info.get("hw_model", old.get("hw_model", "")),
-                    "role": old.get("role", "CLIENT_BASE"),
-                    "ignored": old.get("ignored", False),
-                    "favorite": old.get("favorite", False),
-                    # Sending a message refreshes transient fields only.
-                    # Never erase the locally stored position.
-                    "position": old.get("position")
-                }
-
-                save_nodes()
-
-            return jsonify({
-                "ok": True,
-                "chat_id": final_chat_id,
-                "chat_type": chat_type,
-                "packet_id": packet_id,
-                "reply_id": reply_id
-            })
-
-        except subprocess.TimeoutExpired:
-            radio_event(
-                "send_error",
-                "Meshtastic send timeout"
-            )
-
-            with state_lock:
-                add_message(
-                    "rx",
-                    "SYSTEM ERROR",
-                    "send timeout",
-                    "",
-                    CHANNEL_CHAT_ID
-                )
-
-            return jsonify({
-                "ok": False,
-                "error": "timeout"
-            }), 500
-
-        except Exception as e:
-            radio_event(
-                "send_error",
-                str(e)
-            )
-
-            with state_lock:
-                add_message(
-                    "rx",
-                    "SYSTEM ERROR",
-                    f"send: {str(e)}",
-                    "",
-                    CHANNEL_CHAT_ID
-                )
-
-            return jsonify({
-                "ok": False,
-                "error": str(e)
-            }), 500
-
-        finally:
-            time.sleep(2.0)
-            pause_listen.clear()
-            print("[SEND] Listener resumed", flush=True)
+        return jsonify({
+            "ok": True,
+            "chat_id": final_chat_id,
+            "chat_type": chat_type,
+            "message_id": msg["id"],
+            "client_id": client_id or None,
+            "reply_id": reply_id,
+            "status": "pending"
+        }), 202

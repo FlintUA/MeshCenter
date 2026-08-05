@@ -548,10 +548,6 @@ def normalize_node_id(node_id):
     if not node_id: return None
     if node_id.startswith("!") and len(node_id) == 9:
         return node_id
-    if node_id.startswith("!1p"):
-        hex_part = node_id[3:]
-        if len(hex_part) == 8:
-            return "!" + hex_part
     if re.match(r'^[0-9a-fA-F]{8}$', node_id):
         return "!" + node_id
     if node_id.startswith("!") and len(node_id) != 9:
@@ -700,7 +696,12 @@ def log_node_event(event, source, node_id, old=None, new=None, raw=None, extra=N
                     "new": new.get(key)
                 }
 
-        if not changed and event not in ("SKIP_LOCAL_NODE", "ERROR"):
+        if (
+            not changed
+            and not extra
+            and not raw
+            and event not in ("SKIP_LOCAL_NODE", "ERROR")
+        ):
             return
 
         lines = [
@@ -921,8 +922,10 @@ def _telemetry_sender_node_id(line):
     except Exception:
         pass
 
-    if LOCAL_NODE_ID and LOCAL_NODE_ID in line:
-        return LOCAL_NODE_ID
+    # Do not infer the sender from an arbitrary occurrence of LOCAL_NODE_ID.
+    # It may appear as toId, relay metadata, or nested packet data belonging
+    # to another node. Unresolved telemetry is dropped rather than attributed
+    # to the wrong node.
     return None
 
 
@@ -1002,7 +1005,7 @@ def parse_waypoint_from_listen_line(line):
         packet_id = extract_packet_id(line)
         waypoint_id = packet_id if packet_id is not None else 0
 
-    if not waypoint_id or latitude is None or longitude is None:
+    if waypoint_id is None or latitude is None or longitude is None:
         # Meshtastic CLI emits short intermediary lines such as
         # "portnum: WAYPOINT_APP" before the decoded object. They are not errors.
         return None
@@ -1047,13 +1050,48 @@ def process_waypoint_line(line):
         flush=True,
     )
     log_system_event(
-        "INFO",
-        "waypoint",
-        f"Waypoint {event}",
-        f"{name}; sender: {sender_name}; "
+        title=f"Waypoint {event}",
+        level="INFO",
+        details=f"{name}; sender: {sender_name}; "
         f"coordinates: {saved.get('latitude')}, {saved.get('longitude')}",
+        source="waypoint",
     )
     return True
+
+def _parse_power_channels_from_line(line):
+    """Return normalized PowerMetrics channels 1..3 from listener output."""
+    channels = {}
+
+    for channel_number in (1, 2, 3):
+        voltage = _regex_number(line, [
+            rf"['\"]ch{channel_number}Voltage['\"]:\s*(-?\d+(?:\.\d+)?)",
+            rf"ch{channel_number}_voltage:\s*(-?\d+(?:\.\d+)?)",
+            rf"ch{channel_number}Voltage:\s*(-?\d+(?:\.\d+)?)",
+        ])
+        current = _regex_number(line, [
+            rf"['\"]ch{channel_number}Current['\"]:\s*(-?\d+(?:\.\d+)?)",
+            rf"ch{channel_number}_current:\s*(-?\d+(?:\.\d+)?)",
+            rf"ch{channel_number}Current:\s*(-?\d+(?:\.\d+)?)",
+        ])
+
+        if voltage is None and current is None:
+            continue
+
+        channel = {
+            "voltage": voltage,
+            "current": current,
+        }
+
+        if voltage is not None and current is not None:
+            try:
+                channel["power"] = float(voltage) * float(current)
+            except (TypeError, ValueError):
+                channel["power"] = None
+
+        channels[str(channel_number)] = channel
+
+    return channels
+
 
 def parse_telemetry_from_listen_line(line):
     """Parse passive Meshtastic telemetry for local or remote nodes."""
@@ -1084,18 +1122,22 @@ def parse_telemetry_from_listen_line(line):
         r"barometric_pressure:\s*(-?\d+(?:\.\d+)?)",
         r"barometricPressure:\s*(-?\d+(?:\.\d+)?)"
     ])
-    voltage = _regex_number(line, [
-        r"['\"]ch1Voltage['\"]:\s*(-?\d+(?:\.\d+)?)",
-        r"ch1_voltage:\s*(-?\d+(?:\.\d+)?)",
-        r"['\"]voltage['\"]:\s*(-?\d+(?:\.\d+)?)",
-        r"voltage:\s*(-?\d+(?:\.\d+)?)"
-    ])
-    current = _regex_number(line, [
-        r"['\"]ch1Current['\"]:\s*(-?\d+(?:\.\d+)?)",
-        r"ch1_current:\s*(-?\d+(?:\.\d+)?)",
-        r"['\"]current['\"]:\s*(-?\d+(?:\.\d+)?)",
-        r"current:\s*(-?\d+(?:\.\d+)?)"
-    ])
+    power_channels = _parse_power_channels_from_line(line)
+    channel_1 = power_channels.get("1", {})
+
+    voltage = channel_1.get("voltage")
+    if voltage is None:
+        voltage = _regex_number(line, [
+            r"['\"]voltage['\"]:\s*(-?\d+(?:\.\d+)?)",
+            r"voltage:\s*(-?\d+(?:\.\d+)?)"
+        ])
+
+    current = channel_1.get("current")
+    if current is None:
+        current = _regex_number(line, [
+            r"['\"]current['\"]:\s*(-?\d+(?:\.\d+)?)",
+            r"current:\s*(-?\d+(?:\.\d+)?)"
+        ])
     battery_level = _regex_number(line, [
         r"['\"]batteryLevel['\"]:\s*(-?\d+(?:\.\d+)?)",
         r"battery_level:\s*(-?\d+(?:\.\d+)?)"
@@ -1123,6 +1165,7 @@ def parse_telemetry_from_listen_line(line):
         "channel_utilization": channel_utilization,
         "air_util_tx": air_util_tx,
         "uptime_seconds": int(uptime_seconds) if uptime_seconds is not None else None,
+        "power_channels": power_channels or None,
     }
     if all(value is None for value in values.values()):
         print(f"[TELEMETRY RAW] Metrics not parsed for {node_id}: {line[:500]}", flush=True)
@@ -1144,7 +1187,7 @@ def apply_node_telemetry(node_id, values, source="passive"):
         })
 
         for key, value in values.items():
-            if value is not None:
+            if value is not None and key != "power_channels":
                 node[key] = value
 
         voltage = values.get("voltage")
@@ -1171,7 +1214,29 @@ def apply_node_telemetry(node_id, values, source="passive"):
             value = node.get(key) if key == "power" else values.get(key)
             if value is not None:
                 power[key] = value
-        if any(values.get(key) is not None for key in ("voltage", "current")):
+
+        incoming_channels = values.get("power_channels")
+        if isinstance(incoming_channels, dict) and incoming_channels:
+            stored_channels = power.setdefault("channels", {})
+            for channel_id, channel_values in incoming_channels.items():
+                if not isinstance(channel_values, dict):
+                    continue
+
+                stored_channel = stored_channels.setdefault(str(channel_id), {})
+                for metric_name in ("voltage", "current", "power"):
+                    metric_value = channel_values.get(metric_name)
+                    if metric_value is not None:
+                        stored_channel[metric_name] = metric_value
+
+                stored_channel.update({
+                    "updated": timestamp,
+                    "source": source,
+                })
+
+        if (
+            any(values.get(key) is not None for key in ("voltage", "current"))
+            or bool(incoming_channels)
+        ):
             power.update({"updated": timestamp, "source": source})
 
         node["last_telemetry_time"] = timestamp
@@ -1271,20 +1336,53 @@ def process_received_nodeinfo_line(line):
     if not isinstance(power_metrics, dict):
         power_metrics = {}
 
+    power_channels = {}
+    for channel_number in (1, 2, 3):
+        voltage_key = f"ch{channel_number}Voltage"
+        current_key = f"ch{channel_number}Current"
+        channel_voltage = power_metrics.get(voltage_key)
+        channel_current = power_metrics.get(current_key)
+
+        if channel_number == 1:
+            if channel_voltage is None:
+                channel_voltage = power_metrics.get("voltage")
+            if channel_current is None:
+                channel_current = power_metrics.get("current")
+
+        if channel_voltage is None and channel_current is None:
+            continue
+
+        channel = {
+            "voltage": channel_voltage,
+            "current": channel_current,
+        }
+
+        if channel_voltage is not None and channel_current is not None:
+            try:
+                channel["power"] = (
+                    float(channel_voltage) * float(channel_current)
+                )
+            except (TypeError, ValueError):
+                channel["power"] = None
+
+        power_channels[str(channel_number)] = channel
+
+    channel_1 = power_channels.get("1", {})
     values = {
         "battery_level": device_metrics.get("batteryLevel"),
-        "voltage": device_metrics.get("voltage"),
+        "voltage": (
+            device_metrics.get("voltage")
+            if device_metrics.get("voltage") is not None
+            else channel_1.get("voltage")
+        ),
         "channel_utilization": device_metrics.get("channelUtilization"),
         "air_util_tx": device_metrics.get("airUtilTx"),
         "uptime_seconds": device_metrics.get("uptimeSeconds"),
         "temperature": environment_metrics.get("temperature"),
         "humidity": environment_metrics.get("relativeHumidity"),
         "pressure": environment_metrics.get("barometricPressure"),
-        "current": (
-            power_metrics.get("ch1Current")
-            if power_metrics.get("ch1Current") is not None
-            else power_metrics.get("current")
-        ),
+        "current": channel_1.get("current"),
+        "power_channels": power_channels or None,
     }
 
     position = _normalize_nodeinfo_position(info.get("position"))
@@ -1467,6 +1565,8 @@ def process_telemetry_line(line):
     node_id = parsed["node_id"]
     values = parsed["values"]
     updated = apply_node_telemetry(node_id, values, source="passive")
+    if updated:
+        radio_event("telemetry")
 
     # Local radio telemetry also feeds the existing left-side sensor cards
     # and telemetry history. Remote-node telemetry must not overwrite them.
@@ -2077,7 +2177,8 @@ def update_node(line, sender, text):
         # Имя может менять только NODEINFO / parse_nodes_from_info.
         stable_name = old.get("name") or name
 
-        nodes[node_id] = {
+        node = dict(old)
+        node.update({
             "name": stable_name,
             "node_id": node_id,
             "last_seen": time.time(),
@@ -2094,8 +2195,9 @@ def update_node(line, sender, text):
             "favorite": old.get("favorite", False),
             # Keep the last known position. Text packets do not contain
             # coordinates and must not erase a position obtained earlier.
-            "position": old.get("position")
-        }
+            "position": old.get("position"),
+        })
+        nodes[node_id] = node
 
         new_snapshot = {
             "name": nodes[node_id].get("name"),
@@ -2184,10 +2286,14 @@ def process_nodeinfo(block):
         "snr": old.get("snr")
         }
         info = get_node_info(node_id)
-        nodes[node_id] = {
-            "name": name, "node_id": node_id,
-            "last_seen": time.time(), "last_time": now(),
-            "rssi": rssi or old.get("rssi"), "snr": snr or old.get("snr"),
+        node = dict(old)
+        node.update({
+            "name": name,
+            "node_id": node_id,
+            "last_seen": time.time(),
+            "last_time": now(),
+            "rssi": rssi or old.get("rssi"),
+            "snr": snr or old.get("snr"),
             "hop_start": hop_start or old.get("hop_start", ""),
             "relay_node": relay_node or old.get("relay_node", ""),
             "last_text": old.get("last_text", ""),
@@ -2198,8 +2304,9 @@ def process_nodeinfo(block):
             "favorite": old.get("favorite", False),
             # NODEINFO refreshes identity/radio metadata only. Preserve the
             # latest known coordinates across NODEINFO broadcasts/restarts.
-            "position": old.get("position")
-        }
+            "position": old.get("position"),
+        })
+        nodes[node_id] = node
         if node_id.startswith("!"):
             ensure_chat(node_id, name, force=True)
             new_snapshot = {
@@ -2228,7 +2335,8 @@ def process_nodeinfo(block):
         save_nodes()
     return True
 
-def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, reply_to=None, packet_id=None):
+def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, reply_to=None, packet_id=None,
+                 status=None, client_id=None):
     # Store all locally transmitted messages under one canonical direction.
     # Older waypoint notifications used "tx", while the rest of the chat
     # subsystem and UI use "me" for outgoing messages.
@@ -2268,8 +2376,19 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
             "id": uuid.uuid4().hex,
             "kind": kind, "sender": sender, "node_id": node_id,
             "text": text, "time": now(),
-            "chat_id": chat_id, "chat_type": chat_type, "chat_name": chat_name
+            "chat_id": chat_id, "chat_type": chat_type, "chat_name": chat_name,
+            # "pending" -> "sent" / "failed" is used by the async /api/send flow so the
+            # frontend can render an optimistic bubble and reconcile it once the
+            # background send worker actually talks to the radio. Messages created
+            # through any other path (rx, system, waypoint notifications) are
+            # considered final immediately.
+            "status": status or "sent"
         }
+        if client_id:
+            # Echoed back to the frontend so an optimistic local bubble can be
+            # matched to the authoritative server copy and removed once it
+            # shows up in a poll response.
+            msg["client_id"] = str(client_id)[:64]
 
         # Record the real local-radio owner of every transmitted message.
         # The value remains stable when another saved radio profile becomes
@@ -2308,6 +2427,30 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
             save_chats()
         save_messages()
     return msg
+
+def update_message_status(message_id, chat_id, status, packet_id=None, error=None):
+    """Update a message created with status="pending" once the background
+    send worker (api/api_chat.py) has actually talked to the radio.
+
+    This lets /api/send return immediately after queueing the transmission
+    instead of blocking the HTTP request for the full serial round-trip.
+    """
+    with state_lock:
+        for message in reversed(messages):
+            if message.get("id") == message_id and message.get("chat_id") == chat_id:
+                message["status"] = status
+                if packet_id is not None:
+                    try:
+                        message["packet_id"] = int(packet_id)
+                    except (TypeError, ValueError):
+                        pass
+                if error:
+                    message["error"] = str(error)[:300]
+                elif "error" in message and status == "sent":
+                    message.pop("error", None)
+                save_messages()
+                return message
+    return None
 
 def is_duplicate_text(sender, text, node_id=""):
     cleaned_text = str(text or "").strip()
@@ -2777,10 +2920,10 @@ def listen_meshtastic():
 
                     text = extract_text_message(line)
 
-                    radio_event("telemetry")
-
                     if not text:
                         continue
+
+                    radio_event("text")
 
                     pid = extract_packet_id(line)
 
@@ -2818,7 +2961,7 @@ def listen_meshtastic():
                         is_channel = True
                     elif "'dest'" in line.lower() or '"dest"' in line.lower():
                         is_channel = False
-                    elif "'to': '!" in line or '"to": "!"' in line:
+                    elif "'to': '!" in line or '"to": "!' in line:
                         is_channel = False
                     elif re.search(r"'to':\s*[0-9]+,", line) or re.search(r'"to":\s*[0-9]+,', line):
                         if "4294967295" not in line:
@@ -3008,28 +3151,24 @@ def process_listener_autorecovery(status, listener_running, now_ts):
 
         if enabled:
             log_system_event(
-                "INFO",
-                "recovery",
-                "Listener Auto Recovery enabled",
-                f"Recovery delay: {delay} seconds",
+                title="Listener Auto Recovery enabled",
+                level="INFO",
+                details=f"Recovery delay: {delay} seconds",
+                source="recovery",
             )
 
     elif state["last_enabled"] != enabled:
         state["last_enabled"] = enabled
 
         log_system_event(
-            "INFO",
-            "recovery",
-            (
-                "Listener Auto Recovery enabled"
+            title="Listener Auto Recovery enabled"
                 if enabled
-                else "Listener Auto Recovery disabled"
-            ),
-            (
-                f"Recovery delay: {delay} seconds"
+                else "Listener Auto Recovery disabled",
+            level="INFO",
+            details=f"Recovery delay: {delay} seconds"
                 if enabled
-                else "Automatic listener restart is disabled"
-            ),
+                else "Automatic listener restart is disabled",
+            source="recovery",
         )
 
     if not enabled:
@@ -3059,10 +3198,10 @@ def process_listener_autorecovery(status, listener_running, now_ts):
 
         if listener_running and status != "LISTENER_DOWN":
             log_system_event(
-                "OK",
-                "recovery",
-                "Listener recovered successfully",
-                "Automatic listener restart completed",
+                title="Listener recovered successfully",
+                level="OK",
+                details="Automatic listener restart completed",
+                source="recovery",
             )
 
             state["restart_pending"] = False
@@ -3075,14 +3214,12 @@ def process_listener_autorecovery(status, listener_running, now_ts):
             >= LISTENER_RECOVERY_RESULT_TIMEOUT
         ):
             log_system_event(
-                "WARNING",
-                "recovery",
-                "Automatic listener recovery failed",
-                (
-                    "Listener is still unavailable "
+                title="Automatic listener recovery failed",
+                level="WARNING",
+                details="Listener is still unavailable "
                     f"{LISTENER_RECOVERY_RESULT_TIMEOUT} seconds "
-                    "after restart"
-                ),
+                    "after restart",
+                source="recovery",
             )
 
             state["restart_pending"] = False
@@ -3095,10 +3232,10 @@ def process_listener_autorecovery(status, listener_running, now_ts):
     if status != "LISTENER_DOWN":
         if state["down_since"] is not None:
             log_system_event(
-                "INFO",
-                "recovery",
-                "Automatic recovery cancelled",
-                "Listener recovered before automatic restart",
+                title="Automatic recovery cancelled",
+                level="INFO",
+                details="Listener recovered before automatic restart",
+                source="recovery",
             )
 
         state["down_since"] = None
@@ -3112,13 +3249,11 @@ def process_listener_autorecovery(status, listener_running, now_ts):
         state["down_since"] = now_ts
 
         log_system_event(
-            "WARNING",
-            "recovery",
-            "Listener failure detected",
-            (
-                f"Waiting {delay} seconds before "
-                "automatic recovery"
-            ),
+            title="Listener failure detected",
+            level="WARNING",
+            details=f"Waiting {delay} seconds before "
+                "automatic recovery",
+            source="recovery",
         )
         return
 
@@ -3135,13 +3270,11 @@ def process_listener_autorecovery(status, listener_running, now_ts):
     ):
         if not state["limit_logged"]:
             log_system_event(
-                "ERROR",
-                "recovery",
-                "Automatic recovery limit reached",
-                (
-                    f"{LISTENER_RECOVERY_MAX_ATTEMPTS} attempts "
-                    "within 30 minutes. Manual action required."
-                ),
+                title="Automatic recovery limit reached",
+                level="ERROR",
+                details=f"{LISTENER_RECOVERY_MAX_ATTEMPTS} attempts "
+                    "within 30 minutes. Manual action required.",
+                source="recovery",
             )
             state["limit_logged"] = True
 
@@ -3154,13 +3287,11 @@ def process_listener_autorecovery(status, listener_running, now_ts):
     attempt_number = len(state["attempts"]) + 1
 
     log_system_event(
-        "ACTION",
-        "recovery",
-        "Automatic listener restart requested",
-        (
-            f"Attempt {attempt_number} of "
-            f"{LISTENER_RECOVERY_MAX_ATTEMPTS}"
-        ),
+        title="Automatic listener restart requested",
+        level="ACTION",
+        details=f"Attempt {attempt_number} of "
+            f"{LISTENER_RECOVERY_MAX_ATTEMPTS}",
+        source="recovery",
     )
 
     state["attempts"].append(now_ts)
@@ -3188,10 +3319,10 @@ def process_listener_autorecovery(status, listener_running, now_ts):
         state["down_since"] = now_ts
 
         log_system_event(
-            "ERROR",
-            "recovery",
-            "Automatic listener restart failed",
-            str(error),
+            title="Automatic listener restart failed",
+            level="ERROR",
+            details=str(error),
+            source="recovery",
         )
 
         print(
@@ -3393,6 +3524,7 @@ register_chat_routes(
     now,
     radio_event,
     is_radio_available,
+    update_message_status,
 )
 
 register_settings_routes(
@@ -4578,8 +4710,10 @@ def api_waypoint_send():
             flush=True,
         )
         log_system_event(
-            "OK", "waypoint", "Waypoint sent",
-            f"{name}; id {waypoint_id}; {latitude:.6f}, {longitude:.6f}; channel {channel_index}",
+            title="Waypoint sent",
+            level="OK",
+            details=f"{name}; id {waypoint_id}; {latitude:.6f}, {longitude:.6f}; channel {channel_index}",
+            source="waypoint",
         )
         return jsonify({
             "ok": True,

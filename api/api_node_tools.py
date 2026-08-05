@@ -422,8 +422,10 @@ def register_node_tools_routes(
         ) = build_command(action, node_id, resolved_port)
 
         log_system_event(
-            "ACTION", "node_tools", action_started_event,
-            f"Target: {node_name} ({node_id}); Job: {context.job_id}",
+            title=action_started_event,
+            level="ACTION",
+            details=f"Target: {node_name} ({node_id}); Job: {context.job_id}",
+            source="node_tools",
         )
         print(
             f"[NODE TOOLS] {action_title}: {node_name} ({node_id}); "
@@ -433,9 +435,11 @@ def register_node_tools_routes(
 
         if not prepare_radio_command(resolved_port, timeout=10):
             log_system_event(
-                "ERROR", "node_tools", action_failed_event,
-                f"Serial port is busy: {resolved_port or 'auto-detect'}; "
+                title=action_failed_event,
+                level="ERROR",
+                details=f"Serial port is busy: {resolved_port or 'auto-detect'}; "
                 f"Job: {context.job_id}",
+                source="node_tools",
             )
             return ActionResult.failure(
                 "The radio connection is busy. Try again in a few seconds.",
@@ -478,9 +482,11 @@ def register_node_tools_routes(
                         action_title, error_text, configured_port, resolved_port,
                     )
                     log_system_event(
-                        "ERROR", "node_tools", action_failed_event,
-                        f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
+                        title=action_failed_event,
+                        level="ERROR",
+                        details=f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
                         f"{error_text[:500]}",
+                        source="node_tools",
                     )
                     return ActionResult.failure(
                         user_message,
@@ -495,9 +501,11 @@ def register_node_tools_routes(
 
                 requested_at = time.time()
                 log_system_event(
-                    "OK", "node_tools", "Telemetry request transmitted",
-                    f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
+                    title="Telemetry request transmitted",
+                    level="OK",
+                    details=f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
                     "waiting for listener response",
+                    source="node_tools",
                 )
                 return ActionResult.success(
                     "Telemetry request sent. Waiting for the node response.",
@@ -540,9 +548,11 @@ def register_node_tools_routes(
                     action_title, error_text, configured_port, resolved_port,
                 )
                 log_system_event(
-                    "ERROR", "node_tools", action_failed_event,
-                    f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
+                    title=action_failed_event,
+                    level="ERROR",
+                    details=f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
                     f"{error_text[:500]}",
+                    source="node_tools",
                 )
                 return ActionResult.failure(
                     user_message,
@@ -567,14 +577,18 @@ def register_node_tools_routes(
                         target_node["position"] = position
                     save_nodes()
                     log_system_event(
-                        "OK", "node_tools", "Position saved",
-                        f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
+                        title="Position saved",
+                        level="OK",
+                        details=f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
                         f"{position['latitude']}, {position['longitude']}",
+                        source="node_tools",
                     )
 
             log_system_event(
-                "OK", "node_tools", action_completed_event,
-                f"Target: {node_name} ({node_id}); Job: {context.job_id}",
+                title=action_completed_event,
+                level="OK",
+                details=f"Target: {node_name} ({node_id}); Job: {context.job_id}",
+                source="node_tools",
             )
             data = {"output": combined_output[-4000:], "returncode": result.returncode}
             if action == "request_position":
@@ -584,9 +598,11 @@ def register_node_tools_routes(
 
         except subprocess.TimeoutExpired as error:
             log_system_event(
-                "WARNING", "node_tools", f"{action_title} timed out",
-                f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
+                title=f"{action_title} timed out",
+                level="WARNING",
+                details=f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
                 f"Python timeout after {error.timeout}s",
+                source="node_tools",
             )
             return ActionResult.failure(
                 f"{action_title} timed out",
@@ -601,8 +617,10 @@ def register_node_tools_routes(
                 action_title, str(error), configured_port, resolved_port,
             )
             log_system_event(
-                "ERROR", "node_tools", action_failed_event,
-                f"Target: {node_name} ({node_id}); Job: {context.job_id}; {error}",
+                title=action_failed_event,
+                level="ERROR",
+                details=f"Target: {node_name} ({node_id}); Job: {context.job_id}; {error}",
+                source="node_tools",
             )
             return ActionResult.failure(
                 user_message,

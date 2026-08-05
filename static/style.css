@@ -10812,6 +10812,17 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
     line-height: 1.4;
 }
 
+.message-delete-error {
+    margin: 10px 0 0;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(230, 80, 93, 0.35);
+    background: rgba(230, 80, 93, 0.1);
+    color: #c62828;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
 @media (max-width: 720px) {
     .message {
         max-width: 88%;
@@ -10932,6 +10943,52 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
     color: inherit;
     text-align: left;
     cursor: pointer;
+}
+
+/* Outgoing-message lifecycle badge: /api/send returns as soon as the
+   message is queued, the radio transmission itself finishes in the
+   background, so the bubble shows its own pending -> sent/failed state. */
+.message-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 6px;
+    font-size: 11px;
+    vertical-align: middle;
+}
+
+.message-status.pending {
+    opacity: 0.7;
+    animation: mc-message-status-pulse 1.4s ease-in-out infinite;
+}
+
+.message-status.sent {
+    color: #4caf50;
+}
+
+.message-status.failed {
+    color: #ff6b6b;
+}
+
+.message-retry-btn {
+    margin-left: 4px;
+    padding: 1px 6px;
+    font-size: 10px;
+    line-height: 1.6;
+    border: 1px solid currentColor;
+    border-radius: 10px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+.message-retry-btn:hover {
+    background: rgba(255, 107, 107, 0.15);
+}
+
+@keyframes mc-message-status-pulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
 }
 
 .message.me .message-reply-quote {
@@ -12267,8 +12324,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
 
 /* ===== Node Manager v1 - workspace polish and multi-profile foundation ===== */
 .base-node-manager-entry:hover .base-node-manager-hint,
-.base-node-manager-entry:focus-visible .base-node-manager-entry:hover .base-node-manager-chevron,
-.base-node-manager-entry:focus-visible .node-manager-view.workspace-view {
+.base-node-manager-entry:focus-visible .base-node-manager-entry:hover .base-node-manager-chevron {
     flex: 1 1 auto;
     min-width: 0;
     min-height: 0;
@@ -12653,32 +12709,15 @@ body.node-manager-open #messagesView[hidden] {
     overflow: hidden !important;
 }
 
-.chat-panels.node-manager-layout {
-    display: flex !important;
-    flex: 1 1 auto !important;
-    min-height: 0 !important;
-    height: auto !important;
-    flex-direction: row !important;
-    align-items: stretch !important;
-    overflow: hidden !important;
-}
-
-.chat-panels.node-manager-layout > #nodeManagerView {
-    display: flex;
-    flex: 1 1 auto;
-    align-self: stretch;
-    width: 100%;
-    min-width: 0;
-    min-height: 0;
-    height: 100%;
-    margin: 0 !important;
-    transform: none !important;
-}
-
-body.node-manager-open .node-manager-view.workspace-view {
-    padding: var(--mc-page-pad, 14px) !important;
-    margin: 0 !important;
-}
+/* NOTE: .chat-panels.node-manager-layout / body.node-manager-open .node-manager-view
+   used to reparent/resize #nodeManagerView inside .chat-panels via a JS-added
+   class, but #nodeManagerView was never actually moved into .chat-panels in
+   the DOM, so `.chat-panels.node-manager-layout > #nodeManagerView` never
+   matched anything. Meanwhile the still-live base ".chat-panels { flex: 1; }"
+   rule kept claiming a flex-grow share of the shared column even while empty,
+   which is what pushed #nodeManagerView down. Fixed by no longer toggling
+   node-manager-layout in JS (see switchMainTab) instead of patching around it
+   here; the dead rules that used to depend on that class were removed. */
 
 /* The main waypoint row remains navigable, including hidden and expired entries. */
 .waypoint-tools-main:disabled {
@@ -12710,12 +12749,6 @@ body.node-manager-open .node-manager-view.workspace-view {
 
 .waypoint-tools-item.is-selected .waypoint-tools-main {
     background: transparent;
-}
-
-@media (max-width: 768px) {
-    .chat-panels.node-manager-layout {
-        flex-direction: column !important;
-    }
 }
 
 @media (max-width: 650px) {
@@ -12766,14 +12799,8 @@ body.node-manager-open .node-manager-view.workspace-view {
     --text-primary: var(--theme-text);
     --text-secondary: var(--theme-text-secondary);
     --primary-color: var(--theme-accent);
-    --mc-card-bg: var(--theme-panel-bg);
-    --mc-border: var(--theme-border);
-    --mc-text: var(--theme-text);
-    --mc-muted: var(--theme-text-secondary);
-    --mc-bg-workspace: var(--theme-workspace-bg);
-    --mc-bg-panel: var(--theme-panel-bg);
-    --mc-workspace-header-bg: var(--theme-panel-bg);
-    --mc-workspace-header-border: var(--theme-border);
+
+    /* Feature-level aliases used in this stylesheet. */
 }
 
 [data-theme="dark"] {
@@ -12801,14 +12828,7 @@ body.node-manager-open .node-manager-view.workspace-view {
     --text-primary: var(--theme-text);
     --text-secondary: var(--theme-text-secondary);
     --primary-color: var(--theme-accent);
-    --mc-card-bg: var(--theme-panel-bg);
-    --mc-border: var(--theme-border);
-    --mc-text: var(--theme-text);
-    --mc-muted: var(--theme-text-secondary);
-    --mc-bg-workspace: var(--theme-workspace-bg);
-    --mc-bg-panel: var(--theme-panel-bg);
-    --mc-workspace-header-bg: var(--theme-panel-bg);
-    --mc-workspace-header-border: var(--theme-border);
+
 }
 
 /* Main application surfaces. */
@@ -13925,6 +13945,12 @@ body[data-theme="dark"] .waypoint-action-toast.error {
 [data-theme="dark"] .message-delete-note,
 [data-theme="dark"] .message-info-label {
     color: #9eb3c8;
+}
+
+[data-theme="dark"] .message-delete-error {
+    border-color: rgba(255, 107, 107, 0.4);
+    background: rgba(255, 107, 107, 0.14);
+    color: #ff8a80;
 }
 
 [data-theme="dark"] .message-info-content {

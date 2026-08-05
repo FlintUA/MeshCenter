@@ -1,0 +1,4 @@
+{
+  "url": "http://192.168.2.104:5000",
+  "comment": "MeshCenter is a Raspberry Pi-specific Flask server (Meshtastic USB radio + Picamera2/libcamera). It cannot run on Windows dev machines, so preview points at the dev instance already running as a systemd service on the Pi instead of launching a local command."
+}

@@ -31,7 +31,17 @@ echo "==> Staging changes (git add .)"
 git add .
 
 echo "==> Committing changes"
-git commit -m "$COMMIT_MESSAGE"
+COMMIT_OUTPUT=$(git commit -m "$COMMIT_MESSAGE" 2>&1) && COMMIT_STATUS=0 || COMMIT_STATUS=$?
+echo "$COMMIT_OUTPUT"
+
+if [ "$COMMIT_STATUS" -ne 0 ]; then
+    if echo "$COMMIT_OUTPUT" | grep -q "nothing to commit"; then
+        echo "Нет новых изменений для коммита, деплою текущую версию из GitHub"
+    else
+        echo "Error: git commit failed"
+        exit 1
+    fi
+fi
 
 echo "==> Pushing to remote"
 git push

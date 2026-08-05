@@ -192,7 +192,8 @@ def register_chat_routes(
                         print(f"[SEND WARN] interface.close(): {close_error}", flush=True)
         finally:
             time.sleep(2.0)
-            pause_listen.clear()
+            if is_radio_available():
+                pause_listen.clear()
             print("[SEND] Listener resumed", flush=True)
 
     def send_worker():

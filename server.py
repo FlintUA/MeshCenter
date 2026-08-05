@@ -2629,7 +2629,13 @@ def stop_listener():
     pause_listen.set()
     time.sleep(1.5)
 
-    proc = listen_process
+    # listen_meshtastic() only assigns listen_process while holding
+    # radio_lock (when it creates the new Popen). Reading the global here
+    # without the same lock left a narrow window where this could observe
+    # a stale None right as the listener commits to starting a fresh
+    # process, wrongly reporting "already stopped" with nothing to kill.
+    with radio_lock:
+        proc = listen_process
 
     if proc is None:
         print("[DEBUG] Listener already stopped", flush=True)
@@ -2666,15 +2672,13 @@ def wait_serial_release(device=None, timeout=8):
     while time.time() - start < timeout:
         try:
             result = subprocess.run(
-                ["lsof", device],
+                ["lsof", "-t", device],
                 capture_output=True,
                 text=True,
                 timeout=2
             )
 
-            out = result.stdout or ""
-
-            if "meshtastic" not in out:
+            if not result.stdout.strip():
                 return True
 
         except Exception as e:
@@ -4723,7 +4727,8 @@ def api_waypoint_send():
             "sender_result": sender_result,
         })
     finally:
-        pause_listen.clear()
+        if is_radio_available():
+            pause_listen.clear()
 
 
 @app.route("/api/telemetry/history")

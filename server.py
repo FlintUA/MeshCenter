@@ -2389,7 +2389,16 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
             chat_id = CHANNEL_CHAT_ID
             chat_type = "channel"
         if chat_name is None:
-            chat_name = get_node_name(chat_id) if chat_type == "dm" else CHANNEL_CHAT_NAME
+            if chat_type == "dm":
+                chat_name = get_node_name(chat_id)
+            else:
+                chat_name = chats.get(chat_id, {}).get("name")
+                if not chat_name:
+                    if chat_id == CHANNEL_CHAT_ID:
+                        chat_name = CHANNEL_CHAT_NAME
+                    else:
+                        channel_index = chat_id.split(":", 1)[-1] if ":" in chat_id else chat_id
+                        chat_name = f"Channel {channel_index}"
         if chat_type == "dm" and chat_id not in chats:
             ensure_chat(chat_id, chat_name, force=True)
         msg = {

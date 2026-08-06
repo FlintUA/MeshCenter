@@ -6,6 +6,11 @@
 // Catalogs live at /static/i18n/<locale>.json, one flat/dotted-key
 // JSON file per locale. English is always loaded as a fallback so a
 // missing key/locale never shows up blank in the UI.
+//
+// Before translating catalog content, read static/i18n/README.md — it
+// lists terms that must stay untranslated in every locale (Meshtastic,
+// LongFast, PSK, etc.) and documents the one genuinely ambiguous case
+// ("Channel") that was already investigated against the code.
 // ============================================================
 (function (window) {
     'use strict';

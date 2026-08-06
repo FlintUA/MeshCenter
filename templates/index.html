@@ -1648,7 +1648,7 @@
         <div class="dock-section dock-right" id="dockRight">
             <button type="button" id="appTitle" class="dock-brand" title="Click to refresh page (Ctrl+F5)" aria-label="Refresh MeshCenter">
                 <img src="{{ url_for('static', filename='meshcenter_logo.png') }}" class="dock-brand-logo" alt="">
-                <span class="dock-brand-name">MeshCenter</span>
+                <span class="dock-brand-name">MeshCenter <span class="dock-separator">v{{ app_version }}</span></span>
             </button>
             <span class="dock-separator" aria-hidden="true">•</span>
             <button type="button"

@@ -4500,7 +4500,7 @@ def api_rescan_nodes():
 def api_clear_chat():
     data = request.get_json(force=True)
     chat_id = data.get("chat_id", "").strip()
-    if not chat_id or not is_valid_node_id(chat_id):
+    if not chat_id or not is_valid_chat_id(chat_id):
         return jsonify({"ok": False, "error": "Invalid chat_id"}), 400
     global messages
     with state_lock:

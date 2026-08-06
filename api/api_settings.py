@@ -386,6 +386,8 @@ def register_settings_routes(
     settings,
     save_settings,
     handle_errors,
+    weather_service=None,
+    resolve_weather_language=None,
 ):
     @app.route("/api/settings", methods=["GET"])
     @handle_errors
@@ -436,11 +438,19 @@ def register_settings_routes(
             merged = _deep_merge(current, updates)
             new_settings = normalize_settings(merged)
 
+            language_changed = new_settings.get("language") != current.get("language")
+
             settings.clear()
             settings.update(new_settings)
             save_settings()
 
             response_settings = normalize_settings(settings)
+
+        # Weather data is a single cache shared by every connected client, so
+        # a language change here is a global update, not a per-request one -
+        # see OpenWeatherService.set_language().
+        if language_changed and weather_service is not None and resolve_weather_language is not None:
+            weather_service.set_language(resolve_weather_language(response_settings.get("language", "auto")))
 
         return jsonify({
             "ok": True,

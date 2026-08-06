@@ -52,6 +52,21 @@ class OpenWeatherService:
             self._cache_time = 0.0
             self._cache_key = None
 
+    def set_language(self, language: str) -> None:
+        """Update the OpenWeather response language (see the ui.language ->
+        OpenWeather lang mapping in server.py) without restarting MeshCenter.
+
+        Weather data is a single cache shared by every connected client (see
+        the module docstring), so this is a global setting, not per-request -
+        there's no way to serve two different languages of weather text to
+        two browsers at once.
+        """
+        with self._lock:
+            self.config = replace(self.config, language=str(language or "en").strip())
+            self._cache = None
+            self._cache_time = 0.0
+            self._cache_key = None
+
     def test_api_key(
         self,
         api_key: str,

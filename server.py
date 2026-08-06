@@ -3560,14 +3560,6 @@ register_chat_routes(
     update_message_status,
 )
 
-register_settings_routes(
-    app,
-    state_lock,
-    settings,
-    save_settings,
-    handle_errors,
-)
-
 def _coordinate(value, minimum, maximum):
     try:
         number = float(value)
@@ -3760,6 +3752,38 @@ def resolve_ui_language():
 
     supported = [lang for lang in SUPPORTED_LANGUAGES if lang != "auto"]
     return request.accept_languages.best_match(supported, default="en")
+
+# OpenWeather's own language codes (https://openweathermap.org/current#multi)
+# mostly match our locale codes, except Ukrainian: OpenWeather uses "ua",
+# not the ISO 639-1 code "uk" our ui.language setting uses.
+WEATHER_LANGUAGE_MAP = {
+    "en": "en",
+    "de": "de",
+    "ru": "ru",
+    "uk": "ua",
+}
+
+def resolve_weather_language(ui_language):
+    # Weather data is one cache shared by every connected client (see
+    # weather_service.py) - there's no single request to resolve "auto"
+    # against, so fall back to the static config.py default instead of
+    # guessing from whichever browser happened to trigger this call.
+    if ui_language == "auto":
+        return WEATHER_LANGUAGE_MAP.get(WEATHER_LANGUAGE, WEATHER_LANGUAGE)
+    return WEATHER_LANGUAGE_MAP.get(ui_language, WEATHER_LANGUAGE)
+
+# Registered here (rather than alongside the other register_*_routes calls
+# above) because it needs weather_service/resolve_weather_language, both
+# defined above this point.
+register_settings_routes(
+    app,
+    state_lock,
+    settings,
+    save_settings,
+    handle_errors,
+    weather_service=weather_service,
+    resolve_weather_language=resolve_weather_language,
+)
 
 @app.route("/")
 def index():
@@ -5228,6 +5252,11 @@ if __name__ == "__main__":
             flush=True,
         )
     load_settings()
+    # weather_service was constructed before settings.json was loaded (it's a
+    # module-level singleton, built long before this __main__ block runs), so
+    # sync it now in case a language other than the config.py default was
+    # saved in a previous run.
+    weather_service.set_language(resolve_weather_language(settings.get("language", "auto")))
     _load_cpu_history()
 
     if identity_match:

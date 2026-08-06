@@ -45,34 +45,34 @@
             <!-- Live local-node telemetry -->
             <div class="sensors-card" id="sensorsCard" style="display: none;">
                 <div class="sensors-title">
-                    <span>Node telemetry</span>
+                    <span data-i18n="node_panel.node_telemetry">Node telemetry</span>
                     <span class="sensor-update" id="sensorUpdate">Updated --</span>
                 </div>
 
                 <div class="node-telemetry-surface">
                     <div class="sensors-grid node-metrics-grid">
                         <div class="sensor-item">
-                            <div class="sensor-label">Temperature</div>
+                            <div class="sensor-label" data-i18n="node_panel.temperature">Temperature</div>
                             <div class="sensor-reading"><span class="sensor-value" id="tempValue">--</span><span class="sensor-unit"></span></div>
                         </div>
                         <div class="sensor-item">
-                            <div class="sensor-label">Humidity</div>
+                            <div class="sensor-label" data-i18n="node_panel.humidity">Humidity</div>
                             <div class="sensor-reading"><span class="sensor-value" id="humValue">--</span><span class="sensor-unit">%</span></div>
                         </div>
                         <div class="sensor-item">
-                            <div class="sensor-label">Pressure</div>
+                            <div class="sensor-label" data-i18n="node_panel.pressure">Pressure</div>
                             <div class="sensor-reading"><span class="sensor-value" id="presValue">--</span><span class="sensor-unit"></span></div>
                         </div>
                         <div class="sensor-item">
-                            <div class="sensor-label">Voltage</div>
+                            <div class="sensor-label" data-i18n="node_panel.voltage">Voltage</div>
                             <div class="sensor-reading"><span class="sensor-value" id="voltValue">--</span><span class="sensor-unit">V</span></div>
                         </div>
                         <div class="sensor-item">
-                            <div class="sensor-label">Current</div>
+                            <div class="sensor-label" data-i18n="node_panel.current">Current</div>
                             <div class="sensor-reading"><span class="sensor-value" id="currValue">--</span><span class="sensor-unit">mA</span></div>
                         </div>
                         <div class="sensor-item">
-                            <div class="sensor-label">Power</div>
+                            <div class="sensor-label" data-i18n="node_panel.power">Power</div>
                             <div class="sensor-reading"><span class="sensor-value" id="powValue">--</span><span class="sensor-unit">mW</span></div>
                         </div>
                     </div>
@@ -83,7 +83,7 @@
                          id="batteryIndicator"
                          style="display: none;">
                         <div class="base-mini-card-heading">
-                            <span>Battery</span>
+                            <span data-i18n="node_panel.battery">Battery</span>
                             <strong id="batteryPercent" class="battery-percent-sr">0%</strong>
                         </div>
                         <div class="battery-bar" aria-label="Battery charge level">
@@ -95,8 +95,8 @@
                             <span>0</span><span>25</span><span>50</span><span>75</span><span>100</span>
                         </div>
                         <div class="battery-runtime-row">
-                            <span class="battery-runtime-label">Estimated runtime</span>
-                            <strong class="battery-runtime-value" id="batteryRuntime">Waiting for current data</strong>
+                            <span class="battery-runtime-label" data-i18n="node_panel.estimated_runtime">Estimated runtime</span>
+                            <strong class="battery-runtime-value" id="batteryRuntime" data-i18n="node_panel.waiting_for_data">Waiting for current data</strong>
                         </div>
                     </div>
                 </div>
@@ -105,14 +105,14 @@
             <!-- Telemetry history shortcuts -->
             <div class="telemetry-section" id="telemetrySection">
                 <div class="telemetry-header">
-                    <span class="telemetry-title">Charts</span>
+                    <span class="telemetry-title" data-i18n="node_panel.charts">Charts</span>
                     <span class="telemetry-status" id="telemetryStatus">No data yet</span>
                 </div>
                 <div class="telemetry-buttons">
                     <button class="telemetry-btn environment" onclick="openTelemetryModal('environment')">
                         <div class="telemetry-top">
                             <span class="telemetry-icon">🌡️</span>
-                            <span class="telemetry-label">Environment</span>
+                            <span class="telemetry-label" data-i18n="node_panel.environment">Environment</span>
                             <span class="telemetry-update" id="telemetryEnvUpdate"></span>
                         </div>
                         <span class="telemetry-value" id="telemetryEnvValue">—</span>
@@ -120,7 +120,7 @@
                     <button class="telemetry-btn power" onclick="openTelemetryModal('power')">
                         <div class="telemetry-top">
                             <span class="telemetry-icon">⚡</span>
-                            <span class="telemetry-label">Power</span>
+                            <span class="telemetry-label" data-i18n="node_panel.power">Power</span>
                             <span class="telemetry-update" id="telemetryPowerUpdate"></span>
                         </div>
                         <span class="telemetry-value" id="telemetryPowerValue">—</span>
@@ -154,9 +154,9 @@
                 </div>
 
                 <div class="weather-metrics">
-                    <div class="weather-metric"><span>Humidity</span><strong id="weatherHumidity">--%</strong></div>
-                    <div class="weather-metric"><span>Pressure</span><strong id="weatherPressure">-- hPa</strong></div>
-                    <div class="weather-metric"><span>Wind</span><strong id="weatherWind">-- m/s</strong></div>
+                    <div class="weather-metric"><span data-i18n="weather.humidity">Humidity</span><strong id="weatherHumidity">--%</strong></div>
+                    <div class="weather-metric"><span data-i18n="weather.pressure">Pressure</span><strong id="weatherPressure">-- hPa</strong></div>
+                    <div class="weather-metric"><span data-i18n="weather.wind">Wind</span><strong id="weatherWind">-- m/s</strong></div>
                 </div>
 
                 <div class="weather-footer">
@@ -165,7 +165,7 @@
                 </div>
 
                 <div class="weather-forecast" aria-labelledby="weatherForecastTitle">
-                    <div class="weather-forecast-title" id="weatherForecastTitle">Forecast</div>
+                    <div class="weather-forecast-title" id="weatherForecastTitle" data-i18n="weather.forecast">Forecast</div>
                     <div class="weather-forecast-grid" id="weatherForecastGrid">
                         <div class="weather-forecast-placeholder">Loading 3-day forecast…</div>
                     </div>
@@ -179,24 +179,24 @@
             <!-- Main Tabs -->
             <div class="main-content-tabs">
                 <button class="main-content-tab active" id="mainTabChats" onclick="switchMainTab('chats')">
-                    💬 Chats
+                    💬 <span data-i18n="nav.chats">Chats</span>
                 </button>
                 <button class="main-content-tab" id="mainTabVideo" onclick="switchMainTab('video')">
-                    🎥 Camera
+                    🎥 <span data-i18n="nav.camera">Camera</span>
                 </button>
                 <button class="main-content-tab" id="mainTabMedia" onclick="switchMainTab('media')">
-                    🖼️ Media
+                    🖼️ <span data-i18n="nav.media">Media</span>
                 </button>
                 <button class="main-content-tab" id="mainTabDevices" onclick="switchMainTab('devices')">
-                    🔌 Devices
+                    🔌 <span data-i18n="nav.devices">Devices</span>
                 </button>
             </div>
 
             <!-- Chat Header -->
             <div class="chat-header" id="chatHeader">
                 <div class="chat-header-info">
-                    <span class="chat-title" id="chatTitle">💬 Chats</span>
-                    <span class="chat-subtitle" id="chatSubtitle">Select a chat to view messages</span>
+                    <span class="chat-title" id="chatTitle">💬 <span data-i18n="nav.chats">Chats</span></span>
+                    <span class="chat-subtitle" id="chatSubtitle" data-i18n="chat.select_chat_subtitle">Select a chat to view messages</span>
                 </div>
                 <div class="chat-header-actions">
                     <button class="chat-actions-btn" id="deleteAllDmHeaderBtn" onclick="deleteAllDmChats()" title="Delete all DM chats" style="display:none;">
@@ -213,13 +213,13 @@
                 <!-- Chat List View -->
                 <div class="chat-list-container split-chat-list-container" id="chatListContainer">
                     <section class="chat-list-section channels-section">
-                        <div class="chat-section-heading">📡 Channels</div>
+                        <div class="chat-section-heading">📡 <span data-i18n="chat.channels_heading">Channels</span></div>
                         <div class="chat-list channels-list" id="channelList">
                             <div class="loading" id="initialLoading">
                             <div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:30px 0;">
                                 <div style="width:40px;height:40px;border:4px solid #e0e0e0;border-top:4px solid #1a73e8;border-radius:50%;animation:spin 1s linear infinite;"></div>
-                                <span style="color:#888;font-size:14px;">Loading chats and nodes...</span>
-                                <span style="color:#bbb;font-size:12px;">Please wait</span>
+                                <span style="color:#888;font-size:14px;" data-i18n="chat.loading_chats_and_nodes">Loading chats and nodes...</span>
+                                <span style="color:#bbb;font-size:12px;" data-i18n="common.please_wait">Please wait</span>
                             </div>
                         </div>
                         <style>
@@ -231,9 +231,9 @@
                         </div>
                     </section>
                     <section class="chat-list-section dm-section">
-                        <div class="chat-section-heading">💬 Direct Messages</div>
+                        <div class="chat-section-heading">💬 <span data-i18n="chat.direct_messages_heading">Direct Messages</span></div>
                         <div class="chat-list dm-list" id="dmChatList">
-                            <div class="loading">Loading direct messages...</div>
+                            <div class="loading" data-i18n="chat.loading_direct_messages">Loading direct messages...</div>
                         </div>
                     </section>
                 </div>
@@ -241,7 +241,7 @@
                 <!-- Messages View -->
                 <div class="messages-view" id="messagesView">
                     <div class="messages-container" id="messagesContainer">
-                        <div class="loading">💬 Select a chat from the list</div>
+                        <div class="loading">💬 <span data-i18n="chat.select_chat_from_list">Select a chat from the list</span></div>
                     </div>
 
                     <!-- Input Area -->
@@ -255,9 +255,9 @@
                             <button type="button" class="reply-composer-close" onclick="cancelReply()" title="Cancel reply" aria-label="Cancel reply">✕</button>
                         </div>
                         <form class="input-form" id="sendForm">
-                            <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
-                            <button type="button" id="emojiBtn" class="emoji-btn" title="Insert emoji">😊</button>
-                            <button type="submit" id="sendBtn">Send</button>
+                            <input type="text" id="messageInput" placeholder="Type a message..." data-i18n-placeholder="chat.message_input_placeholder" autocomplete="off">
+                            <button type="button" id="emojiBtn" class="emoji-btn" title="Insert emoji" data-i18n-title="chat.insert_emoji">😊</button>
+                            <button type="submit" id="sendBtn" data-i18n="common.send">Send</button>
                         </form>
                         
                         <div id="emojiPicker" class="emoji-picker" style="display: none;">
@@ -284,17 +284,18 @@
                 <div class="video-panel mc-workspace-panel">
                     <div class="video-header mc-workspace-header">
                         <div>
-                            <div class="video-title workspace-page-title">📷 Live Camera</div>
-                            <div class="video-subtitle workspace-page-subtitle">Live preview and capture controls</div>
+                            <div class="video-title workspace-page-title">📷 <span data-i18n="camera.live_camera">Live Camera</span></div>
+                            <div class="video-subtitle workspace-page-subtitle" data-i18n="camera.live_preview_subtitle">Live preview and capture controls</div>
                         </div>
 
                         <button type="button"
                                 class="camera-power-btn"
                                 id="cameraPowerBtn"
                                 onclick="toggleCameraPower()"
-                                title="Turn camera off">
+                                title="Turn camera off"
+                                data-i18n-title="camera.turn_camera_off">
                             <span class="camera-power-btn-icon">⏻</span>
-                            <span id="cameraPowerBtnText">Turn Off</span>
+                            <span id="cameraPowerBtnText" data-i18n="camera.turn_off">Turn Off</span>
                         </button>
                     </div>
 
@@ -308,24 +309,24 @@
                              role="status"
                              aria-live="polite">
                             <div class="camera-loading-spinner" aria-hidden="true"></div>
-                            <div class="camera-loading-title">Connecting to camera…</div>
-                            <div class="camera-loading-text">Waiting for the first video frame</div>
+                            <div class="camera-loading-title" data-i18n="camera.connecting">Connecting to camera…</div>
+                            <div class="camera-loading-text" data-i18n="camera.waiting_first_frame">Waiting for the first video frame</div>
                         </div>
 
                         <div class="camera-off-placeholder"
                              id="cameraOffPlaceholder"
                              style="display:none;">
                             <div class="camera-off-icon">📷</div>
-                            <div class="camera-off-title">
+                            <div class="camera-off-title" data-i18n="camera.camera_off_title">
                                 Camera is turned off
                             </div>
-                            <div class="camera-off-text">
+                            <div class="camera-off-text" data-i18n="camera.camera_off_text">
                                 Power-saving mode is active
                             </div>
                             <button type="button"
                                     class="camera-off-start-btn"
                                     onclick="setCameraPower(true)">
-                                ▶ Turn On Camera
+                                ▶ <span data-i18n="camera.turn_on_camera">Turn On Camera</span>
                             </button>
                         </div>
                     </div>
@@ -456,7 +457,7 @@
                                     <button class="screenshot-btn"
                                             id="cameraCaptureBtn"
                                             onclick="captureCameraPhoto()">
-                                        📸 Screenshot
+                                        📸 <span data-i18n="camera.screenshot">Screenshot</span>
                                     </button>
 
                                 </div>
@@ -596,16 +597,16 @@
                 <div class="media-panel mc-workspace-panel">
                     <header class="media-header mc-workspace-header">
                         <div>
-                            <h2 class="media-title workspace-page-title" id="mediaWorkspaceTitle">🖼️ Media Gallery</h2>
-                            <p class="media-subtitle workspace-page-subtitle">Captured images stored locally on this MeshCenter node</p>
+                            <h2 class="media-title workspace-page-title" id="mediaWorkspaceTitle">🖼️ <span data-i18n="media.media_gallery">Media Gallery</span></h2>
+                            <p class="media-subtitle workspace-page-subtitle" data-i18n="media.subtitle">Captured images stored locally on this MeshCenter node</p>
                         </div>
-                        <button type="button" class="media-refresh-btn mc-refresh-btn" onclick="loadMediaGallery(true)">↻ Refresh</button>
+                        <button type="button" class="media-refresh-btn mc-refresh-btn" onclick="loadMediaGallery(true)">↻ <span data-i18n="common.refresh">Refresh</span></button>
                     </header>
                     <div class="media-content" id="mediaGalleryContent">
                         <div class="media-empty-state">
                             <div class="media-empty-icon">🖼️</div>
-                            <div class="media-empty-title">Media workspace is ready</div>
-                            <div class="media-empty-text">Open this workspace to load captured images.</div>
+                            <div class="media-empty-title" data-i18n="media.empty_title">Media workspace is ready</div>
+                            <div class="media-empty-text" data-i18n="media.empty_text">Open this workspace to load captured images.</div>
                         </div>
                     </div>
                 </div>
@@ -616,16 +617,16 @@
                 <div class="devices-panel mc-workspace-panel">
                     <header class="devices-header mc-workspace-header">
                         <div>
-                            <h2 class="workspace-page-title" id="devicesWorkspaceTitle">🔌 Devices</h2>
-                            <p class="workspace-page-subtitle">Peripheral devices and modules assigned to the active radio profile</p>
+                            <h2 class="workspace-page-title" id="devicesWorkspaceTitle">🔌 <span data-i18n="nav.devices">Devices</span></h2>
+                            <p class="workspace-page-subtitle" data-i18n="devices.subtitle">Peripheral devices and modules assigned to the active radio profile</p>
                         </div>
                         <div class="workspace-page-actions">
-                            <button type="button" class="mc-refresh-btn" onclick="loadPeripheralDevices(true)">↻ Refresh</button>
+                            <button type="button" class="mc-refresh-btn" onclick="loadPeripheralDevices(true)">↻ <span data-i18n="common.refresh">Refresh</span></button>
                         </div>
                     </header>
 
                     <div class="devices-dashboard" id="devicesDashboard">
-                        <div class="device-dashboard-loading">Loading peripheral devices...</div>
+                        <div class="device-dashboard-loading" data-i18n="devices.loading">Loading peripheral devices...</div>
                     </div>
                 </div>
             </section>
@@ -635,12 +636,12 @@
                 <div class="node-manager-panel mc-workspace-panel">
                     <header class="node-manager-header mc-workspace-header">
                         <div class="workspace-page-heading">
-                            <h2 class="workspace-page-title" id="nodeManagerWorkspaceTitle">📡 Node Manager</h2>
-                            <p class="workspace-page-subtitle">Manage Meshtastic radios, profiles and connections</p>
+                            <h2 class="workspace-page-title" id="nodeManagerWorkspaceTitle">📡 <span data-i18n="node_manager.title">Node Manager</span></h2>
+                            <p class="workspace-page-subtitle" data-i18n="node_manager.subtitle">Manage Meshtastic radios, profiles and connections</p>
                         </div>
                         <div class="workspace-page-actions">
-                            <button type="button" class="mc-refresh-btn" onclick="loadNodeManagerDashboard(true)">↻ Refresh</button>
-                            <button type="button" class="workspace-page-close-btn" onclick="closeWorkspacePage()" title="Close Node Manager" aria-label="Close Node Manager">
+                            <button type="button" class="mc-refresh-btn" onclick="loadNodeManagerDashboard(true)">↻ <span data-i18n="common.refresh">Refresh</span></button>
+                            <button type="button" class="workspace-page-close-btn" onclick="closeWorkspacePage()" title="Close Node Manager" aria-label="Close Node Manager" data-i18n-title="node_manager.close" data-i18n-aria-label="node_manager.close">
                                 <svg class="workspace-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                     <path d="M7 7L17 17M17 7L7 17"></path>
                                 </svg>
@@ -649,7 +650,7 @@
                     </header>
                     <input type="file" id="baseNodeAvatarInput" accept="image/png,image/jpeg,image/webp" hidden>
                     <div class="devices-dashboard node-manager-dashboard" id="nodeManagerDashboard">
-                        <div class="device-dashboard-loading">Loading node information...</div>
+                        <div class="device-dashboard-loading" data-i18n="node_manager.loading">Loading node information...</div>
                     </div>
                 </div>
             </section>
@@ -658,12 +659,12 @@
                 <div class="system-panel mc-workspace-panel">
                     <div class="system-header mc-workspace-header">
                         <div>
-                            <h3 class="workspace-page-title">🖥️ System</h3>
-                            <div class="system-subtitle workspace-page-subtitle">Raspberry Pi and network status</div>
+                            <h3 class="workspace-page-title">🖥️ <span data-i18n="system.title">System</span></h3>
+                            <div class="system-subtitle workspace-page-subtitle" data-i18n="system.subtitle">Raspberry Pi and network status</div>
                         </div>
                         <div class="workspace-page-actions">
-                            <button class="system-refresh-btn mc-refresh-btn" onclick="loadSystemNetwork(); loadSystemInfo(); loadInstanceInfo();">↻ Refresh</button>
-                            <button type="button" class="workspace-page-close-btn" onclick="closeWorkspacePage()" title="Close System" aria-label="Close System">
+                            <button class="system-refresh-btn mc-refresh-btn" onclick="loadSystemNetwork(); loadSystemInfo(); loadInstanceInfo();">↻ <span data-i18n="common.refresh">Refresh</span></button>
+                            <button type="button" class="workspace-page-close-btn" onclick="closeWorkspacePage()" title="Close System" aria-label="Close System" data-i18n-title="system.close" data-i18n-aria-label="system.close">
                                 <svg class="workspace-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                     <path d="M7 7L17 17M17 7L7 17"></path>
                                 </svg>
@@ -679,45 +680,45 @@
 
                             <!-- Network -->
                             <div class="system-card">
-                                <div class="system-card-title">🌐 Network</div>
+                                <div class="system-card-title">🌐 <span data-i18n="system.network">Network</span></div>
 
                                 <div class="system-row">
-                                    <span>SSID</span>
+                                    <span data-i18n="system.ssid">SSID</span>
                                     <strong id="systemWifiSsid">--</strong>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>Signal</span>
+                                    <span data-i18n="system.signal">Signal</span>
                                     <strong id="systemWifiSignal">--</strong>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>RSSI</span>
+                                    <span data-i18n="system.rssi">RSSI</span>
                                     <strong id="systemWifiRssi">--</strong>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>RX bitrate</span>
+                                    <span data-i18n="system.rx_bitrate">RX bitrate</span>
                                     <span id="systemRxRate">--</span>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>TX bitrate</span>
+                                    <span data-i18n="system.tx_bitrate">TX bitrate</span>
                                     <span id="systemTxRate">--</span>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>IP address</span>
+                                    <span data-i18n="system.ip_address">IP address</span>
                                     <strong id="systemWifiIp">--</strong>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>Gateway</span>
+                                    <span data-i18n="system.gateway">Gateway</span>
                                     <strong id="systemWifiGateway">--</strong>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>Internet</span>
+                                    <span data-i18n="system.internet">Internet</span>
                                     <strong id="systemInternet">--</strong>
                                 </div>
 
@@ -728,23 +729,23 @@
                             <div class="system-card">
 
                                 <div class="system-card-title">
-                                    📶 Wi-Fi Manager
+                                    📶 <span data-i18n="system.wifi_manager">Wi-Fi Manager</span>
                                 </div>
 
                                 <div class="wifi-toolbar">
                                     <button class="wifi-toggle-btn" onclick="toggleWifiNetworks()">
-                                        <span>▾ Available networks</span>
-                                        <span id="wifiNetworksCount">Show</span>
+                                        <span>▾ <span data-i18n="system.available_networks">Available networks</span></span>
+                                        <span id="wifiNetworksCount" data-i18n="common.show">Show</span>
                                     </button>
 
                                     <button class="wifi-scan-action" onclick="loadWifiNetworks()">
-                                        🔄 Scan
+                                        🔄 <span data-i18n="system.scan">Scan</span>
                                     </button>
                                 </div>
 
                                 <div id="wifiNetworksPanel" style="display:none;margin-top:12px;">
                                     <div id="wifiNetworksList">
-                                        <div class="loading">No scan yet</div>
+                                        <div class="loading" data-i18n="system.no_scan_yet">No scan yet</div>
                                     </div>
                                 </div>
 
@@ -753,11 +754,11 @@
                             <div class="system-card">
 
                                 <div class="system-card-title">
-                                    ❤️ Listener Auto Recovery
+                                    ❤️ <span data-i18n="system.listener_auto_recovery">Listener Auto Recovery</span>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>Enabled</span>
+                                    <span data-i18n="common.enabled">Enabled</span>
 
                                     <label class="switch">
                                         <input
@@ -769,7 +770,7 @@
                                 </div>
 
                                 <div class="system-row">
-                                    <span>Delay</span>
+                                    <span data-i18n="common.delay">Delay</span>
 
                                     <select
                                         id="listenerRecoveryDelay"
@@ -792,7 +793,8 @@
                                         font-size:12px;
                                         color:#888;
                                         line-height:1.4;
-                                    ">
+                                    "
+                                    data-i18n="system.listener_auto_recovery_description">
 
                                     Automatically restarts the Meshtastic listener
                                     if it remains offline longer than the selected delay.
@@ -1013,10 +1015,10 @@
                 <div class="settings-panel mc-workspace-panel">
                     <div class="settings-header mc-workspace-header">
                         <div>
-                            <div class="settings-title workspace-page-title">⚙️ Settings</div>
-                            <div class="settings-subtitle workspace-page-subtitle">Global MeshCenter preferences</div>
+                            <div class="settings-title workspace-page-title">⚙️ <span data-i18n="settings.title">Settings</span></div>
+                            <div class="settings-subtitle workspace-page-subtitle" data-i18n="settings.subtitle">Global MeshCenter preferences</div>
                         </div>
-                        <button type="button" class="workspace-page-close-btn" onclick="closeWorkspacePage()" title="Close Settings" aria-label="Close Settings">
+                        <button type="button" class="workspace-page-close-btn" onclick="closeWorkspacePage()" title="Close Settings" aria-label="Close Settings" data-i18n-title="settings.close" data-i18n-aria-label="settings.close">
                             <svg class="workspace-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                 <path d="M7 7L17 17M17 7L7 17"></path>
                             </svg>
@@ -1025,27 +1027,27 @@
 
                     <div class="settings-grid">
                         <div class="settings-card settings-card--general">
-                            <div class="settings-card-title">🌍 General</div>
+                            <div class="settings-card-title">🌍 <span data-i18n="settings.general">General</span></div>
                             <div class="settings-option settings-option--select">
-                                <label class="settings-option-label" for="uiLanguage">Language</label>
+                                <label class="settings-option-label" for="uiLanguage" data-i18n="settings.language_label">Language</label>
                                 <select id="uiLanguage" class="settings-select" onchange="setLanguageSetting(this.value)">
-                                    <option value="auto">Auto (browser default)</option>
-                                    <option value="en">English</option>
-                                    <option value="de">Deutsch</option>
-                                    <option value="ru">Русский</option>
-                                    <option value="uk">Українська</option>
+                                    <option value="auto" data-i18n="settings.language_auto">Auto (browser default)</option>
+                                    <option value="en" data-i18n="settings.language_en">English</option>
+                                    <option value="de" data-i18n="settings.language_de">Deutsch</option>
+                                    <option value="ru" data-i18n="settings.language_ru">Русский</option>
+                                    <option value="uk" data-i18n="settings.language_uk">Українська</option>
                                 </select>
                             </div>
-                            <div class="settings-card-text settings-card-note">Reloads the page after saving.</div>
+                            <div class="settings-card-text settings-card-note" data-i18n="settings.language_reload_note">Reloads the page after saving.</div>
                         </div>
 
                         <div class="settings-card settings-card--telemetry">
-                            <div class="settings-card-title">📊 Telemetry</div>
-                            <div class="settings-card-text">
+                            <div class="settings-card-title">📊 <span data-i18n="settings.telemetry">Telemetry</span></div>
+                            <div class="settings-card-text" data-i18n="settings.telemetry_description">
                                 Controls how often sensor readings are stored and refreshed.
                             </div>
                             <div class="settings-option settings-option--select">
-                                <label class="settings-option-label" for="telemetryInterval">Update interval</label>
+                                <label class="settings-option-label" for="telemetryInterval" data-i18n="settings.update_interval">Update interval</label>
                                 <select id="telemetryInterval" class="settings-select" onchange="updateTelemetryConfig()">
                                     <option value="120">2 minutes</option>
                                     <option value="300" selected>5 minutes</option>
@@ -1055,20 +1057,20 @@
                                 </select>
                             </div>
                             <div class="settings-option settings-option--select">
-                                <label class="settings-option-label" for="batteryCapacityMah">Battery capacity</label>
+                                <label class="settings-option-label" for="batteryCapacityMah" data-i18n="settings.battery_capacity">Battery capacity</label>
                                 <div class="settings-inline-input">
                                     <input id="batteryCapacityMah" class="settings-number-input" type="number" min="100" max="50000" step="100" value="3000" onchange="updateBatteryCapacitySetting()">
                                     <span>mAh</span>
                                 </div>
                             </div>
-                            <div class="settings-card-text settings-card-note">Used only for the approximate remaining runtime estimate.</div>
+                            <div class="settings-card-text settings-card-note" data-i18n="settings.battery_capacity_note">Used only for the approximate remaining runtime estimate.</div>
                         </div>
 
                         <div class="settings-card">
-                            <div class="settings-card-title">📏 Units</div>
+                            <div class="settings-card-title">📏 <span data-i18n="settings.units">Units</span></div>
 
                             <div class="settings-option">
-                                <div class="settings-option-label">Temperature</div>
+                                <div class="settings-option-label" data-i18n="node_panel.temperature">Temperature</div>
                                 <div class="settings-segmented">
                                     <button id="unitTempC" onclick="setUnitSetting('temperature', 'c')">°C</button>
                                     <button id="unitTempF" onclick="setUnitSetting('temperature', 'f')">°F</button>
@@ -1076,7 +1078,7 @@
                             </div>
 
                             <div class="settings-option">
-                                <div class="settings-option-label">Pressure</div>
+                                <div class="settings-option-label" data-i18n="node_panel.pressure">Pressure</div>
                                 <div class="settings-segmented">
                                     <button id="unitPressureHpa" onclick="setUnitSetting('pressure', 'hpa')">hPa</button>
                                     <button id="unitPressureMmhg" onclick="setUnitSetting('pressure', 'mmhg')">mmHg</button>
@@ -1087,19 +1089,19 @@
                         <div class="settings-card settings-card--radio" id="radioConnectionCard">
                             <div class="radio-connection-heading">
                                 <div>
-                                    <div class="settings-card-title">📡 Meshtastic Radio</div>
-                                    <div class="settings-card-text">
+                                    <div class="settings-card-title">📡 <span data-i18n="settings.meshtastic_radio">Meshtastic Radio</span></div>
+                                    <div class="settings-card-text" data-i18n="settings.radio_release_description">
                                         Temporarily release the USB serial connection for configuration with the official Meshtastic application.
                                     </div>
                                 </div>
-                                <span class="radio-connection-badge is-loading" id="radioConnectionBadge">Checking</span>
+                                <span class="radio-connection-badge is-loading" id="radioConnectionBadge" data-i18n="settings.checking">Checking</span>
                             </div>
 
-                            <div class="radio-connection-status" id="radioConnectionStatus">
+                            <div class="radio-connection-status" id="radioConnectionStatus" data-i18n="settings.reading_radio_status">
                                 Reading radio connection status...
                             </div>
 
-                            <div class="radio-connection-note" id="radioConnectionNote">
+                            <div class="radio-connection-note" id="radioConnectionNote" data-i18n="settings.radio_released_note">
                                 Messaging, telemetry and Node Tools are unavailable while the radio is released.
                             </div>
 
@@ -1107,20 +1109,21 @@
                                     class="radio-connection-action"
                                     id="radioConnectionAction"
                                     onclick="toggleRadioConnectionMode()"
-                                    disabled>
+                                    disabled
+                                    data-i18n="settings.release_radio">
                                 Release Radio
                             </button>
                         </div>
 
                         <div class="map-settings-card settings-card settings-card--map">
                             <div class="map-settings-title">
-                                🗺 Map
+                                🗺 <span data-i18n="settings.map">Map</span>
                             </div>
 
                             <div class="map-settings-row">
                                 <div>
-                                    <div class="map-settings-label">External map provider</div>
-                                    <div class="map-settings-description">
+                                    <div class="map-settings-label" data-i18n="settings.external_map_provider">External map provider</div>
+                                    <div class="map-settings-description" data-i18n="settings.map_provider_description">
                                         Used when opening a saved node position.
                                     </div>
                                 </div>
@@ -1136,21 +1139,21 @@
 
                         <div class="reference-location-card settings-card settings-card--reference">
                             <div class="reference-location-title">
-                                📍 Reference location
+                                📍 <span data-i18n="settings.reference_location">Reference location</span>
                             </div>
 
-                            <div class="reference-location-description">
+                            <div class="reference-location-description" data-i18n="settings.reference_location_description">
                                 Used to calculate distance and bearing to Meshtastic nodes.
                             </div>
 
                             <div class="reference-location-row">
-                                <label for="referenceLocationMode">Mode</label>
+                                <label for="referenceLocationMode" data-i18n="common.mode">Mode</label>
 
                                 <select id="referenceLocationMode"
                                         onchange="updateReferenceLocationFields()">
-                                    <option value="disabled">Disabled</option>
-                                    <option value="manual">Manual coordinates</option>
-                                    <option value="node">Use node position</option>
+                                    <option value="disabled" data-i18n="common.disabled">Disabled</option>
+                                    <option value="manual" data-i18n="settings.manual_coordinates">Manual coordinates</option>
+                                    <option value="node" data-i18n="settings.use_node_position">Use node position</option>
                                 </select>
                             </div>
 
@@ -1158,21 +1161,23 @@
                                  class="reference-location-fields"
                                  style="display:none;">
                                 <div class="reference-location-coordinate">
-                                    <label for="referenceLatitude">Latitude</label>
+                                    <label for="referenceLatitude" data-i18n="settings.latitude">Latitude</label>
                                     <input id="referenceLatitude"
                                            type="text"
                                            inputmode="decimal"
                                            autocomplete="off"
-                                           placeholder="Enter latitude">
+                                           placeholder="Enter latitude"
+                                           data-i18n-placeholder="settings.enter_latitude">
                                 </div>
 
                                 <div class="reference-location-coordinate">
-                                    <label for="referenceLongitude">Longitude</label>
+                                    <label for="referenceLongitude" data-i18n="settings.longitude">Longitude</label>
                                     <input id="referenceLongitude"
                                            type="text"
                                            inputmode="decimal"
                                            autocomplete="off"
-                                           placeholder="Enter longitude">
+                                           placeholder="Enter longitude"
+                                           data-i18n-placeholder="settings.enter_longitude">
                                 </div>
                             </div>
 
@@ -1181,12 +1186,12 @@
                                 style="display:none;">
 
                                 <div class="reference-location-coordinate">
-                                    <label for="referenceNodeId">
+                                    <label for="referenceNodeId" data-i18n="settings.reference_node">
                                         Reference node
                                     </label>
 
                                     <select id="referenceNodeId">
-                                        <option value="">
+                                        <option value="" data-i18n="settings.select_node">
                                             Select node
                                         </option>
                                     </select>
@@ -1198,7 +1203,7 @@
                                     class="reference-location-save-btn"
                                     onclick="saveReferenceLocation()"
                                     disabled>
-                                💾 Save reference location
+                                💾 <span data-i18n="settings.save_reference_location">Save reference location</span>
                             </button>
 
                             <div id="referenceLocationStatus"
@@ -1678,25 +1683,25 @@
 <!-- Message actions -->
 <div class="message-actions-menu" id="messageActionsMenu" role="menu" aria-hidden="true">
     <button type="button" class="message-action-item" role="menuitem" onclick="startReplyToMessage()">
-        <span aria-hidden="true">↩</span><span>Reply</span>
+        <span aria-hidden="true">↩</span><span data-i18n="modals.reply">Reply</span>
     </button>
     <div class="message-action-divider" aria-hidden="true"></div>
     <button type="button" class="message-action-item" role="menuitem" onclick="copyMessageText()">
-        <span aria-hidden="true">📋</span><span>Copy</span>
+        <span aria-hidden="true">📋</span><span data-i18n="modals.copy">Copy</span>
     </button>
     <button type="button" class="message-action-item" role="menuitem" onclick="showMessageInfo()">
-        <span aria-hidden="true">ⓘ</span><span>Message Info</span>
+        <span aria-hidden="true">ⓘ</span><span data-i18n="modals.message_info">Message Info</span>
     </button>
     <div class="message-action-divider" aria-hidden="true"></div>
     <button type="button" class="message-action-item danger" role="menuitem" onclick="requestDeleteMessage()">
-        <span aria-hidden="true">🗑️</span><span>Delete locally</span>
+        <span aria-hidden="true">🗑️</span><span data-i18n="modals.delete_locally">Delete locally</span>
     </button>
 </div>
 
 <div class="modal-overlay" id="messageInfoModal" style="display: none;" onclick="closeMessageInfo()">
     <div class="modal-content message-info-modal" onclick="event.stopPropagation()">
         <div class="modal-header">
-            <span>ⓘ Message Info</span>
+            <span>ⓘ <span data-i18n="modals.message_info">Message Info</span></span>
             <button class="modal-close" onclick="closeMessageInfo()">✕</button>
         </div>
         <div class="modal-body">
@@ -1709,16 +1714,18 @@
 <div class="modal-overlay" id="confirmDeleteMessageModal" style="display: none;" onclick="closeConfirmDeleteMessage()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
-            <span>🗑️ Delete locally</span>
+            <span>🗑️ <span data-i18n="modals.delete_locally">Delete locally</span></span>
             <button class="modal-close" onclick="closeConfirmDeleteMessage()">✕</button>
         </div>
         <div class="modal-body">
+            <!-- confirmDeleteMessageText is set dynamically by chat.js (interpolates a message
+                 preview) each time this modal opens - not covered by applyStaticDom(). -->
             <p class="confirm-text" id="confirmDeleteMessageText">Delete this message locally?</p>
-            <p class="message-delete-note">The message will only be removed from MeshCenter history. It cannot be removed from other Meshtastic devices.</p>
+            <p class="message-delete-note" data-i18n="modals.delete_message_note">The message will only be removed from MeshCenter history. It cannot be removed from other Meshtastic devices.</p>
             <p class="message-delete-error" id="confirmDeleteMessageError" style="display: none;"></p>
             <div class="confirm-actions">
-                <button class="confirm-btn confirm-cancel" onclick="closeConfirmDeleteMessage()">Cancel</button>
-                <button class="confirm-btn confirm-danger" id="confirmDeleteMessageBtn" onclick="executeDeleteMessage()">Delete</button>
+                <button class="confirm-btn confirm-cancel" onclick="closeConfirmDeleteMessage()" data-i18n="common.cancel">Cancel</button>
+                <button class="confirm-btn confirm-danger" id="confirmDeleteMessageBtn" onclick="executeDeleteMessage()" data-i18n="common.delete">Delete</button>
             </div>
         </div>
     </div>
@@ -1727,12 +1734,12 @@
 <div class="modal-overlay" id="chatActionsModal" style="display: none;" onclick="closeChatActions()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
-            <span>Chat Actions</span>
+            <span data-i18n="modals.chat_actions">Chat Actions</span>
             <button class="modal-close" onclick="closeChatActions()">✕</button>
         </div>
         <div class="modal-body">
-            <button class="modal-action-btn danger" id="deleteChatBtn" onclick="deleteCurrentChat()">🗑️ Delete Chat</button>
-            <button class="modal-action-btn" id="clearChatBtn" onclick="clearCurrentChat()" style="margin-top: 8px;">🧹 Clear Messages</button>
+            <button class="modal-action-btn danger" id="deleteChatBtn" onclick="deleteCurrentChat()">🗑️ <span data-i18n="modals.delete_chat">Delete Chat</span></button>
+            <button class="modal-action-btn" id="clearChatBtn" onclick="clearCurrentChat()" style="margin-top: 8px;">🧹 <span data-i18n="modals.clear_messages">Clear Messages</span></button>
         </div>
     </div>
 </div>
@@ -1740,14 +1747,16 @@
 <div class="modal-overlay" id="confirmDeleteModal" style="display: none;" onclick="closeConfirmDelete()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
-            <span>⚠️ Confirm Delete</span>
+            <span>⚠️ <span data-i18n="modals.confirm_delete">Confirm Delete</span></span>
             <button class="modal-close" onclick="closeConfirmDelete()">✕</button>
         </div>
         <div class="modal-body">
+            <!-- confirmDeleteText is set dynamically by chat.js (interpolates the chat name)
+                 each time this modal opens - not covered by applyStaticDom(). -->
             <p class="confirm-text" id="confirmDeleteText">Delete this chat?</p>
             <div class="confirm-actions">
-                <button class="confirm-btn confirm-cancel" onclick="closeConfirmDelete()">Cancel</button>
-                <button class="confirm-btn confirm-danger" id="confirmDeleteBtn" onclick="executeDeleteChat()">Delete</button>
+                <button class="confirm-btn confirm-cancel" onclick="closeConfirmDelete()" data-i18n="common.cancel">Cancel</button>
+                <button class="confirm-btn confirm-danger" id="confirmDeleteBtn" onclick="executeDeleteChat()" data-i18n="common.delete">Delete</button>
             </div>
         </div>
     </div>
@@ -1756,14 +1765,16 @@
 <div class="modal-overlay" id="confirmClearModal" style="display: none;" onclick="closeConfirmClear()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
-            <span>🧹 Clear Messages</span>
+            <span>🧹 <span data-i18n="modals.clear_messages">Clear Messages</span></span>
             <button class="modal-close" onclick="closeConfirmClear()">✕</button>
         </div>
         <div class="modal-body">
+            <!-- confirmClearText is set dynamically by chat.js (interpolates the chat name)
+                 each time this modal opens - not covered by applyStaticDom(). -->
             <p class="confirm-text" id="confirmClearText">Clear all messages in this chat?</p>
             <div class="confirm-actions">
-                <button class="confirm-btn confirm-cancel" onclick="closeConfirmClear()">Cancel</button>
-                <button class="confirm-btn confirm-danger" id="confirmClearBtn" onclick="executeClearChat()">Clear</button>
+                <button class="confirm-btn confirm-cancel" onclick="closeConfirmClear()" data-i18n="common.cancel">Cancel</button>
+                <button class="confirm-btn confirm-danger" id="confirmClearBtn" onclick="executeClearChat()" data-i18n="modals.clear">Clear</button>
             </div>
         </div>
     </div>
@@ -1772,14 +1783,16 @@
 <div class="modal-overlay" id="confirmDeleteAllDmModal" style="display: none;" onclick="closeDeleteAllDmModal()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
-            <span>⚠️ Confirm Delete All DM Chats</span>
+            <span>⚠️ <span data-i18n="modals.confirm_delete_all_dm">Confirm Delete All DM Chats</span></span>
             <button class="modal-close" onclick="closeDeleteAllDmModal()">✕</button>
         </div>
         <div class="modal-body">
+            <!-- deleteAllDmText is set dynamically by chat.js each time this modal opens
+                 (two-step confirmation copy) - not covered by applyStaticDom(). -->
             <p class="confirm-text" id="deleteAllDmText">Delete ALL Direct Message chats?</p>
             <div class="confirm-actions">
-                <button class="confirm-btn confirm-cancel" onclick="closeDeleteAllDmModal()">Cancel</button>
-                <button class="confirm-btn confirm-danger" id="confirmDeleteAllDmBtn" onclick="executeDeleteAllDm()">Delete All</button>
+                <button class="confirm-btn confirm-cancel" onclick="closeDeleteAllDmModal()" data-i18n="common.cancel">Cancel</button>
+                <button class="confirm-btn confirm-danger" id="confirmDeleteAllDmBtn" onclick="executeDeleteAllDm()" data-i18n="modals.delete_all">Delete All</button>
             </div>
         </div>
     </div>
@@ -1788,12 +1801,12 @@
 <div class="modal-overlay telemetry-modal" id="telemetryModal" style="display: none;" onclick="closeTelemetryModal()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header">
-            <span id="telemetryModalTitle">📊 Telemetry</span>
+            <span id="telemetryModalTitle">📊 <span data-i18n="modals.telemetry">Telemetry</span></span>
             <button class="modal-close" onclick="closeTelemetryModal()">✕</button>
         </div>
         <div class="modal-body">
             <div class="telemetry-cards" id="telemetryCards"></div>
-            <div class="telemetry-chart-container" id="telemetryChartContainer"><div class="loading">Loading...</div></div>
+            <div class="telemetry-chart-container" id="telemetryChartContainer"><div class="loading" data-i18n="common.loading">Loading...</div></div>
             <div class="telemetry-footer" id="telemetryFooter">
                 <div class="telemetry-time-controls">
                     <button class="time-btn active" data-range="60" onclick="setTelemetryRange(60)">1h</button>
@@ -1812,16 +1825,16 @@
 <div class="modal-overlay" id="weatherSetupModal" style="display:none;" aria-hidden="true" onclick="closeWeatherSetup()">
     <div class="modal-content weather-setup-modal" role="dialog" aria-modal="true" aria-labelledby="weatherSetupTitle" onclick="event.stopPropagation()">
         <div class="modal-header">
-            <span id="weatherSetupTitle">🌦️ OpenWeather Setup</span>
-            <button class="modal-close" type="button" onclick="closeWeatherSetup()" aria-label="Close OpenWeather setup">✕</button>
+            <span id="weatherSetupTitle">🌦️ <span data-i18n="modals.openweather_setup">OpenWeather Setup</span></span>
+            <button class="modal-close" type="button" onclick="closeWeatherSetup()" aria-label="Close OpenWeather setup" data-i18n-aria-label="modals.close_openweather_setup">✕</button>
         </div>
         <div class="modal-body">
-            <p class="weather-setup-copy">
+            <p class="weather-setup-copy" data-i18n="modals.openweather_setup_copy">
                 Enter an OpenWeather API key to enable current weather and the 3-day forecast.
                 The key is stored only on this Raspberry Pi and is never returned to the browser.
             </p>
 
-            <label class="weather-setup-label" for="weatherApiKeyInput">OpenWeather API key</label>
+            <label class="weather-setup-label" for="weatherApiKeyInput" data-i18n="modals.openweather_api_key">OpenWeather API key</label>
             <div class="weather-key-input-wrap">
                 <input
                     type="password"
@@ -1829,10 +1842,13 @@
                     class="weather-setup-input"
                     placeholder="Paste API key"
                     autocomplete="off"
-                    spellcheck="false">
-                <button class="weather-key-visibility" type="button" onclick="toggleWeatherKeyVisibility(this)" aria-label="Show or hide API key">Show</button>
+                    spellcheck="false"
+                    data-i18n-placeholder="modals.paste_api_key">
+                <button class="weather-key-visibility" type="button" onclick="toggleWeatherKeyVisibility(this)" aria-label="Show or hide API key" data-i18n="common.show" data-i18n-aria-label="modals.show_hide_api_key">Show</button>
             </div>
 
+            <!-- Contains a real <a> link - applyStaticDom() would replace it via
+                 textContent, so left untranslated for this pass rather than broken. -->
             <div class="weather-setup-help">
                 Get a free key at
                 <a href="https://openweathermap.org/api" target="_blank" rel="noopener noreferrer">openweathermap.org/api</a>.
@@ -1857,9 +1873,10 @@
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above —
     // reuse that instead of letting the client re-guess independently.
-    // Nothing calls applyStaticDom() yet (Stage 3), so this has no visible
-    // effect on the page beyond the catalog being loaded and queryable.
-    window.I18N.init("{{ ui_language }}");
+    // applyStaticDom() only covers markup already in the DOM at this point
+    // (the static shell) - content rendered later by chat.js/media.js/
+    // weather.js is untouched until those call I18N.t()/plural() directly.
+    window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
 <script src="/static/chat.js?v=20260806-channel-header-index"></script>
 <script src="/static/media.js"></script>

@@ -1575,6 +1575,7 @@ html[data-theme="dark"] :is(
     .settings-title, .settings-card-title,
     .map-settings-title, .reference-location-title,
     .system-title, .system-card-title,
+    .route-chain-name,
     .media-title, .video-title,
     .about-title, .about-card h2, .about-section-heading h2,
     .about-project-copy h1, .about-release-head h2,

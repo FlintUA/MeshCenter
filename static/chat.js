@@ -835,7 +835,7 @@ function getNodeDistanceAndBearing(
     if (distanceMeters < 1) {
         return {
             distanceText: '0 m',
-            bearingText: 'Reference'
+            bearingText: window.I18N.t('nodes.at_reference_location')
         };
     }
 
@@ -913,8 +913,8 @@ function renderNodeMapBadge(node) {
 
     const reference = getReferenceLocation();
     let distanceText = '--';
-    let bearingText = 'No reference';
-    let mapTitle = 'Open node position on map';
+    let bearingText = window.I18N.t('nodes.no_reference');
+    let mapTitle = window.I18N.t('nodes.open_position_on_map');
     let badgeClass = 'node-map-badge-neutral';
 
     if (
@@ -933,8 +933,8 @@ function renderNodeMapBadge(node) {
 
         if (distanceMeters < 1) {
             distanceText = '0 m';
-            bearingText = 'Reference';
-            mapTitle = 'Reference position';
+            bearingText = window.I18N.t('nodes.at_reference_location');
+            mapTitle = window.I18N.t('nodes.reference_position');
         } else {
             const bearing = calculateBearingDegrees(
                 reference.latitude,
@@ -956,7 +956,7 @@ function renderNodeMapBadge(node) {
                 aria-label="${escapeHtml(mapTitle)}"
                 onclick="event.stopPropagation(); openNodeMap(${latitude}, ${longitude})">
             <span class="node-map-distance"
-                  title="Distance from reference location: ${escapeHtml(distanceText)}">${escapeHtml(distanceText)}</span>
+                  title="${escapeHtml(window.I18N.t('nodes.distance_from_reference', { distance: distanceText }))}">${escapeHtml(distanceText)}</span>
             <span class="node-map-bearing">${escapeHtml(bearingText)}</span>
         </button>
     `;
@@ -2343,7 +2343,7 @@ function getNodeActivityPresentation(node) {
         || node?.clean_name
         || node?.long_name
         || node?.node_id
-        || 'Unknown'
+        || window.I18N.t('nodes.unknown_node')
     ).trim();
 
     let activityClass = 'activity-unknown';
@@ -2376,7 +2376,7 @@ function getNodeActivityPresentation(node) {
         node?.clean_name
         || rawName.replace(/^[🟢🟡🔴⚪]\s*/u, '')
         || node?.node_id
-        || 'Unknown'
+        || window.I18N.t('nodes.unknown_node')
     ).trim();
 
     return {
@@ -2469,8 +2469,8 @@ function renderNodeSignalSegments(node) {
 
     return `
         <span class="node-signal-indicator ${qualityClass}"
-              title="Signal quality: ${level}/7"
-              aria-label="Signal quality ${level} of 7">
+              title="${escapeHtml(window.I18N.t('nodes.signal_quality_of', { level }))}"
+              aria-label="${escapeHtml(window.I18N.t('nodes.signal_quality_of', { level }))}">
             ${segments}
         </span>
     `;
@@ -2503,23 +2503,23 @@ function updateChatHeaderStatus() {
     if (!titleEl || !subtitleEl) return;
     
     let statusIcon = '🟢';
-    let statusText = 'Online';
-    
+    let statusText = window.I18N.t('nodes.status_online');
+
     if (node && node.age) {
         const age = node.age;
         if (age.includes('h') || age.includes('day') || (age.includes('min') && parseInt(age) > 10)) {
             statusIcon = '🟡';
-            statusText = 'Away';
+            statusText = window.I18N.t('nodes.status_away');
         }
         if (age.includes('day') || (age.includes('h') && parseInt(age) > 24)) {
             statusIcon = '🔴';
-            statusText = 'Radio Offline';
+            statusText = window.I18N.t('nodes.status_radio_offline');
         }
     }
-    
+
     const shortId = currentChatId ? currentChatId.slice(-4) : '';
-    titleEl.innerHTML = `${statusIcon} ${currentChatName} <span style="font-size:12px;font-weight:400;color:#888;margin-left:6px;">${shortId}</span>`;
-    subtitleEl.textContent = `Direct Message • ${statusText}`;
+    titleEl.innerHTML = `${statusIcon} ${escapeHtml(currentChatName)} <span style="font-size:12px;font-weight:400;color:#888;margin-left:6px;">${escapeHtml(shortId)}</span>`;
+    subtitleEl.textContent = window.I18N.t('nodes.direct_message_status', { status: statusText });
     subtitleEl.style.color = statusIcon === '🟢' ? '#2e7d32' : (statusIcon === '🟡' ? '#f57c00' : '#c62828');
 }
 
@@ -5709,7 +5709,7 @@ function renderNodeDetails(node) {
 
     if (!node || typeof node !== 'object') {
         details.className = 'node-details-placeholder';
-        details.innerHTML = 'Select a node below';
+        details.innerHTML = window.I18N.t('nodes.select_node_below');
         return;
     }
 
@@ -5730,7 +5730,7 @@ function renderNodeDetails(node) {
     const shortName = node.short_name || '-';
     const hwModel = node.hw_model || '-';
     const role = node.role || 'CLIENT';
-    const lastSeen = node.age || 'Never';
+    const lastSeen = node.age || window.I18N.t('nodes.never_seen');
     const hops = node.hop_start || node.hops_away || '?';
     const rssi = node.rssi || '--';
     const snr = node.snr || '--';
@@ -5764,10 +5764,10 @@ function renderNodeDetails(node) {
             <!-- Верхняя панель -->
             <div class="node-detail-header">
                 <div class="node-detail-title-wrap">
-                    <span class="node-detail-activity ${getNodeActivityPresentation(node).activityClass}" title="Activity status" aria-hidden="true"></span>
+                    <span class="node-detail-activity ${getNodeActivityPresentation(node).activityClass}" title="${escapeHtml(window.I18N.t('nodes.activity_status'))}" aria-hidden="true"></span>
                     <span class="node-detail-name">${escapeHtml(displayName)}</span>
                 </div>
-                <button type="button" class="node-detail-close" onclick="closeNodeDetails()" title="Close node details" aria-label="Close node details">×</button>
+                <button type="button" class="node-detail-close" onclick="closeNodeDetails()" title="${escapeHtml(window.I18N.t('nodes.close_node_details'))}" aria-label="${escapeHtml(window.I18N.t('nodes.close_node_details'))}">×</button>
             </div>
 
             <!-- Вторая строка: ID, модель, роль + node actions -->
@@ -5779,7 +5779,7 @@ function renderNodeDetails(node) {
                     <span class="node-detail-separator">•</span>
                     <span class="node-detail-hw">${escapeHtml(hwModel)}</span>
                     <span class="node-detail-separator">•</span>
-                    <button type="button" class="node-detail-id" onclick="copyNodeId('${escapeHtml(nodeId)}')" title="Click to copy Node ID" aria-label="Copy Node ID">${escapeHtml(truncateText(nodeId, 12))}</button>
+                    <button type="button" class="node-detail-id" onclick="copyNodeId('${escapeHtml(nodeId)}')" title="${escapeHtml(window.I18N.t('nodes.click_to_copy_node_id'))}" aria-label="${escapeHtml(window.I18N.t('nodes.copy_node_id'))}">${escapeHtml(truncateText(nodeId, 12))}</button>
                 </div>
             </div>
 
@@ -5787,14 +5787,14 @@ function renderNodeDetails(node) {
             <div class="node-detail-status-row">
                 <div class="node-detail-status-copy">
                     <span class="node-detail-last-seen">🕒 ${escapeHtml(lastSeen)}</span>
-                    <span class="node-detail-hops">Hops: ${escapeHtml(hops)}</span>
+                    <span class="node-detail-hops">${escapeHtml(window.I18N.t('nodes.hops', { value: hops }))}</span>
                 </div>
                 <div class="node-detail-header-actions node-detail-action-group">
                     <button type="button"
                             class="node-detail-state-btn node-detail-favorite-btn ${isFavorite ? 'active' : ''}"
                             onclick="toggleFavorite('${escapeHtml(nodeId)}')"
-                            title="${isFavorite ? 'Remove from favorites' : 'Add to favorites'}"
-                            aria-label="${isFavorite ? 'Remove node from favorites' : 'Add node to favorites'}"
+                            title="${escapeHtml(isFavorite ? window.I18N.t('nodes.remove_from_favorites') : window.I18N.t('nodes.add_to_favorites'))}"
+                            aria-label="${escapeHtml(isFavorite ? window.I18N.t('nodes.remove_node_from_favorites') : window.I18N.t('nodes.add_node_to_favorites'))}"
                             aria-pressed="${isFavorite ? 'true' : 'false'}">
                         <span aria-hidden="true">⚑</span>
                     </button>
@@ -5802,23 +5802,23 @@ function renderNodeDetails(node) {
                     <button type="button"
                             class="node-detail-state-btn node-detail-ignore-btn ${isIgnored ? 'active' : ''}"
                             onclick="toggleIgnore('${escapeHtml(nodeId)}')"
-                            title="${isIgnored ? 'Stop ignoring node' : 'Ignore node'}"
-                            aria-label="${isIgnored ? 'Stop ignoring node' : 'Ignore node'}"
+                            title="${escapeHtml(isIgnored ? window.I18N.t('nodes.stop_ignoring_node') : window.I18N.t('nodes.ignore_node'))}"
+                            aria-label="${escapeHtml(isIgnored ? window.I18N.t('nodes.stop_ignoring_node') : window.I18N.t('nodes.ignore_node'))}"
                             aria-pressed="${isIgnored ? 'true' : 'false'}">
                         <span aria-hidden="true">🚫</span>
                     </button>
 
                     <button class="node-detail-actions-btn"
                             onclick="toggleNodeActionsMenu(event)"
-                            aria-label="More node actions"
-                            title="More actions">
+                            aria-label="${escapeHtml(window.I18N.t('nodes.more_node_actions'))}"
+                            title="${escapeHtml(window.I18N.t('nodes.more_actions'))}">
                         ⋮
                     </button>
                 </div>
             </div>
 
             <!-- Вкладки -->
-            <div class="node-detail-tabs" role="tablist" aria-label="Node details">
+            <div class="node-detail-tabs" role="tablist" aria-label="${escapeHtml(window.I18N.t('nodes.node_details_aria'))}">
                 ${NODE_DETAIL_TABS.map((tab, index) => `
                     <button type="button"
                             class="node-detail-tab ${index === 0 ? 'active' : ''}"
@@ -5859,11 +5859,11 @@ function renderNodeDetails(node) {
     actionsMenu.style.display = 'none';
     actionsMenu.innerHTML = `
         <div class="node-actions-menu-inner">
-            <button onclick="openChat('${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', 'dm')">📨 Send message</button>
-            <button onclick="runNodeTool('request_position', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">📍 Request position</button>
-            <button onclick="runNodeTool('request_telemetry', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">📊 Request telemetry</button>
-            <button onclick="runNodeTool('traceroute', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">🔍 Traceroute</button>
-            <button onclick="setNodeAsReference('${escapeHtml(nodeId)}')">📍 Set as reference</button>
+            <button onclick="openChat('${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', 'dm')">📨 ${escapeHtml(window.I18N.t('nodes.send_message'))}</button>
+            <button onclick="runNodeTool('request_position', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">📍 ${escapeHtml(window.I18N.t('nodes.request_position'))}</button>
+            <button onclick="runNodeTool('request_telemetry', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">📊 ${escapeHtml(window.I18N.t('nodes.request_telemetry'))}</button>
+            <button onclick="runNodeTool('traceroute', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">🔍 ${escapeHtml(window.I18N.t('nodes.traceroute'))}</button>
+            <button onclick="setNodeAsReference('${escapeHtml(nodeId)}')">📍 ${escapeHtml(window.I18N.t('nodes.set_as_reference'))}</button>
         </div>
     `;
     details.parentNode.insertBefore(actionsMenu, details.nextSibling);
@@ -5905,38 +5905,38 @@ function renderOverviewPane(node) {
                     <span class="tile-value">${escapeHtml(snr)} dB</span>
                 </div>
                 <div class="tile">
-                    <span class="tile-label">Hops</span>
+                    <span class="tile-label">${escapeHtml(window.I18N.t('nodes.hops_label'))}</span>
                     <span class="tile-value">${escapeHtml(hops)}</span>
                 </div>
                 <div class="tile">
-                    <span class="tile-label">Distance</span>
+                    <span class="tile-label">${escapeHtml(window.I18N.t('nodes.distance'))}</span>
                     <span class="tile-value">${escapeHtml(distanceText)}</span>
                 </div>
                 <div class="tile">
-                    <span class="tile-label">Bearing</span>
+                    <span class="tile-label">${escapeHtml(window.I18N.t('nodes.bearing'))}</span>
                     <span class="tile-value">${escapeHtml(bearingText)}</span>
                 </div>
                 ${battery !== '--' ? `
                 <div class="tile">
-                    <span class="tile-label">Battery</span>
+                    <span class="tile-label">${escapeHtml(window.I18N.t('node_panel.battery'))}</span>
                     <span class="tile-value">${escapeHtml(battery)}%</span>
                 </div>` : ''}
                 ${voltage !== '--' ? `
                 <div class="tile">
-                    <span class="tile-label">Voltage</span>
+                    <span class="tile-label">${escapeHtml(window.I18N.t('node_panel.voltage'))}</span>
                     <span class="tile-value">${escapeHtml(voltage)} V</span>
                 </div>` : ''}
             </div>
             ${lastText ? `
             <div class="node-detail-last-msg">
-                <span class="last-msg-label">Last message</span>
+                <span class="last-msg-label">${escapeHtml(window.I18N.t('nodes.last_message_label'))}</span>
                 <span class="last-msg-text">${escapeHtml(truncateText(lastText, 80))}</span>
                 <span class="last-msg-time">${escapeHtml(node.last_time || '')}</span>
             </div>` : ''}
             <div class="node-detail-quick-actions">
-                <button class="quick-action" onclick="openChat('${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', 'dm')">💬 Message</button>
-                <button class="quick-action" onclick="openExternalNodeMap(${node.position?.latitude || 0}, ${node.position?.longitude || 0})" ${!hasPosition ? 'disabled' : ''}>🗺 External Map</button>
-                <button class="quick-action" onclick="toggleNodeActionsMenu(event)">⚡ More</button>
+                <button class="quick-action" onclick="openChat('${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', 'dm')">💬 ${escapeHtml(window.I18N.t('nodes.message_button'))}</button>
+                <button class="quick-action" onclick="openExternalNodeMap(${node.position?.latitude || 0}, ${node.position?.longitude || 0})" ${!hasPosition ? 'disabled' : ''}>🗺 ${escapeHtml(window.I18N.t('nodes.external_map'))}</button>
+                <button class="quick-action" onclick="toggleNodeActionsMenu(event)">⚡ ${escapeHtml(window.I18N.t('nodes.more'))}</button>
             </div>
         </div>
     `;
@@ -5952,33 +5952,33 @@ function renderRadioPane(node) {
     const rssi = node.rssi ?? '--';
     const snr = node.snr ?? '--';
     const hops = node.hop_start ?? node.hops_away ?? '?';
-    const lastSeen = node.age || 'Never';
+    const lastSeen = node.age || window.I18N.t('nodes.never_seen');
     const relay = node.relay_node || '--';
     const signalQuality = formatSignalQualityLabel(node.signal_quality);
 
     // Простая история (заглушка)
-    let historyHtml = '<div class="radio-history-placeholder">Signal history is not available yet</div>';
+    let historyHtml = `<div class="radio-history-placeholder">${escapeHtml(window.I18N.t('nodes.signal_history_unavailable'))}</div>`;
 
     return `
         <div class="node-detail-radio">
             <div class="radio-params">
-                <div class="radio-param"><span class="label">Signal quality</span><span class="value">${escapeHtml(signalQuality)}</span></div>
+                <div class="radio-param"><span class="label">${escapeHtml(window.I18N.t('nodes.signal_quality'))}</span><span class="value">${escapeHtml(signalQuality)}</span></div>
                 <div class="radio-param"><span class="label">RSSI</span><span class="value">${escapeHtml(rssi)} dBm</span></div>
                 <div class="radio-param"><span class="label">SNR</span><span class="value">${escapeHtml(snr)} dB</span></div>
-                <div class="radio-param"><span class="label">Hops</span><span class="value">${escapeHtml(hops)}</span></div>
-                <div class="radio-param"><span class="label">Last relay</span><span class="value">${escapeHtml(relay)}</span></div>
-                <div class="radio-param"><span class="label">Last heard</span><span class="value">${escapeHtml(lastSeen)}</span></div>
+                <div class="radio-param"><span class="label">${escapeHtml(window.I18N.t('nodes.hops_label'))}</span><span class="value">${escapeHtml(hops)}</span></div>
+                <div class="radio-param"><span class="label">${escapeHtml(window.I18N.t('nodes.last_relay'))}</span><span class="value">${escapeHtml(relay)}</span></div>
+                <div class="radio-param"><span class="label">${escapeHtml(window.I18N.t('nodes.last_heard'))}</span><span class="value">${escapeHtml(lastSeen)}</span></div>
             </div>
             <div class="radio-history">
                 <div class="radio-history-header">
-                    <span>Signal history</span>
-                    <span class="radio-history-range" title="Time ranges will be enabled when history storage is added">30m · 1h · 6h · 24h</span>
+                    <span>${escapeHtml(window.I18N.t('nodes.signal_history'))}</span>
+                    <span class="radio-history-range" title="${escapeHtml(window.I18N.t('nodes.time_ranges_tooltip'))}">30m · 1h · 6h · 24h</span>
                 </div>
                 ${historyHtml}
             </div>
             <div class="radio-actions">
-                <button class="radio-action" onclick="runNodeTool('traceroute', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">🔍 Run traceroute</button>
-                <button class="radio-action" onclick="refreshNodeMetrics('${escapeHtml(node.node_id)}')">↻ Refresh</button>
+                <button class="radio-action" onclick="runNodeTool('traceroute', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">🔍 ${escapeHtml(window.I18N.t('nodes.run_traceroute'))}</button>
+                <button class="radio-action" onclick="refreshNodeMetrics('${escapeHtml(node.node_id)}')">↻ ${escapeHtml(window.I18N.t('common.refresh'))}</button>
             </div>
         </div>
     `;
@@ -5991,7 +5991,7 @@ function renderPositionPane(node) {
     const lon = hasPosition ? pos.longitude.toFixed(6) : '--';
     const alt = Number.isFinite(pos.altitude) ? `${Math.round(pos.altitude)} m` : '--';
     const age = pos.updated_time || node.age || '--';
-    const source = pos.source || 'Radio';
+    const source = pos.source || window.I18N.t('nodes.source_radio');
     const precision = pos.precision_label || '--';
 
     let distanceText = '--', bearingText = '--';
@@ -6007,33 +6007,33 @@ function renderPositionPane(node) {
 
     const referenceName = (() => {
         const ref = getReferenceLocation();
-        return ref ? ref.name : 'Not set';
+        return ref ? ref.name : window.I18N.t('nodes.reference_not_set');
     })();
 
     return `
         <div class="node-detail-position">
             ${hasPosition ? `
             <div class="position-coords">
-                <div class="coord"><span class="label">Latitude</span><span class="value">${escapeHtml(lat)}</span></div>
-                <div class="coord"><span class="label">Longitude</span><span class="value">${escapeHtml(lon)}</span></div>
-                <div class="coord"><span class="label">Altitude</span><span class="value">${escapeHtml(alt)}</span></div>
-                <div class="coord"><span class="label">Distance</span><span class="value">${escapeHtml(distanceText)}</span></div>
-                <div class="coord"><span class="label">Bearing</span><span class="value">${escapeHtml(bearingText)}</span></div>
-                <div class="coord"><span class="label">Position age</span><span class="value">${escapeHtml(age)}</span></div>
-                <div class="coord"><span class="label">Source</span><span class="value">${escapeHtml(source)}</span></div>
-                <div class="coord"><span class="label">Precision</span><span class="value">${escapeHtml(precision)}</span></div>
+                <div class="coord"><span class="label">${escapeHtml(window.I18N.t('settings.latitude'))}</span><span class="value">${escapeHtml(lat)}</span></div>
+                <div class="coord"><span class="label">${escapeHtml(window.I18N.t('settings.longitude'))}</span><span class="value">${escapeHtml(lon)}</span></div>
+                <div class="coord"><span class="label">${escapeHtml(window.I18N.t('nodes.altitude'))}</span><span class="value">${escapeHtml(alt)}</span></div>
+                <div class="coord"><span class="label">${escapeHtml(window.I18N.t('nodes.distance'))}</span><span class="value">${escapeHtml(distanceText)}</span></div>
+                <div class="coord"><span class="label">${escapeHtml(window.I18N.t('nodes.bearing'))}</span><span class="value">${escapeHtml(bearingText)}</span></div>
+                <div class="coord"><span class="label">${escapeHtml(window.I18N.t('nodes.position_age'))}</span><span class="value">${escapeHtml(age)}</span></div>
+                <div class="coord"><span class="label">${escapeHtml(window.I18N.t('nodes.source'))}</span><span class="value">${escapeHtml(source)}</span></div>
+                <div class="coord"><span class="label">${escapeHtml(window.I18N.t('nodes.precision'))}</span><span class="value">${escapeHtml(precision)}</span></div>
             </div>
             <div class="position-actions">
-                <button onclick='openNodeMap(${pos.latitude}, ${pos.longitude}, ${JSON.stringify(String(node.node_id || ""))})'>🗺 Locate on Map</button>
-                <button onclick="copyCoordinates('${pos.latitude}', '${pos.longitude}')">📋 Copy coordinates</button>
-                <button onclick="setNodeAsReference('${escapeHtml(node.node_id)}')">📍 Set as reference</button>
-                <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">📡 Request new position</button>
+                <button onclick='openNodeMap(${pos.latitude}, ${pos.longitude}, ${JSON.stringify(String(node.node_id || ""))})'>🗺 ${escapeHtml(window.I18N.t('nodes.locate_on_map'))}</button>
+                <button onclick="copyCoordinates('${pos.latitude}', '${pos.longitude}')">📋 ${escapeHtml(window.I18N.t('nodes.copy_coordinates'))}</button>
+                <button onclick="setNodeAsReference('${escapeHtml(node.node_id)}')">📍 ${escapeHtml(window.I18N.t('nodes.set_as_reference'))}</button>
+                <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">📡 ${escapeHtml(window.I18N.t('nodes.request_new_position'))}</button>
             </div>
-            <div class="position-reference">Reference: ${escapeHtml(referenceName)}</div>
+            <div class="position-reference">${escapeHtml(window.I18N.t('nodes.reference_prefix', { name: referenceName }))}</div>
             ` : `
             <div class="position-no-data">
-                <span>📍 No known position</span>
-                <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">Request position</button>
+                <span>📍 ${escapeHtml(window.I18N.t('nodes.no_known_position'))}</span>
+                <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">${escapeHtml(window.I18N.t('nodes.request_position'))}</button>
             </div>
             `}
         </div>
@@ -6126,43 +6126,43 @@ function renderDataPane(node) {
     const nodeName = escapeHtml(node.clean_name || node.name || node.node_id);
 
     const deviceRows = [
-        hasBattery ? `<div><span class="label">Battery</span><span class="value">${escapeHtml(formatBatteryPercent(node.battery_level))}%</span></div>` : '',
-        hasDeviceVoltage ? `<div><span class="label">Voltage</span><span class="value">${escapeHtml(formatTelemetryNumber(node.voltage, 3))} V</span></div>` : '',
-        hasChannelUtil ? `<div><span class="label">Channel utilization</span><span class="value">${escapeHtml(formatTelemetryNumber(node.channel_utilization, 2))}%</span></div>` : '',
-        hasAirUtil ? `<div><span class="label">Air utilization TX</span><span class="value">${escapeHtml(formatTelemetryNumber(node.air_util_tx, 2))}%</span></div>` : '',
-        hasUptime ? `<div><span class="label">Uptime</span><span class="value">${escapeHtml(formatUptime(node.uptime_seconds))}</span></div>` : ''
+        hasBattery ? `<div><span class="label">${escapeHtml(window.I18N.t('node_panel.battery'))}</span><span class="value">${escapeHtml(formatBatteryPercent(node.battery_level))}%</span></div>` : '',
+        hasDeviceVoltage ? `<div><span class="label">${escapeHtml(window.I18N.t('node_panel.voltage'))}</span><span class="value">${escapeHtml(formatTelemetryNumber(node.voltage, 3))} V</span></div>` : '',
+        hasChannelUtil ? `<div><span class="label">${escapeHtml(window.I18N.t('nodes.channel_utilization'))}</span><span class="value">${escapeHtml(formatTelemetryNumber(node.channel_utilization, 2))}%</span></div>` : '',
+        hasAirUtil ? `<div><span class="label">${escapeHtml(window.I18N.t('nodes.air_utilization_tx'))}</span><span class="value">${escapeHtml(formatTelemetryNumber(node.air_util_tx, 2))}%</span></div>` : '',
+        hasUptime ? `<div><span class="label">${escapeHtml(window.I18N.t('nodes.uptime'))}</span><span class="value">${escapeHtml(formatUptime(node.uptime_seconds))}</span></div>` : ''
     ].filter(Boolean).join('');
 
     const environmentRows = [
-        hasTemperature ? `<div><span class="label">Temperature</span><span class="value">${formatTemperature(node.temperature)}</span></div>` : '',
-        hasHumidity ? `<div><span class="label">Humidity</span><span class="value">${escapeHtml(formatTelemetryNumber(node.humidity, 1))}%</span></div>` : '',
-        hasPressure ? `<div><span class="label">Pressure</span><span class="value">${formatPressure(node.pressure)}</span></div>` : ''
+        hasTemperature ? `<div><span class="label">${escapeHtml(window.I18N.t('node_panel.temperature'))}</span><span class="value">${formatTemperature(node.temperature)}</span></div>` : '',
+        hasHumidity ? `<div><span class="label">${escapeHtml(window.I18N.t('node_panel.humidity'))}</span><span class="value">${escapeHtml(formatTelemetryNumber(node.humidity, 1))}%</span></div>` : '',
+        hasPressure ? `<div><span class="label">${escapeHtml(window.I18N.t('node_panel.pressure'))}</span><span class="value">${formatPressure(node.pressure)}</span></div>` : ''
     ].filter(Boolean).join('');
 
     const powerRows = [
-        hasPowerVoltage ? `<div><span class="label">Voltage</span><span class="value">${escapeHtml(formatTelemetryNumber(node.voltage, 3))} V</span></div>` : '',
-        hasCurrent ? `<div><span class="label">Current</span><span class="value">${escapeHtml(formatTelemetryNumber(node.current, 1))} mA</span></div>` : '',
-        hasPowerValue ? `<div><span class="label">Power</span><span class="value">${escapeHtml(formatPowerWattsFromMilliwatts(node.power))} W</span></div>` : ''
+        hasPowerVoltage ? `<div><span class="label">${escapeHtml(window.I18N.t('node_panel.voltage'))}</span><span class="value">${escapeHtml(formatTelemetryNumber(node.voltage, 3))} V</span></div>` : '',
+        hasCurrent ? `<div><span class="label">${escapeHtml(window.I18N.t('node_panel.current'))}</span><span class="value">${escapeHtml(formatTelemetryNumber(node.current, 1))} mA</span></div>` : '',
+        hasPowerValue ? `<div><span class="label">${escapeHtml(window.I18N.t('node_panel.power'))}</span><span class="value">${escapeHtml(formatPowerWattsFromMilliwatts(node.power))} W</span></div>` : ''
     ].filter(Boolean).join('');
 
     return `
         <div class="node-detail-data">
             <div class="data-group">
-                <div class="data-group-title">📟 Device</div>
-                ${deviceRows ? `<div class="data-grid">${deviceRows}</div>` : '<div class="data-no-data">No device metrics received</div>'}
+                <div class="data-group-title">📟 ${escapeHtml(window.I18N.t('nodes.device'))}</div>
+                ${deviceRows ? `<div class="data-grid">${deviceRows}</div>` : `<div class="data-no-data">${escapeHtml(window.I18N.t('nodes.no_device_metrics'))}</div>`}
             </div>
             <div class="data-group">
-                <div class="data-group-title">🌡️ Environment</div>
-                ${hasEnv ? `<div class="data-grid">${environmentRows}</div>` : '<div class="data-no-data">No environment metrics received</div>'}
+                <div class="data-group-title">🌡️ ${escapeHtml(window.I18N.t('node_panel.environment'))}</div>
+                ${hasEnv ? `<div class="data-grid">${environmentRows}</div>` : `<div class="data-no-data">${escapeHtml(window.I18N.t('nodes.no_environment_metrics'))}</div>`}
             </div>
             <div class="data-group">
-                <div class="data-group-title">⚡ Power</div>
-                ${hasPower ? `<div class="data-grid">${powerRows}</div>` : '<div class="data-no-data">No power metrics received</div>'}
+                <div class="data-group-title">⚡ ${escapeHtml(window.I18N.t('node_panel.power'))}</div>
+                ${hasPower ? `<div class="data-grid">${powerRows}</div>` : `<div class="data-no-data">${escapeHtml(window.I18N.t('nodes.no_power_metrics'))}</div>`}
             </div>
             <div class="data-actions">
-                <button onclick="runNodeTool('request_telemetry', '${nodeId}', '${nodeName}', this)">📊 Request telemetry</button>
-                ${hasPower ? `<button onclick="viewTelemetryHistory('${nodeId}', 'power')">⚡ Power history</button>` : ''}
-                ${hasEnv ? `<button onclick="viewTelemetryHistory('${nodeId}', 'environment')">🌡️ Environment history</button>` : ''}
+                <button onclick="runNodeTool('request_telemetry', '${nodeId}', '${nodeName}', this)">📊 ${escapeHtml(window.I18N.t('nodes.request_telemetry'))}</button>
+                ${hasPower ? `<button onclick="viewTelemetryHistory('${nodeId}', 'power')">⚡ ${escapeHtml(window.I18N.t('nodes.power_history'))}</button>` : ''}
+                ${hasEnv ? `<button onclick="viewTelemetryHistory('${nodeId}', 'environment')">🌡️ ${escapeHtml(window.I18N.t('nodes.environment_history'))}</button>` : ''}
             </div>
         </div>
     `;
@@ -6172,10 +6172,10 @@ function renderLogPane(node) {
     // Сводка
     const summary = {
         first_seen: node.first_seen || '--',
-        last_heard: node.age || 'Never',
-        last_text: node.last_time || 'Never',
-        last_position: node.position?.updated_time || 'Never',
-        last_telemetry: node.telemetry_time || 'Never',
+        last_heard: node.age || window.I18N.t('nodes.never_seen'),
+        last_text: node.last_time || window.I18N.t('nodes.never_seen'),
+        last_position: node.position?.updated_time || window.I18N.t('nodes.never_seen'),
+        last_telemetry: node.telemetry_time || window.I18N.t('nodes.never_seen'),
         packets: node.packets_received ?? '--',
         messages: node.messages_received ?? '--'
     };
@@ -6184,17 +6184,17 @@ function renderLogPane(node) {
     return `
         <div class="node-detail-log">
             <div class="log-summary">
-                <div class="log-summary-item"><span class="label">First seen</span><span class="value">${escapeHtml(summary.first_seen)}</span></div>
-                <div class="log-summary-item"><span class="label">Last heard</span><span class="value">${escapeHtml(summary.last_heard)}</span></div>
-                <div class="log-summary-item"><span class="label">Last text</span><span class="value">${escapeHtml(summary.last_text)}</span></div>
-                <div class="log-summary-item"><span class="label">Last position</span><span class="value">${escapeHtml(summary.last_position)}</span></div>
-                <div class="log-summary-item"><span class="label">Last telemetry</span><span class="value">${escapeHtml(summary.last_telemetry)}</span></div>
-                <div class="log-summary-item"><span class="label">Packets</span><span class="value">${escapeHtml(summary.packets)}</span></div>
-                <div class="log-summary-item"><span class="label">Messages</span><span class="value">${escapeHtml(summary.messages)}</span></div>
+                <div class="log-summary-item"><span class="label">${escapeHtml(window.I18N.t('nodes.first_seen'))}</span><span class="value">${escapeHtml(summary.first_seen)}</span></div>
+                <div class="log-summary-item"><span class="label">${escapeHtml(window.I18N.t('nodes.last_heard'))}</span><span class="value">${escapeHtml(summary.last_heard)}</span></div>
+                <div class="log-summary-item"><span class="label">${escapeHtml(window.I18N.t('nodes.last_text'))}</span><span class="value">${escapeHtml(summary.last_text)}</span></div>
+                <div class="log-summary-item"><span class="label">${escapeHtml(window.I18N.t('nodes.last_position'))}</span><span class="value">${escapeHtml(summary.last_position)}</span></div>
+                <div class="log-summary-item"><span class="label">${escapeHtml(window.I18N.t('nodes.last_telemetry'))}</span><span class="value">${escapeHtml(summary.last_telemetry)}</span></div>
+                <div class="log-summary-item"><span class="label">${escapeHtml(window.I18N.t('nodes.packets'))}</span><span class="value">${escapeHtml(summary.packets)}</span></div>
+                <div class="log-summary-item"><span class="label">${escapeHtml(window.I18N.t('nodes.messages'))}</span><span class="value">${escapeHtml(summary.messages)}</span></div>
             </div>
             <div class="log-events">
-                <div class="log-events-title">Event history</div>
-                <div class="log-history-placeholder">Detailed node event history is not available yet</div>
+                <div class="log-events-title">${escapeHtml(window.I18N.t('nodes.event_history'))}</div>
+                <div class="log-history-placeholder">${escapeHtml(window.I18N.t('nodes.event_history_unavailable'))}</div>
             </div>
         </div>
     `;
@@ -6255,10 +6255,10 @@ async function copyNodeId(nodeId) {
             textarea.remove();
             if (!copied) throw new Error('Copy command was rejected.');
         }
-        showToast('✅ Node ID copied', 'success');
+        showToast(`✅ ${window.I18N.t('nodes.node_id_copied')}`, 'success');
     } catch (error) {
         console.warn('Unable to copy Node ID:', error);
-        showToast('❌ Failed to copy Node ID', 'error');
+        showToast(`❌ ${window.I18N.t('nodes.node_id_copy_failed')}`, 'error');
     }
 }
 
@@ -6267,7 +6267,7 @@ async function copyCoordinates(lat, lon) {
     const longitude = Number(lon);
 
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-        showToast('❌ Coordinates unavailable', 'error');
+        showToast(`❌ ${window.I18N.t('nodes.coordinates_unavailable')}`, 'error');
         return;
     }
 
@@ -6295,10 +6295,10 @@ async function copyCoordinates(lat, lon) {
             }
         }
 
-        showToast('✅ Coordinates copied', 'success');
+        showToast(`✅ ${window.I18N.t('nodes.coordinates_copied')}`, 'success');
     } catch (error) {
         console.warn('[WAYPOINT] Failed to copy coordinates:', error);
-        showToast('❌ Failed to copy coordinates', 'error');
+        showToast(`❌ ${window.I18N.t('nodes.coordinates_copy_failed')}`, 'error');
     }
 }
 
@@ -6326,21 +6326,21 @@ function setNodeAsReference(nodeId) {
             appSettings = data.settings;
             updateSettingsUi();
             notifySettingsUpdated();
-            showToast('✅ Reference node set', 'success');
+            showToast(`✅ ${window.I18N.t('nodes.reference_node_set')}`, 'success');
             // Перерисовать карточку
             const node = nodeCache.find(n => n.node_id === nodeId);
             if (node) renderNodeDetails(node);
         } else {
-            showToast('❌ Failed to set reference', 'error');
+            showToast(`❌ ${window.I18N.t('nodes.set_reference_failed')}`, 'error');
         }
     })
-    .catch(() => showToast('❌ Network error', 'error'));
+    .catch(() => showToast(`❌ ${window.I18N.t('errors.network_error')}`, 'error'));
 }
 
 function refreshNodeMetrics(nodeId) {
     // Просто обновляем данные
     loadMessages();
-    showToast('↻ Refreshing local node data', 'info');
+    showToast(`↻ ${window.I18N.t('nodes.refreshing_local_data')}`, 'info');
 }
 
 function viewTelemetryHistory(nodeId, type = 'power') {
@@ -6373,8 +6373,8 @@ function setNodeToolsBusy(isBusy) {
         toolsButton.disabled = radioCommandRunning;
 
         toolsButton.innerHTML = radioCommandRunning
-            ? '<span>⏳ Working...</span>'
-            : '<span>🛠 Tools</span><span id="nodeToolsArrow">▾</span>';
+            ? `<span>⏳ ${escapeHtml(window.I18N.t('nodes.working'))}</span>`
+            : `<span>🛠 ${escapeHtml(window.I18N.t('nodes.tools'))}</span><span id="nodeToolsArrow">▾</span>`;
     }
 
     if (radioCommandRunning && toolsMenu) {
@@ -6384,7 +6384,7 @@ function setNodeToolsBusy(isBusy) {
 
 function toggleNodeToolsMenu(forceOpen = null) {
     if (radioCommandRunning && forceOpen !== false) {
-        showToast('A radio command is already running', 'info');
+        showToast(window.I18N.t('nodes.another_command_running'), 'info');
         return;
     }
 
@@ -6462,7 +6462,7 @@ function parseTracerouteLine(line) {
 
         const nodeId = match[1];
         const nodeName = nodeId.toLowerCase() === 'unknown'
-            ? 'Unknown'
+            ? window.I18N.t('nodes.unknown_node')
             : getTracerouteNodeName(nodeId);
 
         return {
@@ -6506,7 +6506,7 @@ function renderTracerouteChain(route) {
     if (!route || !Array.isArray(route.nodes) || !route.nodes.length) {
         return `
             <div class="route-empty">
-                Route information unavailable
+                ${escapeHtml(window.I18N.t('nodes.route_unavailable'))}
             </div>
         `;
     }
@@ -6527,8 +6527,8 @@ function renderTracerouteChain(route) {
         ].filter(Boolean).join(' ');
 
         const nodeLabel = isFirst
-            ? 'SOURCE'
-            : (isLast ? 'DESTINATION' : '');
+            ? window.I18N.t('nodes.route_source')
+            : (isLast ? window.I18N.t('nodes.route_destination') : '');
 
         const connector = !isLast
             ? `
@@ -6537,7 +6537,7 @@ function renderTracerouteChain(route) {
 
                     <span class="route-snr-badge">
                         ${escapeHtml(
-                            route.nodes[index + 1].snr || '? dB'
+                            route.nodes[index + 1].snr || window.I18N.t('nodes.snr_unknown')
                         )}
                     </span>
 
@@ -6554,7 +6554,7 @@ function renderTracerouteChain(route) {
                      title="${escapeHtml(node.id)}">
 
                     ${nodeLabel
-                        ? `<span class="route-endpoint-label">${nodeLabel}</span>`
+                        ? `<span class="route-endpoint-label">${escapeHtml(nodeLabel)}</span>`
                         : ''
                     }
 
@@ -6577,11 +6577,9 @@ function renderTracerouteChain(route) {
         `;
     }).join('');
 
-    const hopWord = route.hopCount === 1 ? 'hop' : 'hops';
-
     return `
         <div class="route-chain-meta">
-            ${route.hopCount} ${hopWord}
+            ${escapeHtml(window.I18N.plural('nodes.hop_count', route.hopCount, { count: route.hopCount }))}
         </div>
 
         <div class="route-chain">
@@ -6628,7 +6626,7 @@ function formatTelemetryCliOutput(output) {
             const formatted = formatDurationSeconds(secondsText);
 
             return formatted
-                ? `Uptime: ${formatted}`
+                ? `${window.I18N.t('nodes.uptime')}: ${formatted}`
                 : fullMatch;
         }
     );
@@ -6656,7 +6654,7 @@ function renderNodeToolResult(nodeId, type, title, message, details = '') {
             <button type="button"
                     class="node-tool-result-close"
                     onclick="closeNodeToolResult('${escapeHtml(nodeId)}')"
-                    title="Close">
+                    title="${escapeHtml(window.I18N.t('common.close'))}">
                 ×
             </button>
         </div>
@@ -6738,7 +6736,7 @@ async function runNodeTool(action, nodeId, nodeName, button) {
 
     if (radioCommandRunning) {
         showToast(
-            'Another radio command is already running',
+            window.I18N.t('nodes.another_command_running'),
             'info'
         );
         return;
@@ -6751,43 +6749,43 @@ async function runNodeTool(action, nodeId, nodeName, button) {
 
     const toolConfig = {
         traceroute: {
-            pendingTitle: '🛰 Traceroute',
-            pendingMessage: `Checking route to ${nodeName}...`,
-            successToast: `✅ Traceroute completed: ${nodeName}`,
-            errorTitle: '❌ Traceroute failed',
-            errorToastPrefix: '❌ Traceroute failed'
+            pendingTitle: `🛰 ${window.I18N.t('nodes.traceroute')}`,
+            pendingMessage: window.I18N.t('nodes.checking_route_to', { name: nodeName }),
+            successToast: `✅ ${window.I18N.t('nodes.traceroute_completed', { name: nodeName })}`,
+            errorTitle: `❌ ${window.I18N.t('nodes.traceroute_failed')}`,
+            errorToastPrefix: `❌ ${window.I18N.t('nodes.traceroute_failed')}`
         },
 
         request_telemetry: {
-            pendingTitle: '📊 Request telemetry',
-            pendingMessage: `Requesting telemetry from ${nodeName}...`,
-            successToast: `✅ Telemetry request completed: ${nodeName}`,
-            errorTitle: '❌ Telemetry request failed',
-            errorToastPrefix: '❌ Telemetry request failed'
+            pendingTitle: `📊 ${window.I18N.t('nodes.request_telemetry')}`,
+            pendingMessage: window.I18N.t('nodes.requesting_telemetry_from', { name: nodeName }),
+            successToast: `✅ ${window.I18N.t('nodes.telemetry_request_completed', { name: nodeName })}`,
+            errorTitle: `❌ ${window.I18N.t('nodes.telemetry_request_failed')}`,
+            errorToastPrefix: `❌ ${window.I18N.t('nodes.telemetry_request_failed')}`
         },
 
         request_position: {
-            pendingTitle: '📍 Request position',
-            pendingMessage: `Requesting position from ${nodeName}...`,
-            successToast: `✅ Position request completed: ${nodeName}`,
-            errorTitle: '❌ Position request failed',
-            errorToastPrefix: '❌ Position request failed'
+            pendingTitle: `📍 ${window.I18N.t('nodes.request_position')}`,
+            pendingMessage: window.I18N.t('nodes.requesting_position_from', { name: nodeName }),
+            successToast: `✅ ${window.I18N.t('nodes.position_request_completed', { name: nodeName })}`,
+            errorTitle: `❌ ${window.I18N.t('nodes.position_request_failed')}`,
+            errorToastPrefix: `❌ ${window.I18N.t('nodes.position_request_failed')}`
         }
     };
 
     const currentTool = toolConfig[action];
 
     if (!currentTool) {
-        showToast('Unsupported Node Tool action', 'error');
+        showToast(window.I18N.t('nodes.unsupported_tool_action'), 'error');
         setNodeToolsBusy(false);
         return;
-    }    
+    }
 
     if (button) {
         button.disabled = true;
         button.innerHTML = `
             <span>⏳</span>
-            <span>Running...</span>
+            <span>${escapeHtml(window.I18N.t('nodes.running'))}</span>
         `;
     }
 
@@ -6815,7 +6813,7 @@ async function runNodeTool(action, nodeId, nodeName, button) {
         if (!response.ok || !data.ok) {
             if (response.status === 409 || data.status === 'busy') {
                 throw new Error(
-                    'Another radio command is already running'
+                    window.I18N.t('nodes.another_command_running')
                 );
             }
 
@@ -6840,7 +6838,7 @@ async function runNodeTool(action, nodeId, nodeName, button) {
                 <div class="route-card route-card-forward">
                     <div class="route-card-header">
                         <span class="route-badge route-forward">
-                            FORWARD
+                            ${escapeHtml(window.I18N.t('nodes.route_forward'))}
                         </span>
                     </div>
 
@@ -6850,7 +6848,7 @@ async function runNodeTool(action, nodeId, nodeName, button) {
                 <div class="route-card route-card-return">
                     <div class="route-card-header">
                         <span class="route-badge route-return">
-                            RETURN
+                            ${escapeHtml(window.I18N.t('nodes.route_return'))}
                         </span>
                     </div>
 
@@ -6863,7 +6861,7 @@ async function runNodeTool(action, nodeId, nodeName, button) {
             renderNodeToolResult(
                 nodeId,
                 "success",
-                `🛰 Traceroute to ${data.node_name || nodeName}`,
+                `🛰 ${window.I18N.t('nodes.traceroute_to', { name: data.node_name || nodeName })}`,
                 "",
                 routeDetails
             );
@@ -6877,12 +6875,12 @@ async function runNodeTool(action, nodeId, nodeName, button) {
             renderNodeToolResult(
                 nodeId,
                 'pending',
-                `📊 Telemetry request sent to ${data.node_name || nodeName}`,
-                'The radio listener is active again and is waiting for the node response.'
+                `📊 ${window.I18N.t('nodes.telemetry_request_sent_to', { name: data.node_name || nodeName })}`,
+                window.I18N.t('nodes.listener_active_waiting')
             );
 
             showToast(
-                `📡 Telemetry request sent: ${data.node_name || nodeName}`,
+                `📡 ${window.I18N.t('nodes.telemetry_request_sent', { name: data.node_name || nodeName })}`,
                 'info'
             );
 
@@ -6902,12 +6900,12 @@ async function runNodeTool(action, nodeId, nodeName, button) {
                 const details = `
                     <div class="telemetry-request-output">
                         <div class="telemetry-request-status">
-                            Response received through the MeshCenter listener
+                            ${escapeHtml(window.I18N.t('nodes.response_received_via_listener'))}
                         </div>
                         <div class="telemetry-request-note">
-                            Battery: ${formatBatteryPercent(device.battery_level)}% ·
-                            Voltage: ${device.voltage ?? '--'} V ·
-                            Updated: ${refreshedNode.last_telemetry_time_text || 'just now'}
+                            ${escapeHtml(window.I18N.t('node_panel.battery'))}: ${formatBatteryPercent(device.battery_level)}% ·
+                            ${escapeHtml(window.I18N.t('node_panel.voltage'))}: ${device.voltage ?? '--'} V ·
+                            ${escapeHtml(window.I18N.t('nodes.updated_label'))}: ${refreshedNode.last_telemetry_time_text || window.I18N.t('nodes.just_now')}
                         </div>
                     </div>
                 `;
@@ -6915,23 +6913,23 @@ async function runNodeTool(action, nodeId, nodeName, button) {
                 renderNodeToolResult(
                     nodeId,
                     'success',
-                    `📊 Telemetry received from ${data.node_name || nodeName}`,
+                    `📊 ${window.I18N.t('nodes.telemetry_received_from', { name: data.node_name || nodeName })}`,
                     '',
                     details
                 );
                 showToast(
-                    `✅ Telemetry received: ${data.node_name || nodeName}`,
+                    `✅ ${window.I18N.t('nodes.telemetry_received', { name: data.node_name || nodeName })}`,
                     'success'
                 );
             } else {
                 renderNodeToolResult(
                     nodeId,
                     'error',
-                    '⚠️ No fresh telemetry response',
-                    'The request was transmitted, but the node did not provide fresh telemetry before the waiting period ended.'
+                    `⚠️ ${window.I18N.t('nodes.no_fresh_telemetry_title')}`,
+                    window.I18N.t('nodes.no_fresh_telemetry_message')
                 );
                 showToast(
-                    `⚠️ Telemetry request sent, but no fresh response: ${data.node_name || nodeName}`,
+                    `⚠️ ${window.I18N.t('nodes.telemetry_sent_no_response', { name: data.node_name || nodeName })}`,
                     'info'
                 );
             }
@@ -6946,7 +6944,7 @@ async function runNodeTool(action, nodeId, nodeName, button) {
                 ? `
                     <div class="telemetry-request-output">
                         <div class="telemetry-request-status">
-                            Request completed by Meshtastic CLI
+                            ${escapeHtml(window.I18N.t('nodes.request_completed_by_cli'))}
                         </div>
 
                         <pre>${escapeHtml(rawOutput)}</pre>
@@ -6955,11 +6953,11 @@ async function runNodeTool(action, nodeId, nodeName, button) {
                 : `
                     <div class="telemetry-request-output">
                         <div class="telemetry-request-status">
-                            Position request sent successfully
+                            ${escapeHtml(window.I18N.t('nodes.position_request_sent_successfully'))}
                         </div>
 
                         <div class="telemetry-request-note">
-                            The response may arrive asynchronously through the listener.
+                            ${escapeHtml(window.I18N.t('nodes.response_may_arrive_async'))}
                         </div>
                     </div>
                 `;
@@ -6967,7 +6965,7 @@ async function runNodeTool(action, nodeId, nodeName, button) {
             renderNodeToolResult(
                 nodeId,
                 'success',
-                `📍 Position from ${data.node_name || nodeName}`,
+                `📍 ${window.I18N.t('nodes.position_from', { name: data.node_name || nodeName })}`,
                 '',
                 positionDetails
             );
@@ -6996,14 +6994,14 @@ async function runNodeTool(action, nodeId, nodeName, button) {
         
         const completedName = data.node_name || nodeName;
 
-        let successMessage = `✅ Command completed: ${completedName}`;
+        let successMessage = `✅ ${window.I18N.t('nodes.command_completed', { name: completedName })}`;
 
         if (action === 'traceroute') {
-            successMessage = `✅ Traceroute completed: ${completedName}`;
+            successMessage = `✅ ${window.I18N.t('nodes.traceroute_completed', { name: completedName })}`;
         } else if (action === 'request_telemetry') {
             successMessage = '';
         } else if (action === 'request_position') {
-            successMessage = `✅ Position request completed: ${completedName}`;
+            successMessage = `✅ ${window.I18N.t('nodes.position_request_completed', { name: completedName })}`;
         }
 
         if (successMessage) {
@@ -7226,21 +7224,24 @@ function updateBatteryRuntime(currentMa, batteryPercent, powerMw = null, voltage
         : null;
 
     if (!Number.isFinite(percent)) {
-        runtimeEl.textContent = 'Waiting for charge data';
-        runtimeEl.title = 'Battery percentage is not available yet';
+        runtimeEl.textContent = window.I18N.t('node_panel.waiting_for_charge_data');
+        runtimeEl.title = window.I18N.t('node_panel.battery_percent_unavailable');
         return;
     }
 
     if (!Number.isFinite(averageCurrent) || averageCurrent <= 5) {
-        runtimeEl.textContent = 'Waiting for current data';
-        runtimeEl.title = 'Current consumption is not available yet';
+        runtimeEl.textContent = window.I18N.t('node_panel.waiting_for_data');
+        runtimeEl.title = window.I18N.t('node_panel.current_unavailable');
         return;
     }
 
     const remainingMah = capacityMah * (percent / 100);
     const runtimeHours = remainingMah / averageCurrent;
     runtimeEl.textContent = formatEstimatedRuntime(runtimeHours);
-    runtimeEl.title = `Approximate estimate using ${Math.round(capacityMah)} mAh and ${Math.round(averageCurrent)} mA average current`;
+    runtimeEl.title = window.I18N.t('node_panel.runtime_estimate_note', {
+        capacity: Math.round(capacityMah),
+        current: Math.round(averageCurrent)
+    });
 }
 
 async function updateBatteryCapacitySetting() {
@@ -7257,13 +7258,13 @@ async function updateBatteryCapacitySetting() {
             body: JSON.stringify({ settings: { power: { battery_capacity_mah: capacity } } })
         });
         const data = await response.json();
-        if (!data.ok) throw new Error(data.error || 'Unable to save battery capacity');
+        if (!data.ok) throw new Error(data.error || window.I18N.t('node_panel.battery_capacity_save_failed'));
         appSettings = data.settings || appSettings;
         updateBatteryRuntime(null, latestBatteryPercent);
-        showToast(`Battery capacity set to ${capacity} mAh`, 'success');
+        showToast(window.I18N.t('node_panel.battery_capacity_set', { capacity }), 'success');
     } catch (error) {
         console.error('Error updating battery capacity:', error);
-        showToast('Unable to save battery capacity', 'error');
+        showToast(window.I18N.t('node_panel.battery_capacity_save_failed'), 'error');
     }
 }
 
@@ -7303,7 +7304,7 @@ async function loadSensors() {
                 updateBatteryRuntime(Number(data.current), null, Number(data.power), Number(data.voltage));
             }
 
-            document.getElementById('sensorUpdate').textContent = `Updated ${data.last_update || '--'}`;
+            document.getElementById('sensorUpdate').textContent = window.I18N.t('weather.updated_at', { time: data.last_update || '--' });
         }
     } catch (error) {
         console.error('Error loading sensors:', error);
@@ -7341,7 +7342,7 @@ async function loadBaseStatus() {
         if (nameEl) nameEl.textContent = data.node_name || 'Flint Base';
         if (uptimeEl) {
             const uptime = data.uptime_seconds !== null ? formatUptime(data.uptime_seconds) : '--';
-            uptimeEl.textContent = `Uptime ${uptime}`;
+            uptimeEl.textContent = window.I18N.t('node_panel.uptime_label', { value: uptime });
         }
 
         const percent = data.real_battery !== null ? Number(data.real_battery) :
@@ -8426,7 +8427,7 @@ function renderTelemetryCardsLayout(type) {
     if (type === 'power') {
         cards.innerHTML = `
             <div class="telemetry-card" id="powerVoltageCard">
-                <div class="card-label">⚡ Voltage</div>
+                <div class="card-label">⚡ ${escapeHtml(window.I18N.t('node_panel.voltage'))}</div>
                 <div class="card-value" id="powerVoltageValue">--</div>
                 <div class="card-range">
                     <span class="range-min" id="powerVoltageMin">--</span>
@@ -8435,7 +8436,7 @@ function renderTelemetryCardsLayout(type) {
                 </div>
             </div>
             <div class="telemetry-card" id="powerCurrentCard">
-                <div class="card-label">🔌 Current</div>
+                <div class="card-label">🔌 ${escapeHtml(window.I18N.t('node_panel.current'))}</div>
                 <div class="card-value" id="powerCurrentValue">--</div>
                 <div class="card-range">
                     <span class="range-min" id="powerCurrentMin">--</span>
@@ -8444,7 +8445,7 @@ function renderTelemetryCardsLayout(type) {
                 </div>
             </div>
             <div class="telemetry-card" id="powerPowerCard">
-                <div class="card-label">⚡ Power</div>
+                <div class="card-label">⚡ ${escapeHtml(window.I18N.t('node_panel.power'))}</div>
                 <div class="card-value" id="powerPowerValue">--</div>
                 <div class="card-range">
                     <span class="range-min" id="powerPowerMin">--</span>
@@ -8457,7 +8458,7 @@ function renderTelemetryCardsLayout(type) {
 
     cards.innerHTML = `
         <div class="telemetry-card" id="environmentTemperatureCard">
-            <div class="card-label">🌡️ Temperature</div>
+            <div class="card-label">🌡️ ${escapeHtml(window.I18N.t('node_panel.temperature'))}</div>
             <div class="card-value" id="environmentTemperatureValue">--</div>
             <div class="card-range">
                 <span class="range-min" id="environmentTemperatureMin">--</span>
@@ -8466,7 +8467,7 @@ function renderTelemetryCardsLayout(type) {
             </div>
         </div>
         <div class="telemetry-card" id="environmentHumidityCard">
-            <div class="card-label">💧 Humidity</div>
+            <div class="card-label">💧 ${escapeHtml(window.I18N.t('node_panel.humidity'))}</div>
             <div class="card-value" id="environmentHumidityValue">--</div>
             <div class="card-range">
                 <span class="range-min" id="environmentHumidityMin">--</span>
@@ -8475,7 +8476,7 @@ function renderTelemetryCardsLayout(type) {
             </div>
         </div>
         <div class="telemetry-card" id="environmentPressureCard">
-            <div class="card-label">📊 Pressure</div>
+            <div class="card-label">📊 ${escapeHtml(window.I18N.t('node_panel.pressure'))}</div>
             <div class="card-value" id="environmentPressureValue">--</div>
             <div class="card-range">
                 <span class="range-min" id="environmentPressureMin">--</span>
@@ -8622,7 +8623,7 @@ function updateTelemetryUI() {
         if (data.last_update) {
             statusEl.textContent = `🟢 ${data.last_update}`;
         } else {
-            statusEl.textContent = '⚪ No data';
+            statusEl.textContent = `⚪ ${window.I18N.t('nodes.no_data')}`;
         }
     }
 }
@@ -8642,13 +8643,13 @@ async function updateTelemetryConfig() {
         const data = await response.json();
         if (data.ok) {
             telemetryInterval = interval;
-            showToast(`✅ Interval set to ${interval/60} minutes`, 'success');
+            showToast(`✅ ${window.I18N.t('nodes.interval_set_to', { minutes: interval / 60 })}`, 'success');
         } else {
-            showToast('❌ Failed to update interval', 'error');
+            showToast(`❌ ${window.I18N.t('nodes.interval_update_failed')}`, 'error');
         }
     } catch (error) {
         console.error('Error updating telemetry config:', error);
-        showToast('❌ Network error', 'error');
+        showToast(`❌ ${window.I18N.t('errors.network_error')}`, 'error');
     }
 }
 
@@ -8670,15 +8671,16 @@ async function openTelemetryModal(type, nodeId = '', nodeName = '') {
     modal.dataset.requestId = String(requestId);
     renderTelemetryCardsLayout(type);
     modal.style.display = 'flex';
-    container.innerHTML = '<div class="loading">⏳ Loading telemetry data...</div>';
+    container.innerHTML = `<div class="loading">⏳ ${escapeHtml(window.I18N.t('nodes.loading_telemetry_data'))}</div>`;
 
     const labels = {
-        'environment': '🌡️ Environment Sensors',
-        'power': '⚡ Power Sensors'
+        'environment': `🌡️ ${window.I18N.t('nodes.environment_sensors')}`,
+        'power': `⚡ ${window.I18N.t('nodes.power_sensors')}`
     };
+    const telemetryTitle = labels[type] || `📊 ${window.I18N.t('modals.telemetry')}`;
     title.textContent = nodeName
-        ? `${labels[type] || '📊 Telemetry'} - ${nodeName}`
-        : (labels[type] || '📊 Telemetry');
+        ? `${telemetryTitle} - ${nodeName}`
+        : telemetryTitle;
 
     const footer = document.getElementById('telemetryFooter');
     if (footer) {
@@ -8693,8 +8695,8 @@ async function openTelemetryModal(type, nodeId = '', nodeName = '') {
         </div>
 
         <div class="telemetry-footer-actions">
-            <button class="telemetry-export-btn" onclick="exportTelemetryData()">⬇ Export</button>
-            <span class="telemetry-records-count" id="telemetryRecordsCount">📊 0 records</span>
+            <button class="telemetry-export-btn" onclick="exportTelemetryData()">⬇ ${escapeHtml(window.I18N.t('nodes.export'))}</button>
+            <span class="telemetry-records-count" id="telemetryRecordsCount">📊 ${escapeHtml(window.I18N.plural('nodes.records_count', 0, { count: 0 }))}</span>
         </div>
         `;
     }
@@ -8714,7 +8716,7 @@ async function openTelemetryModal(type, nodeId = '', nodeName = '') {
         renderTelemetryWithRange(type, telemetryTimeRange);
         } catch (error) {
         console.error('Error loading telemetry modal:', error);
-        container.innerHTML = '<div class="loading">⚠️ Error loading telemetry data</div>';
+        container.innerHTML = `<div class="loading">⚠️ ${escapeHtml(window.I18N.t('nodes.error_loading_telemetry'))}</div>`;
     }
 }
 
@@ -8782,8 +8784,8 @@ function openCustomTelemetryExport() {
         <div class="custom-export-dialog">
             <div class="custom-export-header">
                 <div>
-                    <div class="custom-export-title">📤 Export telemetry</div>
-                    <div class="custom-export-subtitle">Export selected telemetry data</div>
+                    <div class="custom-export-title">📤 ${escapeHtml(window.I18N.t('nodes.export_telemetry_title'))}</div>
+                    <div class="custom-export-subtitle">${escapeHtml(window.I18N.t('nodes.export_telemetry_subtitle'))}</div>
                 </div>
                 <button class="custom-export-close" onclick="closeCustomTelemetryExport()">×</button>
             </div>
@@ -8791,40 +8793,40 @@ function openCustomTelemetryExport() {
             <div class="custom-export-body">
 
                 <div class="export-section">
-                    <div class="export-section-title">Export source</div>
+                    <div class="export-section-title">${escapeHtml(window.I18N.t('nodes.export_source'))}</div>
 
                     <label class="export-radio-row">
                         <input type="radio" name="exportRangeMode" value="visible" checked onchange="updateCustomExportMode()">
-                        <span>Current visible range (${rangeLabel})</span>
+                        <span>${escapeHtml(window.I18N.t('nodes.current_visible_range', { range: rangeLabel }))}</span>
                     </label>
 
                     <label class="export-radio-row">
                         <input type="radio" name="exportRangeMode" value="custom" onchange="updateCustomExportMode()">
-                        <span>Custom range</span>
+                        <span>${escapeHtml(window.I18N.t('nodes.custom_range'))}</span>
                     </label>
                 </div>
 
                 <div class="export-section custom-export-range" id="customExportRangeFields" style="display:none;">
                     <div class="export-date-grid">
                         <label>
-                            <span>From</span>
+                            <span>${escapeHtml(window.I18N.t('nodes.date_from'))}</span>
                             <input type="datetime-local" id="exportStartDate" value="${datetimeLocalValue(from)}">
                         </label>
 
                         <label>
-                            <span>To</span>
+                            <span>${escapeHtml(window.I18N.t('nodes.date_to'))}</span>
                             <input type="datetime-local" id="exportEndDate" value="${datetimeLocalValue(now)}">
                         </label>
                     </div>
                 </div>
 
                 <div class="export-section">
-                    <div class="export-section-title">Series</div>
-                    <div class="export-series-summary">${seriesText}</div>
+                    <div class="export-section-title">${escapeHtml(window.I18N.t('nodes.series'))}</div>
+                    <div class="export-series-summary">${escapeHtml(seriesText)}</div>
                 </div>
 
                 <div class="export-section">
-                    <div class="export-section-title">Format</div>
+                    <div class="export-section-title">${escapeHtml(window.I18N.t('nodes.format'))}</div>
 
                     <div class="export-format-row">
                         <label class="export-format-option">
@@ -8842,8 +8844,8 @@ function openCustomTelemetryExport() {
             </div>
 
             <div class="custom-export-footer">
-                <button class="custom-export-cancel" onclick="closeCustomTelemetryExport()">Cancel</button>
-                <button class="custom-export-primary" onclick="runCustomTelemetryExport()">⬇ Export</button>
+                <button class="custom-export-cancel" onclick="closeCustomTelemetryExport()">${escapeHtml(window.I18N.t('common.cancel'))}</button>
+                <button class="custom-export-primary" onclick="runCustomTelemetryExport()">⬇ ${escapeHtml(window.I18N.t('nodes.export'))}</button>
             </div>
         </div>
     `;
@@ -8879,19 +8881,19 @@ function getTelemetryRangeLabel(minutes) {
 function getTelemetryVisibleSeriesText(type) {
     const visible = telemetryVisibleSeries[type] || {};
     const labels = {
-        temperature: 'Temperature',
-        humidity: 'Humidity',
-        pressure: 'Pressure',
-        voltage: 'Voltage',
-        current: 'Current',
-        power: 'Power'
+        temperature: window.I18N.t('node_panel.temperature'),
+        humidity: window.I18N.t('node_panel.humidity'),
+        pressure: window.I18N.t('node_panel.pressure'),
+        voltage: window.I18N.t('node_panel.voltage'),
+        current: window.I18N.t('node_panel.current'),
+        power: window.I18N.t('node_panel.power')
     };
 
     const active = Object.keys(visible)
         .filter(key => visible[key])
         .map(key => labels[key] || key);
 
-    return active.length > 0 ? active.join(' • ') : 'No series selected';
+    return active.length > 0 ? active.join(' • ') : window.I18N.t('nodes.no_series_selected');
 }
 
 function runCustomTelemetryExport() {
@@ -8916,7 +8918,7 @@ function runCustomTelemetryExport() {
         const endValue = document.getElementById('exportEndDate')?.value;
 
         if (!startValue || !endValue) {
-            alert('Please select start and end date/time.');
+            alert(window.I18N.t('nodes.select_start_end_date'));
             return;
         }
 
@@ -8924,7 +8926,7 @@ function runCustomTelemetryExport() {
         const endTs = Math.floor(new Date(endValue).getTime() / 1000);
 
         if (!startTs || !endTs || startTs >= endTs) {
-            alert('Invalid date range.');
+            alert(window.I18N.t('nodes.invalid_date_range'));
             return;
         }
 
@@ -8982,13 +8984,13 @@ const rangeLabel = minutes < 1440
     : `${minutes / 1440}d`;
 
 if (filteredRecords.length === 0) {
-    container.innerHTML = `<div class="loading">📊 No data for this period (${rangeLabel}). Try a longer range.</div>`;
-    if (recordsCount) recordsCount.textContent = '📊 0 records';
+    container.innerHTML = `<div class="loading">📊 ${escapeHtml(window.I18N.t('nodes.no_data_for_period', { range: rangeLabel }))}</div>`;
+    if (recordsCount) recordsCount.textContent = `📊 ${window.I18N.plural('nodes.records_count', 0, { count: 0 })}`;
     return;
 }
 
 if (recordsCount) {
-    recordsCount.textContent = `📊 ${filteredRecords.length} records (${rangeLabel})`;
+    recordsCount.textContent = `📊 ${window.I18N.plural('nodes.records_count', filteredRecords.length, { count: filteredRecords.length })} (${rangeLabel})`;
 }
 
     renderTelemetryChart(container, filteredRecords, type);
@@ -9017,7 +9019,8 @@ function renderTelemetryChart(container, records, type) {
         const tempData = records.map(r => r.temperature).filter(v => v !== null && v !== undefined);
         if (tempData.length > 0 && telemetryVisibleSeries.environment.temperature) {
             datasets.push({
-                label: 'Temperature ' + temperatureChartUnit(),
+                label: window.I18N.t('node_panel.temperature') + ' ' + temperatureChartUnit(),
+                metricType: 'temperature',
                 data: records.map(r => telemetryValuePresent(r.temperature) ? temperatureChartValue(r.temperature) : null),
                 borderColor: SENSOR_COLORS.temperature,
                 backgroundColor: SENSOR_BG_COLORS.temperature,
@@ -9031,7 +9034,8 @@ function renderTelemetryChart(container, records, type) {
         const humData = records.map(r => r.humidity).filter(v => v !== null && v !== undefined);
         if (humData.length > 0 && telemetryVisibleSeries.environment.humidity) {
             datasets.push({
-                label: 'Humidity %',
+                label: window.I18N.t('node_panel.humidity') + ' %',
+                metricType: 'humidity',
                 data: records.map(r => telemetryValuePresent(r.humidity) ? Number(r.humidity) : null),
                 borderColor: SENSOR_COLORS.humidity,
                 backgroundColor: SENSOR_BG_COLORS.humidity,
@@ -9046,7 +9050,8 @@ function renderTelemetryChart(container, records, type) {
         if (pressData.length > 0 && telemetryVisibleSeries.environment.pressure) {
             hasPressure = true;
             datasets.push({
-                label: 'Pressure ' + pressureChartUnit(),
+                label: window.I18N.t('node_panel.pressure') + ' ' + pressureChartUnit(),
+                metricType: 'pressure',
                 data: records.map(r => telemetryValuePresent(r.pressure) ? pressureChartValue(r.pressure) : null),
                 borderColor: SENSOR_COLORS.pressure,
                 backgroundColor: SENSOR_BG_COLORS.pressure,
@@ -9061,7 +9066,8 @@ function renderTelemetryChart(container, records, type) {
         const voltData = records.map(r => r.voltage).filter(v => v !== null && v !== undefined);
         if (voltData.length > 0 && telemetryVisibleSeries.power.voltage) {
             datasets.push({
-                label: 'Voltage V',
+                label: window.I18N.t('node_panel.voltage') + ' V',
+                metricType: 'voltage',
                 data: records.map(r => telemetryValuePresent(r.voltage) ? Number(r.voltage) : null),
                 borderColor: SENSOR_COLORS.voltage,
                 backgroundColor: SENSOR_BG_COLORS.voltage,
@@ -9076,7 +9082,8 @@ function renderTelemetryChart(container, records, type) {
         if (currData.length > 0 && telemetryVisibleSeries.power.current) {
             hasCurrent = true;
             datasets.push({
-                label: 'Current mA',
+                label: window.I18N.t('node_panel.current') + ' mA',
+                metricType: 'current',
                 data: records.map(r => telemetryValuePresent(r.current) ? Number(r.current) : null),
                 borderColor: SENSOR_COLORS.current,
                 backgroundColor: SENSOR_BG_COLORS.current,
@@ -9099,7 +9106,8 @@ function renderTelemetryChart(container, records, type) {
         if (powerData.length > 0 && telemetryVisibleSeries.power.power) {
             hasPower = true;
             datasets.push({
-                label: 'Power W',
+                label: window.I18N.t('node_panel.power') + ' W',
+                metricType: 'power',
                 data: powerSeries,
                 borderColor: SENSOR_COLORS.power,
                 backgroundColor: SENSOR_BG_COLORS.power,
@@ -9117,7 +9125,7 @@ function renderTelemetryChart(container, records, type) {
     }
 
     if (datasets.length === 0) {
-        container.innerHTML = '<div class="loading">📊 No data available for this sensor type</div>';
+        container.innerHTML = `<div class="loading">📊 ${escapeHtml(window.I18N.t('nodes.no_data_for_sensor_type'))}</div>`;
         return;
     }
 
@@ -9168,7 +9176,7 @@ function renderTelemetryChart(container, records, type) {
 
         if (hasPower) {
             const powerValues = datasets
-                .filter(d => d.label === 'Power W')
+                .filter(d => d.metricType === 'power')
                 .flatMap(d => d.data)
                 .filter(v => v !== null && v !== undefined && !isNaN(v));
 
@@ -9212,15 +9220,16 @@ function renderTelemetryChart(container, records, type) {
                             },
                             label: function(context) {
                                 const label = context.dataset.label || '';
+                                const metricType = context.dataset.metricType || '';
                                 const value = context.parsed.y;
 
                                 if (value === null || value === undefined || isNaN(value)) return label + ': —';
-                                if (label.startsWith('Temperature')) return label + ': ' + value.toFixed(1) + temperatureChartUnit();
-                                if (label.startsWith('Humidity')) return label + ': ' + value.toFixed(1) + '%';
-                                if (label.startsWith('Pressure')) return label + ': ' + value.toFixed(1) + ' ' + pressureChartUnit();
-                                if (label.startsWith('Voltage')) return label + ': ' + value.toFixed(3) + ' V';
-                                if (label.startsWith('Current')) return label + ': ' + value.toFixed(1) + ' mA';
-                                if (label.startsWith('Power')) return label + ': ' + value.toFixed(3) + ' W';
+                                if (metricType === 'temperature') return label + ': ' + value.toFixed(1) + temperatureChartUnit();
+                                if (metricType === 'humidity') return label + ': ' + value.toFixed(1) + '%';
+                                if (metricType === 'pressure') return label + ': ' + value.toFixed(1) + ' ' + pressureChartUnit();
+                                if (metricType === 'voltage') return label + ': ' + value.toFixed(3) + ' V';
+                                if (metricType === 'current') return label + ': ' + value.toFixed(1) + ' mA';
+                                if (metricType === 'power') return label + ': ' + value.toFixed(3) + ' W';
 
                                 return label + ': ' + value.toFixed(2);
                             }
@@ -9241,7 +9250,7 @@ function renderTelemetryChart(container, records, type) {
 
     } catch (error) {
         console.error('Chart creation error:', error);
-        container.innerHTML = '<div class="loading">⚠️ Error creating chart: ' + error.message + '</div>';
+        container.innerHTML = '<div class="loading">⚠️ ' + escapeHtml(window.I18N.t('nodes.error_creating_chart', { message: error.message })) + '</div>';
     }
 }
 

@@ -95,7 +95,7 @@ function formatWeatherDate(value) {
 }
 
 function weatherDayLabel(item, index) {
-    return index === 0 ? 'Tomorrow' : formatWeatherDate(item?.date);
+    return index === 0 ? window.I18N.t('weather.tomorrow') : formatWeatherDate(item?.date);
 }
 
 function weatherShortTemperature(value) {
@@ -112,7 +112,7 @@ function renderWeatherForecast(items) {
 
     const forecast = Array.isArray(items) ? items.slice(0, 3) : [];
     if (!forecast.length) {
-        grid.innerHTML = '<div class="weather-forecast-placeholder">Forecast unavailable</div>';
+        grid.innerHTML = `<div class="weather-forecast-placeholder">${escapeHtml(window.I18N.t('weather.forecast_unavailable'))}</div>`;
         return;
     }
 
@@ -126,7 +126,7 @@ function renderWeatherForecast(items) {
         const rainChance = Number(item.precipitation_probability);
         const titleParts = [description];
         if (Number.isFinite(rainChance) && rainChance > 0) {
-            titleParts.push(`Precipitation chance: ${Math.round(rainChance)}%`);
+            titleParts.push(window.I18N.t('weather.precipitation_chance', { percent: Math.round(rainChance) }));
         }
         const tooltip = titleParts.filter(Boolean).join(' • ');
 
@@ -144,13 +144,15 @@ function renderWeatherForecast(items) {
 
 function weatherUpdatedText(data) {
     const fetchedAt = Number(data?.fetched_at);
-    if (!Number.isFinite(fetchedAt)) return `Updated ${data?.updated_local || '--:--'}`;
+    if (!Number.isFinite(fetchedAt)) return window.I18N.t('weather.updated_at', { time: data?.updated_local || '--:--' });
 
     const ageMinutes = Math.max(0, Math.floor((Date.now() / 1000 - fetchedAt) / 60));
-    if (ageMinutes < 1) return 'Updated just now';
-    if (ageMinutes === 1) return 'Updated 1 min ago';
-    if (ageMinutes < 60) return `Updated ${ageMinutes} min ago`;
-    return `Updated ${data?.updated_local || '--:--'}`;
+    if (ageMinutes < 1) return window.I18N.t('weather.updated_just_now');
+    // Uses plural() rather than a hardcoded "1 min ago" / "N min ago" split -
+    // Russian/Ukrainian "минута/минуты/минут" needs the full one/few/many
+    // distinction, not just a singular/plural one.
+    if (ageMinutes < 60) return window.I18N.plural('weather.updated_min_ago', ageMinutes);
+    return window.I18N.t('weather.updated_at', { time: data?.updated_local || '--:--' });
 }
 
 function setWeatherState(state, label) {
@@ -170,34 +172,34 @@ function renderWeather(data) {
     weatherText('weatherLocation', [data.location, data.country].filter(Boolean).join(', '));
     weatherText('weatherIcon', weatherEmoji(data.icon_code, data.condition));
     weatherText('weatherTemperature', formatWeatherTemperature(data.temperature));
-    weatherText('weatherCondition', data.description || data.condition || 'Current weather');
+    weatherText('weatherCondition', data.description || data.condition || window.I18N.t('weather.current_weather_fallback'));
     weatherText('weatherHumidity', `${formatWeatherNumber(data.humidity)}%`);
     weatherText('weatherPressure', formatWeatherPressure(data.pressure));
     weatherText('weatherWind', formatWeatherWind(data.wind_speed));
-    weatherText('weatherFeelsLike', `Feels like ${formatWeatherTemperature(data.feels_like)}`);
+    weatherText('weatherFeelsLike', window.I18N.t('weather.feels_like', { temperature: formatWeatherTemperature(data.feels_like) }));
     weatherText('weatherUpdated', weatherUpdatedText(data));
     renderWeatherForecast(data.forecast);
 
     if (data.stale) {
-        setWeatherState('stale', 'Cached');
+        setWeatherState('stale', window.I18N.t('weather.status_cached'));
     } else if (data.cached) {
-        setWeatherState('online', 'Cached');
+        setWeatherState('online', window.I18N.t('weather.status_cached'));
     } else {
-        setWeatherState('online', 'Live');
+        setWeatherState('online', window.I18N.t('weather.status_live'));
     }
 }
 
 function renderWeatherError(data) {
     weatherLastData = null;
     weatherSetupRequired = data?.configured === false;
-    setWeatherState('error', weatherSetupRequired ? 'Setup' : 'Offline');
+    setWeatherState('error', weatherSetupRequired ? window.I18N.t('weather.status_setup') : window.I18N.t('weather.status_offline'));
     weatherText('weatherTemperature', `--${weatherTemperatureUnit()}`);
-    weatherText('weatherCondition', data?.error || 'Weather data unavailable');
+    weatherText('weatherCondition', data?.error || window.I18N.t('weather.data_unavailable'));
     weatherText('weatherHumidity', '--%');
     weatherText('weatherPressure', `-- ${weatherPressureUnit()}`);
     weatherText('weatherWind', '-- m/s');
     weatherText('weatherFeelsLike', 'OpenWeather');
-    weatherText('weatherUpdated', weatherSetupRequired ? 'Click Setup' : 'Retry later');
+    weatherText('weatherUpdated', weatherSetupRequired ? window.I18N.t('weather.click_setup') : window.I18N.t('weather.retry_later'));
     renderWeatherForecast([]);
 }
 
@@ -223,7 +225,7 @@ function handleWeatherSettingsUpdated() {
 async function loadWeather(force = false) {
     if (weatherLoading) return;
     weatherLoading = true;
-    setWeatherState('loading', 'Loading');
+    setWeatherState('loading', window.I18N.t('common.loading_short'));
 
     try {
         const endpoint = force ? '/api/weather/current?refresh=1' : '/api/weather/current';
@@ -282,11 +284,11 @@ function setWeatherSetupBusy(busy, action = '') {
     if (input) input.disabled = weatherSetupBusy;
     if (testButton) {
         testButton.disabled = weatherSetupBusy;
-        testButton.textContent = weatherSetupBusy && action === 'test' ? 'Testing…' : 'Test key';
+        testButton.textContent = weatherSetupBusy && action === 'test' ? window.I18N.t('weather.testing') : window.I18N.t('weather.test_key');
     }
     if (saveButton) {
         saveButton.disabled = weatherSetupBusy;
-        saveButton.textContent = weatherSetupBusy && action === 'save' ? 'Saving…' : 'Save';
+        saveButton.textContent = weatherSetupBusy && action === 'save' ? window.I18N.t('weather.saving') : window.I18N.t('common.save');
     }
 }
 
@@ -322,13 +324,13 @@ function weatherSetupKey() {
 async function submitWeatherKey(endpoint, action) {
     const apiKey = weatherSetupKey();
     if (!apiKey) {
-        setWeatherSetupResult('Enter your OpenWeather API key.', 'error');
+        setWeatherSetupResult(window.I18N.t('weather.enter_api_key'), 'error');
         document.getElementById('weatherApiKeyInput')?.focus();
         return null;
     }
 
     setWeatherSetupBusy(true, action);
-    setWeatherSetupResult(action === 'test' ? 'Checking the key…' : 'Checking and saving the key…', 'pending');
+    setWeatherSetupResult(action === 'test' ? window.I18N.t('weather.checking_key') : window.I18N.t('weather.checking_and_saving_key'), 'pending');
 
     try {
         const response = await fetch(endpoint, {
@@ -338,11 +340,11 @@ async function submitWeatherKey(endpoint, action) {
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data.ok) {
-            throw new Error(data.error || 'OpenWeather setup failed.');
+            throw new Error(data.error || window.I18N.t('weather.setup_failed'));
         }
         return data;
     } catch (error) {
-        setWeatherSetupResult(error.message || 'OpenWeather setup failed.', 'error');
+        setWeatherSetupResult(error.message || window.I18N.t('weather.setup_failed'), 'error');
         return null;
     } finally {
         setWeatherSetupBusy(false);
@@ -352,15 +354,15 @@ async function submitWeatherKey(endpoint, action) {
 async function testWeatherApiKey() {
     const data = await submitWeatherKey('/api/weather/config/test', 'test');
     if (!data) return;
-    const suffix = data.location ? ` Location: ${data.location}.` : '';
-    setWeatherSetupResult(`API key is valid.${suffix}`, 'success');
+    const suffix = data.location ? window.I18N.t('weather.location_suffix', { location: data.location }) : '';
+    setWeatherSetupResult(window.I18N.t('weather.api_key_valid') + suffix, 'success');
 }
 
 async function saveWeatherApiKey() {
     const data = await submitWeatherKey('/api/weather/config', 'save');
     if (!data) return;
 
-    setWeatherSetupResult('API key saved. Loading weather…', 'success');
+    setWeatherSetupResult(window.I18N.t('weather.api_key_saved'), 'success');
     weatherSetupRequired = false;
     setTimeout(async () => {
         closeWeatherSetup();
@@ -385,5 +387,5 @@ function toggleWeatherKeyVisibility(button) {
     if (!input) return;
     const show = input.type === 'password';
     input.type = show ? 'text' : 'password';
-    if (button) button.textContent = show ? 'Hide' : 'Show';
+    if (button) button.textContent = show ? window.I18N.t('weather.hide') : window.I18N.t('common.show');
 }

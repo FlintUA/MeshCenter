@@ -1482,7 +1482,7 @@ function renderNotificationCenter() {
 
 function setDockStatusBaseline(message, type = 'online') {
     notificationDockBaseline = {
-        message: String(message || 'Ready'),
+        message: String(message || window.I18N.t('notifications.ready')),
         type: String(type || 'online')
     };
     if (!notificationCurrent) renderDockNotification();
@@ -1501,18 +1501,18 @@ function renderDockNotification() {
         ? displayed.type
         : 'online';
 
-    text.textContent = displayed.message || 'Ready';
+    text.textContent = displayed.message || window.I18N.t('notifications.ready');
     button.dataset.notificationType = type;
     button.title = notificationCurrent
-        ? `${displayed.message} - open notifications`
-        : 'Open notifications';
+        ? window.I18N.t('notifications.open_with_message', { message: displayed.message })
+        : window.I18N.t('notifications.open');
 
     state.className = `dock-notification-state dock-state-${type}`;
 
     const hasAction = Boolean(notificationCurrent?.action);
     if (actionButton) {
         actionButton.hidden = !hasAction;
-        actionButton.textContent = notificationCurrent?.actionLabel || 'Retry';
+        actionButton.textContent = notificationCurrent?.actionLabel || window.I18N.t('common.retry');
     }
     if (dismissButton) {
         dismissButton.hidden = !notificationCurrent;
@@ -1955,7 +1955,7 @@ function renderChatItem(chat) {
     const selectedClass = isSelected ? 'selected' : '';
     const icon = chat.is_channel ? (isDemo ? '🔒' : '📡') : getChatNodeShortName(chat);
     const iconClass = chat.is_channel ? `channel${isDemo ? ' demo' : ''}` : 'dm node-short-name';
-    const lastMsg = chat.last_message || 'No messages yet';
+    const lastMsg = chat.last_message || window.I18N.t('chat.no_messages_yet_short');
     const time = chat.last_time || '';
     const ignored = chat.ignored ? '🚫 ' : '';
     const favorite = chat.favorite ? '⚑ ' : '';
@@ -1975,7 +1975,7 @@ function renderChatItem(chat) {
     }
 
     const clickHandler = isDemo
-        ? `showToast('This channel is not configured on the radio yet', 'info')`
+        ? `showToast(${JSON.stringify(window.I18N.t('chat.channel_not_configured_toast'))}, 'info')`
         : `openChat('${escapeHtml(chat.id)}', '${escapeHtml(chat.name)}', '${escapeHtml(chat.type)}', 'chat')`;
     const demoClass = isDemo ? 'demo-channel' : '';
     const displayName = chat.is_channel && Number.isInteger(chat.index)
@@ -1983,7 +1983,7 @@ function renderChatItem(chat) {
         : chat.name;
 
     return `
-        <div class="chat-item ${hasUnread} ${selectedClass} ${demoClass}" data-chat-id="${escapeHtml(chat.id)}" onclick="${clickHandler}" ${isDemo ? 'title="Channel is not configured on the radio"' : ''}>
+        <div class="chat-item ${hasUnread} ${selectedClass} ${demoClass}" data-chat-id="${escapeHtml(chat.id)}" onclick="${clickHandler}" ${isDemo ? `title="${escapeHtml(window.I18N.t('chat.channel_not_configured_title'))}"` : ''}>
             <div class="chat-icon ${iconClass}">${icon}</div>
             <div class="chat-info">
                 <div class="chat-name">${ignored}${favorite}${escapeHtml(displayName)}</div>
@@ -2090,7 +2090,7 @@ async function loadChatList() {
 
         channelContainer.innerHTML = channels.length
             ? channels.map(renderChatItem).join('')
-            : '<div class="loading">📡 No configured channels</div>';
+            : `<div class="loading">📡 ${escapeHtml(window.I18N.t('chat.no_configured_channels'))}</div>`;
 
         // If the active radio channel was removed externally, leave the stale
         // conversation and switch to the first channel that still exists.
@@ -2098,7 +2098,7 @@ async function loadChatList() {
             const activeChannelStillExists = channels.some(channel => channel.id === currentChatId);
             if (!activeChannelStillExists) {
                 const fallbackChannel = channels[0] || null;
-                showToast('The selected channel was removed from the radio', 'info');
+                showToast(window.I18N.t('chat.channel_removed_from_radio'), 'info');
 
                 if (fallbackChannel) {
                     window.setTimeout(() => {
@@ -2113,14 +2113,14 @@ async function loadChatList() {
         const dmChats = chatListCache.filter(chat => !chat.is_channel);
         dmContainer.innerHTML = dmChats.length
             ? dmChats.map(renderChatItem).join('')
-            : '<div class="loading">💬 No direct messages yet</div>';
+            : `<div class="loading">💬 ${escapeHtml(window.I18N.t('chat.no_direct_messages_yet'))}</div>`;
 
         flushPendingSynchronizedScroll();
     } catch (error) {
         console.error('[CHAT] Error:', error);
-        const message = error.name === 'AbortError' ? 'Request timeout' : error.message;
+        const message = error.name === 'AbortError' ? window.I18N.t('errors.request_timeout') : error.message;
         channelContainer.innerHTML = `<div class="loading" style="color:#ff9800;">⚠️ ${escapeHtml(message)}</div>`;
-        dmContainer.innerHTML = '<div class="loading">Direct messages unavailable</div>';
+        dmContainer.innerHTML = `<div class="loading">${escapeHtml(window.I18N.t('chat.direct_messages_unavailable'))}</div>`;
     }
 }
 
@@ -2680,9 +2680,9 @@ function updateChatHeader() {
     if (!titleEl) return;
 
     if (!currentChatId) {
-        titleEl.textContent = '💬 Chats';
+        titleEl.textContent = '💬 ' + window.I18N.t('nav.chats');
         if (subtitleEl) {
-            subtitleEl.textContent = 'Select a chat to view messages';
+            subtitleEl.textContent = window.I18N.t('chat.select_chat_subtitle');
             subtitleEl.style.color = '';
         }
         return;
@@ -2692,13 +2692,13 @@ function updateChatHeader() {
         const channelLabel = formatChannelIndexLabel(currentChatName, channelIndexFromChatId(currentChatId));
         titleEl.textContent = '📡 ' + channelLabel;
         if (subtitleEl) {
-            subtitleEl.textContent = 'Channel • All messages are broadcast';
+            subtitleEl.textContent = window.I18N.t('chat.channel_subtitle');
             subtitleEl.style.color = '#1a73e8';
         }
     } else {
         titleEl.textContent = '💬 ' + currentChatName;
         if (subtitleEl) {
-            subtitleEl.textContent = 'Direct Message';
+            subtitleEl.textContent = window.I18N.t('chat.direct_message_subtitle');
             subtitleEl.style.color = '';
         }
     }
@@ -2729,7 +2729,7 @@ function openChat(chatId, chatName, chatType, selectionSource = 'external') {
     // Загружаем сообщения
     const container = document.getElementById('messagesContainer');
     if (container) {
-        container.innerHTML = '<div class="loading">⏳ Loading messages...</div>';
+        container.innerHTML = `<div class="loading">⏳ ${escapeHtml(window.I18N.t('chat.loading_messages'))}</div>`;
     }
     loadChatMessages(chatId, { forceRefresh: false });
     startMessagePolling(chatId);
@@ -2786,7 +2786,7 @@ function showChatList() {
 
     const container = document.getElementById('messagesContainer');
     if (container) {
-        container.innerHTML = '<div class="loading">💬 Select a chat from the list</div>';
+        container.innerHTML = `<div class="loading">💬 ${escapeHtml(window.I18N.t('chat.select_chat_from_list'))}</div>`;
     }
 
     stopMessagePolling();
@@ -3253,7 +3253,7 @@ function renderMessages(container, messages, chatId) {
 
     if (messages.length === 0) {
         const chatName = currentChatName || chatId;
-        container.innerHTML = `<div class="loading">💬 No messages yet with ${escapeHtml(chatName)}. Send the first one!</div>`;
+        container.innerHTML = `<div class="loading">💬 ${escapeHtml(window.I18N.t('chat.no_messages_yet', { name: chatName }))}</div>`;
     } else {
         container.innerHTML = messages.map(msg => {
             // A transmitted record is outgoing only for the radio profile
@@ -3302,16 +3302,16 @@ function renderMessages(container, messages, chatId) {
             let statusBadge = '';
             if (isMe) {
                 if (msg.status === 'pending') {
-                    statusBadge = '<span class="message-status pending" title="Sending…">⏳</span>';
+                    statusBadge = `<span class="message-status pending" title="${escapeHtml(window.I18N.t('chat.sending'))}">⏳</span>`;
                 } else if (msg.status === 'failed') {
-                    const errText = escapeHtml(String(msg.error || 'Send failed'));
+                    const errText = escapeHtml(String(msg.error || window.I18N.t('chat.send_failed')));
                     statusBadge = `
                         <span class="message-status failed" title="${errText}">⚠️
-                            <button type="button" class="message-retry-btn" data-retry-message-id="${messageId}">Retry</button>
+                            <button type="button" class="message-retry-btn" data-retry-message-id="${messageId}">${escapeHtml(window.I18N.t('common.retry'))}</button>
                         </span>
                     `;
                 } else {
-                    statusBadge = '<span class="message-status sent" title="Sent">✓</span>';
+                    statusBadge = `<span class="message-status sent" title="${escapeHtml(window.I18N.t('chat.sent'))}">✓</span>`;
                 }
             }
 
@@ -3455,7 +3455,7 @@ async function loadChatMessages(chatId, options = {}) {
             !messageCache[chatId]
         ) {
             container.innerHTML =
-                '<div class="loading">⚠️ Error loading messages</div>';
+                `<div class="loading">⚠️ ${escapeHtml(window.I18N.t('chat.error_loading_messages'))}</div>`;
         }
     } finally {
         window.clearTimeout(timeoutId);
@@ -3544,15 +3544,14 @@ function notifyFailedOutgoingMessages(messageList) {
 
         notifiedFailedMessageIds.add(msg.id);
 
-        const where = msg.chat_name || (msg.chat_type === 'dm' ? 'direct message' : 'channel');
+        const where = msg.chat_name || (msg.chat_type === 'dm' ? window.I18N.t('chat.direct_message_label') : window.I18N.t('chat.generic_channel_label'));
         const preview = String(msg.text || '').trim().slice(0, 60);
-        const reason = msg.error || 'send failed';
+        const reason = msg.error || window.I18N.t('errors.send_failed');
 
         if (typeof showToast === 'function') {
-            showToast(
-                `Message not delivered in ${where}: ${reason}${preview ? ` — "${preview}"` : ''}`,
-                'error'
-            );
+            const base = window.I18N.t('chat.message_not_delivered', { where, reason });
+            const suffix = preview ? window.I18N.t('chat.message_preview_suffix', { preview }) : '';
+            showToast(base + suffix, 'error');
         }
     }
 
@@ -3654,15 +3653,15 @@ async function submitOutgoingMessage(chatId, chatType, chatName, text, replyTo) 
     } catch (error) {
         console.error('Error sending message:', error);
         tempMsg.status = 'failed';
-        tempMsg.error = (error && error.message) ? error.message : 'Network error';
+        tempMsg.error = (error && error.message) ? error.message : window.I18N.t('errors.network_error');
         renderChatIfActive(chatId);
 
         if (typeof showToast === 'function') {
             const preview = String(text || '').trim().slice(0, 60);
-            showToast(
-                `Message not delivered in ${chatName || (chatType === 'dm' ? 'direct message' : 'channel')}: ${tempMsg.error}${preview ? ` — "${preview}"` : ''}`,
-                'error'
-            );
+            const where = chatName || (chatType === 'dm' ? window.I18N.t('chat.direct_message_label') : window.I18N.t('chat.generic_channel_label'));
+            const base = window.I18N.t('chat.message_not_delivered', { where, reason: tempMsg.error });
+            const suffix = preview ? window.I18N.t('chat.message_preview_suffix', { preview }) : '';
+            showToast(base + suffix, 'error');
         }
     }
 }
@@ -3789,11 +3788,12 @@ async function executeDeleteChat() {
             showChatList();
         } else {
             const error = await response.json();
-            alert('Failed to delete chat: ' + (error.error || 'Unknown error'));
+            const reason = window.I18N.tOrFallback('errors.' + (error.error_code || ''), error.error_params, error.error || window.I18N.t('errors.unknown_error'));
+            alert(window.I18N.t('chat.delete_chat_failed', { reason }));
         }
     } catch (error) {
         console.error('Error deleting chat:', error);
-        alert('Network error');
+        alert(window.I18N.t('errors.network_error'));
     }
 }
 
@@ -3839,11 +3839,12 @@ async function executeClearChat() {
             loadMessages();
         } else {
             const error = await response.json();
-            alert('Failed to clear chat: ' + (error.error || 'Unknown error'));
+            const reason = window.I18N.tOrFallback('errors.' + (error.error_code || ''), error.error_params, error.error || window.I18N.t('errors.unknown_error'));
+            alert(window.I18N.t('chat.clear_chat_failed', { reason }));
         }
     } catch (error) {
         console.error('Error clearing chat:', error);
-        alert('Network error');
+        alert(window.I18N.t('errors.network_error'));
     }
 }
 
@@ -3903,8 +3904,11 @@ async function toggleIgnore(nodeId) {
             loadChatList();
             
             updateNodeDetails(nodeId);
-            showToast(data.ignored ? 'Node ignored' : 'Node restored', data.ignored ? 'warning' : 'success');
-            
+            showToast(
+                data.ignored ? window.I18N.t('chat.node_ignored') : window.I18N.t('chat.node_restored'),
+                data.ignored ? 'warning' : 'success'
+            );
+
             if (currentChatId === nodeId) {
                 // Avoid duplicating the bottom notification with a chat banner.
                 hideIgnoredBanner();
@@ -3914,11 +3918,11 @@ async function toggleIgnore(nodeId) {
             }
         } else {
             const error = await response.json();
-            alert('Failed to toggle ignore: ' + (error.error || 'Unknown error'));
+            alert(window.I18N.t('chat.toggle_ignore_failed', { reason: error.error || window.I18N.t('errors.unknown_error') }));
         }
     } catch (error) {
         console.error('Error toggling ignore:', error);
-        alert('Network error');
+        alert(window.I18N.t('errors.network_error'));
     }
 }
 
@@ -3943,14 +3947,17 @@ async function toggleFavorite(nodeId) {
             loadMessages();
             loadChatList();
             updateNodeDetails(nodeId);
-            showToast(data.favorite ? 'Node added to favorites' : 'Node removed from favorites', 'success');
+            showToast(
+                data.favorite ? window.I18N.t('chat.node_added_to_favorites') : window.I18N.t('chat.node_removed_from_favorites'),
+                'success'
+            );
         } else {
             const error = await response.json();
-            alert('Failed to toggle favorite: ' + (error.error || 'Unknown error'));
+            alert(window.I18N.t('chat.toggle_favorite_failed', { reason: error.error || window.I18N.t('errors.unknown_error') }));
         }
     } catch (error) {
         console.error('Error toggling favorite:', error);
-        alert('Network error');
+        alert(window.I18N.t('errors.network_error'));
     }
 }
 
@@ -11515,16 +11522,16 @@ function updateStatusDock(tab) {
     if (!workspaceLabel || !centerText || !right) return;
 
     if (tab === 'chats') {
-        workspaceLabel.textContent = 'Chats';
-        setDockStatusBaseline('Mesh Online', 'online');
+        workspaceLabel.textContent = window.I18N.t('nav.chats');
+        setDockStatusBaseline(window.I18N.t('notifications.mesh_online'), 'online');
         setStatusDockContext('Nodes');
     } else if (tab === 'video') {
-        workspaceLabel.textContent = 'Camera';
+        workspaceLabel.textContent = window.I18N.t('nav.camera');
 
         setDockStatusBaseline(
             cameraPowerEnabled
-                ? (cameraActive ? 'Camera Online' : 'Camera Ready')
-                : 'Camera Off',
+                ? (cameraActive ? window.I18N.t('notifications.camera_online') : window.I18N.t('notifications.camera_ready'))
+                : window.I18N.t('notifications.camera_off'),
             cameraPowerEnabled ? 'online' : 'warning'
         );
 
@@ -11532,43 +11539,43 @@ function updateStatusDock(tab) {
             ? getCurrentVideoInfoText()
             : 'Power-saving mode');
     } else if (tab === 'media') {
-        workspaceLabel.textContent = 'Media';
-        setDockStatusBaseline('Local Gallery', 'online');
+        workspaceLabel.textContent = window.I18N.t('nav.media');
+        setDockStatusBaseline(window.I18N.t('notifications.local_gallery'), 'online');
         setStatusDockContext('Images');
     } else if (tab === 'devices') {
-        workspaceLabel.textContent = 'Devices';
-        setDockStatusBaseline('Peripherals', 'online');
+        workspaceLabel.textContent = window.I18N.t('nav.devices');
+        setDockStatusBaseline(window.I18N.t('notifications.peripherals'), 'online');
         setStatusDockContext('Active profile');
     } else if (tab === 'node-manager') {
-        workspaceLabel.textContent = 'Node Manager';
-        setDockStatusBaseline('Active Radio', 'online');
+        workspaceLabel.textContent = window.I18N.t('node_manager.title');
+        setDockStatusBaseline(window.I18N.t('notifications.active_radio'), 'online');
         setStatusDockContext('Profile');
     } else if (tab === 'system') {
-        workspaceLabel.textContent = 'System';
-        setDockStatusBaseline('System Monitor', 'online');
+        workspaceLabel.textContent = window.I18N.t('nav.system');
+        setDockStatusBaseline(window.I18N.t('notifications.system_monitor'), 'online');
         setStatusDockContext('MeshCenter');
     } else if (tab === 'map') {
-        workspaceLabel.textContent = 'Map';
-        setDockStatusBaseline('Node Positions', 'online');
+        workspaceLabel.textContent = window.I18N.t('settings.map');
+        setDockStatusBaseline(window.I18N.t('notifications.node_positions'), 'online');
         setStatusDockContext('OpenStreetMap');
     } else if (tab === 'settings') {
-        workspaceLabel.textContent = 'Settings';
-        setDockStatusBaseline('Ready', 'online');
+        workspaceLabel.textContent = window.I18N.t('nav.settings');
+        setDockStatusBaseline(window.I18N.t('notifications.ready'), 'online');
         setStatusDockContext('MeshCenter');
     } else if (tab === 'about') {
-        workspaceLabel.textContent = 'About';
+        workspaceLabel.textContent = window.I18N.t('notifications.about');
         setDockStatusBaseline('MeshCenter', 'online');
         setStatusDockContext('v' + (document.querySelector('meta[name="app-version"]')?.content || '?'));
     } else {
-        workspaceLabel.textContent = 'Workspace';
-        setDockStatusBaseline('Ready', 'online');
+        workspaceLabel.textContent = window.I18N.t('notifications.workspace');
+        setDockStatusBaseline(window.I18N.t('notifications.ready'), 'online');
         setStatusDockContext('MeshCenter');
     }
 }
 
 function getCurrentVideoInfoText() {
     const info = document.getElementById('videoLiveInfo');
-    return info ? info.textContent.replace('Live: ', '') : 'Camera';
+    return info ? info.textContent.replace('Live: ', '') : window.I18N.t('nav.camera');
 }
 
 function syncVideoControlsToDock() {

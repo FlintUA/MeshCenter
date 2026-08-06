@@ -1650,11 +1650,11 @@
                      hidden
                      onclick="event.stopPropagation()">
                 <header class="notification-popover-header">
-                    <div><strong>Notifications</strong><span>Recent MeshCenter activity</span></div>
-                    <button type="button" class="notification-clear-btn" onclick="clearNotifications()">Clear</button>
+                    <div><strong data-i18n="notifications.title">Notifications</strong><span data-i18n="notifications.recent_activity">Recent MeshCenter activity</span></div>
+                    <button type="button" class="notification-clear-btn" onclick="clearNotifications()" data-i18n="modals.clear">Clear</button>
                 </header>
                 <div class="notification-list" id="notificationList"></div>
-                <div class="notification-empty" id="notificationEmpty">No notifications yet</div>
+                <div class="notification-empty" id="notificationEmpty" data-i18n="notifications.empty">No notifications yet</div>
             </section>
         </div>
 

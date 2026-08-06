@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="{{ ui_language }}">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -1024,11 +1024,19 @@
                     </div>
 
                     <div class="settings-grid">
-                        <div class="settings-card settings-card--placeholder settings-card--general">
+                        <div class="settings-card settings-card--general">
                             <div class="settings-card-title">🌍 General</div>
-                            <div class="settings-card-text">
-                                Basic interface preferences will be added here.
+                            <div class="settings-option settings-option--select">
+                                <label class="settings-option-label" for="uiLanguage">Language</label>
+                                <select id="uiLanguage" class="settings-select" onchange="setLanguageSetting(this.value)">
+                                    <option value="auto">Auto (browser default)</option>
+                                    <option value="en">English</option>
+                                    <option value="de">Deutsch</option>
+                                    <option value="ru">Русский</option>
+                                    <option value="uk">Українська</option>
+                                </select>
                             </div>
+                            <div class="settings-card-text settings-card-note">Reloads the page after saving.</div>
                         </div>
 
                         <div class="settings-card settings-card--telemetry">
@@ -1846,11 +1854,12 @@
 <script src="/static/chart.umd.min.js"></script>
 <script src="/static/i18n.js?v=20260806-1"></script>
 <script>
-    // Stage 1: load the catalog so I18N.t()/plural() are usable from the
-    // console for verification. Not yet fed a stored ui.language setting
-    // (Stage 2) and nothing calls applyStaticDom() yet (Stage 3) — so this
-    // has no visible effect on the page.
-    window.I18N.init('auto');
+    // Server already resolved "auto" (stored ui.language, or an
+    // Accept-Language guess) to a concrete locale for <html lang> above —
+    // reuse that instead of letting the client re-guess independently.
+    // Nothing calls applyStaticDom() yet (Stage 3), so this has no visible
+    // effect on the page beyond the catalog being loaded and queryable.
+    window.I18N.init("{{ ui_language }}");
 </script>
 <script src="/static/chat.js?v=20260806-channel-header-index"></script>
 <script src="/static/media.js"></script>

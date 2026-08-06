@@ -589,6 +589,11 @@ function notifySettingsUpdated() {
 }
 
 function updateSettingsUi() {
+    const languageSelect = document.getElementById('uiLanguage');
+    if (languageSelect) {
+        languageSelect.value = appSettings?.language || 'auto';
+    }
+
     const units = appSettings?.units || {};
 
     document.getElementById('unitTempC')?.classList.toggle('active', units.temperature === 'c');
@@ -1190,6 +1195,31 @@ async function setMapProvider(provider) {
             `❌ Unable to save map provider: ${error.message}`,
             'error'
         );
+    }
+}
+
+async function setLanguageSetting(value) {
+    try {
+        const response = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ language: value })
+        });
+
+        const data = await response.json();
+
+        if (!data.ok) {
+            alert('Unable to save settings: ' + (data.error || 'Unknown error'));
+            return;
+        }
+
+        // The server resolves "auto" and picks <html lang>/the initial
+        // catalog at render time, and nothing here does a live re-render
+        // yet (Stage 3+), so a full reload is the simplest correct way to
+        // apply the new language.
+        window.location.reload();
+    } catch (error) {
+        alert('Unable to save settings: ' + error.message);
     }
 }
 

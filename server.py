@@ -28,7 +28,7 @@ from meshsrv.instance_manager import InstanceManager
 from meshsrv.radio_identity import detect_radio_identity, detect_connected_radio, compare_radio_identity
 from api.api_camera import register_camera_routes
 from api.api_chat import register_chat_routes
-from api.api_settings import register_settings_routes
+from api.api_settings import register_settings_routes, normalize_settings, SUPPORTED_LANGUAGES
 from api.api_system import register_system_routes
 from system_log import log_system_event
 from storage.waypoint_store import WaypointStore
@@ -3751,9 +3751,23 @@ def _profile_storage_summary(profile_dir):
 # API ROUTES
 # ============================================================
 
+def resolve_ui_language():
+    with state_lock:
+        language_setting = normalize_settings(settings).get("language", "auto")
+
+    if language_setting != "auto":
+        return language_setting
+
+    supported = [lang for lang in SUPPORTED_LANGUAGES if lang != "auto"]
+    return request.accept_languages.best_match(supported, default="en")
+
 @app.route("/")
 def index():
-    return render_template("index.html", app_version=APP_VERSION)
+    return render_template(
+        "index.html",
+        app_version=APP_VERSION,
+        ui_language=resolve_ui_language(),
+    )
 
 @app.route("/api/sensors")
 def api_sensors():

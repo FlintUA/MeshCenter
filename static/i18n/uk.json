@@ -1,0 +1,59 @@
+{
+  "_status": "untranslated-en-placeholder",
+  "common": {
+    "app_name": "MeshCenter",
+    "loading": "Loading...",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "delete": "Delete",
+    "save": "Save",
+    "close": "Close",
+    "retry": "Retry",
+    "yes": "Yes",
+    "no": "No"
+  },
+  "nav": {
+    "chats": "Chats",
+    "camera": "Camera",
+    "media": "Media",
+    "devices": "Devices",
+    "settings": "Settings",
+    "system": "System"
+  },
+  "settings": {
+    "language_label": "Language",
+    "language_auto": "Auto (browser default)",
+    "language_en": "English",
+    "language_de": "Deutsch",
+    "language_ru": "Русский",
+    "language_uk": "Українська"
+  },
+  "chat": {
+    "delete_chat_confirm": "Delete chat with \"{name}\"? This action cannot be undone.",
+    "clear_chat_confirm": "Clear all messages in \"{name}\"? This action cannot be undone.",
+    "delete_message_confirm": "Delete this message locally?",
+    "no_messages_yet": "No messages yet with {name}. Send the first one!",
+    "message_placeholder_channel": "Type a message to channel...",
+    "message_placeholder_dm": "Message {name}..."
+  },
+  "waypoints": {
+    "delete_selected_confirm": {
+      "one": "Delete {count} selected waypoint from local storage?",
+      "few": "Delete {count} selected waypoints from local storage?",
+      "many": "Delete {count} selected waypoints from local storage?",
+      "other": "Delete {count} selected waypoints from local storage?"
+    },
+    "delete_all_confirm": "Delete ALL saved waypoints from MeshCenter local storage? This cannot be undone."
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again.",
+    "invalid_chat_id": "Invalid chat.",
+    "invalid_node_id": "Invalid node.",
+    "radio_busy": "The radio is busy right now. Please try again shortly.",
+    "radio_timeout": "The radio did not respond in time.",
+    "radio_released": "The radio is released for external configuration.",
+    "action_busy": "Another action is already in progress.",
+    "unsupported_action": "This action isn't supported.",
+    "action_exception": "The action failed unexpectedly."
+  }
+}

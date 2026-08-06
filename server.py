@@ -4982,7 +4982,10 @@ def api_delete_all_dm():
                     json.dump({"deleted": dm_chat_ids}, f)
             except Exception as e:
                 print(f"[WARN] Could not write deleted_dm.json: {e}")
-            messages = [m for m in messages if m.get("chat_id") == CHANNEL_CHAT_ID]
+            messages = [
+                m for m in messages
+                if m.get("chat_id") == CHANNEL_CHAT_ID or str(m.get("chat_id", "")).startswith("channel:")
+            ]
             save_chats()
             save_messages()
         return jsonify({"ok": True, "deleted_count": deleted_count, "message": f"Deleted {deleted_count} DM chats"})

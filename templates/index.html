@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="app-version" content="{{ app_version }}">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=node-manager-transition-fix-20260803">
@@ -1231,7 +1232,7 @@
                                 <h1>MeshCenter</h1>
                                 <div class="about-motto">Control <span>•</span> Monitoring <span>•</span> Communication</div>
                                 <div class="about-badges">
-                                    <span class="about-badge">Version 1.1.0</span>
+                                    <span class="about-badge">Version {{ app_version }}</span>
                                     <span class="about-badge about-badge-status"><i></i> Active Development</span>
                                     <span class="about-badge">© 2026–Present</span>
                                 </div>
@@ -1324,7 +1325,18 @@
                     <section class="about-section" id="aboutSectionChangelog" role="tabpanel" hidden>
                         <div class="about-section-heading"><h2>Changelog</h2><p>Current release highlights.</p></div>
                         <article class="about-release-card">
-                            <div class="about-release-head"><div><span class="about-version">v1.1.0</span><h2>Workspace Foundation</h2></div><span class="about-current-label">Current</span></div>
+                            <div class="about-release-head"><div><span class="about-version">v1.3.0</span><h2>Waypoints &amp; Actions Update</h2></div><span class="about-current-label">Current</span></div>
+                            <ul>
+                                <li>Added full waypoint management: create, edit, delete and send waypoints directly from MeshCenter, with persistent storage.</li>
+                                <li>Added channel activity notifications and unread message indicators.</li>
+                                <li>Introduced a new extensible Action Engine for centralized node actions.</li>
+                                <li>Added runtime identity detection for the connected local node.</li>
+                                <li>Messaging, telemetry and UI reliability improvements.</li>
+                            </ul>
+                            <a class="about-primary-link" href="https://github.com/FlintUA/MeshCenter/releases" target="_blank" rel="noopener noreferrer">View full release history ↗</a>
+                        </article>
+                        <article class="about-release-card">
+                            <div class="about-release-head"><div><span class="about-version">v1.1.0</span><h2>Workspace Foundation</h2></div></div>
                             <ul>
                                 <li>Introduced Workspace preferences for this browser.</li>
                                 <li>Added panel visibility controls to the status bar.</li>

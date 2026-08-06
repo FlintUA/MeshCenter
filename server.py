@@ -72,6 +72,26 @@ except NameError:
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+def resolve_app_version(project_dir, fallback="dev"):
+    """Return the app version from the latest git tag (e.g. "1.3.0" from "v1.3.0")."""
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        tag = result.stdout.strip()
+        if result.returncode == 0 and tag:
+            return tag[1:] if tag.startswith("v") else tag
+    except Exception as error:
+        print(f"[VERSION] git describe failed: {error}", flush=True)
+    return fallback
+
+APP_VERSION = resolve_app_version(PROJECT_DIR)
+print(f"[VERSION] MeshCenter {APP_VERSION}", flush=True)
+
 try:
     MESHTASTIC_CMD = resolve_meshtastic_cli(MESHTASTIC_CMD, PROJECT_DIR)
     MESHTASTIC_PORT = resolve_serial_port(MESHTASTIC_PORT)
@@ -3724,7 +3744,7 @@ def _profile_storage_summary(profile_dir):
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", app_version=APP_VERSION)
 
 @app.route("/api/sensors")
 def api_sensors():

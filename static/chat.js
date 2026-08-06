@@ -11505,7 +11505,7 @@ function updateStatusDock(tab) {
     } else if (tab === 'about') {
         workspaceLabel.textContent = 'About';
         setDockStatusBaseline('MeshCenter', 'online');
-        setStatusDockContext('v1.1.0');
+        setStatusDockContext('v' + (document.querySelector('meta[name="app-version"]')?.content || '?'));
     } else {
         workspaceLabel.textContent = 'Workspace';
         setDockStatusBaseline('Ready', 'online');

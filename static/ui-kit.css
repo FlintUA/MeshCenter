@@ -1573,6 +1573,7 @@ html[data-theme="dark"] :is(
     .node-name, .node-title, .node-detail-title,
     .workspace-page-title,
     .settings-title, .settings-card-title,
+    .map-settings-title, .reference-location-title,
     .system-title, .system-card-title,
     .media-title, .video-title,
     .about-title, .about-card h2, .about-section-heading h2,

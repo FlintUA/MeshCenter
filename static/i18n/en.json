@@ -183,12 +183,32 @@
   "errors": {
     "generic": "Something went wrong. Please try again.",
     "invalid_chat_id": "Invalid chat.",
+    "invalid_chat": "Invalid chat.",
     "invalid_node_id": "Invalid node.",
     "radio_busy": "The radio is busy right now. Please try again shortly.",
     "radio_timeout": "The radio did not respond in time.",
     "radio_released": "The radio is released for external configuration.",
     "action_busy": "Another action is already in progress.",
     "unsupported_action": "This action isn't supported.",
-    "action_exception": "The action failed unexpectedly."
+    "action_exception": "The action failed unexpectedly.",
+    "invalid_message_id": "Invalid message.",
+    "message_not_found": "Message not found.",
+    "invalid_reply_to": "Invalid reply.",
+    "empty_message": "Message can't be empty.",
+    "invalid_target_node": "Invalid target node.",
+    "channel_not_configured": "This channel isn't configured on the radio.",
+    "reply_missing_packet_id": "This message has no Meshtastic packet ID. Reply to a newly received message.",
+    "waypoint_not_found": "Waypoint not found.",
+    "waypoint_ids_not_a_list": "Invalid waypoint list.",
+    "invalid_waypoint_id": "Invalid waypoint ID.",
+    "waypoint_invalid_name": "Name is required and must be at most 30 characters.",
+    "waypoint_invalid_description": "Description must be at most 100 characters.",
+    "waypoint_invalid_data": "Invalid waypoint data.",
+    "waypoint_invalid_coordinates": "Coordinates are outside the valid range.",
+    "waypoint_invalid_channel_index": "Channel index must be between 0 and 7.",
+    "waypoint_expiration_in_past": "Expiration must be in the future.",
+    "waypoint_send_failed": "Waypoint send failed.",
+    "invalid_coordinates": "Invalid coordinates.",
+    "invalid_settings_payload": "Invalid settings payload."
   }
 }

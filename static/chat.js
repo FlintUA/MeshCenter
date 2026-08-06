@@ -48,6 +48,23 @@ const NODE_DETAIL_TABS = [
     { id: 'log', label: 'Log', render: renderLogPane }
 ];
 
+// Translates a request error thrown with a .code (set from the backend's
+// error_code field, see requestError.code = data.error_code assignments
+// below) via the errors.* catalog namespace, interpolating .params if the
+// backend sent any. Falls back to the raw English error.message when the
+// code isn't in the catalog yet — most endpoints don't set error_code at
+// all, so this must degrade gracefully rather than show a broken marker.
+function translateRequestError(error) {
+    if (error && error.code) {
+        return window.I18N.tOrFallback(
+            'errors.' + error.code,
+            error.params,
+            error.message
+        );
+    }
+    return error?.message || 'Unknown error';
+}
+
 function registerNodeDetailTab(tab) {
     if (!tab || !tab.id || !tab.label || typeof tab.render !== 'function') return false;
     if (NODE_DETAIL_TABS.some(item => item.id === tab.id)) return false;
@@ -1171,6 +1188,7 @@ async function setMapProvider(provider) {
                 data.error || `HTTP ${response.status}`
             );
             requestError.code = data.error_code || '';
+            requestError.params = data.error_params || undefined;
             throw requestError;
         }
 
@@ -1192,7 +1210,7 @@ async function setMapProvider(provider) {
 
     } catch (error) {
         showToast(
-            `❌ Unable to save map provider: ${error.message}`,
+            `❌ Unable to save map provider: ${translateRequestError(error)}`,
             'error'
         );
     }
@@ -6802,6 +6820,7 @@ async function runNodeTool(action, nodeId, nodeName, button) {
                 data.error || `HTTP ${response.status}`
             );
             requestError.code = data.error_code || '';
+            requestError.params = data.error_params || undefined;
             throw requestError;
         }
 
@@ -6987,15 +7006,17 @@ async function runNodeTool(action, nodeId, nodeName, button) {
     } catch (error) {
         console.error('[NODE TOOLS] Error:', error);
 
+        const translatedMessage = translateRequestError(error);
+
         renderNodeToolResult(
             nodeId,
             'error',
             currentTool.errorTitle,
-            error.message
+            translatedMessage
         );
 
-        showToast(error.message, 'error');
-        
+        showToast(translatedMessage, 'error');
+
     } finally {
         if (button) {
             button.disabled = false;
@@ -9544,6 +9565,7 @@ async function loadCameraPowerState() {
                 data.error || `HTTP ${response.status}`
             );
             requestError.code = data.error_code || '';
+            requestError.params = data.error_params || undefined;
             throw requestError;
         }
 
@@ -9608,6 +9630,7 @@ async function setCameraPower(enabled) {
                 data.error || `HTTP ${response.status}`
             );
             requestError.code = data.error_code || '';
+            requestError.params = data.error_params || undefined;
             throw requestError;
         }
 
@@ -9640,7 +9663,7 @@ async function setCameraPower(enabled) {
         cameraPowerStatus = 'error';
 
         showToast(
-            `❌ Camera power error: ${error.message}`,
+            `❌ Camera power error: ${translateRequestError(error)}`,
             'error'
         );
 

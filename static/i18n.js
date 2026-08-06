@@ -136,6 +136,30 @@
     }
 
     /**
+     * Like t(), but returns `fallback` instead of a "[[key]]" marker when
+     * the key isn't in any loaded catalog — for translating server-sent
+     * error/message codes, where a missing catalog entry should silently
+     * fall back to the server's own English string rather than show a
+     * broken-looking marker to the user. (t() itself intentionally keeps
+     * the visible marker — that's the right behavior for static markup,
+     * where a missing key is a bug to notice, not a runtime condition to
+     * degrade gracefully from.)
+     */
+    function tOrFallback(key, params, fallback) {
+        var value = lookupRaw(key);
+
+        if (value === undefined) {
+            return fallback;
+        }
+
+        if (isPluralForm(value)) {
+            return interpolate(value.other || value.one || '', params);
+        }
+
+        return interpolate(value, params);
+    }
+
+    /**
      * Like t(), but selects the correct CLDR plural category for `count`
      * via the native Intl.PluralRules (covers ru/uk's one/few/many/other,
      * not just English's one/other). `params` is interpolated in addition
@@ -227,6 +251,7 @@
         SUPPORTED_LOCALES: SUPPORTED_LOCALES,
         init: init,
         t: t,
+        tOrFallback: tOrFallback,
         plural: plural,
         applyStaticDom: applyStaticDom,
         formatDate: formatDate,

@@ -4524,7 +4524,7 @@ def api_clear_chat():
     data = request.get_json(force=True)
     chat_id = data.get("chat_id", "").strip()
     if not chat_id or not is_valid_chat_id(chat_id):
-        return jsonify({"ok": False, "error": "Invalid chat_id"}), 400
+        return jsonify({"ok": False, "error": "Invalid chat_id", "error_code": "invalid_chat_id"}), 400
     global messages
     with state_lock:
         messages = [m for m in messages if m.get("chat_id") != chat_id]
@@ -4542,7 +4542,7 @@ def api_delete_chat():
     data = request.get_json(force=True)
     chat_id = data.get("chat_id", "").strip()
     if not chat_id or chat_id == CHANNEL_CHAT_ID or not is_valid_node_id(chat_id):
-        return jsonify({"ok": False, "error": "Invalid chat"}), 400
+        return jsonify({"ok": False, "error": "Invalid chat", "error_code": "invalid_chat"}), 400
     with state_lock:
         if chat_id in chats:
             del chats[chat_id]
@@ -4584,7 +4584,7 @@ def api_waypoints():
 def api_waypoint_detail(waypoint_id):
     waypoint = waypoint_store.get(waypoint_id)
     if not waypoint:
-        return jsonify({"ok": False, "error": "Waypoint not found"}), 404
+        return jsonify({"ok": False, "error": "Waypoint not found", "error_code": "waypoint_not_found"}), 404
 
     sender_id = waypoint.get("sender_id") or ""
     waypoint["sender_name"] = get_node_name(sender_id) if sender_id else "Unknown"
@@ -4601,7 +4601,7 @@ def api_waypoint_hidden(waypoint_id):
     hidden = bool(data.get("hidden", True))
     waypoint = waypoint_store.set_hidden(waypoint_id, hidden)
     if not waypoint:
-        return jsonify({"ok": False, "error": "Waypoint not found"}), 404
+        return jsonify({"ok": False, "error": "Waypoint not found", "error_code": "waypoint_not_found"}), 404
     sender_id = waypoint.get("sender_id") or ""
     waypoint["sender_name"] = get_node_name(sender_id) if sender_id else "Unknown"
     waypoint.pop("raw_packet", None)
@@ -4613,7 +4613,7 @@ def api_waypoint_hidden(waypoint_id):
 def api_waypoint_delete(waypoint_id):
     deleted = waypoint_store.delete(waypoint_id)
     if not deleted:
-        return jsonify({"ok": False, "error": "Waypoint not found"}), 404
+        return jsonify({"ok": False, "error": "Waypoint not found", "error_code": "waypoint_not_found"}), 404
     return jsonify({"ok": True, "deleted": 1, "waypoint_id": waypoint_id})
 
 
@@ -4623,11 +4623,11 @@ def api_waypoints_delete_many():
     data = request.get_json(silent=True) or {}
     raw_ids = data.get("waypoint_ids") or []
     if not isinstance(raw_ids, list):
-        return jsonify({"ok": False, "error": "waypoint_ids must be a list"}), 400
+        return jsonify({"ok": False, "error": "waypoint_ids must be a list", "error_code": "waypoint_ids_not_a_list"}), 400
     try:
         waypoint_ids = [int(value) for value in raw_ids]
     except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "Invalid waypoint ID"}), 400
+        return jsonify({"ok": False, "error": "Invalid waypoint ID", "error_code": "invalid_waypoint_id"}), 400
     deleted = waypoint_store.delete_many(waypoint_ids)
     return jsonify({"ok": True, "deleted": deleted})
 
@@ -4653,9 +4653,9 @@ def api_waypoint_send():
     post_notification = bool(data.get("post_notification", True))
 
     if not name or len(name) > 30:
-        return jsonify({"ok": False, "error": "Name is required and must be at most 30 characters"}), 400
+        return jsonify({"ok": False, "error": "Name is required and must be at most 30 characters", "error_code": "waypoint_invalid_name"}), 400
     if len(description) > 100:
-        return jsonify({"ok": False, "error": "Description must be at most 100 characters"}), 400
+        return jsonify({"ok": False, "error": "Description must be at most 100 characters", "error_code": "waypoint_invalid_description"}), 400
     try:
         latitude = float(latitude)
         longitude = float(longitude)
@@ -4663,17 +4663,17 @@ def api_waypoint_send():
         icon = int(icon)
         expire_at = int(expire_at)
     except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "Invalid waypoint data"}), 400
+        return jsonify({"ok": False, "error": "Invalid waypoint data", "error_code": "waypoint_invalid_data"}), 400
     if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
-        return jsonify({"ok": False, "error": "Coordinates are outside the valid range"}), 400
+        return jsonify({"ok": False, "error": "Coordinates are outside the valid range", "error_code": "waypoint_invalid_coordinates"}), 400
     if not (0 <= channel_index <= 7):
-        return jsonify({"ok": False, "error": "Channel index must be between 0 and 7"}), 400
+        return jsonify({"ok": False, "error": "Channel index must be between 0 and 7", "error_code": "waypoint_invalid_channel_index"}), 400
     if expire_at <= int(time.time()) + 30:
-        return jsonify({"ok": False, "error": "Expiration must be in the future"}), 400
+        return jsonify({"ok": False, "error": "Expiration must be in the future", "error_code": "waypoint_expiration_in_past"}), 400
     if not is_radio_available():
-        return jsonify({"ok": False, "error": "Meshtastic radio is currently unavailable"}), 503
+        return jsonify({"ok": False, "error": "Meshtastic radio is currently unavailable", "error_code": "radio_released"}), 503
     if not prepare_radio_command(MESHTASTIC_PORT, timeout=10):
-        return jsonify({"ok": False, "error": "Meshtastic serial port is busy"}), 503
+        return jsonify({"ok": False, "error": "Meshtastic serial port is busy", "error_code": "radio_busy"}), 503
 
     cli_path = str(MESHTASTIC_CMD or "")
     python_path = os.path.join(os.path.dirname(cli_path), "python3")
@@ -4713,7 +4713,7 @@ def api_waypoint_send():
         output = (result.stdout or "").strip()
         if result.returncode != 0:
             print(f"[WAYPOINT SEND] Failed: {output}", flush=True)
-            return jsonify({"ok": False, "error": output[-1000:] or "Waypoint send failed"}), 500
+            return jsonify({"ok": False, "error": output[-1000:] or "Waypoint send failed", "error_code": "waypoint_send_failed"}), 500
 
         try:
             sender_result = json.loads(output.splitlines()[-1])
@@ -5014,7 +5014,7 @@ def api_delete_all_dm():
         return jsonify({"ok": True, "deleted_count": deleted_count, "message": f"Deleted {deleted_count} DM chats"})
     except Exception as e:
         print(f"[ERROR] Delete all DM: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": str(e), "error_code": "generic"}), 500
 
 @app.route("/api/restore_deleted_dm", methods=["POST"])
 @handle_errors

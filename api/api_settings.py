@@ -410,6 +410,7 @@ def register_settings_routes(
             return jsonify({
                 "ok": False,
                 "error": "Invalid coordinates",
+                "error_code": "invalid_coordinates",
             }), 400
 
         return jsonify({
@@ -427,6 +428,7 @@ def register_settings_routes(
             return jsonify({
                 "ok": False,
                 "error": "Invalid settings payload",
+                "error_code": "invalid_settings_payload",
             }), 400
 
         with state_lock:

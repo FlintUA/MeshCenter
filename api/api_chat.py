@@ -414,7 +414,8 @@ def register_chat_routes(
         if chat_id and not (is_valid_node_id(chat_id) or is_channel_chat_id(chat_id)):
             return jsonify({
                 "ok": False,
-                "error": "Invalid chat_id"
+                "error": "Invalid chat_id",
+                "error_code": "invalid_chat_id"
             }), 400
 
         if chat_id:
@@ -457,10 +458,10 @@ def register_chat_routes(
         message_id = str(data.get("message_id", "")).strip()
 
         if not chat_id or not (is_valid_node_id(chat_id) or is_channel_chat_id(chat_id)):
-            return jsonify({"ok": False, "error": "Invalid chat_id"}), 400
+            return jsonify({"ok": False, "error": "Invalid chat_id", "error_code": "invalid_chat_id"}), 400
 
         if not message_id or len(message_id) > 128:
-            return jsonify({"ok": False, "error": "Invalid message_id"}), 400
+            return jsonify({"ok": False, "error": "Invalid message_id", "error_code": "invalid_message_id"}), 400
 
         deleted_message = None
 
@@ -474,7 +475,7 @@ def register_chat_routes(
                     break
 
             if deleted_message is None:
-                return jsonify({"ok": False, "error": "Message not found"}), 404
+                return jsonify({"ok": False, "error": "Message not found", "error_code": "message_not_found"}), 404
 
             save_messages()
 
@@ -523,7 +524,7 @@ def register_chat_routes(
         client_id = str(data.get("client_id", "")).strip()[:64]
 
         if reply_to is not None and not isinstance(reply_to, dict):
-            return jsonify({"ok": False, "error": "Invalid reply_to"}), 400
+            return jsonify({"ok": False, "error": "Invalid reply_to", "error_code": "invalid_reply_to"}), 400
 
         if isinstance(reply_to, dict):
             raw_packet_id = reply_to.get("packet_id")
@@ -544,13 +545,13 @@ def register_chat_routes(
             }
 
         if not text:
-            return jsonify({"ok": False, "error": "empty or invalid message"}), 400
+            return jsonify({"ok": False, "error": "empty or invalid message", "error_code": "empty_message"}), 400
 
         if chat_id and not is_channel_chat_id(chat_id) and not is_valid_node_id(chat_id):
-            return jsonify({"ok": False, "error": "Invalid chat_id"}), 400
+            return jsonify({"ok": False, "error": "Invalid chat_id", "error_code": "invalid_chat_id"}), 400
 
         if target_node and not is_valid_node_id(target_node):
-            return jsonify({"ok": False, "error": "Invalid target_node"}), 400
+            return jsonify({"ok": False, "error": "Invalid target_node", "error_code": "invalid_target_node"}), 400
 
         if target_node and target_node.startswith("!") and target_node not in nodes:
             print(f"[SEND] Target node not in nodes cache, sending anyway: {target_node}", flush=True)
@@ -566,7 +567,7 @@ def register_chat_routes(
             channel_index = 0 if chat_id == CHANNEL_CHAT_ID else int(chat_id.split(":", 1)[1])
             configured = next((c for c in discover_radio_channels() if c.get("id") == chat_id and not c.get("is_demo")), None)
             if configured is None:
-                return jsonify({"ok": False, "error": "Channel is not configured on the radio"}), 400
+                return jsonify({"ok": False, "error": "Channel is not configured on the radio", "error_code": "channel_not_configured"}), 400
             chat_name = configured.get("name", f"Channel {channel_index}")
         elif chat_id and chat_id != CHANNEL_CHAT_ID and chat_id.startswith("!"):
             final_chat_id = chat_id
@@ -584,7 +585,8 @@ def register_chat_routes(
         if isinstance(reply_to, dict) and reply_id is None:
             return jsonify({
                 "ok": False,
-                "error": "This message has no Meshtastic packet ID. Reply to a newly received message."
+                "error": "This message has no Meshtastic packet ID. Reply to a newly received message.",
+                "error_code": "reply_missing_packet_id"
             }), 400
 
         print("[SEND] Queueing message", flush=True)

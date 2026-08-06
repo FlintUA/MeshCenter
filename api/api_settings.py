@@ -8,6 +8,10 @@ import re
 
 
 DEFAULT_SETTINGS = {
+    # "auto" resolves from the browser's language client-side; an explicit
+    # value overrides that. See static/i18n.js for the supported locale list.
+    "language": "auto",
+
     "units": {
         "temperature": "c",
         "pressure": "hpa",
@@ -80,9 +84,19 @@ def _normalize_coordinate(value, minimum, maximum):
     return number
 
 
+SUPPORTED_LANGUAGES = ("auto", "en", "de", "ru", "uk")
+
+
 def normalize_settings(settings):
     if not isinstance(settings, dict):
         settings = {}
+
+    # ---------------- Language ----------------
+
+    language = str(settings.get("language", "auto")).strip().lower()
+
+    if language not in SUPPORTED_LANGUAGES:
+        language = "auto"
 
     # ---------------- Units ----------------
 
@@ -284,6 +298,8 @@ def normalize_settings(settings):
         }
 
     return {
+        "language": language,
+
         "units": {
             "temperature": temperature,
             "pressure": pressure,

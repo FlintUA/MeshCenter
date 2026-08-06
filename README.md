@@ -1206,6 +1206,25 @@ You can adjust the following without editing configuration files:
 
 All settings are saved immediately and persist across restarts.
 
+### 🌍 Localization (i18n)
+
+MeshCenter includes the underlying infrastructure for a multi-language interface, selectable from **Settings → General → Language**.
+
+**What works today:**
+
+- Language switching (Auto / English / Deutsch / Русский / Українська) from the Settings panel
+- The page's `<html lang>` attribute and the loaded translation catalog follow the selected language (or the browser's language when set to Auto)
+- Part of the static interface text, a first slice of error and toast messages, and the Weather module's OpenWeather response language all follow the selected language
+- Verified end-to-end for all four locales (en/de/ru/uk)
+
+**What's not translated yet:**
+
+The German, Russian and Ukrainian catalogs currently contain the same English text as placeholders — the translation *infrastructure* is complete and tested, but the actual translated wording has not been written yet. Selecting German or Ukrainian today changes the mechanism (`<html lang>`, weather text, the wired error messages) while most of the visible interface text still reads in English until real translations are added in a future update.
+
+Most of the chat interface (message bubbles, toasts and dialogs generated dynamically by JavaScript) is not yet wired into the translation system at all and remains English-only regardless of the selected language.
+
+See `static/i18n/README.md` for translator notes, including terms that must never be translated (Meshtastic, LongFast, PSK, and similar).
+
 ### 🧩 Modular Architecture
 
 MeshCenter is gradually moving from a single large server file to a modular architecture.
@@ -1659,6 +1678,12 @@ Future work includes:
 - Better responsiveness
 - Improved camera performance
 
+#### 🌍 Multi-language Interface
+
+The i18n infrastructure is implemented and live (see "Localization (i18n)" under Core Features above) — language switching, `<html lang>`, part of the interface text, a first slice of error messages and the Weather module all work across English, German, Russian and Ukrainian.
+
+What remains is writing the actual translations: German, Russian and Ukrainian currently ship as English placeholder text, and most of the JavaScript-rendered chat interface still needs to be wired into the translation system.
+
 ### Future Ideas
 
 These ideas are being considered for future releases.  
@@ -1686,19 +1711,6 @@ Further map improvements under consideration:
 - Favorite node emphasis
 - Last-heard indicators
 
-#### 🌍 Multi-language Interface
-
-Support additional user interface languages.
-
-Possible languages include:
-
-- English
-- German
-- Ukrainian
-- Russian
-
-English will remain the primary project language.
-
 #### 📦 Additional Integrations
 
 Possible future integrations include:
@@ -1713,6 +1725,7 @@ Possible future integrations include:
 
 | Version | Highlights |
 |----------|------------|
+| v1.4.0 | Localization (i18n) infrastructure — language switching, translation runtime, first slice of localized errors and weather; translations pending |
 | v1.3.0 | Waypoints, Notifications, Action Engine |
 | v1.2.0 | Interactive Map |
 | v1.0.0 | First Stable Release |

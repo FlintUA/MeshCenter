@@ -94,6 +94,9 @@ class InstanceManager:
             "port": first_text(
                 nested_radio.get("port"), nested_radio.get("serial_port"), raw.get("serial_port"), default_radio.get("port")
             ),
+            "firmware_version": first_text(
+                nested_radio.get("firmware_version"), raw.get("firmware_version"), default_radio.get("firmware_version")
+            ),
         }
 
         detected_radio = nested_runtime.get("last_detected_radio")
@@ -120,6 +123,7 @@ class InstanceManager:
                 "hardware": first_text(detected_radio.get("hardware")),
                 "role": first_text(detected_radio.get("role")),
                 "port": first_text(detected_radio.get("port")),
+                "firmware_version": first_text(detected_radio.get("firmware_version")),
             },
         }
 

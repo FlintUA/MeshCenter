@@ -10909,6 +10909,7 @@ async function loadNodeManagerDashboard(showFeedback = false) {
                         <div><dt>${escapeHtml(window.I18N.t('node_manager.short_name'))}</dt><dd>${deviceDashboardValue(radio.short_name)}</dd></div>
                         <div><dt>${escapeHtml(window.I18N.t('chat.node_id_label'))}</dt><dd class="device-monospace copyable-value" title="${escapeHtml(window.I18N.t('node_manager.click_to_copy'))}" onclick="copyTextToClipboard('${String(radio.node_id || '').replace(/'/g, "\\'")}', '${escapeHtml(window.I18N.t('node_manager.node_id_copied'))}')">${deviceDashboardValue(radio.node_id)}</dd></div>
                         <div><dt>${escapeHtml(window.I18N.t('node_manager.hardware'))}</dt><dd>${deviceDashboardValue(radio.hardware)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.firmware_version'))}</dt><dd>${deviceDashboardValue(radio.firmware_version)}</dd></div>
                         <div><dt>${escapeHtml(window.I18N.t('node_manager.role'))}</dt><dd>${deviceDashboardValue(radio.role)}</dd></div>
                         <div><dt>${escapeHtml(window.I18N.t('node_manager.identity'))}</dt><dd>${deviceDashboardValue(radio.identity_status)}</dd></div>
                         <div><dt>${escapeHtml(window.I18N.t('node_manager.last_verified'))}</dt><dd>${formatDeviceDashboardDate(radio.identity_checked_at)}</dd></div>

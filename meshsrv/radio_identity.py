@@ -102,6 +102,24 @@ def _parse_nodes(output: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _parse_metadata(output: str) -> dict[str, Any]:
+    # `meshtastic --info` prints a separate "Metadata: {...}" line (from
+    # MeshInterface.showInfo(), see mesh_interface.py) holding the local
+    # node's DeviceMetadata - firmwareVersion lives here, not in the
+    # per-node "Nodes in mesh" block used for name/hardware/role above.
+    marker = output.find("Metadata:")
+    if marker < 0:
+        return {}
+    block = _extract_json_block(output, marker)
+    if not block:
+        return {}
+    try:
+        value = json.loads(block)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def parse_radio_identity(output: str, serial_port: str = "") -> dict[str, str]:
     """Extract the local radio identity from Meshtastic CLI --info output."""
     output = str(output or "")
@@ -111,6 +129,7 @@ def parse_radio_identity(output: str, serial_port: str = "") -> dict[str, str]:
     if not isinstance(node_data, dict):
         node_data = {}
     user = node_data.get("user") if isinstance(node_data.get("user"), dict) else {}
+    metadata = _parse_metadata(output)
 
     return {
         "node_id": node_id,
@@ -119,6 +138,7 @@ def parse_radio_identity(output: str, serial_port: str = "") -> dict[str, str]:
         "hardware": str(user.get("hwModel") or "").strip(),
         "role": str(user.get("role") or "").strip(),
         "port": str(serial_port or "").strip(),
+        "firmware_version": str(metadata.get("firmwareVersion") or "").strip(),
     }
 
 

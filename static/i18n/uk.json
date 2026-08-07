@@ -328,6 +328,7 @@
     "exported_csv": "Експортовано вузлів у CSV: {count}",
     "exported_json": "Експортовано вузлів у JSON: {count}",
     "hardware": "Обладнання",
+    "firmware_version": "Версія прошивки",
     "identity": "Ідентичність",
     "image_saved": "Зображення вузла збережено",
     "image_too_large": "Зображення вузла має бути менше 2 МБ.",

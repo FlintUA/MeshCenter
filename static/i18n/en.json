@@ -328,6 +328,7 @@
     "exported_csv": "Exported {count} nodes to CSV",
     "exported_json": "Exported {count} nodes to JSON",
     "hardware": "Hardware",
+    "firmware_version": "Firmware version",
     "identity": "Identity",
     "image_saved": "Node image saved",
     "image_too_large": "The node image must be smaller than 2 MB.",

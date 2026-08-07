@@ -328,6 +328,7 @@
     "exported_csv": "{count} Knoten als CSV exportiert",
     "exported_json": "{count} Knoten als JSON exportiert",
     "hardware": "Hardware",
+    "firmware_version": "Firmware-Version",
     "identity": "Identität",
     "image_saved": "Knotenbild gespeichert",
     "image_too_large": "Das Knotenbild muss kleiner als 2 MB sein.",

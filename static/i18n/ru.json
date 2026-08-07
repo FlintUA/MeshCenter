@@ -328,6 +328,7 @@
     "exported_csv": "Экспортировано узлов в CSV: {count}",
     "exported_json": "Экспортировано узлов в JSON: {count}",
     "hardware": "Оборудование",
+    "firmware_version": "Версия прошивки",
     "identity": "Идентичность",
     "image_saved": "Изображение узла сохранено",
     "image_too_large": "Изображение узла должно быть меньше 2 МБ.",

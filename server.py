@@ -4148,6 +4148,7 @@ def api_devices_dashboard():
             "long_name": detected.get("long_name") or configured.get("long_name", ""),
             "short_name": detected.get("short_name") or configured.get("short_name", ""),
             "hardware": detected.get("hardware") or configured.get("hardware", ""),
+            "firmware_version": detected.get("firmware_version") or configured.get("firmware_version", ""),
             "role": detected.get("role") or configured.get("role", ""),
             "port": connection.get("serial_port") or configured.get("port", ""),
             "identity_status": RADIO_IDENTITY_RESULT.get("status")

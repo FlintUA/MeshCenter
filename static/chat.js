@@ -1739,12 +1739,12 @@ function initBaseNodeAvatar() {
         const file = input.files && input.files[0];
         if (!file) return;
         if (!/^image\/(png|jpeg|webp)$/i.test(file.type)) {
-            showToast('Please choose a PNG, JPEG or WebP image.', 'error');
+            showToast(window.I18N.t('node_manager.please_choose_image'), 'error');
             input.value = '';
             return;
         }
         if (file.size > 2 * 1024 * 1024) {
-            showToast('The node image must be smaller than 2 MB.', 'error');
+            showToast(window.I18N.t('node_manager.image_too_large'), 'error');
             input.value = '';
             return;
         }
@@ -1757,13 +1757,13 @@ function initBaseNodeAvatar() {
             formData.append('icon', pngBlob, 'node-icon.png');
             const response = await fetch(`/api/nodes/${encodeURIComponent(localNodeId)}/icon`, { method: 'POST', body: formData });
             const result = await response.json().catch(() => ({}));
-            if (!response.ok || !result.ok) throw new Error(result.error || 'Upload failed.');
+            if (!response.ok || !result.ok) throw new Error(result.error || window.I18N.t('node_manager.upload_failed'));
             applyIcon(`${result.icon_url}&t=${Date.now()}`);
             localStorage.removeItem('meshcenter.baseNodeAvatar');
-            showToast('Node image saved', 'success');
+            showToast(window.I18N.t('node_manager.image_saved'), 'success');
         } catch (error) {
             console.warn('Unable to save node image:', error);
-            showToast(error.message || 'Unable to save node image', 'error');
+            showToast(error.message || window.I18N.t('node_manager.unable_to_save_image'), 'error');
         } finally {
             input.value = '';
         }
@@ -1791,7 +1791,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             if (appName) {
                 appName.classList.add('brand-fade-out');
                 setTimeout(() => {
-                    appName.textContent = 'Reloading…';
+                    appName.textContent = window.I18N.t('common.reloading');
                     appName.classList.remove('brand-fade-out');
                     appName.classList.add('brand-fade-in');
                 }, 150);
@@ -8042,13 +8042,13 @@ async function loadNodesManagement() {
         document.getElementById('totalNodesCount').textContent = data.total || 0;
         
         if (data.nodes.length === 0) {
-            container.innerHTML = '<div class="loading">No nodes found</div>';
+            container.innerHTML = `<div class="loading">${escapeHtml(window.I18N.t('nodes.no_nodes_found'))}</div>`;
             return;
         }
-        
+
         container.innerHTML = data.nodes.map(node => {
             const statusClass = node.ignored ? 'ignored' : 'normal';
-            const statusText = node.ignored ? '🚫 Ignored' : '✅ Normal';
+            const statusText = node.ignored ? `🚫 ${window.I18N.t('node_manager.status_ignored')}` : `✅ ${window.I18N.t('node_manager.status_normal')}`;
 
             return `
                 <div class="nodes-management-item">
@@ -8062,7 +8062,7 @@ async function loadNodesManagement() {
         }).join('');
     } catch (error) {
         console.error('Error loading nodes management:', error);
-        container.innerHTML = '<div class="loading">⚠️ Error loading nodes</div>';
+        container.innerHTML = `<div class="loading">⚠️ ${escapeHtml(window.I18N.t('node_manager.error_loading_nodes'))}</div>`;
     }
 }
 
@@ -8075,10 +8075,10 @@ async function exportNodesCSV() {
         const data = await response.json();
         
         if (!data.nodes || data.nodes.length === 0) {
-            showToast('❌ No nodes to export', 'error');
+            showToast(`❌ ${window.I18N.t('node_manager.no_nodes_to_export')}`, 'error');
             return;
         }
-        
+
         const headers = ['"Node Name","Node ID","Last Seen","RSSI","SNR","Role","Short Name","HW Model"'];
         const rows = data.nodes.map(n => 
             `"${escapeCsv(n.name)}","${n.node_id}","${n.last_time || ''}","${n.rssi || ''}","${n.snr || ''}","${n.role || 'CLIENT'}","${n.short_name || ''}","${n.hw_model || ''}"`
@@ -8093,10 +8093,10 @@ async function exportNodesCSV() {
         a.click();
         URL.revokeObjectURL(url);
         
-        showToast(`✅ Exported ${data.nodes.length} nodes to CSV`, 'success');
+        showToast(`✅ ${window.I18N.t('node_manager.exported_csv', { count: data.nodes.length })}`, 'success');
     } catch (error) {
         console.error('Export CSV error:', error);
-        showToast('❌ Export failed', 'error');
+        showToast(`❌ ${window.I18N.t('node_manager.export_failed')}`, 'error');
     }
 }
 
@@ -8106,10 +8106,10 @@ async function exportNodesJSON() {
         const data = await response.json();
         
         if (!data.nodes || data.nodes.length === 0) {
-            showToast('❌ No nodes to export', 'error');
+            showToast(`❌ ${window.I18N.t('node_manager.no_nodes_to_export')}`, 'error');
             return;
         }
-        
+
         const blob = new Blob([JSON.stringify(data.nodes, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -8117,11 +8117,11 @@ async function exportNodesJSON() {
         a.download = `meshtastic_nodes_${new Date().toISOString().slice(0,10)}.json`;
         a.click();
         URL.revokeObjectURL(url);
-        
-        showToast(`✅ Exported ${data.nodes.length} nodes to JSON`, 'success');
+
+        showToast(`✅ ${window.I18N.t('node_manager.exported_json', { count: data.nodes.length })}`, 'success');
     } catch (error) {
         console.error('Export JSON error:', error);
-        showToast('❌ Export failed', 'error');
+        showToast(`❌ ${window.I18N.t('node_manager.export_failed')}`, 'error');
     }
 }
 
@@ -8135,7 +8135,7 @@ async function importNodesCSV(event) {
             const text = e.target.result;
             const lines = text.split('\n').filter(line => line.trim());
             if (lines.length < 2) {
-                showToast('❌ Invalid CSV file', 'error');
+                showToast(`❌ ${window.I18N.t('node_manager.invalid_csv_file')}`, 'error');
                 return;
             }
             
@@ -8161,27 +8161,27 @@ async function importNodesCSV(event) {
             }
             
             if (nodes.length === 0) {
-                showToast('❌ No valid nodes found in CSV', 'error');
+                showToast(`❌ ${window.I18N.t('node_manager.no_valid_nodes_csv')}`, 'error');
                 return;
             }
-            
+
             const response = await fetch('/api/nodes_import', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ nodes })
             });
-            
+
             const result = await response.json();
             if (result.ok) {
-                showToast(`✅ Imported ${result.imported_count} nodes from CSV`, 'success');
+                showToast(`✅ ${window.I18N.t('node_manager.imported_csv', { count: result.imported_count })}`, 'success');
                 loadMessages();
                 loadNodesManagement();
             } else {
-                showToast('❌ Import failed: ' + result.error, 'error');
+                showToast(`❌ ${window.I18N.t('node_manager.import_failed_reason', { reason: result.error })}`, 'error');
             }
         } catch (error) {
             console.error('Import CSV error:', error);
-            showToast('❌ Import failed', 'error');
+            showToast(`❌ ${window.I18N.t('node_manager.import_failed')}`, 'error');
         }
     };
     reader.readAsText(file);
@@ -8197,27 +8197,27 @@ async function importNodesJSON(event) {
         try {
             const nodes = JSON.parse(e.target.result);
             if (!Array.isArray(nodes) || nodes.length === 0) {
-                showToast('❌ Invalid JSON file', 'error');
+                showToast(`❌ ${window.I18N.t('node_manager.invalid_json_file')}`, 'error');
                 return;
             }
-            
+
             const response = await fetch('/api/nodes_import', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ nodes })
             });
-            
+
             const result = await response.json();
             if (result.ok) {
-                showToast(`✅ Imported ${result.imported_count} nodes from JSON`, 'success');
+                showToast(`✅ ${window.I18N.t('node_manager.imported_json', { count: result.imported_count })}`, 'success');
                 loadMessages();
                 loadNodesManagement();
             } else {
-                showToast('❌ Import failed: ' + result.error, 'error');
+                showToast(`❌ ${window.I18N.t('node_manager.import_failed_reason', { reason: result.error })}`, 'error');
             }
         } catch (error) {
             console.error('Import JSON error:', error);
-            showToast('❌ Import failed', 'error');
+            showToast(`❌ ${window.I18N.t('node_manager.import_failed')}`, 'error');
         }
     };
     reader.readAsText(file);
@@ -8230,7 +8230,7 @@ function escapeCsv(value) {
 }
 
 async function restartListener() {
-    if (!confirm("Restart MeshCenter listener?\n\nCurrent reception will be interrupted for a few seconds.")) {
+    if (!confirm(window.I18N.t('system.restart_listener_confirm'))) {
         return;
     }
 
@@ -8239,7 +8239,7 @@ async function restartListener() {
 
     if (button) {
         button.disabled = true;
-        button.textContent = 'Restarting Listener...';
+        button.textContent = window.I18N.t('system.restarting_listener');
     }
 
     try {
@@ -8250,10 +8250,10 @@ async function restartListener() {
             throw new Error(data.error || `HTTP ${response.status}`);
         }
 
-        showToast('✅ Meshtastic listener restart requested', 'success');
+        showToast(`✅ ${window.I18N.t('system.listener_restart_requested')}`, 'success');
         setTimeout(loadRadioHealth, 1000);
     } catch (error) {
-        showToast('❌ Restart failed: ' + error.message, 'error');
+        showToast(`❌ ${window.I18N.t('system.restart_failed', { reason: error.message })}`, 'error');
     } finally {
         if (button) {
             setTimeout(() => {
@@ -8271,37 +8271,37 @@ async function rescanNodes() {
     
     try {
         btn.disabled = true;
-        btn.textContent = '⏳ Scanning...';
-        
+        btn.textContent = `⏳ ${window.I18N.t('system.scanning')}`;
+
         const response = await fetch('/api/rescan_nodes', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });
-        
+
         const data = await response.json();
-        
+
         if (data.ok) {
-            btn.textContent = '⏳ Waiting for nodes...';
+            btn.textContent = `⏳ ${window.I18N.t('system.waiting_for_nodes')}`;
             await new Promise(resolve => setTimeout(resolve, 5000));
-            
+
             await loadMessages();
             await loadChatList();
-            
-            btn.textContent = '✅ Done!';
+
+            btn.textContent = `✅ ${window.I18N.t('system.done_exclaim')}`;
             setTimeout(() => {
                 btn.textContent = originalText;
                 btn.disabled = false;
             }, 2000);
-            
-            showToast('✅ Network rescanned', 'success');
+
+            showToast(`✅ ${window.I18N.t('system.network_rescanned')}`, 'success');
         } else {
-            showToast('❌ Error: ' + (data.error || 'Unknown error'), 'error');
+            showToast(`❌ ${window.I18N.t('common.error_prefix', { reason: data.error || window.I18N.t('errors.unknown_error') })}`, 'error');
             btn.textContent = originalText;
             btn.disabled = false;
         }
     } catch (error) {
         console.error('Rescan error:', error);
-        showToast('❌ Network error', 'error');
+        showToast(`❌ ${window.I18N.t('errors.network_error')}`, 'error');
         btn.textContent = originalText;
         btn.disabled = false;
     }
@@ -8319,8 +8319,8 @@ function deleteAllDmChats() {
     const btn = document.getElementById('confirmDeleteAllDmBtn');
     
     if (modal && text) {
-        text.textContent = '⚠️ Delete ALL Direct Message chats?\n\nThis will delete all DM chats and their messages.\nThe LongFast channel will remain.\n\nThis action cannot be undone!';
-        btn.textContent = 'Delete All';
+        text.textContent = `⚠️ ${window.I18N.t('chat.delete_all_dm_confirm')}`;
+        btn.textContent = window.I18N.t('modals.delete_all');
         btn.style.background = '';
         modal.style.display = 'flex';
     }
@@ -8338,15 +8338,15 @@ function executeDeleteAllDm() {
     
     if (deleteAllDmState === 'first') {
         deleteAllDmState = 'second';
-        text.textContent = '⚠️ Are you sure?\n\nAll DM chats and messages will be permanently deleted!\n\nThis action cannot be undone!';
-        btn.textContent = 'Yes, Delete Everything!';
+        text.textContent = `⚠️ ${window.I18N.t('chat.delete_all_dm_confirm2')}`;
+        btn.textContent = window.I18N.t('chat.yes_delete_everything');
         btn.style.background = '#c62828';
         return;
     }
-    
+
     btn.disabled = true;
-    btn.textContent = '⏳ Deleting...';
-    
+    btn.textContent = `⏳ ${window.I18N.t('chat.deleting')}`;
+
     fetch('/api/delete_all_dm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
@@ -8360,19 +8360,19 @@ function executeDeleteAllDm() {
             if (currentChatType === 'dm') {
                 showChatList();
             }
-            showToast(`✅ Deleted ${data.deleted_count} DM chats`, 'success');
+            showToast(`✅ ${window.I18N.t('chat.deleted_dm_count', { count: data.deleted_count })}`, 'success');
         } else {
-            showToast('❌ Error: ' + (data.error || 'Unknown error'), 'error');
+            showToast(`❌ ${window.I18N.t('common.error_prefix', { reason: data.error || window.I18N.t('errors.unknown_error') })}`, 'error');
             btn.disabled = false;
-            btn.textContent = 'Delete All';
+            btn.textContent = window.I18N.t('modals.delete_all');
             btn.style.background = '';
         }
     })
     .catch(error => {
         console.error('Delete all DM error:', error);
-        showToast('❌ Network error', 'error');
+        showToast(`❌ ${window.I18N.t('errors.network_error')}`, 'error');
         btn.disabled = false;
-        btn.textContent = 'Delete All';
+        btn.textContent = window.I18N.t('modals.delete_all');
         btn.style.background = '';
     });
 }
@@ -10759,11 +10759,11 @@ function deviceStatusClass(mode, identityStatus) {
 }
 
 function deviceConnectionLabel(mode, listenerRunning) {
-    if (mode === 'released') return 'Released';
-    if (mode === 'releasing') return 'Releasing';
-    if (mode === 'reconnecting') return 'Reconnecting';
-    if (mode === 'error') return 'Connection error';
-    return listenerRunning ? 'Connected' : 'Listener stopped';
+    if (mode === 'released') return window.I18N.t('settings.radio_status_released');
+    if (mode === 'releasing') return window.I18N.t('settings.radio_status_releasing');
+    if (mode === 'reconnecting') return window.I18N.t('settings.radio_status_reconnecting');
+    if (mode === 'error') return window.I18N.t('node_manager.connection_error');
+    return listenerRunning ? window.I18N.t('settings.radio_status_connected') : window.I18N.t('node_manager.listener_stopped');
 }
 
 async function loadNodeManagerDashboard(showFeedback = false) {
@@ -10771,13 +10771,13 @@ async function loadNodeManagerDashboard(showFeedback = false) {
     if (!container) return;
 
     if (!container.dataset.loaded) {
-        container.innerHTML = '<div class="device-dashboard-loading">Loading node information...</div>';
+        container.innerHTML = `<div class="device-dashboard-loading">${escapeHtml(window.I18N.t('node_manager.loading'))}</div>`;
     }
 
     try {
         const response = await fetch('/api/node-manager/dashboard', { cache: 'no-store' });
         const data = await response.json();
-        if (!response.ok || !data.ok) throw new Error(data.error || 'Unable to load node information');
+        if (!response.ok || !data.ok) throw new Error(data.error || window.I18N.t('node_manager.unable_to_load'));
 
         const radio = data.radio || {};
         const connection = data.connection || {};
@@ -10809,8 +10809,8 @@ async function loadNodeManagerDashboard(showFeedback = false) {
                         <small>${deviceDashboardValue(itemRadio.hardware)} · ${deviceDashboardValue(itemRadio.node_id)}</small>
                     </span>
                     <span class="node-profile-badges">
-                        ${active ? '<span class="node-profile-badge active">Active</span>' : '<span class="node-profile-badge saved">Saved</span>'}
-                        ${active ? `<span class="node-profile-badge ${connected ? 'connected' : 'offline'}">${connected ? 'Connected' : 'Offline'}</span>` : ''}
+                        ${active ? `<span class="node-profile-badge active">${escapeHtml(window.I18N.t('node_manager.badge_active'))}</span>` : `<span class="node-profile-badge saved">${escapeHtml(window.I18N.t('node_manager.badge_saved'))}</span>`}
+                        ${active ? `<span class="node-profile-badge ${connected ? 'connected' : 'offline'}">${connected ? escapeHtml(window.I18N.t('settings.radio_status_connected')) : escapeHtml(window.I18N.t('node_manager.badge_offline'))}</span>` : ''}
                         <span class="node-profile-badge identity">${deviceDashboardValue(identity)}</span>
                     </span>
                 </button>`;
@@ -10821,15 +10821,15 @@ async function loadNodeManagerDashboard(showFeedback = false) {
             <section class="node-profile-selector-section">
                 <div class="node-manager-section-heading">
                     <div>
-                        <h3>Radios and profiles</h3>
-                        <p>Select the radio profile to inspect or activate.</p>
+                        <h3>${escapeHtml(window.I18N.t('node_manager.radios_and_profiles'))}</h3>
+                        <p>${escapeHtml(window.I18N.t('node_manager.select_profile_hint'))}</p>
                     </div>
                     <div class="node-manager-profile-heading-actions">
                         <span class="node-manager-profile-count">${profiles.length}</span>
                         <button type="button"
                             class="node-manager-detect-radio-btn"
                             onclick="detectAndAddNodeManagerRadio()">
-                            Detect radio
+                            ${escapeHtml(window.I18N.t('node_manager.detect_radio'))}
                         </button>
                     </div>
                 </div>
@@ -10839,11 +10839,11 @@ async function loadNodeManagerDashboard(showFeedback = false) {
             <section class="device-hero-card node-manager-hero-card">
                 <div class="node-manager-avatar-wrap">
                     <img id="nodeManagerAvatar" class="node-manager-avatar" src="${escapeHtml(iconSrc)}" alt="">
-                    <button type="button" class="node-manager-change-image-btn" id="nodeManagerChangeImageBtn">Change image</button>
+                    <button type="button" class="node-manager-change-image-btn" id="nodeManagerChangeImageBtn">${escapeHtml(window.I18N.t('node_manager.change_image'))}</button>
                 </div>
                 <div class="device-hero-main">
-                    <div class="device-card-eyebrow">Selected radio</div>
-                    <h3>${deviceDashboardValue(radio.long_name, 'Meshtastic radio')}</h3>
+                    <div class="device-card-eyebrow">${escapeHtml(window.I18N.t('node_manager.selected_radio'))}</div>
+                    <h3>${deviceDashboardValue(radio.long_name, window.I18N.t('node_manager.meshtastic_radio_fallback'))}</h3>
                     <div class="device-hero-meta">
                         <span>${deviceDashboardValue(radio.short_name)}</span>
                         <span>${deviceDashboardValue(radio.hardware)}</span>
@@ -10852,76 +10852,76 @@ async function loadNodeManagerDashboard(showFeedback = false) {
                 </div>
                 <div class="node-manager-status-stack">
                     <div class="device-status-pill ${statusClass}"><span class="device-status-dot"></span>${escapeHtml(connectionLabel)}</div>
-                    <span class="node-manager-active-label">Active profile</span>
+                    <span class="node-manager-active-label">${escapeHtml(window.I18N.t('node_manager.active_profile'))}</span>
                 </div>
             </section>
 
             <div class="device-dashboard-grid">
                 <section class="device-info-card">
-                    <div class="device-card-title">📡 Radio</div>
+                    <div class="device-card-title">📡 ${escapeHtml(window.I18N.t('node_manager.radio_label'))}</div>
                     <dl class="device-detail-list">
-                        <div><dt>Long name</dt><dd>${deviceDashboardValue(radio.long_name)}</dd></div>
-                        <div><dt>Short name</dt><dd>${deviceDashboardValue(radio.short_name)}</dd></div>
-                        <div><dt>Node ID</dt><dd class="device-monospace copyable-value" title="Click to copy" onclick="copyTextToClipboard('${String(radio.node_id || '').replace(/'/g, "\\'")}', 'Node ID copied')">${deviceDashboardValue(radio.node_id)}</dd></div>
-                        <div><dt>Hardware</dt><dd>${deviceDashboardValue(radio.hardware)}</dd></div>
-                        <div><dt>Role</dt><dd>${deviceDashboardValue(radio.role)}</dd></div>
-                        <div><dt>Identity</dt><dd>${deviceDashboardValue(radio.identity_status)}</dd></div>
-                        <div><dt>Last verified</dt><dd>${formatDeviceDashboardDate(radio.identity_checked_at)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.long_name'))}</dt><dd>${deviceDashboardValue(radio.long_name)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.short_name'))}</dt><dd>${deviceDashboardValue(radio.short_name)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('chat.node_id_label'))}</dt><dd class="device-monospace copyable-value" title="${escapeHtml(window.I18N.t('node_manager.click_to_copy'))}" onclick="copyTextToClipboard('${String(radio.node_id || '').replace(/'/g, "\\'")}', '${escapeHtml(window.I18N.t('node_manager.node_id_copied'))}')">${deviceDashboardValue(radio.node_id)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.hardware'))}</dt><dd>${deviceDashboardValue(radio.hardware)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.role'))}</dt><dd>${deviceDashboardValue(radio.role)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.identity'))}</dt><dd>${deviceDashboardValue(radio.identity_status)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.last_verified'))}</dt><dd>${formatDeviceDashboardDate(radio.identity_checked_at)}</dd></div>
                     </dl>
                 </section>
 
                 <section class="device-info-card">
-                    <div class="device-card-title">🔌 Connection</div>
+                    <div class="device-card-title">🔌 ${escapeHtml(window.I18N.t('node_manager.connection_label'))}</div>
                     <dl class="device-detail-list">
-                        <div><dt>USB port</dt><dd class="device-monospace">${deviceDashboardValue(radio.port)}</dd></div>
-                        <div><dt>Status</dt><dd>${escapeHtml(connectionLabel)}</dd></div>
-                        <div><dt>Listener</dt><dd>${connection.listener_running ? 'Running' : 'Stopped'}</dd></div>
-                        <div><dt>Listener PID</dt><dd>${deviceDashboardValue(connection.listener_pid)}</dd></div>
-                        <div><dt>Connected since</dt><dd>${formatDeviceDashboardDate(connection.connected_since)}</dd></div>
-                        <div><dt>Message</dt><dd>${deviceDashboardValue(connection.message)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.usb_port'))}</dt><dd class="device-monospace">${deviceDashboardValue(radio.port)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('waypoints.status'))}</dt><dd>${escapeHtml(connectionLabel)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.listener_label'))}</dt><dd>${connection.listener_running ? escapeHtml(window.I18N.t('node_manager.running')) : escapeHtml(window.I18N.t('node_manager.stopped'))}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.listener_pid'))}</dt><dd>${deviceDashboardValue(connection.listener_pid)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.connected_since'))}</dt><dd>${formatDeviceDashboardDate(connection.connected_since)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.message_label'))}</dt><dd>${deviceDashboardValue(connection.message)}</dd></div>
                     </dl>
                     <div class="device-action-row">
                         <button type="button" class="device-action-btn device-action-secondary"
                             onclick="releaseRadioConnection(); setTimeout(() => loadNodeManagerDashboard(), 1200);"
-                            ${canRelease ? '' : 'disabled'}>Release Radio</button>
+                            ${canRelease ? '' : 'disabled'}>${escapeHtml(window.I18N.t('settings.release_radio'))}</button>
                         <button type="button" class="device-action-btn device-action-primary"
                             onclick="reconnectRadioConnection(); setTimeout(() => loadNodeManagerDashboard(), 1800);"
-                            ${canReconnect ? '' : 'disabled'}>Reconnect</button>
+                            ${canReconnect ? '' : 'disabled'}>${escapeHtml(window.I18N.t('node_manager.reconnect'))}</button>
                     </div>
                 </section>
 
                 <section class="device-info-card">
-                    <div class="device-card-title">🗂 Profile</div>
+                    <div class="device-card-title">🗂 ${escapeHtml(window.I18N.t('node_manager.profile_label'))}</div>
                     <dl class="device-detail-list">
-                        <div><dt>Profile ID</dt><dd class="device-monospace">${deviceDashboardValue(profile.profile_id)}</dd></div>
-                        <div><dt>Created</dt><dd>${formatDeviceDashboardDate(profile.created_at)}</dd></div>
-                        <div><dt>Last used</dt><dd>${formatDeviceDashboardDate(profile.last_used_at)}</dd></div>
-                        <div><dt>Messages</dt><dd>${deviceDashboardValue(counts.messages, '0')}</dd></div>
-                        <div><dt>Chats</dt><dd>${deviceDashboardValue(counts.chats, '0')}</dd></div>
-                        <div><dt>Nodes</dt><dd>${deviceDashboardValue(counts.nodes, '0')}</dd></div>
-                        <div><dt>Waypoints</dt><dd>${deviceDashboardValue(counts.waypoints, '0')}</dd></div>
-                        <div><dt>Telemetry records</dt><dd>${deviceDashboardValue(counts.telemetry_records, '0')}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.profile_id'))}</dt><dd class="device-monospace">${deviceDashboardValue(profile.profile_id)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.created'))}</dt><dd>${formatDeviceDashboardDate(profile.created_at)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.last_used'))}</dt><dd>${formatDeviceDashboardDate(profile.last_used_at)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('nodes.messages'))}</dt><dd>${deviceDashboardValue(counts.messages, '0')}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('nav.chats'))}</dt><dd>${deviceDashboardValue(counts.chats, '0')}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('nodes.sidebar_tab'))}</dt><dd>${deviceDashboardValue(counts.nodes, '0')}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('waypoints.title'))}</dt><dd>${deviceDashboardValue(counts.waypoints, '0')}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.telemetry_records'))}</dt><dd>${deviceDashboardValue(counts.telemetry_records, '0')}</dd></div>
                     </dl>
                 </section>
 
                 <section class="device-info-card">
-                    <div class="device-card-title">💾 Profile storage</div>
+                    <div class="device-card-title">💾 ${escapeHtml(window.I18N.t('node_manager.profile_storage'))}</div>
                     <dl class="device-detail-list">
-                        <div><dt>Total</dt><dd>${deviceDashboardValue(storage.total)}</dd></div>
-                        <div><dt>Messages</dt><dd>${deviceDashboardValue(storage.messages)}</dd></div>
-                        <div><dt>Telemetry</dt><dd>${deviceDashboardValue(storage.telemetry)}</dd></div>
-                        <div><dt>Waypoints</dt><dd>${deviceDashboardValue(storage.waypoints)}</dd></div>
-                        <div><dt>Node icons</dt><dd>${deviceDashboardValue(storage.icons)}</dd></div>
-                        <div><dt>Path</dt><dd class="device-path-value copyable-value" title="${deviceDashboardValue(profile.path)}">${deviceDashboardValue(profile.path)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.total'))}</dt><dd>${deviceDashboardValue(storage.total)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('nodes.messages'))}</dt><dd>${deviceDashboardValue(storage.messages)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('nodes.telemetry_short'))}</dt><dd>${deviceDashboardValue(storage.telemetry)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('waypoints.title'))}</dt><dd>${deviceDashboardValue(storage.waypoints)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.node_icons'))}</dt><dd>${deviceDashboardValue(storage.icons)}</dd></div>
+                        <div><dt>${escapeHtml(window.I18N.t('node_manager.path'))}</dt><dd class="device-path-value copyable-value" title="${deviceDashboardValue(profile.path)}">${deviceDashboardValue(profile.path)}</dd></div>
                     </dl>
                 </section>
             </div>`;
 
-        if (showFeedback) showToast('Node information refreshed', 'success');
+        if (showFeedback) showToast(window.I18N.t('node_manager.info_refreshed'), 'success');
     } catch (error) {
         console.error('[NODE MANAGER] Dashboard load failed:', error);
-        container.innerHTML = `<div class="device-dashboard-error"><strong>Unable to load node information</strong><span>${escapeHtml(error.message || String(error))}</span><button type="button" class="mc-refresh-btn" onclick="loadNodeManagerDashboard(true)">Try again</button></div>`;
-        if (showFeedback) showToast('Node information could not be loaded', 'error');
+        container.innerHTML = `<div class="device-dashboard-error"><strong>${escapeHtml(window.I18N.t('node_manager.unable_to_load'))}</strong><span>${escapeHtml(error.message || String(error))}</span><button type="button" class="mc-refresh-btn" onclick="loadNodeManagerDashboard(true)">${escapeHtml(window.I18N.t('node_manager.try_again'))}</button></div>`;
+        if (showFeedback) showToast(window.I18N.t('node_manager.info_load_failed'), 'error');
     }
 }
 
@@ -10953,15 +10953,10 @@ async function waitForNodeManagerProfile(profileId, timeoutMs = 60000) {
 
 
 async function detectAndAddNodeManagerRadio() {
-    const confirmed = window.confirm(
-        'Detect the currently connected Meshtastic radio?\n\n' +
-        'MeshCenter will stop the listener and release the USB connection. ' +
-        'Connect the replacement radio before continuing.\n\n' +
-        'No existing profile data will be deleted or merged.'
-    );
+    const confirmed = window.confirm(window.I18N.t('node_manager.detect_radio_confirm'));
     if (!confirmed) return;
 
-    showToast('Releasing listener and scanning serial ports...', 'info');
+    showToast(window.I18N.t('node_manager.releasing_and_scanning'), 'info');
 
     try {
         const response = await fetch('/api/node-manager/radio/detect', {
@@ -10974,17 +10969,17 @@ async function detectAndAddNodeManagerRadio() {
         if (!response.ok || !data.ok) {
             const attempts = Array.isArray(data.attempts)
                 ? data.attempts.map(item =>
-                    `${item.port}: ${item.error || item.status || 'no response'}`
+                    `${item.port}: ${item.error || item.status || window.I18N.t('node_manager.no_response')}`
                 ).join('\n')
                 : '';
             throw new Error(
-                (data.error || `Radio detection failed (HTTP ${response.status})`) +
-                (attempts ? `\n\nProbe results:\n${attempts}` : '')
+                (data.error || window.I18N.t('node_manager.radio_detection_failed_http', { status: response.status })) +
+                (attempts ? `\n\n${window.I18N.t('node_manager.probe_results')}:\n${attempts}` : '')
             );
         }
 
         const radio = data.detected || {};
-        const label = radio.long_name || radio.node_id || 'Meshtastic radio';
+        const label = radio.long_name || radio.node_id || window.I18N.t('node_manager.meshtastic_radio_fallback');
         const details = [
             radio.short_name,
             radio.hardware,
@@ -10993,24 +10988,27 @@ async function detectAndAddNodeManagerRadio() {
         ].filter(Boolean).join(' · ');
 
         const action = data.profile_exists
-            ? 'use its saved profile'
-            : 'create a new clean profile';
+            ? window.I18N.t('node_manager.use_saved_profile')
+            : window.I18N.t('node_manager.create_clean_profile');
 
         const accept = window.confirm(
-            `${data.profile_exists ? 'Known' : 'New'} radio detected:\n\n` +
-            `${label}\n${details}\n\n` +
-            `Do you want to ${action} and restart MeshCenter?`
+            window.I18N.t('node_manager.radio_detected_confirm', {
+                knownOrNew: data.profile_exists ? window.I18N.t('node_manager.known') : window.I18N.t('node_manager.new'),
+                label,
+                details,
+                action
+            })
         );
         if (!accept) {
-            showToast('Radio detected. Listener remains released.', 'info');
+            showToast(window.I18N.t('node_manager.radio_detected_released'), 'info');
             await loadNodeManagerDashboard();
             return;
         }
 
         showToast(
             data.profile_exists
-                ? `Selecting profile for ${label}...`
-                : `Creating a clean profile for ${label}...`,
+                ? window.I18N.t('node_manager.selecting_profile_for', { label })
+                : window.I18N.t('node_manager.creating_clean_profile_for', { label }),
             'info'
         );
 
@@ -11027,19 +11025,19 @@ async function detectAndAddNodeManagerRadio() {
         if (!acceptResponse.ok || !accepted.ok) {
             throw new Error(
                 accepted.error ||
-                `Radio profile creation failed (HTTP ${acceptResponse.status})`
+                window.I18N.t('node_manager.profile_creation_failed_http', { status: acceptResponse.status })
             );
         }
 
         showToast(
-            accepted.message || 'Radio accepted. MeshCenter is restarting...',
+            accepted.message || window.I18N.t('node_manager.radio_accepted_restarting'),
             'success'
         );
         waitForNodeManagerProfile(accepted.profile_id);
     } catch (error) {
         console.error('[NODE MANAGER] Radio detection failed:', error);
         window.alert(error.message || String(error));
-        showToast('Radio was not added', 'error');
+        showToast(window.I18N.t('node_manager.radio_not_added'), 'error');
         await loadNodeManagerDashboard();
     }
 }
@@ -11054,20 +11052,14 @@ async function activateNodeManagerProfile(profileId) {
     const radioName = card?.querySelector('.node-profile-main strong')?.textContent?.trim()
         || cleanProfileId;
 
-    const confirmed = window.confirm(
-        `Switch MeshCenter to "${radioName}"?\n\n` +
-        `Connect that Meshtastic radio to the configured USB port. ` +
-        `MeshCenter will release the current radio, verify the connected node, ` +
-        `activate its saved profile and restart the service.\n\n` +
-        `No profile data will be deleted or merged.`
-    );
+    const confirmed = window.confirm(window.I18N.t('node_manager.switch_profile_confirm', { name: radioName }));
     if (!confirmed) return;
 
     document.querySelectorAll('.node-profile-card').forEach(button => {
         button.disabled = true;
     });
     card?.classList.add('is-switching');
-    showToast(`Checking connected radio for ${radioName}...`, 'info');
+    showToast(window.I18N.t('node_manager.checking_connected_radio_for', { name: radioName }), 'info');
 
     try {
         const response = await fetch(
@@ -11081,22 +11073,22 @@ async function activateNodeManagerProfile(profileId) {
         const data = await response.json().catch(() => ({}));
 
         if (!response.ok || !data.ok) {
-            throw new Error(data.error || `Profile activation failed (HTTP ${response.status})`);
+            throw new Error(data.error || window.I18N.t('node_manager.profile_activation_failed_http', { status: response.status }));
         }
 
         if (data.already_active) {
-            showToast(data.message || 'This profile is already active', 'info');
+            showToast(data.message || window.I18N.t('node_manager.profile_already_active'), 'info');
             await loadNodeManagerDashboard();
             return;
         }
 
-        showToast(data.message || 'Profile activated. MeshCenter is restarting...', 'success');
+        showToast(data.message || window.I18N.t('node_manager.profile_activated_restarting'), 'success');
 
         waitForNodeManagerProfile(cleanProfileId, 60000);
     } catch (error) {
         console.error('[NODE MANAGER] Profile activation failed:', error);
         window.alert(error.message || String(error));
-        showToast('Radio profile was not changed', 'error');
+        showToast(window.I18N.t('node_manager.radio_profile_not_changed'), 'error');
         await loadNodeManagerDashboard();
     } finally {
         card?.classList.remove('is-switching');
@@ -11106,7 +11098,7 @@ async function activateNodeManagerProfile(profileId) {
     }
 }
 
-async function copyTextToClipboard(text, successMessage = 'Copied') {
+async function copyTextToClipboard(text, successMessage = window.I18N.t('node_manager.copied')) {
     if (!text) return;
     try {
         if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
@@ -11122,7 +11114,7 @@ async function copyTextToClipboard(text, successMessage = 'Copied') {
         }
         showToast(successMessage, 'success');
     } catch (error) {
-        showToast('Copy failed', 'error');
+        showToast(window.I18N.t('node_manager.copy_failed'), 'error');
     }
 }
 
@@ -11140,13 +11132,13 @@ function handleNodeManagerHeaderKey(event) {
 }
 
 function peripheralStatusLabel(device) {
-    if (!device.assigned) return 'Not assigned';
-    if (!device.enabled) return 'Disabled';
-    if (device.status === 'active') return 'Active';
-    if (device.status === 'available') return 'Available';
-    if (device.status === 'data') return 'Connected';
-    if (device.status === 'no_data') return 'No data';
-    return 'Unavailable';
+    if (!device.assigned) return window.I18N.t('devices.not_assigned');
+    if (!device.enabled) return window.I18N.t('devices.disabled');
+    if (device.status === 'active') return window.I18N.t('waypoints.active');
+    if (device.status === 'available') return window.I18N.t('devices.available');
+    if (device.status === 'data') return window.I18N.t('settings.radio_status_connected');
+    if (device.status === 'no_data') return window.I18N.t('devices.no_data');
+    return window.I18N.t('devices.unavailable');
 }
 
 function peripheralStatusClass(device) {
@@ -11166,13 +11158,13 @@ async function loadPeripheralDevices(showFeedback = false) {
     const container = document.getElementById('devicesDashboard');
     if (!container) return;
     if (!container.dataset.loaded) {
-        container.innerHTML = '<div class="device-dashboard-loading">Loading peripheral devices...</div>';
+        container.innerHTML = `<div class="device-dashboard-loading">${escapeHtml(window.I18N.t('devices.loading'))}</div>`;
     }
 
     try {
         const response = await fetch('/api/devices', { cache: 'no-store' });
         const data = await response.json();
-        if (!response.ok || !data.ok) throw new Error(data.error || 'Unable to load peripheral devices');
+        if (!response.ok || !data.ok) throw new Error(data.error || window.I18N.t('devices.unable_to_load'));
         const devices = Array.isArray(data.devices) ? data.devices : [];
 
         const cards = devices.map(device => {
@@ -11181,28 +11173,28 @@ async function loadPeripheralDevices(showFeedback = false) {
             let action = '';
             if (device.id === 'camera') {
                 details = `
-                    <div><dt>Source</dt><dd>${deviceDashboardValue(device.source)}</dd></div>
-                    <div><dt>Model</dt><dd>${deviceDashboardValue(device.model)}</dd></div>
-                    <div><dt>Assigned</dt><dd>${device.assigned ? 'Yes' : 'No'}</dd></div>`;
-                action = `<button type="button" class="device-action-btn device-action-primary" onclick="switchMainTab('video')">Open Camera</button>`;
+                    <div><dt>${escapeHtml(window.I18N.t('devices.source'))}</dt><dd>${deviceDashboardValue(device.source)}</dd></div>
+                    <div><dt>${escapeHtml(window.I18N.t('devices.model'))}</dt><dd>${deviceDashboardValue(device.model)}</dd></div>
+                    <div><dt>${escapeHtml(window.I18N.t('devices.assigned'))}</dt><dd>${device.assigned ? escapeHtml(window.I18N.t('common.yes')) : escapeHtml(window.I18N.t('common.no'))}</dd></div>`;
+                action = `<button type="button" class="device-action-btn device-action-primary" onclick="switchMainTab('video')">${escapeHtml(window.I18N.t('devices.open_camera'))}</button>`;
             } else if (device.id === 'environment') {
                 details = `
-                    <div><dt>Driver</dt><dd>${deviceDashboardValue(device.driver)}</dd></div>
-                    <div><dt>Temperature</dt><dd>${formatPeripheralMetric(values.temperature, '°')}</dd></div>
-                    <div><dt>Humidity</dt><dd>${formatPeripheralMetric(values.humidity, '%')}</dd></div>
-                    <div><dt>Pressure</dt><dd>${formatPeripheralMetric(values.pressure, ' hPa')}</dd></div>`;
+                    <div><dt>${escapeHtml(window.I18N.t('devices.driver'))}</dt><dd>${deviceDashboardValue(device.driver)}</dd></div>
+                    <div><dt>${escapeHtml(window.I18N.t('node_panel.temperature'))}</dt><dd>${formatPeripheralMetric(values.temperature, '°')}</dd></div>
+                    <div><dt>${escapeHtml(window.I18N.t('node_panel.humidity'))}</dt><dd>${formatPeripheralMetric(values.humidity, '%')}</dd></div>
+                    <div><dt>${escapeHtml(window.I18N.t('node_panel.pressure'))}</dt><dd>${formatPeripheralMetric(values.pressure, ' hPa')}</dd></div>`;
             } else if (device.id === 'power') {
                 details = `
-                    <div><dt>Driver</dt><dd>${deviceDashboardValue(device.driver)}</dd></div>
-                    <div><dt>Voltage</dt><dd>${formatPeripheralMetric(values.voltage, ' V')}</dd></div>
-                    <div><dt>Current</dt><dd>${formatPeripheralMetric(values.current, ' mA')}</dd></div>
-                    <div><dt>Power</dt><dd>${formatPeripheralMetric(values.power, ' mW')}</dd></div>`;
+                    <div><dt>${escapeHtml(window.I18N.t('devices.driver'))}</dt><dd>${deviceDashboardValue(device.driver)}</dd></div>
+                    <div><dt>${escapeHtml(window.I18N.t('node_panel.voltage'))}</dt><dd>${formatPeripheralMetric(values.voltage, ' V')}</dd></div>
+                    <div><dt>${escapeHtml(window.I18N.t('node_panel.current'))}</dt><dd>${formatPeripheralMetric(values.current, ' mA')}</dd></div>
+                    <div><dt>${escapeHtml(window.I18N.t('node_panel.power'))}</dt><dd>${formatPeripheralMetric(values.power, ' mW')}</dd></div>`;
             }
             return `
                 <section class="peripheral-card">
                     <div class="peripheral-card-header">
                         <div>
-                            <div class="device-card-eyebrow">Active profile ${deviceDashboardValue(data.profile_id)}</div>
+                            <div class="device-card-eyebrow">${escapeHtml(window.I18N.t('devices.active_profile', { id: deviceDashboardValue(data.profile_id) }))}</div>
                             <h3>${deviceDashboardValue(device.name)}</h3>
                         </div>
                         <div class="device-status-pill ${peripheralStatusClass(device)}">
@@ -11219,14 +11211,14 @@ async function loadPeripheralDevices(showFeedback = false) {
             <div class="peripheral-grid">${cards}</div>
             <section class="peripheral-card peripheral-add-card" aria-disabled="true">
                 <div class="peripheral-add-icon">＋</div>
-                <h3>Add device</h3>
-                <p>Support for additional modules and actuators is planned.</p>
+                <h3>${escapeHtml(window.I18N.t('devices.add_device'))}</h3>
+                <p>${escapeHtml(window.I18N.t('devices.add_device_planned'))}</p>
             </section>`;
-        if (showFeedback) showToast('Device information refreshed', 'success');
+        if (showFeedback) showToast(window.I18N.t('devices.info_refreshed'), 'success');
     } catch (error) {
         console.error('[DEVICES] Peripheral load failed:', error);
-        container.innerHTML = `<div class="device-dashboard-error"><strong>Unable to load devices</strong><span>${escapeHtml(error.message || String(error))}</span><button type="button" class="mc-refresh-btn" onclick="loadPeripheralDevices(true)">Try again</button></div>`;
-        if (showFeedback) showToast('Device information could not be loaded', 'error');
+        container.innerHTML = `<div class="device-dashboard-error"><strong>${escapeHtml(window.I18N.t('devices.unable_to_load'))}</strong><span>${escapeHtml(error.message || String(error))}</span><button type="button" class="mc-refresh-btn" onclick="loadPeripheralDevices(true)">${escapeHtml(window.I18N.t('node_manager.try_again'))}</button></div>`;
+        if (showFeedback) showToast(window.I18N.t('devices.info_load_failed'), 'error');
     }
 }
 
@@ -11674,12 +11666,12 @@ async function loadSystemNetwork() {
 
         const internetEl = document.getElementById('systemInternet');
         if (internetEl) {
-            internetEl.textContent = data.internet ? '🟢 Connected' : '🔴 Radio Offline';
+            internetEl.textContent = data.internet ? `🟢 ${window.I18N.t('settings.radio_status_connected')}` : `🔴 ${window.I18N.t('nodes.status_radio_offline')}`;
         }
 
     } catch (error) {
         console.error('System network load error:', error);
-        showToast('❌ Failed to load system network info', 'error');
+        showToast(`❌ ${window.I18N.t('system.failed_to_load_network_info')}`, 'error');
     }
 }
 
@@ -11700,7 +11692,7 @@ async function loadWifiNetworks() {
 
     const list = document.getElementById("wifiNetworksList");
 
-    list.innerHTML = "Scanning...";
+    list.innerHTML = window.I18N.t('system.scanning_ellipsis');
 
     try {
 
@@ -11709,12 +11701,12 @@ async function loadWifiNetworks() {
         const data = await response.json();
 
         if (!data.ok) {
-            list.innerHTML = "Scan failed";
+            list.innerHTML = escapeHtml(window.I18N.t('system.scan_failed'));
             return;
         }
 
         if (data.networks.length === 0) {
-            list.innerHTML = "No networks found";
+            list.innerHTML = escapeHtml(window.I18N.t('system.no_networks_found'));
             return;
         }
 
@@ -11727,12 +11719,12 @@ async function loadWifiNetworks() {
             div.className = "wifi-network-item";
 
         const actionHtml = net.connected
-            ? '<span class="wifi-connected">Connected</span>'
+            ? `<span class="wifi-connected">${escapeHtml(window.I18N.t('settings.radio_status_connected'))}</span>`
             : `
                 <div class="wifi-actions">
-                    ${net.saved ? `<button class="wifi-forget-btn" data-ssid="${escapeHtml(net.ssid)}">Forget</button>` : ''}
+                    ${net.saved ? `<button class="wifi-forget-btn" data-ssid="${escapeHtml(net.ssid)}">${escapeHtml(window.I18N.t('system.forget'))}</button>` : ''}
                     <button class="wifi-connect-btn" data-ssid="${escapeHtml(net.ssid)}" data-saved="${net.saved ? '1' : '0'}">
-                        Connect
+                        ${escapeHtml(window.I18N.t('system.connect'))}
                     </button>
                 </div>
             `;
@@ -11740,13 +11732,13 @@ async function loadWifiNetworks() {
         div.innerHTML = `
             <div class="wifi-name">
                 ${net.connected ? "🟢" : "⚪"} ${net.ssid}
-                ${net.saved && !net.connected ? '<span class="wifi-saved-badge">Saved</span>' : ''}
+                ${net.saved && !net.connected ? `<span class="wifi-saved-badge">${escapeHtml(window.I18N.t('node_manager.badge_saved'))}</span>` : ''}
             </div>
 
             <div class="wifi-info">
                 <span>${net.signal ?? '--'}%</span>
                 <span>${net.signal_dbm ?? '--'} dBm</span>
-                <span>${net.security || 'Open'}</span>
+                <span>${net.security || window.I18N.t('system.open_security')}</span>
                 ${actionHtml}
             </div>
         `;
@@ -11778,7 +11770,7 @@ async function loadWifiNetworks() {
 
         console.error(e);
 
-        list.innerHTML="Scan error";
+        list.innerHTML=escapeHtml(window.I18N.t('system.scan_error'));
 
     }
 
@@ -11786,7 +11778,7 @@ async function loadWifiNetworks() {
 
 async function connectWifi(ssid, password) {
     try {
-        showToast(`📶 Connecting to ${ssid}...`, 'success');
+        showToast(`📶 ${window.I18N.t('system.connecting_to', { ssid })}`, 'success');
 
         const response = await fetch('/api/system/wifi/connect', {
             method: 'POST',
@@ -11797,24 +11789,24 @@ async function connectWifi(ssid, password) {
         const data = await response.json();
 
         if (response.ok && data.ok) {
-            showToast(`✅ Connected to ${ssid}`, 'success');
+            showToast(`✅ ${window.I18N.t('system.connected_to', { ssid })}`, 'success');
 
             setTimeout(() => {
                 loadSystemNetwork();
                 loadWifiNetworks();
             }, 2500);
         } else {
-            showToast('❌ Wi-Fi connect failed: ' + (data.error || 'Unknown error'), 'error');
+            showToast(`❌ ${window.I18N.t('system.wifi_connect_failed', { reason: data.error || window.I18N.t('errors.unknown_error') })}`, 'error');
         }
 
     } catch (error) {
         console.error('Wi-Fi connect error:', error);
-        showToast('❌ Wi-Fi connect network error', 'error');
+        showToast(`❌ ${window.I18N.t('system.wifi_connect_network_error')}`, 'error');
     }
 }
 
 async function forgetWifi(ssid) {
-    if (!confirm(`Forget Wi-Fi network "${ssid}"?`)) return;
+    if (!confirm(window.I18N.t('system.forget_wifi_confirm', { ssid }))) return;
 
     try {
         const response = await fetch('/api/system/wifi/forget', {
@@ -11826,15 +11818,15 @@ async function forgetWifi(ssid) {
         const data = await response.json();
 
         if (response.ok && data.ok) {
-            showToast(`🗑️ Forgotten: ${ssid}`, 'success');
+            showToast(`🗑️ ${window.I18N.t('system.forgotten', { ssid })}`, 'success');
             loadWifiNetworks();
         } else {
-            showToast('❌ Forget failed: ' + (data.error || 'Unknown error'), 'error');
+            showToast(`❌ ${window.I18N.t('system.forget_failed', { reason: data.error || window.I18N.t('errors.unknown_error') })}`, 'error');
         }
 
     } catch (error) {
         console.error('Wi-Fi forget error:', error);
-        showToast('❌ Wi-Fi forget network error', 'error');
+        showToast(`❌ ${window.I18N.t('system.wifi_forget_network_error')}`, 'error');
     }
 }
 
@@ -11876,7 +11868,7 @@ async function init() {
     await loadSettings();
     
     const statusEl = document.getElementById('statusText');
-    if (statusEl) statusEl.innerHTML = '⏳ Loading...';
+    if (statusEl) statusEl.innerHTML = `⏳ ${escapeHtml(window.I18N.t('common.loading'))}`;
     
     try {
         // Загружаем настройки из localStorage
@@ -12000,7 +11992,7 @@ async function connectSelectedWifi() {
     const password = document.getElementById('wifiConnectPassword')?.value || '';
 
     if (!selectedWifiSsid) {
-        showToast('❌ No Wi-Fi selected', 'error');
+        showToast(`❌ ${window.I18N.t('system.no_wifi_selected')}`, 'error');
         return;
     }
 
@@ -12314,7 +12306,7 @@ function startCpuMonitoringUi() {
 
 function formatIdentityRadio(radio) {
     if (!radio || typeof radio !== 'object') return '--';
-    const name = radio.long_name || radio.short_name || 'Unknown';
+    const name = radio.long_name || radio.short_name || window.I18N.t('nodes.unknown_node');
     const nodeId = radio.node_id || '';
     return nodeId ? `${name} (${nodeId})` : name;
 }
@@ -12330,7 +12322,7 @@ async function loadInstanceInfo() {
     try {
         const response = await fetch('/api/instance', { cache: 'no-store' });
         const data = await response.json();
-        if (!response.ok || data.ok === false) throw new Error(data.error || 'Identity request failed');
+        if (!response.ok || data.ok === false) throw new Error(data.error || window.I18N.t('system.identity_request_failed'));
 
         const setText = (id, value) => {
             const element = document.getElementById(id);
@@ -12344,11 +12336,11 @@ async function loadInstanceInfo() {
 
         const status = String(data.status || 'NOT_CHECKED').toUpperCase();
         const labels = {
-            MATCH: 'Verified',
-            MISMATCH: 'Different radio detected',
-            NOT_FOUND: 'Radio identity not found',
-            DETECTION_ERROR: 'Detection error',
-            NOT_CHECKED: 'Not checked',
+            MATCH: window.I18N.t('system.identity_verified'),
+            MISMATCH: window.I18N.t('system.identity_mismatch'),
+            NOT_FOUND: window.I18N.t('system.identity_not_found'),
+            DETECTION_ERROR: window.I18N.t('system.identity_detection_error'),
+            NOT_CHECKED: window.I18N.t('system.identity_not_checked'),
         };
         const statusElement = document.getElementById('instanceIdentityStatus');
         if (statusElement) {
@@ -12365,7 +12357,7 @@ async function loadInstanceInfo() {
         console.error('Instance identity load error:', error);
         const statusElement = document.getElementById('instanceIdentityStatus');
         if (statusElement) {
-            statusElement.textContent = 'Unavailable';
+            statusElement.textContent = window.I18N.t('devices.unavailable');
             statusElement.className = 'identity-status identity-detection-error';
         }
     }
@@ -12663,19 +12655,19 @@ async function loadRadioHealth() {
 async function runSystemAction(action, button) {
     const config = {
         restart_meshcenter: {
-            confirm: 'Restart MeshCenter service?\n\nThe web interface will be unavailable for a few seconds.',
-            pending: 'Restarting MeshCenter...',
-            success: 'MeshCenter restart requested.'
+            confirm: window.I18N.t('system.restart_meshcenter_confirm'),
+            pending: window.I18N.t('system.restarting_meshcenter'),
+            success: window.I18N.t('system.meshcenter_restart_requested')
         },
         reboot: {
-            confirm: 'Restart Raspberry Pi?\n\nMeshCenter and the radio connection will be temporarily unavailable.',
-            pending: 'Restarting Raspberry Pi...',
-            success: 'Raspberry Pi restart requested.'
+            confirm: window.I18N.t('system.reboot_pi_confirm'),
+            pending: window.I18N.t('system.restarting_pi'),
+            success: window.I18N.t('system.pi_restart_requested')
         },
         shutdown: {
-            confirm: 'Shut down Raspberry Pi?\n\nThe device must be powered on manually afterwards.',
-            pending: 'Shutting down Raspberry Pi...',
-            success: 'Raspberry Pi shutdown requested.'
+            confirm: window.I18N.t('system.shutdown_pi_confirm'),
+            pending: window.I18N.t('system.shutting_down_pi'),
+            success: window.I18N.t('system.pi_shutdown_requested')
         }
     };
 

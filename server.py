@@ -3880,10 +3880,30 @@ register_settings_routes(
 
 @app.route("/")
 def index():
+    ui_language = resolve_ui_language()
+
+    # weather_service.set_language() only otherwise runs at startup and on
+    # settings save (see resolve_weather_language()) - neither has a browser
+    # to resolve "auto" against, so it fell back to the static config.py
+    # default (English) and stuck there. Every page load does have a
+    # browser, so when the stored preference is "auto", sync the shared
+    # weather cache to whatever resolve_ui_language() just resolved for
+    # this request.
+    with state_lock:
+        language_setting = normalize_settings(settings).get("language", "auto")
+    if language_setting == "auto":
+        resolved_weather_language = resolve_weather_language(ui_language)
+        # set_language() unconditionally invalidates the shared weather
+        # cache, so only call it when the resolved language actually
+        # changed - otherwise every page load would defeat
+        # WEATHER_CACHE_SECONDS and re-hit the OpenWeather API for nothing.
+        if resolved_weather_language != weather_service.config.language:
+            weather_service.set_language(resolved_weather_language)
+
     return render_template(
         "index.html",
         app_version=APP_VERSION,
-        ui_language=resolve_ui_language(),
+        ui_language=ui_language,
     )
 
 @app.route("/api/sensors")

@@ -2850,11 +2850,11 @@ body {
 }
 
 .settings-card--general   { grid-area: 1 / 1 / 2 / 2; }
-.settings-card--units     { grid-area: 2 / 1 / 3 / 2; }
-.settings-card--map       { grid-area: 3 / 1 / 4 / 2; }
-.settings-card--telemetry { grid-area: 1 / 2 / 4 / 3; }
-.settings-card--radio     { grid-area: 1 / 3 / 4 / 4; }
-.settings-card--reference { grid-area: 4 / 1 / 5 / 4; }
+.settings-card--telemetry { grid-area: 2 / 1 / 3 / 2; }
+.settings-card--units     { grid-area: 1 / 2 / 2 / 3; }
+.settings-card--radio     { grid-area: 2 / 2 / 3 / 3; }
+.settings-card--map       { grid-area: 1 / 3 / 2 / 4; }
+.settings-card--reference { grid-area: 2 / 3 / 3 / 4; }
 
 .settings-card {
     background: var(--mc-card-bg);

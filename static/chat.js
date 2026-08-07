@@ -2066,7 +2066,7 @@ async function loadChatList() {
 
         if (!currentChatId) {
             const chatTitle = document.getElementById('chatTitle');
-            if (chatTitle) chatTitle.textContent = totalUnreadCount > 0 ? `💬 Chats (${totalUnreadCount})` : '💬 Chats';
+            if (chatTitle) chatTitle.textContent = totalUnreadCount > 0 ? `💬 ${window.I18N.t('nav.chats')} (${totalUnreadCount})` : `💬 ${window.I18N.t('nav.chats')}`;
             const subtitleEl = document.getElementById('chatSubtitle');
             if (subtitleEl) subtitleEl.textContent = '';
         }
@@ -2187,22 +2187,22 @@ async function loadMessages() {
         const statusEl = document.getElementById('statusText');
         const nodeCountEl = document.getElementById('nodeCount');
 
-        if (statusEl && statusEl.innerHTML !== '🔴 Error loading - refresh page') {
-            statusEl.innerHTML = '🟢 Mesh online';
+        if (statusEl && statusEl.innerHTML !== `🔴 ${window.I18N.t('nodes.error_loading_refresh')}`) {
+            statusEl.innerHTML = `🟢 ${window.I18N.t('notifications.mesh_online')}`;
         }
-        
+
         const allNodes = nodeCache;
         const ignoredNodes = allNodes.filter(n => n.ignored);
         const favoriteNodes = allNodes.filter(n => n.favorite);
-        
+
         const ignoredCountEl = document.getElementById('ignoredCount');
         if (ignoredCountEl) {
-            ignoredCountEl.textContent = ignoredNodes.length + ' ignored';
+            ignoredCountEl.textContent = window.I18N.t('nodes.ignored_count', { count: ignoredNodes.length });
         }
-        
+
         const favoritesCountEl = document.getElementById('favoritesCount');
         if (favoritesCountEl) {
-            favoritesCountEl.textContent = favoriteNodes.length + ' favorites';
+            favoritesCountEl.textContent = window.I18N.t('nodes.favorites_count', { count: favoriteNodes.length });
         }
         
         let displayNodes = [];
@@ -2219,7 +2219,7 @@ async function loadMessages() {
         
         if (nodeCountEl) {
             const totalDisplay = displayNodes.length;
-            nodeCountEl.innerHTML = '🖥️ Nodes [' + totalDisplay + ']';
+            nodeCountEl.innerHTML = '🖥️ ' + escapeHtml(window.I18N.t('nodes.nodes_count', { count: totalDisplay }));
         }
 
         const nodesList = document.getElementById('nodesList');
@@ -2234,15 +2234,15 @@ async function loadMessages() {
         }
 
         if (filteredNodes.length === 0) {
-            let message = '🔍 No nodes found';
+            let message = `🔍 ${window.I18N.t('nodes.no_nodes_found')}`;
             if (showFavorites && showIgnored) {
-                message = '⚑ No favorite ignored nodes found';
+                message = `⚑ ${window.I18N.t('nodes.no_favorite_ignored_nodes_found')}`;
             } else if (showFavorites) {
-                message = '⚑ No favorite nodes found';
+                message = `⚑ ${window.I18N.t('nodes.no_favorite_nodes_found')}`;
             } else if (showIgnored) {
-                message = '🚫 No ignored nodes found';
+                message = `🚫 ${window.I18N.t('nodes.no_ignored_nodes_found')}`;
             }
-            nodesList.innerHTML = `<div class="loading" style="padding: 16px;">${message}</div>`;
+            nodesList.innerHTML = `<div class="loading" style="padding: 16px;">${escapeHtml(message)}</div>`;
         } else {
             nodesList.innerHTML = filteredNodes.map(node => {
                 const { activityClass, displayName } = getNodeActivityPresentation(node);
@@ -2754,7 +2754,9 @@ function openChat(chatId, chatName, chatType, selectionSource = 'external') {
     // Настраиваем поле ввода
     const input = document.getElementById('messageInput');
     if (input) {
-        input.placeholder = chatType === 'channel' ? 'Type a message to channel...' : `Message ${chatName}...`;
+        input.placeholder = chatType === 'channel'
+            ? window.I18N.t('chat.message_placeholder_channel')
+            : window.I18N.t('chat.message_placeholder_dm', { name: chatName });
         input.value = '';
         input.focus();
     }
@@ -2888,7 +2890,7 @@ async function copyMessageText() {
 
     try {
         await navigator.clipboard.writeText(text);
-        showMessageActionStatus('Message copied', 'success');
+        showMessageActionStatus(window.I18N.t('chat.message_copied'), 'success');
     } catch (error) {
         const textarea = document.createElement('textarea');
         textarea.value = text;
@@ -2899,10 +2901,10 @@ async function copyMessageText() {
 
         try {
             document.execCommand('copy');
-            showMessageActionStatus('Message copied', 'success');
+            showMessageActionStatus(window.I18N.t('chat.message_copied'), 'success');
         } catch (fallbackError) {
             console.error('[MESSAGE ACTIONS] Copy failed:', fallbackError);
-            showMessageActionStatus('Could not copy message', 'error');
+            showMessageActionStatus(window.I18N.t('chat.message_copy_failed'), 'error');
         } finally {
             textarea.remove();
         }
@@ -2938,7 +2940,7 @@ function updateReplyComposer() {
         return;
     }
 
-    sender.textContent = `Reply to ${activeReply.sender || 'Unknown'}`;
+    sender.textContent = window.I18N.t('chat.reply_to', { sender: activeReply.sender || window.I18N.t('nodes.unknown_node') });
     text.textContent = activeReply.text || '';
     preview.hidden = false;
 }
@@ -2978,9 +2980,9 @@ function messageBelongsToActiveRadio(message) {
 
 function messageDirectionLabel(message) {
     if (message?.kind === 'system' || message?.sender === 'SYSTEM ERROR') {
-        return 'System';
+        return window.I18N.t('chat.direction_system');
     }
-    return messageBelongsToActiveRadio(message) ? 'Sent' : 'Received';
+    return messageBelongsToActiveRadio(message) ? window.I18N.t('chat.direction_sent') : window.I18N.t('chat.direction_received');
 }
 
 function startReplyToMessage() {
@@ -3006,14 +3008,14 @@ function showMessageInfo() {
     if (!message) return;
 
     const fields = [
-        ['Sender', message.sender || 'Unknown'],
-        ['Node ID', message.node_id || '—'],
-        ['Chat', message.chat_name || currentChatName || message.chat_id || '—'],
-        ['Chat type', message.chat_type || currentChatType || '—'],
-        ['Direction', messageDirectionLabel(message)],
-        ['Time', message.time || '—'],
-        ['Message ID', message.id || '—'],
-        ['Packet ID', message.packet_id ?? '—']
+        [window.I18N.t('waypoints.sender'), message.sender || window.I18N.t('nodes.unknown_node')],
+        [window.I18N.t('chat.node_id_label'), message.node_id || '—'],
+        [window.I18N.t('chat.chat_label'), message.chat_name || currentChatName || message.chat_id || '—'],
+        [window.I18N.t('chat.chat_type_label'), message.chat_type || currentChatType || '—'],
+        [window.I18N.t('chat.direction_label'), messageDirectionLabel(message)],
+        [window.I18N.t('chat.time_label'), message.time || '—'],
+        [window.I18N.t('chat.message_id_label'), message.id || '—'],
+        [window.I18N.t('chat.packet_id_label'), message.packet_id ?? '—']
     ];
 
     const content = document.getElementById('messageInfoContent');
@@ -3047,8 +3049,10 @@ function requestDeleteMessage() {
     const text = document.getElementById('confirmDeleteMessageText');
     if (text) {
         text.textContent = preview
-            ? `Delete this message locally?\n\n“${preview.slice(0, 140)}${preview.length > 140 ? '…' : ''}”`
-            : 'Delete this message locally?';
+            ? window.I18N.t('chat.delete_message_confirm_with_preview', {
+                preview: preview.slice(0, 140) + (preview.length > 140 ? '…' : '')
+            })
+            : window.I18N.t('chat.delete_message_confirm');
     }
 
     const errorEl = document.getElementById('confirmDeleteMessageError');
@@ -3083,7 +3087,7 @@ async function executeDeleteMessage() {
     const errorEl = document.getElementById('confirmDeleteMessageError');
     if (button) {
         button.disabled = true;
-        button.textContent = 'Deleting…';
+        button.textContent = window.I18N.t('chat.deleting');
     }
     if (errorEl) {
         errorEl.textContent = '';
@@ -3102,7 +3106,7 @@ async function executeDeleteMessage() {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            throw new Error(data.error || `Delete failed (HTTP ${response.status})`);
+            throw new Error(data.error || window.I18N.t('chat.delete_failed_http', { status: response.status }));
         }
 
         invalidateCache(currentChatId);
@@ -3111,7 +3115,7 @@ async function executeDeleteMessage() {
         messageActionTarget = null;
         await loadChatMessages(currentChatId);
         loadChatList();
-        showMessageActionStatus('Message deleted locally', 'success');
+        showMessageActionStatus(window.I18N.t('chat.message_deleted_locally'), 'success');
     } catch (error) {
         console.error('[MESSAGE ACTIONS] Delete failed:', error);
         // The modal stays open on failure by design (so the user can see
@@ -3121,14 +3125,14 @@ async function executeDeleteMessage() {
         // invisible while it's open, which made failures look like the
         // dialog had simply frozen.
         if (errorEl) {
-            errorEl.textContent = error.message || 'Could not delete message';
+            errorEl.textContent = error.message || window.I18N.t('chat.could_not_delete_message');
             errorEl.style.display = 'block';
         }
-        showMessageActionStatus(error.message || 'Could not delete message', 'error');
+        showMessageActionStatus(error.message || window.I18N.t('chat.could_not_delete_message'), 'error');
     } finally {
         if (button) {
             button.disabled = false;
-            button.textContent = 'Delete';
+            button.textContent = window.I18N.t('common.delete');
         }
     }
 }
@@ -3168,7 +3172,7 @@ function initializeMessageActions() {
         );
 
         if (!original) {
-            showMessageActionStatus('Original message is not available in this chat', 'error');
+            showMessageActionStatus(window.I18N.t('chat.original_message_unavailable'), 'error');
             return;
         }
 
@@ -3261,15 +3265,15 @@ function renderMessages(container, messages, chatId) {
             // are rendered as received after a profile switch.
             const isMe = messageBelongsToActiveRadio(msg);
             const isSystem = msg.kind === 'system' || msg.sender === 'SYSTEM ERROR';
-            const sender = escapeHtml(msg.sender || 'Unknown');
+            const sender = escapeHtml(msg.sender || window.I18N.t('nodes.unknown_node'));
             const text = escapeHtml(msg.text || '');
             const time = escapeHtml(msg.time || '');
 
             const messageId = escapeHtml(String(msg.id || ''));
             const reply = msg.reply_to && typeof msg.reply_to === 'object' ? msg.reply_to : null;
             const replyBlock = reply ? `
-                <button type="button" class="message-reply-quote" data-reply-message-id="${escapeHtml(String(reply.id || ''))}" title="Referenced message">
-                    <span class="message-reply-label">↪ ${escapeHtml(String(reply.sender || 'Unknown'))}</span>
+                <button type="button" class="message-reply-quote" data-reply-message-id="${escapeHtml(String(reply.id || ''))}" title="${escapeHtml(window.I18N.t('chat.referenced_message'))}">
+                    <span class="message-reply-label">↪ ${escapeHtml(String(reply.sender || window.I18N.t('nodes.unknown_node')))}</span>
                     <span class="message-reply-text">${escapeHtml(String(reply.text || ''))}</span>
                 </button>
             ` : '';
@@ -3277,8 +3281,8 @@ function renderMessages(container, messages, chatId) {
                 <button type="button"
                         class="message-actions-trigger"
                         data-message-id="${messageId}"
-                        title="Message actions"
-                        aria-label="Message actions"
+                        title="${escapeHtml(window.I18N.t('chat.message_actions'))}"
+                        aria-label="${escapeHtml(window.I18N.t('chat.message_actions'))}"
                         aria-haspopup="menu">⋮</button>
             ` : '';
 
@@ -3564,7 +3568,7 @@ function notifyFailedOutgoingMessages(messageList) {
 function getActiveLocalSenderName() {
     const el = document.getElementById('baseNodeName');
     const text = el ? el.textContent.trim() : '';
-    return text || 'Me';
+    return text || window.I18N.t('chat.me_fallback');
 }
 
 function mergeOptimisticMessages(chatId, serverMessages) {
@@ -3708,7 +3712,7 @@ if (sendForm) {
         if (currentChatType === 'dm' && currentChatId !== 'channel') {
             const isIgnored = await checkNodeIgnored(currentChatId);
             if (isIgnored) {
-                if (!confirm(`⚠️ Node "${currentChatName}" is ignored. Send message anyway?`)) {
+                if (!confirm(`⚠️ ${window.I18N.t('chat.ignored_node_confirm', { name: currentChatName })}`)) {
                     return;
                 }
             }
@@ -3760,7 +3764,7 @@ function showConfirmDelete(chatName, chatId) {
     const modal = document.getElementById('confirmDeleteModal');
     const text = document.getElementById('confirmDeleteText');
     if (modal && text) {
-        text.textContent = `Delete chat with "${chatName}"? This action cannot be undone.`;
+        text.textContent = window.I18N.t('chat.delete_chat_confirm', { name: chatName });
         modal.style.display = 'flex';
     }
 }
@@ -3808,7 +3812,7 @@ function showConfirmClear(chatName, chatId) {
     const modal = document.getElementById('confirmClearModal');
     const text = document.getElementById('confirmClearText');
     if (modal && text) {
-        text.textContent = `Clear all messages in "${chatName}"? This action cannot be undone.`;
+        text.textContent = window.I18N.t('chat.clear_chat_confirm', { name: chatName });
         modal.style.display = 'flex';
     }
 }
@@ -4138,7 +4142,7 @@ function formatWaypointTime(timestamp) {
 function formatWaypointExpiryDetails(expireAt) {
     const seconds = Number(expireAt);
     if (!Number.isFinite(seconds) || seconds <= 0) {
-        return { relative:'No expiration', absolute:'', expired:false };
+        return { relative: window.I18N.t('waypoints.no_expiration'), absolute:'', expired:false };
     }
 
     let remaining = Math.floor(seconds - Date.now() / 1000);
@@ -4149,7 +4153,7 @@ function formatWaypointExpiryDetails(expireAt) {
     });
 
     if (remaining <= 0) {
-        return { relative:'Expired', absolute:absoluteDateTime, expired:true };
+        return { relative: window.I18N.t('waypoints.expired'), absolute:absoluteDateTime, expired:true };
     }
 
     const days = Math.floor(remaining / 86400);
@@ -4158,18 +4162,20 @@ function formatWaypointExpiryDetails(expireAt) {
     remaining %= 3600;
     const minutes = Math.floor(remaining / 60);
 
+    const inPrefix = window.I18N.t('waypoints.in_prefix');
+
     if (days > 0) {
         const tail = hours > 0 ? ` ${hours} h` : (minutes > 0 ? ` ${minutes} min` : '');
-        return { relative:`in ${days} d${tail}`, absolute:absoluteDateTime, expired:false };
+        return { relative:`${inPrefix} ${days} d${tail}`, absolute:absoluteDateTime, expired:false };
     }
     if (hours > 0) {
         return {
-            relative:`in ${hours} h${minutes > 0 ? ` ${minutes} min` : ''}`,
+            relative:`${inPrefix} ${hours} h${minutes > 0 ? ` ${minutes} min` : ''}`,
             absolute:absoluteTime,
             expired:false
         };
     }
-    return { relative:`in ${Math.max(1, minutes)} min`, absolute:absoluteTime, expired:false };
+    return { relative:`${inPrefix} ${Math.max(1, minutes)} min`, absolute:absoluteTime, expired:false };
 }
 
 function waypointExpiryHtml(expireAt) {
@@ -4205,29 +4211,29 @@ function buildWaypointPopup(waypoint) {
         ? getNodeDistanceAndBearing(lat, lon)
         : { distanceText:'--', bearingText:'--' };
     const name = waypoint?.name || `Waypoint ${waypoint?.waypoint_id || ''}`;
-    const sender = waypoint?.sender_name || waypoint?.sender_id || 'Unknown';
-    const description = waypoint?.description || 'No description';
+    const sender = waypoint?.sender_name || waypoint?.sender_id || window.I18N.t('nodes.unknown_node');
+    const description = waypoint?.description || window.I18N.t('waypoints.no_description');
     const channel = Number.isFinite(Number(waypoint?.channel_index)) ? Number(waypoint.channel_index) : '--';
     const expired = waypoint?.is_active === false || formatWaypointExpiryDetails(waypoint?.expire_at).expired;
     return `
         <div class="map-popup-name waypoint-popup-name">${escapeHtml(waypointIconCharacter(waypoint?.icon))} ${escapeHtml(name)}</div>
         <div class="map-popup-subtitle">${escapeHtml(description)}</div>
         <div class="map-popup-grid">
-            <span>Status</span><strong class="${expired ? 'waypoint-status-expired' : 'waypoint-status-active'}">${expired ? 'Expired' : 'Active'}</strong>
-            <span>Sender</span><strong>${escapeHtml(sender)}</strong>
-            <span>Distance</span><strong>${escapeHtml(nav.distanceText)}</strong>
-            <span>Bearing</span><strong>${escapeHtml(nav.bearingText)}</strong>
-            <span>Channel</span><strong>${escapeHtml(channel)}</strong>
-            <span>Received</span><strong>${escapeHtml(formatWaypointTime(waypoint?.received_at))}</strong>
-            <span>Expires</span><strong>${waypointExpiryHtml(waypoint?.expire_at)}</strong>
-            <span>Coordinates</span><strong>${Number.isFinite(lat) ? lat.toFixed(6) : '--'}, ${Number.isFinite(lon) ? lon.toFixed(6) : '--'}</strong>
+            <span>${escapeHtml(window.I18N.t('waypoints.status'))}</span><strong class="${expired ? 'waypoint-status-expired' : 'waypoint-status-active'}">${expired ? escapeHtml(window.I18N.t('waypoints.expired')) : escapeHtml(window.I18N.t('waypoints.active'))}</strong>
+            <span>${escapeHtml(window.I18N.t('waypoints.sender'))}</span><strong>${escapeHtml(sender)}</strong>
+            <span>${escapeHtml(window.I18N.t('nodes.distance'))}</span><strong>${escapeHtml(nav.distanceText)}</strong>
+            <span>${escapeHtml(window.I18N.t('nodes.bearing'))}</span><strong>${escapeHtml(nav.bearingText)}</strong>
+            <span>${escapeHtml(window.I18N.t('waypoints.channel_label'))}</span><strong>${escapeHtml(channel)}</strong>
+            <span>${escapeHtml(window.I18N.t('waypoints.received'))}</span><strong>${escapeHtml(formatWaypointTime(waypoint?.received_at))}</strong>
+            <span>${escapeHtml(window.I18N.t('waypoints.expires'))}</span><strong>${waypointExpiryHtml(waypoint?.expire_at)}</strong>
+            <span>${escapeHtml(window.I18N.t('waypoints.coordinates'))}</span><strong>${Number.isFinite(lat) ? lat.toFixed(6) : '--'}, ${Number.isFinite(lon) ? lon.toFixed(6) : '--'}</strong>
         </div>
         <div class="map-popup-actions">
-            <button class="map-popup-primary-btn" type="button" onclick="centerMapOnWaypoint('${escapeJsString(waypoint?.waypoint_id)}')">⌖ Center</button>
-            <button class="map-popup-action-btn" type="button" onclick="openExternalNodeMap('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')">↗ Navigate</button>
-            <button class="map-popup-action-btn" type="button" title="Copy coordinates to clipboard" onclick="copyCoordinates('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')">📋 Coordinates</button>
-            <button class="map-popup-action-btn danger" type="button" onclick="setWaypointHidden('${escapeJsString(waypoint?.waypoint_id)}', true)">🙈 Hide</button>
-            <button class="map-popup-action-btn map-popup-close-btn" type="button" onclick="closeWaypointPopup()">✕ Close</button>
+            <button class="map-popup-primary-btn" type="button" onclick="centerMapOnWaypoint('${escapeJsString(waypoint?.waypoint_id)}')">⌖ ${escapeHtml(window.I18N.t('waypoints.center'))}</button>
+            <button class="map-popup-action-btn" type="button" onclick="openExternalNodeMap('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')">↗ ${escapeHtml(window.I18N.t('waypoints.navigate'))}</button>
+            <button class="map-popup-action-btn" type="button" title="${escapeHtml(window.I18N.t('waypoints.copy_coordinates_tooltip'))}" onclick="copyCoordinates('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')">📋 ${escapeHtml(window.I18N.t('waypoints.coordinates'))}</button>
+            <button class="map-popup-action-btn danger" type="button" onclick="setWaypointHidden('${escapeJsString(waypoint?.waypoint_id)}', true)">🙈 ${escapeHtml(window.I18N.t('waypoints.hide'))}</button>
+            <button class="map-popup-action-btn map-popup-close-btn" type="button" onclick="closeWaypointPopup()">✕ ${escapeHtml(window.I18N.t('common.close'))}</button>
         </div>
     `;
 }
@@ -4267,28 +4273,28 @@ function renderWaypointToolsList() {
     const validIds = new Set(items.map(item => String(item?.waypoint_id)));
     waypointToolsSelectedIds = new Set([...waypointToolsSelectedIds].filter(id => validIds.has(id)));
     if (!items.length) {
-        container.innerHTML = `<div class="waypoint-tools-empty">${waypointToolsShowExpired ? 'No saved waypoints' : 'No active waypoints'}</div>`;
+        container.innerHTML = `<div class="waypoint-tools-empty">${escapeHtml(waypointToolsShowExpired ? window.I18N.t('waypoints.no_saved_waypoints') : window.I18N.t('waypoints.no_active_waypoints'))}</div>`;
         updateWaypointBulkControls();
         return;
     }
     container.innerHTML = items.map(item => {
         const id = String(item?.waypoint_id);
         const name = item?.name || `Waypoint ${id}`;
-        const sender = item?.sender_name || item?.sender_id || 'Unknown';
+        const sender = item?.sender_name || item?.sender_id || window.I18N.t('nodes.unknown_node');
         const expiry = formatWaypointExpiryDetails(item?.expire_at);
         const hidden = Boolean(item?.is_hidden);
         const expired = item?.is_active === false || expiry.expired;
         const pending = waypointVisibilityPending.has(id);
         const selected = id === String(selectedWaypointId || '');
         return `<div class="waypoint-tools-item ${expired ? 'is-expired' : ''} ${hidden ? 'is-hidden' : ''} ${pending ? 'is-pending' : ''} ${selected ? 'is-selected' : ''}" data-waypoint-id="${escapeHtml(id)}">` +
-            `<label class="waypoint-tools-select" title="Select"><input type="checkbox" ${waypointToolsSelectedIds.has(id) ? 'checked' : ''} onchange="toggleWaypointSelection('${escapeJsString(id)}', this.checked)"></label>` +
-            `<button type="button" class="waypoint-tools-main" onclick="showWaypointOnMap('${escapeJsString(id)}')" title="Open waypoint on map">` +
+            `<label class="waypoint-tools-select" title="${escapeHtml(window.I18N.t('waypoints.select_tooltip'))}"><input type="checkbox" ${waypointToolsSelectedIds.has(id) ? 'checked' : ''} onchange="toggleWaypointSelection('${escapeJsString(id)}', this.checked)"></label>` +
+            `<button type="button" class="waypoint-tools-main" onclick="showWaypointOnMap('${escapeJsString(id)}')" title="${escapeHtml(window.I18N.t('waypoints.open_on_map_tooltip'))}">` +
             `<span class="waypoint-tools-icon">${escapeHtml(waypointIconCharacter(item?.icon))}</span>` +
             `<span class="waypoint-tools-copy"><strong>${escapeHtml(name)}</strong>` +
-            `<small>${escapeHtml(sender)} · ${escapeHtml(expired ? 'Expired' : expiry.relative)}</small></span></button>` +
-            `<button type="button" class="waypoint-tools-visibility" title="${hidden ? 'Show waypoint' : 'Hide waypoint'}" ` +
+            `<small>${escapeHtml(sender)} · ${escapeHtml(expired ? window.I18N.t('waypoints.expired') : expiry.relative)}</small></span></button>` +
+            `<button type="button" class="waypoint-tools-visibility" title="${escapeHtml(hidden ? window.I18N.t('waypoints.show_waypoint') : window.I18N.t('waypoints.hide_waypoint'))}" ` +
             `onclick="setWaypointHidden('${escapeJsString(id)}', ${hidden ? 'false' : 'true'})" ${pending ? 'disabled' : ''}>${pending ? '…' : (hidden ? '👁' : '🙈')}</button>` +
-            `<button type="button" class="waypoint-tools-delete" title="Delete locally" onclick="deleteWaypoint('${escapeJsString(id)}')">🗑</button></div>`;
+            `<button type="button" class="waypoint-tools-delete" title="${escapeHtml(window.I18N.t('modals.delete_locally'))}" onclick="deleteWaypoint('${escapeJsString(id)}')">🗑</button></div>`;
     }).join('');
     updateWaypointBulkControls();
 }
@@ -4307,11 +4313,11 @@ async function refreshWaypointToolsList(force = false) {
     try {
         const response = await fetch(waypointToolsListUrl(), { cache:'no-store' });
         const payload = await response.json();
-        if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Could not load waypoints');
+        if (!response.ok || !payload?.ok) throw new Error(payload?.error || window.I18N.t('waypoints.could_not_load'));
         waypointToolsItems = Array.isArray(payload.waypoints) ? payload.waypoints : [];
         renderWaypointToolsList();
     } catch (error) {
-        showToast(error.message || 'Could not load waypoints', 'error');
+        showToast(error.message || window.I18N.t('waypoints.could_not_load'), 'error');
     } finally {
         waypointToolsRefreshInFlight = false;
     }
@@ -4350,7 +4356,7 @@ async function setWaypointHidden(waypointId, hidden, options = {}) {
             body:JSON.stringify({ hidden:Boolean(hidden) })
         });
         const payload = await response.json();
-        if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Waypoint update failed');
+        if (!response.ok || !payload?.ok) throw new Error(payload?.error || window.I18N.t('waypoints.update_failed'));
         if (payload.waypoint) {
             const item = { ...payload.waypoint, is_hidden:Boolean(hidden) };
             const idx = waypointToolsItems.findIndex(row => String(row?.waypoint_id) === id);
@@ -4367,13 +4373,13 @@ async function setWaypointHidden(waypointId, hidden, options = {}) {
             refreshMeshMapWaypoints(true),
             refreshWaypointToolsList(true)
         ]);
-        if (!options.silent) showToast(hidden ? 'Waypoint hidden locally' : 'Waypoint is visible again', 'success');
+        if (!options.silent) showToast(hidden ? window.I18N.t('waypoints.hidden_locally') : window.I18N.t('waypoints.visible_again'), 'success');
         return true;
     } catch (error) {
         if (toolsIndex >= 0 && previousTools) waypointToolsItems[toolsIndex] = previousTools;
         if (previousMap) meshMapWaypoints = [previousMap, ...meshMapWaypoints.filter(item => String(item?.waypoint_id) !== id)];
         else meshMapWaypoints = meshMapWaypoints.filter(item => String(item?.waypoint_id) !== id);
-        showToast(error.message || 'Waypoint update failed', 'error');
+        showToast(error.message || window.I18N.t('waypoints.update_failed'), 'error');
         return false;
     } finally {
         waypointVisibilityPending.delete(id);
@@ -4386,59 +4392,59 @@ async function deleteWaypoint(waypointId) {
     const id = String(waypointId);
     const item = waypointToolsItems.find(row => String(row?.waypoint_id) === id);
     const name = item?.name || `Waypoint ${id}`;
-    if (!window.confirm(`Delete "${name}" from MeshCenter local storage?`)) return;
+    if (!window.confirm(window.I18N.t('waypoints.delete_named_confirm', { name }))) return;
     try {
         const response = await fetch(`/api/waypoints/${encodeURIComponent(id)}`, { method:'DELETE' });
         const payload = await response.json();
-        if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Waypoint delete failed');
+        if (!response.ok || !payload?.ok) throw new Error(payload?.error || window.I18N.t('waypoints.delete_failed'));
         waypointToolsItems = waypointToolsItems.filter(row => String(row?.waypoint_id) !== id);
         meshMapWaypoints = meshMapWaypoints.filter(row => String(row?.waypoint_id) !== id);
         waypointToolsSelectedIds.delete(id);
         renderWaypointToolsList();
         if (meshMap) renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
-        showToast('Waypoint deleted locally', 'success');
+        showToast(window.I18N.t('waypoints.deleted_locally'), 'success');
     } catch (error) {
-        showToast(error.message || 'Waypoint delete failed', 'error');
+        showToast(error.message || window.I18N.t('waypoints.delete_failed'), 'error');
     }
 }
 
 async function deleteSelectedWaypoints() {
     const ids = [...waypointToolsSelectedIds];
     if (!ids.length) return;
-    if (!window.confirm(`Delete ${ids.length} selected waypoint${ids.length === 1 ? '' : 's'} from local storage?`)) return;
+    if (!window.confirm(window.I18N.plural('waypoints.delete_selected_confirm', ids.length, { count: ids.length }))) return;
     try {
         const response = await fetch('/api/waypoints/delete', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body:JSON.stringify({ waypoint_ids: ids.map(Number) })
         });
         const payload = await response.json();
-        if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Waypoint delete failed');
+        if (!response.ok || !payload?.ok) throw new Error(payload?.error || window.I18N.t('waypoints.delete_failed'));
         const idSet = new Set(ids);
         waypointToolsItems = waypointToolsItems.filter(row => !idSet.has(String(row?.waypoint_id)));
         meshMapWaypoints = meshMapWaypoints.filter(row => !idSet.has(String(row?.waypoint_id)));
         waypointToolsSelectedIds.clear();
         renderWaypointToolsList();
         if (meshMap) renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
-        showToast(`${payload.deleted || ids.length} waypoint(s) deleted locally`, 'success');
+        showToast(window.I18N.plural('waypoints.deleted_count', payload.deleted || ids.length, { count: payload.deleted || ids.length }), 'success');
     } catch (error) {
-        showToast(error.message || 'Waypoint delete failed', 'error');
+        showToast(error.message || window.I18N.t('waypoints.delete_failed'), 'error');
     }
 }
 
 async function deleteAllWaypoints() {
-    if (!window.confirm('Delete ALL saved waypoints from MeshCenter local storage? This cannot be undone.')) return;
+    if (!window.confirm(window.I18N.t('waypoints.delete_all_confirm'))) return;
     try {
         const response = await fetch('/api/waypoints', { method:'DELETE' });
         const payload = await response.json();
-        if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Waypoint cleanup failed');
+        if (!response.ok || !payload?.ok) throw new Error(payload?.error || window.I18N.t('waypoints.cleanup_failed'));
         waypointToolsItems = [];
         meshMapWaypoints = [];
         waypointToolsSelectedIds.clear();
         renderWaypointToolsList();
         if (meshMap) renderMeshMap(meshMapTargetNodeId, { preserveViewport:true, openPopup:false });
-        showToast(`${payload.deleted || 0} waypoint(s) deleted locally`, 'success');
+        showToast(window.I18N.plural('waypoints.deleted_count', payload.deleted || 0, { count: payload.deleted || 0 }), 'success');
     } catch (error) {
-        showToast(error.message || 'Waypoint cleanup failed', 'error');
+        showToast(error.message || window.I18N.t('waypoints.cleanup_failed'), 'error');
     }
 }
 
@@ -4699,7 +4705,7 @@ function showWaypointActionStatus(message, state = 'sending', operation = null) 
     const options = state === 'error' && operation
         ? {
             persistent: true,
-            actionLabel: 'Retry',
+            actionLabel: window.I18N.t('common.retry'),
             action: () => sendWaypointOperation(operation)
         }
         : {
@@ -4751,7 +4757,7 @@ async function applySuccessfulWaypointResult(result, operation) {
 
     waypointSendOperation = null;
     showWaypointActionStatus(
-        `Waypoint sent: ${operation.payload.name}`,
+        window.I18N.t('waypoints.sent', { name: operation.payload.name }),
         'success'
     );
     waypointSendNotificationId = null;
@@ -4765,8 +4771,8 @@ async function sendWaypointOperation(operation) {
 
     showWaypointActionStatus(
         operation.attempts > 1
-            ? `Retrying waypoint: ${operation.payload.name}`
-            : `Sending waypoint: ${operation.payload.name}`,
+            ? window.I18N.t('waypoints.retrying', { name: operation.payload.name })
+            : window.I18N.t('waypoints.sending', { name: operation.payload.name }),
         'sending'
     );
 
@@ -4780,14 +4786,14 @@ async function sendWaypointOperation(operation) {
         const result = await response.json().catch(() => ({}));
 
         if (!response.ok || !result?.ok) {
-            throw new Error(result?.error || 'Waypoint send failed');
+            throw new Error(result?.error || window.I18N.t('errors.waypoint_send_failed'));
         }
 
         await applySuccessfulWaypointResult(result, operation);
     } catch (error) {
         console.error('[WAYPOINT] Send failed:', error);
         showWaypointActionStatus(
-            error?.message || 'Waypoint was not sent',
+            error?.message || window.I18N.t('waypoints.not_sent'),
             'error',
             operation
         );
@@ -4806,7 +4812,7 @@ function submitCreateWaypoint() {
     );
 
     if (!name) {
-        showToast('Enter a waypoint name', 'warning');
+        showToast(window.I18N.t('waypoints.enter_name'), 'warning');
         return;
     }
 
@@ -4893,7 +4899,7 @@ async function showWaypointOnMap(waypointId) {
         waypoint = waypointToolsItems.find(item => String(item?.waypoint_id) === id);
     }
     if (!waypoint) {
-        showToast('Waypoint is no longer available', 'error');
+        showToast(window.I18N.t('waypoints.no_longer_available'), 'error');
         return;
     }
 
@@ -4950,8 +4956,8 @@ async function refreshMeshMapWaypoints(forceRender = false) {
             items.forEach(item => {
                 const id = String(item?.waypoint_id);
                 if (id && !meshMapWaypointKnownIds.has(id)) {
-                    const sender = item?.sender_name || item?.sender_id || 'Unknown';
-                    showToast(`📍 Waypoint received: ${item?.name || 'Unnamed'} · ${sender}`, 'info');
+                    const sender = item?.sender_name || item?.sender_id || window.I18N.t('nodes.unknown_node');
+                    showToast(`📍 ${window.I18N.t('waypoints.received_notification', { name: item?.name || window.I18N.t('waypoints.unnamed'), sender })}`, 'info');
                 }
             });
         }
@@ -4995,7 +5001,7 @@ function centerMapOnWaypoint(waypointId) {
     const lat = Number(waypoint.latitude);
     const lon = Number(waypoint.longitude);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        showToast('Waypoint coordinates are unavailable', 'error');
+        showToast(window.I18N.t('waypoints.coordinates_unavailable'), 'error');
         return;
     }
 
@@ -11907,8 +11913,8 @@ async function init() {
         // Переключаемся на вкладку чатов
         console.log('[INIT] Switching to chats tab...');
         switchMainTab('chats');
-        
-        if (statusEl) statusEl.innerHTML = '🟢 Mesh online';
+
+        if (statusEl) statusEl.innerHTML = `🟢 ${window.I18N.t('notifications.mesh_online')}`;
 
         await loadRadioHealth();
 
@@ -11917,21 +11923,21 @@ async function init() {
         }
 
         console.log('[INIT] Application ready');
-        
+
     } catch (error) {
         console.error('[INIT] Critical error:', error);
         const statusEl = document.getElementById('statusText');
-        if (statusEl) statusEl.innerHTML = '🔴 Error loading - refresh page';
-        
+        if (statusEl) statusEl.innerHTML = `🔴 ${window.I18N.t('nodes.error_loading_refresh')}`;
+
         const chatList = document.getElementById('chatList');
         if (chatList) {
             chatList.innerHTML = `
                 <div class="loading" style="color:#c62828;">
-                    ⚠️ Failed to load data<br>
-                    <small style="font-size:12px;color:#999;">${error.message || 'Unknown error'}</small>
+                    ⚠️ ${escapeHtml(window.I18N.t('chat.failed_to_load_data'))}<br>
+                    <small style="font-size:12px;color:#999;">${escapeHtml(error.message || window.I18N.t('errors.unknown_error'))}</small>
                     <br><br>
                     <button onclick="window.location.reload()" style="padding:8px 20px;border:none;border-radius:8px;background:#1a73e8;color:white;cursor:pointer;">
-                        ↻ Refresh Page
+                        ↻ ${escapeHtml(window.I18N.t('chat.refresh_page'))}
                     </button>
                 </div>
             `;

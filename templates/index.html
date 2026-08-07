@@ -1376,8 +1376,8 @@
         <div class="sidebar" id="sidebar">
             <!-- Sidebar Tabs -->
             <div class="sidebar-tabs">
-                <button class="sidebar-tab active" data-tab="nodes" onclick="switchSidebarTab('nodes')">📡 Nodes</button>
-                <button class="sidebar-tab" data-tab="tools" onclick="switchSidebarTab('tools')">🧰 Toolkit</button>
+                <button class="sidebar-tab active" data-tab="nodes" onclick="switchSidebarTab('nodes')">📡 <span data-i18n="nodes.sidebar_tab">Nodes</span></button>
+                <button class="sidebar-tab" data-tab="tools" onclick="switchSidebarTab('tools')">🧰 <span data-i18n="waypoints.toolkit_tab">Toolkit</span></button>
             </div>
 
             <!-- Nodes Tab -->
@@ -1385,11 +1385,11 @@
                 <div class="nodes-section">
                     <div class="nodes-controls">
                         <div class="search-container search-row">
-                            <input type="text" id="nodeSearchInput" class="search-input-wide" placeholder="🔍 Search nodes...">
+                            <input type="text" id="nodeSearchInput" class="search-input-wide" placeholder="🔍 Search nodes..." data-i18n-placeholder="nodes.search_placeholder">
                             <button type="button" id="clearSearchBtn" class="clear-search-btn" onclick="clearNodeSearch()">✕</button>
                         </div>
                         <div class="nodes-actions-row">
-                            <button id="rescanNodesBtn" class="rescan-nodes-btn" onclick="rescanNodes()" style="flex:1;">📡 Rescan Network</button>
+                            <button id="rescanNodesBtn" class="rescan-nodes-btn" onclick="rescanNodes()" style="flex:1;">📡 <span data-i18n="nodes.rescan_network">Rescan Network</span></button>
                         </div>
                     </div>
                     <div id="nodeDetails"></div>
@@ -1402,19 +1402,19 @@
                 <div class="nodes-tools">
                     <div class="waypoint-tools-panel">
                         <div class="waypoint-tools-header">
-                            <strong>📍 Waypoints</strong>
+                            <strong>📍 <span data-i18n="waypoints.title">Waypoints</span></strong>
                             <div class="waypoint-tools-actions">
-                                <label class="waypoint-select-all" title="Select all shown"><input id="waypointSelectAll" type="checkbox" onchange="toggleSelectAllWaypoints(this.checked)"> All</label>
-                                <label class="waypoint-archive-toggle"><input type="checkbox" onchange="toggleWaypointArchive(this.checked)"> Archive</label>
-                                <button type="button" class="waypoint-tools-refresh" onclick="refreshWaypointToolsList(true)">↻ Refresh</button>
+                                <label class="waypoint-select-all" title="Select all shown" data-i18n-title="waypoints.select_all_shown_tooltip"><input id="waypointSelectAll" type="checkbox" onchange="toggleSelectAllWaypoints(this.checked)"> <span data-i18n="waypoints.all_label">All</span></label>
+                                <label class="waypoint-archive-toggle"><input type="checkbox" onchange="toggleWaypointArchive(this.checked)"> <span data-i18n="waypoints.archive_label">Archive</span></label>
+                                <button type="button" class="waypoint-tools-refresh" onclick="refreshWaypointToolsList(true)">↻ <span data-i18n="common.refresh">Refresh</span></button>
                             </div>
                         </div>
                         <div id="waypointToolsList" class="waypoint-tools-list">
-                            <div class="waypoint-tools-empty">No active waypoints</div>
+                            <div class="waypoint-tools-empty" data-i18n="waypoints.no_active_waypoints">No active waypoints</div>
                         </div>
                         <div class="waypoint-tools-bulk-actions">
-                            <button type="button" id="waypointDeleteSelected" onclick="deleteSelectedWaypoints()" disabled>🗑 Selected</button>
-                            <button type="button" class="danger" onclick="deleteAllWaypoints()">🗑 All</button>
+                            <button type="button" id="waypointDeleteSelected" onclick="deleteSelectedWaypoints()" disabled>🗑 <span data-i18n="waypoints.selected_label">Selected</span></button>
+                            <button type="button" class="danger" onclick="deleteAllWaypoints()">🗑 <span data-i18n="waypoints.all_label">All</span></button>
                         </div>
                     </div>
                     <div class="nodes-tools-grid nodes-tools-grid-compact">
@@ -1868,7 +1868,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20260806-2"></script>
+<script src="/static/i18n.js?v=20260806-3"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above —
@@ -1878,7 +1878,7 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="/static/chat.js?v=20260806-stage7a-nodes-i18n"></script>
+<script src="/static/chat.js?v=20260806-stage8-waypoints-chat-i18n"></script>
 <script src="/static/media.js"></script>
 <script src="/static/weather.js?v=openweather-setup-20260731"></script>
 
@@ -1912,32 +1912,32 @@
 <div id="waypointCreateModal" class="waypoint-create-modal" style="display:none;" onclick="if(event.target===this) closeCreateWaypointDialog()">
     <div class="waypoint-create-dialog" role="dialog" aria-modal="true" aria-labelledby="waypointCreateTitle">
         <div class="waypoint-create-header">
-            <div><strong id="waypointCreateTitle">📍 Create Waypoint</strong><small>Send a map point through the Meshtastic network</small></div>
+            <div><strong id="waypointCreateTitle">📍 <span data-i18n="waypoints.create_title">Create Waypoint</span></strong><small data-i18n="waypoints.create_subtitle">Send a map point through the Meshtastic network</small></div>
             <button type="button" onclick="closeCreateWaypointDialog()">✕</button>
         </div>
         <div class="waypoint-create-body">
-            <label>Name<input id="waypointCreateName" maxlength="30" placeholder="Meeting point"></label>
-            <label>Description<textarea id="waypointCreateDescription" maxlength="100" rows="3" placeholder="Optional details"></textarea></label>
+            <label><span data-i18n="waypoints.name_label">Name</span><input id="waypointCreateName" maxlength="30" placeholder="Meeting point" data-i18n-placeholder="waypoints.name_placeholder"></label>
+            <label><span data-i18n="waypoints.description_label">Description</span><textarea id="waypointCreateDescription" maxlength="100" rows="3" placeholder="Optional details" data-i18n-placeholder="waypoints.description_placeholder"></textarea></label>
             <div class="waypoint-create-grid">
-                <label>Channel<select id="waypointCreateChannel">
+                <label><span data-i18n="waypoints.channel_label">Channel</span><select id="waypointCreateChannel">
                     <option value="0">Channel [0]</option>
                 </select></label>
-                <label>Expires<select id="waypointCreateDuration">
-                    <option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600" selected>1 hour</option>
-                    <option value="10800">3 hours</option><option value="21600">6 hours</option><option value="43200">12 hours</option>
-                    <option value="86400">1 day</option><option value="172800">2 days</option><option value="604800">7 days</option>
+                <label><span data-i18n="waypoints.expires_label">Expires</span><select id="waypointCreateDuration">
+                    <option value="900" data-i18n="waypoints.duration_15m">15 minutes</option><option value="1800" data-i18n="waypoints.duration_30m">30 minutes</option><option value="3600" selected data-i18n="waypoints.duration_1h">1 hour</option>
+                    <option value="10800" data-i18n="waypoints.duration_3h">3 hours</option><option value="21600" data-i18n="waypoints.duration_6h">6 hours</option><option value="43200" data-i18n="waypoints.duration_12h">12 hours</option>
+                    <option value="86400" data-i18n="waypoints.duration_1d">1 day</option><option value="172800" data-i18n="waypoints.duration_2d">2 days</option><option value="604800" data-i18n="waypoints.duration_7d">7 days</option>
                 </select></label>
             </div>
             <label class="waypoint-create-notify" for="waypointCreatePostNotification">
                 <input type="checkbox" id="waypointCreatePostNotification" checked>
-                <span>Post a text notification to the selected channel</span>
+                <span data-i18n="waypoints.post_notification_label">Post a text notification to the selected channel</span>
             </label>
-            <div class="waypoint-create-coordinates"><span>Coordinates</span><strong id="waypointCreateCoordinates">--</strong></div>
-            <div class="waypoint-create-note">Right-click anywhere on the map to choose another location.</div>
+            <div class="waypoint-create-coordinates"><span data-i18n="waypoints.coordinates">Coordinates</span><strong id="waypointCreateCoordinates">--</strong></div>
+            <div class="waypoint-create-note" data-i18n="waypoints.right_click_note">Right-click anywhere on the map to choose another location.</div>
         </div>
         <div class="waypoint-create-footer">
-            <button type="button" class="secondary" onclick="closeCreateWaypointDialog()">Cancel</button>
-            <button type="button" id="waypointCreateSend" class="primary" onclick="submitCreateWaypoint()">Send</button>
+            <button type="button" class="secondary" onclick="closeCreateWaypointDialog()" data-i18n="common.cancel">Cancel</button>
+            <button type="button" id="waypointCreateSend" class="primary" onclick="submitCreateWaypoint()" data-i18n="common.send">Send</button>
         </div>
     </div>
 </div>

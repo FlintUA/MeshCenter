@@ -271,10 +271,10 @@ function updateReferenceLocationSaveButton() {
 
     button.disabled = referenceLocationSaving || !changed;
     button.textContent = referenceLocationSaving
-        ? 'Saving…'
+        ? window.I18N.t('weather.saving')
         : changed
-            ? '💾 Save reference location'
-            : '✓ Reference location saved';
+            ? `💾 ${window.I18N.t('settings.save_reference_location')}`
+            : `✓ ${window.I18N.t('settings.reference_location_saved')}`;
 }
 
 function markReferenceLocationStateSaved() {
@@ -332,7 +332,7 @@ function populateReferenceNodeSelect() {
 
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = 'Select node';
+    placeholder.textContent = window.I18N.t('settings.select_node');
     select.appendChild(placeholder);
 
     const availableNodes = Array.isArray(nodeCache)
@@ -455,7 +455,7 @@ function getReferenceLocation() {
                 longitude,
                 name:
                     String(reference.place_name || '').trim()
-                    || 'Manual position'
+                    || window.I18N.t('settings.manual_position')
             };
         }
 
@@ -539,8 +539,8 @@ function updateReferenceLocationSummary() {
     if (!nameElement || !coordinatesElement) return;
 
     if (!reference) {
-        nameElement.textContent = '📍 Location not configured';
-        coordinatesElement.textContent = 'Click to configure';
+        nameElement.textContent = `📍 ${window.I18N.t('settings.location_not_configured')}`;
+        coordinatesElement.textContent = window.I18N.t('settings.click_to_configure');
         locationButton?.classList.add('reference-is-disabled');
         return;
     }
@@ -550,11 +550,11 @@ function updateReferenceLocationSummary() {
     const placeName =
         String(appSettings?.reference_location?.place_name || '').trim()
         || String(reference.name || '').trim()
-        || 'Reference location';
+        || window.I18N.t('settings.reference_location');
     nameElement.textContent = `📍 ${placeName}`;
     coordinatesElement.textContent = hasCoordinates
         ? `${reference.latitude.toFixed(5)} • ${reference.longitude.toFixed(5)}`
-        : 'Position unavailable';
+        : window.I18N.t('settings.position_unavailable');
 }
 
 function openReferenceSettings() {
@@ -1039,7 +1039,7 @@ async function saveReferenceLocation() {
 
     if (mode === 'manual') {
         if (latitudeValue === '' || longitudeValue === '') {
-            showToast('❌ Enter both reference coordinates', 'error');
+            showToast(`❌ ${window.I18N.t('settings.enter_both_coordinates')}`, 'error');
             return;
         }
 
@@ -1047,12 +1047,12 @@ async function saveReferenceLocation() {
         const longitude = Number.parseFloat(longitudeValue);
 
         if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
-            showToast('❌ Invalid reference latitude', 'error');
+            showToast(`❌ ${window.I18N.t('settings.invalid_latitude')}`, 'error');
             return;
         }
 
         if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
-            showToast('❌ Invalid reference longitude', 'error');
+            showToast(`❌ ${window.I18N.t('settings.invalid_longitude')}`, 'error');
             return;
         }
 
@@ -1067,7 +1067,7 @@ async function saveReferenceLocation() {
 
     if (mode === 'node') {
         if (!nodeId) {
-            showToast('❌ Select a reference node', 'error');
+            showToast(`❌ ${window.I18N.t('settings.select_reference_node')}`, 'error');
             return;
         }
 
@@ -1079,7 +1079,7 @@ async function saveReferenceLocation() {
         activeLongitude = Number(referenceNode?.position?.longitude);
 
         if (!Number.isFinite(activeLatitude) || !Number.isFinite(activeLongitude)) {
-            showToast('❌ Selected node has no valid position', 'error');
+            showToast(`❌ ${window.I18N.t('settings.node_no_valid_position')}`, 'error');
             return;
         }
 
@@ -1090,7 +1090,7 @@ async function saveReferenceLocation() {
     updateReferenceLocationSaveButton();
 
     if (statusElement) {
-        statusElement.textContent = 'Saving reference location…';
+        statusElement.textContent = window.I18N.t('settings.saving_reference_location');
     }
 
     if (Number.isFinite(activeLatitude) && Number.isFinite(activeLongitude)) {
@@ -1131,17 +1131,17 @@ async function saveReferenceLocation() {
         }
 
         if (statusElement) {
-            statusElement.textContent = 'Reference location saved';
+            statusElement.textContent = window.I18N.t('settings.reference_location_saved');
         }
 
-        showToast('✅ Reference location saved', 'success');
+        showToast(`✅ ${window.I18N.t('settings.reference_location_saved')}`, 'success');
     } catch (error) {
         if (statusElement) {
-            statusElement.textContent = `Save failed: ${error.message}`;
+            statusElement.textContent = window.I18N.t('settings.save_failed_reason', { reason: error.message });
         }
 
         showToast(
-            `❌ Unable to save reference location: ${error.message}`,
+            `❌ ${window.I18N.t('settings.unable_to_save_reference_location', { reason: error.message })}`,
             'error'
         );
     } finally {
@@ -1204,13 +1204,13 @@ async function setMapProvider(provider) {
         }
 
         showToast(
-            `✅ Map provider: ${providerName}`,
+            `✅ ${window.I18N.t('settings.map_provider_set', { name: providerName })}`,
             'success'
         );
 
     } catch (error) {
         showToast(
-            `❌ Unable to save map provider: ${translateRequestError(error)}`,
+            `❌ ${window.I18N.t('settings.unable_to_save_map_provider', { reason: translateRequestError(error) })}`,
             'error'
         );
     }
@@ -1227,7 +1227,7 @@ async function setLanguageSetting(value) {
         const data = await response.json();
 
         if (!data.ok) {
-            alert('Unable to save settings: ' + (data.error || 'Unknown error'));
+            alert(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }));
             return;
         }
 
@@ -1237,7 +1237,7 @@ async function setLanguageSetting(value) {
         // apply the new language.
         window.location.reload();
     } catch (error) {
-        alert('Unable to save settings: ' + error.message);
+        alert(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }));
     }
 }
 
@@ -1257,7 +1257,7 @@ async function setUnitSetting(name, value) {
         const data = await response.json();
 
         if (!data.ok) {
-            alert('Unable to save settings: ' + (data.error || 'Unknown error'));
+            alert(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }));
             return;
         }
 
@@ -1274,7 +1274,7 @@ async function setUnitSetting(name, value) {
         }
 
     } catch (error) {
-        alert('Unable to save settings: ' + error.message);
+        alert(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }));
     }
 }
 
@@ -1316,7 +1316,7 @@ async function updateListenerRecoverySettings() {
 
         if (!data.ok) {
 
-            showToast("Unable to save settings", "error");
+            showToast(window.I18N.t('settings.unable_to_save_settings_short'), "error");
             return;
 
         }
@@ -1326,7 +1326,7 @@ async function updateListenerRecoverySettings() {
         updateSettingsUi();
 
         showToast(
-            "Listener Auto Recovery updated",
+            window.I18N.t('settings.listener_recovery_updated'),
             "success"
         );
 
@@ -5099,7 +5099,7 @@ function ensureMeshMap() {
 function buildMapPopup(node) {
     const pos = getNodePosition(node);
     const navigation = pos ? getNodeDistanceAndBearing(pos.latitude, pos.longitude) : { distanceText:'--', bearingText:'--' };
-    const source = node?.position?.source || 'Radio';
+    const source = node?.position?.source || window.I18N.t('nodes.source_radio');
     const updated = formatNodePositionUpdated(node?.position);
     const age = node?.age || node?.last_seen || '--';
     const nodeId = escapeJsString(node?.node_id || '');
@@ -5108,17 +5108,17 @@ function buildMapPopup(node) {
     return `
         <div class="map-popup-name">${escapeHtml(getNodeDisplayName(node))}</div>
         <div class="map-popup-grid">
-            <span>Distance</span><strong>${escapeHtml(navigation.distanceText)}</strong>
-            <span>Bearing</span><strong>${escapeHtml(navigation.bearingText)}</strong>
-            <span>Source</span><strong>${escapeHtml(source)}</strong>
-            <span>Last update</span><strong>${escapeHtml(updated || age)}</strong>
+            <span>${escapeHtml(window.I18N.t('nodes.distance'))}</span><strong>${escapeHtml(navigation.distanceText)}</strong>
+            <span>${escapeHtml(window.I18N.t('nodes.bearing'))}</span><strong>${escapeHtml(navigation.bearingText)}</strong>
+            <span>${escapeHtml(window.I18N.t('nodes.source'))}</span><strong>${escapeHtml(source)}</strong>
+            <span>${escapeHtml(window.I18N.t('nodes.last_update'))}</span><strong>${escapeHtml(updated || age)}</strong>
         </div>
         <div class="map-popup-actions">
-            <button class="map-popup-primary-btn" onclick="openChat('${nodeId}', '${nodeName}', 'dm')">💬 Message</button>
-            <button class="map-popup-action-btn" onclick="runNodeTool('request_telemetry', '${nodeId}', '${nodeName}', this)">📊 Telemetry</button>
-            <button class="map-popup-action-btn" onclick="runNodeTool('request_position', '${nodeId}', '${nodeName}', this)">📍 Position</button>
-            <button class="map-popup-action-btn" onclick="setNodeAsReference('${nodeId}')">📌 Reference</button>
-            <button class="map-popup-action-btn" onclick="copyCoordinates('${pos ? pos.latitude : ''}', '${pos ? pos.longitude : ''}')">📋 Coordinates</button>
+            <button class="map-popup-primary-btn" onclick="openChat('${nodeId}', '${nodeName}', 'dm')">💬 ${escapeHtml(window.I18N.t('nodes.message_button'))}</button>
+            <button class="map-popup-action-btn" onclick="runNodeTool('request_telemetry', '${nodeId}', '${nodeName}', this)">📊 ${escapeHtml(window.I18N.t('nodes.telemetry_short'))}</button>
+            <button class="map-popup-action-btn" onclick="runNodeTool('request_position', '${nodeId}', '${nodeName}', this)">📍 ${escapeHtml(window.I18N.t('nodes.position_short'))}</button>
+            <button class="map-popup-action-btn" onclick="setNodeAsReference('${nodeId}')">📌 ${escapeHtml(window.I18N.t('nodes.reference_short'))}</button>
+            <button class="map-popup-action-btn" onclick="copyCoordinates('${pos ? pos.latitude : ''}', '${pos ? pos.longitude : ''}')">📋 ${escapeHtml(window.I18N.t('waypoints.coordinates'))}</button>
         </div>
     `;
 }
@@ -5126,7 +5126,7 @@ function buildMapPopup(node) {
 function renderMeshMap(targetNodeId = null, options = {}) {
     const map = ensureMeshMap();
     if (!map) {
-        showToast('Map library could not be loaded', 'error');
+        showToast(window.I18N.t('nodes.map_library_load_failed'), 'error');
         return;
     }
 
@@ -5275,11 +5275,12 @@ function renderMeshMap(targetNodeId = null, options = {}) {
 
     const reference = getReferenceLocation();
     if (reference) {
+        const referenceLocationLabel = reference.name || window.I18N.t('settings.reference_location');
         meshMapReferenceMarker = L.marker([reference.latitude, reference.longitude], {
             icon: createMeshMapIcon('reference'),
-            title: reference.name || 'Reference location',
+            title: referenceLocationLabel,
             zIndexOffset: 700
-        }).addTo(map).bindPopup(`<div class="map-popup-name">${escapeHtml(reference.name || 'Reference location')}</div><div class="map-popup-grid"><span>Type</span><strong>Reference</strong><span>Latitude</span><strong>${reference.latitude.toFixed(6)}</strong><span>Longitude</span><strong>${reference.longitude.toFixed(6)}</strong></div>`, { className:'meshcenter-map-popup' });
+        }).addTo(map).bindPopup(`<div class="map-popup-name">${escapeHtml(referenceLocationLabel)}</div><div class="map-popup-grid"><span>${escapeHtml(window.I18N.t('nodes.type_label'))}</span><strong>${escapeHtml(window.I18N.t('nodes.reference_short'))}</strong><span>${escapeHtml(window.I18N.t('settings.latitude'))}</span><strong>${reference.latitude.toFixed(6)}</strong><span>${escapeHtml(window.I18N.t('settings.longitude'))}</span><strong>${reference.longitude.toFixed(6)}</strong></div>`, { className:'meshcenter-map-popup' });
         bounds.push([reference.latitude, reference.longitude]);
 
         const targetNode = positionedNodes.find(node => String(node.node_id) === String(meshMapTargetNodeId));
@@ -5303,10 +5304,12 @@ function renderMeshMap(targetNodeId = null, options = {}) {
             : [];
         const activeWaypointCount = visibleWaypoints.filter(item => item?.is_active !== false && !formatWaypointExpiryDetails(item?.expire_at).expired).length;
         const expiredWaypointCount = visibleWaypoints.length - activeWaypointCount;
+        const waypointCountText = window.I18N.plural('waypoints.waypoint_count_plural', visibleWaypoints.length, { count: visibleWaypoints.length });
         const waypointSummary = expiredWaypointCount > 0
-            ? `${visibleWaypoints.length} waypoints (${activeWaypointCount} active, ${expiredWaypointCount} expired)`
-            : `${visibleWaypoints.length} waypoint${visibleWaypoints.length === 1 ? '' : 's'}`;
-        countEl.textContent = `${positionedNodes.length} node${positionedNodes.length === 1 ? '' : 's'} · ${waypointSummary}`;
+            ? `${waypointCountText} (${activeWaypointCount} ${window.I18N.t('waypoints.count_active')}, ${expiredWaypointCount} ${window.I18N.t('waypoints.count_expired')})`
+            : waypointCountText;
+        const nodeCountText = window.I18N.plural('nodes.node_count_plural', positionedNodes.length, { count: positionedNodes.length });
+        countEl.textContent = `${nodeCountText} · ${waypointSummary}`;
     }
 
 const targetNode = positionedNodes.find(
@@ -5320,7 +5323,7 @@ const subtitle = document.getElementById("mapViewSubtitle");
 
 if (targetNode && targetPos) {
     if (title)
-        title.textContent = `🗺 Map — ${getNodeDisplayName(targetNode)}`;
+        title.textContent = `🗺 ${window.I18N.t('nodes.map_title_for', { name: getNodeDisplayName(targetNode) })}`;
     if (subtitle) {
         const nav = getNodeDistanceAndBearing(
             targetPos.latitude,
@@ -5328,7 +5331,7 @@ if (targetNode && targetPos) {
         );
         subtitle.textContent =
             `${nav.distanceText} · ${nav.bearingText} · ` +
-            `${targetNode.position?.source || "Radio"}`;
+            `${targetNode.position?.source || window.I18N.t('nodes.source_radio')}`;
     }
     if (preserveViewport &&
         savedCenter &&
@@ -5362,8 +5365,8 @@ if (targetNode && targetPos) {
         }
     }
 } else {
-        if (title) title.textContent = '🗺 Map';
-        if (subtitle) subtitle.textContent = 'Known Meshtastic nodes and waypoints';
+        if (title) title.textContent = `🗺 ${window.I18N.t('nodes.map_title')}`;
+        if (subtitle) subtitle.textContent = window.I18N.t('nodes.map_subtitle_default');
 
         if (preserveViewport && savedCenter && Number.isFinite(savedZoom)) {
             map.setView(savedCenter, savedZoom, { animate:false });
@@ -5399,7 +5402,7 @@ function openEmbeddedNodeMap(latitude, longitude, nodeId = null) {
     const lat = Number(latitude);
     const lon = Number(longitude);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        showToast('Position coordinates are unavailable', 'error');
+        showToast(window.I18N.t('nodes.position_coordinates_unavailable'), 'error');
         return;
     }
 
@@ -5450,7 +5453,7 @@ function openNodeMap(latitude, longitude, nodeId = null) {
 function openExternalNodeMap(latitude, longitude) {
     const url = buildNodeMapUrl(latitude, longitude);
     if (!url) {
-        showToast('Position coordinates are unavailable', 'error');
+        showToast(window.I18N.t('nodes.position_coordinates_unavailable'), 'error');
         return;
     }
     window.open(url, '_blank', 'noopener,noreferrer');
@@ -9384,7 +9387,7 @@ function isCameraTabVisible() {
     return currentMainTab === 'video';
 }
 
-function setCameraFeedLoading(loading, message = 'Connecting to camera…') {
+function setCameraFeedLoading(loading, message = window.I18N.t('camera.connecting')) {
     const img = document.getElementById('videoFeed');
     const placeholder = document.getElementById('cameraLoadingPlaceholder');
     const title = placeholder?.querySelector('.camera-loading-title');
@@ -9411,7 +9414,7 @@ function showCameraFeed() {
     setCameraFeedLoading(false);
 }
 
-function hideCameraFeed(message = 'Connecting to camera…') {
+function hideCameraFeed(message = window.I18N.t('camera.connecting')) {
     setCameraFeedLoading(true, message);
 }
 
@@ -9473,11 +9476,11 @@ function renderCameraPowerState() {
 
     if (cameraPowerStatus === 'starting') {
         if (buttonText) {
-            buttonText.textContent = 'Starting...';
+            buttonText.textContent = window.I18N.t('camera.starting');
         }
 
         if (status) {
-            status.textContent = '🟡 Starting camera...';
+            status.textContent = `🟡 ${window.I18N.t('camera.starting_camera')}`;
             status.style.color = '#d97706';
         }
 
@@ -9486,11 +9489,11 @@ function renderCameraPowerState() {
 
     if (cameraPowerStatus === 'stopping') {
         if (buttonText) {
-            buttonText.textContent = 'Stopping...';
+            buttonText.textContent = window.I18N.t('camera.stopping');
         }
 
         if (status) {
-            status.textContent = '🟠 Stopping camera...';
+            status.textContent = `🟠 ${window.I18N.t('camera.stopping_camera')}`;
             status.style.color = '#ea580c';
         }
 
@@ -9500,11 +9503,11 @@ function renderCameraPowerState() {
     if (cameraPowerStatus === 'error') {
         if (buttonText) {
             buttonText.textContent =
-                cameraPowerEnabled ? 'Turn Off' : 'Try Again';
+                cameraPowerEnabled ? window.I18N.t('camera.turn_off') : window.I18N.t('camera.try_again');
         }
 
         if (status) {
-            status.textContent = '🔴 Camera error';
+            status.textContent = `🔴 ${window.I18N.t('camera.camera_error')}`;
             status.style.color = '#c62828';
         }
 
@@ -9525,16 +9528,16 @@ function renderCameraPowerState() {
         }
 
         if (buttonText) {
-            buttonText.textContent = 'Turn On';
+            buttonText.textContent = window.I18N.t('camera.turn_on');
         }
 
         if (status) {
-            status.textContent = '⚫ Camera Off';
+            status.textContent = `⚫ ${window.I18N.t('notifications.camera_off')}`;
             status.style.color = '#64748b';
         }
 
         if (liveInfo) {
-            liveInfo.textContent = 'Power-saving mode';
+            liveInfo.textContent = window.I18N.t('camera.power_saving_mode');
         }
 
         setCameraControlsDisabled(true);
@@ -9551,7 +9554,7 @@ function renderCameraPowerState() {
     }
 
     if (buttonText) {
-        buttonText.textContent = 'Turn Off';
+        buttonText.textContent = window.I18N.t('camera.turn_off');
     }
 
     setCameraControlsDisabled(false);
@@ -9559,8 +9562,8 @@ function renderCameraPowerState() {
     if (status) {
         status.textContent =
             cameraActive && isCameraTabVisible()
-                ? '🟢 Online'
-                : '⏸️ Paused';
+                ? `🟢 ${window.I18N.t('nodes.status_online')}`
+                : `⏸️ ${window.I18N.t('camera.paused')}`;
 
         status.style.color =
             cameraActive && isCameraTabVisible()
@@ -9676,8 +9679,8 @@ async function setCameraPower(enabled) {
 
         showToast(
             cameraPowerEnabled
-                ? '✅ Camera turned on'
-                : '✅ Camera turned off',
+                ? `✅ ${window.I18N.t('camera.camera_turned_on')}`
+                : `✅ ${window.I18N.t('camera.camera_turned_off')}`,
             'success'
         );
 
@@ -9685,7 +9688,7 @@ async function setCameraPower(enabled) {
         cameraPowerStatus = 'error';
 
         showToast(
-            `❌ Camera power error: ${translateRequestError(error)}`,
+            `❌ ${window.I18N.t('camera.camera_power_error', { message: translateRequestError(error) })}`,
             'error'
         );
 
@@ -9711,11 +9714,11 @@ async function startCameraStream() {
     cameraActive = true;
 
     console.log('[CAMERA] Starting stream...');
-    hideCameraFeed('Connecting to camera…');
+    hideCameraFeed(window.I18N.t('camera.connecting'));
 
     const status = document.getElementById('videoStatus');
     if (status) {
-        status.textContent = '🔄 Starting...';
+        status.textContent = `🔄 ${window.I18N.t('camera.starting')}`;
         status.style.color = '#ff9800';
     }
 
@@ -9736,7 +9739,7 @@ function stopCameraStream() {
 
     const status = document.getElementById('videoStatus');
     if (status) {
-        status.textContent = '⏸️ Paused';
+        status.textContent = `⏸️ ${window.I18N.t('camera.paused')}`;
         status.style.color = '#888';
     }
 }
@@ -9803,12 +9806,12 @@ async function loadVideoSettings() {
 
             const liveInfo = document.getElementById('videoLiveInfo');
             if (liveInfo) {
-                liveInfo.textContent = `Live: ${data.config.resolution || '640×480'} @ ${data.config.fps || 12} FPS`;
+                liveInfo.textContent = window.I18N.t('camera.live_info', { resolution: data.config.resolution || '640×480', fps: data.config.fps || 12 });
             }
-            
+
             const statusEl = document.getElementById('videoStatus');
             if (statusEl) {
-                statusEl.textContent = cameraActive ? '🟢 Online' : '⏸️ Paused';
+                statusEl.textContent = cameraActive ? `🟢 ${window.I18N.t('nodes.status_online')}` : `⏸️ ${window.I18N.t('camera.paused')}`;
                 statusEl.style.color = cameraActive ? '#4caf50' : '#888';
             }
             
@@ -9877,7 +9880,7 @@ async function updateVideoSettings() {
     const status = document.getElementById('videoStatus');
 
     if (status) {
-        status.textContent = '🔄 Applying settings...';
+        status.textContent = `🔄 ${window.I18N.t('camera.applying_settings')}`;
         status.style.color = '#ff9800';
     }
 
@@ -9899,21 +9902,21 @@ async function updateVideoSettings() {
         if (liveInfo) {
             const appliedResolution = currentVideoSettings.resolution || requestedSettings.resolution;
             const appliedFps = currentVideoSettings.fps || requestedSettings.fps;
-            liveInfo.textContent = `Live: ${appliedResolution.replace('x', '×')} @ ${appliedFps} FPS`;
+            liveInfo.textContent = window.I18N.t('camera.live_info', { resolution: appliedResolution.replace('x', '×'), fps: appliedFps });
         }
 
         if (cameraActive) {
             await reconnectCameraFeed();
         } else if (status) {
-            status.textContent = '⏸️ Paused';
+            status.textContent = `⏸️ ${window.I18N.t('camera.paused')}`;
             status.style.color = '#888';
         }
 
-        showToast('✅ Video settings updated', 'success');
+        showToast(`✅ ${window.I18N.t('camera.video_settings_updated')}`, 'success');
 
     } catch (error) {
         console.error('Error updating video settings:', error);
-        showToast(`❌ Camera settings failed: ${error.message}`, 'error');
+        showToast(`❌ ${window.I18N.t('camera.settings_failed', { message: error.message })}`, 'error');
         await loadVideoSettings();
 
     } finally {
@@ -10040,7 +10043,7 @@ async function applyCameraImagePreset(presetName) {
     await updateCameraImageControls(false);
 
     showToast(
-        `✅ Image preset applied: ${document.getElementById('cameraImagePreset')?.selectedOptions[0]?.textContent || presetName}`,
+        `✅ ${window.I18N.t('camera.image_preset_applied', { name: document.getElementById('cameraImagePreset')?.selectedOptions[0]?.textContent || presetName })}`,
         'success'
     );
 }
@@ -10153,7 +10156,7 @@ async function updateCameraImageControls(showMessage = false) {
         }
 
         if (cameraControlShowMessage) {
-            showToast('✅ Image settings updated', 'success');
+            showToast(`✅ ${window.I18N.t('camera.image_settings_updated')}`, 'success');
         }
 
     } catch (error) {
@@ -10163,7 +10166,7 @@ async function updateCameraImageControls(showMessage = false) {
         );
 
         showToast(
-            '❌ Image settings failed: ' + error.message,
+            `❌ ${window.I18N.t('camera.image_settings_failed', { message: error.message })}`,
             'error'
         );
 
@@ -10193,7 +10196,7 @@ async function restoreCameraImageDefaults() {
     await updateCameraImageControls(false);
 
     showToast(
-        '✅ Neutral image settings restored',
+        `✅ ${window.I18N.t('camera.neutral_settings_restored')}`,
         'success'
     );
 }
@@ -10204,24 +10207,24 @@ async function takeScreenshot(source = 'video') {
     
     try {
         btn.disabled = true;
-        btn.textContent = '⏳ Capturing...';
-        
+        btn.textContent = `⏳ ${window.I18N.t('camera.capturing')}`;
+
         const response = await fetch('/api/camera/screenshot', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ source: source })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.ok) {
-            showToast('✅ Screenshot saved', 'success');
+            showToast(`✅ ${window.I18N.t('camera.screenshot_saved')}`, 'success');
         } else {
-            showToast('❌ Failed: ' + (data.error || 'Unknown error'), 'error');
+            showToast(`❌ ${window.I18N.t('camera.failed_prefix', { reason: data.error || window.I18N.t('errors.unknown_error') })}`, 'error');
         }
     } catch (error) {
         console.error('Error taking screenshot:', error);
-        showToast('❌ Network error', 'error');
+        showToast(`❌ ${window.I18N.t('errors.network_error')}`, 'error');
     } finally {
         btn.disabled = false;
         btn.textContent = originalText;
@@ -10263,10 +10266,10 @@ function reconnectCameraFeed() {
             cameraFeedRefreshTimer = null;
         }
 
-        hideCameraFeed('Connecting to camera…');
+        hideCameraFeed(window.I18N.t('camera.connecting'));
 
         if (status) {
-            status.textContent = '🔄 Connecting...';
+            status.textContent = `🔄 ${window.I18N.t('camera.connecting_short')}`;
             status.style.color = '#ff9800';
         }
 
@@ -10344,13 +10347,13 @@ function reconnectCameraFeed() {
                 if (online) {
                     showCameraFeed();
                 } else {
-                    hideCameraFeed('Camera stream unavailable');
+                    hideCameraFeed(window.I18N.t('camera.stream_unavailable'));
                 }
 
                 if (status) {
                     status.textContent = online
-                        ? '🟢 Online'
-                        : '🔴 Camera unavailable';
+                        ? `🟢 ${window.I18N.t('nodes.status_online')}`
+                        : `🔴 ${window.I18N.t('camera.camera_unavailable')}`;
 
                     status.style.color = online
                         ? '#4caf50'
@@ -10464,7 +10467,11 @@ async function loadPhotoSettings() {
             const photoInfo = document.getElementById('photoInfo');
             if (photoInfo) {
                 const res = photoPreviewResolution.replace('x', '×');
-                photoInfo.textContent = `Preview: ${res} (${currentPhotoQuality}%) • Save: ${photoSaveResolution.replace('x', '×')}`;
+                photoInfo.textContent = window.I18N.t('camera.photo_info', {
+                    resolution: res,
+                    quality: currentPhotoQuality,
+                    saveResolution: photoSaveResolution.replace('x', '×')
+                });
             }
             
             console.log('[PHOTO] Settings loaded:', { preview: photoPreviewResolution, quality: currentPhotoQuality });
@@ -10494,17 +10501,17 @@ async function updatePhotoSettings(showMessage = false) {
         const data = await response.json();
 
         if (!data.ok) {
-            showToast('❌ Failed to update photo settings', 'error');
+            showToast(`❌ ${window.I18N.t('camera.update_photo_settings_failed')}`, 'error');
             return;
         }
 
         if (showMessage) {
-            showToast(`✅ Photo quality set to ${quality}%`, 'success');
+            showToast(`✅ ${window.I18N.t('camera.photo_quality_set', { quality })}`, 'success');
         }
 
     } catch (error) {
         console.error('Error updating photo settings:', error);
-        showToast('❌ Network error', 'error');
+        showToast(`❌ ${window.I18N.t('errors.network_error')}`, 'error');
     }
 }
 
@@ -10516,7 +10523,7 @@ async function capturePhotoPreview() {
     
     try {
         if (status) {
-            status.textContent = '⏳ Capturing preview...';
+            status.textContent = `⏳ ${window.I18N.t('camera.capturing_preview')}`;
             status.style.color = '#ff9800';
         }
         if (saveBtn) {
@@ -10544,35 +10551,35 @@ async function capturePhotoPreview() {
             if (status) {
                 const res = data.preview_resolution || photoPreviewResolution;
                 const quality = data.quality || currentPhotoQuality;
-                status.textContent = `📷 Preview ready (${res.replace('x', '×')}, ${quality}%)`;
+                status.textContent = `📷 ${window.I18N.t('camera.preview_ready', { resolution: res.replace('x', '×'), quality })}`;
                 status.style.color = '#2e7d32';
             }
             if (saveBtn) {
                 saveBtn.disabled = false;
-                saveBtn.textContent = '💾 Save';
+                saveBtn.textContent = `💾 ${window.I18N.t('common.save')}`;
             }
             currentPhotoData = data.image_data;
         } else {
             console.error('[PHOTO] Failed:', data.error);
             if (status) {
-                status.textContent = '❌ Failed: ' + (data.error || 'Unknown error');
+                status.textContent = `❌ ${window.I18N.t('camera.failed_prefix', { reason: data.error || window.I18N.t('errors.unknown_error') })}`;
                 status.style.color = '#c62828';
             }
             if (saveBtn) {
                 saveBtn.disabled = true;
-                saveBtn.textContent = '💾 Save';
+                saveBtn.textContent = `💾 ${window.I18N.t('common.save')}`;
             }
             if (placeholder) placeholder.style.display = 'flex';
         }
     } catch (error) {
         console.error('[PHOTO] Error:', error);
         if (status) {
-            status.textContent = '❌ Network error';
+            status.textContent = `❌ ${window.I18N.t('errors.network_error')}`;
             status.style.color = '#c62828';
         }
         if (saveBtn) {
             saveBtn.disabled = true;
-            saveBtn.textContent = '💾 Save';
+            saveBtn.textContent = `💾 ${window.I18N.t('common.save')}`;
         }
         if (placeholder) placeholder.style.display = 'flex';
     }
@@ -10581,7 +10588,7 @@ async function capturePhotoPreview() {
 async function captureCameraPhoto() {
     if (!cameraPowerEnabled) {
         showToast(
-            '⚫ Turn the camera on first',
+            `⚫ ${window.I18N.t('camera.turn_camera_on_first')}`,
             'error'
         );
         return;
@@ -10593,7 +10600,7 @@ async function captureCameraPhoto() {
     try {
         if (btn) {
             btn.disabled = true;
-            btn.textContent = '⏳ Saving...';
+            btn.textContent = `⏳ ${window.I18N.t('camera.saving')}`;
         }
 
         if (videoFeed) {
@@ -10611,14 +10618,14 @@ async function captureCameraPhoto() {
         const data = await response.json();
 
         if (data.ok) {
-            showToast(`✅ Screenshot saved: ${data.display_name || data.filename}`, 'success');
+            showToast(`✅ ${window.I18N.t('camera.screenshot_saved_named', { name: data.display_name || data.filename })}`, 'success');
         } else {
-            showToast('❌ Screenshot failed: ' + (data.error || 'Unknown error'), 'error');
+            showToast(`❌ ${window.I18N.t('camera.screenshot_failed', { reason: data.error || window.I18N.t('errors.unknown_error') })}`, 'error');
         }
 
     } catch (error) {
         console.error('Screenshot error:', error);
-        showToast('❌ Network error', 'error');
+        showToast(`❌ ${window.I18N.t('errors.network_error')}`, 'error');
 
     } finally {
 
@@ -10632,7 +10639,7 @@ async function captureCameraPhoto() {
 
     if (btn) {
         btn.disabled = false;
-        btn.textContent = '📸 Screenshot';
+        btn.textContent = `📸 ${window.I18N.t('camera.screenshot')}`;
         }
     }
 }
@@ -10643,71 +10650,71 @@ async function savePhoto() {
     const saveBtn = document.getElementById('photoSaveBtn');
     
     if (!display || display.style.display === 'none' || !currentPhotoData) {
-        showToast('❌ No photo to save. Create a screenshot first!', 'error');
+        showToast(`❌ ${window.I18N.t('camera.no_photo_to_save')}`, 'error');
         return;
     }
-    
+
     try {
         if (status) {
-            status.textContent = '⏳ Capturing high-res photo...';
+            status.textContent = `⏳ ${window.I18N.t('camera.capturing_high_res')}`;
             status.style.color = '#ff9800';
         }
         if (saveBtn) {
             saveBtn.disabled = true;
             saveBtn.textContent = '⏳...';
         }
-        
+
         const response = await fetch('/api/photo/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });
-        
+
         const data = await response.json();
-        
+
         if (data.ok) {
             if (data.preview_data && display) {
                 display.src = 'data:image/jpeg;base64,' + data.preview_data;
             }
-            
+
             if (status) {
-                status.textContent = '✅ Saved!';
+                status.textContent = `✅ ${window.I18N.t('camera.saved_exclaim')}`;
                 status.style.color = '#2e7d32';
             }
-            showToast(`✅ Photo saved: ${data.filename} (${(data.size/1024).toFixed(1)} KB)`, 'success');
-            
+            showToast(`✅ ${window.I18N.t('camera.photo_saved', { filename: data.filename, size: (data.size / 1024).toFixed(1) })}`, 'success');
+
             setTimeout(() => {
                 if (status) {
                     const res = photoPreviewResolution.replace('x', '×');
-                    status.textContent = `📷 Preview ready (${res}, ${currentPhotoQuality}%)`;
+                    status.textContent = `📷 ${window.I18N.t('camera.preview_ready', { resolution: res, quality: currentPhotoQuality })}`;
                     status.style.color = '#2e7d32';
                 }
                 if (saveBtn) {
                     saveBtn.disabled = false;
-                    saveBtn.textContent = '💾 Save';
+                    saveBtn.textContent = `💾 ${window.I18N.t('common.save')}`;
                 }
             }, 2000);
         } else {
             if (status) {
-                status.textContent = '❌ Save failed';
+                status.textContent = `❌ ${window.I18N.t('camera.save_failed')}`;
                 status.style.color = '#c62828';
             }
-            showToast('❌ Failed to save: ' + (data.error || 'Unknown error'), 'error');
+            showToast(`❌ ${window.I18N.t('camera.failed_to_save', { reason: data.error || window.I18N.t('errors.unknown_error') })}`, 'error');
             if (saveBtn) {
                 saveBtn.disabled = false;
-                saveBtn.textContent = '💾 Save';
+                saveBtn.textContent = `💾 ${window.I18N.t('common.save')}`;
             }
         }
     } catch (error) {
         console.error('Error saving photo:', error);
         if (status) {
-            status.textContent = '❌ Network error';
+            status.textContent = `❌ ${window.I18N.t('errors.network_error')}`;
             status.style.color = '#c62828';
         }
         if (saveBtn) {
             saveBtn.disabled = false;
-            saveBtn.textContent = '💾 Save';
+            saveBtn.textContent = `💾 ${window.I18N.t('common.save')}`;
         }
-        showToast('❌ Network error', 'error');
+        showToast(`❌ ${window.I18N.t('errors.network_error')}`, 'error');
     }
 }
 
@@ -10717,12 +10724,12 @@ function refreshPhoto() {
     const placeholder = document.getElementById('photoPlaceholder');
     
     if (status) {
-        status.textContent = '⏳ Capturing...';
+        status.textContent = `⏳ ${window.I18N.t('camera.capturing')}`;
         status.style.color = '#ff9800';
     }
     if (display) display.style.display = 'none';
     if (placeholder) placeholder.style.display = 'flex';
-    
+
     switchCameraMode('photo').then(() => {
         setTimeout(() => capturePhotoPreview(), 300);
     });
@@ -12992,13 +12999,13 @@ let radioConnectionActionBusy = false;
 
 function radioConnectionLabel(mode) {
     const labels = {
-        connected: 'Connected',
-        releasing: 'Releasing',
-        released: 'Released',
-        reconnecting: 'Reconnecting',
-        error: 'Error'
+        connected: window.I18N.t('settings.radio_status_connected'),
+        releasing: window.I18N.t('settings.radio_status_releasing'),
+        released: window.I18N.t('settings.radio_status_released'),
+        reconnecting: window.I18N.t('settings.radio_status_reconnecting'),
+        error: window.I18N.t('settings.radio_status_error')
     };
-    return labels[mode] || 'Checking';
+    return labels[mode] || window.I18N.t('settings.checking');
 }
 
 function renderRadioConnectionState(radio) {
@@ -13015,7 +13022,7 @@ function renderRadioConnectionState(radio) {
     badge.className = `radio-connection-badge is-${mode}`;
     badge.textContent = radioConnectionLabel(mode);
 
-    let message = radioConnectionState.message || 'Radio connection status is unavailable.';
+    let message = radioConnectionState.message || window.I18N.t('settings.radio_status_unavailable');
     if (radioConnectionState.last_error) {
         message += ` ${radioConnectionState.last_error}`;
     }
@@ -13023,18 +13030,18 @@ function renderRadioConnectionState(radio) {
 
     if (note) {
         note.textContent = mode === 'released'
-            ? 'Open the official Meshtastic application now. When configuration is complete, return here and reconnect the radio.'
-            : 'Messaging, telemetry and Node Tools are unavailable while the radio is released.';
+            ? window.I18N.t('settings.radio_released_instructions')
+            : window.I18N.t('settings.radio_released_note');
     }
 
     const transitional = mode === 'releasing' || mode === 'reconnecting';
     action.disabled = transitional || radioConnectionActionBusy;
     action.classList.toggle('is-reconnect', mode === 'released' || mode === 'error');
     action.textContent = mode === 'released' || mode === 'error'
-        ? 'Reconnect Radio'
+        ? window.I18N.t('settings.reconnect_radio')
         : transitional
             ? radioConnectionLabel(mode) + '...'
-            : 'Release Radio';
+            : window.I18N.t('settings.release_radio');
 
     document.documentElement.dataset.radioMode = mode;
 }
@@ -13047,7 +13054,7 @@ async function loadRadioConnectionStatus({ silent = false } = {}) {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            throw new Error(data.error || 'Unable to read radio status');
+            throw new Error(data.error || window.I18N.t('settings.unable_to_read_radio_status'));
         }
 
         renderRadioConnectionState(data.radio);
@@ -13056,21 +13063,16 @@ async function loadRadioConnectionStatus({ silent = false } = {}) {
         console.warn('[RADIO MODE] Status error:', error);
         renderRadioConnectionState({
             mode: 'error',
-            message: 'Unable to read the radio connection status.',
+            message: window.I18N.t('settings.unable_to_read_radio_status_full'),
             last_error: error.message
         });
-        if (!silent) showToast('Unable to read radio status', 'error');
+        if (!silent) showToast(window.I18N.t('settings.unable_to_read_radio_status'), 'error');
         return null;
     }
 }
 
 async function releaseRadioConnection() {
-    const confirmed = window.confirm(
-        'Release the Meshtastic radio?\n\n' +
-        'Messaging, telemetry, node discovery and Node Tools will be temporarily unavailable. ' +
-        'MeshCenter itself will continue running.\n\n' +
-        'After the radio is released, connect to it using the official Meshtastic application.'
-    );
+    const confirmed = window.confirm(window.I18N.t('settings.release_radio_confirm'));
 
     if (!confirmed) return;
 
@@ -13078,7 +13080,7 @@ async function releaseRadioConnection() {
     renderRadioConnectionState({
         ...(radioConnectionState || {}),
         mode: 'releasing',
-        message: 'Stopping the listener and releasing the serial port...'
+        message: window.I18N.t('settings.stopping_listener_releasing_port')
     });
 
     try {
@@ -13090,13 +13092,13 @@ async function releaseRadioConnection() {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            throw new Error(data.error || data.message || 'Unable to release the radio');
+            throw new Error(data.error || data.message || window.I18N.t('settings.unable_to_release_radio'));
         }
 
         renderRadioConnectionState(data.radio);
-        showToast('Radio released for external configuration', 'success');
+        showToast(window.I18N.t('settings.radio_released_success'), 'success');
     } catch (error) {
-        showToast(`Unable to release radio: ${error.message}`, 'error');
+        showToast(window.I18N.t('settings.unable_to_release_radio_reason', { reason: error.message }), 'error');
         await loadRadioConnectionStatus({ silent: true });
     } finally {
         radioConnectionActionBusy = false;
@@ -13109,7 +13111,7 @@ async function reconnectRadioConnection() {
     renderRadioConnectionState({
         ...(radioConnectionState || {}),
         mode: 'reconnecting',
-        message: 'Reconnecting MeshCenter to the Meshtastic radio...'
+        message: window.I18N.t('settings.reconnecting_meshcenter')
     });
 
     try {
@@ -13121,11 +13123,11 @@ async function reconnectRadioConnection() {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            throw new Error(data.error || data.message || 'Unable to reconnect the radio');
+            throw new Error(data.error || data.message || window.I18N.t('settings.unable_to_reconnect_radio'));
         }
 
         renderRadioConnectionState(data.radio);
-        showToast('Radio reconnect requested', 'success');
+        showToast(window.I18N.t('settings.radio_reconnect_requested'), 'success');
 
         // Give the existing listener loop time to reopen the serial port, then
         // force the normal chat/channel refresh to pick up configuration changes.
@@ -13139,7 +13141,7 @@ async function reconnectRadioConnection() {
             }
         }, 1800);
     } catch (error) {
-        showToast(`Unable to reconnect radio: ${error.message}`, 'error');
+        showToast(window.I18N.t('settings.unable_to_reconnect_radio_reason', { reason: error.message }), 'error');
         await loadRadioConnectionStatus({ silent: true });
     } finally {
         radioConnectionActionBusy = false;

@@ -25,7 +25,7 @@ async function loadMediaGallery(force = false) {
     if (mediaGalleryLoaded && !force) return;
 
     mediaGalleryLoading = true;
-    content.innerHTML = '<div class="media-loading">🖼️ Loading media…</div>';
+    content.innerHTML = `<div class="media-loading">🖼️ ${mediaEscapeHtml(window.I18N.t('media.loading'))}</div>`;
 
     try {
         const response = await fetch('/api/camera/screenshots');
@@ -42,9 +42,9 @@ async function loadMediaGallery(force = false) {
         content.innerHTML = `
             <div class="media-empty-state media-error-state">
                 <div class="media-empty-icon">⚠️</div>
-                <div class="media-empty-title">Could not load media</div>
-                <div class="media-empty-text">Check the camera service and network connection.</div>
-                <button type="button" class="media-primary-btn" onclick="loadMediaGallery(true)">Retry</button>
+                <div class="media-empty-title">${mediaEscapeHtml(window.I18N.t('media.could_not_load'))}</div>
+                <div class="media-empty-text">${mediaEscapeHtml(window.I18N.t('media.check_camera_service'))}</div>
+                <button type="button" class="media-primary-btn" onclick="loadMediaGallery(true)">${mediaEscapeHtml(window.I18N.t('common.retry'))}</button>
             </div>`;
     } finally {
         mediaGalleryLoading = false;
@@ -63,14 +63,14 @@ function renderMediaGallery(screenshots, storage) {
         content.innerHTML = `
             <div class="media-toolbar">
                 <div class="media-summary">
-                    <strong>0 images</strong>
-                    <span>${usedMb.toFixed(1)} MB used · ${freeGb.toFixed(1)} GB free</span>
+                    <strong>${mediaEscapeHtml(window.I18N.plural('media.image_count', 0, { count: 0 }))}</strong>
+                    <span>${mediaEscapeHtml(window.I18N.t('media.storage_used_free', { used: usedMb.toFixed(1), free: freeGb.toFixed(1) }))}</span>
                 </div>
             </div>
             <div class="media-empty-state">
                 <div class="media-empty-icon">📭</div>
-                <div class="media-empty-title">No captured images yet</div>
-                <div class="media-empty-text">Photos captured in Camera will appear here automatically.</div>
+                <div class="media-empty-title">${mediaEscapeHtml(window.I18N.t('media.no_images_yet'))}</div>
+                <div class="media-empty-text">${mediaEscapeHtml(window.I18N.t('media.no_images_text'))}</div>
             </div>`;
         return;
     }
@@ -78,12 +78,12 @@ function renderMediaGallery(screenshots, storage) {
     content.innerHTML = `
         <div class="media-toolbar">
             <div class="media-summary">
-                <strong>${imageCount} ${imageCount === 1 ? 'image' : 'images'}</strong>
-                <span>${usedMb.toFixed(1)} MB used · ${freeGb.toFixed(1)} GB free · Newest first</span>
+                <strong>${mediaEscapeHtml(window.I18N.plural('media.image_count', imageCount, { count: imageCount }))}</strong>
+                <span>${mediaEscapeHtml(window.I18N.t('media.storage_used_free', { used: usedMb.toFixed(1), free: freeGb.toFixed(1) }))} · ${mediaEscapeHtml(window.I18N.t('media.newest_first'))}</span>
             </div>
             <div class="media-toolbar-actions">
-                <span class="media-sort-label">Date ↓</span>
-                <button type="button" class="media-delete-all-btn" onclick="deleteAllMedia()">🗑 Delete All</button>
+                <span class="media-sort-label">${mediaEscapeHtml(window.I18N.t('media.date_desc'))}</span>
+                <button type="button" class="media-delete-all-btn" onclick="deleteAllMedia()">🗑 ${mediaEscapeHtml(window.I18N.t('media.delete_all'))}</button>
             </div>
         </div>
         <div class="media-grid">
@@ -93,7 +93,7 @@ function renderMediaGallery(screenshots, storage) {
 
 function renderMediaItem(item) {
     const filename = String(item.filename || '');
-    const displayName = String(item.display_name || filename.split('/').pop() || 'Image');
+    const displayName = String(item.display_name || filename.split('/').pop() || window.I18N.t('media.image_fallback_name'));
     const url = String(item.url || '#');
     const modified = String(item.modified || '');
     const sizeKb = (Number(item.size || 0) / 1024).toFixed(1);
@@ -106,7 +106,7 @@ function renderMediaItem(item) {
                      alt="${mediaEscapeHtml(displayName)}"
                      loading="lazy"
                      onerror="this.closest('.media-preview').classList.add('media-preview-error'); this.style.display='none';">
-                <span class="media-preview-error-text">Image unavailable</span>
+                <span class="media-preview-error-text">${mediaEscapeHtml(window.I18N.t('media.image_unavailable'))}</span>
             </a>
             <div class="media-item-info">
                 <div class="media-item-copy">
@@ -114,8 +114,8 @@ function renderMediaItem(item) {
                     <span>${mediaEscapeHtml(modified)} · ${sizeKb} KB</span>
                 </div>
                 <div class="media-item-actions">
-                    <a class="media-icon-btn" href="${mediaEscapeHtml(url)}" download="${mediaEscapeHtml(displayName)}" title="Download" aria-label="Download image">⬇</a>
-                    <button type="button" class="media-icon-btn media-delete-btn" onclick='deleteMediaItem(${handlerFilename}, event)' title="Delete" aria-label="Delete image">🗑</button>
+                    <a class="media-icon-btn" href="${mediaEscapeHtml(url)}" download="${mediaEscapeHtml(displayName)}" title="${mediaEscapeHtml(window.I18N.t('media.download'))}" aria-label="${mediaEscapeHtml(window.I18N.t('media.download_image_aria'))}">⬇</a>
+                    <button type="button" class="media-icon-btn media-delete-btn" onclick='deleteMediaItem(${handlerFilename}, event)' title="${mediaEscapeHtml(window.I18N.t('common.delete'))}" aria-label="${mediaEscapeHtml(window.I18N.t('media.delete_image_aria'))}">🗑</button>
                 </div>
             </div>
         </article>`;
@@ -125,7 +125,7 @@ async function deleteMediaItem(filename, event) {
     event?.preventDefault();
     event?.stopPropagation();
 
-    if (!confirm(`Delete image "${filename}"?`)) return;
+    if (!confirm(window.I18N.t('media.delete_image_confirm', { filename }))) return;
 
     try {
         const response = await fetch(`/api/camera/screenshot/${encodeURIComponent(filename)}`, {
@@ -134,10 +134,10 @@ async function deleteMediaItem(filename, event) {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            throw new Error(data.error || 'Delete failed');
+            throw new Error(data.error || window.I18N.t('media.delete_failed'));
         }
 
-        if (typeof showToast === 'function') showToast('✅ Image deleted', 'success');
+        if (typeof showToast === 'function') showToast(`✅ ${window.I18N.t('media.image_deleted')}`, 'success');
         mediaGalleryLoaded = false;
         await loadMediaGallery(true);
     } catch (error) {
@@ -147,16 +147,16 @@ async function deleteMediaItem(filename, event) {
 }
 
 async function deleteAllMedia() {
-    if (!confirm('Delete ALL images? This action cannot be undone.')) return;
-    if (!confirm('Are you sure you want to permanently delete the complete gallery?')) return;
+    if (!confirm(window.I18N.t('media.delete_all_confirm'))) return;
+    if (!confirm(window.I18N.t('media.delete_all_confirm2'))) return;
 
     try {
         const response = await fetch('/api/camera/screenshots', { method: 'DELETE' });
         const data = await response.json().catch(() => ({}));
 
-        if (!response.ok) throw new Error(data.error || 'Delete failed');
+        if (!response.ok) throw new Error(data.error || window.I18N.t('media.delete_failed'));
 
-        if (typeof showToast === 'function') showToast('✅ All images deleted', 'success');
+        if (typeof showToast === 'function') showToast(`✅ ${window.I18N.t('media.all_images_deleted')}`, 'success');
         mediaGalleryLoaded = false;
         await loadMediaGallery(true);
     } catch (error) {

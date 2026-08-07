@@ -2717,7 +2717,8 @@ def stop_listener():
         return False
 
     finally:
-        listen_process = None
+        with radio_lock:
+            listen_process = None
         time.sleep(1.0)
 
 def wait_serial_release(device=None, timeout=8):
@@ -2891,7 +2892,8 @@ def listen_meshtastic():
             time.sleep(0.5)
             continue
 
-        listen_process = None
+        with radio_lock:
+            listen_process = None
 
         try:
             time.sleep(0.5)
@@ -3128,22 +3130,33 @@ def listen_meshtastic():
                     print(f"[LISTEN] Error processing line: {e}", flush=True)
                     continue
 
-            return_code = listen_process.poll()
+            # stop_listener() can null out the shared listen_process global
+            # from another thread at any time (e.g. via radio_session()).
+            # Snapshot it under the same radio_lock used for that write so
+            # this doesn't poll/terminate a None that just got swapped in -
+            # that used to crash this loop with "'NoneType' object has no
+            # attribute 'poll'", caught only by the generic retry handler
+            # below.
+            with radio_lock:
+                proc = listen_process
+            return_code = proc.poll() if proc is not None else None
 
             if pause_listen.is_set():
                 print("[DEBUG] Listener paused, terminating process...", flush=True)
-                try:
-                    listen_process.terminate()
-                    listen_process.wait(timeout=3)
-                except Exception:
+                if proc is not None:
                     try:
-                        listen_process.kill()
+                        proc.terminate()
+                        proc.wait(timeout=3)
                     except Exception:
-                        pass
-                
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+
                 radio_event("listener_stop")
-                
-                listen_process = None
+
+                with radio_lock:
+                    listen_process = None
                 time.sleep(0.5)
                 continue
 
@@ -3155,7 +3168,8 @@ def listen_meshtastic():
 
             radio_event("listener_stop")
 
-            listen_process = None
+            with radio_lock:
+                listen_process = None
 
         except Exception as e:
             consecutive_errors += 1

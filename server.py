@@ -17,6 +17,7 @@ import csv
 import uuid
 import ast
 import sqlite3
+from contextlib import contextmanager
 from collections import defaultdict, deque
 from datetime import datetime
 from camera import camera
@@ -2778,6 +2779,40 @@ def is_radio_available():
     identity_ok = RADIO_IDENTITY_RESULT.get("status") in {"MATCH", "NOT_CHECKED"}
     return identity_ok and radio_connection_manager.commands_allowed()
 
+
+class RadioBusyError(RuntimeError):
+    """Raised by radio_session() when the serial port could not be claimed."""
+
+
+@contextmanager
+def radio_session(device=None, timeout=8, cooldown=2.0, extra_release_wait=None):
+    """Claim exclusive access to the radio for the duration of the block.
+
+    Centralizes the pause-listener / wait-for-port / hold-radio_lock /
+    resume-listener dance shared by the send worker, channel discovery, and
+    node tools. ``cooldown`` is the pause before the listener resumes
+    (matches the delay send already needed to avoid "Timed out waiting for
+    connection completion" from bouncing --listen too fast); pass 0 to skip
+    it. ``extra_release_wait`` adds a second wait_serial_release() pass after
+    the block exits, for callers whose CLI subprocess can close its serial
+    descriptor slightly after returning (see node tools).
+    """
+    prepared = prepare_radio_command(device=device, timeout=timeout)
+    try:
+        if not prepared:
+            raise RadioBusyError(f"Serial port busy: {device or 'auto-detect'}")
+        with radio_lock:
+            yield
+    finally:
+        if extra_release_wait is not None:
+            wait_serial_release(device=device, timeout=extra_release_wait)
+            time.sleep(0.4)
+        if cooldown:
+            time.sleep(cooldown)
+        if is_radio_available():
+            pause_listen.clear()
+
+
 def update_base_status_from_info(info_output=None):
     global base_status
     try:
@@ -3573,10 +3608,9 @@ register_chat_routes(
     lambda: MESHTASTIC_PORT,
     LOCAL_NODE_ID,
     LOCAL_NODE_NAME,
-    pause_listen,
     radio_lock,
-    stop_listener,
-    prepare_radio_command,
+    radio_session,
+    RadioBusyError,
     get_node_name,
     ensure_chat,
     add_message,
@@ -3686,10 +3720,8 @@ register_node_tools_routes(
     save_nodes=save_nodes,
     MESHTASTIC_CMD=MESHTASTIC_CMD,
     MESHTASTIC_PORT=MESHTASTIC_PORT,
-    radio_lock=radio_lock,
-    pause_listen=pause_listen,
-    prepare_radio_command=prepare_radio_command,
-    wait_serial_release=wait_serial_release,
+    radio_session=radio_session,
+    RadioBusyError=RadioBusyError,
     log_system_event=log_system_event,
     is_radio_available=is_radio_available,
 )
@@ -4547,12 +4579,20 @@ def api_rescan_nodes():
         }), 409
 
     try:
-        pause_listen.set()
-        stop_listener()
+        with radio_session(device=MESHTASTIC_PORT, timeout=10, cooldown=2.0):
+            # Fetch --info while still holding radio_lock, so this doesn't
+            # race the listener (or any other radio_session caller) the way
+            # a bare parse_nodes_from_info() call used to: that helper runs
+            # its own unlocked subprocess when given no info_output.
+            result = subprocess.run(
+                meshtastic_command(MESHTASTIC_CMD, MESHTASTIC_PORT, "--info"),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            info_output = result.stdout + result.stderr
 
-        success = parse_nodes_from_info()
-
-        pause_listen.clear()
+        success = parse_nodes_from_info(info_output=info_output)
 
         return jsonify({
             "ok": bool(success),
@@ -4563,9 +4603,14 @@ def api_rescan_nodes():
             )
         })
 
-    except Exception as e:
-        pause_listen.clear()
+    except RadioBusyError:
+        return jsonify({
+            "ok": False,
+            "error": "Meshtastic serial port is busy",
+            "error_code": "radio_busy"
+        }), 503
 
+    except Exception as e:
         return jsonify({
             "ok": False,
             "error": str(e)

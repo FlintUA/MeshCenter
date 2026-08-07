@@ -26,10 +26,9 @@ def register_chat_routes(
     get_meshtastic_port,
     LOCAL_NODE_ID,
     LOCAL_NODE_NAME,
-    pause_listen,
     radio_lock,
-    stop_listener,
-    prepare_radio_command,
+    radio_session,
+    RadioBusyError,
     get_node_name,
     ensure_chat,
     add_message,
@@ -171,29 +170,25 @@ def register_chat_routes(
             return
 
         try:
-            if not prepare_radio_command(active_serial_port(), timeout=10):
-                for job in batch:
-                    _mark_failed(job["message_id"], job["final_chat_id"], f"serial port busy: {active_serial_port()}")
-                return
+            with radio_session(device=active_serial_port(), timeout=10, cooldown=2.0):
+                interface = None
+                try:
+                    from meshtastic.serial_interface import SerialInterface
 
-            interface = None
-            try:
-                from meshtastic.serial_interface import SerialInterface
-
-                with radio_lock:
                     interface = SerialInterface(devPath=active_serial_port())
                     for job in batch:
                         _send_one(interface, job)
-            finally:
-                if interface is not None:
-                    try:
-                        interface.close()
-                    except Exception as close_error:
-                        print(f"[SEND WARN] interface.close(): {close_error}", flush=True)
+                finally:
+                    if interface is not None:
+                        try:
+                            interface.close()
+                        except Exception as close_error:
+                            print(f"[SEND WARN] interface.close(): {close_error}", flush=True)
+        except RadioBusyError:
+            for job in batch:
+                _mark_failed(job["message_id"], job["final_chat_id"], f"serial port busy: {active_serial_port()}")
+            return
         finally:
-            time.sleep(2.0)
-            if is_radio_available():
-                pause_listen.clear()
             print("[SEND] Listener resumed", flush=True)
 
     # How long to wait, after the first job in a new batch arrives, for
@@ -306,11 +301,8 @@ def register_chat_routes(
             }]
 
         try:
-            if not prepare_radio_command(active_serial_port(), timeout=10):
-                raise RuntimeError("serial port busy")
-
-            from meshtastic.serial_interface import SerialInterface
-            with radio_lock:
+            with radio_session(device=active_serial_port(), timeout=10, cooldown=2.0):
+                from meshtastic.serial_interface import SerialInterface
                 interface = SerialInterface(devPath=active_serial_port())
 
                 # SerialInterface() returns as soon as the initial handshake
@@ -368,13 +360,13 @@ def register_chat_routes(
             discovery_error = error
             print(f"[CHANNELS] Discovery warning: {error}", flush=True)
         finally:
+            # pause_listen/cooldown are handled by radio_session() itself;
+            # only the SerialInterface needs closing here.
             if interface is not None:
                 try:
                     interface.close()
                 except Exception:
                     pass
-            if is_radio_available():
-                pause_listen.clear()
 
         if discovered:
             # One item per slot, ordered exactly as on the radio.

@@ -335,10 +335,8 @@ def register_node_tools_routes(
     save_nodes,
     MESHTASTIC_CMD,
     MESHTASTIC_PORT,
-    radio_lock,
-    pause_listen,
-    prepare_radio_command,
-    wait_serial_release,
+    radio_session,
+    RadioBusyError,
     log_system_event,
     is_radio_available,
 ):
@@ -433,30 +431,14 @@ def register_node_tools_routes(
             flush=True,
         )
 
-        if not prepare_radio_command(resolved_port, timeout=10):
-            log_system_event(
-                title=action_failed_event,
-                level="ERROR",
-                details=f"Serial port is busy: {resolved_port or 'auto-detect'}; "
-                f"Job: {context.job_id}",
-                source="node_tools",
-            )
-            return ActionResult.failure(
-                "The radio connection is busy. Try again in a few seconds.",
-                error_code="radio_busy",
-                state="busy",
-                data={"technical_error": f"Serial port busy: {resolved_port or 'auto-detect'}"},
-                http_status=503,
-            )
-
         try:
-            start_time = time.time()
+            with radio_session(device=resolved_port, timeout=10, cooldown=0.4, extra_release_wait=6):
+                start_time = time.time()
 
-            # Device telemetry is dispatched without waiting for the remote
-            # response. The listener resumes immediately and receives the
-            # eventual TELEMETRY_APP / nodeinfo update through the normal path.
-            if action == "request_telemetry":
-                with radio_lock:
+                # Device telemetry is dispatched without waiting for the remote
+                # response. The listener resumes immediately and receives the
+                # eventual TELEMETRY_APP / nodeinfo update through the normal path.
+                if action == "request_telemetry":
                     print(f"[NODE TOOLS CMD] {cmd}", flush=True)
                     dispatched, returncode, combined_output = _dispatch_cli_request(
                         cmd,
@@ -468,16 +450,81 @@ def register_node_tools_routes(
                         settle_seconds=1.0,
                     )
 
+                    elapsed = time.time() - start_time
+                    print(
+                        f"[NODE TOOLS] Request dispatch finished in {elapsed:.1f}s; "
+                        f"sent={dispatched}; job={context.job_id}",
+                        flush=True,
+                    )
+                    print(f"[NODE TOOLS] Output: {combined_output[:2000]}", flush=True)
+
+                    if not dispatched:
+                        error_text = combined_output or "Telemetry request was not transmitted"
+                        error_code, user_message = _friendly_command_error(
+                            action_title, error_text, configured_port, resolved_port,
+                        )
+                        log_system_event(
+                            title=action_failed_event,
+                            level="ERROR",
+                            details=f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
+                            f"{error_text[:500]}",
+                            source="node_tools",
+                        )
+                        return ActionResult.failure(
+                            user_message,
+                            error_code=error_code,
+                            data={
+                                "technical_error": error_text[-2000:],
+                                "returncode": returncode,
+                                "output": combined_output[-4000:],
+                            },
+                            http_status=500,
+                        )
+
+                    requested_at = time.time()
+                    log_system_event(
+                        title="Telemetry request transmitted",
+                        level="OK",
+                        details=f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
+                        "waiting for listener response",
+                        source="node_tools",
+                    )
+                    return ActionResult.success(
+                        "Telemetry request sent. Waiting for the node response.",
+                        state="waiting_response",
+                        data={
+                            "output": combined_output[-4000:],
+                            "returncode": returncode,
+                            "request_sent": True,
+                            "telemetry_saved": False,
+                            "requested_at": requested_at,
+                            "response_timeout_seconds": 50,
+                        },
+                        http_status=202,
+                    )
+
+                # Position and traceroute keep their existing synchronous CLI
+                # behavior until they are migrated to the same response tracker.
+                print(f"[NODE TOOLS CMD] {cmd}", flush=True)
+                result = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=context.action.timeout_seconds,
+                )
+
                 elapsed = time.time() - start_time
+                combined_output = (result.stdout or "").strip()
                 print(
-                    f"[NODE TOOLS] Request dispatch finished in {elapsed:.1f}s; "
-                    f"sent={dispatched}; job={context.job_id}",
+                    f"[NODE TOOLS] Command finished in {elapsed:.1f}s; job={context.job_id}",
                     flush=True,
                 )
+                print(f"[NODE TOOLS] Return code: {result.returncode}", flush=True)
                 print(f"[NODE TOOLS] Output: {combined_output[:2000]}", flush=True)
 
-                if not dispatched:
-                    error_text = combined_output or "Telemetry request was not transmitted"
+                if result.returncode != 0:
+                    error_text = combined_output or f"{action_title} failed"
                     error_code, user_message = _friendly_command_error(
                         action_title, error_text, configured_port, resolved_port,
                     )
@@ -493,108 +540,58 @@ def register_node_tools_routes(
                         error_code=error_code,
                         data={
                             "technical_error": error_text[-2000:],
-                            "returncode": returncode,
+                            "returncode": result.returncode,
                             "output": combined_output[-4000:],
                         },
                         http_status=500,
                     )
 
-                requested_at = time.time()
+                position = None
+                if action == "request_position":
+                    position = _parse_position_output(combined_output)
+                    if position:
+                        with state_lock:
+                            target_node = nodes.setdefault(node_id, {
+                                "node_id": node_id,
+                                "name": node_name,
+                            })
+                            target_node["position"] = position
+                        save_nodes()
+                        log_system_event(
+                            title="Position saved",
+                            level="OK",
+                            details=f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
+                            f"{position['latitude']}, {position['longitude']}",
+                            source="node_tools",
+                        )
+
                 log_system_event(
-                    title="Telemetry request transmitted",
+                    title=action_completed_event,
                     level="OK",
-                    details=f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
-                    "waiting for listener response",
+                    details=f"Target: {node_name} ({node_id}); Job: {context.job_id}",
                     source="node_tools",
                 )
-                return ActionResult.success(
-                    "Telemetry request sent. Waiting for the node response.",
-                    state="waiting_response",
-                    data={
-                        "output": combined_output[-4000:],
-                        "returncode": returncode,
-                        "request_sent": True,
-                        "telemetry_saved": False,
-                        "requested_at": requested_at,
-                        "response_timeout_seconds": 50,
-                    },
-                    http_status=202,
-                )
+                data = {"output": combined_output[-4000:], "returncode": result.returncode}
+                if action == "request_position":
+                    data["position"] = position
+                    data["position_saved"] = position is not None
+                return ActionResult.success(f"{action_title} completed", data=data)
 
-            # Position and traceroute keep their existing synchronous CLI
-            # behavior until they are migrated to the same response tracker.
-            with radio_lock:
-                print(f"[NODE TOOLS CMD] {cmd}", flush=True)
-                result = subprocess.run(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    timeout=context.action.timeout_seconds,
-                )
-
-            elapsed = time.time() - start_time
-            combined_output = (result.stdout or "").strip()
-            print(
-                f"[NODE TOOLS] Command finished in {elapsed:.1f}s; job={context.job_id}",
-                flush=True,
-            )
-            print(f"[NODE TOOLS] Return code: {result.returncode}", flush=True)
-            print(f"[NODE TOOLS] Output: {combined_output[:2000]}", flush=True)
-
-            if result.returncode != 0:
-                error_text = combined_output or f"{action_title} failed"
-                error_code, user_message = _friendly_command_error(
-                    action_title, error_text, configured_port, resolved_port,
-                )
-                log_system_event(
-                    title=action_failed_event,
-                    level="ERROR",
-                    details=f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
-                    f"{error_text[:500]}",
-                    source="node_tools",
-                )
-                return ActionResult.failure(
-                    user_message,
-                    error_code=error_code,
-                    data={
-                        "technical_error": error_text[-2000:],
-                        "returncode": result.returncode,
-                        "output": combined_output[-4000:],
-                    },
-                    http_status=500,
-                )
-
-            position = None
-            if action == "request_position":
-                position = _parse_position_output(combined_output)
-                if position:
-                    with state_lock:
-                        target_node = nodes.setdefault(node_id, {
-                            "node_id": node_id,
-                            "name": node_name,
-                        })
-                        target_node["position"] = position
-                    save_nodes()
-                    log_system_event(
-                        title="Position saved",
-                        level="OK",
-                        details=f"Target: {node_name} ({node_id}); Job: {context.job_id}; "
-                        f"{position['latitude']}, {position['longitude']}",
-                        source="node_tools",
-                    )
-
+        except RadioBusyError:
             log_system_event(
-                title=action_completed_event,
-                level="OK",
-                details=f"Target: {node_name} ({node_id}); Job: {context.job_id}",
+                title=action_failed_event,
+                level="ERROR",
+                details=f"Serial port is busy: {resolved_port or 'auto-detect'}; "
+                f"Job: {context.job_id}",
                 source="node_tools",
             )
-            data = {"output": combined_output[-4000:], "returncode": result.returncode}
-            if action == "request_position":
-                data["position"] = position
-                data["position_saved"] = position is not None
-            return ActionResult.success(f"{action_title} completed", data=data)
+            return ActionResult.failure(
+                "The radio connection is busy. Try again in a few seconds.",
+                error_code="radio_busy",
+                state="busy",
+                data={"technical_error": f"Serial port busy: {resolved_port or 'auto-detect'}"},
+                http_status=503,
+            )
 
         except subprocess.TimeoutExpired as error:
             log_system_event(
@@ -630,12 +627,10 @@ def register_node_tools_routes(
             )
 
         finally:
-            # Do not race channel discovery or the listener against a CLI
-            # process that has only just closed its serial descriptor.
-            wait_serial_release(device=resolved_port, timeout=6)
-            time.sleep(0.4)
-            if is_radio_available():
-                pause_listen.clear()
+            # wait_serial_release/cooldown/pause_listen bookkeeping is handled
+            # by radio_session() itself (including the extra post-command wait
+            # for a CLI process that closes its serial descriptor slightly
+            # after returning).
             print(
                 f"[NODE TOOLS] Listener resume requested; job={context.job_id}",
                 flush=True,

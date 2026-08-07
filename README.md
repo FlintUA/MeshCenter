@@ -461,6 +461,11 @@ the radio identity. Typical symptoms are:
 
 This is the most common cause of USB detection failure.
 
+> **Tick-off checklist:** the same steps below are also available as a
+> condensed checklist in **[INSTALL.md](INSTALL.md)**, including the sudoers
+> step that's easy to miss, plus `scripts/verify-install.sh` to check an
+> install automatically.
+
 ### Installation Validation
 
 The installation procedure described in this repository has been successfully validated on a clean Raspberry Pi Zero 2 W using a **RAK WisMesh TAP v2 (RAK3312)** with standard Meshtastic firmware.

@@ -2842,9 +2842,19 @@ body {
 }
 
 .settings-grid {
-    columns: 3;
-    column-gap: 14px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-rows: min-content;
+    align-items: start;
+    gap: 14px;
 }
+
+.settings-card--general   { grid-area: 1 / 1 / 2 / 2; }
+.settings-card--units     { grid-area: 2 / 1 / 3 / 2; }
+.settings-card--map       { grid-area: 3 / 1 / 4 / 2; }
+.settings-card--telemetry { grid-area: 1 / 2 / 4 / 3; }
+.settings-card--radio     { grid-area: 1 / 3 / 4 / 4; }
+.settings-card--reference { grid-area: 4 / 1 / 5 / 4; }
 
 .settings-card {
     background: var(--mc-card-bg);
@@ -2852,8 +2862,6 @@ body {
     padding: 16px;
     border: 1px solid #e6e9ef;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-    break-inside: avoid;
-    margin-bottom: 14px;
 }
 
 .settings-card-title {
@@ -2871,7 +2879,16 @@ body {
 
 @media (max-width: 900px) {
     .settings-grid {
-        columns: 1;
+        grid-template-columns: 1fr;
+    }
+
+    .settings-card--general,
+    .settings-card--units,
+    .settings-card--map,
+    .settings-card--telemetry,
+    .settings-card--radio,
+    .settings-card--reference {
+        grid-area: auto;
     }
 }
 

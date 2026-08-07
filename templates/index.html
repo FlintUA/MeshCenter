@@ -6,7 +6,7 @@
     <meta name="app-version" content="{{ app_version }}">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=settings-masonry-nodelist-restyle-20260807">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=settings-bento-grid-fix-20260807">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -1066,7 +1066,7 @@
                             <div class="settings-card-text settings-card-note" data-i18n="settings.battery_capacity_note">Used only for the approximate remaining runtime estimate.</div>
                         </div>
 
-                        <div class="settings-card">
+                        <div class="settings-card settings-card--units">
                             <div class="settings-card-title">📏 <span data-i18n="settings.units">Units</span></div>
 
                             <div class="settings-option">

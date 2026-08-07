@@ -196,30 +196,43 @@ def register_chat_routes(
                 pause_listen.clear()
             print("[SEND] Listener resumed", flush=True)
 
+    # How long to wait, after the first job in a new batch arrives, for
+    # more jobs to land before committing to a batch. Draining with
+    # get_nowait() right after the first get() only catches jobs that
+    # happened to already be enqueued at that exact instant - a genuine
+    # race against the HTTP request thread(s) doing the put(), so whether
+    # two messages sent moments apart shared one pause/connect/resume
+    # cycle depended on scheduling luck instead of working reliably.
+    BATCH_ACCUMULATION_WINDOW_SECONDS = 0.1
+
     def send_worker():
         while True:
             job = send_queue.get()
-            send_queue.task_done()
-            if job is None:
-                continue
+            # One get() (blocking or via get_nowait() below) must be matched
+            # by exactly one task_done() once that job's batch has actually
+            # been processed - not immediately after get(), which would
+            # mark the job "done" while it's still sitting in `batch`
+            # waiting to be sent. Nothing currently calls send_queue.join(),
+            # but task_done() bookkeeping should still reflect reality
+            # rather than being a formality that happens to not matter yet.
+            pending_jobs = [job]
 
-            batch = [job]
-
-            # Pick up anything else that arrived while we were still
-            # queueing this job (e.g. several messages typed and sent in
-            # quick succession) so they all share the same pause/connect
-            # cycle instead of each paying for their own.
+            deadline = time.monotonic() + BATCH_ACCUMULATION_WINDOW_SECONDS
             while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
                 try:
-                    extra = send_queue.get_nowait()
+                    extra = send_queue.get(timeout=remaining)
                 except queue.Empty:
                     break
-                send_queue.task_done()
-                if extra is not None:
-                    batch.append(extra)
+                pending_jobs.append(extra)
+
+            batch = [j for j in pending_jobs if j is not None]
 
             try:
-                _process_send_batch(batch)
+                if batch:
+                    _process_send_batch(batch)
             except Exception as worker_error:
                 print(f"[SEND WORKER] Unexpected error: {worker_error}", flush=True)
                 for failed_job in batch:
@@ -227,6 +240,9 @@ def register_chat_routes(
                         _mark_failed(failed_job.get("message_id"), failed_job.get("final_chat_id"), str(worker_error))
                     except Exception:
                         pass
+            finally:
+                for _ in pending_jobs:
+                    send_queue.task_done()
 
     threading.Thread(target=send_worker, daemon=True, name="mc-send-worker").start()
 

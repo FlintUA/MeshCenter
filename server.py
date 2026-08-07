@@ -2481,6 +2481,35 @@ def update_message_status(message_id, chat_id, status, packet_id=None, error=Non
                 return message
     return None
 
+def reconcile_interrupted_sends():
+    """Fail out any message left in status="pending" from a previous run.
+
+    The outgoing send queue (api/api_chat.py: send_queue) lives only in
+    process memory. If the process restarts (deploy, crash, manual
+    restart) while a message is still "pending", the job that would have
+    sent it is gone - there is no queue to resume from - but the message
+    itself survives in messages.json and would otherwise sit forever with
+    a spinner that never resolves, since nothing re-queues it. Whether the
+    previous process actually reached the radio before dying is unknown,
+    so silently retrying could double-send; marking it failed lets the
+    user retry deliberately from the UI instead.
+
+    Must run after load_messages() (this file's __main__ startup
+    sequence) and before send_queue starts accepting new jobs.
+    """
+    changed = False
+    with state_lock:
+        for message in messages:
+            if message.get("status") == "pending":
+                message["status"] = "failed"
+                message["error"] = "Interrupted by server restart"
+                message["error_code"] = "interrupted_by_restart"
+                changed = True
+        if changed:
+            save_messages()
+    if changed:
+        print("[STARTUP] Reconciled pending messages left over from a previous run", flush=True)
+
 def is_duplicate_text(sender, text, node_id=""):
     cleaned_text = str(text or "").strip()
     if not cleaned_text:
@@ -5239,6 +5268,7 @@ if __name__ == "__main__":
     # Load the accepted profile regardless of radio availability so history
     # remains visible.  A mismatched radio is never allowed to write into it.
     load_messages()
+    reconcile_interrupted_sends()
     load_nodes()
     load_sensors_data()
     load_chats()

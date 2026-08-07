@@ -2576,13 +2576,17 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
     return msg
 
 # How long a DM that requested a delivery ACK waits for the mesh to confirm
-# it before ack_timeout_worker() gives up and marks it "unconfirmed". 30s is
-# the meshtastic library's own Timeout(maxSecs=20) default (util.py) plus
-# headroom for multi-hop routing on a local mesh. Broadcast/channel sends
-# never request an ACK - there is no per-recipient acknowledgment for
-# broadcast traffic in the Meshtastic protocol itself, so their "sent"
-# status is already the terminal, honest state.
-ACK_TIMEOUT_SECONDS = 30
+# it before ack_timeout_worker() gives up and marks it "unconfirmed". Started
+# at 30s (the meshtastic library's own Timeout(maxSecs=20) default from
+# util.py, plus headroom) but live testing between two real nodes ~2.53km
+# apart showed the text consistently arriving while the routing ACK
+# consistently failed to return within 30s - LoRa is half-duplex, so the ACK
+# has to make the same (possibly multi-hop) trip back, doubling the loss
+# chance. Bumped to 60s. Broadcast/channel sends never request an ACK -
+# there is no per-recipient acknowledgment for broadcast traffic in the
+# Meshtastic protocol itself, so their "sent" status is already the
+# terminal, honest state.
+ACK_TIMEOUT_SECONDS = 60
 
 
 def update_message_status(message_id, chat_id, status, packet_id=None, error=None, ack_requested=None):

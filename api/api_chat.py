@@ -86,10 +86,19 @@ def register_chat_routes(
 
         try:
             destination = final_chat_id if chat_type == "dm" else "^all"
+            # Broadcast has no per-recipient ACK in the Meshtastic protocol
+            # itself - only direct messages can be meaningfully confirmed,
+            # so only they ask for one. The short-lived SerialInterface used
+            # here closes right after this call returns, long before any
+            # ACK could arrive - actual delivery confirmation is picked up
+            # later from --listen's own output (see process_routing_ack_line
+            # in server.py), not from an onResponse callback on this object.
+            want_ack = chat_type == "dm"
 
             sent_packet = interface.sendText(
                 text=text,
                 destinationId=destination,
+                wantAck=want_ack,
                 channelIndex=channel_index,
                 replyId=reply_id,
             )
@@ -100,12 +109,15 @@ def register_chat_routes(
 
             print(
                 f"[SEND WORKER] destination={destination}, channel_index={channel_index}, "
-                f"packet_id={packet_id}, reply_id={reply_id}",
+                f"packet_id={packet_id}, reply_id={reply_id}, want_ack={want_ack}",
                 flush=True
             )
 
             radio_event("send")
-            update_message_status(message_id, final_chat_id, "sent", packet_id=packet_id)
+            update_message_status(
+                message_id, final_chat_id, "sent",
+                packet_id=packet_id, ack_requested=want_ack,
+            )
 
             with state_lock:
                 old = nodes.get(LOCAL_NODE_ID, {})

@@ -10982,8 +10982,21 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
     animation: mc-message-status-pulse 1.4s ease-in-out infinite;
 }
 
-.message-status.sent {
+.message-status.sent,
+.message-status.transmitted {
+    /* Neutral, not green - this only means "left the local radio", not
+       "confirmed received". See .delivered for an actual mesh ACK. */
+    color: #9aa0a6;
+}
+
+.message-status.delivered {
     color: #4caf50;
+}
+
+.message-status.unconfirmed {
+    /* Deliberately not the same red as .failed - the send itself
+       succeeded, only the delivery ACK never came back in time. */
+    color: #f5a623;
 }
 
 .message-status.failed {

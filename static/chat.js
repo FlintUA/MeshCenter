@@ -3305,7 +3305,13 @@ function renderMessages(container, messages, chatId) {
             // Outgoing messages go through /api/send asynchronously now:
             // the HTTP response comes back before the radio has actually
             // transmitted anything, so the bubble shows its own lifecycle
-            // (pending -> sent / failed) independently of the request.
+            // independently of the request. Channel broadcasts stop at
+            // "sent" (Meshtastic has no per-recipient ACK for broadcast -
+            // that's a protocol limit, not something this app can fix).
+            // DMs go further: sent (awaiting ACK) -> delivered (mesh ACK
+            // seen) or unconfirmed (no ACK within the timeout - the
+            // message may still have arrived, this only means the ACK
+            // itself never came back).
             let statusBadge = '';
             if (isMe) {
                 if (msg.status === 'pending') {
@@ -3317,8 +3323,17 @@ function renderMessages(container, messages, chatId) {
                             <button type="button" class="message-retry-btn" data-retry-message-id="${messageId}">${escapeHtml(window.I18N.t('common.retry'))}</button>
                         </span>
                     `;
+                } else if (msg.status === 'delivered') {
+                    statusBadge = `<span class="message-status delivered" title="${escapeHtml(window.I18N.t('chat.delivered'))}">✓✓</span>`;
+                } else if (msg.status === 'unconfirmed') {
+                    const reason = msg.error
+                        ? window.I18N.t('chat.unconfirmed_reason', { reason: msg.error })
+                        : window.I18N.t('chat.unconfirmed');
+                    statusBadge = `<span class="message-status unconfirmed" title="${escapeHtml(reason)}">✓</span>`;
+                } else if (msg.chat_type === 'channel') {
+                    statusBadge = `<span class="message-status transmitted" title="${escapeHtml(window.I18N.t('chat.transmitted_channel_tooltip'))}">✓</span>`;
                 } else {
-                    statusBadge = `<span class="message-status sent" title="${escapeHtml(window.I18N.t('chat.sent'))}">✓</span>`;
+                    statusBadge = `<span class="message-status sent" title="${escapeHtml(window.I18N.t('chat.sent_awaiting_ack'))}">✓</span>`;
                 }
             }
 

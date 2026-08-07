@@ -2098,6 +2098,105 @@ def extract_reply_id(line):
     return None
 
 
+def extract_request_id(line):
+    """Return the packet id a ROUTING_APP (ACK/NAK) line is responding to."""
+    patterns = [
+        r"'requestId':\s*(\d+)",
+        r'"requestId":\s*(\d+)',
+        r"'request_id':\s*(\d+)",
+        r'"request_id":\s*(\d+)',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, line)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def extract_routing_error_reason(line):
+    """Return the Routing.errorReason enum name from a ROUTING_APP line.
+
+    "NONE" (or absent) means the mesh acknowledged the packet; anything
+    else is a NAK with that reason (e.g. "NO_ROUTE", "MAX_RETRANSMIT").
+    """
+    patterns = [
+        r"'errorReason':\s*'([A-Z_]+)'",
+        r'"errorReason":\s*"([A-Z_]+)"',
+        r"'error_reason':\s*'([A-Z_]+)'",
+        r'"error_reason":\s*"([A-Z_]+)"',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, line)
+        if match:
+            return match.group(1)
+    return None
+
+
+def process_routing_ack_line(line):
+    """Resolve a pending DM delivery ACK from a ROUTING_APP line in the
+    --listen output (see the module docstring / CLAUDE.md for why this is
+    text-parsed rather than using the meshtastic library's onResponse
+    callback: the SerialInterface that sent the message is already closed
+    by the time any ACK comes back over the mesh, so the callback would
+    never fire - only the long-lived --listen process is still around to
+    see it).
+    """
+    request_id = extract_request_id(line)
+    if request_id is None:
+        return
+
+    error_reason = extract_routing_error_reason(line)
+    is_ack = error_reason is None or error_reason == "NONE"
+
+    with state_lock:
+        target = find_message_by_packet_id(request_id)
+        if target is None or not target.get("ack_requested") or target.get("status") != "sent":
+            return
+
+        target["status"] = "delivered" if is_ack else "unconfirmed"
+        target.pop("ack_deadline", None)
+        if is_ack:
+            target.pop("error", None)
+        else:
+            target["error"] = error_reason or "NO_ACK"
+        save_messages()
+
+    print(
+        f"[ACK] requestId={request_id} -> "
+        f"{'delivered' if is_ack else 'unconfirmed'} ({error_reason})",
+        flush=True,
+    )
+
+
+def ack_timeout_worker():
+    """Flip DM sends that requested a delivery ACK to "unconfirmed" once
+    their ack_deadline has passed without process_routing_ack_line() seeing
+    a response. Kept separate from radio_health_worker so that one stays
+    read-only (see CLAUDE.md's background-thread inventory).
+    """
+    while True:
+        time.sleep(5)
+        try:
+            now_ts = time.time()
+            changed = False
+            with state_lock:
+                for message in messages:
+                    if (
+                        message.get("status") == "sent"
+                        and message.get("ack_requested")
+                        and message.get("ack_deadline")
+                        and now_ts >= message["ack_deadline"]
+                    ):
+                        message["status"] = "unconfirmed"
+                        message["error"] = "No delivery ACK received in time"
+                        message.pop("ack_deadline", None)
+                        changed = True
+                if changed:
+                    save_messages()
+        except Exception as e:
+            print(f"[ACK] ack_timeout_worker error: {e}", flush=True)
+
+
 def find_message_by_packet_id(packet_id, chat_id=None):
     if packet_id is None:
         return None
@@ -2476,12 +2575,27 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
         save_messages()
     return msg
 
-def update_message_status(message_id, chat_id, status, packet_id=None, error=None):
+# How long a DM that requested a delivery ACK waits for the mesh to confirm
+# it before ack_timeout_worker() gives up and marks it "unconfirmed". 30s is
+# the meshtastic library's own Timeout(maxSecs=20) default (util.py) plus
+# headroom for multi-hop routing on a local mesh. Broadcast/channel sends
+# never request an ACK - there is no per-recipient acknowledgment for
+# broadcast traffic in the Meshtastic protocol itself, so their "sent"
+# status is already the terminal, honest state.
+ACK_TIMEOUT_SECONDS = 30
+
+
+def update_message_status(message_id, chat_id, status, packet_id=None, error=None, ack_requested=None):
     """Update a message created with status="pending" once the background
     send worker (api/api_chat.py) has actually talked to the radio.
 
     This lets /api/send return immediately after queueing the transmission
     instead of blocking the HTTP request for the full serial round-trip.
+
+    ``ack_requested=True`` marks a DM send that asked the mesh for a
+    delivery ACK (see api/api_chat.py: wantAck=True for chat_type="dm"):
+    it stamps an ack_deadline so ack_timeout_worker() can flip it to
+    "unconfirmed" if process_routing_ack_line() never sees a response.
     """
     with state_lock:
         for message in reversed(messages):
@@ -2492,9 +2606,12 @@ def update_message_status(message_id, chat_id, status, packet_id=None, error=Non
                         message["packet_id"] = int(packet_id)
                     except (TypeError, ValueError):
                         pass
+                if ack_requested:
+                    message["ack_requested"] = True
+                    message["ack_deadline"] = time.time() + ACK_TIMEOUT_SECONDS
                 if error:
                     message["error"] = str(error)[:300]
-                elif "error" in message and status == "sent":
+                elif "error" in message and status in ("sent", "delivered"):
                     message.pop("error", None)
                 save_messages()
                 return message
@@ -2971,6 +3088,12 @@ def listen_meshtastic():
                             process_waypoint_line(line)
                         except Exception as e:
                             print(f"[WAYPOINT] Parse error: {e}", flush=True)
+
+                    if "Publishing meshtastic.receive.routing:" in line:
+                        try:
+                            process_routing_ack_line(line)
+                        except Exception as e:
+                            print(f"[ACK] Parse error: {e}", flush=True)
 
                     if (
                         "TELEMETRY_APP" in line
@@ -5419,6 +5542,7 @@ if __name__ == "__main__":
         threading.Thread(target=telemetry_worker, daemon=True).start()
         threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
         threading.Thread(target=radio_health_worker, daemon=True).start()
+        threading.Thread(target=ack_timeout_worker, daemon=True).start()
     else:
         pause_listen.set()
         print(f"[IDENTITY] Listener not started because status={identity_status}", flush=True)

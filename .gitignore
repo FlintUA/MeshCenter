@@ -16,6 +16,13 @@ config.py
 config.local.py
 .env
 chats.json
+chats_backup.json
+messages.json
+sensors.json
+nodes.txt
+nodes_backup.json
+nodes_debug.json
+info.txt
 backups/
 *.py[cod]
 weather_secrets.py
@@ -24,6 +31,9 @@ weather_secrets.py
 # Runtime data
 data/
 !data/.gitkeep
+data/**/*.json
+data/**/*.db
+data/**/*.txt
 
 # Logs
 *.log

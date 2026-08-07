@@ -121,6 +121,10 @@ of this automatically.
    sudo visudo -cf /etc/sudoers.d/meshcenter        # expect: parsed OK
    sudo visudo -cf /etc/sudoers.d/meshcenter-wifi    # expect: parsed OK
    ```
+   `scripts/verify-install.sh` checks this by asking `sudo -n -l` what the
+   current user can actually run passwordlessly, not by looking for these
+   exact files — a Pi where the user already has broader NOPASSWD sudo some
+   other way also passes.
 
 10. [ ] **Confirm radio identity** — open the UI and check there's no
     identity-mismatch banner, or:

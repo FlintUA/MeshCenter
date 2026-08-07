@@ -129,32 +129,25 @@ echo
 
 # --- 4. sudoers (the step that's easy to forget) ------------------------------
 echo "sudoers (system/Wi-Fi actions — commonly forgotten, see INSTALL.md 'Easy to forget')"
-if [ -f "/etc/sudoers.d/meshcenter" ]; then
-    ok "/etc/sudoers.d/meshcenter present"
-else
-    bad "/etc/sudoers.d/meshcenter missing — see INSTALL.md step 9"
-fi
-if [ -f "/etc/sudoers.d/meshcenter-wifi" ]; then
-    ok "/etc/sudoers.d/meshcenter-wifi present"
-else
-    warn "/etc/sudoers.d/meshcenter-wifi missing — Wi-Fi actions in the UI will fail"
-fi
-
-# sudo -n never prompts; it just fails if a password would be required.
+# `sudo -n -l` (never prompts) is the only reliable check here: it reports
+# what this user could actually run as root, whether that comes from
+# deploy/meshcenter.sudoers or from a broader NOPASSWD rule set some other
+# way. Testing for /etc/sudoers.d/meshcenter with `[ -f ... ]` looks
+# appealing but is unreliable — that directory is typically mode 750
+# root:root, so a non-root user gets "Permission denied" on stat(), which
+# `[ -f ]` can't distinguish from "file doesn't exist".
 SUDO_LIST=$(sudo -n -l 2>/dev/null)
-if [ -n "$SUDO_LIST" ]; then
-    if echo "$SUDO_LIST" | grep -q "systemctl restart meshcenter.service"; then
-        ok "NOPASSWD sudo confirmed for: systemctl restart meshcenter.service"
-    else
-        bad "systemctl restart meshcenter.service NOT in NOPASSWD sudo rules — UI restart action will hang waiting for a password"
-    fi
-    if echo "$SUDO_LIST" | grep -qE "nmcli|iw$|/usr/sbin/iw"; then
-        ok "NOPASSWD sudo confirmed for Wi-Fi commands (nmcli/iw)"
-    else
-        warn "nmcli/iw not found in NOPASSWD sudo rules — Wi-Fi actions in the UI will fail"
-    fi
+if [ -z "$SUDO_LIST" ]; then
+    bad "sudo -n -l returned nothing (or would require a password) — this user has no passwordless sudo at all; UI restart/reboot/Wi-Fi actions will hang waiting for a password"
+elif echo "$SUDO_LIST" | grep -qE "NOPASSWD:\s*ALL|systemctl restart meshcenter\.service"; then
+    ok "NOPASSWD sudo confirmed for: systemctl restart meshcenter.service"
 else
-    bad "sudo -n -l returned nothing (or would require a password) — NOPASSWD sudoers not effective for this user"
+    bad "systemctl restart meshcenter.service not covered by passwordless sudo — UI restart action will hang waiting for a password (see deploy/meshcenter.sudoers)"
+fi
+if [ -n "$SUDO_LIST" ] && echo "$SUDO_LIST" | grep -qE "NOPASSWD:\s*ALL|nmcli|/usr/sbin/iw"; then
+    ok "NOPASSWD sudo confirmed for Wi-Fi commands (nmcli/iw)"
+else
+    warn "nmcli/iw not covered by passwordless sudo — Wi-Fi actions in the UI will fail (see deploy/meshcenter-wifi.sudoers)"
 fi
 echo
 

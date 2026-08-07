@@ -30,6 +30,13 @@
     "settings": "Einstellungen",
     "system": "System"
   },
+  "about": {
+    "tab_overview": "Übersicht",
+    "tab_help": "Hilfe",
+    "tab_license": "Lizenz",
+    "tab_links": "Links",
+    "tab_changelog": "Änderungsprotokoll"
+  },
   "node_panel": {
     "node_telemetry": "Knoten-Telemetrie",
     "temperature": "Temperatur",
@@ -49,7 +56,8 @@
     "runtime_estimate_note": "Ungefähre Schätzung auf Basis von {capacity} mAh und {current} mA durchschnittlicher Stromstärke",
     "battery_capacity_set": "Akkukapazität auf {capacity} mAh gesetzt",
     "battery_capacity_save_failed": "Akkukapazität konnte nicht gespeichert werden",
-    "uptime_label": "Laufzeit {value}"
+    "uptime_label": "Laufzeit {value}",
+    "no_data_yet": "Noch keine Daten"
   },
   "weather": {
     "humidity": "Luftfeuchtigkeit",
@@ -86,7 +94,9 @@
     "location_suffix": " Standort: {location}.",
     "api_key_valid": "API-Schlüssel ist gültig.",
     "api_key_saved": "API-Schlüssel gespeichert. Wetter wird geladen …",
-    "hide": "Verbergen"
+    "hide": "Verbergen",
+    "connecting": "Verbinde …",
+    "refresh_or_configure_tooltip": "Wetter aktualisieren oder OpenWeather konfigurieren"
   },
   "chat": {
     "select_chat_subtitle": "Wähle einen Chat, um Nachrichten anzuzeigen",
@@ -210,7 +220,28 @@
     "turn_camera_on_first": "Schalte zuerst die Kamera ein",
     "turn_on": "Einschalten",
     "update_photo_settings_failed": "Fotoeinstellungen konnten nicht aktualisiert werden",
-    "video_settings_updated": "Videoeinstellungen aktualisiert"
+    "video_settings_updated": "Videoeinstellungen aktualisiert",
+    "fps_label": "FPS",
+    "photo_quality_label": "FOTOQUALITÄT",
+    "preset_current_custom": "Aktuell / Benutzerdefiniert",
+    "preset_default": "Standard",
+    "preset_high_contrast": "Hoher Kontrast",
+    "preset_indoor": "Innen",
+    "preset_label": "Voreinstellung",
+    "preset_monochrome": "Monochrom",
+    "preset_night": "Nacht",
+    "preset_outdoor": "Außen",
+    "screenshot_label": "SCREENSHOT",
+    "video_label": "VIDEO",
+    "video_quality_label": "VIDEOQUALITÄT",
+    "wb_auto": "Automatisch",
+    "wb_cloudy": "Bewölkt",
+    "wb_daylight": "Tageslicht / Sonne",
+    "wb_fluorescent": "Leuchtstofflampe",
+    "wb_incandescent": "Glühlampe",
+    "wb_select_tooltip": "Wähle den automatischen Weißabgleich-Modus",
+    "wb_tungsten": "Glühlicht",
+    "white_balance_label": "Weißabgleich"
   },
   "media": {
     "media_gallery": "Mediengalerie",
@@ -414,7 +445,31 @@
     "waiting_for_nodes": "Warte auf Knoten …",
     "wifi_connect_failed": "WLAN-Verbindung fehlgeschlagen: {reason}",
     "wifi_connect_network_error": "Netzwerkfehler bei der WLAN-Verbindung",
-    "wifi_forget_network_error": "Netzwerkfehler beim Vergessen des WLANs"
+    "wifi_forget_network_error": "Netzwerkfehler beim Vergessen des WLANs",
+    "configured_radio_label": "Konfiguriertes Funkgerät",
+    "cpu_load_label": "CPU-Auslastung",
+    "cpu_temp_label": "CPU-Temperatur",
+    "detected_radio_label": "Erkanntes Funkgerät",
+    "disk_label": "Speicher",
+    "event_fallback": "Ereignis",
+    "hostname_label": "Hostname",
+    "instance_label": "Instanz",
+    "kernel_label": "Kernel",
+    "last_check_label": "Letzte Prüfung",
+    "last_packet_label": "Letztes Paket",
+    "last_send_label": "Letztes Senden",
+    "level_label": "Stufe",
+    "meshcenter_instance_title": "MeshCenter-Instanz",
+    "model_label": "Modell",
+    "no_events_yet": "Noch keine Ereignisse",
+    "os_label": "Betriebssystem",
+    "radio_health_title": "Funkgerät-Zustand",
+    "ram_label": "RAM",
+    "restart_listener_button_label": "Listener neu starten",
+    "restarts_label": "Neustarts",
+    "seconds_ago": "vor {seconds} s",
+    "system_information_title": "Systeminformationen",
+    "uptime_label": "Laufzeit"
   },
   "settings": {
     "title": "Einstellungen",
@@ -490,7 +545,8 @@
     "unable_to_save_map_provider": "Kartenanbieter konnte nicht gespeichert werden: {reason}",
     "unable_to_save_reference_location": "Referenzstandort konnte nicht gespeichert werden: {reason}",
     "unable_to_save_settings": "Einstellungen konnten nicht gespeichert werden: {reason}",
-    "unable_to_save_settings_short": "Einstellungen konnten nicht gespeichert werden"
+    "unable_to_save_settings_short": "Einstellungen konnten nicht gespeichert werden",
+    "open_location_settings": "Standorteinstellungen öffnen"
   },
   "modals": {
     "message_info": "Nachrichteninfo",
@@ -596,7 +652,8 @@
       "few": "{count} Waypoints",
       "many": "{count} Waypoints",
       "other": "{count} Waypoints"
-    }
+    },
+    "show_hide_tooltip": "Empfangene Meshtastic-Waypoints anzeigen oder ausblenden"
   },
   "nodes": {
     "select_node_below": "Wähle unten einen Knoten aus, um Details anzuzeigen",
@@ -779,7 +836,10 @@
     "position_short": "Position",
     "reference_short": "Referenz",
     "telemetry_short": "Telemetrie",
-    "type_label": "Typ"
+    "type_label": "Typ",
+    "hide_map": "Karte ausblenden",
+    "node_label": "Knoten",
+    "selected_label": "Ausgewählt"
   },
   "notifications": {
     "ready": "Bereit",

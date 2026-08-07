@@ -8235,7 +8235,7 @@ async function restartListener() {
     }
 
     const button = document.getElementById('restartListenerBtn');
-    const originalText = button?.textContent || '🔄 Restart Listener';
+    const originalText = button?.textContent || `🔄 ${window.I18N.t('system.restart_listener_button_label')}`;
 
     if (button) {
         button.disabled = true;
@@ -12579,12 +12579,12 @@ async function loadRadioHealth() {
         }
 
         if (listenerEl) {
-            listenerEl.textContent = data.listener_running ? '🟢 Running' : '🔴 Stopped';
+            listenerEl.textContent = data.listener_running ? `🟢 ${window.I18N.t('node_manager.running')}` : `🔴 ${window.I18N.t('node_manager.stopped')}`;
         }
 
-        if (packetEl) packetEl.textContent = data.packet_age == null ? 'Never' : `${data.packet_age} s ago`;
-        if (telemetryEl) telemetryEl.textContent = data.telemetry_age == null ? 'Never' : `${data.telemetry_age} s ago`;
-        if (sendEl) sendEl.textContent = data.send_age == null ? 'Never' : `${data.send_age} s ago`;
+        if (packetEl) packetEl.textContent = data.packet_age == null ? window.I18N.t('nodes.never_seen') : window.I18N.t('system.seconds_ago', { seconds: data.packet_age });
+        if (telemetryEl) telemetryEl.textContent = data.telemetry_age == null ? window.I18N.t('nodes.never_seen') : window.I18N.t('system.seconds_ago', { seconds: data.telemetry_age });
+        if (sendEl) sendEl.textContent = data.send_age == null ? window.I18N.t('nodes.never_seen') : window.I18N.t('system.seconds_ago', { seconds: data.send_age });
         if (restartEl) restartEl.textContent = data.restart_count ?? 0;
 
         if (recommendationEl) {
@@ -12594,14 +12594,14 @@ async function loadRadioHealth() {
 
         if (restartBtn) {
             restartBtn.disabled = false;
-            restartBtn.textContent = '🔄 Restart Listener';
+            restartBtn.textContent = `🔄 ${window.I18N.t('system.restart_listener_button_label')}`;
         }
 
         if (historyEl) {
             const history = Array.isArray(logData.events) ? logData.events.slice().reverse() : [];
 
             if (!history.length) {
-                historyEl.innerHTML = '<div class="radio-history-empty">No events yet</div>';
+                historyEl.innerHTML = `<div class="radio-history-empty">${escapeHtml(window.I18N.t('system.no_events_yet'))}</div>`;
             } else {
                 historyEl.innerHTML = history.map(item => {
                     const itemLevel = String(item.level || 'INFO').toUpperCase();
@@ -12636,7 +12636,7 @@ async function loadRadioHealth() {
                                 <span class="radio-history-time">${escapeHtml(dateTime)}</span>
                                 <span>${icon}</span>
                                 <span class="radio-history-event" style="color:${color};">
-                                    ${escapeHtml(item.event || 'Event')}
+                                    ${escapeHtml(item.event || window.I18N.t('system.event_fallback'))}
                                 </span>
                                 <span class="radio-history-source">${escapeHtml(item.source || 'system')}</span>
                             </div>

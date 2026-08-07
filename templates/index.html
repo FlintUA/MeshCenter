@@ -106,7 +106,7 @@
             <div class="telemetry-section" id="telemetrySection">
                 <div class="telemetry-header">
                     <span class="telemetry-title" data-i18n="node_panel.charts">Charts</span>
-                    <span class="telemetry-status" id="telemetryStatus">No data yet</span>
+                    <span class="telemetry-status" id="telemetryStatus" data-i18n="node_panel.no_data_yet">No data yet</span>
                 </div>
                 <div class="telemetry-buttons">
                     <button class="telemetry-btn environment" onclick="openTelemetryModal('environment')">
@@ -137,7 +137,7 @@
                             class="weather-location-block"
                             id="baseReferenceLocation"
                             onclick="openReferenceSettings()"
-                            title="Open location settings">
+                            title="Open location settings" data-i18n-title="settings.open_location_settings">
                         <span class="weather-location-name" id="weatherLocation">📍 Erlangen, Germany</span>
                         <span class="weather-location-coordinates" id="weatherCoordinates">49.58810 • 11.00780</span>
                     </button>
@@ -146,11 +146,11 @@
                         <div class="weather-icon" id="weatherIcon" aria-hidden="true">🌤️</div>
                         <div class="weather-current-copy">
                             <div class="weather-temperature" id="weatherTemperature">--°</div>
-                            <div class="weather-condition" id="weatherCondition">Connecting…</div>
+                            <div class="weather-condition" id="weatherCondition" data-i18n="weather.connecting">Connecting…</div>
                         </div>
                     </div>
 
-                    <button class="weather-state-badge weather-summary-state" id="weatherStateBadge" type="button" onclick="handleWeatherBadgeClick()" title="Refresh weather or configure OpenWeather">Loading</button>
+                    <button class="weather-state-badge weather-summary-state" id="weatherStateBadge" type="button" onclick="handleWeatherBadgeClick()" title="Refresh weather or configure OpenWeather" data-i18n-title="weather.refresh_or_configure_tooltip" data-i18n="common.loading_short">Loading</button>
                 </div>
 
                 <div class="weather-metrics">
@@ -374,7 +374,7 @@
                                 <div class="camera-settings-block">
                                     <div class="camera-settings-row">
                                         <div class="control-group video-resolution-group">
-                                            <label>VIDEO</label>
+                                            <label data-i18n="camera.video_label">VIDEO</label>
                                             <select id="videoResolution" onchange="updateVideoSettings()">
                                                 <option value="640x480">640×480 (VGA)</option>
                                                 <option value="800x600">800×600 (SVGA)</option>
@@ -385,7 +385,7 @@
                                         </div>
 
                                         <div class="control-group video-fps-group">
-                                            <label>FPS</label>
+                                            <label data-i18n="camera.fps_label">FPS</label>
                                             <select id="videoFps" onchange="updateVideoSettings()">
                                                 <option value="5">5</option>
                                                 <option value="8">8</option>
@@ -401,7 +401,7 @@
 
                                     <div class="camera-settings-row">
                                         <div class="control-group video-quality-group">
-                                            <label>VIDEO QUALITY</label>
+                                            <label data-i18n="camera.video_quality_label">VIDEO QUALITY</label>
                                             <div class="quality-control">
                                                 <input type="range"
                                                        id="videoQuality"
@@ -420,7 +420,7 @@
                                 <div class="camera-settings-block">
                                     <div class="camera-settings-row">
                                         <div class="control-group capture-resolution-group">
-                                            <label>SCREENSHOT</label>
+                                            <label data-i18n="camera.screenshot_label">SCREENSHOT</label>
                                             <select id="photoResolution"
                                                     onchange="updatePhotoSettings(false)">
                                                 <option value="640x480">640×480</option>
@@ -437,7 +437,7 @@
 
                                     <div class="camera-settings-row">
                                         <div class="control-group capture-quality-group">
-                                            <label>PHOTO QUALITY</label>
+                                            <label data-i18n="camera.photo_quality_label">PHOTO QUALITY</label>
                                             <div class="quality-control">
                                                 <input type="range"
                                                        id="photoQuality"
@@ -473,31 +473,31 @@
                             <div class="camera-image-workspace">
                                 <div class="camera-image-toolbar">
                                     <div class="camera-preset-group">
-                                        <label for="cameraImagePreset">Preset</label>
+                                        <label for="cameraImagePreset" data-i18n="camera.preset_label">Preset</label>
                                         <select id="cameraImagePreset"
                                                 onchange="applyCameraImagePreset(this.value)">
-                                            <option value="custom">Current / Custom</option>
-                                            <option value="neutral">Default</option>
-                                            <option value="indoor">Indoor</option>
-                                            <option value="night">Night</option>
-                                            <option value="outdoor">Outdoor</option>
-                                            <option value="monochrome">Monochrome</option>
-                                            <option value="highContrast">High contrast</option>
+                                            <option value="custom" data-i18n="camera.preset_current_custom">Current / Custom</option>
+                                            <option value="neutral" data-i18n="camera.preset_default">Default</option>
+                                            <option value="indoor" data-i18n="camera.preset_indoor">Indoor</option>
+                                            <option value="night" data-i18n="camera.preset_night">Night</option>
+                                            <option value="outdoor" data-i18n="camera.preset_outdoor">Outdoor</option>
+                                            <option value="monochrome" data-i18n="camera.preset_monochrome">Monochrome</option>
+                                            <option value="highContrast" data-i18n="camera.preset_high_contrast">High contrast</option>
                                         </select>
                                     </div>
 
                                     <div class="camera-white-balance-group">
-                                        <label for="cameraWhiteBalance">White balance</label>
+                                        <label for="cameraWhiteBalance" data-i18n="camera.white_balance_label">White balance</label>
                                         <select id="cameraWhiteBalance"
                                                 onchange="updateCameraImageControls(true)"
-                                                title="Select the automatic white-balance mode">
-                                            <option value="auto">Auto</option>
-                                            <option value="daylight">Daylight / Sun</option>
-                                            <option value="cloudy">Cloudy</option>
-                                            <option value="indoor">Indoor</option>
-                                            <option value="tungsten">Tungsten</option>
-                                            <option value="fluorescent">Fluorescent</option>
-                                            <option value="incandescent">Incandescent</option>
+                                                title="Select the automatic white-balance mode" data-i18n-title="camera.wb_select_tooltip">
+                                            <option value="auto" data-i18n="camera.wb_auto">Auto</option>
+                                            <option value="daylight" data-i18n="camera.wb_daylight">Daylight / Sun</option>
+                                            <option value="cloudy" data-i18n="camera.wb_cloudy">Cloudy</option>
+                                            <option value="indoor" data-i18n="camera.preset_indoor">Indoor</option>
+                                            <option value="tungsten" data-i18n="camera.wb_tungsten">Tungsten</option>
+                                            <option value="fluorescent" data-i18n="camera.wb_fluorescent">Fluorescent</option>
+                                            <option value="incandescent" data-i18n="camera.wb_incandescent">Incandescent</option>
                                         </select>
                                     </div>
 
@@ -823,7 +823,7 @@
                                     style="display:block;"
                                 >
                                     <div id="radioHealthHistory">
-                                        <div class="radio-history-empty">No events yet</div>
+                                        <div class="radio-history-empty" data-i18n="system.no_events_yet">No events yet</div>
                                     </div>
                                 </div>
                             </div>
@@ -835,64 +835,64 @@
                         <div class="system-right-column">
 
                             <div class="system-card instance-identity-card">
-                                <div class="system-card-title">🆔 MeshCenter Instance</div>
-                                <div class="system-row"><span>Instance</span><strong id="instanceName">--</strong></div>
-                                <div class="system-row"><span>Hostname</span><strong id="instanceHostname">--</strong></div>
-                                <div class="system-row"><span>Configured radio</span><strong id="instanceConfiguredRadio">--</strong></div>
-                                <div class="system-row"><span>Detected radio</span><strong id="instanceDetectedRadio">--</strong></div>
-                                <div class="system-row"><span>Identity</span><strong id="instanceIdentityStatus" class="identity-status identity-not-checked">Not checked</strong></div>
-                                <div class="system-row"><span>Last check</span><strong id="instanceLastCheck">--</strong></div>
+                                <div class="system-card-title">🆔 <span data-i18n="system.meshcenter_instance_title">MeshCenter Instance</span></div>
+                                <div class="system-row"><span data-i18n="system.instance_label">Instance</span><strong id="instanceName">--</strong></div>
+                                <div class="system-row"><span data-i18n="system.hostname_label">Hostname</span><strong id="instanceHostname">--</strong></div>
+                                <div class="system-row"><span data-i18n="system.configured_radio_label">Configured radio</span><strong id="instanceConfiguredRadio">--</strong></div>
+                                <div class="system-row"><span data-i18n="system.detected_radio_label">Detected radio</span><strong id="instanceDetectedRadio">--</strong></div>
+                                <div class="system-row"><span data-i18n="node_manager.identity">Identity</span><strong id="instanceIdentityStatus" class="identity-status identity-not-checked" data-i18n="system.identity_not_checked">Not checked</strong></div>
+                                <div class="system-row"><span data-i18n="system.last_check_label">Last check</span><strong id="instanceLastCheck">--</strong></div>
                                 <div id="instanceIdentityError" class="identity-error" hidden></div>
                             </div>
 
                             <div class="system-card">
 
                                 <div class="system-card-title">
-                                    🖥️ System Information
+                                    🖥️ <span data-i18n="system.system_information_title">System Information</span>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>Hostname</span>
+                                    <span data-i18n="system.hostname_label">Hostname</span>
                                     <strong id="systemHostname">--</strong>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>Uptime</span>
+                                    <span data-i18n="system.uptime_label">Uptime</span>
                                     <strong id="systemUptime">--</strong>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>CPU temp</span>
+                                    <span data-i18n="system.cpu_temp_label">CPU temp</span>
                                     <strong id="systemCpuTemp">--</strong>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>CPU load</span>
+                                    <span data-i18n="system.cpu_load_label">CPU load</span>
                                     <strong id="systemCpuLoad">--</strong>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>RAM</span>
+                                    <span data-i18n="system.ram_label">RAM</span>
                                     <strong id="systemRam">--</strong>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>Disk</span>
+                                    <span data-i18n="system.disk_label">Disk</span>
                                     <strong id="systemDisk">--</strong>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>Model</span>
+                                    <span data-i18n="system.model_label">Model</span>
                                     <strong id="systemModel">--</strong>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>OS</span>
+                                    <span data-i18n="system.os_label">OS</span>
                                     <strong id="systemOs">--</strong>
                                 </div>
 
                                 <div class="system-row">
-                                    <span>Kernel</span>
+                                    <span data-i18n="system.kernel_label">Kernel</span>
                                     <strong id="systemKernel">--</strong>
                                 </div>
 
@@ -902,41 +902,41 @@
                              <div class="system-card">
 
                             <div class="system-card-title">
-                                📡 Radio Health
+                                📡 <span data-i18n="system.radio_health_title">Radio Health</span>
                             </div>
 
                             <div class="system-row">
-                                <span>Status</span>
+                                <span data-i18n="waypoints.status">Status</span>
                                 <strong id="radioHealthStatus">--</strong>
                             </div>
 
                             <div class="system-row">
-                                <span>Level</span>
+                                <span data-i18n="system.level_label">Level</span>
                                 <strong id="radioHealthLevel">--</strong>
                             </div>
 
                             <div class="system-row">
-                                <span>Listener</span>
+                                <span data-i18n="node_manager.listener_label">Listener</span>
                                 <strong id="radioHealthListener">--</strong>
                             </div>
 
                             <div class="system-row">
-                                <span>Last packet</span>
+                                <span data-i18n="system.last_packet_label">Last packet</span>
                                 <strong id="radioHealthPacket">--</strong>
                             </div>
 
                             <div class="system-row">
-                                <span>Telemetry</span>
+                                <span data-i18n="nodes.telemetry_short">Telemetry</span>
                                 <strong id="radioHealthTelemetry">--</strong>
                             </div>
 
                             <div class="system-row">
-                                <span>Last send</span>
+                                <span data-i18n="system.last_send_label">Last send</span>
                                 <strong id="radioHealthSend">--</strong>
                             </div>
 
                             <div class="system-row">
-                                <span>Restarts</span>
+                                <span data-i18n="system.restarts_label">Restarts</span>
                                 <strong id="radioHealthRestart">0</strong>
                             </div>
 
@@ -982,10 +982,10 @@
                 <div class="map-panel mc-workspace-panel">
                     <div class="map-header mc-workspace-header">
                         <div>
-                            <div class="map-title workspace-page-title" id="mapViewTitle">🗺 Map</div>
-                            <div class="map-subtitle workspace-page-subtitle" id="mapViewSubtitle">Known Meshtastic nodes and waypoints</div>
+                            <div class="map-title workspace-page-title" id="mapViewTitle">🗺 <span data-i18n="nodes.map_title">Map</span></div>
+                            <div class="map-subtitle workspace-page-subtitle" id="mapViewSubtitle" data-i18n="nodes.map_subtitle_default">Known Meshtastic nodes and waypoints</div>
                         </div>
-                        <button type="button" class="workspace-page-close-btn" onclick="setMapLayoutMode('off')" title="Hide Map" aria-label="Hide Map">
+                        <button type="button" class="workspace-page-close-btn" onclick="setMapLayoutMode('off')" title="Hide Map" aria-label="Hide Map" data-i18n-title="nodes.hide_map" data-i18n-aria-label="nodes.hide_map">
                             <svg class="workspace-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                 <path d="M7 7L17 17M17 7L7 17"></path>
                             </svg>
@@ -993,12 +993,12 @@
                     </div>
                     <div class="map-toolbar">
                         <div class="map-legend">
-                            <span><i class="map-legend-dot map-legend-reference"></i>Reference</span>
-                            <span><i class="map-legend-dot map-legend-node"></i>Node</span>
-                            <span><i class="map-legend-dot map-legend-selected"></i>Selected</span>
-                            <label class="map-layer-toggle" title="Show or hide received Meshtastic waypoints">
+                            <span><i class="map-legend-dot map-legend-reference"></i><span data-i18n="nodes.reference_short">Reference</span></span>
+                            <span><i class="map-legend-dot map-legend-node"></i><span data-i18n="nodes.node_label">Node</span></span>
+                            <span><i class="map-legend-dot map-legend-selected"></i><span data-i18n="nodes.selected_label">Selected</span></span>
+                            <label class="map-layer-toggle" title="Show or hide received Meshtastic waypoints" data-i18n-title="waypoints.show_hide_tooltip">
                                 <input type="checkbox" id="mapWaypointsToggle" checked onchange="toggleMeshMapWaypoints(this.checked)">
-                                <i class="map-legend-dot map-legend-waypoint"></i>Waypoints <i class="map-legend-dot map-legend-waypoint-expired"></i>Expired
+                                <i class="map-legend-dot map-legend-waypoint"></i><span data-i18n="waypoints.title">Waypoints</span> <i class="map-legend-dot map-legend-waypoint-expired"></i><span data-i18n="waypoints.expired">Expired</span>
                             </label>
                         </div>
                         <div class="map-toolbar-right">
@@ -1230,11 +1230,11 @@
                 </div>
 
                 <div class="about-tabs" role="tablist" aria-label="About sections">
-                    <button class="about-tab active" id="aboutTabOverview" onclick="switchAboutTab('overview')" role="tab" aria-selected="true">Overview</button>
-                    <button class="about-tab" id="aboutTabHelp" onclick="switchAboutTab('help')" role="tab" aria-selected="false">Help</button>
-                    <button class="about-tab" id="aboutTabLicense" onclick="switchAboutTab('license')" role="tab" aria-selected="false">License</button>
-                    <button class="about-tab" id="aboutTabLinks" onclick="switchAboutTab('links')" role="tab" aria-selected="false">Links</button>
-                    <button class="about-tab" id="aboutTabChangelog" onclick="switchAboutTab('changelog')" role="tab" aria-selected="false">Changelog</button>
+                    <button class="about-tab active" id="aboutTabOverview" onclick="switchAboutTab('overview')" role="tab" aria-selected="true" data-i18n="about.tab_overview">Overview</button>
+                    <button class="about-tab" id="aboutTabHelp" onclick="switchAboutTab('help')" role="tab" aria-selected="false" data-i18n="about.tab_help">Help</button>
+                    <button class="about-tab" id="aboutTabLicense" onclick="switchAboutTab('license')" role="tab" aria-selected="false" data-i18n="about.tab_license">License</button>
+                    <button class="about-tab" id="aboutTabLinks" onclick="switchAboutTab('links')" role="tab" aria-selected="false" data-i18n="about.tab_links">Links</button>
+                    <button class="about-tab" id="aboutTabChangelog" onclick="switchAboutTab('changelog')" role="tab" aria-selected="false" data-i18n="about.tab_changelog">Changelog</button>
                 </div>
 
                 <div class="about-content">
@@ -1868,7 +1868,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20260806-5"></script>
+<script src="/static/i18n.js?v=20260806-6"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above —
@@ -1878,7 +1878,7 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="/static/chat.js?v=20260806-stage10-nodemanager-devices-system-i18n"></script>
+<script src="/static/chat.js?v=20260806-stage11-app-shell-scattered-i18n"></script>
 <script src="/static/media.js?v=20260806-stage9-i18n"></script>
 <script src="/static/weather.js?v=openweather-setup-20260731"></script>
 

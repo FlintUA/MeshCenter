@@ -30,6 +30,13 @@
     "settings": "Settings",
     "system": "System"
   },
+  "about": {
+    "tab_overview": "Overview",
+    "tab_help": "Help",
+    "tab_license": "License",
+    "tab_links": "Links",
+    "tab_changelog": "Changelog"
+  },
   "node_panel": {
     "node_telemetry": "Node telemetry",
     "temperature": "Temperature",
@@ -49,7 +56,8 @@
     "runtime_estimate_note": "Approximate estimate using {capacity} mAh and {current} mA average current",
     "battery_capacity_set": "Battery capacity set to {capacity} mAh",
     "battery_capacity_save_failed": "Unable to save battery capacity",
-    "uptime_label": "Uptime {value}"
+    "uptime_label": "Uptime {value}",
+    "no_data_yet": "No data yet"
   },
   "weather": {
     "humidity": "Humidity",
@@ -86,7 +94,9 @@
     "location_suffix": " Location: {location}.",
     "api_key_valid": "API key is valid.",
     "api_key_saved": "API key saved. Loading weather…",
-    "hide": "Hide"
+    "hide": "Hide",
+    "connecting": "Connecting…",
+    "refresh_or_configure_tooltip": "Refresh weather or configure OpenWeather"
   },
   "chat": {
     "select_chat_subtitle": "Select a chat to view messages",
@@ -210,7 +220,28 @@
     "turn_camera_on_first": "Turn the camera on first",
     "turn_on": "Turn On",
     "update_photo_settings_failed": "Failed to update photo settings",
-    "video_settings_updated": "Video settings updated"
+    "video_settings_updated": "Video settings updated",
+    "fps_label": "FPS",
+    "photo_quality_label": "PHOTO QUALITY",
+    "preset_current_custom": "Current / Custom",
+    "preset_default": "Default",
+    "preset_high_contrast": "High contrast",
+    "preset_indoor": "Indoor",
+    "preset_label": "Preset",
+    "preset_monochrome": "Monochrome",
+    "preset_night": "Night",
+    "preset_outdoor": "Outdoor",
+    "screenshot_label": "SCREENSHOT",
+    "video_label": "VIDEO",
+    "video_quality_label": "VIDEO QUALITY",
+    "wb_auto": "Auto",
+    "wb_cloudy": "Cloudy",
+    "wb_daylight": "Daylight / Sun",
+    "wb_fluorescent": "Fluorescent",
+    "wb_incandescent": "Incandescent",
+    "wb_select_tooltip": "Select the automatic white-balance mode",
+    "wb_tungsten": "Tungsten",
+    "white_balance_label": "White balance"
   },
   "media": {
     "media_gallery": "Media Gallery",
@@ -414,7 +445,31 @@
     "waiting_for_nodes": "Waiting for nodes...",
     "wifi_connect_failed": "Wi-Fi connect failed: {reason}",
     "wifi_connect_network_error": "Wi-Fi connect network error",
-    "wifi_forget_network_error": "Wi-Fi forget network error"
+    "wifi_forget_network_error": "Wi-Fi forget network error",
+    "configured_radio_label": "Configured radio",
+    "cpu_load_label": "CPU load",
+    "cpu_temp_label": "CPU temp",
+    "detected_radio_label": "Detected radio",
+    "disk_label": "Disk",
+    "event_fallback": "Event",
+    "hostname_label": "Hostname",
+    "instance_label": "Instance",
+    "kernel_label": "Kernel",
+    "last_check_label": "Last check",
+    "last_packet_label": "Last packet",
+    "last_send_label": "Last send",
+    "level_label": "Level",
+    "meshcenter_instance_title": "MeshCenter Instance",
+    "model_label": "Model",
+    "no_events_yet": "No events yet",
+    "os_label": "OS",
+    "radio_health_title": "Radio Health",
+    "ram_label": "RAM",
+    "restart_listener_button_label": "Restart Listener",
+    "restarts_label": "Restarts",
+    "seconds_ago": "{seconds} s ago",
+    "system_information_title": "System Information",
+    "uptime_label": "Uptime"
   },
   "settings": {
     "title": "Settings",
@@ -490,7 +545,8 @@
     "unable_to_save_map_provider": "Unable to save map provider: {reason}",
     "unable_to_save_reference_location": "Unable to save reference location: {reason}",
     "unable_to_save_settings": "Unable to save settings: {reason}",
-    "unable_to_save_settings_short": "Unable to save settings"
+    "unable_to_save_settings_short": "Unable to save settings",
+    "open_location_settings": "Open location settings"
   },
   "modals": {
     "message_info": "Message Info",
@@ -596,7 +652,8 @@
       "few": "{count} waypoints",
       "many": "{count} waypoints",
       "other": "{count} waypoints"
-    }
+    },
+    "show_hide_tooltip": "Show or hide received Meshtastic waypoints"
   },
   "nodes": {
     "select_node_below": "Select a node below to view details",
@@ -779,7 +836,10 @@
     "position_short": "Position",
     "reference_short": "Reference",
     "telemetry_short": "Telemetry",
-    "type_label": "Type"
+    "type_label": "Type",
+    "hide_map": "Hide Map",
+    "node_label": "Node",
+    "selected_label": "Selected"
   },
   "notifications": {
     "ready": "Ready",

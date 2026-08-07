@@ -30,6 +30,13 @@
     "settings": "Налаштування",
     "system": "Система"
   },
+  "about": {
+    "tab_overview": "Огляд",
+    "tab_help": "Довідка",
+    "tab_license": "Ліцензія",
+    "tab_links": "Посилання",
+    "tab_changelog": "Історія змін"
+  },
   "node_panel": {
     "node_telemetry": "Телеметрія вузла",
     "temperature": "Температура",
@@ -49,7 +56,8 @@
     "runtime_estimate_note": "Орієнтовна оцінка на основі {capacity} мА·год та середнього струму {current} мА",
     "battery_capacity_set": "Ємність батареї встановлено: {capacity} мА·год",
     "battery_capacity_save_failed": "Не вдалося зберегти ємність батареї",
-    "uptime_label": "Час роботи: {value}"
+    "uptime_label": "Час роботи: {value}",
+    "no_data_yet": "Даних поки немає"
   },
   "weather": {
     "humidity": "Вологість",
@@ -86,7 +94,9 @@
     "location_suffix": " Місцезнаходження: {location}.",
     "api_key_valid": "API-ключ дійсний.",
     "api_key_saved": "API-ключ збережено. Завантаження погоди…",
-    "hide": "Приховати"
+    "hide": "Приховати",
+    "connecting": "Підключення…",
+    "refresh_or_configure_tooltip": "Оновити погоду або налаштувати OpenWeather"
   },
   "chat": {
     "select_chat_subtitle": "Виберіть чат, щоб переглянути повідомлення",
@@ -210,7 +220,28 @@
     "turn_camera_on_first": "Спочатку увімкніть камеру",
     "turn_on": "Увімкнути",
     "update_photo_settings_failed": "Не вдалося оновити налаштування фото",
-    "video_settings_updated": "Налаштування відео оновлено"
+    "video_settings_updated": "Налаштування відео оновлено",
+    "fps_label": "FPS",
+    "photo_quality_label": "ЯКІСТЬ ФОТО",
+    "preset_current_custom": "Поточне / Користувацьке",
+    "preset_default": "За замовчуванням",
+    "preset_high_contrast": "Високий контраст",
+    "preset_indoor": "У приміщенні",
+    "preset_label": "Пресет",
+    "preset_monochrome": "Монохром",
+    "preset_night": "Ніч",
+    "preset_outdoor": "На вулиці",
+    "screenshot_label": "ЗНІМОК",
+    "video_label": "ВІДЕО",
+    "video_quality_label": "ЯКІСТЬ ВІДЕО",
+    "wb_auto": "Авто",
+    "wb_cloudy": "Хмарно",
+    "wb_daylight": "Денне світло / Сонце",
+    "wb_fluorescent": "Люмінесцентна лампа",
+    "wb_incandescent": "Лампа розжарювання",
+    "wb_select_tooltip": "Виберіть режим автоматичного балансу білого",
+    "wb_tungsten": "Вольфрамова лампа",
+    "white_balance_label": "Баланс білого"
   },
   "media": {
     "media_gallery": "Галерея медіа",
@@ -414,7 +445,31 @@
     "waiting_for_nodes": "Очікування вузлів…",
     "wifi_connect_failed": "Не вдалося підключитися до Wi-Fi: {reason}",
     "wifi_connect_network_error": "Мережева помилка підключення до Wi-Fi",
-    "wifi_forget_network_error": "Мережева помилка видалення Wi-Fi"
+    "wifi_forget_network_error": "Мережева помилка видалення Wi-Fi",
+    "configured_radio_label": "Налаштоване радіо",
+    "cpu_load_label": "Завантаження ЦП",
+    "cpu_temp_label": "Температура ЦП",
+    "detected_radio_label": "Виявлене радіо",
+    "disk_label": "Диск",
+    "event_fallback": "Подія",
+    "hostname_label": "Ім'я хоста",
+    "instance_label": "Екземпляр",
+    "kernel_label": "Ядро",
+    "last_check_label": "Остання перевірка",
+    "last_packet_label": "Останній пакет",
+    "last_send_label": "Останнє надсилання",
+    "level_label": "Рівень",
+    "meshcenter_instance_title": "Екземпляр MeshCenter",
+    "model_label": "Модель",
+    "no_events_yet": "Подій поки немає",
+    "os_label": "ОС",
+    "radio_health_title": "Стан радіо",
+    "ram_label": "ОЗП",
+    "restart_listener_button_label": "Перезапустити слухача",
+    "restarts_label": "Перезапуски",
+    "seconds_ago": "{seconds} с тому",
+    "system_information_title": "Інформація про систему",
+    "uptime_label": "Час роботи"
   },
   "settings": {
     "title": "Налаштування",
@@ -490,7 +545,8 @@
     "unable_to_save_map_provider": "Не вдалося зберегти провайдера карт: {reason}",
     "unable_to_save_reference_location": "Не вдалося зберегти опорну точку: {reason}",
     "unable_to_save_settings": "Не вдалося зберегти налаштування: {reason}",
-    "unable_to_save_settings_short": "Не вдалося зберегти налаштування"
+    "unable_to_save_settings_short": "Не вдалося зберегти налаштування",
+    "open_location_settings": "Відкрити налаштування розташування"
   },
   "modals": {
     "message_info": "Інформація про повідомлення",
@@ -596,7 +652,8 @@
       "few": "{count} waypoint",
       "many": "{count} waypoint",
       "other": "{count} waypoint"
-    }
+    },
+    "show_hide_tooltip": "Показати або приховати отримані waypoint Meshtastic"
   },
   "nodes": {
     "select_node_below": "Виберіть вузол нижче, щоб побачити деталі",
@@ -779,7 +836,10 @@
     "position_short": "Позиція",
     "reference_short": "Опорна точка",
     "telemetry_short": "Телеметрія",
-    "type_label": "Тип"
+    "type_label": "Тип",
+    "hide_map": "Приховати карту",
+    "node_label": "Вузол",
+    "selected_label": "Вибрано"
   },
   "notifications": {
     "ready": "Готово",

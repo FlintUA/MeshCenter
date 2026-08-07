@@ -30,6 +30,13 @@
     "settings": "Настройки",
     "system": "Система"
   },
+  "about": {
+    "tab_overview": "Обзор",
+    "tab_help": "Справка",
+    "tab_license": "Лицензия",
+    "tab_links": "Ссылки",
+    "tab_changelog": "История изменений"
+  },
   "node_panel": {
     "node_telemetry": "Телеметрия узла",
     "temperature": "Температура",
@@ -49,7 +56,8 @@
     "runtime_estimate_note": "Примерная оценка на основе {capacity} мА·ч и среднего тока {current} мА",
     "battery_capacity_set": "Ёмкость батареи установлена: {capacity} мА·ч",
     "battery_capacity_save_failed": "Не удалось сохранить ёмкость батареи",
-    "uptime_label": "Время работы: {value}"
+    "uptime_label": "Время работы: {value}",
+    "no_data_yet": "Данных пока нет"
   },
   "weather": {
     "humidity": "Влажность",
@@ -86,7 +94,9 @@
     "location_suffix": " Местоположение: {location}.",
     "api_key_valid": "API-ключ действителен.",
     "api_key_saved": "API-ключ сохранён. Загрузка погоды…",
-    "hide": "Скрыть"
+    "hide": "Скрыть",
+    "connecting": "Подключение…",
+    "refresh_or_configure_tooltip": "Обновить погоду или настроить OpenWeather"
   },
   "chat": {
     "select_chat_subtitle": "Выберите чат для просмотра сообщений",
@@ -210,7 +220,28 @@
     "turn_camera_on_first": "Сначала включите камеру",
     "turn_on": "Включить",
     "update_photo_settings_failed": "Не удалось обновить настройки фото",
-    "video_settings_updated": "Настройки видео обновлены"
+    "video_settings_updated": "Настройки видео обновлены",
+    "fps_label": "FPS",
+    "photo_quality_label": "КАЧЕСТВО ФОТО",
+    "preset_current_custom": "Текущее / Пользовательское",
+    "preset_default": "По умолчанию",
+    "preset_high_contrast": "Высокий контраст",
+    "preset_indoor": "В помещении",
+    "preset_label": "Пресет",
+    "preset_monochrome": "Монохром",
+    "preset_night": "Ночь",
+    "preset_outdoor": "На улице",
+    "screenshot_label": "СНИМОК",
+    "video_label": "ВИДЕО",
+    "video_quality_label": "КАЧЕСТВО ВИДЕО",
+    "wb_auto": "Авто",
+    "wb_cloudy": "Облачно",
+    "wb_daylight": "Дневной свет / Солнце",
+    "wb_fluorescent": "Люминесцентная лампа",
+    "wb_incandescent": "Лампа накаливания",
+    "wb_select_tooltip": "Выберите режим автоматического баланса белого",
+    "wb_tungsten": "Вольфрамовая лампа",
+    "white_balance_label": "Баланс белого"
   },
   "media": {
     "media_gallery": "Галерея медиа",
@@ -414,7 +445,31 @@
     "waiting_for_nodes": "Ожидание узлов…",
     "wifi_connect_failed": "Не удалось подключиться к Wi-Fi: {reason}",
     "wifi_connect_network_error": "Сетевая ошибка подключения к Wi-Fi",
-    "wifi_forget_network_error": "Сетевая ошибка при удалении Wi-Fi"
+    "wifi_forget_network_error": "Сетевая ошибка при удалении Wi-Fi",
+    "configured_radio_label": "Настроенное радио",
+    "cpu_load_label": "Загрузка ЦП",
+    "cpu_temp_label": "Температура ЦП",
+    "detected_radio_label": "Обнаруженное радио",
+    "disk_label": "Диск",
+    "event_fallback": "Событие",
+    "hostname_label": "Имя хоста",
+    "instance_label": "Экземпляр",
+    "kernel_label": "Ядро",
+    "last_check_label": "Последняя проверка",
+    "last_packet_label": "Последний пакет",
+    "last_send_label": "Последняя отправка",
+    "level_label": "Уровень",
+    "meshcenter_instance_title": "Экземпляр MeshCenter",
+    "model_label": "Модель",
+    "no_events_yet": "Событий пока нет",
+    "os_label": "ОС",
+    "radio_health_title": "Состояние радио",
+    "ram_label": "ОЗУ",
+    "restart_listener_button_label": "Перезапустить слушателя",
+    "restarts_label": "Перезапуски",
+    "seconds_ago": "{seconds} с назад",
+    "system_information_title": "Информация о системе",
+    "uptime_label": "Время работы"
   },
   "settings": {
     "title": "Настройки",
@@ -490,7 +545,8 @@
     "unable_to_save_map_provider": "Не удалось сохранить провайдера карт: {reason}",
     "unable_to_save_reference_location": "Не удалось сохранить опорную точку: {reason}",
     "unable_to_save_settings": "Не удалось сохранить настройки: {reason}",
-    "unable_to_save_settings_short": "Не удалось сохранить настройки"
+    "unable_to_save_settings_short": "Не удалось сохранить настройки",
+    "open_location_settings": "Открыть настройки местоположения"
   },
   "modals": {
     "message_info": "Информация о сообщении",
@@ -596,7 +652,8 @@
       "few": "{count} waypoint",
       "many": "{count} waypoint",
       "other": "{count} waypoint"
-    }
+    },
+    "show_hide_tooltip": "Показать или скрыть полученные waypoint Meshtastic"
   },
   "nodes": {
     "select_node_below": "Выберите узел ниже, чтобы увидеть подробности",
@@ -779,7 +836,10 @@
     "position_short": "Позиция",
     "reference_short": "Опорная точка",
     "telemetry_short": "Телеметрия",
-    "type_label": "Тип"
+    "type_label": "Тип",
+    "hide_map": "Скрыть карту",
+    "node_label": "Узел",
+    "selected_label": "Выбран"
   },
   "notifications": {
     "ready": "Готово",

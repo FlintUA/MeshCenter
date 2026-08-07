@@ -2818,6 +2818,8 @@ body {
 .settings-panel {
     padding: 18px;
     width: 100%;
+    container-type: inline-size;
+    container-name: settings-panel;
 }
 
 .settings-header {
@@ -2878,6 +2880,23 @@ body {
 }
 
 @media (max-width: 900px) {
+    .settings-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .settings-card--general,
+    .settings-card--units,
+    .settings-card--map,
+    .settings-card--telemetry,
+    .settings-card--radio,
+    .settings-card--reference {
+        grid-area: auto;
+    }
+}
+
+/* The settings panel can be narrower than the viewport (side panels open) —
+   respond to the panel's own width, not the window's, via a container query. */
+@container settings-panel (max-width: 900px) {
     .settings-grid {
         grid-template-columns: 1fr;
     }

@@ -8048,15 +8048,17 @@ async function loadNodesManagement() {
 
         container.innerHTML = data.nodes.map(node => {
             const statusClass = node.ignored ? 'ignored' : 'normal';
-            const statusText = node.ignored ? `🚫 ${window.I18N.t('node_manager.status_ignored')}` : `✅ ${window.I18N.t('node_manager.status_normal')}`;
+            const statusText = node.ignored ? window.I18N.t('node_manager.status_ignored') : window.I18N.t('node_manager.status_normal');
+            const activityClass = node.ignored ? 'activity-unknown' : 'activity-online';
 
             return `
                 <div class="nodes-management-item">
+                    <span class="node-activity-square ${activityClass}" title="${escapeHtml(statusText)}"></span>
                     <div class="name-wrapper">
                         <span class="name">${escapeHtml(node.name)}</span>
                         <span class="id">${escapeHtml(node.node_id)}</span>
                     </div>
-                    <span class="status ${statusClass}">${statusText}</span>
+                    <span class="status ${statusClass}">${escapeHtml(statusText)}</span>
                 </div>
             `;
         }).join('');

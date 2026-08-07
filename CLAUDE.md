@@ -20,7 +20,7 @@ mkdir -p data
 
 python server.py                               # dev run, http://<host>:5000
 # or, in production:
-sudo systemctl restart meshcenter.service       # see deploy/meshcenter.service (wsgi.py is the WSGI entrypoint)
+sudo systemctl restart meshcenter.service       # see deploy/meshcenter.service
 ```
 
 `config.py` and `weather_secrets.py` are gitignored local files; `server.py` exits at import time if `config.py` is missing or missing required variables (see the `required_vars` check near the top of `server.py`). When changing code that reads config, check `config.example.py` for the authoritative variable list.
@@ -80,4 +80,4 @@ Routes are split between `server.py` (nodes, chats, waypoints, telemetry, system
 
 ## Deployment
 
-`deploy/meshcenter.service` is a template (`__MESH_USER__` / `__MESH_HOME__` placeholders filled via `sed` at install time, see README step 8) for running under systemd with `wsgi.py` as the WSGI entrypoint. `deploy/meshcenter.sudoers` and `deploy/meshcenter-wifi.sudoers` grant the narrowly-scoped sudo rules needed for the in-app system actions (restart/reboot/shutdown) and Wi-Fi management (NetworkManager) respectively — extend these rather than widening sudo access when adding new privileged actions.
+`deploy/meshcenter.service` is a template (`__MESH_USER__` / `__MESH_HOME__` placeholders filled via `sed` at install time, see README step 8) for running under systemd. Its `ExecStart` runs `python server.py` directly — that means production actually serves requests through Flask's built-in Werkzeug dev server (`app.run(..., debug=False, threaded=True)` at the bottom of `server.py`), not through a real WSGI server. `wsgi.py` (`from server import app`) exists and is correctly importable, but nothing in this deployment path invokes it via Gunicorn/uWSGI/Waitress — it is currently dead code, not the production entrypoint its own docstring claims. `debug=False` keeps the interactive debugger (the actual RCE-risk part of the dev server) off, and this is a LAN-only single-user deployment, so the practical exposure is limited — but don't describe `wsgi.py` as "the" production entrypoint elsewhere in this repo until something in `deploy/` actually runs it that way. `deploy/meshcenter.sudoers` and `deploy/meshcenter-wifi.sudoers` grant the narrowly-scoped sudo rules needed for the in-app system actions (restart/reboot/shutdown) and Wi-Fi management (NetworkManager) respectively — extend these rather than widening sudo access when adding new privileged actions.

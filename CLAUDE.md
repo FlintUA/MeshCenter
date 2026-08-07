@@ -70,6 +70,10 @@ Only `data/instance.json`, `data/settings.json`, and `data/screenshots/` are ins
 
 No build step: `templates/index.html` is a single server-rendered page pulling in `static/chat.js`, `static/media.js`, `static/weather.js`, a vendored `static/chart.umd.min.js`, and Leaflet from a CDN (`unpkg.com/leaflet@1.9.4`). Cache-busting on the local scripts is done manually via `?v=` query strings in the `<script>` tags in `index.html` — bump those when shipping JS changes that must not be served stale from browser cache.
 
+### Internationalization (i18n)
+
+UI strings go through a hand-rolled runtime, `static/i18n.js` (`window.I18N.t()` / `.plural()` / `.applyStaticDom()`), backed by one JSON catalog per locale under `static/i18n/{en,de,ru,uk}.json`. New user-facing strings must use `I18N.t()` (or `data-i18n*` attributes in static markup) instead of hardcoded English, added to all four catalogs in the same commit. See `static/i18n/CONVENTIONS.md` for the short rulebook (tone per locale, key-naming, plural handling) and `static/i18n/README.md` for the do-not-translate glossary (Meshtastic, Waypoint, GPS, etc.) and the reasoning behind ambiguous cases. Translation coverage is uneven — check the README's "Localization" section before claiming a UI area is fully translated.
+
 ### REST API
 
 Routes are split between `server.py` (nodes, chats, waypoints, telemetry, system, radio profile/connection management) and `api/api_*.py` (camera, chat send worker, settings, system actions, node tools, node icons, weather). See the README's "REST API" section for the representative endpoint list; the JS in `static/*.js` is the actual client.

@@ -133,6 +133,7 @@
     "message_preview_suffix": " — \"{preview}\"",
     "delete_chat_failed": "Failed to delete chat: {reason}",
     "clear_chat_failed": "Failed to clear chat: {reason}",
+    "retry_failed": "Retry failed: {reason}",
     "toggle_ignore_failed": "Failed to toggle ignore: {reason}",
     "toggle_favorite_failed": "Failed to toggle favorite: {reason}",
     "node_ignored": "Node ignored",

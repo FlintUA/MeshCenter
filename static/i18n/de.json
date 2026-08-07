@@ -133,6 +133,7 @@
     "message_preview_suffix": " – „{preview}\"",
     "delete_chat_failed": "Chat konnte nicht gelöscht werden: {reason}",
     "clear_chat_failed": "Chat konnte nicht geleert werden: {reason}",
+    "retry_failed": "Erneuter Versand fehlgeschlagen: {reason}",
     "toggle_ignore_failed": "Ignorieren konnte nicht umgeschaltet werden: {reason}",
     "toggle_favorite_failed": "Favorit konnte nicht umgeschaltet werden: {reason}",
     "node_ignored": "Knoten ignoriert",

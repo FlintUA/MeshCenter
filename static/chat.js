@@ -3689,18 +3689,40 @@ function retryFailedMessage(messageId) {
 
     // Case 2: the server accepted and stored the message, but the
     // background send worker could not actually transmit it (radio busy,
-    // timeout, etc). Resend using the stored copy.
+    // timeout, etc). Re-attempt the SAME stored record via /api/send/retry
+    // instead of submitOutgoingMessage(), which would POST a brand-new
+    // message and leave both the old "failed" bubble and a new one in the
+    // chat history.
     const chatId = currentChatId;
     const cachedMessages = (messageCache[chatId] && messageCache[chatId].messages) || [];
     const serverMsg = cachedMessages.find(m => String(m.id) === String(messageId));
     if (serverMsg) {
-        submitOutgoingMessage(
-            chatId,
-            serverMsg.chat_type,
-            serverMsg.chat_name,
-            serverMsg.text,
-            serverMsg.reply_to || null
-        );
+        retryStoredMessage(chatId, messageId);
+    }
+}
+
+async function retryStoredMessage(chatId, messageId) {
+    try {
+        const response = await fetch('/api/send/retry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, message_id: messageId })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `HTTP ${response.status}`);
+        }
+
+        invalidateCache(chatId);
+        await loadChatMessages(chatId, { forceRefresh: true, suppressErrorPlaceholder: true });
+        loadChatList();
+    } catch (error) {
+        console.error('Error retrying message:', error);
+        if (typeof showToast === 'function') {
+            const reason = (error && error.message) ? error.message : window.I18N.t('errors.network_error');
+            showToast(window.I18N.t('chat.retry_failed', { reason }), 'error');
+        }
     }
 }
 

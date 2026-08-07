@@ -649,3 +649,80 @@ def register_chat_routes(
             "reply_id": reply_id,
             "status": "pending"
         }), 202
+
+    @app.route("/api/send/retry", methods=["POST"])
+    @handle_errors
+    def api_send_retry():
+        """Re-attempt sending a message that already exists server-side with
+        status="failed", reusing its own id instead of the /api/send path,
+        which would create a second, independent message record for the
+        same content - the retry button used to leave both the old failed
+        bubble and a new one in the chat history.
+        """
+        if not is_radio_available():
+            return jsonify({
+                "ok": False,
+                "error": "The radio is released for external configuration",
+                "error_code": "radio_released"
+            }), 409
+
+        data = request.get_json(force=True)
+        chat_id = str(data.get("chat_id", "")).strip()
+        message_id = str(data.get("message_id", "")).strip()
+
+        if not chat_id or not (is_valid_node_id(chat_id) or is_channel_chat_id(chat_id)):
+            return jsonify({"ok": False, "error": "Invalid chat_id", "error_code": "invalid_chat_id"}), 400
+        if not message_id or len(message_id) > 128:
+            return jsonify({"ok": False, "error": "Invalid message_id", "error_code": "invalid_message_id"}), 400
+
+        with state_lock:
+            target = None
+            for message in reversed(messages):
+                if message.get("chat_id") == chat_id and str(message.get("id", "")) == message_id:
+                    target = message
+                    break
+
+            if target is None:
+                return jsonify({"ok": False, "error": "Message not found", "error_code": "message_not_found"}), 404
+            if target.get("kind") != "me":
+                return jsonify({"ok": False, "error": "Only outgoing messages can be retried", "error_code": "retry_not_outgoing"}), 400
+            if target.get("status") != "failed":
+                return jsonify({"ok": False, "error": "Only failed messages can be retried", "error_code": "retry_not_failed"}), 400
+
+            text = str(target.get("text", ""))
+            reply_to = target.get("reply_to")
+
+            if not text:
+                return jsonify({"ok": False, "error": "Message has no text to resend", "error_code": "retry_empty_text"}), 400
+
+            target["status"] = "pending"
+            target.pop("error", None)
+            save_messages()
+
+        if is_channel_chat_id(chat_id):
+            chat_type = "channel"
+            channel_index = 0 if chat_id == CHANNEL_CHAT_ID else int(chat_id.split(":", 1)[1])
+            receiver_name = "Broadcast"
+        else:
+            chat_type = "dm"
+            channel_index = 0
+            receiver_name = get_node_name(chat_id)
+
+        reply_id = reply_to.get("packet_id") if isinstance(reply_to, dict) else None
+
+        send_queue.put({
+            "text": text,
+            "final_chat_id": chat_id,
+            "chat_type": chat_type,
+            "channel_index": channel_index,
+            "reply_id": reply_id,
+            "message_id": message_id,
+            "receiver_name": receiver_name,
+        })
+
+        return jsonify({
+            "ok": True,
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "status": "pending"
+        }), 202

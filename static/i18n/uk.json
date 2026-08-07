@@ -133,6 +133,7 @@
     "message_preview_suffix": " — «{preview}»",
     "delete_chat_failed": "Не вдалося видалити чат: {reason}",
     "clear_chat_failed": "Не вдалося очистити чат: {reason}",
+    "retry_failed": "Не вдалося повторити надсилання: {reason}",
     "toggle_ignore_failed": "Не вдалося змінити статус ігнорування: {reason}",
     "toggle_favorite_failed": "Не вдалося змінити обране: {reason}",
     "node_ignored": "Вузол додано до ігнорованих",

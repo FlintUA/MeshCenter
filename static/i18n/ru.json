@@ -133,6 +133,7 @@
     "message_preview_suffix": " — «{preview}»",
     "delete_chat_failed": "Не удалось удалить чат: {reason}",
     "clear_chat_failed": "Не удалось очистить чат: {reason}",
+    "retry_failed": "Не удалось повторить отправку: {reason}",
     "toggle_ignore_failed": "Не удалось изменить статус игнорирования: {reason}",
     "toggle_favorite_failed": "Не удалось изменить избранное: {reason}",
     "node_ignored": "Узел добавлен в игнорируемые",

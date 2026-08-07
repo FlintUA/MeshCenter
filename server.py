@@ -74,7 +74,10 @@ except NameError:
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def resolve_app_version(project_dir, fallback="dev"):
-    """Return the app version from the latest git tag (e.g. "1.3.0" from "v1.3.0")."""
+    """Return the app version from git: the exact tag when HEAD is tagged
+    (e.g. "1.3.0" from "v1.3.0"), otherwise a tag+distance+hash description
+    (e.g. "1.5.0-42-gd586650") so a checkout ahead of the latest reachable
+    tag still reports something more useful than a bare "dev"."""
     try:
         result = subprocess.run(
             ["git", "describe", "--tags", "--abbrev=0"],
@@ -87,7 +90,22 @@ def resolve_app_version(project_dir, fallback="dev"):
         if result.returncode == 0 and tag:
             return tag[1:] if tag.startswith("v") else tag
     except Exception as error:
-        print(f"[VERSION] git describe failed: {error}", flush=True)
+        print(f"[VERSION] git describe --abbrev=0 failed: {error}", flush=True)
+
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--always"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        described = result.stdout.strip()
+        if result.returncode == 0 and described:
+            return described[1:] if described.startswith("v") else described
+    except Exception as error:
+        print(f"[VERSION] git describe --always failed: {error}", flush=True)
+
     return fallback
 
 APP_VERSION = resolve_app_version(PROJECT_DIR)

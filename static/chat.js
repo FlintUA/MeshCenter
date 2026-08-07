@@ -3256,7 +3256,10 @@ function renderMessages(container, messages, chatId) {
     );
 
     if (messages.length === 0) {
-        const chatName = currentChatName || chatId;
+        const rawChatName = currentChatName || chatId;
+        const chatName = currentChatType === 'channel'
+            ? formatChannelIndexLabel(rawChatName, channelIndexFromChatId(chatId))
+            : rawChatName;
         container.innerHTML = `<div class="loading">💬 ${escapeHtml(window.I18N.t('chat.no_messages_yet', { name: chatName }))}</div>`;
     } else {
         container.innerHTML = messages.map(msg => {
@@ -3855,7 +3858,10 @@ async function executeClearChat() {
 function clearCurrentChat() {
     if (!currentChatId) return;
     closeChatActions();
-    showConfirmClear(currentChatName, currentChatId);
+    const displayName = currentChatType === 'channel'
+        ? formatChannelIndexLabel(currentChatName, channelIndexFromChatId(currentChatId))
+        : currentChatName;
+    showConfirmClear(displayName, currentChatId);
 }
 
 // ============================================================

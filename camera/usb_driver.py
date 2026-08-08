@@ -275,40 +275,39 @@ class UsbCameraDriver(CameraDriver):
         with self._lock:
             was_started = self._started
             previous_resolution = self._resolution
+            target_resolution = resolution or self._resolution
 
-            if resolution and resolution != self._resolution:
-                if not self.start(resolution=resolution):
-                    return b""
-            elif not self._started:
-                if not self.start():
-                    return b""
-
-            device = self._device
-            if device is None:
+            # Always capture from a freshly (re)started stream, mirroring
+            # the CSI driver's existing video/photo mode split
+            # (switch_camera_mode() always stops the camera first before
+            # reconfiguring - the two capture kinds are mutually exclusive,
+            # not concurrent, on that driver too). Confirmed live on
+            # camtest that grabbing one frame from a device that was just
+            # stream_off()'d - without a full stop()+start() to re-arm
+            # streaming - fails with Errno 5, so this isn't just following
+            # convention, it's the only sequence that actually works with
+            # this camera/library combination.
+            self.stop()
+            if not self.start(resolution=target_resolution):
                 return b""
 
+            device = self._device
+            photo = b""
             try:
-                photo = b""
                 for frame in device:
                     data = bytes(frame)
                     if data:
                         photo = data
-                        break
+                    break
             except Exception as error:
                 print(f"[USB CAMERA] Photo capture error: {error}", flush=True)
                 photo = b""
-            finally:
-                # A one-shot capture has no business leaving the stream
-                # running afterward - same reasoning as stream_mjpeg()'s
-                # finally block. This mirrors the CSI driver's existing
-                # video/photo mode split (switch_camera_mode() always
-                # stops the camera first) - the two capture kinds are
-                # mutually exclusive here too, not concurrent.
-                self._stream_off_safe(device)
 
-            # Restore the streaming resolution if we temporarily switched
-            # for a higher/lower-res still capture.
-            if resolution and resolution != previous_resolution and was_started:
+            # A one-shot capture has no business leaving the stream
+            # running - stop it, then restart continuous streaming only if
+            # it was actually active before this call.
+            self.stop()
+            if was_started:
                 self.start(resolution=previous_resolution)
 
             return photo

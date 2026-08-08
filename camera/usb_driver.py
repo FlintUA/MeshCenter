@@ -215,6 +215,7 @@ class UsbCameraDriver(CameraDriver):
     def stop(self) -> None:
         with self._lock:
             if self._device is not None:
+                self._stream_off_safe(self._device)
                 try:
                     self._device.close()
                 except Exception as error:
@@ -259,6 +260,16 @@ class UsbCameraDriver(CameraDriver):
                     yield data
         except Exception as error:
             print(f"[USB CAMERA] Stream error: {error}", flush=True)
+        finally:
+            # Confirmed live on camtest: breaking out of `for frame in
+            # device` (client disconnect, generation change) without an
+            # explicit stream_off() leaves the camera's own state machine
+            # confused - the *next* open()/set_format() on this same
+            # camera fails with "[Errno 16] Device or resource busy" for a
+            # few seconds until it self-recovers. Always release the
+            # stream here regardless of how this generator exits.
+            if my_generation == self._stream_generation:
+                self._stream_off_safe(device)
 
     def capture_photo(self, resolution: str | None = None) -> bytes:
         with self._lock:
@@ -286,6 +297,14 @@ class UsbCameraDriver(CameraDriver):
             except Exception as error:
                 print(f"[USB CAMERA] Photo capture error: {error}", flush=True)
                 photo = b""
+            finally:
+                # A one-shot capture has no business leaving the stream
+                # running afterward - same reasoning as stream_mjpeg()'s
+                # finally block. This mirrors the CSI driver's existing
+                # video/photo mode split (switch_camera_mode() always
+                # stops the camera first) - the two capture kinds are
+                # mutually exclusive here too, not concurrent.
+                self._stream_off_safe(device)
 
             # Restore the streaming resolution if we temporarily switched
             # for a higher/lower-res still capture.
@@ -301,6 +320,22 @@ class UsbCameraDriver(CameraDriver):
     # ------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------
+
+    @staticmethod
+    def _stream_off_safe(device) -> None:
+        """Best-effort VIDIOC_STREAMOFF - swallow errors, this is always
+        called from a cleanup path (finally blocks, stop()) where raising
+        would just replace one problem with another. Confirmed live on
+        camtest to be safe to call even when the device was never
+        actually streaming."""
+        if device is None:
+            return
+        try:
+            from linuxpy.video.device import BufferType
+
+            device.stream_off(BufferType.VIDEO_CAPTURE)
+        except Exception as error:
+            print(f"[USB CAMERA] stream_off() warning: {error}", flush=True)
 
     def _apply_format(self, resolution: str, fps: int) -> bool:
         try:

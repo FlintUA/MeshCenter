@@ -38,7 +38,9 @@ from storage.device_manager import DeviceManager
 from api.api_node_tools import register_node_tools_routes
 from api.api_node_icons import register_node_icon_routes
 from api.api_weather import register_weather_routes
-from weather_service import OpenWeatherService, WeatherConfig
+from weather.weather_manager import WeatherManager
+from weather.providers.openweather import OpenWeatherProvider, WeatherConfig as OpenWeatherConfig
+from weather.providers.weatherapi import WeatherApiProvider, WeatherApiConfig
 
 try:
     from config import *
@@ -3855,17 +3857,31 @@ def resolve_weather_location():
     }
 
 
-weather_service = OpenWeatherService(WeatherConfig(
-    api_key=OPENWEATHER_API_KEY,
-    latitude=WEATHER_LATITUDE,
-    longitude=WEATHER_LONGITUDE,
-    location_name=WEATHER_LOCATION_NAME,
-    language=WEATHER_LANGUAGE,
-    cache_seconds=WEATHER_CACHE_SECONDS,
-))
+_weather_providers = {
+    "openweather": OpenWeatherProvider(OpenWeatherConfig(
+        api_key=OPENWEATHER_API_KEY,
+        latitude=WEATHER_LATITUDE,
+        longitude=WEATHER_LONGITUDE,
+        location_name=WEATHER_LOCATION_NAME,
+        language=WEATHER_LANGUAGE,
+        cache_seconds=WEATHER_CACHE_SECONDS,
+    )),
+    "weatherapi": WeatherApiProvider(WeatherApiConfig(
+        api_key=WEATHERAPI_API_KEY,
+        latitude=WEATHER_LATITUDE,
+        longitude=WEATHER_LONGITUDE,
+        location_name=WEATHER_LOCATION_NAME,
+        language=WEATHER_LANGUAGE,
+        cache_seconds=WEATHER_CACHE_SECONDS,
+    )),
+}
+weather_manager = WeatherManager(
+    _weather_providers,
+    active_id=WEATHER_PROVIDER if WEATHER_PROVIDER in _weather_providers else "openweather",
+)
 register_weather_routes(
     app,
-    weather_service,
+    weather_manager,
     resolve_weather_location,
     secrets_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "weather_secrets.py"),
 )
@@ -3973,27 +3989,22 @@ def resolve_ui_language():
     supported = [lang for lang in SUPPORTED_LANGUAGES if lang != "auto"]
     return request.accept_languages.best_match(supported, default="en")
 
-# OpenWeather's own language codes (https://openweathermap.org/current#multi)
-# mostly match our locale codes, except Ukrainian: OpenWeather uses "ua",
-# not the ISO 639-1 code "uk" our ui.language setting uses.
-WEATHER_LANGUAGE_MAP = {
-    "en": "en",
-    "de": "de",
-    "ru": "ru",
-    "uk": "ua",
-}
-
+# Each provider owns its own ui.language -> provider-language-code mapping
+# (see WeatherProvider.LANGUAGE_MAP in weather/providers/base.py) since that
+# mapping is provider-specific - e.g. OpenWeather uses "ua" for Ukrainian,
+# WeatherAPI uses "uk" directly. This just delegates to whichever provider is
+# currently active.
 def resolve_weather_language(ui_language):
     # Weather data is one cache shared by every connected client (see
-    # weather_service.py) - there's no single request to resolve "auto"
+    # weather/providers/*.py) - there's no single request to resolve "auto"
     # against, so fall back to the static config.py default instead of
     # guessing from whichever browser happened to trigger this call.
     if ui_language == "auto":
-        return WEATHER_LANGUAGE_MAP.get(WEATHER_LANGUAGE, WEATHER_LANGUAGE)
-    return WEATHER_LANGUAGE_MAP.get(ui_language, WEATHER_LANGUAGE)
+        ui_language = WEATHER_LANGUAGE
+    return weather_manager.active().resolve_language(ui_language)
 
 # Registered here (rather than alongside the other register_*_routes calls
-# above) because it needs weather_service/resolve_weather_language, both
+# above) because it needs weather_manager/resolve_weather_language, both
 # defined above this point.
 register_settings_routes(
     app,
@@ -4001,7 +4012,7 @@ register_settings_routes(
     settings,
     save_settings,
     handle_errors,
-    weather_service=weather_service,
+    weather_manager=weather_manager,
     resolve_weather_language=resolve_weather_language,
 )
 
@@ -4009,7 +4020,7 @@ register_settings_routes(
 def index():
     ui_language = resolve_ui_language()
 
-    # weather_service.set_language() only otherwise runs at startup and on
+    # set_language() only otherwise runs at startup and on
     # settings save (see resolve_weather_language()) - neither has a browser
     # to resolve "auto" against, so it fell back to the static config.py
     # default (English) and stuck there. Every page load does have a
@@ -4023,9 +4034,10 @@ def index():
         # set_language() unconditionally invalidates the shared weather
         # cache, so only call it when the resolved language actually
         # changed - otherwise every page load would defeat
-        # WEATHER_CACHE_SECONDS and re-hit the OpenWeather API for nothing.
-        if resolved_weather_language != weather_service.config.language:
-            weather_service.set_language(resolved_weather_language)
+        # WEATHER_CACHE_SECONDS and re-hit the provider's API for nothing.
+        active_provider = weather_manager.active()
+        if resolved_weather_language != active_provider.config.language:
+            active_provider.set_language(resolved_weather_language)
 
     return render_template(
         "index.html",
@@ -5511,11 +5523,15 @@ if __name__ == "__main__":
             flush=True,
         )
     load_settings()
-    # weather_service was constructed before settings.json was loaded (it's a
-    # module-level singleton, built long before this __main__ block runs), so
-    # sync it now in case a language other than the config.py default was
-    # saved in a previous run.
-    weather_service.set_language(resolve_weather_language(settings.get("language", "auto")))
+    # weather_manager's providers were constructed before settings.json was
+    # loaded (they're module-level singletons, built long before this
+    # __main__ block runs), so sync the active provider and its language now
+    # in case a choice other than the config.py defaults was saved in a
+    # previous run.
+    weather_manager.set_active(
+        normalize_settings(settings).get("weather", {}).get("provider", "openweather")
+    )
+    weather_manager.active().set_language(resolve_weather_language(settings.get("language", "auto")))
     _load_cpu_history()
 
     if identity_match:

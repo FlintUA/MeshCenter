@@ -1,4 +1,4 @@
-"""OpenWeather backend service for MeshCenter.
+"""OpenWeather backend for MeshCenter.
 
 The browser never receives the API key. Current conditions and the compact
 three-day forecast are cached together so all connected clients reuse the same
@@ -18,6 +18,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from .base import WeatherProvider
+
 
 @dataclass(frozen=True)
 class WeatherConfig:
@@ -30,7 +32,46 @@ class WeatherConfig:
     timeout_seconds: int = 8
 
 
-class OpenWeatherService:
+def _condition_key(weather_id: int, icon: str) -> str:
+    """Map an OpenWeather condition id + icon code onto CONDITION_KEYS.
+
+    id ranges are OpenWeather's own (https://openweathermap.org/weather-conditions);
+    the icon's trailing d/n picks the day/night variant for the two states
+    that actually render differently at night.
+    """
+    is_day = not str(icon or "").endswith("n")
+
+    if 200 <= weather_id < 300:
+        return "thunderstorm"
+    if 300 <= weather_id < 400:
+        return "drizzle"
+    if 500 <= weather_id < 600:
+        return "rain"
+    if 600 <= weather_id < 700:
+        return "snow"
+    if 700 <= weather_id < 800:
+        return "fog"
+    if weather_id == 800:
+        return "clear-day" if is_day else "clear-night"
+    if weather_id == 801:
+        return "partly-cloudy-day" if is_day else "partly-cloudy-night"
+    return "cloudy"
+
+
+class OpenWeatherProvider(WeatherProvider):
+    id = "openweather"
+    display_name = "OpenWeather"
+
+    # OpenWeather's own language codes (https://openweathermap.org/current#multi)
+    # mostly match our locale codes, except Ukrainian: OpenWeather uses "ua",
+    # not the ISO 639-1 code "uk" our ui.language setting uses.
+    LANGUAGE_MAP = {
+        "en": "en",
+        "de": "de",
+        "ru": "ru",
+        "uk": "ua",
+    }
+
     CURRENT_URL = "https://api.openweathermap.org/data/2.5/weather"
     FORECAST_URL = "https://api.openweathermap.org/data/2.5/forecast"
 
@@ -53,8 +94,7 @@ class OpenWeatherService:
             self._cache_key = None
 
     def set_language(self, language: str) -> None:
-        """Update the OpenWeather response language (see the ui.language ->
-        OpenWeather lang mapping in server.py) without restarting MeshCenter.
+        """Update the OpenWeather response language without restarting MeshCenter.
 
         Weather data is a single cache shared by every connected client (see
         the module docstring), so this is a global setting, not per-request -
@@ -222,6 +262,11 @@ class OpenWeatherService:
         weather = (current.get("weather") or [{}])[0]
         sys_data = current.get("sys") or {}
 
+        try:
+            weather_id = int(weather.get("id") or 0)
+        except (TypeError, ValueError):
+            weather_id = 0
+
         timezone_offset = int(
             current.get("timezone")
             or (forecast.get("city") or {}).get("timezone")
@@ -252,6 +297,7 @@ class OpenWeatherService:
             "condition": weather.get("main"),
             "description": weather.get("description"),
             "icon_code": weather.get("icon"),
+            "condition_key": _condition_key(weather_id, weather.get("icon")),
             "sunrise": sys_data.get("sunrise"),
             "sunset": sys_data.get("sunset"),
             "timezone_offset": timezone_offset,
@@ -371,6 +417,10 @@ class OpenWeatherService:
                 ),
             )
             representative_weather = (representative.get("weather") or [{}])[0]
+            try:
+                representative_weather_id = int(representative_weather.get("id") or 0)
+            except (TypeError, ValueError):
+                representative_weather_id = 0
 
             daytime_pop_values = [
                 float(entry.get("pop") or 0)
@@ -386,6 +436,9 @@ class OpenWeatherService:
                 "condition": dominant_category,
                 "description": representative_weather.get("description"),
                 "icon_code": representative_weather.get("icon"),
+                "condition_key": _condition_key(
+                    representative_weather_id, representative_weather.get("icon")
+                ),
                 "precipitation_probability": round(precipitation_probability * 100),
                 "representative_local_time": representative["_local_dt"].strftime("%H:%M"),
             })

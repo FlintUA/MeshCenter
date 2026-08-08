@@ -636,7 +636,7 @@ Replace the example values with those reported by `meshtastic --info`.
 
 `config.py`, optional `weather_secrets.py` and the `data/` folder are local files and are **not** overwritten by normal Git updates.
 
-**Optional weather:** copy `weather_secrets.example.py` to `weather_secrets.py` and insert your OpenWeather API key. The location can later be chosen in **Workspace → Settings → Reference location**.
+**Optional weather:** copy `weather_secrets.example.py` to `weather_secrets.py` and insert an API key for OpenWeather and/or WeatherAPI. Which provider is active is chosen in **Workspace → Settings → Weather Provider**; the location can later be chosen in **Workspace → Settings → Reference location**.
 
 ### 7. First manual start
 
@@ -1170,9 +1170,9 @@ MeshCenter provides a dedicated System workspace that gives you full visibility 
 
 ### 🌦️ Weather Module
 
-MeshCenter integrates with OpenWeather to show current weather conditions and a 3‑day forecast for your location.
+MeshCenter shows current weather conditions and a 3‑day forecast for your location, sourced from a pluggable weather provider (`weather/providers/`) - currently OpenWeather or WeatherAPI. The active provider is chosen in **Settings → Weather Provider**.
 
-- **Server-side API key** - The OpenWeather API key is stored in the local `weather_secrets.py` file and never exposed to the browser
+- **Server-side API key** - Each provider's API key is stored in the local `weather_secrets.py` file and never exposed to the browser
 - **Caching** – Weather data is cached for 10 minutes to reduce API calls
 - **Location sources**:
   - Manual coordinates (set in the web Settings)
@@ -1591,7 +1591,7 @@ Also check your firewall configuration.
 
 ### Weather data not showing
 
-- Verify that `OPENWEATHER_API_KEY` is set in `weather_secrets.py`
+- Verify that the active provider's key (`OPENWEATHER_API_KEY` or `WEATHERAPI_API_KEY`) is set in `weather_secrets.py` - check which provider is active in Settings → Weather Provider
 - Check that the reference location is configured (Settings → Reference location)
 - Ensure the Raspberry Pi has internet access
 

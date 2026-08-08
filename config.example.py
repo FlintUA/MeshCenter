@@ -50,12 +50,22 @@ KNOWN_NODE_INFO = {
     "!xxxxxxxx": {"short_name": "MYND", "hw_model": "RAK4631"},
 }
 
-# ===== WEATHER / OPENWEATHER =====
-# Keep the real API key in weather_secrets.py (ignored by Git).
+# ===== WEATHER =====
+# Keep the real API keys in weather_secrets.py (ignored by Git). Only the key
+# for the provider chosen in web Settings -> Weather Provider is actually used.
 try:
     from weather_secrets import OPENWEATHER_API_KEY
 except ImportError:
     OPENWEATHER_API_KEY = ""
+
+try:
+    from weather_secrets import WEATHERAPI_API_KEY
+except ImportError:
+    WEATHERAPI_API_KEY = ""
+
+# Which provider is active on first startup, before any choice is saved to
+# settings.json. Must be "openweather" or "weatherapi".
+WEATHER_PROVIDER = "openweather"
 
 # Optional static fallback. Leave unset and choose a reference location in the
 # web Settings, or enter fallback coordinates here.

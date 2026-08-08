@@ -2851,12 +2851,12 @@ body {
     gap: 14px;
 }
 
-.settings-card--general   { grid-area: 1 / 1 / 2 / 2; }
-.settings-card--telemetry { grid-area: 2 / 1 / 3 / 2; }
-.settings-card--units     { grid-area: 1 / 2 / 2 / 3; }
-.settings-card--radio     { grid-area: 2 / 2 / 3 / 3; }
-.settings-card--map       { grid-area: 1 / 3 / 2 / 4; }
-.settings-card--reference { grid-area: 2 / 3 / 3 / 4; }
+.settings-card--general          { grid-area: 1 / 1 / 2 / 2; }
+.settings-card--telemetry        { grid-area: 2 / 1 / 3 / 2; }
+.settings-card--units             { grid-area: 1 / 2 / 2 / 3; }
+.settings-card--weather-provider { grid-area: 2 / 2 / 3 / 3; }
+.settings-card--map              { grid-area: 1 / 3 / 2 / 4; }
+.settings-card--reference        { grid-area: 2 / 3 / 3 / 4; }
 
 .settings-card {
     background: var(--mc-card-bg);
@@ -2888,7 +2888,7 @@ body {
     .settings-card--units,
     .settings-card--map,
     .settings-card--telemetry,
-    .settings-card--radio,
+    .settings-card--weather-provider,
     .settings-card--reference {
         grid-area: auto;
     }
@@ -2905,7 +2905,7 @@ body {
     .settings-card--units,
     .settings-card--map,
     .settings-card--telemetry,
-    .settings-card--radio,
+    .settings-card--weather-provider,
     .settings-card--reference {
         grid-area: auto;
     }
@@ -11565,49 +11565,13 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 .chat-area.map-layout-split.map-on-bottom > .map-view { order: 20; }
 
 /* ============================================================
-   OPENWEATHER SETUP MODAL
+   WEATHER PROVIDER SETTINGS CARD
    ============================================================ */
-.weather-setup-modal {
-    width: min(520px, calc(100vw - 32px));
-    max-width: 520px;
-}
-
-.weather-setup-copy {
-    margin: 0 0 16px;
-    color: var(--mc-muted, #66798d);
-    font-size: 13px;
-    line-height: 1.55;
-}
-
-.weather-setup-label {
-    display: block;
-    margin-bottom: 7px;
-    color: var(--mc-text, #1e3145);
-    font-size: 12px;
-    font-weight: 700;
-}
 
 .weather-key-input-wrap {
     display: flex;
     align-items: stretch;
     gap: 8px;
-}
-
-.weather-setup-input {
-    min-width: 0;
-    flex: 1 1 auto;
-    height: 40px;
-    padding: 0 12px;
-    border: 1px solid var(--mc-border, #c8d3de);
-    border-radius: 8px;
-    background: var(--mc-surface, #fff);
-    color: var(--mc-text, #1e3145);
-    font: inherit;
-}
-
-.weather-setup-input:focus {
-    outline: 2px solid rgba(31, 111, 219, .22);
-    border-color: var(--mc-primary, #1f6fdb);
 }
 
 .weather-key-visibility {
@@ -11621,172 +11585,31 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
     font-weight: 700;
 }
 
-.weather-setup-help {
-    margin-top: 10px;
-    color: var(--mc-muted, #66798d);
-    font-size: 12px;
-    line-height: 1.5;
-}
-
-.weather-setup-help a {
-    color: var(--mc-primary, #1f6fdb);
-    font-weight: 700;
-}
-
-.weather-setup-result {
-    min-height: 20px;
-    margin-top: 12px;
-    padding: 0;
-    font-size: 12px;
-    line-height: 1.45;
-}
-
-.weather-setup-result.is-pending { color: var(--mc-muted, #66798d); }
-.weather-setup-result.is-success { color: #23834b; }
-.weather-setup-result.is-error { color: #c24752; }
-
-.weather-setup-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-top: 14px;
-}
-
-.weather-test-btn {
-    background: var(--mc-surface-alt, #edf3f8);
-    color: var(--mc-text, #1e3145);
-}
-
-.weather-save-btn {
-    background: var(--mc-primary, #1f6fdb);
-    color: #fff;
-}
-
-.weather-setup-actions button:disabled,
-.weather-key-visibility:disabled,
-.weather-setup-input:disabled {
+.weather-key-visibility:disabled {
     opacity: .58;
     cursor: wait;
 }
 
-[data-theme="dark"] .weather-setup-copy,
-[data-theme="dark"] .weather-setup-help,
-[data-theme="dark"] .weather-setup-result.is-pending {
-    color: #9fb1c2;
-}
-
-[data-theme="dark"] .weather-setup-input {
-    background: #132638;
-    border-color: #38516a;
-    color: #eef6fc;
-}
-
-[data-theme="dark"] .weather-key-visibility,
-[data-theme="dark"] .weather-test-btn {
+[data-theme="dark"] .weather-key-visibility {
     background: #20384e;
     border-color: #38516a;
     color: #eef6fc;
 }
 
-@media (max-width: 560px) {
-    .weather-setup-actions { flex-wrap: wrap; }
-    .weather-setup-actions .confirm-btn { flex: 1 1 120px; }
+.weather-provider-status.is-configured {
+    color: #218653;
 }
 
-/* =========================================================
-   RADIO CONFIGURATION MODE
-   ========================================================= */
-.settings-card--radio {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+.weather-provider-status.is-required {
+    color: #9b7421;
 }
 
-.radio-connection-heading {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
+[data-theme="dark"] .weather-provider-status.is-configured {
+    color: #4fd18b;
 }
 
-.radio-connection-badge {
-    flex: 0 0 auto;
-    display: inline-flex;
-    align-items: center;
-    min-height: 25px;
-    padding: 4px 10px;
-    border-radius: 999px;
-    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.28));
-    background: rgba(148, 163, 184, 0.12);
-    color: var(--text-secondary, #94a3b8);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: .02em;
-}
-
-.radio-connection-badge.is-connected {
-    border-color: rgba(34, 197, 94, .35);
-    background: rgba(34, 197, 94, .12);
-    color: #22c55e;
-}
-
-.radio-connection-badge.is-released,
-.radio-connection-badge.is-releasing,
-.radio-connection-badge.is-reconnecting {
-    border-color: rgba(245, 158, 11, .38);
-    background: rgba(245, 158, 11, .12);
-    color: #f59e0b;
-}
-
-.radio-connection-badge.is-error {
-    border-color: rgba(239, 68, 68, .4);
-    background: rgba(239, 68, 68, .12);
-    color: #ef4444;
-}
-
-.radio-connection-status {
-    padding: 12px 14px;
-    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.25));
-    border-radius: 10px;
-    background: var(--panel-soft-bg, rgba(15, 23, 42, .26));
-    color: var(--text-primary, #e5e7eb);
-    line-height: 1.45;
-}
-
-.radio-connection-note {
-    color: var(--text-secondary, #94a3b8);
-    font-size: 12px;
-    line-height: 1.45;
-}
-
-.radio-connection-action {
-    align-self: flex-start;
-    min-width: 150px;
-    padding: 9px 15px;
-    border-radius: 9px;
-    border: 1px solid rgba(239, 68, 68, .35);
-    background: rgba(239, 68, 68, .1);
-    color: #ef4444;
-    font-weight: 700;
-    cursor: pointer;
-    transition: transform .15s ease, background .15s ease, opacity .15s ease;
-}
-
-.radio-connection-action:hover:not(:disabled) {
-    transform: translateY(-1px);
-    background: rgba(239, 68, 68, .16);
-}
-
-.radio-connection-action.is-reconnect {
-    border-color: rgba(34, 197, 94, .4);
-    background: rgba(34, 197, 94, .12);
-    color: #22c55e;
-}
-
-.radio-connection-action:disabled {
-    cursor: wait;
-    opacity: .55;
-    transform: none;
+[data-theme="dark"] .weather-provider-status.is-required {
+    color: #e0b667;
 }
 
 /* Waypoints map layer */

@@ -1,7 +1,8 @@
 // ============================================================
 // WEATHER MODULE
-// OpenWeather data is fetched only through the MeshCenter backend.
-// The API key never reaches the browser.
+// Weather data is fetched only through the MeshCenter backend, from
+// whichever provider is active (Settings -> Weather Provider). The API
+// key never reaches the browser.
 // ============================================================
 
 let weatherRefreshTimer = null;
@@ -14,33 +15,25 @@ function weatherText(id, value, fallback = '--') {
     if (element) element.textContent = value ?? fallback;
 }
 
-function weatherEmoji(code, condition) {
-    const icon = String(code || '').toLowerCase();
-    const name = String(condition || '').toLowerCase();
+// Keyed on the provider-neutral condition_key every WeatherProvider backend
+// normalizes into (see weather/providers/base.py CONDITION_KEYS) - not on any
+// provider's own icon vocabulary, so this never needs to change when a new
+// provider is added.
+const WEATHER_CONDITION_EMOJI = {
+    'clear-day': '☀️',
+    'clear-night': '🌙',
+    'partly-cloudy-day': '🌤️',
+    'partly-cloudy-night': '☁️',
+    'cloudy': '☁️',
+    'fog': '🌫️',
+    'drizzle': '🌦️',
+    'rain': '🌧️',
+    'thunderstorm': '⛈️',
+    'snow': '🌨️',
+};
 
-    // Prefer the OpenWeather icon code. It is more precise and stable than
-    // matching translated/free-form description text.
-    const iconMap = {
-        '01d': '☀️', '01n': '🌙',
-        '02d': '🌤️', '02n': '☁️',
-        '03d': '☁️', '03n': '☁️',
-        '04d': '☁️', '04n': '☁️',
-        '09d': '🌧️', '09n': '🌧️',
-        '10d': '🌦️', '10n': '🌧️',
-        '11d': '⛈️', '11n': '⛈️',
-        '13d': '🌨️', '13n': '🌨️',
-        '50d': '🌫️', '50n': '🌫️',
-    };
-    if (iconMap[icon]) return iconMap[icon];
-
-    const isNight = icon.endsWith('n');
-    if (name.includes('thunder')) return '⛈️';
-    if (name.includes('snow')) return '🌨️';
-    if (name.includes('rain') || name.includes('drizzle')) return '🌧️';
-    if (name.includes('mist') || name.includes('fog') || name.includes('haze')) return '🌫️';
-    if (name.includes('clear')) return isNight ? '🌙' : '☀️';
-    if (name.includes('cloud')) return '☁️';
-    return '🌤️';
+function weatherEmoji(conditionKey) {
+    return WEATHER_CONDITION_EMOJI[conditionKey] || '🌤️';
 }
 
 function formatWeatherNumber(value, digits = 0) {
@@ -119,7 +112,7 @@ function renderWeatherForecast(items) {
     grid.innerHTML = forecast.map((item, index) => {
         const label = weatherDayLabel(item, index);
         const dateLine = index === 0 ? formatWeatherDate(item?.date) : '';
-        const icon = weatherEmoji(item.icon_code, item.condition);
+        const icon = weatherEmoji(item.condition_key);
         const high = weatherShortTemperature(item.temp_max);
         const low = weatherShortTemperature(item.temp_min);
         const description = item.description || item.condition || '';
@@ -170,7 +163,7 @@ function renderWeather(data) {
     weatherSetupRequired = false;
 
     weatherText('weatherLocation', [data.location, data.country].filter(Boolean).join(', '));
-    weatherText('weatherIcon', weatherEmoji(data.icon_code, data.condition));
+    weatherText('weatherIcon', weatherEmoji(data.condition_key));
     weatherText('weatherTemperature', formatWeatherTemperature(data.temperature));
     weatherText('weatherCondition', data.description || data.condition || window.I18N.t('weather.current_weather_fallback'));
     weatherText('weatherHumidity', `${formatWeatherNumber(data.humidity)}%`);
@@ -252,140 +245,107 @@ document.addEventListener('meshcenter:settings-updated', handleWeatherSettingsUp
 document.addEventListener('DOMContentLoaded', startWeatherModule);
 
 // ============================================================
-// OPENWEATHER SETUP
+// WEATHER PROVIDER SETTINGS (Settings -> Weather Provider card)
 // The API key is sent only to the MeshCenter backend and is never
 // returned to the browser after it has been saved.
 // ============================================================
 
 let weatherSetupRequired = false;
-let weatherSetupBusy = false;
+let weatherProviderBusy = false;
 
 function handleWeatherBadgeClick() {
     if (weatherSetupRequired) {
-        openWeatherSetup();
+        window.openWeatherProviderSettings?.();
         return;
     }
     loadWeather(true);
 }
 
-function setWeatherSetupResult(message = '', state = '') {
-    const result = document.getElementById('weatherSetupResult');
-    if (!result) return;
-    result.textContent = message;
-    result.className = 'weather-setup-result';
-    if (state) result.classList.add(`is-${state}`);
+function setWeatherProviderStatus(message = '', state = '') {
+    const status = document.getElementById('weatherProviderStatus');
+    if (!status) return;
+    status.textContent = message;
+    status.className = 'reference-location-status weather-provider-status';
+    if (state) status.classList.add(`is-${state}`);
 }
 
-function setWeatherSetupBusy(busy, action = '') {
-    weatherSetupBusy = Boolean(busy);
-    const input = document.getElementById('weatherApiKeyInput');
-    const testButton = document.getElementById('weatherTestKeyBtn');
-    const saveButton = document.getElementById('weatherSaveKeyBtn');
-    if (input) input.disabled = weatherSetupBusy;
-    if (testButton) {
-        testButton.disabled = weatherSetupBusy;
-        testButton.textContent = weatherSetupBusy && action === 'test' ? window.I18N.t('weather.testing') : window.I18N.t('weather.test_key');
-    }
-    if (saveButton) {
-        saveButton.disabled = weatherSetupBusy;
-        saveButton.textContent = weatherSetupBusy && action === 'save' ? window.I18N.t('weather.saving') : window.I18N.t('common.save');
-    }
-}
-
-function openWeatherSetup() {
-    const modal = document.getElementById('weatherSetupModal');
-    const input = document.getElementById('weatherApiKeyInput');
-    if (!modal) return;
-
-    setWeatherSetupBusy(false);
-    setWeatherSetupResult('');
-    if (input) input.value = '';
-    modal.style.display = 'flex';
-    modal.setAttribute('aria-hidden', 'false');
-    setTimeout(() => input?.focus(), 40);
-}
-
-function closeWeatherSetup() {
-    if (weatherSetupBusy) return;
-    const modal = document.getElementById('weatherSetupModal');
-    const input = document.getElementById('weatherApiKeyInput');
-    if (modal) {
-        modal.style.display = 'none';
-        modal.setAttribute('aria-hidden', 'true');
-    }
-    if (input) input.value = '';
-    setWeatherSetupResult('');
-}
-
-function weatherSetupKey() {
-    return String(document.getElementById('weatherApiKeyInput')?.value || '').trim();
-}
-
-async function submitWeatherKey(endpoint, action) {
-    const apiKey = weatherSetupKey();
-    if (!apiKey) {
-        setWeatherSetupResult(window.I18N.t('weather.enter_api_key'), 'error');
-        document.getElementById('weatherApiKeyInput')?.focus();
-        return null;
-    }
-
-    setWeatherSetupBusy(true, action);
-    setWeatherSetupResult(action === 'test' ? window.I18N.t('weather.checking_key') : window.I18N.t('weather.checking_and_saving_key'), 'pending');
-
+async function loadWeatherProviderStatus() {
+    const select = document.getElementById('weatherProviderSelect');
     try {
-        const response = await fetch(endpoint, {
+        const response = await fetch('/api/weather/config', { cache: 'no-store' });
+        const data = await response.json();
+        if (!data.ok) throw data;
+
+        if (select && data.provider) select.value = data.provider;
+        setWeatherProviderStatus(
+            data.configured
+                ? `✓ ${window.I18N.t('settings.weather_configured')}`
+                : `▲ ${window.I18N.t('settings.weather_key_required')}`,
+            data.configured ? 'configured' : 'required'
+        );
+    } catch (error) {
+        console.warn('[WEATHER] Failed to load provider status:', error);
+    }
+}
+
+function setWeatherProviderBusy(busy) {
+    weatherProviderBusy = Boolean(busy);
+    const input = document.getElementById('weatherProviderApiKeyInput');
+    const saveButton = document.getElementById('weatherProviderSaveButton');
+    const select = document.getElementById('weatherProviderSelect');
+    if (input) input.disabled = weatherProviderBusy;
+    if (select) select.disabled = weatherProviderBusy;
+    if (saveButton) {
+        saveButton.disabled = weatherProviderBusy;
+        saveButton.textContent = weatherProviderBusy
+            ? `💾 ${window.I18N.t('weather.saving')}`
+            : `💾 ${window.I18N.t('common.save')}`;
+    }
+}
+
+async function saveWeatherProviderApiKey() {
+    const input = document.getElementById('weatherProviderApiKeyInput');
+    const apiKey = String(input?.value || '').trim();
+    if (!apiKey) {
+        setWeatherProviderStatus(window.I18N.t('settings.weather_enter_api_key'), 'error');
+        input?.focus();
+        return;
+    }
+
+    setWeatherProviderBusy(true);
+    try {
+        const response = await fetch('/api/weather/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ api_key: apiKey }),
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data.ok) {
-            throw new Error(data.error || window.I18N.t('weather.setup_failed'));
+            throw new Error(data.error || window.I18N.t('settings.unable_to_save_weather_api_key', { reason: '' }));
         }
-        return data;
-    } catch (error) {
-        setWeatherSetupResult(error.message || window.I18N.t('weather.setup_failed'), 'error');
-        return null;
-    } finally {
-        setWeatherSetupBusy(false);
-    }
-}
 
-async function testWeatherApiKey() {
-    const data = await submitWeatherKey('/api/weather/config/test', 'test');
-    if (!data) return;
-    const suffix = data.location ? window.I18N.t('weather.location_suffix', { location: data.location }) : '';
-    setWeatherSetupResult(window.I18N.t('weather.api_key_valid') + suffix, 'success');
-}
-
-async function saveWeatherApiKey() {
-    const data = await submitWeatherKey('/api/weather/config', 'save');
-    if (!data) return;
-
-    setWeatherSetupResult(window.I18N.t('weather.api_key_saved'), 'success');
-    weatherSetupRequired = false;
-    setTimeout(async () => {
-        closeWeatherSetup();
+        weatherSetupRequired = false;
+        if (input) input.value = '';
+        setWeatherProviderStatus(`✓ ${window.I18N.t('settings.weather_configured')}`, 'configured');
+        showToast(`✅ ${window.I18N.t('weather.api_key_saved')}`, 'success');
         await loadWeather(true);
-    }, 450);
+    } catch (error) {
+        showToast(
+            `❌ ${window.I18N.t('settings.unable_to_save_weather_api_key', { reason: error.message })}`,
+            'error'
+        );
+    } finally {
+        setWeatherProviderBusy(false);
+    }
 }
 
-document.addEventListener('keydown', event => {
-    const modal = document.getElementById('weatherSetupModal');
-    if (!modal || modal.style.display === 'none') return;
-
-    if (event.key === 'Escape') {
-        closeWeatherSetup();
-    } else if (event.key === 'Enter' && !weatherSetupBusy) {
-        event.preventDefault();
-        saveWeatherApiKey();
-    }
-});
-
-function toggleWeatherKeyVisibility(button) {
-    const input = document.getElementById('weatherApiKeyInput');
+function toggleWeatherProviderKeyVisibility(button) {
+    const input = document.getElementById('weatherProviderApiKeyInput');
     if (!input) return;
     const show = input.type === 'password';
     input.type = show ? 'text' : 'password';
     if (button) button.textContent = show ? window.I18N.t('weather.hide') : window.I18N.t('common.show');
 }
+
+document.addEventListener('DOMContentLoaded', loadWeatherProviderStatus);
+window.loadWeatherProviderStatus = loadWeatherProviderStatus;

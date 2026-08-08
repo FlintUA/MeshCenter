@@ -583,6 +583,32 @@ function openReferenceSettings() {
     }, 80);
 }
 
+function openWeatherProviderSettings() {
+    switchMainTab('settings');
+
+    window.setTimeout(() => {
+        const card =
+            document.querySelector('.weather-provider-card');
+
+        if (card) {
+            card.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+            });
+
+            card.classList.add(
+                'reference-location-card-highlight'
+            );
+
+            window.setTimeout(() => {
+                card.classList.remove(
+                    'reference-location-card-highlight'
+                );
+            }, 1200);
+        }
+    }, 80);
+}
+
 async function loadSettings() {
     try {
         const response = await fetch("/api/settings");
@@ -648,6 +674,13 @@ function updateSettingsUi() {
 
     if (mapProviderSelect) {
         mapProviderSelect.value = mapProvider;
+    }
+
+    const weatherProviderSelect =
+        document.getElementById('weatherProviderSelect');
+
+    if (weatherProviderSelect) {
+        weatherProviderSelect.value = appSettings?.weather?.provider || 'openweather';
     }
 
     const referenceLocation =
@@ -1211,6 +1244,68 @@ async function setMapProvider(provider) {
     } catch (error) {
         showToast(
             `❌ ${window.I18N.t('settings.unable_to_save_map_provider', { reason: translateRequestError(error) })}`,
+            'error'
+        );
+    }
+}
+
+async function setWeatherProvider(provider) {
+    const normalizedProvider =
+        provider === 'weatherapi'
+            ? 'weatherapi'
+            : 'openweather';
+
+    const providerName =
+        normalizedProvider === 'weatherapi'
+            ? 'WeatherAPI'
+            : 'OpenWeather';
+
+    const weather = {
+        ...(appSettings?.weather || {}),
+        provider: normalizedProvider
+    };
+
+    try {
+        const response = await fetch('/api/settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                weather
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            if (data.technical_error) {
+                console.error('[NODE TOOLS] Technical details:', data.technical_error);
+            }
+
+            const requestError = new Error(
+                data.error || `HTTP ${response.status}`
+            );
+            requestError.code = data.error_code || '';
+            requestError.params = data.error_params || undefined;
+            throw requestError;
+        }
+
+        appSettings = data.settings;
+        updateSettingsUi();
+
+        const apiKeyInput = document.getElementById('weatherProviderApiKeyInput');
+        if (apiKeyInput) apiKeyInput.value = '';
+        await window.loadWeatherProviderStatus?.();
+
+        showToast(
+            `✅ ${window.I18N.t('settings.weather_provider_set', { name: providerName })}`,
+            'success'
+        );
+
+    } catch (error) {
+        showToast(
+            `❌ ${window.I18N.t('settings.unable_to_save_weather_provider', { reason: translateRequestError(error) })}`,
             'error'
         );
     }
@@ -12856,12 +12951,15 @@ window.runNodeTool = runNodeTool;
 window.closeNodeToolResult = closeNodeToolResult;
 window.openNodeMap = openNodeMap;
 window.setMapProvider = setMapProvider;
+window.setWeatherProvider = setWeatherProvider;
 window.updateReferenceLocationFields =
     updateReferenceLocationFields;
 window.saveReferenceLocation =
     saveReferenceLocation;
 window.openReferenceSettings =
     openReferenceSettings;
+window.openWeatherProviderSettings =
+    openWeatherProviderSettings;
 window.setBasePanelHidden = setBasePanelHidden;
 window.setNodesPanelHidden = setNodesPanelHidden;
 window.getAppSettings = function() {
@@ -12977,9 +13075,11 @@ window.runNodeTool = runNodeTool;
 window.closeNodeToolResult = closeNodeToolResult;
 window.openNodeMap = openNodeMap;
 window.setMapProvider = setMapProvider;
+window.setWeatherProvider = setWeatherProvider;
 window.updateReferenceLocationFields = updateReferenceLocationFields;
 window.saveReferenceLocation = saveReferenceLocation;
 window.openReferenceSettings = openReferenceSettings;
+window.openWeatherProviderSettings = openWeatherProviderSettings;
 window.setBasePanelHidden = setBasePanelHidden;
 window.setNodesPanelHidden = setNodesPanelHidden;
 window.getAppSettings = function() { return appSettings; };
@@ -13029,97 +13129,13 @@ window.fitMeshMapToNodes = fitMeshMapToNodes;
 window.renderMeshMap = renderMeshMap;
 
 // ============================================================
-// RADIO CONFIGURATION MODE
+// RADIO CONNECTION ACTIONS (Node Manager -> Connection card)
 // ============================================================
-let radioConnectionState = null;
-let radioConnectionPollTimer = null;
-let radioConnectionActionBusy = false;
-
-function radioConnectionLabel(mode) {
-    const labels = {
-        connected: window.I18N.t('settings.radio_status_connected'),
-        releasing: window.I18N.t('settings.radio_status_releasing'),
-        released: window.I18N.t('settings.radio_status_released'),
-        reconnecting: window.I18N.t('settings.radio_status_reconnecting'),
-        error: window.I18N.t('settings.radio_status_error')
-    };
-    return labels[mode] || window.I18N.t('settings.checking');
-}
-
-function renderRadioConnectionState(radio) {
-    radioConnectionState = radio || {};
-
-    const badge = document.getElementById('radioConnectionBadge');
-    const status = document.getElementById('radioConnectionStatus');
-    const note = document.getElementById('radioConnectionNote');
-    const action = document.getElementById('radioConnectionAction');
-
-    if (!badge || !status || !action) return;
-
-    const mode = String(radioConnectionState.mode || 'error').toLowerCase();
-    badge.className = `radio-connection-badge is-${mode}`;
-    badge.textContent = radioConnectionLabel(mode);
-
-    let message = radioConnectionState.message || window.I18N.t('settings.radio_status_unavailable');
-    if (radioConnectionState.last_error) {
-        message += ` ${radioConnectionState.last_error}`;
-    }
-    status.textContent = message;
-
-    if (note) {
-        note.textContent = mode === 'released'
-            ? window.I18N.t('settings.radio_released_instructions')
-            : window.I18N.t('settings.radio_released_note');
-    }
-
-    const transitional = mode === 'releasing' || mode === 'reconnecting';
-    action.disabled = transitional || radioConnectionActionBusy;
-    action.classList.toggle('is-reconnect', mode === 'released' || mode === 'error');
-    action.textContent = mode === 'released' || mode === 'error'
-        ? window.I18N.t('settings.reconnect_radio')
-        : transitional
-            ? radioConnectionLabel(mode) + '...'
-            : window.I18N.t('settings.release_radio');
-
-    document.documentElement.dataset.radioMode = mode;
-}
-
-async function loadRadioConnectionStatus({ silent = false } = {}) {
-    try {
-        const response = await fetch('/api/radio_connection/status', {
-            cache: 'no-store'
-        });
-        const data = await response.json();
-
-        if (!response.ok || !data.ok) {
-            throw new Error(data.error || window.I18N.t('settings.unable_to_read_radio_status'));
-        }
-
-        renderRadioConnectionState(data.radio);
-        return data.radio;
-    } catch (error) {
-        console.warn('[RADIO MODE] Status error:', error);
-        renderRadioConnectionState({
-            mode: 'error',
-            message: window.I18N.t('settings.unable_to_read_radio_status_full'),
-            last_error: error.message
-        });
-        if (!silent) showToast(window.I18N.t('settings.unable_to_read_radio_status'), 'error');
-        return null;
-    }
-}
 
 async function releaseRadioConnection() {
     const confirmed = window.confirm(window.I18N.t('settings.release_radio_confirm'));
 
     if (!confirmed) return;
-
-    radioConnectionActionBusy = true;
-    renderRadioConnectionState({
-        ...(radioConnectionState || {}),
-        mode: 'releasing',
-        message: window.I18N.t('settings.stopping_listener_releasing_port')
-    });
 
     try {
         const response = await fetch('/api/radio_connection/release', {
@@ -13133,25 +13149,13 @@ async function releaseRadioConnection() {
             throw new Error(data.error || data.message || window.I18N.t('settings.unable_to_release_radio'));
         }
 
-        renderRadioConnectionState(data.radio);
         showToast(window.I18N.t('settings.radio_released_success'), 'success');
     } catch (error) {
         showToast(window.I18N.t('settings.unable_to_release_radio_reason', { reason: error.message }), 'error');
-        await loadRadioConnectionStatus({ silent: true });
-    } finally {
-        radioConnectionActionBusy = false;
-        await loadRadioConnectionStatus({ silent: true });
     }
 }
 
 async function reconnectRadioConnection() {
-    radioConnectionActionBusy = true;
-    renderRadioConnectionState({
-        ...(radioConnectionState || {}),
-        mode: 'reconnecting',
-        message: window.I18N.t('settings.reconnecting_meshcenter')
-    });
-
     try {
         const response = await fetch('/api/radio_connection/reconnect', {
             method: 'POST',
@@ -13164,13 +13168,11 @@ async function reconnectRadioConnection() {
             throw new Error(data.error || data.message || window.I18N.t('settings.unable_to_reconnect_radio'));
         }
 
-        renderRadioConnectionState(data.radio);
         showToast(window.I18N.t('settings.radio_reconnect_requested'), 'success');
 
         // Give the existing listener loop time to reopen the serial port, then
         // force the normal chat/channel refresh to pick up configuration changes.
         window.setTimeout(async () => {
-            await loadRadioConnectionStatus({ silent: true });
             try {
                 lastForcedChannelRefreshAt = 0;
                 await loadChatList();
@@ -13180,43 +13182,8 @@ async function reconnectRadioConnection() {
         }, 1800);
     } catch (error) {
         showToast(window.I18N.t('settings.unable_to_reconnect_radio_reason', { reason: error.message }), 'error');
-        await loadRadioConnectionStatus({ silent: true });
-    } finally {
-        radioConnectionActionBusy = false;
-        window.setTimeout(() => loadRadioConnectionStatus({ silent: true }), 2200);
     }
 }
 
-function toggleRadioConnectionMode() {
-    const mode = String(radioConnectionState?.mode || '').toLowerCase();
-    if (mode === 'released' || mode === 'error') {
-        reconnectRadioConnection();
-    } else if (mode === 'connected') {
-        releaseRadioConnection();
-    }
-}
-
-function initializeRadioConnectionMode() {
-    loadRadioConnectionStatus({ silent: true });
-
-    if (radioConnectionPollTimer) {
-        window.clearInterval(radioConnectionPollTimer);
-    }
-
-    radioConnectionPollTimer = window.setInterval(() => {
-        if (document.visibilityState === 'visible') {
-            loadRadioConnectionStatus({ silent: true });
-        }
-    }, 5000);
-}
-
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializeRadioConnectionMode, { once: true });
-} else {
-    initializeRadioConnectionMode();
-}
-
-window.loadRadioConnectionStatus = loadRadioConnectionStatus;
 window.releaseRadioConnection = releaseRadioConnection;
 window.reconnectRadioConnection = reconnectRadioConnection;
-window.toggleRadioConnectionMode = toggleRadioConnectionMode;

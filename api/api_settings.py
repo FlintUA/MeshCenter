@@ -27,6 +27,10 @@ DEFAULT_SETTINGS = {
         "provider": "osm",
     },
 
+    "weather": {
+        "provider": "openweather",
+    },
+
     "reference_location": {
         "mode": "disabled",
         "manual": {
@@ -85,6 +89,11 @@ def _normalize_coordinate(value, minimum, maximum):
 
 
 SUPPORTED_LANGUAGES = ("auto", "en", "de", "ru", "uk")
+
+# Kept as a plain tuple (like SUPPORTED_LANGUAGES) rather than importing the
+# weather package here - normalize_settings() only needs to know which ids
+# are valid, not the provider classes themselves.
+SUPPORTED_WEATHER_PROVIDERS = ("openweather", "weatherapi")
 
 
 def normalize_settings(settings):
@@ -166,6 +175,19 @@ def normalize_settings(settings):
 
     if map_provider not in ("osm", "google"):
         map_provider = "osm"
+
+    # ---------------- Weather provider ----------------
+
+    weather = settings.get("weather", {})
+    if not isinstance(weather, dict):
+        weather = {}
+
+    weather_provider = str(
+        weather.get("provider", "openweather")
+    ).strip().lower()
+
+    if weather_provider not in SUPPORTED_WEATHER_PROVIDERS:
+        weather_provider = "openweather"
 
     # ---------------- Reference location ----------------
 
@@ -319,6 +341,10 @@ def normalize_settings(settings):
             "provider": map_provider,
         },
 
+        "weather": {
+            "provider": weather_provider,
+        },
+
         "reference_location": {
             "mode": reference_mode,
             "manual": {
@@ -386,7 +412,7 @@ def register_settings_routes(
     settings,
     save_settings,
     handle_errors,
-    weather_service=None,
+    weather_manager=None,
     resolve_weather_language=None,
 ):
     @app.route("/api/settings", methods=["GET"])
@@ -439,6 +465,10 @@ def register_settings_routes(
             new_settings = normalize_settings(merged)
 
             language_changed = new_settings.get("language") != current.get("language")
+            provider_changed = (
+                new_settings.get("weather", {}).get("provider")
+                != current.get("weather", {}).get("provider")
+            )
 
             settings.clear()
             settings.update(new_settings)
@@ -447,10 +477,15 @@ def register_settings_routes(
             response_settings = normalize_settings(settings)
 
         # Weather data is a single cache shared by every connected client, so
-        # a language change here is a global update, not a per-request one -
-        # see OpenWeatherService.set_language().
-        if language_changed and weather_service is not None and resolve_weather_language is not None:
-            weather_service.set_language(resolve_weather_language(response_settings.get("language", "auto")))
+        # a language or active-provider change here is a global update, not a
+        # per-request one - see WeatherProvider.set_language()/set_api_key().
+        if weather_manager is not None:
+            if provider_changed:
+                weather_manager.set_active(response_settings.get("weather", {}).get("provider", "openweather"))
+            if (language_changed or provider_changed) and resolve_weather_language is not None:
+                weather_manager.active().set_language(
+                    resolve_weather_language(response_settings.get("language", "auto"))
+                )
 
         return jsonify({
             "ok": True,

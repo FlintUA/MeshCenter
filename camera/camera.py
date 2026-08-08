@@ -116,6 +116,10 @@ CAMERA_AVAILABLE = False
 CAMERA_MODE = "video"
 CAMERA_ACTIVE = False
 CAMERA_CAPTURE_BUSY = False
+# Sensor model reported by Picamera2 itself (e.g. "imx708", "ov5647"), not a
+# user-editable label - lets two Pis with different camera modules show their
+# real hardware in the Devices card instead of a generic placeholder.
+CAMERA_MODEL = ""
 
 picam2 = None
 camera_started = False
@@ -334,7 +338,7 @@ def fix_camera_colors(frame):
 
 def init_camera():
     """Initialize camera through Picamera2."""
-    global CAMERA_AVAILABLE, picam2
+    global CAMERA_AVAILABLE, CAMERA_MODEL, picam2
 
     print("[CAMERA] 🔍 Initializing...", flush=True)
 
@@ -346,7 +350,8 @@ def init_camera():
 
         props = picam2.camera_properties
         if props:
-            print("[CAMERA] ✅ Camera found", flush=True)
+            CAMERA_MODEL = str(props.get("Model") or "").strip()
+            print(f"[CAMERA] ✅ Camera found: {CAMERA_MODEL or 'unknown model'}", flush=True)
             CAMERA_AVAILABLE = True
             return True
 
@@ -828,6 +833,7 @@ def get_camera_status():
     return {
         "ok": CAMERA_AVAILABLE,
         "started": camera_started,
+        "model": CAMERA_MODEL,
         "mode": CAMERA_MODE,
         "resolution": VIDEO_CONFIG["resolution"],
         "fps": VIDEO_CONFIG["fps"],

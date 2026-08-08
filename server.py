@@ -4581,7 +4581,11 @@ def api_profile_devices():
                 "detected": bool(camera_status.get("ok", False)),
                 "active": bool(camera_status.get("started", False)),
                 "source": camera_cfg.get("source", "csi"),
-                "model": camera_cfg.get("model") or "Raspberry Pi Camera",
+                # Real sensor model from Picamera2 (see camera.init_camera())
+                # wins over a manually configured label, which itself wins
+                # over a generic placeholder when neither is available (e.g.
+                # camera not detected yet).
+                "model": camera_status.get("model") or camera_cfg.get("model") or "Raspberry Pi Camera",
                 "status": "active" if camera_status.get("started") else ("available" if camera_status.get("ok") else "unavailable"),
                 "action": {"label": "Open Camera", "tab": "video"},
             },

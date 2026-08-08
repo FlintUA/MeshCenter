@@ -215,7 +215,22 @@ class UsbCameraDriver(CameraDriver):
         with self._lock:
             if self._started and self._device is not None:
                 if resolution and resolution != self._resolution:
-                    return self._reconfigure(resolution, fps or self._fps)
+                    # Live-switching resolution goes through _reconfigure(),
+                    # which stop()s and reopens the device - confirmed on
+                    # camtest that this specific camera (Logitech QuickCam
+                    # E 3500 behind a USB hub on a Pi 3B+) can take well
+                    # over the usual few-second USB re-enumeration window
+                    # to recover from that, without a real fix in sight yet
+                    # (retry-with-backoff wasn't tried). Deliberately
+                    # ignoring the request for now rather than risking
+                    # another disconnect - _reconfigure() is left intact
+                    # below for whenever this gets revisited.
+                    print(
+                        f"[USB CAMERA] Resolution switch to {resolution} ignored - "
+                        f"fixed at {self._resolution} for now, see usb_driver.py "
+                        "module docstring",
+                        flush=True,
+                    )
                 return True
 
             try:

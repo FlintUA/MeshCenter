@@ -25,6 +25,15 @@ Every call shape below (set_format's BufferType argument, get_fps/set_fps,
 Capability bitmask checking, frame_sizes() enumeration) was verified live
 against the actual installed linuxpy 0.24.0 on camtest, not assumed from
 memory - see the session notes for the exact probe commands run.
+
+Also observed live: this camera/controller combination (an ~2005-era
+Logitech webcam on a Pi 3B+'s dwc_otg USB controller) is genuinely fragile
+under rapid close-then-reopen cycling - a quick sequence of stop()/start()
+calls during testing triggered a real USB-level disconnect/re-enumeration
+(visible in `dmesg` as "device descriptor read/64, error -32" followed by
+"unable to enumerate USB device" before it recovered a few seconds later).
+STOP_START_SETTLE_SECONDS exists because of that, not as a defensive
+guess.
 """
 
 from __future__ import annotations
@@ -33,9 +42,15 @@ import glob
 import os
 import re
 import threading
+import time
 from typing import Any, Iterator
 
 from camera.camera_driver import CameraDriver
+
+# Minimum pause between closing and reopening the device (stop() followed
+# by start()) - see the module docstring for why this isn't optional on
+# this hardware.
+STOP_START_SETTLE_SECONDS = 0.5
 
 # Frame sizes this exact camera (Logitech QuickCam E 3500) was confirmed to
 # support live via Device.info.frame_sizes() on camtest. Used as a fallback
@@ -288,6 +303,7 @@ class UsbCameraDriver(CameraDriver):
             # convention, it's the only sequence that actually works with
             # this camera/library combination.
             self.stop()
+            time.sleep(STOP_START_SETTLE_SECONDS)
             if not self.start(resolution=target_resolution):
                 return b""
 
@@ -308,6 +324,7 @@ class UsbCameraDriver(CameraDriver):
             # it was actually active before this call.
             self.stop()
             if was_started:
+                time.sleep(STOP_START_SETTLE_SECONDS)
                 self.start(resolution=previous_resolution)
 
             return photo
@@ -364,6 +381,7 @@ class UsbCameraDriver(CameraDriver):
 
     def _reconfigure(self, resolution: str, fps: int) -> bool:
         self.stop()
+        time.sleep(STOP_START_SETTLE_SECONDS)
         return self.start(resolution=resolution, fps=fps)
 
     def _probe_resolutions(self) -> list[str]:

@@ -182,6 +182,16 @@ function renderWeather(data) {
     }
 }
 
+// Matches the display names chat.js's setWeatherProvider() toast uses -
+// kept in sync with settings.weather.provider rather than hardcoding a
+// single provider's name now that the backend is pluggable.
+function activeWeatherProviderDisplayName() {
+    const provider = document.getElementById('weatherProviderSelect')?.value
+        || appSettings?.weather?.provider
+        || 'openweather';
+    return provider === 'weatherapi' ? 'WeatherAPI' : 'OpenWeather';
+}
+
 function renderWeatherError(data) {
     weatherLastData = null;
     weatherSetupRequired = data?.configured === false;
@@ -191,7 +201,7 @@ function renderWeatherError(data) {
     weatherText('weatherHumidity', '--%');
     weatherText('weatherPressure', `-- ${weatherPressureUnit()}`);
     weatherText('weatherWind', '-- m/s');
-    weatherText('weatherFeelsLike', 'OpenWeather');
+    weatherText('weatherFeelsLike', activeWeatherProviderDisplayName());
     weatherText('weatherUpdated', weatherSetupRequired ? window.I18N.t('weather.click_setup') : window.I18N.t('weather.retry_later'));
     renderWeatherForecast([]);
 }

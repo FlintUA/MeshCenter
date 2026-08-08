@@ -222,7 +222,7 @@ Waypoints can be created, stored, managed and transmitted directly from the brow
 
 ### 🌦️ Weather Module
 
-- Current weather and 3‑day forecast via OpenWeather
+- Current weather and 3‑day forecast, from a selectable provider (OpenWeather or WeatherAPI)
 - Location from manual coordinates or a reference node
 - Units follow global preferences
 - Auto‑refreshes every 10 minutes
@@ -1219,7 +1219,7 @@ MeshCenter includes the underlying infrastructure for a multi-language interface
 
 - Language switching (Auto / English / Deutsch / Русский / Українська) from the Settings panel
 - The page's `<html lang>` attribute and the loaded translation catalog follow the selected language (or the browser's language when set to Auto)
-- Part of the static interface text, a first slice of error and toast messages, and the Weather module's OpenWeather response language all follow the selected language
+- Part of the static interface text, a first slice of error and toast messages, and the Weather module's response language (mapped to whichever provider is active) all follow the selected language
 - Verified end-to-end for all four locales (en/de/ru/uk)
 
 **What's not translated yet:**
@@ -1481,7 +1481,7 @@ Future versions may include optional authentication.
 - **Messaging Improvements** – Native Meshtastic reply support, reply composer, quoted replies, jump to original message, message actions and improved Direct Messages
 - **Map UI & Performance** – Redesigned map panel, larger markers, smoother interaction, faster updates, reduced redraws and optimized refresh logic
 - **System & Radio Health** – Added system monitoring, radio health dashboard, CPU history chart and automatic listener recovery
-- **Weather Module** – Integrated OpenWeather with caching and location from reference node
+- **Weather Module** – Pluggable weather provider (OpenWeather or WeatherAPI, selectable in Settings) with caching and location from reference node
 - **Node Tools** – Added remote telemetry, position request and traceroute
 - **Custom Node Icons** – Upload and manage icons for any node
 - **Workspace & UI** – Persistent panel visibility, theme, compact mode; improved light/dark themes and layout consistency

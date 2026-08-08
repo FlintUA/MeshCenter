@@ -62,7 +62,7 @@ Only `data/instance.json`, `data/settings.json`, and `data/screenshots/` are ins
 
 - `camera/camera.py` — Picamera2-based MJPEG live stream + photo capture; needs the venv built with `--system-site-packages` to see system Picamera2/libcamera bindings.
 - `telemetry/telemetry.py` — telemetry history storage/aggregation (`configure_storage()` is pointed at the active profile's `telemetry_history.json` at startup and after a profile switch).
-- `weather_service.py` — OpenWeather client with its own cache (`WEATHER_CACHE_SECONDS`); API key comes from gitignored `weather_secrets.py`, never from the browser.
+- `weather/` — pluggable weather backend. `weather/providers/base.py` defines the `WeatherProvider` interface (each provider normalizes its own condition codes into a shared `CONDITION_KEYS` vocabulary so `static/weather.js` never has to know which provider is active); `weather/providers/openweather.py` and `weather/providers/weatherapi.py` implement it for OpenWeather and WeatherAPI; `weather/weather_manager.py` is the registry that tracks which provider is active (`settings.weather.provider`, mirrors `settings.maps.provider`) and switches on save. Both providers share one cache-per-request-window shape (`WEATHER_CACHE_SECONDS`); API keys come from gitignored `weather_secrets.py` (one variable per provider, e.g. `OPENWEATHER_API_KEY` / `WEATHERAPI_API_KEY`), never from the browser.
 - `system_log.py` — persistent event log surfaced in the System workspace (`log_system_event`, used e.g. by `RadioConnectionManager`).
 - `utils/helpers.py` — small shared utilities.
 

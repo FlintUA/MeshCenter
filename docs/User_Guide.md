@@ -21,7 +21,7 @@ The reference installation uses a Raspberry Pi Zero 2 W and a RAK4631-based node
 
 - Raspberry Pi Camera supported by Picamera2
 - Meshtastic environmental or power telemetry sensors
-- OpenWeather API key for the weather card
+- API key for a weather provider (OpenWeather or WeatherAPI) for the weather card
 - Internet access for weather, map tiles and software updates
 
 ### Configure the radio first
@@ -261,20 +261,23 @@ Replace the example node ID, name, short name and hardware model with the values
 
 `config.py`, `weather_secrets.py` and `data/` are local installation files and are intentionally excluded from Git.
 
-### Optional OpenWeather setup
+### Optional weather setup
+
+MeshCenter supports two weather providers, OpenWeather and WeatherAPI. Only one is active at a time, chosen in `Workspace > Settings > Weather Provider`, but a key for either (or both) can be kept in `weather_secrets.py`:
 
 ```bash
 cd ~/meshcenter
 cp weather_secrets.example.py weather_secrets.py
 ```
 
-Insert the OpenWeather API key into `weather_secrets.py`:
+Insert the API key(s) into `weather_secrets.py`:
 
 ```python
 OPENWEATHER_API_KEY = "your-openweather-api-key"
+WEATHERAPI_API_KEY = "your-weatherapi-api-key"
 ```
 
-The location can later be selected in `Workspace > Settings > Reference location`.
+The active provider and the reference location can later be selected in `Workspace > Settings > Weather Provider` and `Workspace > Settings > Reference location`.
 
 ### First manual start
 
@@ -458,7 +461,7 @@ Telemetry only appears when the connected or remote node actually transmits the 
 
 The battery-capacity value under `Workspace > Settings` is used only for an approximate runtime estimate. It is not a battery calibration value.
 
-Weather requires an OpenWeather API key and a valid reference location. Click the weather status badge to request a refresh.
+Weather requires an API key for the active provider (`Workspace > Settings > Weather Provider`) and a valid reference location. Click the weather status badge to request a refresh.
 
 ## 10. Camera and Media
 

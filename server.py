@@ -5542,7 +5542,27 @@ if __name__ == "__main__":
     # Инициализация камеры
     print("[CAMERA] 🔍 Initializing...", flush=True)
     camera.init_camera()   # <--- вызов через модуль
-    
+
+    # Keep devices.json in sync with whatever sensor Picamera2 actually
+    # found - it used to only ever hold "" or whatever model was recorded
+    # the first time the file was created, so swapping the physical camera
+    # module (e.g. imx219 -> ov5647) left a stale value on disk even though
+    # /api/devices was already showing the live-detected one.
+    detected_camera_model = str(getattr(camera, "CAMERA_MODEL", "") or "").strip()
+    if detected_camera_model:
+        try:
+            devices_data = device_manager.load_or_create()
+            stored_camera = devices_data.get("devices", {}).get("camera", {})
+            if stored_camera.get("model") != detected_camera_model:
+                devices_data["devices"]["camera"]["model"] = detected_camera_model
+                device_manager.save(devices_data)
+                print(
+                    f"[CAMERA] Recorded detected model in devices.json: {detected_camera_model}",
+                    flush=True,
+                )
+        except Exception as error:
+            print(f"[CAMERA] Failed to persist detected model: {error}", flush=True)
+
     # Start radio workers only for the accepted physical radio.  This prevents
     # another USB node from contaminating the active profile.
     if identity_match:

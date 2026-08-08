@@ -3,3 +3,4 @@ Pillow>=10.0.0
 requests>=2.31.0
 psutil>=5.9.0
 meshtastic
+v4l2py>=4.0.0

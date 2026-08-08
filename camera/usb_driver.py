@@ -288,20 +288,24 @@ class UsbCameraDriver(CameraDriver):
 
     def capture_photo(self, resolution: str | None = None) -> bytes:
         with self._lock:
-            was_started = self._started
-            previous_resolution = self._resolution
             target_resolution = resolution or self._resolution
 
             # Always capture from a freshly (re)started stream, mirroring
-            # the CSI driver's existing video/photo mode split
-            # (switch_camera_mode() always stops the camera first before
-            # reconfiguring - the two capture kinds are mutually exclusive,
-            # not concurrent, on that driver too). Confirmed live on
-            # camtest that grabbing one frame from a device that was just
-            # stream_off()'d - without a full stop()+start() to re-arm
-            # streaming - fails with Errno 5, so this isn't just following
-            # convention, it's the only sequence that actually works with
-            # this camera/library combination.
+            # the CSI driver's existing video/photo mode split - see
+            # camera/camera.py's switch_camera_mode()/capture_photo_preview():
+            # switching to photo mode there doesn't auto-restore video mode
+            # afterward either, the UI's explicit Mode tabs own that
+            # transition. Confirmed live on camtest that grabbing one frame
+            # from a device that was just stream_off()'d - without a full
+            # stop()+start() to re-arm streaming - fails with Errno 5, so
+            # the stop()+start() here isn't optional the way it might look.
+            #
+            # Deliberately does NOT try to restore whatever streaming state
+            # existed before this call: on this camera/Pi 3B+ combination a
+            # third stop()+start() cycle back-to-back with the two above
+            # was the one most likely to hit a transient USB "busy" error
+            # during testing, for no benefit CSI's own photo mode doesn't
+            # already skip.
             self.stop()
             time.sleep(STOP_START_SETTLE_SECONDS)
             if not self.start(resolution=target_resolution):
@@ -318,14 +322,6 @@ class UsbCameraDriver(CameraDriver):
             except Exception as error:
                 print(f"[USB CAMERA] Photo capture error: {error}", flush=True)
                 photo = b""
-
-            # A one-shot capture has no business leaving the stream
-            # running - stop it, then restart continuous streaming only if
-            # it was actually active before this call.
-            self.stop()
-            if was_started:
-                time.sleep(STOP_START_SETTLE_SECONDS)
-                self.start(resolution=previous_resolution)
 
             return photo
 

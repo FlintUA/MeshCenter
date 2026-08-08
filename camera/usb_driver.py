@@ -1,21 +1,30 @@
-"""USB/UVC camera driver — raw V4L2 via v4l2py, MJPEG passthrough.
+"""USB/UVC camera driver — raw V4L2 via linuxpy, MJPEG passthrough.
 
-Confirmed hardware (camtest, Raspberry Pi 3B+, 2026-08-08): Logitech
-QuickCam E 3500 (USB id 046d:09a4) at /dev/video0, native MJPEG,
-160x120 up to 640x480, up to 30fps.
+Confirmed hardware (camtest, Raspberry Pi 3B+, 192.168.2.107,
+2026-08-08): Logitech QuickCam E 3500, USB id 046d:09a4, at /dev/video0
+(/dev/video1 is its paired metadata node, not a capture device). Native
+MJPEG at 160x120, 176x144, 320x240, 352x288, 640x480 - verified live via
+Device.info.frame_sizes().
 
 No decode/re-encode happens here: the camera already produces MJPEG in
-hardware, so each frame v4l2py hands back is forwarded to
-CameraDriver.stream_mjpeg() unmodified. This is the "MJPEG passthrough"
-half of the plan - contrast with csi_driver.py, which has to decode a raw
-sensor frame and re-encode it via PIL because Picamera2 has no native
-MJPEG capture path.
+hardware, so each frame linuxpy hands back (confirmed to start with the
+JPEG SOI marker 0xFFD8) is forwarded to CameraDriver.stream_mjpeg()
+unmodified. This is the "MJPEG passthrough" half of the plan - contrast
+with csi_driver.py, which has to decode a raw sensor frame and re-encode
+it via PIL because Picamera2 has no native MJPEG capture path.
 
-NOTE: written without live access to the actual hardware (SSH to camtest
-wasn't set up yet as of this writing) - the v4l2py call shapes below are
-believed correct but unverified against the installed v4l2py version.
-First real run on camtest is the actual test; watch [USB CAMERA] log
-lines for anything that doesn't match.
+Uses `linuxpy.video.device` directly, not the `v4l2py` package - v4l2py
+3.0 is just a deprecated compatibility shim ("v4l2py is no longer being
+maintained, please consider using linuxpy.video instead", printed as a
+UserWarning on import) that re-exports linuxpy's own Device class.
+requirements.txt pulls in linuxpy transitively via v4l2py>=3.0.0; importing
+linuxpy.video.device directly here avoids the deprecation warning noise on
+every server start.
+
+Every call shape below (set_format's BufferType argument, get_fps/set_fps,
+Capability bitmask checking, frame_sizes() enumeration) was verified live
+against the actual installed linuxpy 0.24.0 on camtest, not assumed from
+memory - see the session notes for the exact probe commands run.
 """
 
 from __future__ import annotations
@@ -24,15 +33,14 @@ import glob
 import os
 import re
 import threading
-import time
 from typing import Any, Iterator
 
 from camera.camera_driver import CameraDriver
 
 # Frame sizes this exact camera (Logitech QuickCam E 3500) was confirmed to
-# support during live testing on camtest. Used as a fallback if runtime
-# enumeration via v4l2py (_probe_resolutions) fails for any reason - this
-# list is a known-good floor, not a guess.
+# support live via Device.info.frame_sizes() on camtest. Used as a fallback
+# if runtime enumeration fails for any reason - this list is a known-good
+# floor, not a guess.
 CONFIRMED_RESOLUTIONS = ["160x120", "176x144", "320x240", "352x288", "640x480"]
 
 DEFAULT_RESOLUTION = "640x480"
@@ -49,13 +57,17 @@ def _read_sys_text(path: str) -> str:
 
 def _usb_ids_for_video_device(dev_path: str) -> tuple[str, str]:
     """Return (vendor_id, product_id) hex strings for a /dev/videoN node,
-    read from sysfs - independent of v4l2py, so it works even if the
-    format-negotiation part of this driver has trouble."""
+    read from sysfs - independent of linuxpy, so it works even if the
+    format-negotiation part of this driver has trouble.
+
+    /sys/class/video4linux/videoN/device is a symlink to the USB
+    *interface* directory (e.g. .../1-1.1.2:1.0); idVendor/idProduct live
+    one level up, on the actual USB device directory (.../1-1.1.2) -
+    verified against the real camtest hardware path.
+    """
     name = os.path.basename(dev_path)
     sys_device_dir = f"/sys/class/video4linux/{name}/device"
     real = os.path.realpath(sys_device_dir)
-    # Walk up from the video4linux child node to the actual USB device
-    # directory, which is where idVendor/idProduct live.
     probe = real
     for _ in range(6):
         vendor = _read_sys_text(os.path.join(probe, "idVendor"))
@@ -71,25 +83,26 @@ def _usb_ids_for_video_device(dev_path: str) -> tuple[str, str]:
 
 def discover_usb_cameras() -> list[dict[str, Any]]:
     """Enumerate /dev/video* nodes that are actual capture devices (not
-    the metadata/M2M nodes some UVC cameras also expose), independent of
-    v4l2py so discovery works even before a driver instance is created.
+    the metadata/M2M nodes some UVC cameras also expose - e.g. this
+    camera's /dev/video1), independent of any single driver instance.
     """
     found: list[dict[str, Any]] = []
     for dev_path in sorted(glob.glob("/dev/video*")):
-        match = re.fullmatch(r"/dev/video(\d+)", dev_path)
-        if not match:
+        if not re.fullmatch(r"/dev/video\d+", dev_path):
             continue
-        try:
-            from v4l2py import Device as V4L2Device
 
-            with V4L2Device(dev_path) as probe_device:
-                caps = probe_device.info.capabilities
-                # v4l2py exposes capabilities as a flag-enum-like object;
-                # comparing by name keeps this independent of the exact
-                # enum implementation across versions.
-                if "VIDEO_CAPTURE" not in str(caps):
+        try:
+            from linuxpy.video.device import Capability, Device as V4LDevice
+
+            device = V4LDevice(dev_path)
+            device.open()
+            try:
+                caps = Capability(device.info.capabilities)
+                if Capability.VIDEO_CAPTURE not in caps:
                     continue
-                card_name = str(getattr(probe_device.info, "card", "") or "").strip()
+                card_name = str(device.info.card or "").strip()
+            finally:
+                device.close()
         except Exception as error:
             print(f"[USB CAMERA] Probe failed for {dev_path}: {error}", flush=True)
             continue
@@ -113,7 +126,7 @@ class UsbCameraDriver(CameraDriver):
         self.display_name = "USB Camera"
 
         self._lock = threading.RLock()
-        self._device = None  # v4l2py Device, opened lazily in start()
+        self._device = None  # linuxpy Device, opened lazily in start()
         self._started = False
         self._model = ""
         self._resolution = DEFAULT_RESOLUTION
@@ -125,18 +138,21 @@ class UsbCameraDriver(CameraDriver):
     # ------------------------------------------------------------
 
     def detect(self) -> dict[str, Any] | None:
-        try:
-            from v4l2py import Device as V4L2Device
-        except ImportError as error:
-            print(f"[USB CAMERA] v4l2py not installed: {error}", flush=True)
-            return None
-
         if not os.path.exists(self.dev_path):
             return None
 
         try:
-            with V4L2Device(self.dev_path) as probe_device:
-                card_name = str(getattr(probe_device.info, "card", "") or "").strip()
+            from linuxpy.video.device import Capability, Device as V4LDevice
+
+            device = V4LDevice(self.dev_path)
+            device.open()
+            try:
+                caps = Capability(device.info.capabilities)
+                if Capability.VIDEO_CAPTURE not in caps:
+                    return None
+                card_name = str(device.info.card or "").strip()
+            finally:
+                device.close()
         except Exception as error:
             print(f"[USB CAMERA] Detect failed for {self.dev_path}: {error}", flush=True)
             return None
@@ -158,15 +174,15 @@ class UsbCameraDriver(CameraDriver):
                 return True
 
             try:
-                from v4l2py import Device as V4L2Device
+                from linuxpy.video.device import Device as V4LDevice
             except ImportError as error:
-                print(f"[USB CAMERA] v4l2py not installed: {error}", flush=True)
+                print(f"[USB CAMERA] linuxpy not installed: {error}", flush=True)
                 return False
 
             try:
-                self._device = V4L2Device(self.dev_path)
+                self._device = V4LDevice(self.dev_path)
                 self._device.open()
-                self._model = str(getattr(self._device.info, "card", "") or "").strip() or self._model
+                self._model = str(self._device.info.card or "").strip() or self._model
 
                 target_resolution = resolution or self._resolution
                 target_fps = fps or self._fps
@@ -261,13 +277,12 @@ class UsbCameraDriver(CameraDriver):
                 return b""
 
             try:
+                photo = b""
                 for frame in device:
                     data = bytes(frame)
                     if data:
                         photo = data
                         break
-                else:
-                    photo = b""
             except Exception as error:
                 print(f"[USB CAMERA] Photo capture error: {error}", flush=True)
                 photo = b""
@@ -299,34 +314,15 @@ class UsbCameraDriver(CameraDriver):
             return False
 
         try:
-            # v4l2py's format setter is exposed on the device's
-            # video_capture sub-object in the versions this was written
-            # against; fall back to a direct set_format() on the device
-            # itself if that shape differs in the installed version.
-            video_capture = getattr(device, "video_capture", None)
-            if video_capture is not None and hasattr(video_capture, "set_format"):
-                video_capture.set_format(width, height, "MJPG")
-            elif hasattr(device, "set_format"):
-                device.set_format(width, height, "MJPG")
-            else:
-                print(
-                    "[USB CAMERA] No known set_format() entry point on this "
-                    "v4l2py Device - API shape mismatch, needs checking "
-                    "against the installed v4l2py version",
-                    flush=True,
-                )
-                return False
+            from linuxpy.video.device import BufferType
 
+            device.set_format(BufferType.VIDEO_CAPTURE, width, height, "MJPG")
             try:
-                if hasattr(device, "set_fps"):
-                    device.set_fps(fps)
-                elif video_capture is not None and hasattr(video_capture, "set_fps"):
-                    video_capture.set_fps(fps)
+                device.set_fps(BufferType.VIDEO_CAPTURE, fps)
             except Exception as fps_error:
                 # Frame rate is a nice-to-have; MJPEG capture at the
                 # camera's default fps for this resolution still works.
                 print(f"[USB CAMERA] set_fps() failed, continuing without it: {fps_error}", flush=True)
-
             return True
         except Exception as error:
             print(f"[USB CAMERA] Format negotiation failed ({width}x{height} MJPG): {error}", flush=True)
@@ -338,28 +334,26 @@ class UsbCameraDriver(CameraDriver):
 
     def _probe_resolutions(self) -> list[str]:
         try:
-            from v4l2py import Device as V4L2Device
+            from linuxpy.video.device import Device as V4LDevice, PixelFormat
         except ImportError:
             return []
 
         try:
-            with V4L2Device(self.dev_path) as probe_device:
-                video_capture = getattr(probe_device, "video_capture", None)
-                formats = getattr(video_capture, "formats", None) if video_capture else None
-                if not formats:
-                    return []
-
+            device = V4LDevice(self.dev_path)
+            device.open()
+            try:
                 sizes: set[str] = set()
-                for fmt in formats:
-                    pixel_format = str(getattr(fmt, "pixel_format", ""))
-                    if "MJPG" not in pixel_format.upper() and "MJPEG" not in pixel_format.upper():
+                for frame_size in device.info.frame_sizes():
+                    if frame_size.pixel_format != PixelFormat.MJPEG:
                         continue
-                    for size in getattr(fmt, "sizes", []) or getattr(fmt, "size", []):
-                        width = getattr(size, "width", None)
-                        height = getattr(size, "height", None)
-                        if width and height:
-                            sizes.add(f"{width}x{height}")
+                    info = frame_size.info
+                    width = getattr(info, "width", None)
+                    height = getattr(info, "height", None)
+                    if width and height:
+                        sizes.add(f"{width}x{height}")
                 return sorted(sizes, key=lambda s: int(s.split("x")[0]))
+            finally:
+                device.close()
         except Exception as error:
             print(f"[USB CAMERA] Resolution probe failed, using confirmed fallback list: {error}", flush=True)
             return []

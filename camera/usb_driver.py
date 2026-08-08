@@ -26,14 +26,30 @@ Capability bitmask checking, frame_sizes() enumeration) was verified live
 against the actual installed linuxpy 0.24.0 on camtest, not assumed from
 memory - see the session notes for the exact probe commands run.
 
-Also observed live: this camera/controller combination (an ~2005-era
-Logitech webcam on a Pi 3B+'s dwc_otg USB controller) is genuinely fragile
-under rapid close-then-reopen cycling - a quick sequence of stop()/start()
-calls during testing triggered a real USB-level disconnect/re-enumeration
-(visible in `dmesg` as "device descriptor read/64, error -32" followed by
-"unable to enumerate USB device" before it recovered a few seconds later).
-STOP_START_SETTLE_SECONDS exists because of that, not as a defensive
-guess.
+ARCHITECTURE NOTE - why this keeps the device open and streaming
+continuously instead of opening/closing per operation (the first version
+of this file did the latter and was reworked after live testing):
+
+This camera/controller combination (an ~2005-era Logitech webcam, behind
+a USB hub, on a Pi 3B+'s dwc_otg USB controller) is genuinely fragile
+under close-then-reopen cycling - repeated stop()/start() during testing
+reliably triggered a real USB-level disconnect/re-enumeration, visible in
+`dmesg` as "device descriptor read/64, error -32" / "unable to enumerate
+USB device", taking several seconds to recover. This happened even with
+0.5-3s settle delays between cycles and across separate process
+invocations, so it isn't a race condition in this code - it's a real
+hardware limit.
+
+The fix: once started, a background reader thread continuously pulls
+frames into self._last_frame (mirroring camera.py's existing
+get_camera_frame()/last_frame pattern for the CSI driver).
+stream_mjpeg() (possibly several concurrent viewers) and capture_photo()
+both just read that buffered frame - neither ever touches stream_off or
+reopens the device during normal operation. The device is only actually
+closed on an explicit stop() or a genuine resolution change, both of
+which still use STOP_START_SETTLE_SECONDS as a precaution, but those are
+now rare, deliberate operations instead of something every photo capture
+triggered.
 """
 
 from __future__ import annotations
@@ -47,10 +63,15 @@ from typing import Any, Iterator
 
 from camera.camera_driver import CameraDriver
 
-# Minimum pause between closing and reopening the device (stop() followed
-# by start()) - see the module docstring for why this isn't optional on
-# this hardware.
+# Minimum pause between closing and reopening the device - see the module
+# docstring for why this isn't optional on this hardware. Only exercised
+# now by stop()+start() and genuine resolution changes, not by every
+# capture_photo() call.
 STOP_START_SETTLE_SECONDS = 0.5
+
+# How long capture_photo() waits for the background reader thread to
+# deliver a first frame on a cold start, before giving up.
+FIRST_FRAME_TIMEOUT_SECONDS = 3.0
 
 # Frame sizes this exact camera (Logitech QuickCam E 3500) was confirmed to
 # support live via Device.info.frame_sizes() on camtest. Used as a fallback
@@ -147,6 +168,15 @@ class UsbCameraDriver(CameraDriver):
         self._resolution = DEFAULT_RESOLUTION
         self._fps = DEFAULT_FPS
         self._stream_generation = 0
+        self._reader_thread: threading.Thread | None = None
+
+        # Populated by _reader_loop(), read by stream_mjpeg()/capture_photo().
+        # Separate from self._lock (which guards start/stop control flow)
+        # so a long-lived stream_mjpeg() generator polling this never
+        # blocks a concurrent stop() or capture_photo() call.
+        self._frame_lock = threading.Lock()
+        self._last_frame: bytes | None = None
+        self._last_frame_time = 0.0
 
     # ------------------------------------------------------------
     # DeviceDriver
@@ -210,6 +240,18 @@ class UsbCameraDriver(CameraDriver):
                 self._fps = target_fps
                 self._started = True
                 self._stream_generation += 1
+                self._last_frame = None
+                self._last_frame_time = 0.0
+
+                generation = self._stream_generation
+                self._reader_thread = threading.Thread(
+                    target=self._reader_loop,
+                    args=(self._device, generation),
+                    name=f"usb-camera-reader-{generation}",
+                    daemon=True,
+                )
+                self._reader_thread.start()
+
                 print(
                     f"[USB CAMERA] Started {self.dev_path} ({self._model}) "
                     f"at {self._resolution} MJPEG",
@@ -229,17 +271,34 @@ class UsbCameraDriver(CameraDriver):
 
     def stop(self) -> None:
         with self._lock:
-            if self._device is not None:
-                self._stream_off_safe(self._device)
-                try:
-                    self._device.close()
-                except Exception as error:
-                    print(f"[USB CAMERA] Stop error: {error}", flush=True)
-            self._device = None
+            self._stream_generation += 1  # tells _reader_loop() to exit
             self._started = False
-            self._stream_generation += 1
+            thread = self._reader_thread
+            self._reader_thread = None
+            device = self._device
+            self._device = None
+
+        # Join outside self._lock: the reader thread only ever touches
+        # self._frame_lock, but holding self._lock here while waiting on
+        # it would still needlessly block other callers (e.g. get_status())
+        # for no reason.
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+
+        if device is not None:
+            self._stream_off_safe(device)
+            try:
+                device.close()
+            except Exception as error:
+                print(f"[USB CAMERA] Stop error: {error}", flush=True)
+
+        with self._frame_lock:
+            self._last_frame = None
+            self._last_frame_time = 0.0
 
     def get_status(self) -> dict[str, Any]:
+        with self._frame_lock:
+            frame_age = (time.time() - self._last_frame_time) if self._last_frame_time else None
         return {
             "ok": os.path.exists(self.dev_path),
             "started": self._started,
@@ -247,6 +306,7 @@ class UsbCameraDriver(CameraDriver):
             "dev_path": self.dev_path,
             "resolution": self._resolution,
             "fps": self._fps,
+            "last_frame_age_seconds": frame_age,
         }
 
     # ------------------------------------------------------------
@@ -259,71 +319,51 @@ class UsbCameraDriver(CameraDriver):
             return
 
         my_generation = self._stream_generation
-        device = self._device
-        if device is None:
-            return
+        frame_interval = 1.0 / max(1, self._fps)
+        last_sent_time = 0.0
+        last_frame_time_seen = 0.0
 
-        try:
-            for frame in device:
-                if my_generation != self._stream_generation:
-                    # stop()/reconfigure happened underneath this generator -
-                    # exit quietly instead of yielding frames from a
-                    # closed/reconfigured device.
-                    return
-                data = bytes(frame)
-                if data:
-                    yield data
-        except Exception as error:
-            print(f"[USB CAMERA] Stream error: {error}", flush=True)
-        finally:
-            # Confirmed live on camtest: breaking out of `for frame in
-            # device` (client disconnect, generation change) without an
-            # explicit stream_off() leaves the camera's own state machine
-            # confused - the *next* open()/set_format() on this same
-            # camera fails with "[Errno 16] Device or resource busy" for a
-            # few seconds until it self-recovers. Always release the
-            # stream here regardless of how this generator exits.
-            if my_generation == self._stream_generation:
-                self._stream_off_safe(device)
+        while my_generation == self._stream_generation:
+            now = time.time()
+            if now - last_sent_time < frame_interval:
+                time.sleep(0.01)
+                continue
+
+            with self._frame_lock:
+                data = self._last_frame
+                frame_time = self._last_frame_time
+
+            if not data or frame_time == last_frame_time_seen:
+                time.sleep(0.01)
+                continue
+
+            yield data
+            last_sent_time = now
+            last_frame_time_seen = frame_time
 
     def capture_photo(self, resolution: str | None = None) -> bytes:
         with self._lock:
-            target_resolution = resolution or self._resolution
+            if resolution and resolution != self._resolution:
+                if not self.start(resolution=resolution):
+                    return b""
+            elif not self._started:
+                if not self.start():
+                    return b""
 
-            # Always capture from a freshly (re)started stream, mirroring
-            # the CSI driver's existing video/photo mode split - see
-            # camera/camera.py's switch_camera_mode()/capture_photo_preview():
-            # switching to photo mode there doesn't auto-restore video mode
-            # afterward either, the UI's explicit Mode tabs own that
-            # transition. Confirmed live on camtest that grabbing one frame
-            # from a device that was just stream_off()'d - without a full
-            # stop()+start() to re-arm streaming - fails with Errno 5, so
-            # the stop()+start() here isn't optional the way it might look.
-            #
-            # Deliberately does NOT try to restore whatever streaming state
-            # existed before this call: on this camera/Pi 3B+ combination a
-            # third stop()+start() cycle back-to-back with the two above
-            # was the one most likely to hit a transient USB "busy" error
-            # during testing, for no benefit CSI's own photo mode doesn't
-            # already skip.
-            self.stop()
-            time.sleep(STOP_START_SETTLE_SECONDS)
-            if not self.start(resolution=target_resolution):
-                return b""
+        # Wait for the background reader thread to deliver a frame,
+        # outside self._lock so start()/stop() aren't blocked by this
+        # wait. Usually near-instant if streaming was already running -
+        # this timeout only matters on a cold start.
+        deadline = time.time() + FIRST_FRAME_TIMEOUT_SECONDS
+        while time.time() < deadline:
+            with self._frame_lock:
+                data = self._last_frame
+            if data:
+                return data
+            time.sleep(0.03)
 
-            device = self._device
-            photo = b""
-            try:
-                for frame in device:
-                    data = bytes(frame)
-                    if data:
-                        photo = data
-                    break
-            except Exception as error:
-                print(f"[USB CAMERA] Photo capture error: {error}", flush=True)
-                photo = b""
-
-            return photo
+        print("[USB CAMERA] capture_photo() timed out waiting for a frame", flush=True)
+        return b""
 
     def list_resolutions(self) -> list[str]:
         resolutions = self._probe_resolutions()
@@ -333,13 +373,29 @@ class UsbCameraDriver(CameraDriver):
     # Internal helpers
     # ------------------------------------------------------------
 
+    def _reader_loop(self, device, generation: int) -> None:
+        """Runs on a background thread for the lifetime of one start()
+        cycle - reads frames as fast as the camera produces them and
+        stashes the latest one, so stream_mjpeg()/capture_photo() never
+        have to touch the device directly."""
+        try:
+            for frame in device:
+                if generation != self._stream_generation:
+                    break
+                data = bytes(frame)
+                if data:
+                    with self._frame_lock:
+                        self._last_frame = data
+                        self._last_frame_time = time.time()
+        except Exception as error:
+            if generation == self._stream_generation:
+                print(f"[USB CAMERA] Reader thread error: {error}", flush=True)
+
     @staticmethod
     def _stream_off_safe(device) -> None:
         """Best-effort VIDIOC_STREAMOFF - swallow errors, this is always
-        called from a cleanup path (finally blocks, stop()) where raising
-        would just replace one problem with another. Confirmed live on
-        camtest to be safe to call even when the device was never
-        actually streaming."""
+        called from a cleanup path (stop()) where raising would just
+        replace one problem with another."""
         if device is None:
             return
         try:
@@ -376,6 +432,8 @@ class UsbCameraDriver(CameraDriver):
             return False
 
     def _reconfigure(self, resolution: str, fps: int) -> bool:
+        # Only reached for a genuine resolution/fps change - normal
+        # streaming and photo capture never call stop()+start() anymore.
         self.stop()
         time.sleep(STOP_START_SETTLE_SECONDS)
         return self.start(resolution=resolution, fps=fps)

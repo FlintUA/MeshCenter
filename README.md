@@ -549,7 +549,7 @@ For more detailed instructions, see the [Practical User Guide](docs/User_Guide.m
 
 ```bash
 sudo apt update
-sudo apt install -y git python3 python3-venv python3-pip network-manager iw
+sudo apt install -y git python3 python3-venv python3-pip network-manager iw lsof
 ```
 
 Optional camera support (install **before** creating the virtual environment):

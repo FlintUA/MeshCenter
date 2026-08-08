@@ -165,7 +165,7 @@ Install the required system packages:
 
 ```bash
 sudo apt update
-sudo apt install -y git python3 python3-venv python3-pip network-manager iw
+sudo apt install -y git python3 python3-venv python3-pip network-manager iw lsof
 ```
 
 For Raspberry Pi Camera support, also install:

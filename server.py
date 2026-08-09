@@ -28,6 +28,7 @@ from meshsrv.runtime_identity import resolve_meshtastic_cli, resolve_serial_port
 from meshsrv.instance_manager import InstanceManager
 from meshsrv.radio_identity import detect_radio_identity, detect_connected_radio, compare_radio_identity
 from api.api_camera import register_camera_routes
+from api.api_camera_manager import register_camera_manager_routes
 from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes, normalize_settings, SUPPORTED_LANGUAGES
 from api.api_system import register_system_routes
@@ -304,6 +305,10 @@ def handle_errors(f):
     return decorated_function
 
 register_camera_routes(app, camera, handle_errors)
+# Separate from register_camera_routes()/api_camera.py above - see
+# api/api_camera_manager.py's module docstring. Does not touch
+# /video_feed or anything else camera.py already owns.
+register_camera_manager_routes(app, device_manager, handle_errors)
 register_system_routes(app)
 
 # ===== STATIC FILES =====

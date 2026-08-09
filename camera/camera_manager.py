@@ -62,17 +62,27 @@ class CameraManager:
 
     def list_drivers(self) -> list[dict[str, Any]]:
         """One summary dict per registered driver - id, display_name,
-        device_type, active flag, plus whatever detect() reports (model,
-        vendor/product ids, ...). Used for the Devices tab's camera
-        cards."""
+        device_type, active flag, plus model/vendor/product info. Used
+        for the Devices tab's camera cards.
+
+        Uses get_status() (cheap, no device I/O) for the *active* driver
+        and detect() (opens the device briefly to (re)confirm it's still
+        there) for inactive ones. Calling detect() on the active driver
+        too would be wrong for usb_driver.py specifically: it always does
+        a fresh open()/close() regardless of whether the driver is
+        already streaming via its background thread, which would then be
+        fighting its own reader thread over the same /dev/videoN - the
+        exact kind of contention this whole framework exists to avoid.
+        """
         summaries = []
         for driver_id, driver in self._drivers.items():
-            info = driver.detect() or {}
+            is_active = driver_id == self._active_id
+            info = (driver.get_status() if is_active else driver.detect()) or {}
             summaries.append({
                 "id": driver_id,
                 "display_name": driver.display_name,
                 "device_type": driver.device_type,
-                "active": driver_id == self._active_id,
+                "active": is_active,
                 **info,
             })
         return summaries

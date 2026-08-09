@@ -415,15 +415,40 @@ class UsbCameraDriver(CameraDriver):
         cycle - reads frames as fast as the camera produces them and
         stashes the latest one, so stream_mjpeg()/capture_photo() never
         have to touch the device directly."""
+        warned_bad_format = False
         try:
             for frame in device:
                 if generation != self._stream_generation:
                     break
                 data = bytes(frame)
-                if data:
-                    with self._frame_lock:
-                        self._last_frame = data
-                        self._last_frame_time = time.time()
+                if not data:
+                    continue
+
+                # V4L2's set_format() ACKing "MJPG" doesn't guarantee the
+                # bytes actually arriving are JPEG - confirmed live with a
+                # second camera model (Logitech C170) that negotiates
+                # MJPEG successfully at the ioctl level but streams
+                # fixed-size, non-JPEG frames anyway (no SOI marker,
+                # uniform size matching raw YUYV for the resolution, not
+                # a plausible compressed size). Refuse to publish those:
+                # leaving last_frame unset (and therefore this driver
+                # looking "stuck, no frames") is a far more honest failure
+                # mode than silently serving corrupt image data to
+                # whatever's consuming stream_mjpeg()/capture_photo().
+                if data[:2] != b"\xff\xd8":
+                    if not warned_bad_format:
+                        print(
+                            f"[USB CAMERA] Dropping frame(s): does not start with "
+                            f"the JPEG SOI marker (got {data[:4].hex()}) - camera "
+                            "negotiated MJPEG but isn't actually sending it",
+                            flush=True,
+                        )
+                        warned_bad_format = True
+                    continue
+
+                with self._frame_lock:
+                    self._last_frame = data
+                    self._last_frame_time = time.time()
         except Exception as error:
             if generation == self._stream_generation:
                 print(f"[USB CAMERA] Reader thread error: {error}", flush=True)

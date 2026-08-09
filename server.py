@@ -4575,7 +4575,12 @@ def api_profile_devices():
     environment_detected = any(value is not None for value in environment_values.values())
     power_detected = any(value is not None for value in power_values.values())
 
-    camera_cfg = dict(configured_devices.get("camera", {}))
+    # devices.json schema v2: a single "camera" object became "cameras",
+    # keyed by CameraDriver id (see camera/camera_manager.py). This route
+    # still only knows about the CSI camera directly (camera_manager isn't
+    # wired into it yet - see the project's usb-camera-plan notes), so it
+    # reads the "csi" entry specifically rather than the whole dict.
+    camera_cfg = dict(configured_devices.get("cameras", {}).get("csi", {}))
     environment_cfg = dict(configured_devices.get("environment", {}))
     power_cfg = dict(configured_devices.get("power", {}))
 
@@ -5568,9 +5573,13 @@ if __name__ == "__main__":
     if detected_camera_model:
         try:
             devices_data = device_manager.load_or_create()
-            stored_camera = devices_data.get("devices", {}).get("camera", {})
+            # devices.json schema v2: "cameras" is keyed by CameraDriver id
+            # (see camera/camera_manager.py) - this startup path only knows
+            # about the CSI camera directly, so it writes the "csi" entry.
+            cameras = devices_data.setdefault("devices", {}).setdefault("cameras", {})
+            stored_camera = cameras.setdefault("csi", {})
             if stored_camera.get("model") != detected_camera_model:
-                devices_data["devices"]["camera"]["model"] = detected_camera_model
+                stored_camera["model"] = detected_camera_model
                 device_manager.save(devices_data)
                 print(
                     f"[CAMERA] Recorded detected model in devices.json: {detected_camera_model}",

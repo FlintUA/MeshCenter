@@ -118,13 +118,33 @@ def _usb_ids_for_video_device(dev_path: str) -> tuple[str, str]:
 
 
 def discover_usb_cameras() -> list[dict[str, Any]]:
-    """Enumerate /dev/video* nodes that are actual capture devices (not
-    the metadata/M2M nodes some UVC cameras also expose - e.g. this
-    camera's /dev/video1), independent of any single driver instance.
+    """Enumerate /dev/video* nodes that are actual USB capture devices -
+    not the metadata/M2M nodes some UVC cameras also expose (this
+    camera's /dev/video1), and not the Raspberry Pi's own bcm2835-isp
+    platform nodes that exist on every Pi regardless of any USB camera.
+
+    Two filters, both confirmed necessary live on camtest (a first
+    version using only `.capabilities` and no USB-id check matched 6
+    nodes for one physical camera: video0, its own video1 metadata node,
+    and four unrelated bcm2835-isp ISP-pipeline nodes):
+
+    - `.info.device_capabilities` (per-node), not `.info.capabilities`
+      (the deprecated aggregate-across-all-nodes-of-this-device field) -
+      video0 and video1 report the *same* `.capabilities` value even
+      though only video0 can actually capture images; `device_capabilities`
+      is what actually differs (VIDEO_CAPTURE vs META_CAPTURE).
+    - A real USB vendor/product id from sysfs - bcm2835-isp is a platform
+      device, not USB, and reports VIDEO_CAPTURE via device_capabilities
+      just like a real camera does, so the capability check alone doesn't
+      exclude it.
     """
     found: list[dict[str, Any]] = []
     for dev_path in sorted(glob.glob("/dev/video*")):
         if not re.fullmatch(r"/dev/video\d+", dev_path):
+            continue
+
+        vendor_id, product_id = _usb_ids_for_video_device(dev_path)
+        if not vendor_id or not product_id:
             continue
 
         try:
@@ -133,7 +153,7 @@ def discover_usb_cameras() -> list[dict[str, Any]]:
             device = V4LDevice(dev_path)
             device.open()
             try:
-                caps = Capability(device.info.capabilities)
+                caps = Capability(device.info.device_capabilities)
                 if Capability.VIDEO_CAPTURE not in caps:
                     continue
                 card_name = str(device.info.card or "").strip()
@@ -143,7 +163,6 @@ def discover_usb_cameras() -> list[dict[str, Any]]:
             print(f"[USB CAMERA] Probe failed for {dev_path}: {error}", flush=True)
             continue
 
-        vendor_id, product_id = _usb_ids_for_video_device(dev_path)
         found.append({
             "dev_path": dev_path,
             "card": card_name,
@@ -192,7 +211,10 @@ class UsbCameraDriver(CameraDriver):
             device = V4LDevice(self.dev_path)
             device.open()
             try:
-                caps = Capability(device.info.capabilities)
+                # Per-node capability field, not the deprecated aggregate
+                # `.capabilities` - see discover_usb_cameras()'s docstring
+                # for why that distinction matters on this camera.
+                caps = Capability(device.info.device_capabilities)
                 if Capability.VIDEO_CAPTURE not in caps:
                     return None
                 card_name = str(device.info.card or "").strip()

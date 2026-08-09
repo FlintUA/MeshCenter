@@ -14,11 +14,11 @@ WeatherManager - whoever calls set_active() also persists the choice
 api_settings.py persists settings.json before calling
 weather_manager.set_active().
 
-csi registration is not wired in yet - build_camera_manager() only
-discovers USB cameras today. dev/prod (CSI-only Pi Zero 2W, no USB port
-free) intentionally aren't routed through this manager until
-camera/csi_driver.py exists; only camtest (USB) exercises it for now.
-See the project's usb-camera-plan notes for the full sequencing reason.
+Both csi_driver.py and usb_driver.py are registered by build_camera_manager()
+now, but this manager still isn't wired into the live /video_feed route -
+see the project's usb-camera-plan notes for why that cutover is a
+separate, deliberately later step (it needs to happen for dev/prod and
+camtest at once, not incrementally).
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import Any, Iterator
 
 from camera.camera_driver import CameraDriver
+from camera.csi_driver import CsiCameraDriver
 from camera.usb_driver import UsbCameraDriver, discover_usb_cameras
 
 
@@ -115,9 +116,19 @@ class CameraManager:
 def build_camera_manager(persisted_active_id: str | None = None) -> CameraManager:
     """Discover available camera drivers and wrap them in a CameraManager.
 
-    csi registration will be added here once camera/csi_driver.py exists.
+    CSI is registered unconditionally (its detect() reports whether a
+    sensor is actually present, same as any other driver) - unlike USB,
+    there's nothing to enumerate for it, since camera.py always talks to
+    "the" CSI port. Still not wired into the live /video_feed route yet
+    (see the project's usb-camera-plan notes) - only exercised directly
+    for now, the same way usb_driver.py was before this.
     """
     drivers: dict[str, CameraDriver] = {}
+
+    csi_driver = CsiCameraDriver()
+    if csi_driver.detect() is not None:
+        drivers[csi_driver.id] = csi_driver
+
     for found in discover_usb_cameras():
         driver = UsbCameraDriver(found["dev_path"])
         drivers[driver.id] = driver

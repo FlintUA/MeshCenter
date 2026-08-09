@@ -230,6 +230,10 @@
     "preset_night": "Ніч",
     "preset_outdoor": "На вулиці",
     "screenshot_label": "ЗНІМОК",
+    "select_source_label": "Камера",
+    "select_source_tooltip": "Вибір активної камери. Поки що не впливає на відео вище.",
+    "source_switch_failed": "Не вдалося перемкнути камеру: {reason}",
+    "source_switched": "Перемкнено на {name}",
     "video_label": "ВІДЕО",
     "video_quality_label": "ЯКІСТЬ ВІДЕО",
     "wb_auto": "Авто",
@@ -291,7 +295,16 @@
     "open_camera": "Відкрити камеру",
     "source": "Джерело",
     "unable_to_load": "Не вдалося завантажити периферійні пристрої",
-    "unavailable": "Недоступно"
+    "unavailable": "Недоступно",
+    "cameras_not_scanned": "Камери ще не проскановано",
+    "scan_cameras": "Знайти камери",
+    "scanning_cameras": "Пошук камер…",
+    "no_cameras_found": "Камери не знайдено",
+    "rescan_cameras": "Пересканувати камери",
+    "make_active": "Зробити активною",
+    "camera_id": "ID",
+    "switch_camera_failed": "Не вдалося перемкнути камеру: {reason}",
+    "camera_switched": "Перемкнено на {name}"
   },
   "node_manager": {
     "title": "Менеджер вузлів",

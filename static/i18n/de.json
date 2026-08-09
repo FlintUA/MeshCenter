@@ -230,6 +230,10 @@
     "preset_night": "Nacht",
     "preset_outdoor": "Außen",
     "screenshot_label": "SCREENSHOT",
+    "select_source_label": "Kamera",
+    "select_source_tooltip": "Wähle, welche erkannte Kamera aktiv ist. Wirkt sich noch nicht auf den Live-Stream oben aus.",
+    "source_switch_failed": "Kamera konnte nicht gewechselt werden: {reason}",
+    "source_switched": "Gewechselt zu {name}",
     "video_label": "VIDEO",
     "video_quality_label": "VIDEOQUALITÄT",
     "wb_auto": "Automatisch",
@@ -291,7 +295,16 @@
     "open_camera": "Kamera öffnen",
     "source": "Quelle",
     "unable_to_load": "Peripheriegeräte konnten nicht geladen werden",
-    "unavailable": "Nicht verfügbar"
+    "unavailable": "Nicht verfügbar",
+    "cameras_not_scanned": "Kameras wurden noch nicht gescannt",
+    "scan_cameras": "Kameras suchen",
+    "scanning_cameras": "Kameras werden gesucht …",
+    "no_cameras_found": "Keine Kameras gefunden",
+    "rescan_cameras": "Kameras erneut suchen",
+    "make_active": "Aktivieren",
+    "camera_id": "ID",
+    "switch_camera_failed": "Kamera konnte nicht gewechselt werden: {reason}",
+    "camera_switched": "Zu {name} gewechselt"
   },
   "node_manager": {
     "title": "Knoten-Manager",

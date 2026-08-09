@@ -5737,6 +5737,26 @@ body.context-chat-mode .settings-view {
     gap: 12px;
 }
 
+.video-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.camera-source-select {
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid #d5dbe3;
+    border-radius: 7px;
+    background: #fff;
+    color: #33404f;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    max-width: 180px;
+}
+
 .camera-power-btn {
     display: inline-flex;
     align-items: center;

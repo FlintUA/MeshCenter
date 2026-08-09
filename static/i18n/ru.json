@@ -230,6 +230,10 @@
     "preset_night": "Ночь",
     "preset_outdoor": "На улице",
     "screenshot_label": "СНИМОК",
+    "select_source_label": "Камера",
+    "select_source_tooltip": "Выбор активной камеры. Пока не влияет на видео выше.",
+    "source_switch_failed": "Не удалось переключить камеру: {reason}",
+    "source_switched": "Переключено на {name}",
     "video_label": "ВИДЕО",
     "video_quality_label": "КАЧЕСТВО ВИДЕО",
     "wb_auto": "Авто",
@@ -291,7 +295,16 @@
     "open_camera": "Открыть камеру",
     "source": "Источник",
     "unable_to_load": "Не удалось загрузить периферийные устройства",
-    "unavailable": "Недоступно"
+    "unavailable": "Недоступно",
+    "cameras_not_scanned": "Камеры ещё не просканированы",
+    "scan_cameras": "Найти камеры",
+    "scanning_cameras": "Поиск камер…",
+    "no_cameras_found": "Камеры не найдены",
+    "rescan_cameras": "Пересканировать камеры",
+    "make_active": "Сделать активной",
+    "camera_id": "ID",
+    "switch_camera_failed": "Не удалось переключить камеру: {reason}",
+    "camera_switched": "Переключено на {name}"
   },
   "node_manager": {
     "title": "Менеджер узлов",

@@ -11295,6 +11295,164 @@ function formatPeripheralMetric(value, unit = '') {
     return `${escapeHtml(text)}${unit}`;
 }
 
+function renderCameraManagerCards(cameraManagerData, profileId) {
+    const eyebrow = escapeHtml(window.I18N.t('devices.active_profile', { id: deviceDashboardValue(profileId) }));
+
+    if (!cameraManagerData || !cameraManagerData.scanned) {
+        return `
+            <section class="peripheral-card">
+                <div class="peripheral-card-header">
+                    <div>
+                        <div class="device-card-eyebrow">${eyebrow}</div>
+                        <h3>${escapeHtml(window.I18N.t('devices.cameras_not_scanned'))}</h3>
+                    </div>
+                </div>
+                <div class="device-action-row device-action-row-single">
+                    <button type="button" class="mc-refresh-btn" onclick="rescanCameras(this)">${escapeHtml(window.I18N.t('devices.scan_cameras'))}</button>
+                </div>
+            </section>`;
+    }
+
+    const cameras = Array.isArray(cameraManagerData.cameras) ? cameraManagerData.cameras : [];
+    if (cameras.length === 0) {
+        return `
+            <section class="peripheral-card">
+                <div class="peripheral-card-header">
+                    <div>
+                        <div class="device-card-eyebrow">${eyebrow}</div>
+                        <h3>${escapeHtml(window.I18N.t('devices.no_cameras_found'))}</h3>
+                    </div>
+                </div>
+                <div class="device-action-row device-action-row-single">
+                    <button type="button" class="mc-refresh-btn" onclick="rescanCameras(this)">${escapeHtml(window.I18N.t('devices.rescan_cameras'))}</button>
+                </div>
+            </section>`;
+    }
+
+    return cameras.map(camera => {
+        const isActive = !!camera.active;
+        const statusClass = isActive ? 'device-status-ok' : 'device-status-warning';
+        const statusLabel = isActive ? window.I18N.t('waypoints.active') : window.I18N.t('devices.available');
+        const action = isActive
+            ? ''
+            : `<div class="device-action-row device-action-row-single"><button type="button" class="mc-refresh-btn" onclick="setActiveCamera('${escapeHtml(camera.id)}')">${escapeHtml(window.I18N.t('devices.make_active'))}</button></div>`;
+        return `
+            <section class="peripheral-card">
+                <div class="peripheral-card-header">
+                    <div>
+                        <div class="device-card-eyebrow">${eyebrow}</div>
+                        <h3>${deviceDashboardValue(camera.model || camera.display_name)}</h3>
+                    </div>
+                    <div class="device-status-pill ${statusClass}">
+                        <span class="device-status-dot"></span>${escapeHtml(statusLabel)}
+                    </div>
+                </div>
+                <dl class="device-detail-list">
+                    <div><dt>${escapeHtml(window.I18N.t('devices.camera_id'))}</dt><dd>${deviceDashboardValue(camera.id)}</dd></div>
+                    <div><dt>${escapeHtml(window.I18N.t('devices.driver'))}</dt><dd>${deviceDashboardValue(camera.display_name)}</dd></div>
+                </dl>
+                ${action}
+            </section>`;
+    }).join('');
+}
+
+async function rescanCameras(button) {
+    if (button) button.disabled = true;
+    try {
+        const response = await fetch('/api/devices/cameras/rescan', { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || window.I18N.t('devices.unable_to_load'));
+        await loadPeripheralDevices(false);
+    } catch (error) {
+        console.error('[DEVICES] Camera rescan failed:', error);
+        showToast(window.I18N.t('devices.unable_to_load'), 'error');
+        if (button) button.disabled = false;
+    }
+}
+
+async function setActiveCamera(driverId) {
+    try {
+        const response = await fetch('/api/camera/active', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ driver_id: driverId }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'unknown error');
+        const activeCamera = (data.cameras || []).find(camera => camera.id === driverId);
+        const name = activeCamera ? activeCamera.display_name : driverId;
+        showToast(window.I18N.t('devices.camera_switched', { name }), 'success');
+        await loadPeripheralDevices(false);
+        await loadCameraSourceSelector();
+    } catch (error) {
+        console.error('[DEVICES] Camera switch failed:', error);
+        showToast(window.I18N.t('devices.switch_camera_failed', { reason: error.message || String(error) }), 'error');
+    }
+}
+
+// Camera tab's source dropdown - a second entry point to the same
+// camera_manager.py registry the Devices tab cards use (setActiveCamera()
+// above), shown inline next to the power button for convenience. Same
+// caveat as the Devices cards: switching here only changes what
+// camera_manager.py considers active, not the live stream, until the
+// cutover described in server.py's CUTOVER TODO comment happens.
+async function loadCameraSourceSelector() {
+    const select = document.getElementById('cameraSourceSelect');
+    if (!select) return;
+
+    try {
+        const response = await fetch('/api/devices/cameras', { cache: 'no-store' });
+        const data = await response.json();
+        const cameras = (response.ok && data.ok && data.scanned && Array.isArray(data.cameras))
+            ? data.cameras
+            : [];
+
+        if (cameras.length < 2) {
+            select.style.display = 'none';
+            select.innerHTML = '';
+            return;
+        }
+
+        select.innerHTML = cameras.map(camera => {
+            const label = camera.model || camera.display_name || camera.id;
+            const selected = camera.active ? ' selected' : '';
+            return `<option value="${escapeHtml(camera.id)}"${selected}>${escapeHtml(label)}</option>`;
+        }).join('');
+        select.style.display = '';
+    } catch (error) {
+        console.error('[CAMERA] Failed to load camera source list:', error);
+        select.style.display = 'none';
+        select.innerHTML = '';
+    }
+}
+
+async function onCameraSourceSelectChange(driverId) {
+    const select = document.getElementById('cameraSourceSelect');
+    if (select) select.disabled = true;
+    try {
+        const response = await fetch('/api/camera/active', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ driver_id: driverId }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'unknown error');
+        const activeCamera = (data.cameras || []).find(camera => camera.id === driverId);
+        const name = activeCamera ? (activeCamera.model || activeCamera.display_name) : driverId;
+        showToast(window.I18N.t('camera.source_switched', { name }), 'success');
+        if (document.getElementById('devicesDashboard')?.dataset.loaded) {
+            await loadPeripheralDevices(false);
+        }
+        await loadCameraSourceSelector();
+    } catch (error) {
+        console.error('[CAMERA] Camera source switch failed:', error);
+        showToast(window.I18N.t('camera.source_switch_failed', { reason: error.message || String(error) }), 'error');
+        await loadCameraSourceSelector();
+    } finally {
+        if (select) select.disabled = false;
+    }
+}
+
 async function loadPeripheralDevices(showFeedback = false) {
     const container = document.getElementById('devicesDashboard');
     if (!container) return;
@@ -11303,22 +11461,30 @@ async function loadPeripheralDevices(showFeedback = false) {
     }
 
     try {
-        const response = await fetch('/api/devices', { cache: 'no-store' });
+        const [response, cameraManagerResponse] = await Promise.all([
+            fetch('/api/devices', { cache: 'no-store' }),
+            fetch('/api/devices/cameras', { cache: 'no-store' }).catch(() => null),
+        ]);
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || window.I18N.t('devices.unable_to_load'));
         const devices = Array.isArray(data.devices) ? data.devices : [];
+        const cameraManagerData = cameraManagerResponse && cameraManagerResponse.ok
+            ? await cameraManagerResponse.json().catch(() => null)
+            : null;
 
-        const cards = devices.map(device => {
+        // The new camera-driver framework (camera_manager.py) replaces the
+        // single hardcoded "camera" entry from /api/devices with however
+        // many real cameras it found - CSI and/or USB. /video_feed itself
+        // isn't wired to it yet (see the project's usb-camera-plan notes),
+        // so "Make active" here only affects what camera_manager.py
+        // thinks is selected, not the live stream, until that cutover.
+        const cards = devices
+            .filter(device => device.id !== 'camera')
+            .map(device => {
             const values = device.values || {};
             let details = '';
             let action = '';
-            if (device.id === 'camera') {
-                details = `
-                    <div><dt>${escapeHtml(window.I18N.t('devices.source'))}</dt><dd>${deviceDashboardValue(device.source)}</dd></div>
-                    <div><dt>${escapeHtml(window.I18N.t('devices.model'))}</dt><dd>${deviceDashboardValue(device.model)}</dd></div>
-                    <div><dt>${escapeHtml(window.I18N.t('devices.assigned'))}</dt><dd>${device.assigned ? escapeHtml(window.I18N.t('common.yes')) : escapeHtml(window.I18N.t('common.no'))}</dd></div>`;
-                action = `<button type="button" class="device-action-btn device-action-primary" onclick="switchMainTab('video')">${escapeHtml(window.I18N.t('devices.open_camera'))}</button>`;
-            } else if (device.id === 'environment') {
+            if (device.id === 'environment') {
                 details = `
                     <div><dt>${escapeHtml(window.I18N.t('devices.driver'))}</dt><dd>${deviceDashboardValue(device.driver)}</dd></div>
                     <div><dt>${escapeHtml(window.I18N.t('node_panel.temperature'))}</dt><dd>${formatPeripheralMetric(values.temperature, '°')}</dd></div>
@@ -11347,9 +11513,11 @@ async function loadPeripheralDevices(showFeedback = false) {
                 </section>`;
         }).join('');
 
+        const cameraCards = renderCameraManagerCards(cameraManagerData, data.profile_id);
+
         container.dataset.loaded = '1';
         container.innerHTML = `
-            <div class="peripheral-grid">${cards}</div>
+            <div class="peripheral-grid">${cameraCards}${cards}</div>
             <section class="peripheral-card peripheral-add-card" aria-disabled="true">
                 <div class="peripheral-add-icon">＋</div>
                 <h3>${escapeHtml(window.I18N.t('devices.add_device'))}</h3>
@@ -11515,6 +11683,7 @@ function switchMainTab(tab) {
         stopMessagePolling();
 
         hideCameraFeed('Connecting to camera…');
+        loadCameraSourceSelector();
 
         loadCameraPowerState().then(async () => {
             if (transitionSequence !== mainTabTransitionSequence || currentMainTab !== 'video') return;

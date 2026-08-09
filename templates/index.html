@@ -6,7 +6,7 @@
     <meta name="app-version" content="{{ app_version }}">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=delivery-status-20260807">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260809-camera-selector">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -288,15 +288,26 @@
                             <div class="video-subtitle workspace-page-subtitle" data-i18n="camera.live_preview_subtitle">Live preview and capture controls</div>
                         </div>
 
-                        <button type="button"
-                                class="camera-power-btn"
-                                id="cameraPowerBtn"
-                                onclick="toggleCameraPower()"
-                                title="Turn camera off"
-                                data-i18n-title="camera.turn_camera_off">
-                            <span class="camera-power-btn-icon">⏻</span>
-                            <span id="cameraPowerBtnText" data-i18n="camera.turn_off">Turn Off</span>
-                        </button>
+                        <div class="video-header-actions">
+                            <select id="cameraSourceSelect"
+                                    class="camera-source-select"
+                                    style="display:none;"
+                                    onchange="onCameraSourceSelectChange(this.value)"
+                                    title="Choose which detected camera is active. Doesn't affect the live stream above yet."
+                                    data-i18n-title="camera.select_source_tooltip"
+                                    aria-label="Camera"
+                                    data-i18n-aria-label="camera.select_source_label"></select>
+
+                            <button type="button"
+                                    class="camera-power-btn"
+                                    id="cameraPowerBtn"
+                                    onclick="toggleCameraPower()"
+                                    title="Turn camera off"
+                                    data-i18n-title="camera.turn_camera_off">
+                                <span class="camera-power-btn-icon">⏻</span>
+                                <span id="cameraPowerBtnText" data-i18n="camera.turn_off">Turn Off</span>
+                            </button>
+                        </div>
                     </div>
 
                     <div class="video-frame-wrap">
@@ -1855,7 +1866,7 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="/static/chat.js?v=20260808-weather-provider"></script>
+<script src="/static/chat.js?v=20260809-camera-selector"></script>
 <script src="/static/media.js?v=20260806-stage9-i18n"></script>
 <script src="/static/weather.js?v=20260808-weather-provider"></script>
 

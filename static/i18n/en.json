@@ -230,6 +230,10 @@
     "preset_night": "Night",
     "preset_outdoor": "Outdoor",
     "screenshot_label": "SCREENSHOT",
+    "select_source_label": "Camera",
+    "select_source_tooltip": "Choose which detected camera is active. Doesn't affect the live stream above yet.",
+    "source_switch_failed": "Failed to switch camera: {reason}",
+    "source_switched": "Switched to {name}",
     "video_label": "VIDEO",
     "video_quality_label": "VIDEO QUALITY",
     "wb_auto": "Auto",
@@ -291,7 +295,16 @@
     "open_camera": "Open Camera",
     "source": "Source",
     "unable_to_load": "Unable to load peripheral devices",
-    "unavailable": "Unavailable"
+    "unavailable": "Unavailable",
+    "cameras_not_scanned": "Cameras haven't been scanned yet",
+    "scan_cameras": "Scan for cameras",
+    "scanning_cameras": "Scanning for cameras…",
+    "no_cameras_found": "No cameras found",
+    "rescan_cameras": "Rescan cameras",
+    "make_active": "Make active",
+    "camera_id": "ID",
+    "switch_camera_failed": "Failed to switch camera: {reason}",
+    "camera_switched": "Switched to {name}"
   },
   "node_manager": {
     "title": "Node Manager",

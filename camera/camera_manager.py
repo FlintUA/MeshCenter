@@ -23,11 +23,27 @@ camtest at once, not incrementally).
 
 from __future__ import annotations
 
+import re
 from typing import Any, Iterator
 
 from camera.camera_driver import CameraDriver
 from camera.csi_driver import CsiCameraDriver
 from camera.usb_driver import UsbCameraDriver, discover_usb_cameras
+
+# Matches the "(vendor:product)" suffix uvcvideo puts in its V4L2 card
+# name, e.g. "UVC Camera (046d:09a4)" - confirmed live on camtest that
+# Picamera2's own reported Model string for a USB webcam preserves this
+# verbatim (it's libcamera's uvcvideo pipeline handler just passing the
+# driver's own card name through). Used to recognize when csi_driver.py
+# and usb_driver.py would otherwise both claim the same physical device.
+_USB_IDS_IN_MODEL_RE = re.compile(r"\(([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\)")
+
+
+def _usb_ids_from_model(model: str) -> tuple[str, str] | None:
+    match = _USB_IDS_IN_MODEL_RE.search(model or "")
+    if not match:
+        return None
+    return match.group(1).lower(), match.group(2).lower()
 
 
 class CameraManager:
@@ -122,14 +138,40 @@ def build_camera_manager(persisted_active_id: str | None = None) -> CameraManage
     "the" CSI port. Still not wired into the live /video_feed route yet
     (see the project's usb-camera-plan notes) - only exercised directly
     for now, the same way usb_driver.py was before this.
+
+    Deduplicates by USB vendor:product id: on hardware where libcamera has
+    a uvcvideo pipeline handler (confirmed live on camtest, NOT present on
+    dev/prod), Picamera2 can see a USB UVC webcam directly and
+    csi_driver.py's detect() reports it with the same model string
+    usb_driver.py's own detection would use. Registering both for the same
+    physical device would mean two drivers fighting over the same
+    /dev/videoN the moment either one opens it - see the project's
+    usb-camera-plan notes for the live test that motivated this. Dev/prod
+    and any future USB camera on hardware without uvcvideo support are
+    unaffected: csi_driver.py's model won't carry USB ids there, so
+    usb_driver.py's cameras register normally.
     """
     drivers: dict[str, CameraDriver] = {}
+    csi_usb_ids: tuple[str, str] | None = None
 
     csi_driver = CsiCameraDriver()
-    if csi_driver.detect() is not None:
+    csi_info = csi_driver.detect()
+    if csi_info is not None:
         drivers[csi_driver.id] = csi_driver
+        csi_usb_ids = _usb_ids_from_model(str(csi_info.get("model", "")))
 
     for found in discover_usb_cameras():
+        vendor_id = str(found.get("vendor_id") or "").lower()
+        product_id = str(found.get("product_id") or "").lower()
+        if vendor_id and product_id and csi_usb_ids == (vendor_id, product_id):
+            print(
+                f"[CAMERA MANAGER] Not registering a separate usb_driver "
+                f"entry for {vendor_id}:{product_id} - Picamera2 already "
+                "has it via libcamera's own uvcvideo pipeline handler; "
+                "registering both would fight over the same /dev/videoN.",
+                flush=True,
+            )
+            continue
         driver = UsbCameraDriver(found["dev_path"])
         drivers[driver.id] = driver
 

@@ -5561,6 +5561,23 @@ if __name__ == "__main__":
             print(f"[INIT] Telemetry fetch error: {e}")
     
     # Инициализация камеры
+    #
+    # CUTOVER TODO (see camera/camera_manager.py and the project's
+    # usb-camera-plan notes): this unconditional camera.init_camera() call
+    # is the CSI-only startup path that predates camera_manager.py. Once
+    # /video_feed and api_camera.py are switched to go through
+    # camera_manager instead of the `camera` module directly, this call
+    # must be REMOVED (not just left alongside build_camera_manager()) -
+    # build_camera_manager() already calls CsiCameraDriver.detect(), which
+    # itself calls camera.init_camera() internally. Calling init_camera()
+    # here AND again via camera_manager would open a second Picamera2()
+    # while the first is still live - confirmed live on camtest that even
+    # calling it once already races real USB cameras there for the device
+    # (see the module docstring in camera_manager.py's build_camera_manager()
+    # for why - libcamera's uvcvideo pipeline handler makes Picamera2 claim
+    # some USB webcams too, not just genuine CSI sensors). Replace this
+    # block with `camera_manager = build_camera_manager(persisted_active_id=...)`
+    # at cutover time, sourcing persisted_active_id from devices.json.
     print("[CAMERA] 🔍 Initializing...", flush=True)
     camera.init_camera()   # <--- вызов через модуль
 

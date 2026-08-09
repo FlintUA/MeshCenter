@@ -173,7 +173,7 @@ def discover_usb_cameras() -> list[dict[str, Any]]:
 
 
 class UsbCameraDriver(CameraDriver):
-    def __init__(self, dev_path: str = "/dev/video0"):
+    def __init__(self, dev_path: str = "/dev/video0", card_name: str | None = None):
         self.dev_path = dev_path
         vendor_id, product_id = _usb_ids_for_video_device(dev_path)
         dev_name = os.path.basename(dev_path)
@@ -183,7 +183,12 @@ class UsbCameraDriver(CameraDriver):
         self._lock = threading.RLock()
         self._device = None  # linuxpy Device, opened lazily in start()
         self._started = False
-        self._model = ""
+        # discover_usb_cameras() already opens the device once to check
+        # capabilities and reads .info.card while it's open - seeding it
+        # here means a freshly-discovered driver's model is populated
+        # immediately, without get_status() (used for the *active* driver
+        # in CameraManager.list_drivers()) needing its own open/close probe.
+        self._model = card_name or ""
         self._resolution = DEFAULT_RESOLUTION
         self._fps = DEFAULT_FPS
         self._stream_generation = 0

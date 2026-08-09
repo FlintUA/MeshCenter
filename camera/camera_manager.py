@@ -182,7 +182,7 @@ def build_camera_manager(persisted_active_id: str | None = None) -> CameraManage
                 flush=True,
             )
             continue
-        driver = UsbCameraDriver(found["dev_path"])
+        driver = UsbCameraDriver(found["dev_path"], card_name=found.get("card"))
         drivers[driver.id] = driver
 
     return CameraManager(drivers, active_id=persisted_active_id)

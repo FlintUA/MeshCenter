@@ -26,9 +26,11 @@ import threading
 import time
 from typing import Any, Callable
 
+from modules.display.config_store import DEFAULT_EPAPER_CONFIG
 from modules.display.drivers.waveshare_213g import Waveshare213gDriver
 from modules.display.gpio_registry import GpioRegistry
 from modules.display.manager import DisplayManager
+from modules.display.models import RefreshMode
 from modules.display.pages.status import StatusScreenData, render
 
 logger = logging.getLogger("epaper_service")
@@ -54,9 +56,24 @@ def _bucket(value: float | None, step: int = _SIGNIFICANCE_BUCKET) -> float | No
     return round(value / step) * step
 
 
-def build_display_manager() -> DisplayManager:
-    driver = Waveshare213gDriver(gpio_registry=GpioRegistry())
-    return DisplayManager(driver)
+def build_driver(config: dict, gpio_registry: GpioRegistry) -> Waveshare213gDriver:
+    return Waveshare213gDriver(
+        pins=config.get("pins"), spi=config.get("spi"), gpio_registry=gpio_registry,
+    )
+
+
+def build_display_manager(
+    config: dict | None = None, gpio_registry: GpioRegistry | None = None,
+) -> DisplayManager:
+    config = config or dict(DEFAULT_EPAPER_CONFIG)
+    registry = gpio_registry or GpioRegistry()
+    driver = build_driver(config, registry)
+    return DisplayManager(
+        driver,
+        refresh_mode=RefreshMode(config.get("refresh_mode", "debounce")),
+        debounce_seconds=config.get("debounce_seconds"),
+        refresh_timeout=config.get("refresh_timeout", 75.0),
+    )
 
 
 class _ContentState:
@@ -92,6 +109,7 @@ def epaper_worker(
     get_ram_percent: Callable[[], float | None],
     get_listener_alive: Callable[[], bool],
     local_node_name: str,
+    get_enabled: Callable[[], bool] = lambda: True,
     stop_event: threading.Event | None = None,
 ) -> None:
     stop_event = stop_event or threading.Event()
@@ -99,19 +117,24 @@ def epaper_worker(
 
     while not stop_event.is_set():
         try:
-            _poll_once(
-                manager, state_lock, nodes, get_radio_status, get_cpu_percent,
-                get_ram_percent, get_listener_alive, local_node_name, content_state,
-            )
+            if get_enabled():
+                _poll_once(
+                    manager, state_lock, nodes, get_radio_status, get_cpu_percent,
+                    get_ram_percent, get_listener_alive, local_node_name, content_state,
+                )
         except Exception:
             logger.exception("epaper_worker: poll failed")
         stop_event.wait(POLL_INTERVAL_SECONDS)
 
 
-def _poll_once(
-    manager, state_lock, nodes, get_radio_status, get_cpu_percent,
-    get_ram_percent, get_listener_alive, local_node_name, content_state,
-) -> None:
+def _build_status_fields(
+    state_lock, nodes, get_radio_status, get_cpu_percent, get_ram_percent,
+    get_listener_alive, local_node_name,
+) -> tuple[StatusScreenData, str]:
+    """Everything StatusScreenData needs except `last_update` - returned
+    alongside a content_key string so callers can decide how "last update"
+    should be stamped (poll-driven callers debounce it through
+    _ContentState; an explicit manual action can just use "now")."""
     with state_lock:
         node_count = len(nodes)
         last_seen_values = [n.get("last_seen") for n in nodes.values() if n.get("last_seen")]
@@ -137,8 +160,6 @@ def _poll_once(
         meshcenter_status, radio_status, local_node_name, node_count,
         last_rx, cpu_percent, ram_percent,
     ))
-    last_update = content_state.stamp(content_key)
-
     data = StatusScreenData(
         meshcenter_status=meshcenter_status,
         radio_status=radio_status,
@@ -147,7 +168,34 @@ def _poll_once(
         last_rx=last_rx,
         cpu_percent=cpu_percent,
         ram_percent=ram_percent,
-        last_update=last_update,
     )
+    return data, content_key
+
+
+def _poll_once(
+    manager, state_lock, nodes, get_radio_status, get_cpu_percent,
+    get_ram_percent, get_listener_alive, local_node_name, content_state,
+) -> None:
+    data, content_key = _build_status_fields(
+        state_lock, nodes, get_radio_status, get_cpu_percent, get_ram_percent,
+        get_listener_alive, local_node_name,
+    )
+    data.last_update = content_state.stamp(content_key)
     image = render(manager.capabilities, data)
     manager.mark_dirty(image)
+
+
+def build_status_image_now(
+    manager, state_lock, nodes, get_radio_status, get_cpu_percent,
+    get_ram_percent, get_listener_alive, local_node_name,
+):
+    """Same status-screen content as the poller, but stamps "last update"
+    with the current time unconditionally - for an explicit manual action
+    (POST /api/hardware/display/refresh), where "now" genuinely is the
+    event, unlike a routine 5s poll tick."""
+    data, _content_key = _build_status_fields(
+        state_lock, nodes, get_radio_status, get_cpu_percent, get_ram_percent,
+        get_listener_alive, local_node_name,
+    )
+    data.last_update = time.strftime("%H:%M")
+    return render(manager.capabilities, data)

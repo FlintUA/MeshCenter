@@ -1,20 +1,45 @@
-"""REST route for the e-paper display's Hardware card (read-only part).
-e-Paper Stage 1 plan, Phase 6 (section 36).
+"""REST routes for the e-paper display's Hardware card and Settings
+panel. e-Paper Stage 1 plan, Phases 6-7 (sections 31, 36).
 
-"Online" here means "successfully initialized and successfully completed
-its last refresh" (DisplayManager.status == ONLINE), never "a display
-model was recognized over SPI" - detect() only confirms /dev/spidevN.M
-exists, it doesn't prove the panel is actually there or working. Separate
-from api_camera_manager.py's pattern (no rescan step) since e-paper has
-exactly one configured driver, not a dynamically discovered set.
+Scope for Phase 7 (per project decision): Enable/refresh-mode/debounce
+settings apply live and autosave; GPIO/SPI/timeout ("Advanced") settings
+never apply automatically - they require the explicit /reinit action,
+validated against the GPIO registry and only persisted if the new pins
+actually start successfully. A bad pin typo here risks reproducing the
+BUSY-hang debugging from Phases 1-2, this time live instead of at wiring
+time, hence the extra ceremony. Orientation and the per-page checklist
+(radio/power/environment/message pages don't exist yet) are deferred to
+Phase 10.
+
+test/clear/refresh are all asynchronous - they return before the physical
+refresh completes (plan section 36), same as the rest of this feature's
+"never block the caller" design (DisplayManager.mark_dirty()). /reinit is
+the one exception: it synchronously (bounded by REINIT_CHECK_TIMEOUT)
+confirms the new pins actually work before responding, so the caller
+finds out immediately rather than only on the next debounced refresh.
 """
 
 from __future__ import annotations
 
-from flask import jsonify
+from flask import jsonify, request
+
+from modules.display.config_store import save_epaper_config
+from modules.display.gpio_registry import GpioConflictError
+from modules.display.models import EventPriority, RefreshMode
+from modules.display.pages import test_pattern
+from modules.display.renderer import new_canvas
+from modules.display.service import build_driver
+
+REINIT_CHECK_TIMEOUT = 20.0
 
 
-def register_hardware_display_routes(app, display_manager, epaper_enabled: bool, handle_errors):
+def register_hardware_display_routes(
+    app, display_manager, epaper_enabled: bool, handle_errors,
+    config: dict, config_path: str, gpio_registry, build_status_image_now,
+):
+    def _disabled_response():
+        return jsonify({"ok": False, "error": "e-paper display not enabled on this install"}), 400
+
     @app.route("/api/hardware/display")
     @handle_errors
     def api_hardware_display():
@@ -32,3 +57,114 @@ def register_hardware_display_routes(app, display_manager, epaper_enabled: bool,
             "colors": list(caps.colors),
             **status,
         })
+
+    @app.route("/api/hardware/display/settings")
+    @handle_errors
+    def api_hardware_display_settings_get():
+        if not epaper_enabled or display_manager is None:
+            return _disabled_response()
+        return jsonify({"ok": True, "config": config})
+
+    @app.route("/api/hardware/display/settings", methods=["POST"])
+    @handle_errors
+    def api_hardware_display_settings_post():
+        """Enable/refresh_mode/debounce_seconds only - applied live and
+        autosaved. pins/spi/refresh_timeout are rejected here; use
+        /reinit for those (see module docstring)."""
+        if not epaper_enabled or display_manager is None:
+            return _disabled_response()
+
+        body = request.get_json(force=True) or {}
+        if any(key in body for key in ("pins", "spi", "refresh_timeout")):
+            return jsonify({
+                "ok": False,
+                "error": "pins/spi/refresh_timeout must go through POST /api/hardware/display/reinit",
+            }), 400
+
+        if "enabled" in body:
+            config["enabled"] = bool(body["enabled"])
+            if config["enabled"]:
+                display_manager.start()
+            else:
+                display_manager.stop()
+
+        mode_changed = "refresh_mode" in body
+        if mode_changed:
+            try:
+                mode = RefreshMode(body["refresh_mode"])
+            except ValueError:
+                return jsonify({"ok": False, "error": f"Unknown refresh_mode: {body['refresh_mode']!r}"}), 400
+            config["refresh_mode"] = mode.value
+
+        if "debounce_seconds" in body:
+            config["debounce_seconds"] = float(body["debounce_seconds"])
+
+        if mode_changed or "debounce_seconds" in body:
+            display_manager.set_refresh_mode(RefreshMode(config["refresh_mode"]), config["debounce_seconds"])
+
+        save_epaper_config(config_path, config)
+        return jsonify({"ok": True, "config": config})
+
+    @app.route("/api/hardware/display/reinit", methods=["POST"])
+    @handle_errors
+    def api_hardware_display_reinit():
+        if not epaper_enabled or display_manager is None:
+            return _disabled_response()
+
+        body = request.get_json(force=True) or {}
+        new_config = dict(config)
+        if "pins" in body:
+            new_config["pins"] = {**config["pins"], **body["pins"]}
+        if "spi" in body:
+            new_config["spi"] = {**config["spi"], **body["spi"]}
+        if "refresh_timeout" in body:
+            new_config["refresh_timeout"] = float(body["refresh_timeout"])
+
+        try:
+            gpio_registry.check(new_config["pins"], owner="waveshare_213g")
+        except GpioConflictError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+
+        new_driver = build_driver(new_config, gpio_registry)
+        display_manager.replace_driver(new_driver)
+        ok, error = display_manager.try_start_now(timeout=REINIT_CHECK_TIMEOUT)
+
+        if not ok:
+            # Roll back to the previous, already-working configuration
+            # rather than leaving the live manager on a driver we just
+            # proved doesn't work.
+            old_driver = build_driver(config, gpio_registry)
+            display_manager.replace_driver(old_driver)
+            display_manager.try_start_now(timeout=REINIT_CHECK_TIMEOUT)
+            return jsonify({"ok": False, "error": error}), 400
+
+        config.update(new_config)
+        save_epaper_config(config_path, config)
+        return jsonify({"ok": True, "config": config})
+
+    @app.route("/api/hardware/display/test", methods=["POST"])
+    @handle_errors
+    def api_hardware_display_test():
+        if not epaper_enabled or display_manager is None:
+            return _disabled_response()
+        image = test_pattern.render(display_manager.capabilities)
+        display_manager.mark_dirty(image, priority=EventPriority.CRITICAL)
+        return jsonify({"ok": True})
+
+    @app.route("/api/hardware/display/clear", methods=["POST"])
+    @handle_errors
+    def api_hardware_display_clear():
+        if not epaper_enabled or display_manager is None:
+            return _disabled_response()
+        blank_image, _draw = new_canvas(display_manager.capabilities)
+        display_manager.mark_dirty(blank_image, priority=EventPriority.CRITICAL)
+        return jsonify({"ok": True})
+
+    @app.route("/api/hardware/display/refresh", methods=["POST"])
+    @handle_errors
+    def api_hardware_display_refresh():
+        if not epaper_enabled or display_manager is None:
+            return _disabled_response()
+        image = build_status_image_now()
+        display_manager.mark_dirty(image, priority=EventPriority.CRITICAL)
+        return jsonify({"ok": True})

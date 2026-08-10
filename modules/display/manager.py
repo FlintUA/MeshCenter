@@ -151,6 +151,61 @@ class DisplayManager:
             **self._stats.as_dict(),
         }
 
+    def set_refresh_mode(self, mode: RefreshMode, debounce_seconds: float | None = None) -> None:
+        """Applied live - safe to change while the worker thread is
+        running, unlike pins/SPI (see replace_driver()). A plain attribute
+        write is enough here: Python's GIL makes it atomic, and the worker
+        only ever reads self._refresh_mode/_debounce_seconds at the start
+        of a debounce wait, never mutates them itself."""
+        self._refresh_mode = mode
+        self._debounce_seconds = (
+            debounce_seconds if debounce_seconds is not None else DEFAULT_DEBOUNCE_SECONDS[mode]
+        )
+
+    def replace_driver(self, new_driver: DisplayDriver) -> None:
+        """Swap the wrapped driver (e.g. after a GPIO/SPI/timeout config
+        change) without tearing down the worker thread or losing
+        debounce/stats state - only the physical-driver half of the
+        manager changes. Stops the old driver first to release its
+        GPIO/SPI claim before the new one can be started. Deliberately
+        NOT part of the "applied live" settings path (set_refresh_mode) -
+        a bad pin value here can reproduce the BUSY-hang debugging from
+        Phases 1-2, so callers are expected to pair this with
+        try_start_now() and only persist the new config if that succeeds
+        (see api/api_hardware_display.py's re-init route)."""
+        old_driver = self._driver
+        try:
+            old_driver.stop()
+        except Exception:
+            logger.exception("replace_driver: failed to stop the old driver cleanly")
+        self._driver = new_driver
+        self._last_hash = None  # force a real refresh against the new driver next time
+        self._status = DisplayStatus.CONFIGURED
+
+    def try_start_now(self, timeout: float | None = None) -> tuple[bool, str | None]:
+        """Synchronously attempt to start the current driver, bounded by a
+        timeout. Only for the explicit GPIO/SPI re-init action - the
+        normal async refresh pipeline always goes through _ensure_started()
+        instead. Gives the caller an immediate pass/fail (e.g. "GPIO24
+        conflicts" or a BUSY-timeout) instead of only discovering a bad
+        pin config on the next debounced refresh, minutes later."""
+        timeout = timeout if timeout is not None else self._refresh_timeout
+        self._status = DisplayStatus.INITIALIZING
+
+        def _start_or_raise():
+            if not self._driver.start():
+                raise RuntimeError(self._driver.get_status().get("error") or "start() returned False")
+
+        completed, error = _run_with_timeout(_start_or_raise, timeout)
+        if not completed:
+            self._status = DisplayStatus.ERROR
+            return False, f"start() timed out after {timeout:.0f}s"
+        if error is not None:
+            self._status = DisplayStatus.ERROR
+            return False, str(error)
+        self._status = DisplayStatus.CONFIGURED
+        return True, None
+
     # -- worker thread --------------------------------------------------
 
     def _run(self) -> None:

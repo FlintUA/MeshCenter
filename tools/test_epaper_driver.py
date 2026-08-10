@@ -25,36 +25,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("test_epaper_driver")
 
-TEST_LINES = ["MeshCenter", "EPAPER TEST", "Phase 2", "via DisplayDriver", "PASS"]
-FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-
-
-def build_test_image(caps):
-    from PIL import Image, ImageDraw, ImageFont
-
-    # Landscape: caps.height x caps.width, matching the vendor driver's own
-    # rotate-on-mismatch convention in getbuffer().
-    w, h = caps.height, caps.width
-    image = Image.new("RGB", (w, h), "white")
-    draw = ImageDraw.Draw(image)
-
-    band_w = w // len(caps.colors)
-    for i, color in enumerate(caps.colors):
-        draw.rectangle([i * band_w, 0, (i + 1) * band_w, h // 2], fill=color)
-
-    try:
-        font = ImageFont.truetype(FONT_PATH, 16)
-    except OSError:
-        log.warning("Could not load %s, falling back to PIL default font", FONT_PATH)
-        font = ImageFont.load_default()
-
-    draw.text((4, h // 2 + 4), " / ".join(TEST_LINES), fill="black", font=font)
-    return image
-
 
 def main() -> int:
     from modules.display.drivers.waveshare_213g import Waveshare213gDriver
     from modules.display.gpio_registry import GpioConflictError, GpioRegistry
+    from modules.display.pages import test_pattern
 
     registry = GpioRegistry()
     driver = Waveshare213gDriver(gpio_registry=registry)
@@ -77,7 +52,7 @@ def main() -> int:
         driver.clear()
 
         log.info("render()...")
-        image = build_test_image(driver.capabilities)
+        image = test_pattern.render(driver.capabilities)
         driver.render(image)
 
         log.info("sleep()...")

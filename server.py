@@ -322,9 +322,51 @@ register_system_routes(app)
 # /api/hardware/display can report {"enabled": false} on installs without
 # a display, matching how camera_manager's routes work above even before
 # a rescan has ever run.
-from modules.display.service import build_display_manager
-display_manager = build_display_manager()
-register_hardware_display_routes(app, display_manager, EPAPER_ENABLED, handle_errors)
+from modules.display.config_store import load_epaper_config
+from modules.display.gpio_registry import GpioRegistry as _EpaperGpioRegistry
+from modules.display.service import build_display_manager, build_status_image_now
+
+EPAPER_CONFIG_PATH = os.path.join(DATA_DIR, "epaper_config.json")
+epaper_config = load_epaper_config(EPAPER_CONFIG_PATH)
+epaper_gpio_registry = _EpaperGpioRegistry()
+display_manager = build_display_manager(epaper_config, epaper_gpio_registry)
+
+# Named functions (not inline lambdas) so both epaper_worker's thread
+# (started later, EPAPER_ENABLED-gated) and the Settings/refresh API
+# routes below share exactly one definition of each. All reference
+# server.py globals (radio_connection_manager, radio_health, nodes,
+# state_lock, ...) by name rather than capturing them at def time - safe
+# because Python resolves globals at call time, and none of these
+# functions are actually called until well after those globals exist.
+def _epaper_get_radio_status():
+    return radio_connection_manager.status(radio_health.get("listener_running", False))
+
+def _epaper_get_cpu_percent():
+    return _cpu_current_usage
+
+def _epaper_get_ram_percent():
+    return _read_memory_percent()
+
+def _epaper_get_listener_alive():
+    return radio_health.get("listener_running", False)
+
+def _epaper_get_enabled():
+    return epaper_config.get("enabled", True)
+
+def _epaper_build_status_image_now():
+    return build_status_image_now(
+        display_manager, state_lock, nodes,
+        _epaper_get_radio_status, _epaper_get_cpu_percent, _epaper_get_ram_percent,
+        _epaper_get_listener_alive, LOCAL_NODE_NAME,
+    )
+
+register_hardware_display_routes(
+    app, display_manager, EPAPER_ENABLED, handle_errors,
+    config=epaper_config,
+    config_path=EPAPER_CONFIG_PATH,
+    gpio_registry=epaper_gpio_registry,
+    build_status_image_now=_epaper_build_status_image_now,
+)
 
 # ===== STATIC FILES =====
 @app.route('/static/<path:filename>')
@@ -5644,19 +5686,24 @@ if __name__ == "__main__":
 
         # display_manager itself was already constructed at module load
         # time (see register_hardware_display_routes above) - only
-        # start() actually touches SPI/GPIO.
-        display_manager.start()
+        # start() actually touches SPI/GPIO. Only actually started if the
+        # persisted runtime "enabled" toggle (epaper_config.json, distinct
+        # from this EPAPER_ENABLED master switch) also allows it - the
+        # worker thread itself is always started so that flipping that
+        # toggle back on later (via the Settings POST route) takes effect
+        # without a restart.
+        if epaper_config.get("enabled", True):
+            display_manager.start()
         threading.Thread(
             target=epaper_worker,
             args=(display_manager, state_lock, nodes),
             kwargs=dict(
-                get_radio_status=lambda: radio_connection_manager.status(
-                    radio_health.get("listener_running", False)
-                ),
-                get_cpu_percent=lambda: _cpu_current_usage,
-                get_ram_percent=_read_memory_percent,
-                get_listener_alive=lambda: radio_health.get("listener_running", False),
+                get_radio_status=_epaper_get_radio_status,
+                get_cpu_percent=_epaper_get_cpu_percent,
+                get_ram_percent=_epaper_get_ram_percent,
+                get_listener_alive=_epaper_get_listener_alive,
                 local_node_name=LOCAL_NODE_NAME,
+                get_enabled=_epaper_get_enabled,
             ),
             daemon=True,
         ).start()

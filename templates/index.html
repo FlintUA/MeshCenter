@@ -1242,6 +1242,60 @@
                                  class="reference-location-status">
                             </div>
                         </div>
+
+                        <div class="settings-card settings-card--epaper" id="epaperSettingsCard" style="display:none;">
+                            <div class="settings-card-title">🖥️ <span data-i18n="settings.epaper_title">E-Paper Display</span></div>
+                            <div class="settings-card-text" data-i18n="settings.epaper_description">Waveshare 2.13" status display.</div>
+
+                            <div class="settings-option settings-option--checkbox">
+                                <label class="settings-option-label" for="epaperEnabledToggle" data-i18n="settings.epaper_enabled">Enabled</label>
+                                <input type="checkbox" id="epaperEnabledToggle" onchange="setEpaperEnabled(this.checked)">
+                            </div>
+
+                            <div class="settings-option settings-option--select">
+                                <label class="settings-option-label" for="epaperRefreshMode" data-i18n="settings.epaper_refresh_mode">Refresh mode</label>
+                                <select id="epaperRefreshMode" class="settings-select" onchange="setEpaperRefreshMode(this.value)">
+                                    <option value="responsive" data-i18n="settings.epaper_mode_responsive">Responsive</option>
+                                    <option value="debounce" data-i18n="settings.epaper_mode_debounce">Debounce</option>
+                                    <option value="conservative" data-i18n="settings.epaper_mode_conservative">Conservative</option>
+                                </select>
+                            </div>
+
+                            <div class="settings-option settings-option--select">
+                                <label class="settings-option-label" for="epaperDebounceSeconds" data-i18n="settings.epaper_debounce_delay">Debounce delay</label>
+                                <div class="settings-inline-input">
+                                    <input id="epaperDebounceSeconds" class="settings-number-input" type="number" min="0" max="600" step="1" onchange="setEpaperDebounceSeconds(this.value)">
+                                    <span data-i18n="common.seconds">s</span>
+                                </div>
+                            </div>
+
+                            <div class="device-action-row">
+                                <button type="button" class="mc-refresh-btn" onclick="epaperTestDisplay(this)">🧪 <span data-i18n="settings.epaper_test">Test Display</span></button>
+                                <button type="button" class="mc-refresh-btn" onclick="epaperClearDisplay(this)">🧹 <span data-i18n="settings.epaper_clear">Clear Display</span></button>
+                                <button type="button" class="mc-refresh-btn" onclick="epaperRefreshDisplay(this)">🔄 <span data-i18n="settings.epaper_refresh">Refresh Now</span></button>
+                            </div>
+
+                            <details class="epaper-advanced">
+                                <summary data-i18n="settings.epaper_advanced">Advanced (GPIO / SPI)</summary>
+                                <div class="settings-card-note" data-i18n="settings.epaper_advanced_warning">These fields do not apply automatically. A wrong value can hang the display until the process restarts - always use "Apply &amp; Re-init" to validate before saving.</div>
+
+                                <div class="epaper-pin-grid">
+                                    <div><label for="epaperPinRst">RST</label><input id="epaperPinRst" type="number" min="0" max="27"></div>
+                                    <div><label for="epaperPinDc">DC</label><input id="epaperPinDc" type="number" min="0" max="27"></div>
+                                    <div><label for="epaperPinCs">CS</label><input id="epaperPinCs" type="number" min="0" max="27"></div>
+                                    <div><label for="epaperPinBusy">BUSY</label><input id="epaperPinBusy" type="number" min="0" max="27"></div>
+                                    <div><label for="epaperPinPwr">PWR</label><input id="epaperPinPwr" type="number" min="0" max="27"></div>
+                                    <div><label for="epaperSpiBus" data-i18n="settings.epaper_spi_bus">SPI bus</label><input id="epaperSpiBus" type="number" min="0" max="6"></div>
+                                    <div><label for="epaperSpiDevice" data-i18n="settings.epaper_spi_device">SPI device</label><input id="epaperSpiDevice" type="number" min="0" max="2"></div>
+                                    <div><label for="epaperRefreshTimeout" data-i18n="settings.epaper_timeout">Timeout (s)</label><input id="epaperRefreshTimeout" type="number" min="5" max="300"></div>
+                                </div>
+
+                                <button type="button" class="reference-location-save-btn" onclick="epaperReinitDisplay(this)">
+                                    ⚙️ <span data-i18n="settings.epaper_reinit">Apply &amp; Re-init</span>
+                                </button>
+                                <div id="epaperReinitStatus" class="reference-location-status"></div>
+                            </details>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1866,7 +1920,7 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="/static/chat.js?v=20260810-epaper-hardware-card"></script>
+<script src="/static/chat.js?v=20260810-epaper-settings"></script>
 <script src="/static/media.js?v=20260806-stage9-i18n"></script>
 <script src="/static/weather.js?v=20260808-weather-provider"></script>
 

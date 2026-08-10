@@ -731,6 +731,181 @@ function updateSettingsUi() {
     notifySettingsUpdated();
 }
 
+// ===== E-PAPER DISPLAY SETTINGS (e-Paper Stage 1 plan, Phase 7) =====
+// enabled/refresh_mode/debounce_seconds apply live and autosave on
+// change, matching every other setting on this page. pins/spi/timeout
+// ("Advanced") deliberately do NOT autosave - a typo there risks
+// reproducing the BUSY-hang debugging from Phases 1-2, this time on a
+// live device instead of at wiring time. Those only ever apply through
+// epaperReinitDisplay(), which is a single explicit action gated by the
+// GPIO conflict check and a synchronous re-init confirmation on the
+// server before anything is persisted.
+
+async function loadEpaperSettings() {
+    const card = document.getElementById('epaperSettingsCard');
+    if (!card) return;
+
+    try {
+        const response = await fetch('/api/hardware/display/settings', { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+            card.style.display = 'none';
+            return;
+        }
+        card.style.display = '';
+
+        const config = data.config || {};
+        const enabledToggle = document.getElementById('epaperEnabledToggle');
+        const modeSelect = document.getElementById('epaperRefreshMode');
+        const debounceInput = document.getElementById('epaperDebounceSeconds');
+        if (enabledToggle) enabledToggle.checked = !!config.enabled;
+        if (modeSelect) modeSelect.value = config.refresh_mode || 'debounce';
+        if (debounceInput) debounceInput.value = config.debounce_seconds ?? 30;
+
+        const pins = config.pins || {};
+        const spi = config.spi || {};
+        const setField = (id, value) => {
+            const el = document.getElementById(id);
+            if (el) el.value = value ?? '';
+        };
+        setField('epaperPinRst', pins.rst);
+        setField('epaperPinDc', pins.dc);
+        setField('epaperPinCs', pins.cs);
+        setField('epaperPinBusy', pins.busy);
+        setField('epaperPinPwr', pins.pwr);
+        setField('epaperSpiBus', spi.bus);
+        setField('epaperSpiDevice', spi.device);
+        setField('epaperRefreshTimeout', config.refresh_timeout);
+    } catch (error) {
+        console.error('[EPAPER] Failed to load settings:', error);
+        card.style.display = 'none';
+    }
+}
+
+async function _epaperPostSettings(payload) {
+    try {
+        const response = await fetch('/api/hardware/display/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+        return true;
+    } catch (error) {
+        console.error('[EPAPER] Settings update failed:', error);
+        showToast(window.I18N.t('settings.epaper_settings_failed'), 'error');
+        return false;
+    }
+}
+
+function setEpaperEnabled(enabled) {
+    _epaperPostSettings({ enabled });
+}
+
+function setEpaperRefreshMode(mode) {
+    const debounceInput = document.getElementById('epaperDebounceSeconds');
+    _epaperPostSettings({
+        refresh_mode: mode,
+        debounce_seconds: debounceInput ? Number(debounceInput.value) : undefined,
+    });
+}
+
+function setEpaperDebounceSeconds(value) {
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds < 0) return;
+    _epaperPostSettings({ debounce_seconds: seconds });
+}
+
+async function _epaperTriggerAction(path, button, busyLabel) {
+    if (button) {
+        button.disabled = true;
+        button.dataset.originalText = button.dataset.originalText || button.innerHTML;
+    }
+    try {
+        const response = await fetch(path, { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+        showToast(window.I18N.t('settings.epaper_action_queued'), 'success');
+    } catch (error) {
+        console.error(`[EPAPER] ${path} failed:`, error);
+        showToast(window.I18N.t('settings.epaper_settings_failed'), 'error');
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+function epaperTestDisplay(button) {
+    _epaperTriggerAction('/api/hardware/display/test', button);
+}
+
+function epaperClearDisplay(button) {
+    _epaperTriggerAction('/api/hardware/display/clear', button);
+}
+
+function epaperRefreshDisplay(button) {
+    _epaperTriggerAction('/api/hardware/display/refresh', button);
+}
+
+async function epaperReinitDisplay(button) {
+    const statusEl = document.getElementById('epaperReinitStatus');
+    const getInt = id => {
+        const el = document.getElementById(id);
+        const value = el ? parseInt(el.value, 10) : NaN;
+        return Number.isFinite(value) ? value : undefined;
+    };
+    const getFloat = id => {
+        const el = document.getElementById(id);
+        const value = el ? parseFloat(el.value) : NaN;
+        return Number.isFinite(value) ? value : undefined;
+    };
+
+    const payload = {
+        pins: {
+            rst: getInt('epaperPinRst'),
+            dc: getInt('epaperPinDc'),
+            cs: getInt('epaperPinCs'),
+            busy: getInt('epaperPinBusy'),
+            pwr: getInt('epaperPinPwr'),
+        },
+        spi: {
+            bus: getInt('epaperSpiBus'),
+            device: getInt('epaperSpiDevice'),
+        },
+        refresh_timeout: getFloat('epaperRefreshTimeout'),
+    };
+
+    if (button) button.disabled = true;
+    if (statusEl) {
+        statusEl.textContent = window.I18N.t('settings.epaper_reinit_in_progress');
+        statusEl.className = 'reference-location-status';
+    }
+
+    try {
+        const response = await fetch('/api/hardware/display/reinit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Re-init failed');
+        if (statusEl) {
+            statusEl.textContent = window.I18N.t('settings.epaper_reinit_success');
+            statusEl.className = 'reference-location-status reference-location-status-ok';
+        }
+        showToast(window.I18N.t('settings.epaper_reinit_success'), 'success');
+    } catch (error) {
+        console.error('[EPAPER] Re-init failed:', error);
+        if (statusEl) {
+            statusEl.textContent = `${window.I18N.t('settings.epaper_reinit_failed')}: ${error.message || error}`;
+            statusEl.className = 'reference-location-status reference-location-status-error';
+        }
+        showToast(window.I18N.t('settings.epaper_reinit_failed'), 'error');
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
 function degreesToRadians(value) {
     return value * Math.PI / 180;
 }
@@ -11846,6 +12021,7 @@ function switchMainTab(tab) {
         if (messagesView) messagesView.style.display = 'none';
 
         updateStatusDock('settings');
+        loadEpaperSettings();
     } else if (tab === 'about') {
         if (chatHeader) chatHeader.style.display = 'none';
         if (chatListContainer) chatListContainer.style.display = 'none';

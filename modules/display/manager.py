@@ -105,6 +105,10 @@ class DisplayManager:
     def stats(self) -> RefreshStats:
         return self._stats
 
+    @property
+    def capabilities(self):
+        return self._driver.capabilities
+
     def start(self) -> None:
         if self._worker is not None and self._worker.is_alive():
             return

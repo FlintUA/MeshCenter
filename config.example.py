@@ -74,3 +74,9 @@ WEATHER_LONGITUDE = None
 WEATHER_LOCATION_NAME = ""
 WEATHER_LANGUAGE = "en"
 WEATHER_CACHE_SECONDS = 600
+
+# ===== E-PAPER DISPLAY (experimental, feature/epaper-display branch) =====
+# Off by default for every install. Only set True on hardware with a
+# Waveshare 2.13" e-Paper HAT (G) actually wired up - see the e-Paper Stage
+# 1 plan and modules/display/ for details.
+EPAPER_ENABLED = False

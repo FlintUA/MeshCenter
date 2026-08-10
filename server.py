@@ -60,6 +60,10 @@ required_vars = [
     "KNOWN_NODES", "KNOWN_NODE_INFO"
 ]
 
+# Experimental (feature/epaper-display branch), off unless a local config.py
+# explicitly opts in - see config.example.py.
+EPAPER_ENABLED = globals().get("EPAPER_ENABLED", False)
+
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 # Radio-scoped paths are resolved after the accepted instance identity loads.
 WAYPOINTS_DB_FILE = ""
@@ -5623,7 +5627,28 @@ if __name__ == "__main__":
         pause_listen.set()
         print(f"[IDENTITY] Listener not started because status={identity_status}", flush=True)
     threading.Thread(target=cpu_history_worker, daemon=True).start()
-    
+
+    if EPAPER_ENABLED:
+        from modules.display.service import build_display_manager, epaper_worker
+
+        display_manager = build_display_manager()
+        display_manager.start()
+        threading.Thread(
+            target=epaper_worker,
+            args=(display_manager, state_lock, nodes),
+            kwargs=dict(
+                get_radio_status=lambda: radio_connection_manager.status(
+                    radio_health.get("listener_running", False)
+                ),
+                get_cpu_percent=lambda: _cpu_current_usage,
+                get_ram_percent=_read_memory_percent,
+                get_listener_alive=lambda: radio_health.get("listener_running", False),
+                local_node_name=LOCAL_NODE_NAME,
+            ),
+            daemon=True,
+        ).start()
+        print("[EPAPER] Display manager + worker started", flush=True)
+
     identity_status = RADIO_IDENTITY_RESULT.get("status", "NOT_CHECKED")
     detected_radio = RADIO_IDENTITY_RESULT.get("detected") or {}
     banner_radio_name = detected_radio.get("long_name") or LOCAL_NODE_NAME

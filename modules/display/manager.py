@@ -185,17 +185,19 @@ class DisplayManager:
         frame that arrives during the wait (plan sections 66-69) and
         letting a CRITICAL event short-circuit the remaining wait.
 
-        Only a frame whose *content* actually differs from the one
-        currently being waited on extends the deadline. A caller that
-        polls faster than the debounce window and calls mark_dirty() on
-        every poll regardless of whether anything changed (e.g.
-        modules/display/service.py's epaper_worker) would otherwise reset
-        the deadline on every single poll and the debounce window would
-        never elapse - confirmed live: with a 5s poll against a 30s
-        debounce, refresh_count stayed at 0 indefinitely before this fix.
-        """
+        The deadline is pinned once, at the moment this pending item
+        starts waiting - it is never pushed back out by a later
+        mark_dirty(), whether or not that later frame's content differs.
+        An earlier version of this method reset the deadline whenever the
+        incoming frame's content differed from what it was already
+        waiting on, which fixed the specific case of a caller re-sending
+        an *identical* frame on every poll, but not the general case: real
+        telemetry (CPU%, "seconds since last RX") drifts on nearly every
+        tick, so "content differs" is true almost every poll on a live
+        system too - the debounce window would still never elapse. Pinning
+        the deadline at first arrival is correct regardless of how often
+        or how substantively mark_dirty() is called before it fires."""
         deadline = time.monotonic() + self._debounce_seconds
-        current_hash = _hash_image(image)
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -209,11 +211,7 @@ class DisplayManager:
                     continue
                 if newer_priority == EventPriority.CRITICAL:
                     return newer_image, newer_priority
-                newer_hash = _hash_image(newer_image)
                 image, priority = newer_image, newer_priority
-                if newer_hash != current_hash:
-                    current_hash = newer_hash
-                    deadline = time.monotonic() + self._debounce_seconds
 
     def _refresh(self, image: Any) -> None:
         if time.monotonic() < self._error_cooldown_until:

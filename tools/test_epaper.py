@@ -18,10 +18,20 @@ wait via polling with a timeout watchdog -> measure/print durations -> sleep
 Display is connected via the standard 40-pin HAT connector, so pins are the
 unmodified vendor defaults (RST=17, DC=25, CS=8, BUSY=24, PWR=18) - see
 _vendor/waveshare_epd/epdconfig.py / LICENSE_NOTICE.md.
+
+--no-busy: diagnostic-only mode for when BUSY (GPIO24) reads as electrically
+floating (confirmed via raw gpiozero pull-up/pull-down probing - see the
+e-Paper Stage 1 plan thread). Instead of polling BUSY, sleeps a fixed
+--fixed-delay seconds after each command that would normally wait on it.
+This is NOT the final design (the plan explicitly wants BUSY polling with a
+timeout) - it exists only to answer "does the panel respond to SPI commands
+at all", independent of whatever is wrong with the BUSY line. Once BUSY is
+fixed, this flag should not be needed.
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
 import signal
 import sys
@@ -34,6 +44,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("test_epaper")
 
 REFRESH_TIMEOUT_SECONDS = 90
+DEFAULT_FIXED_DELAY_SECONDS = 35.0
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 TEST_LINES = ["MeshCenter", "EPAPER TEST", "Rev2.1", "250x122", "PASS"]
 
@@ -87,7 +98,25 @@ def build_test_image(epd):
     return image
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--no-busy",
+        action="store_true",
+        help="Bypass BUSY polling entirely; sleep a fixed delay instead (diagnostic only).",
+    )
+    parser.add_argument(
+        "--fixed-delay",
+        type=float,
+        default=DEFAULT_FIXED_DELAY_SECONDS,
+        help=f"Seconds to sleep per step when --no-busy is set (default: {DEFAULT_FIXED_DELAY_SECONDS}).",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     try:
         from waveshare_epd import epd2in13g
     except Exception:
@@ -103,6 +132,20 @@ def main():
     except Exception:
         log.exception("Failed to construct EPD() - GPIO/SPI backend did not initialize")
         return 1
+
+    if args.no_busy:
+        delay = args.fixed_delay
+        log.warning(
+            "--no-busy: BUSY polling disabled, sleeping %.1fs per step instead. "
+            "Diagnostic mode only - not a real pass/fail on BUSY wiring.",
+            delay,
+        )
+
+        def _fixed_delay_read_busy():
+            log.info("[no-busy] sleeping %.1fs instead of polling BUSY", delay)
+            time.sleep(delay)
+
+        epd.ReadBusy = _fixed_delay_read_busy
 
     durations = {}
     try:
@@ -133,7 +176,10 @@ def main():
     log.info("--- Summary ---")
     for step, seconds in durations.items():
         log.info("  %-8s %.2fs", step, seconds)
-    log.info("PASS - all steps completed cleanly")
+    if args.no_busy:
+        log.info("PASS (--no-busy mode - panel responded to SPI commands, BUSY wiring still unverified)")
+    else:
+        log.info("PASS - all steps completed cleanly, including real BUSY polling")
     return 0
 
 

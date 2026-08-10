@@ -5,15 +5,16 @@ Not wired into the Flask app - run directly on the dev node over SSH:
 
     (venv) flint@meshcenter-test:~/meshcenter$ python3 tools/test_epaper.py
 
-Uses the temporary vendored V2 driver (epd2in13g_v2, the one the manual's
-Python demo instructions actually run) in tools/_vendor/waveshare_epd/ (see
-LICENSE_NOTICE.md there - the epdconfig.py fix documented there, sourced
-from Waveshare's official product-page ZIP rather than GitHub's stale
-`master` branch, is what makes BUSY work at all). That location and this
-script are both temporary - Phase 2 replaces them with
-modules/display/drivers/waveshare_213g.py behind the DisplayDriver
-interface, with configurable pins instead of the hardcoded class attributes
-this test relies on.
+Uses the vendored V2 driver (epd2in13g_v2, the one the manual's Python demo
+instructions actually run) directly, bypassing the DisplayDriver
+abstraction entirely - see modules/display/drivers/vendor/waveshare_epd/
+(LICENSE_NOTICE.md there documents the epdconfig.py fix, sourced from
+Waveshare's official product-page ZIP rather than GitHub's stale `master`
+branch, that's what makes BUSY work at all). This script stays useful as a
+minimal-dependency smoke test even after Phase 2 - see
+tools/test_epaper_driver.py for the same scenario run through
+modules/display/drivers/waveshare_213g.py's DisplayDriver interface
+instead, which is what the rest of the app actually uses from Phase 2 on.
 
 Scenario (plan section 48): init -> clear -> all 4 colors -> text -> BUSY
 wait via polling with a timeout watchdog -> measure/print durations -> sleep
@@ -22,7 +23,7 @@ wait via polling with a timeout watchdog -> measure/print durations -> sleep
 Display is connected via the standard 40-pin HAT connector, so pins are the
 unmodified vendor defaults (RST=17, DC=25, CS=8, BUSY=24, PWR=18), confirmed
 against the manual's own Raspberry Pi pin table - see
-_vendor/waveshare_epd/epdconfig.py / LICENSE_NOTICE.md.
+modules/display/drivers/vendor/waveshare_epd/epdconfig.py / LICENSE_NOTICE.md.
 
 --no-busy: diagnostic-only mode for when BUSY (GPIO24) reads as electrically
 floating (confirmed via raw gpiozero pull-up/pull-down probing - see the
@@ -43,7 +44,9 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "_vendor"))
+sys.path.insert(
+    0, str(Path(__file__).resolve().parent.parent / "modules" / "display" / "drivers" / "vendor")
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("test_epaper")

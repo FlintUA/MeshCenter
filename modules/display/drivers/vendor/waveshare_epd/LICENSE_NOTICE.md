@@ -11,7 +11,8 @@ for the 2.13" 4-color (G) e-Paper HAT (black/white/yellow/red).
   - `epd2in13g.py` -> our `epd2in13g.py` (V1 driver, kept for reference)
   - `epd2in13g_V2.py` -> our `epd2in13g_v2.py` (V2 driver, adds quick-refresh
     `init_Fast()`; this is what the manual's Python demo instructions run by
-    default, and what `tools/test_epaper.py` uses)
+    default, and what `modules/display/drivers/waveshare_213g.py` and
+    `tools/test_epaper.py` both use)
   - `epdconfig.py` -> our `epdconfig.py` (shared by both V1 and V2)
 - Retrieved: 2026-08-10.
 - License: the repository has no root `LICENSE` file (GitHub's own license
@@ -47,10 +48,17 @@ driver.**
 
 ## Modifications from upstream
 
-- None beyond the source swap above. Pins are the unmodified vendor defaults
-  (`RST=17`, `DC=25`, `CS=8`, `BUSY=24`, `PWR=18`) - confirmed against the
-  manual's own "Raspberry Pi connection pin correspondence" table, which
-  matches exactly.
-- This location (`tools/_vendor/`) is temporary, Phase 1 (standalone hardware
-  test) only. Phase 2 moves/wraps this behind `modules/display/drivers/` and
-  makes pins configurable instead of hardcoded class attributes.
+- None. Pins are the unmodified vendor defaults (`RST=17`, `DC=25`, `CS=8`,
+  `BUSY=24`, `PWR=18`) - confirmed against the manual's own "Raspberry Pi
+  connection pin correspondence" table, which matches exactly. These are
+  now only *defaults*: `modules/display/drivers/waveshare_213g.py`
+  reconfigures the vendor code's pins/SPI bus from its own constructor
+  config at `start()` time (see that file's `_configure_vendor_pins()`)
+  rather than relying on these hardcoded class attributes directly.
+- This directory moved here from the Phase 1 standalone-test location
+  (`tools/_vendor/waveshare_epd/`) as part of Phase 2 - see
+  `modules/display/drivers/base.py` (the `DisplayDriver` interface) and
+  `waveshare_213g.py` (the concrete driver wrapping this vendor code).
+  `tools/test_epaper.py` (Phase 1) still imports directly from here as a
+  minimal-dependency smoke test; `tools/test_epaper_driver.py` (Phase 2)
+  exercises the same hardware through `DisplayDriver` instead.

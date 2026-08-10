@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from modules.display.drivers.base import DisplayCapabilities
-from modules.display.renderer import color_for_state, load_font, new_canvas
+from modules.display.renderer import color_for_state, draw_text, load_font, new_canvas
 
 
 @dataclass
@@ -30,15 +30,15 @@ class StatusScreenData:
 
 
 def render(caps: DisplayCapabilities, data: StatusScreenData):
-    image, draw = new_canvas(caps)
+    image, _draw = new_canvas(caps)
     w, h = image.size
 
     title_font = load_font(16, bold=True)
     label_font = load_font(12)
     value_font = load_font(12, bold=True)
 
-    draw.text((4, 2), "MeshCenter", fill=color_for_state(data.meshcenter_status), font=title_font)
-    draw.text((4, 20), data.node_name or "-", fill="black", font=label_font)
+    draw_text(image, (4, 2), "MeshCenter", color_for_state(data.meshcenter_status), title_font)
+    draw_text(image, (4, 20), data.node_name or "-", "black", label_font)
 
     rows = [
         ("Radio", data.radio_status, color_for_state(data.radio_status)),
@@ -47,17 +47,17 @@ def render(caps: DisplayCapabilities, data: StatusScreenData):
     ]
     y = 40
     for label, value, color in rows:
-        draw.text((4, y), f"{label}:", fill="black", font=label_font)
-        draw.text((70, y), value, fill=color, font=value_font)
+        draw_text(image, (4, y), f"{label}:", "black", label_font)
+        draw_text(image, (70, y), value, color, value_font)
         y += 16
 
     if data.cpu_percent is not None and data.ram_percent is not None:
-        draw.text(
-            (4, y), f"CPU {data.cpu_percent:.0f}%  RAM {data.ram_percent:.0f}%",
-            fill="black", font=label_font,
+        draw_text(
+            image, (4, y), f"CPU {data.cpu_percent:.0f}%  RAM {data.ram_percent:.0f}%",
+            "black", label_font,
         )
         y += 16
 
-    draw.text((4, h - 16), f"Last update {data.last_update}", fill="black", font=label_font)
+    draw_text(image, (4, h - 16), f"Last update {data.last_update}", "black", label_font)
 
     return image

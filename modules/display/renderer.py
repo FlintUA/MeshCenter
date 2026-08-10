@@ -48,3 +48,23 @@ def color_for_state(state: str) -> StateColor:
     if state in ("warning", "degraded"):
         return "yellow"
     return "black"
+
+
+def draw_text(image: Image.Image, xy: tuple[int, int], text: str, fill: str, font) -> None:
+    """Draw text with hard (non-antialiased) glyph edges, then flat-fill
+    with `fill`.
+
+    Plain ImageDraw.text() antialiases glyph edges to intermediate gray
+    levels. Against this panel's fixed 4-color palette (see the vendor
+    driver's getbuffer() quantization), those gray edge pixels round to
+    white or black essentially at random instead of forming clean strokes -
+    confirmed live: small/Cyrillic text came out visibly speckled/dropped-
+    out on the real panel versus a crisp bitmap-font (no-AA) renderer.
+    Thresholding a 1-bit mask before compositing removes the gray levels
+    entirely, matching what a non-antialiased embedded renderer would
+    produce."""
+    mask = Image.new("L", image.size, 0)
+    ImageDraw.Draw(mask).text(xy, text, fill=255, font=font)
+    mask = mask.point(lambda p: 255 if p > 128 else 0)
+    solid = Image.new("RGB", image.size, fill)
+    image.paste(solid, (0, 0), mask)

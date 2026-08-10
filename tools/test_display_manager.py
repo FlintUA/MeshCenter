@@ -157,15 +157,18 @@ def part2_simulated_timeout() -> bool:
 
     expected_max_wait = 1.0 * (MAX_CONSECUTIVE_RETRIES + 1) + 5  # timeout * attempts + slack
     deadline = time.monotonic() + expected_max_wait
+    reached_error = False
     while time.monotonic() < deadline:
         if manager.status == DisplayStatus.ERROR:
+            reached_error = True
             break
         time.sleep(0.2)
     elapsed = time.monotonic() - t0
+    final_status = manager.status  # read before stop() resets it to DISABLED
     manager.stop()
 
-    if manager.status != DisplayStatus.ERROR:
-        log.error("FAIL: manager never reached ERROR (status=%s) within %.1fs", manager.status, expected_max_wait)
+    if not reached_error:
+        log.error("FAIL: manager never reached ERROR (status=%s) within %.1fs", final_status, expected_max_wait)
         return False
 
     log.info(

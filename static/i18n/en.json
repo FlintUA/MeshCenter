@@ -579,6 +579,7 @@
     "epaper_spi_bus": "SPI bus",
     "epaper_spi_device": "SPI device",
     "epaper_timeout": "Timeout (s)",
+    "epaper_pwr_note": "Vendor power-enable line - not wired on the 2.13\" HAT (G), inherited from Waveshare's shared driver code across other panels. Still validated against the GPIO registry like every other pin here.",
     "epaper_reinit": "Apply & Re-init",
     "epaper_settings_failed": "Failed to update display settings",
     "epaper_action_queued": "Queued - the display will update shortly",

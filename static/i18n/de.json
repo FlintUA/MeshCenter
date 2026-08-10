@@ -579,6 +579,7 @@
     "epaper_spi_bus": "SPI-Bus",
     "epaper_spi_device": "SPI-Gerät",
     "epaper_timeout": "Timeout (s)",
+    "epaper_pwr_note": "Herstellerseitige Power-Enable-Leitung - beim 2,13\"-HAT (G) nicht verdrahtet, stammt aus Waveshares gemeinsamem Treibercode für andere Displays. Wird trotzdem wie jeder andere Pin hier gegen das GPIO-Register geprüft.",
     "epaper_reinit": "Übernehmen & neu initialisieren",
     "epaper_settings_failed": "Display-Einstellungen konnten nicht aktualisiert werden",
     "epaper_action_queued": "Eingereiht - das Display wird in Kürze aktualisiert",

@@ -39,9 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 class RaspberryPi:
-    # Pin definition - standard Waveshare 40-pin HAT pinout (display is
-    # connected directly via the HAT connector, no jumper wires), so these
-    # are the unmodified vendor defaults.
+    # Pin definition
     RST_PIN  = 17
     DC_PIN   = 25
     CS_PIN   = 8
@@ -116,7 +114,20 @@ class RaspberryPi:
         return self.DEV_SPI.DEV_SPI_ReadData()
 
     def module_init(self, cleanup=False):
+        import gpiozero
+
         self.GPIO_PWR_PIN.on()
+        
+        self.GPIO_RST_PIN.on()
+        self.GPIO_DC_PIN.on()
+
+        self.GPIO_BUSY_PIN.close()
+        self.GPIO_BUSY_PIN    = gpiozero.LED(self.BUSY_PIN)
+        self.GPIO_BUSY_PIN.on()
+        self.delay_ms(20)
+        self.GPIO_BUSY_PIN.close()
+        self.GPIO_BUSY_PIN   = gpiozero.Button(self.BUSY_PIN, pull_up = False)
+        
         
         if cleanup:
             find_dirs = [

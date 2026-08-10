@@ -5,18 +5,23 @@ Not wired into the Flask app - run directly on the dev node over SSH:
 
     (venv) flint@meshcenter-test:~/meshcenter$ python3 tools/test_epaper.py
 
-Uses the temporary vendored driver in tools/_vendor/waveshare_epd/ (see
-LICENSE_NOTICE.md there). That location and this script are both temporary -
-Phase 2 replaces them with modules/display/drivers/waveshare_213g.py behind
-the DisplayDriver interface, with configurable pins instead of the hardcoded
-class attributes this test relies on.
+Uses the temporary vendored V2 driver (epd2in13g_v2, the one the manual's
+Python demo instructions actually run) in tools/_vendor/waveshare_epd/ (see
+LICENSE_NOTICE.md there - the epdconfig.py fix documented there, sourced
+from Waveshare's official product-page ZIP rather than GitHub's stale
+`master` branch, is what makes BUSY work at all). That location and this
+script are both temporary - Phase 2 replaces them with
+modules/display/drivers/waveshare_213g.py behind the DisplayDriver
+interface, with configurable pins instead of the hardcoded class attributes
+this test relies on.
 
 Scenario (plan section 48): init -> clear -> all 4 colors -> text -> BUSY
 wait via polling with a timeout watchdog -> measure/print durations -> sleep
 -> clean exit.
 
 Display is connected via the standard 40-pin HAT connector, so pins are the
-unmodified vendor defaults (RST=17, DC=25, CS=8, BUSY=24, PWR=18) - see
+unmodified vendor defaults (RST=17, DC=25, CS=8, BUSY=24, PWR=18), confirmed
+against the manual's own Raspberry Pi pin table - see
 _vendor/waveshare_epd/epdconfig.py / LICENSE_NOTICE.md.
 
 --no-busy: diagnostic-only mode for when BUSY (GPIO24) reads as electrically
@@ -118,10 +123,10 @@ def main():
     args = parse_args()
 
     try:
-        from waveshare_epd import epd2in13g
+        from waveshare_epd import epd2in13g_v2 as epd2in13g
     except Exception:
         log.exception(
-            "Failed to import the vendored epd2in13g driver - check that "
+            "Failed to import the vendored epd2in13g_v2 driver - check that "
             "tools/_vendor/waveshare_epd/ exists and that spidev/gpiozero "
             "are importable in this venv (pip list | grep -iE 'spidev|gpiozero')"
         )

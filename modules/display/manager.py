@@ -109,6 +109,10 @@ class DisplayManager:
     def capabilities(self):
         return self._driver.capabilities
 
+    @property
+    def display_name(self) -> str:
+        return self._driver.display_name
+
     def start(self) -> None:
         if self._worker is not None and self._worker.is_alive():
             return

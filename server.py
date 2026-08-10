@@ -39,6 +39,7 @@ from storage.device_manager import DeviceManager
 from api.api_node_tools import register_node_tools_routes
 from api.api_node_icons import register_node_icon_routes
 from api.api_weather import register_weather_routes
+from api.api_hardware_display import register_hardware_display_routes
 from weather.weather_manager import WeatherManager
 from weather.providers.openweather import OpenWeatherProvider, WeatherConfig as OpenWeatherConfig
 from weather.providers.weatherapi import WeatherApiProvider, WeatherApiConfig
@@ -314,6 +315,16 @@ register_camera_routes(app, camera, handle_errors)
 # /video_feed or anything else camera.py already owns.
 register_camera_manager_routes(app, device_manager, handle_errors)
 register_system_routes(app)
+
+# Constructing DisplayManager (and the driver it wraps) never touches
+# SPI/GPIO by itself - only display_manager.start(), called later from the
+# EPAPER_ENABLED-gated block below, does. Built unconditionally so
+# /api/hardware/display can report {"enabled": false} on installs without
+# a display, matching how camera_manager's routes work above even before
+# a rescan has ever run.
+from modules.display.service import build_display_manager
+display_manager = build_display_manager()
+register_hardware_display_routes(app, display_manager, EPAPER_ENABLED, handle_errors)
 
 # ===== STATIC FILES =====
 @app.route('/static/<path:filename>')
@@ -5629,9 +5640,11 @@ if __name__ == "__main__":
     threading.Thread(target=cpu_history_worker, daemon=True).start()
 
     if EPAPER_ENABLED:
-        from modules.display.service import build_display_manager, epaper_worker
+        from modules.display.service import epaper_worker
 
-        display_manager = build_display_manager()
+        # display_manager itself was already constructed at module load
+        # time (see register_hardware_display_routes above) - only
+        # start() actually touches SPI/GPIO.
         display_manager.start()
         threading.Thread(
             target=epaper_worker,

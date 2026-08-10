@@ -304,7 +304,13 @@
     "make_active": "Aktivieren",
     "camera_id": "ID",
     "switch_camera_failed": "Kamera konnte nicht gewechselt werden: {reason}",
-    "camera_switched": "Zu {name} gewechselt"
+    "camera_switched": "Zu {name} gewechselt",
+    "display_online": "Online",
+    "display_offline": "Offline",
+    "display_refreshes": "Aktualisierungen",
+    "display_errors": "Fehler",
+    "display_last_refresh": "Letzte Aktualisierung",
+    "display_avg_duration": "Ø Dauer"
   },
   "node_manager": {
     "title": "Knoten-Manager",

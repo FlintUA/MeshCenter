@@ -304,7 +304,13 @@
     "make_active": "Make active",
     "camera_id": "ID",
     "switch_camera_failed": "Failed to switch camera: {reason}",
-    "camera_switched": "Switched to {name}"
+    "camera_switched": "Switched to {name}",
+    "display_online": "Online",
+    "display_offline": "Offline",
+    "display_refreshes": "Refreshes",
+    "display_errors": "Errors",
+    "display_last_refresh": "Last refresh",
+    "display_avg_duration": "Avg. duration"
   },
   "node_manager": {
     "title": "Node Manager",

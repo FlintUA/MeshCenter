@@ -304,7 +304,13 @@
     "make_active": "Зробити активною",
     "camera_id": "ID",
     "switch_camera_failed": "Не вдалося перемкнути камеру: {reason}",
-    "camera_switched": "Перемкнено на {name}"
+    "camera_switched": "Перемкнено на {name}",
+    "display_online": "Онлайн",
+    "display_offline": "Офлайн",
+    "display_refreshes": "Оновлення",
+    "display_errors": "Помилки",
+    "display_last_refresh": "Останнє оновлення",
+    "display_avg_duration": "Середня тривалість"
   },
   "node_manager": {
     "title": "Менеджер вузлів",

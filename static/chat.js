@@ -11295,6 +11295,47 @@ function formatPeripheralMetric(value, unit = '') {
     return `${escapeHtml(text)}${unit}`;
 }
 
+function renderDisplayCard(hardwareDisplayData, profileId) {
+    // Read-only for now (e-Paper Stage 1 plan Phase 6) - no enable/disable
+    // or settings here yet, that's Phase 7. Nothing rendered at all when
+    // the feature isn't enabled server-side (EPAPER_ENABLED in config.py),
+    // matching how this card simply doesn't exist on installs without the
+    // hardware, rather than showing a permanently "disabled" placeholder.
+    if (!hardwareDisplayData || !hardwareDisplayData.enabled) return '';
+
+    const eyebrow = escapeHtml(window.I18N.t('devices.active_profile', { id: deviceDashboardValue(profileId) }));
+    const isOnline = hardwareDisplayData.status === 'online';
+    const statusClass = isOnline ? 'device-status-ok' : 'device-status-warning';
+    const statusLabel = isOnline
+        ? window.I18N.t('devices.display_online')
+        : window.I18N.t('devices.display_offline');
+    const lastRefresh = hardwareDisplayData.last_successful_refresh
+        ? new Date(hardwareDisplayData.last_successful_refresh * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : '—';
+    const avgDuration = typeof hardwareDisplayData.average_duration === 'number'
+        ? `${hardwareDisplayData.average_duration.toFixed(1)}s`
+        : '—';
+
+    return `
+        <section class="peripheral-card">
+            <div class="peripheral-card-header">
+                <div>
+                    <div class="device-card-eyebrow">${eyebrow}</div>
+                    <h3>${deviceDashboardValue(hardwareDisplayData.model)}</h3>
+                </div>
+                <div class="device-status-pill ${statusClass}">
+                    <span class="device-status-dot"></span>${statusLabel}
+                </div>
+            </div>
+            <dl class="device-detail-list">
+                <div><dt>${escapeHtml(window.I18N.t('devices.display_refreshes'))}</dt><dd>${deviceDashboardValue(hardwareDisplayData.refresh_count)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.display_errors'))}</dt><dd>${deviceDashboardValue(hardwareDisplayData.error_count)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.display_avg_duration'))}</dt><dd>${avgDuration}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.display_last_refresh'))}</dt><dd>${lastRefresh}</dd></div>
+            </dl>
+        </section>`;
+}
+
 function renderCameraManagerCards(cameraManagerData, profileId) {
     const eyebrow = escapeHtml(window.I18N.t('devices.active_profile', { id: deviceDashboardValue(profileId) }));
 
@@ -11461,15 +11502,19 @@ async function loadPeripheralDevices(showFeedback = false) {
     }
 
     try {
-        const [response, cameraManagerResponse] = await Promise.all([
+        const [response, cameraManagerResponse, hardwareDisplayResponse] = await Promise.all([
             fetch('/api/devices', { cache: 'no-store' }),
             fetch('/api/devices/cameras', { cache: 'no-store' }).catch(() => null),
+            fetch('/api/hardware/display', { cache: 'no-store' }).catch(() => null),
         ]);
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || window.I18N.t('devices.unable_to_load'));
         const devices = Array.isArray(data.devices) ? data.devices : [];
         const cameraManagerData = cameraManagerResponse && cameraManagerResponse.ok
             ? await cameraManagerResponse.json().catch(() => null)
+            : null;
+        const hardwareDisplayData = hardwareDisplayResponse && hardwareDisplayResponse.ok
+            ? await hardwareDisplayResponse.json().catch(() => null)
             : null;
 
         // The new camera-driver framework (camera_manager.py) replaces the
@@ -11514,10 +11559,11 @@ async function loadPeripheralDevices(showFeedback = false) {
         }).join('');
 
         const cameraCards = renderCameraManagerCards(cameraManagerData, data.profile_id);
+        const displayCard = renderDisplayCard(hardwareDisplayData, data.profile_id);
 
         container.dataset.loaded = '1';
         container.innerHTML = `
-            <div class="peripheral-grid">${cameraCards}${cards}</div>
+            <div class="peripheral-grid">${cameraCards}${displayCard}${cards}</div>
             <section class="peripheral-card peripheral-add-card" aria-disabled="true">
                 <div class="peripheral-add-icon">＋</div>
                 <h3>${escapeHtml(window.I18N.t('devices.add_device'))}</h3>

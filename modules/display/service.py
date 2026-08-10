@@ -35,6 +35,24 @@ logger = logging.getLogger("epaper_service")
 
 POLL_INTERVAL_SECONDS = 5.0
 
+# Plan section 20: don't refresh the screen just because of trivial
+# telemetry churn (a couple of CPU/RAM percentage points). This has to
+# bucket the *value that actually gets rendered*, not just gate the
+# "last update" timestamp - DisplayManager.mark_dirty() is called every
+# poll regardless, and its own image-hash dedup (manager.py's _refresh())
+# only skips a physical refresh when the rendered image is byte-identical
+# to the last one. Rounding to raw-percent precision would still change
+# the image (and trigger a real ~20s refresh) on every 0.1% fluctuation;
+# bucketing to a coarser step means the image - and therefore its hash -
+# stays identical across insignificant drift.
+_SIGNIFICANCE_BUCKET = 5
+
+
+def _bucket(value: float | None, step: int = _SIGNIFICANCE_BUCKET) -> float | None:
+    if value is None:
+        return None
+    return round(value / step) * step
+
 
 def build_display_manager() -> DisplayManager:
     driver = Waveshare213gDriver(gpio_registry=GpioRegistry())
@@ -112,8 +130,8 @@ def _poll_once(
         radio_status = "offline"
 
     meshcenter_status = "online" if get_listener_alive() else "critical"
-    cpu_percent = get_cpu_percent()
-    ram_percent = get_ram_percent()
+    cpu_percent = _bucket(get_cpu_percent())
+    ram_percent = _bucket(get_ram_percent())
 
     content_key = "|".join(str(v) for v in (
         meshcenter_status, radio_status, local_node_name, node_count,

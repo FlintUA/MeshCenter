@@ -247,7 +247,7 @@ class DisplayManager:
 
     def _render_with_retries(self, image: Any) -> bool:
         for attempt in range(MAX_CONSECUTIVE_RETRIES + 1):
-            if not self._ensure_started():
+            if not self._ensure_started(attempt):
                 continue
             completed, error = _run_with_timeout(
                 lambda: self._driver.render(image), self._refresh_timeout
@@ -274,9 +274,42 @@ class DisplayManager:
                 )
         return False
 
-    def _ensure_started(self) -> bool:
+    def _ensure_started(self, attempt: int) -> bool:
+        """Like render(), start() ultimately runs the vendor driver's
+        init()/ReadBusy() and can hang exactly the same way a stuck BUSY
+        line would hang a refresh - confirmed live: an unprotected
+        synchronous self._driver.start() call here left the worker thread
+        blocked indefinitely with status stuck at INITIALIZING and no
+        error ever logged, since the call simply never returned. Routing
+        it through the same _run_with_timeout watchdog as render() means a
+        hung start() is treated as a failed attempt (subject to the same
+        MAX_CONSECUTIVE_RETRIES + cooldown) instead of freezing the entire
+        manager forever."""
         status = self._driver.get_status()
         if status.get("started"):
             return True
         self._status = DisplayStatus.INITIALIZING
-        return self._driver.start()
+
+        def _start_or_raise():
+            # _run_with_timeout only detects failure via a raised
+            # exception, but driver.start() reports failure by returning
+            # False (see Waveshare213gDriver.start()) - convert that into
+            # a raise so a plain "start() returned False" doesn't look
+            # like success to the watchdog.
+            if not self._driver.start():
+                raise RuntimeError(self._driver.get_status().get("error") or "start() returned False")
+
+        completed, error = _run_with_timeout(_start_or_raise, self._refresh_timeout)
+        if not completed:
+            logger.error(
+                "Display start() timed out after %.0fs (attempt %d/%d)",
+                self._refresh_timeout, attempt + 1, MAX_CONSECUTIVE_RETRIES + 1,
+            )
+            return False
+        if error is not None:
+            logger.error(
+                "Display start() raised %r (attempt %d/%d)",
+                error, attempt + 1, MAX_CONSECUTIVE_RETRIES + 1,
+            )
+            return False
+        return True

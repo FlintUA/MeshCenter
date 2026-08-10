@@ -35,6 +35,10 @@ ERROR_COOLDOWN_SECONDS = 60.0
 _WORKER_POLL_SECONDS = 1.0
 
 
+def _hash_image(image: Any) -> str:
+    return hashlib.sha256(image.tobytes()).hexdigest()
+
+
 def _run_with_timeout(fn, timeout: float) -> tuple[bool, Exception | None]:
     """Run fn() on a daemon thread, wait up to `timeout` seconds.
 
@@ -179,8 +183,19 @@ class DisplayManager:
     def _debounce(self, image: Any, priority: EventPriority) -> tuple[Any, EventPriority]:
         """Wait out the configured debounce window, merging in any newer
         frame that arrives during the wait (plan sections 66-69) and
-        letting a CRITICAL event short-circuit the remaining wait."""
+        letting a CRITICAL event short-circuit the remaining wait.
+
+        Only a frame whose *content* actually differs from the one
+        currently being waited on extends the deadline. A caller that
+        polls faster than the debounce window and calls mark_dirty() on
+        every poll regardless of whether anything changed (e.g.
+        modules/display/service.py's epaper_worker) would otherwise reset
+        the deadline on every single poll and the debounce window would
+        never elapse - confirmed live: with a 5s poll against a 30s
+        debounce, refresh_count stayed at 0 indefinitely before this fix.
+        """
         deadline = time.monotonic() + self._debounce_seconds
+        current_hash = _hash_image(image)
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -190,10 +205,14 @@ class DisplayManager:
             if self._wake.wait(timeout=remaining):
                 self._wake.clear()
                 newer_image, newer_priority = self._take_pending()
-                if newer_image is not None:
-                    image, priority = newer_image, newer_priority
-                    if priority == EventPriority.CRITICAL:
-                        return image, priority
+                if newer_image is None:
+                    continue
+                if newer_priority == EventPriority.CRITICAL:
+                    return newer_image, newer_priority
+                newer_hash = _hash_image(newer_image)
+                image, priority = newer_image, newer_priority
+                if newer_hash != current_hash:
+                    current_hash = newer_hash
                     deadline = time.monotonic() + self._debounce_seconds
 
     def _refresh(self, image: Any) -> None:
@@ -201,7 +220,7 @@ class DisplayManager:
             logger.debug("Skipping refresh - still in post-error cooldown")
             return
 
-        image_hash = hashlib.sha256(image.tobytes()).hexdigest()
+        image_hash = _hash_image(image)
         if image_hash == self._last_hash:
             logger.debug("Frame unchanged since last refresh, skipping physical refresh")
             return

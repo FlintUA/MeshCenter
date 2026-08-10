@@ -178,13 +178,107 @@ def part2_simulated_timeout() -> bool:
     return True
 
 
+class _FakeInstantDriver:
+    """DisplayDriver stand-in whose render()/clear() succeed instantly -
+    isolates the debounce *timing* invariant from real ~20s hardware
+    refreshes."""
+
+    id = "fake_instant"
+    display_name = "Fake instant display"
+    device_type = "display"
+
+    def __init__(self):
+        self._started = False
+
+    def detect(self) -> dict[str, Any] | None:
+        return {"model": self.display_name}
+
+    def start(self, **options: Any) -> bool:
+        self._started = True
+        return True
+
+    def stop(self) -> None:
+        self._started = False
+
+    def get_status(self) -> dict[str, Any]:
+        return {"ok": True, "started": self._started, "model": self.display_name}
+
+    def render(self, image: Any, fast: bool = False) -> None:
+        pass
+
+    def clear(self) -> None:
+        pass
+
+    def sleep(self) -> None:
+        pass
+
+
+def part3_debounce_survives_drifting_content() -> bool:
+    """Regression test for a real bug found in Phase 5: a caller that
+    polls faster than the debounce window and calls mark_dirty() on every
+    poll - with content that keeps changing (simulating live telemetry
+    like CPU% or "seconds since last RX" drifting almost every tick) -
+    must still see the debounce window elapse and a refresh actually
+    happen, not stall forever because the deadline kept getting reset."""
+    from modules.display.manager import DisplayManager
+    from modules.display.models import DisplayStatus
+
+    log.info("=== Part 3: debounce survives continuously-drifting content ===")
+
+    class _DriftingImage:
+        def __init__(self, n):
+            self._n = n
+
+        def tobytes(self):
+            return f"frame-{self._n}".encode()  # different every call, like real drifting telemetry
+
+    driver = _FakeInstantDriver()
+    debounce_seconds = 2.0
+    manager = DisplayManager(driver, debounce_seconds=debounce_seconds)
+    manager.start()
+
+    poll_interval = 0.3
+    n = 0
+    t0 = time.monotonic()
+    # Keep poking with different content faster than the debounce window,
+    # for a bit longer than the window itself.
+    while time.monotonic() - t0 < debounce_seconds + 1.0:
+        manager.mark_dirty(_DriftingImage(n))
+        n += 1
+        time.sleep(poll_interval)
+
+    # Give the worker a little slack beyond the debounce window to finish.
+    deadline = time.monotonic() + debounce_seconds + 3.0
+    reached_online = False
+    while time.monotonic() < deadline:
+        if manager.status == DisplayStatus.ONLINE:
+            reached_online = True
+            break
+        time.sleep(0.1)
+
+    refresh_count = manager.stats.refresh_count
+    manager.stop()
+
+    if not reached_online or refresh_count < 1:
+        log.error(
+            "FAIL: debounce window never elapsed under continuous drifting "
+            "content (status reached ONLINE=%s, refresh_count=%d)",
+            reached_online, refresh_count,
+        )
+        return False
+
+    log.info("PASS: refresh happened (refresh_count=%d) despite continuous drifting content", refresh_count)
+    return True
+
+
 def main() -> int:
     ok1 = part1_real_hardware()
     ok2 = part2_simulated_timeout()
-    if ok1 and ok2:
+    ok3 = part3_debounce_survives_drifting_content()
+    if ok1 and ok2 and ok3:
         log.info("ALL PASS")
         return 0
-    log.error("FAILED: part1=%s part2=%s", ok1, ok2)
+    log.error("FAILED: part1=%s part2=%s part3=%s", ok1, ok2, ok3)
     return 1
 
 

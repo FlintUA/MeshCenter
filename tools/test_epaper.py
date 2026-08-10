@@ -15,10 +15,9 @@ Scenario (plan section 48): init -> clear -> all 4 colors -> text -> BUSY
 wait via polling with a timeout watchdog -> measure/print durations -> sleep
 -> clean exit.
 
-If this hangs or fails on first run, the most likely culprit per the plan is
-DC_PIN (currently hardcoded to GPIO23 in _vendor/waveshare_epd/epdconfig.py,
-overriding the vendor default of 25) - the other pins (RST=17, CS=8, BUSY=24,
-PWR=18) are still unverified vendor defaults.
+Display is connected via the standard 40-pin HAT connector, so pins are the
+unmodified vendor defaults (RST=17, DC=25, CS=8, BUSY=24, PWR=18) - see
+_vendor/waveshare_epd/epdconfig.py / LICENSE_NOTICE.md.
 """
 
 from __future__ import annotations

@@ -17,11 +17,12 @@ HAT (black/white/yellow/red).
 
 ## Modifications from upstream
 
-- `epdconfig.py`: `RaspberryPi.DC_PIN` changed from the vendor default `25` to
-  `23`, matching this project's confirmed physical wiring on the dev node
-  (`192.168.2.104`) per the e-Paper Stage 1 plan's reference pinout. All other
-  pins (`RST=17`, `CS=8`, `BUSY=24`, `PWR=18`) are left at vendor defaults,
-  pending physical confirmation — see `tools/test_epaper.py`'s docstring.
+- None. The display on the dev node (`192.168.2.104`) is connected directly
+  via the 40-pin HAT connector (confirmed 2026-08-10), so the vendor's
+  standard `RaspberryPi` pin defaults (`RST=17`, `DC=25`, `CS=8`, `BUSY=24`,
+  `PWR=18`) apply unmodified. An earlier revision of this file overrode
+  `DC_PIN` to `23` based on a custom-wiring reference pinout in the e-Paper
+  Stage 1 plan; that assumption no longer applies once wired via the HAT.
 - This location (`tools/_vendor/`) is temporary, Phase 1 (standalone hardware
   test) only. Phase 2 moves/wraps this behind `modules/display/drivers/` and
   makes pins configurable instead of hardcoded class attributes.

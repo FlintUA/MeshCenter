@@ -39,12 +39,11 @@ logger = logging.getLogger(__name__)
 
 
 class RaspberryPi:
-    # Pin definition
-    # DC_PIN overridden from vendor default (25) to 23 to match this
-    # project's confirmed dev-node wiring (see LICENSE_NOTICE.md). Other
-    # pins are still vendor defaults, pending physical confirmation.
+    # Pin definition - standard Waveshare 40-pin HAT pinout (display is
+    # connected directly via the HAT connector, no jumper wires), so these
+    # are the unmodified vendor defaults.
     RST_PIN  = 17
-    DC_PIN   = 23
+    DC_PIN   = 25
     CS_PIN   = 8
     BUSY_PIN = 24
     PWR_PIN  = 18

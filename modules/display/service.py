@@ -30,12 +30,22 @@ from modules.display.config_store import DEFAULT_EPAPER_CONFIG
 from modules.display.drivers.waveshare_213g import Waveshare213gDriver
 from modules.display.gpio_registry import GpioRegistry
 from modules.display.manager import DisplayManager
-from modules.display.models import RefreshMode
+from modules.display.models import EventPriority, RefreshMode
+from modules.display.pages import alert as alert_page
 from modules.display.pages.status import StatusScreenData, render
 
 logger = logging.getLogger("epaper_service")
 
 POLL_INTERVAL_SECONDS = 5.0
+
+# Plan section 68: radio offline / critically low power bypass debounce
+# entirely via the Alert Screen. "Internal fault" and "hardware display
+# error" from that section's list aren't wired here - the former has no
+# single well-defined signal in server.py yet, and alerting *on the
+# display* about the display itself being broken doesn't make sense
+# (DisplayManager.status == ERROR already means the display can't
+# reliably show anything anyway - see the Hardware card instead).
+CRITICAL_LOW_BATTERY_PERCENT = 10
 
 # Plan section 20: don't refresh the screen just because of trivial
 # telemetry churn (a couple of CPU/RAM percentage points). This has to
@@ -110,6 +120,7 @@ def epaper_worker(
     get_listener_alive: Callable[[], bool],
     local_node_name: str,
     get_enabled: Callable[[], bool] = lambda: True,
+    get_battery_percent: Callable[[], float | None] = lambda: None,
     stop_event: threading.Event | None = None,
 ) -> None:
     stop_event = stop_event or threading.Event()
@@ -121,6 +132,7 @@ def epaper_worker(
                 _poll_once(
                     manager, state_lock, nodes, get_radio_status, get_cpu_percent,
                     get_ram_percent, get_listener_alive, local_node_name, content_state,
+                    get_battery_percent,
                 )
         except Exception:
             logger.exception("epaper_worker: poll failed")
@@ -175,11 +187,33 @@ def _build_status_fields(
 def _poll_once(
     manager, state_lock, nodes, get_radio_status, get_cpu_percent,
     get_ram_percent, get_listener_alive, local_node_name, content_state,
+    get_battery_percent=lambda: None,
 ) -> None:
     data, content_key = _build_status_fields(
         state_lock, nodes, get_radio_status, get_cpu_percent, get_ram_percent,
         get_listener_alive, local_node_name,
     )
+
+    battery_percent = get_battery_percent()
+    critical_title = None
+    if data.radio_status == "offline":
+        critical_title = "RADIO OFFLINE"
+    elif battery_percent is not None and battery_percent <= CRITICAL_LOW_BATTERY_PERCENT:
+        critical_title = f"LOW BATTERY ({battery_percent:.0f}%)"
+
+    if critical_title:
+        # Bypasses debounce entirely (plan section 68) - deliberately
+        # doesn't touch content_state/_last content hash bookkeeping,
+        # since recovery is meant to fall back to the normal Status Screen
+        # at the next allowed (debounced) refresh, not stay pinned to
+        # whatever content hash the alert interrupted.
+        image = alert_page.render(
+            manager.capabilities,
+            alert_page.AlertScreenData(title=critical_title, detail=local_node_name),
+        )
+        manager.mark_dirty(image, priority=EventPriority.CRITICAL)
+        return
+
     data.last_update = content_state.stamp(content_key)
     image = render(manager.capabilities, data)
     manager.mark_dirty(image)

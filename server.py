@@ -353,6 +353,9 @@ def _epaper_get_listener_alive():
 def _epaper_get_enabled():
     return epaper_config.get("enabled", True)
 
+def _epaper_get_battery_percent():
+    return sensor_data.get("battery_percent")
+
 def _epaper_build_status_image_now():
     return build_status_image_now(
         display_manager, state_lock, nodes,
@@ -5704,6 +5707,7 @@ if __name__ == "__main__":
                 get_listener_alive=_epaper_get_listener_alive,
                 local_node_name=LOCAL_NODE_NAME,
                 get_enabled=_epaper_get_enabled,
+                get_battery_percent=_epaper_get_battery_percent,
             ),
             daemon=True,
         ).start()

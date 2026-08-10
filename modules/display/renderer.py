@@ -54,17 +54,22 @@ def draw_text(image: Image.Image, xy: tuple[int, int], text: str, fill: str, fon
     """Draw text with hard (non-antialiased) glyph edges, then flat-fill
     with `fill`.
 
-    Plain ImageDraw.text() antialiases glyph edges to intermediate gray
-    levels. Against this panel's fixed 4-color palette (see the vendor
-    driver's getbuffer() quantization), those gray edge pixels round to
-    white or black essentially at random instead of forming clean strokes -
-    confirmed live: small/Cyrillic text came out visibly speckled/dropped-
-    out on the real panel versus a crisp bitmap-font (no-AA) renderer.
-    Thresholding a 1-bit mask before compositing removes the gray levels
-    entirely, matching what a non-antialiased embedded renderer would
-    produce."""
-    mask = Image.new("L", image.size, 0)
-    ImageDraw.Draw(mask).text(xy, text, fill=255, font=font)
-    mask = mask.point(lambda p: 255 if p > 128 else 0)
+    Plain ImageDraw.text() on an "L"/"RGB" image antialiases glyph edges to
+    intermediate gray levels. Against this panel's fixed 4-color palette
+    (see the vendor driver's getbuffer() quantization), those gray edge
+    pixels round to white/black essentially at random instead of forming
+    clean strokes.
+
+    Thresholding that antialiased render at 50% (an earlier version of this
+    function) was a partial fix but still visibly rough on the real
+    panel: hairline strokes that only partially cover a pixel fall under
+    the threshold and vanish, so thin letterforms still show gaps.
+    Drawing directly onto a mode="1" mask instead makes FreeType use its
+    own monochrome hinting path (FT_LOAD_TARGET_MONO) - grid-fitted for a
+    1-bit target rather than naive-thresholded from a grayscale render -
+    which is much closer to what a non-antialiased embedded/bitmap-font
+    renderer (e.g. this panel's previous ESP32 firmware) produces."""
+    mask = Image.new("1", image.size, 0)
+    ImageDraw.Draw(mask).text(xy, text, fill=1, font=font)
     solid = Image.new("RGB", image.size, fill)
     image.paste(solid, (0, 0), mask)

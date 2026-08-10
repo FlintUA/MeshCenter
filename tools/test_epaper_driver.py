@@ -15,6 +15,12 @@ from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
+
+# Repo root, so `modules.display...` resolves regardless of cwd - matches
+# how server.py itself is normally run from the repo root, but this script
+# is invoked directly (python3 tools/test_epaper_driver.py).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("test_epaper_driver")

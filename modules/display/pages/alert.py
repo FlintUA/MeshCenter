@@ -23,7 +23,10 @@ from modules.display.renderer import draw_text, has_color, load_font, new_canvas
 @dataclass
 class AlertScreenData:
     title: str  # e.g. "RADIO OFFLINE"
-    detail: str = ""
+    reason: str = ""  # e.g. "Connection lost"
+    node_name: str = ""
+    device_path: str = ""  # e.g. "/dev/ttyACM0"
+    last_seen: str = ""  # already-formatted, e.g. "15:42"
 
 
 def render(caps: DisplayCapabilities, data: AlertScreenData):
@@ -32,11 +35,25 @@ def render(caps: DisplayCapabilities, data: AlertScreenData):
     background = "red" if has_color(caps) else "black"
     draw.rectangle([0, 0, w, h], fill=background)
 
-    title_font = load_font(20, bold=True)
-    detail_font = load_font(12)
+    title_font = load_font(18, bold=True)
+    label_font = load_font(11)
 
-    draw_text(image, (8, h // 2 - 24), data.title, "white", title_font)
-    if data.detail:
-        draw_text(image, (8, h // 2 + 8), data.detail, "white", detail_font)
+    y = 6
+    draw_text(image, (8, y), data.title, "white", title_font)
+    y += 24
+
+    lines = []
+    if data.reason:
+        lines.append(data.reason)
+    if data.node_name:
+        lines.append(data.node_name)
+    if data.device_path:
+        lines.append(f"Device: {data.device_path}")
+    if data.last_seen:
+        lines.append(f"Last seen: {data.last_seen}")
+
+    for line in lines:
+        draw_text(image, (8, y), line, "white", label_font)
+        y += 16
 
     return image

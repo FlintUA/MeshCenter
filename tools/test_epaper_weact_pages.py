@@ -53,7 +53,8 @@ def main() -> int:
             node_count=5, last_rx="12:34", cpu_percent=10, ram_percent=40, last_update="12:37",
         ))),
         ("Alert Screen (full inverted background expected)", alert_page.render(driver.capabilities, alert_page.AlertScreenData(
-            title="RADIO OFFLINE", detail="Test Node",
+            title="RADIO OFFLINE", reason="Connection lost", node_name="Test Node",
+            device_path="/dev/ttyACM0", last_seen="12:34",
         ))),
     ]
 

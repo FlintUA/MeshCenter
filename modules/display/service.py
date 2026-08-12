@@ -270,10 +270,13 @@ def _poll_once(
 
     battery_percent = get_battery_percent()
     critical_title = None
+    critical_reason = ""
     if data.radio_status == "offline":
         critical_title = "RADIO OFFLINE"
+        critical_reason = "Connection lost"
     elif battery_percent is not None and battery_percent <= CRITICAL_LOW_BATTERY_PERCENT:
         critical_title = f"LOW BATTERY ({battery_percent:.0f}%)"
+        critical_reason = "Critically low power"
 
     if critical_title:
         # Bypasses debounce entirely (plan section 68), and overrides
@@ -282,9 +285,21 @@ def _poll_once(
         # meant to fall back to the normal Status Screen at the next
         # allowed (debounced) refresh, not stay pinned to whatever content
         # hash the alert interrupted.
+        #
+        # device_path/last_seen reuse data already gathered above/nearby
+        # (radio_info's serial_port, the same last_rx the Status Screen
+        # would have shown) rather than collecting anything new - same
+        # "already-collected state only" invariant as section 40.
+        radio_info = get_radio_status() or {}
         image = alert_page.render(
             manager.capabilities,
-            alert_page.AlertScreenData(title=critical_title, detail=local_node_name),
+            alert_page.AlertScreenData(
+                title=critical_title,
+                reason=critical_reason,
+                node_name=local_node_name,
+                device_path=radio_info.get("serial_port", ""),
+                last_seen=data.last_rx,
+            ),
         )
         manager.mark_dirty(image, priority=EventPriority.CRITICAL)
         return

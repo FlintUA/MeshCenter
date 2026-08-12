@@ -15,16 +15,37 @@ and auto-instantiates that class at import time - there's no clean
 injection point for pins/SPI bus in the vendor code, so
 _configure_vendor_pins() below reconfigures the already-constructed
 instance in place instead.
+
+_VENDOR_LOCK below is a second, independent layer of protection against
+concurrent access to that same shared instance - not a duplicate of
+DisplayManager.swap_driver_and_start()'s worker-pause mechanism (see
+manager.py). That mechanism coordinates *when a new cycle is allowed to
+start* at the DisplayManager level, proactively avoiding contention in the
+common case. This lock protects the actual shared vendor resource at the
+driver level, and exists specifically for the case that mechanism can't
+cover: DisplayManager._worker_idle is set as soon as a refresh cycle
+*returns* (see manager.py's _run()), even if that cycle's own
+_run_with_timeout()-wrapped call abandoned a still-running background
+thread (Python can't force-cancel a thread) - so a worker cycle that times
+out on its own can leave an orphaned thread still touching
+epdconfig.implementation while DisplayManager believes it's idle and lets
+something else proceed. This lock is what actually prevents that
+collision, regardless of what DisplayManager's bookkeeping believes.
 """
 
 from __future__ import annotations
 
+import logging
 import sys
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from modules.display.drivers.base import DisplayCapabilities, DisplayDriver
 from modules.display.gpio_registry import GpioRegistry
+
+logger = logging.getLogger("waveshare_213g")
 
 _VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
 if str(_VENDOR_DIR) not in sys.path:
@@ -43,6 +64,53 @@ _CAPABILITIES = DisplayCapabilities(
 # pin-correspondence table.
 DEFAULT_PINS: dict[str, int] = {"rst": 17, "dc": 25, "cs": 8, "busy": 24, "pwr": 18}
 DEFAULT_SPI: dict[str, int] = {"bus": 0, "device": 0}
+
+# Module-level, not per-instance - epdconfig.implementation (the thing this
+# guards) is itself module-level shared state, so a per-instance lock would
+# still let two different Waveshare213gDriver instances (e.g. old + new
+# during a model-switch reinit) race on it.
+_VENDOR_LOCK = threading.Lock()
+
+# Bounded, not indefinite: an unconditional acquire() would just turn a
+# contended attempt into a second orphaned thread once ITS OWN outer
+# watchdog (DisplayManager's _run_with_timeout, default 75s) gives up
+# waiting on it - stacking up abandoned threads across retries instead of
+# fixing anything. A bounded wait fails fast and honestly instead. Set
+# somewhat above DisplayManager's default 75s refresh_timeout so a
+# genuinely still-running (not stuck) previous operation has a realistic
+# chance to finish and release the lock on its own.
+_VENDOR_LOCK_TIMEOUT = 90.0
+
+
+class VendorSessionLocked(Exception):
+    """Raised when _VENDOR_LOCK can't be acquired within
+    _VENDOR_LOCK_TIMEOUT - deliberately its own exception type (not a bare
+    RuntimeError) so it's unambiguous in logs and _last_error. This
+    project's e-paper work has already produced two other distinct
+    Waveshare failure signatures in the wild (a floating-BUSY hang before
+    the vendor init fix, and GPIODeviceClosed from the very module-level
+    corruption this lock now prevents) - conflating a third one (lock
+    contention) into a generic message would cost whoever debugs the next
+    incident the same untangling work all over again."""
+
+
+@contextmanager
+def _vendor_session():
+    """Hold _VENDOR_LOCK for the duration of any block that touches
+    epdconfig.implementation (directly or via a vendor EPD object bound to
+    it) - see the module docstring for why this exists alongside
+    DisplayManager's own worker-pause coordination, not instead of it."""
+    acquired = _VENDOR_LOCK.acquire(timeout=_VENDOR_LOCK_TIMEOUT)
+    if not acquired:
+        raise VendorSessionLocked(
+            f"vendor session lock: still held by a previous operation after "
+            f"{_VENDOR_LOCK_TIMEOUT:.0f}s wait - this is lock contention, "
+            f"NOT a hardware BUSY timeout"
+        )
+    try:
+        yield
+    finally:
+        _VENDOR_LOCK.release()
 
 
 class Waveshare213gDriver(DisplayDriver):
@@ -81,16 +149,17 @@ class Waveshare213gDriver(DisplayDriver):
         if self._gpio_registry is not None:
             self._gpio_registry.claim(self._pins, owner=self.id)
         try:
-            epdconfig, epd2in13g_v2 = self._configure_vendor_pins()
-            epd = epd2in13g_v2.EPD()
-            if epd.init() != 0:
-                self._last_error = "vendor EPD.init() returned non-zero"
-                return False
-            self._epdconfig = epdconfig
-            self._epd = epd
-            self._started = True
-            self._last_error = None
-            return True
+            with _vendor_session():
+                epdconfig, epd2in13g_v2 = self._configure_vendor_pins()
+                epd = epd2in13g_v2.EPD()
+                if epd.init() != 0:
+                    self._last_error = "vendor EPD.init() returned non-zero"
+                    return False
+                self._epdconfig = epdconfig
+                self._epd = epd
+                self._started = True
+                self._last_error = None
+                return True
         except Exception as exc:
             self._last_error = str(exc)
             return False
@@ -105,7 +174,14 @@ class Waveshare213gDriver(DisplayDriver):
         of this method) skipped that release entirely, leaking the claim
         until process restart - this matters in practice for
         DisplayManager.swap_driver_and_start()'s reinit-failure rollback path,
-        which calls stop() on exactly such a driver."""
+        which calls stop() on exactly such a driver.
+
+        Never raises - callers include a path (DisplayManager.
+        _render_with_retries()'s render-timeout branch) that calls stop()
+        without a try/except of its own; an uncaught exception there would
+        silently kill the whole worker thread. That's a real risk now that
+        _vendor_session() can raise VendorSessionLocked here too, not just
+        a pre-existing theoretical concern."""
         try:
             if self._started and self._epdconfig is not None:
                 # cleanup=True is required here - the vendor's default
@@ -114,7 +190,10 @@ class Waveshare213gDriver(DisplayDriver):
                 # pin-factory level (lgpio), so a plain module_exit() call
                 # looked like a clean stop but never actually released the
                 # physical GPIO lines - see tools/test_gpio_cleanup.py.
-                self._epdconfig.module_exit(cleanup=True)
+                with _vendor_session():
+                    self._epdconfig.module_exit(cleanup=True)
+        except Exception:
+            logger.exception("[EPAPER] %s.stop(): module_exit failed", self.id)
         finally:
             self._epd = None
             self._epdconfig = None
@@ -124,16 +203,19 @@ class Waveshare213gDriver(DisplayDriver):
 
     def render(self, image: Any, fast: bool = False) -> None:
         self._require_started()
-        buf = self._epd.getbuffer(image)
-        self._epd.display(buf)
+        with _vendor_session():
+            buf = self._epd.getbuffer(image)
+            self._epd.display(buf)
 
     def clear(self) -> None:
         self._require_started()
-        self._epd.Clear()
+        with _vendor_session():
+            self._epd.Clear()
 
     def sleep(self) -> None:
         self._require_started()
-        self._epd.sleep()  # vendor sleep() also calls module_exit() internally
+        with _vendor_session():
+            self._epd.sleep()  # vendor sleep() also calls module_exit() internally
         self._started = False
 
     def get_status(self) -> dict[str, Any]:

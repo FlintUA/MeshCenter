@@ -586,6 +586,7 @@
     "epaper_show_power": "Живлення",
     "epaper_show_system": "Система",
     "epaper_show_message": "Повідомлення",
+    "epaper_model": "Модель дисплея",
     "epaper_reinit": "Застосувати й переініціалізувати",
     "epaper_settings_failed": "Не вдалося оновити налаштування дисплея",
     "epaper_action_queued": "У черзі - дисплей оновиться найближчим часом",

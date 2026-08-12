@@ -586,6 +586,7 @@
     "epaper_show_power": "Strom",
     "epaper_show_system": "System",
     "epaper_show_message": "Nachricht",
+    "epaper_model": "Display-Modell",
     "epaper_reinit": "Übernehmen & neu initialisieren",
     "epaper_settings_failed": "Display-Einstellungen konnten nicht aktualisiert werden",
     "epaper_action_queued": "Eingereiht - das Display wird in Kürze aktualisiert",

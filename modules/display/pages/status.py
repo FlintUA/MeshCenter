@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from modules.display.drivers.base import DisplayCapabilities
-from modules.display.renderer import color_for_state, draw_text, load_font, new_canvas
+from modules.display.renderer import draw_state_text, draw_text, load_font, new_canvas
 
 
 @dataclass
@@ -37,18 +37,21 @@ def render(caps: DisplayCapabilities, data: StatusScreenData):
     label_font = load_font(12)
     value_font = load_font(12, bold=True)
 
-    draw_text(image, (4, 2), "MeshCenter", color_for_state(data.meshcenter_status), title_font)
+    draw_state_text(image, caps, (4, 2), "MeshCenter", data.meshcenter_status, title_font)
     draw_text(image, (4, 20), data.node_name or "-", "black", label_font)
 
     rows = [
-        ("Radio", data.radio_status, color_for_state(data.radio_status)),
-        ("Nodes", str(data.node_count), "black"),
-        ("Last RX", data.last_rx, "black"),
+        ("Radio", data.radio_status, data.radio_status),
+        ("Nodes", str(data.node_count), None),
+        ("Last RX", data.last_rx, None),
     ]
     y = 40
-    for label, value, color in rows:
+    for label, value, state in rows:
         draw_text(image, (4, y), f"{label}:", "black", label_font)
-        draw_text(image, (70, y), value, color, value_font)
+        if state:
+            draw_state_text(image, caps, (70, y), value, state, value_font)
+        else:
+            draw_text(image, (70, y), value, "black", value_font)
         y += 16
 
     if data.cpu_percent is not None and data.ram_percent is not None:

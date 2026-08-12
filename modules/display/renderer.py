@@ -50,6 +50,39 @@ def color_for_state(state: str) -> StateColor:
     return "black"
 
 
+def has_color(caps: DisplayCapabilities) -> bool:
+    return any(c in caps.colors for c in ("red", "yellow"))
+
+
+def draw_state_text(image: Image.Image, caps: DisplayCapabilities, xy, text: str, state: str, font) -> None:
+    """Text whose visual emphasis reflects `state` (see color_for_state),
+    adapted to whether this panel can actually render red/yellow.
+
+    e-Paper Stage 2 plan (WeAct 1.54"), section 1 item 2 / Phase 3: a B/W
+    panel physically cannot show red/yellow - rather than dither toward
+    some arbitrary gray approximation (which plan section 1 explicitly
+    rejects), critical/warning states get bold white-on-black inverted
+    text instead of a color fill. Panels that do have color (Stage 1's
+    Waveshare) are unaffected - this only changes behavior when
+    color_for_state() would have returned non-black and this panel's
+    DisplayCapabilities says it can't render that color."""
+    color = color_for_state(state)
+    if color == "black" or has_color(caps):
+        draw_text(image, xy, text, color, font)
+        return
+    draw_inverted_text(image, xy, text, font)
+
+
+def draw_inverted_text(image: Image.Image, xy, text: str, font) -> None:
+    """White text on a solid black block - the no-color substitute for a
+    red/yellow fill (see draw_state_text)."""
+    draw = ImageDraw.Draw(image)
+    bbox = draw.textbbox(xy, text, font=font)
+    pad = 2
+    draw.rectangle([bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad], fill="black")
+    draw_text(image, xy, text, "white", font)
+
+
 def draw_text(image: Image.Image, xy: tuple[int, int], text: str, fill: str, font) -> None:
     """Draw text with hard (non-antialiased) glyph edges, then flat-fill
     with `fill`.

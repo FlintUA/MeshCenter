@@ -25,7 +25,12 @@ from __future__ import annotations
 
 from flask import jsonify, request
 
-from modules.display.config_store import save_epaper_config
+from modules.display.config_store import (
+    DEFAULT_MODEL,
+    MODEL_DEFAULT_PINS,
+    MODEL_DISPLAY_NAMES,
+    save_epaper_config,
+)
 from modules.display.gpio_registry import GpioConflictError
 from modules.display.models import EventPriority, RefreshMode
 from modules.display.pages import test_pattern
@@ -58,6 +63,7 @@ def register_hardware_display_routes(
             "ok": True,
             "enabled": True,
             "model": display_manager.display_name,
+            "model_id": config.get("model", DEFAULT_MODEL),
             "width": caps.width,
             "height": caps.height,
             "colors": list(caps.colors),
@@ -69,7 +75,14 @@ def register_hardware_display_routes(
     def api_hardware_display_settings_get():
         if not epaper_enabled or display_manager is None:
             return _disabled_response()
-        return jsonify({"ok": True, "config": config})
+        return jsonify({
+            "ok": True,
+            "config": config,
+            "available_models": [
+                {"id": model_id, "display_name": name, "default_pins": MODEL_DEFAULT_PINS[model_id]}
+                for model_id, name in MODEL_DISPLAY_NAMES.items()
+            ],
+        })
 
     @app.route("/api/hardware/display/settings", methods=["POST"])
     @handle_errors
@@ -114,24 +127,62 @@ def register_hardware_display_routes(
     @app.route("/api/hardware/display/reinit", methods=["POST"])
     @handle_errors
     def api_hardware_display_reinit():
+        """GPIO/SPI/timeout AND model changes all go through here (plan
+        section 1 item 2 / Phase 4) - a model switch changes
+        DisplayCapabilities (size, colors), not just pins, so it gets the
+        same explicit-confirm-and-validate treatment as a bad pin value,
+        not a live-apply autosave."""
         if not epaper_enabled or display_manager is None:
             return _disabled_response()
 
         body = request.get_json(force=True) or {}
         new_config = dict(config)
+
+        model_changed = "model" in body and body["model"] != config.get("model")
+        if "model" in body:
+            if body["model"] not in MODEL_DISPLAY_NAMES:
+                return jsonify({"ok": False, "error": f"Unknown model: {body['model']!r}"}), 400
+            new_config["model"] = body["model"]
+            if model_changed and "pins" not in body:
+                # Reset to the *new* model's own defaults rather than
+                # keeping the old model's pins - e.g. Waveshare's PWR pin
+                # has no meaning on a WeAct panel.
+                new_config["pins"] = dict(MODEL_DEFAULT_PINS[body["model"]])
+
         if "pins" in body:
-            new_config["pins"] = {**config["pins"], **body["pins"]}
+            new_config["pins"] = {**new_config["pins"], **body["pins"]}
         if "spi" in body:
             new_config["spi"] = {**config["spi"], **body["spi"]}
         if "refresh_timeout" in body:
             new_config["refresh_timeout"] = float(body["refresh_timeout"])
 
+        # Release whatever the *current* model claimed before checking the
+        # new pins - GpioRegistry.check() only exempts a pin already
+        # claimed by the *same* owner name, and a model switch changes
+        # that name (e.g. "waveshare_213g" -> "weact_154"), even when the
+        # actual physical pins are identical (both panels use the same
+        # HAT header). Without this, reconfiguring onto the very pins the
+        # current driver already holds would incorrectly look like a
+        # conflict with itself. replace_driver() below also releases this
+        # via the old driver's stop() - doing it here too is redundant but
+        # harmless (GpioRegistry.release() is idempotent).
+        gpio_registry.release(config.get("model", DEFAULT_MODEL))
         try:
-            gpio_registry.check(new_config["pins"], owner="waveshare_213g")
+            gpio_registry.check(new_config["pins"], owner=new_config.get("model", DEFAULT_MODEL))
         except GpioConflictError as exc:
+            # The live driver itself was never touched (replace_driver()
+            # hasn't run yet at this point) - it's still actively holding
+            # its current pins. Restore its registry claim before
+            # returning, or the registry would incorrectly believe those
+            # pins are free while the running driver still uses them.
+            gpio_registry.claim(config.get("pins", {}), owner=config.get("model", DEFAULT_MODEL))
             return jsonify({"ok": False, "error": str(exc)}), 409
 
-        new_driver = build_driver(new_config, gpio_registry)
+        try:
+            new_driver = build_driver(new_config, gpio_registry)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
         display_manager.replace_driver(new_driver)
         ok, error = display_manager.try_start_now(timeout=REINIT_CHECK_TIMEOUT)
 

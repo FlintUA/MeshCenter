@@ -324,6 +324,7 @@ register_system_routes(app)
 # a rescan has ever run.
 from modules.display.config_store import load_epaper_config
 from modules.display.gpio_registry import GpioRegistry as _EpaperGpioRegistry
+from modules.display.i18n import resolve_display_language
 from modules.display.service import (
     build_display_manager,
     build_page_image_now,
@@ -386,11 +387,21 @@ def _epaper_get_latest_message():
     with state_lock:
         return dict(messages[-1]) if messages else None
 
+def _epaper_get_display_language():
+    # Not resolve_ui_language() - that samples request.accept_languages for
+    # "auto", which needs a Flask request in scope. epaper_worker runs in a
+    # background thread with no request, so "auto" here just falls back to
+    # English (see modules/display/i18n.py's resolve_display_language()).
+    with state_lock:
+        language_setting = normalize_settings(settings).get("language", "auto")
+    return resolve_display_language(language_setting)
+
 def _epaper_build_status_image_now():
     return build_status_image_now(
         display_manager, state_lock, nodes,
         _epaper_get_radio_status, _epaper_get_cpu_percent, _epaper_get_ram_percent,
         _epaper_get_listener_alive, LOCAL_NODE_NAME,
+        locale=_epaper_get_display_language(),
     )
 
 def _epaper_build_page_image_now(page):
@@ -399,6 +410,7 @@ def _epaper_build_page_image_now(page):
         _epaper_get_radio_status, _epaper_get_listener_alive, _epaper_get_last_error,
         _epaper_get_power_readings, _epaper_get_cpu_percent, _epaper_get_ram_percent,
         _epaper_get_cpu_temp, _epaper_get_latest_message,
+        locale=_epaper_get_display_language(),
     )
 
 register_hardware_display_routes(
@@ -5753,6 +5765,7 @@ if __name__ == "__main__":
                 get_power_readings=_epaper_get_power_readings,
                 get_cpu_temp=_epaper_get_cpu_temp,
                 get_latest_message=_epaper_get_latest_message,
+                get_display_language=_epaper_get_display_language,
             ),
             daemon=True,
         ).start()

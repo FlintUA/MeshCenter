@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from modules.display.drivers.base import DisplayCapabilities
+from modules.display.i18n import DEFAULT_LOCALE, t
 from modules.display.renderer import draw_text, load_font, new_canvas
 
 
@@ -18,7 +19,7 @@ class SystemScreenData:
     cpu_temp_c: float | None = None
 
 
-def render(caps: DisplayCapabilities, data: SystemScreenData):
+def render(caps: DisplayCapabilities, data: SystemScreenData, locale: str = DEFAULT_LOCALE):
     image, _draw = new_canvas(caps)
     w, h = image.size
 
@@ -26,15 +27,15 @@ def render(caps: DisplayCapabilities, data: SystemScreenData):
     label_font = load_font(12)
     value_font = load_font(14, bold=True)
 
-    draw_text(image, (4, 2), "System", "black", title_font)
+    draw_text(image, (4, 2), t("system", locale), "black", title_font)
 
     def fmt(value, unit):
         return f"{value:.0f}{unit}" if value is not None else "--"
 
     rows = [
-        ("CPU", fmt(data.cpu_percent, "%")),
-        ("RAM", fmt(data.ram_percent, "%")),
-        ("Temp", fmt(data.cpu_temp_c, "C")),
+        (t("cpu", locale), fmt(data.cpu_percent, "%")),
+        (t("ram", locale), fmt(data.ram_percent, "%")),
+        (t("temp", locale), fmt(data.cpu_temp_c, "C")),
     ]
     y = 30
     for label, value in rows:

@@ -31,6 +31,7 @@ from modules.display.drivers.base import DisplayDriver
 from modules.display.drivers.waveshare_213g import Waveshare213gDriver
 from modules.display.drivers.weact_154 import Weact154Driver
 from modules.display.gpio_registry import GpioRegistry
+from modules.display.i18n import DEFAULT_LOCALE, t
 from modules.display.manager import DisplayManager
 from modules.display.models import EventPriority, RefreshMode
 from modules.display.pages import alert as alert_page
@@ -151,6 +152,7 @@ def epaper_worker(
     get_power_readings: Callable[[], dict[str, float | None]] = lambda: {},
     get_cpu_temp: Callable[[], float | None] = lambda: None,
     get_latest_message: Callable[[], dict[str, Any] | None] = lambda: None,
+    get_display_language: Callable[[], str] = lambda: DEFAULT_LOCALE,
     stop_event: threading.Event | None = None,
 ) -> None:
     stop_event = stop_event or threading.Event()
@@ -163,7 +165,7 @@ def epaper_worker(
                     manager, state_lock, nodes, get_radio_status, get_cpu_percent,
                     get_ram_percent, get_listener_alive, local_node_name, content_state,
                     get_battery_percent, get_active_page, get_last_error,
-                    get_power_readings, get_cpu_temp, get_latest_message,
+                    get_power_readings, get_cpu_temp, get_latest_message, get_display_language,
                 )
         except Exception:
             logger.exception("[EPAPER] epaper_worker: poll failed")
@@ -217,7 +219,7 @@ def _build_status_fields(
 
 def _render_page(page: str, manager, local_node_name, get_radio_status, get_listener_alive,
                   get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
-                  get_cpu_temp, get_latest_message):
+                  get_cpu_temp, get_latest_message, locale: str = DEFAULT_LOCALE):
     """Build+render whichever page is currently selected (plan section
     34's "Show on Display"), using only already-collected state - same
     invariant as the Status Screen (section 40)."""
@@ -230,25 +232,25 @@ def _render_page(page: str, manager, local_node_name, get_radio_status, get_list
         return radio_page.render(caps, radio_page.RadioScreenData(
             status=status, mode=mode, node_name=local_node_name,
             listener_running=get_listener_alive(), last_error=get_last_error(),
-        ))
+        ), locale=locale)
 
     if page == "power":
         readings = get_power_readings() or {}
         return power_page.render(caps, power_page.PowerScreenData(
             voltage=readings.get("voltage"), current=readings.get("current"), power=readings.get("power"),
-        ))
+        ), locale=locale)
 
     if page == "system":
         return system_page.render(caps, system_page.SystemScreenData(
             cpu_percent=_bucket(get_cpu_percent()), ram_percent=_bucket(get_ram_percent()),
             cpu_temp_c=get_cpu_temp(),
-        ))
+        ), locale=locale)
 
     if page == "message":
         latest = get_latest_message() or {}
         return message_page.render(caps, message_page.MessageScreenData(
             sender=latest.get("sender", ""), text=latest.get("text", ""), time=latest.get("time", ""),
-        ))
+        ), locale=locale)
 
     return None  # caller falls back to the Status Screen
 
@@ -262,21 +264,23 @@ def _poll_once(
     get_power_readings=lambda: {},
     get_cpu_temp=lambda: None,
     get_latest_message=lambda: None,
+    get_display_language=lambda: DEFAULT_LOCALE,
 ) -> None:
     data, content_key = _build_status_fields(
         state_lock, nodes, get_radio_status, get_cpu_percent, get_ram_percent,
         get_listener_alive, local_node_name,
     )
+    locale = get_display_language()
 
     battery_percent = get_battery_percent()
     critical_title = None
     critical_reason = ""
     if data.radio_status == "offline":
-        critical_title = "RADIO OFFLINE"
-        critical_reason = "Connection lost"
+        critical_title = t("radio_offline_title", locale)
+        critical_reason = t("connection_lost", locale)
     elif battery_percent is not None and battery_percent <= CRITICAL_LOW_BATTERY_PERCENT:
-        critical_title = f"LOW BATTERY ({battery_percent:.0f}%)"
-        critical_reason = "Critically low power"
+        critical_title = t("low_battery_title", locale, percent=battery_percent)
+        critical_reason = t("critically_low_power", locale)
 
     if critical_title:
         # Bypasses debounce entirely (plan section 68), and overrides
@@ -300,6 +304,7 @@ def _poll_once(
                 device_path=radio_info.get("serial_port", ""),
                 last_seen=data.last_rx,
             ),
+            locale=locale,
         )
         manager.mark_dirty(image, priority=EventPriority.CRITICAL)
         return
@@ -309,20 +314,21 @@ def _poll_once(
         image = _render_page(
             active_page, manager, local_node_name, get_radio_status, get_listener_alive,
             get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
-            get_cpu_temp, get_latest_message,
+            get_cpu_temp, get_latest_message, locale,
         )
         if image is not None:
             manager.mark_dirty(image)
             return
 
     data.last_update = content_state.stamp(content_key)
-    image = render(manager.capabilities, data)
+    image = render(manager.capabilities, data, locale=locale)
     manager.mark_dirty(image)
 
 
 def build_status_image_now(
     manager, state_lock, nodes, get_radio_status, get_cpu_percent,
     get_ram_percent, get_listener_alive, local_node_name,
+    locale: str = DEFAULT_LOCALE,
 ):
     """Same status-screen content as the poller, but stamps "last update"
     with the current time unconditionally - for an explicit manual action
@@ -333,13 +339,14 @@ def build_status_image_now(
         get_listener_alive, local_node_name,
     )
     data.last_update = time.strftime("%H:%M")
-    return render(manager.capabilities, data)
+    return render(manager.capabilities, data, locale=locale)
 
 
 def build_page_image_now(
     page, manager, local_node_name, get_radio_status, get_listener_alive,
     get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
     get_cpu_temp, get_latest_message,
+    locale: str = DEFAULT_LOCALE,
 ):
     """For POST /api/hardware/display/show/<page> - builds whichever page
     was requested right now, for an immediate (CRITICAL) push. Returns
@@ -350,5 +357,5 @@ def build_page_image_now(
     return _render_page(
         page, manager, local_node_name, get_radio_status, get_listener_alive,
         get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
-        get_cpu_temp, get_latest_message,
+        get_cpu_temp, get_latest_message, locale,
     )

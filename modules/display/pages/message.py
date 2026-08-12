@@ -11,6 +11,7 @@ import textwrap
 from dataclasses import dataclass
 
 from modules.display.drivers.base import DisplayCapabilities
+from modules.display.i18n import DEFAULT_LOCALE, t
 from modules.display.renderer import draw_text, load_font, new_canvas
 
 
@@ -21,7 +22,7 @@ class MessageScreenData:
     time: str = ""
 
 
-def render(caps: DisplayCapabilities, data: MessageScreenData):
+def render(caps: DisplayCapabilities, data: MessageScreenData, locale: str = DEFAULT_LOCALE):
     image, _draw = new_canvas(caps)
     w, h = image.size
 
@@ -29,10 +30,10 @@ def render(caps: DisplayCapabilities, data: MessageScreenData):
     meta_font = load_font(12)
     body_font = load_font(13)
 
-    draw_text(image, (4, 2), "Message", "black", title_font)
+    draw_text(image, (4, 2), t("message", locale), "black", title_font)
     draw_text(image, (4, 22), f"{data.sender or '-'}  {data.time or ''}", "black", meta_font)
 
-    body = data.text or "(no messages)"
+    body = data.text or t("no_messages", locale)
     lines = textwrap.wrap(body, width=34)[:4]
     y = 44
     for line in lines:

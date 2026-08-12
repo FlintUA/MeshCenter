@@ -17,19 +17,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from modules.display.drivers.base import DisplayCapabilities
+from modules.display.i18n import DEFAULT_LOCALE, t
 from modules.display.renderer import draw_text, has_color, load_font, new_canvas
 
 
 @dataclass
 class AlertScreenData:
-    title: str  # e.g. "RADIO OFFLINE"
-    reason: str = ""  # e.g. "Connection lost"
+    title: str  # already-translated, e.g. t("radio_offline_title", locale)
+    reason: str = ""  # already-translated, e.g. t("connection_lost", locale)
     node_name: str = ""
     device_path: str = ""  # e.g. "/dev/ttyACM0"
     last_seen: str = ""  # already-formatted, e.g. "15:42"
 
 
-def render(caps: DisplayCapabilities, data: AlertScreenData):
+def render(caps: DisplayCapabilities, data: AlertScreenData, locale: str = DEFAULT_LOCALE):
     image, draw = new_canvas(caps)
     w, h = image.size
     background = "red" if has_color(caps) else "black"
@@ -48,9 +49,9 @@ def render(caps: DisplayCapabilities, data: AlertScreenData):
     if data.node_name:
         lines.append(data.node_name)
     if data.device_path:
-        lines.append(f"Device: {data.device_path}")
+        lines.append(t("device_prefix", locale, path=data.device_path))
     if data.last_seen:
-        lines.append(f"Last seen: {data.last_seen}")
+        lines.append(t("last_seen_prefix", locale, time=data.last_seen))
 
     for line in lines:
         draw_text(image, (8, y), line, "white", label_font)

@@ -13,7 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from modules.display.drivers.base import DisplayCapabilities
-from modules.display.renderer import draw_state_text, draw_text, load_font, new_canvas
+from modules.display.i18n import DEFAULT_LOCALE, t
+from modules.display.renderer import draw_state_text, draw_text, load_font, new_canvas, text_width
 
 
 @dataclass
@@ -29,7 +30,7 @@ class StatusScreenData:
     last_update: str = "--:--"
 
 
-def render(caps: DisplayCapabilities, data: StatusScreenData):
+def render(caps: DisplayCapabilities, data: StatusScreenData, locale: str = DEFAULT_LOCALE):
     image, _draw = new_canvas(caps)
     w, h = image.size
 
@@ -37,30 +38,38 @@ def render(caps: DisplayCapabilities, data: StatusScreenData):
     label_font = load_font(12)
     value_font = load_font(12, bold=True)
 
+    # data.meshcenter_status/radio_status stay the raw "online"/"warning"/
+    # "offline" state codes for draw_state_text()'s color mapping - only the
+    # rendered text itself is translated, via t().
     draw_state_text(image, caps, (4, 2), "MeshCenter", data.meshcenter_status, title_font)
     draw_text(image, (4, 20), data.node_name or "-", "black", label_font)
 
     rows = [
-        ("Radio", data.radio_status, data.radio_status),
-        ("Nodes", str(data.node_count), None),
-        ("Last RX", data.last_rx, None),
+        (t("radio", locale), t(data.radio_status, locale), data.radio_status),
+        (t("nodes", locale), str(data.node_count), None),
+        (t("last_rx", locale), data.last_rx, None),
     ]
+    # Value column starts after the widest translated label in this locale,
+    # not a fixed pixel offset sized for English - a longer label (e.g. de
+    # "Letzter Empfang:") would otherwise overlap the value that follows it.
+    value_x = 4 + max(text_width(f"{label}:", label_font) for label, _, _ in rows) + 6
     y = 40
     for label, value, state in rows:
         draw_text(image, (4, y), f"{label}:", "black", label_font)
         if state:
-            draw_state_text(image, caps, (70, y), value, state, value_font)
+            draw_state_text(image, caps, (value_x, y), value, state, value_font)
         else:
-            draw_text(image, (70, y), value, "black", value_font)
+            draw_text(image, (value_x, y), value, "black", value_font)
         y += 16
 
     if data.cpu_percent is not None and data.ram_percent is not None:
         draw_text(
-            image, (4, y), f"CPU {data.cpu_percent:.0f}%  RAM {data.ram_percent:.0f}%",
+            image, (4, y),
+            f"{t('cpu', locale)} {data.cpu_percent:.0f}%  {t('ram', locale)} {data.ram_percent:.0f}%",
             "black", label_font,
         )
         y += 16
 
-    draw_text(image, (4, h - 16), f"Last update {data.last_update}", "black", label_font)
+    draw_text(image, (4, h - 16), t("last_update", locale, time=data.last_update), "black", label_font)
 
     return image

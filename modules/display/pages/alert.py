@@ -17,25 +17,38 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from modules.display.drivers.base import DisplayCapabilities
-from modules.display.renderer import draw_text, has_color, load_font, new_canvas
+from modules.display.i18n import DEFAULT_LOCALE, t
+from modules.display.renderer import draw_text, has_color, load_font, new_canvas, text_width
+
+# Tried largest-first until the title fits the panel width - a fixed 18pt
+# clipped even the original English "LOW BATTERY (10%)" on WeAct's 200px
+# canvas (found via tools/test_epaper_i18n.py, pre-dates any translation:
+# same failure with locale="en"), and translated titles are rarely shorter.
+_TITLE_FONT_SIZES = (18, 16, 14, 12)
 
 
 @dataclass
 class AlertScreenData:
-    title: str  # e.g. "RADIO OFFLINE"
-    reason: str = ""  # e.g. "Connection lost"
+    title: str  # already-translated, e.g. t("radio_offline_title", locale)
+    reason: str = ""  # already-translated, e.g. t("connection_lost", locale)
     node_name: str = ""
     device_path: str = ""  # e.g. "/dev/ttyACM0"
     last_seen: str = ""  # already-formatted, e.g. "15:42"
 
 
-def render(caps: DisplayCapabilities, data: AlertScreenData):
+def render(caps: DisplayCapabilities, data: AlertScreenData, locale: str = DEFAULT_LOCALE):
     image, draw = new_canvas(caps)
     w, h = image.size
     background = "red" if has_color(caps) else "black"
     draw.rectangle([0, 0, w, h], fill=background)
 
-    title_font = load_font(18, bold=True)
+    available_width = w - 16
+    title_font = load_font(_TITLE_FONT_SIZES[-1], bold=True)
+    for size in _TITLE_FONT_SIZES:
+        candidate = load_font(size, bold=True)
+        if text_width(data.title, candidate) <= available_width:
+            title_font = candidate
+            break
     label_font = load_font(11)
 
     y = 6
@@ -48,9 +61,9 @@ def render(caps: DisplayCapabilities, data: AlertScreenData):
     if data.node_name:
         lines.append(data.node_name)
     if data.device_path:
-        lines.append(f"Device: {data.device_path}")
+        lines.append(t("device_prefix", locale, path=data.device_path))
     if data.last_seen:
-        lines.append(f"Last seen: {data.last_seen}")
+        lines.append(t("last_seen_prefix", locale, time=data.last_seen))
 
     for line in lines:
         draw_text(image, (8, y), line, "white", label_font)

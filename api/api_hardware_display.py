@@ -170,6 +170,12 @@ def register_hardware_display_routes(
         try:
             gpio_registry.check(new_config["pins"], owner=new_config.get("model", DEFAULT_MODEL))
         except GpioConflictError as exc:
+            # The live driver itself was never touched (replace_driver()
+            # hasn't run yet at this point) - it's still actively holding
+            # its current pins. Restore its registry claim before
+            # returning, or the registry would incorrectly believe those
+            # pins are free while the running driver still uses them.
+            gpio_registry.claim(config.get("pins", {}), owner=config.get("model", DEFAULT_MODEL))
             return jsonify({"ok": False, "error": str(exc)}), 409
 
         try:

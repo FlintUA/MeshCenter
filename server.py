@@ -397,6 +397,16 @@ def _epaper_get_display_language():
         language_setting = normalize_settings(settings).get("language", "auto")
     return resolve_display_language(language_setting)
 
+def _epaper_get_temperature_unit():
+    # Same settings.units.temperature ("c"/"f"/"both") the web UI footer
+    # reads (static/chat.js's formatTemperature()) - found missing after
+    # the System Screen temperature fix shipped: the screen always drew
+    # Celsius regardless of this setting, so switching units in Settings
+    # made the footer and the e-paper screen disagree even though both
+    # were reading the same underlying sensor value.
+    with state_lock:
+        return normalize_settings(settings).get("units", {}).get("temperature", "c")
+
 def _epaper_build_status_image_now():
     return build_status_image_now(
         display_manager, state_lock, nodes,
@@ -412,6 +422,7 @@ def _epaper_build_page_image_now(page):
         _epaper_get_power_readings, _epaper_get_cpu_percent, _epaper_get_ram_percent,
         _epaper_get_cpu_temp, _epaper_get_latest_message,
         locale=_epaper_get_display_language(),
+        temperature_unit=_epaper_get_temperature_unit(),
     )
 
 register_hardware_display_routes(
@@ -5767,6 +5778,7 @@ if __name__ == "__main__":
                 get_cpu_temp=_epaper_get_cpu_temp,
                 get_latest_message=_epaper_get_latest_message,
                 get_display_language=_epaper_get_display_language,
+                get_temperature_unit=_epaper_get_temperature_unit,
             ),
             daemon=True,
         ).start()

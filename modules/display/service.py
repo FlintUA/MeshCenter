@@ -179,6 +179,7 @@ def epaper_worker(
     get_cpu_temp: Callable[[], float | None] = lambda: None,
     get_latest_message: Callable[[], dict[str, Any] | None] = lambda: None,
     get_display_language: Callable[[], str] = lambda: DEFAULT_LOCALE,
+    get_temperature_unit: Callable[[], str] = lambda: "c",
     stop_event: threading.Event | None = None,
 ) -> None:
     stop_event = stop_event or threading.Event()
@@ -192,6 +193,7 @@ def epaper_worker(
                     get_ram_percent, get_listener_alive, local_node_name, content_state,
                     get_battery_percent, get_active_page, get_last_error,
                     get_power_readings, get_cpu_temp, get_latest_message, get_display_language,
+                    get_temperature_unit,
                 )
         except Exception:
             logger.exception("[EPAPER] epaper_worker: poll failed")
@@ -245,7 +247,8 @@ def _build_status_fields(
 
 def _render_page(page: str, manager, local_node_name, get_radio_status, get_listener_alive,
                   get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
-                  get_cpu_temp, get_latest_message, locale: str = DEFAULT_LOCALE):
+                  get_cpu_temp, get_latest_message, locale: str = DEFAULT_LOCALE,
+                  temperature_unit: str = "c"):
     """Build+render whichever page is currently selected (plan section
     34's "Show on Display"), using only already-collected state - same
     invariant as the Status Screen (section 40)."""
@@ -269,7 +272,13 @@ def _render_page(page: str, manager, local_node_name, get_radio_status, get_list
     if page == "system":
         return system_page.render(caps, system_page.SystemScreenData(
             cpu_percent=_bucket(get_cpu_percent()), ram_percent=_bucket(get_ram_percent()),
+            # Bucketed in Celsius (the sensor's native unit) regardless of
+            # display unit - converting first would need a differently-
+            # scaled bucket step per unit for no benefit, since the bucket
+            # only exists to stabilize the rendered image, not to be
+            # user-facing itself.
             cpu_temp_c=_bucket(get_cpu_temp(), step=_TEMP_SIGNIFICANCE_BUCKET),
+            temperature_unit=temperature_unit,
         ), locale=locale)
 
     if page == "message":
@@ -291,6 +300,7 @@ def _poll_once(
     get_cpu_temp=lambda: None,
     get_latest_message=lambda: None,
     get_display_language=lambda: DEFAULT_LOCALE,
+    get_temperature_unit=lambda: "c",
 ) -> None:
     data, content_key = _build_status_fields(
         state_lock, nodes, get_radio_status, get_cpu_percent, get_ram_percent,
@@ -340,7 +350,7 @@ def _poll_once(
         image = _render_page(
             active_page, manager, local_node_name, get_radio_status, get_listener_alive,
             get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
-            get_cpu_temp, get_latest_message, locale,
+            get_cpu_temp, get_latest_message, locale, get_temperature_unit(),
         )
         if image is not None:
             manager.mark_dirty(image)
@@ -373,6 +383,7 @@ def build_page_image_now(
     get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
     get_cpu_temp, get_latest_message,
     locale: str = DEFAULT_LOCALE,
+    temperature_unit: str = "c",
 ):
     """For POST /api/hardware/display/show/<page> - builds whichever page
     was requested right now, for an immediate (CRITICAL) push. Returns
@@ -383,5 +394,5 @@ def build_page_image_now(
     return _render_page(
         page, manager, local_node_name, get_radio_status, get_listener_alive,
         get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
-        get_cpu_temp, get_latest_message, locale,
+        get_cpu_temp, get_latest_message, locale, temperature_unit,
     )

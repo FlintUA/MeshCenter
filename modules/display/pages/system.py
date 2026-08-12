@@ -16,7 +16,29 @@ from modules.display.renderer import draw_text, load_font, new_canvas, text_widt
 class SystemScreenData:
     cpu_percent: float | None = None
     ram_percent: float | None = None
-    cpu_temp_c: float | None = None
+    cpu_temp_c: float | None = None  # always Celsius - see _format_temp() for unit conversion
+    temperature_unit: str = "c"  # "c" | "f" | "both" - settings.units.temperature
+
+
+def _celsius_to_fahrenheit(c: float) -> float:
+    return c * 9.0 / 5.0 + 32.0
+
+
+def _format_temp(celsius: float | None, unit: str) -> str:
+    """Mirrors static/chat.js's formatTemperature() (same 3 unit modes,
+    same 1-decimal precision) so the e-paper screen and the web UI footer
+    agree on more than just the underlying sensor value - found missing
+    after the System Screen's temperature bug was fixed: the screen kept
+    drawing Celsius regardless of this setting, so switching units in
+    Settings made the footer and the screen disagree even though both
+    were already reading the same source."""
+    if celsius is None:
+        return "--"
+    if unit == "f":
+        return f"{_celsius_to_fahrenheit(celsius):.1f}°F"
+    if unit == "both":
+        return f"{celsius:.1f}°C/{_celsius_to_fahrenheit(celsius):.1f}°F"
+    return f"{celsius:.1f}°C"
 
 
 def render(caps: DisplayCapabilities, data: SystemScreenData, locale: str = DEFAULT_LOCALE):
@@ -40,7 +62,7 @@ def render(caps: DisplayCapabilities, data: SystemScreenData, locale: str = DEFA
     rows = [
         (t("cpu", locale), fmt(data.cpu_percent, "%")),
         (t("ram", locale), fmt(data.ram_percent, "%")),
-        (t("temp", locale), fmt(data.cpu_temp_c, "°C")),
+        (t("temp", locale), _format_temp(data.cpu_temp_c, data.temperature_unit)),
     ]
     value_x = 4 + max(text_width(f"{label}:", label_font) for label, _ in rows) + 6
     y = 30

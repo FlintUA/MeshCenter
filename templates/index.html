@@ -1275,6 +1275,15 @@
                                 <button type="button" class="mc-refresh-btn" onclick="epaperRefreshDisplay(this)">🔄 <span data-i18n="settings.epaper_refresh">Refresh Now</span></button>
                             </div>
 
+                            <div class="settings-option-label" style="margin-top:14px;" data-i18n="settings.epaper_show_on_display">Show on display</div>
+                            <div class="device-action-row">
+                                <button type="button" class="mc-refresh-btn" onclick="epaperShowPage('status', this)"><span data-i18n="settings.epaper_show_status">Status</span></button>
+                                <button type="button" class="mc-refresh-btn" onclick="epaperShowPage('radio', this)"><span data-i18n="settings.epaper_show_radio">Radio</span></button>
+                                <button type="button" class="mc-refresh-btn" onclick="epaperShowPage('power', this)"><span data-i18n="settings.epaper_show_power">Power</span></button>
+                                <button type="button" class="mc-refresh-btn" onclick="epaperShowPage('system', this)"><span data-i18n="settings.epaper_show_system">System</span></button>
+                                <button type="button" class="mc-refresh-btn" onclick="epaperShowPage('message', this)"><span data-i18n="settings.epaper_show_message">Message</span></button>
+                            </div>
+
                             <details class="epaper-advanced">
                                 <summary data-i18n="settings.epaper_advanced">Advanced (GPIO / SPI)</summary>
                                 <div class="settings-card-note" data-i18n="settings.epaper_advanced_warning">These fields do not apply automatically. A wrong value can hang the display until the process restarts - always use "Apply &amp; Re-init" to validate before saving.</div>
@@ -1920,7 +1929,7 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="/static/chat.js?v=20260810-epaper-settings"></script>
+<script src="/static/chat.js?v=20260810-epaper-pages"></script>
 <script src="/static/media.js?v=20260806-stage9-i18n"></script>
 <script src="/static/weather.js?v=20260808-weather-provider"></script>
 

@@ -7,9 +7,11 @@ never apply automatically - they require the explicit /reinit action,
 validated against the GPIO registry and only persisted if the new pins
 actually start successfully. A bad pin typo here risks reproducing the
 BUSY-hang debugging from Phases 1-2, this time live instead of at wiring
-time, hence the extra ceremony. Orientation and the per-page checklist
-(radio/power/environment/message pages don't exist yet) are deferred to
-Phase 10.
+time, hence the extra ceremony. Orientation is deferred (panel is
+physically landscape-only, nothing to select). Environment page is
+deferred too - no BME280 detected on dev, and the plan explicitly says
+not to build a page with no real sensor behind it (section 16); Radio/
+Power/System/Message are built in Phase 10 (see show/<page> below).
 
 test/clear/refresh are all asynchronous - they return before the physical
 refresh completes (plan section 36), same as the rest of this feature's
@@ -33,9 +35,13 @@ from modules.display.service import build_driver
 REINIT_CHECK_TIMEOUT = 20.0
 
 
+KNOWN_SHOW_PAGES = ("status", "radio", "power", "system", "message")
+
+
 def register_hardware_display_routes(
     app, display_manager, epaper_enabled: bool, handle_errors,
     config: dict, config_path: str, gpio_registry, build_status_image_now,
+    build_page_image_now=None, ui_state: dict | None = None,
 ):
     def _disabled_response():
         return jsonify({"ok": False, "error": "e-paper display not enabled on this install"}), 400
@@ -168,3 +174,30 @@ def register_hardware_display_routes(
         image = build_status_image_now()
         display_manager.mark_dirty(image, priority=EventPriority.CRITICAL)
         return jsonify({"ok": True})
+
+    @app.route("/api/hardware/display/show/<page>", methods=["POST"])
+    @handle_errors
+    def api_hardware_display_show(page):
+        """Manual page switching (plan section 34). Pins epaper_worker's
+        poller to `page` (via ui_state, shared with epaper_worker) so it
+        stays selected across subsequent polls instead of reverting to
+        Status on the next tick, and pushes an immediate CRITICAL refresh
+        so the user sees the switch happen right away rather than waiting
+        out the debounce window."""
+        if not epaper_enabled or display_manager is None:
+            return _disabled_response()
+        if page not in KNOWN_SHOW_PAGES:
+            return jsonify({"ok": False, "error": f"Unknown page: {page!r}"}), 404
+
+        if ui_state is not None:
+            ui_state["active_page"] = page
+
+        if page == "status":
+            image = build_status_image_now()
+        else:
+            image = build_page_image_now(page) if build_page_image_now else None
+            if image is None:
+                return jsonify({"ok": False, "error": f"Page not available: {page!r}"}), 404
+
+        display_manager.mark_dirty(image, priority=EventPriority.CRITICAL)
+        return jsonify({"ok": True, "active_page": page})

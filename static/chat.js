@@ -906,6 +906,21 @@ async function epaperReinitDisplay(button) {
     }
 }
 
+async function epaperShowPage(page, button) {
+    if (button) button.disabled = true;
+    try {
+        const response = await fetch(`/api/hardware/display/show/${encodeURIComponent(page)}`, { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+        showToast(window.I18N.t('settings.epaper_action_queued'), 'success');
+    } catch (error) {
+        console.error(`[EPAPER] show/${page} failed:`, error);
+        showToast(window.I18N.t('settings.epaper_settings_failed'), 'error');
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
 function degreesToRadians(value) {
     return value * Math.PI / 180;
 }

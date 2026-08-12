@@ -32,7 +32,17 @@ from modules.display.gpio_registry import GpioRegistry
 from modules.display.manager import DisplayManager
 from modules.display.models import EventPriority, RefreshMode
 from modules.display.pages import alert as alert_page
+from modules.display.pages import message as message_page
+from modules.display.pages import power as power_page
+from modules.display.pages import radio as radio_page
+from modules.display.pages import system as system_page
 from modules.display.pages.status import StatusScreenData, render
+
+# Pages selectable via POST /api/hardware/display/show/<page> (plan
+# section 34). "status" is the default/fallback - an unknown or not-yet-
+# implemented page name (radio/power/environment/message pages beyond
+# what Phase 10 built) falls back to it rather than erroring the worker.
+KNOWN_PAGES = ("status", "radio", "power", "system", "message")
 
 logger = logging.getLogger("epaper_service")
 
@@ -121,6 +131,11 @@ def epaper_worker(
     local_node_name: str,
     get_enabled: Callable[[], bool] = lambda: True,
     get_battery_percent: Callable[[], float | None] = lambda: None,
+    get_active_page: Callable[[], str] = lambda: "status",
+    get_last_error: Callable[[], str] = lambda: "",
+    get_power_readings: Callable[[], dict[str, float | None]] = lambda: {},
+    get_cpu_temp: Callable[[], float | None] = lambda: None,
+    get_latest_message: Callable[[], dict[str, Any] | None] = lambda: None,
     stop_event: threading.Event | None = None,
 ) -> None:
     stop_event = stop_event or threading.Event()
@@ -132,7 +147,8 @@ def epaper_worker(
                 _poll_once(
                     manager, state_lock, nodes, get_radio_status, get_cpu_percent,
                     get_ram_percent, get_listener_alive, local_node_name, content_state,
-                    get_battery_percent,
+                    get_battery_percent, get_active_page, get_last_error,
+                    get_power_readings, get_cpu_temp, get_latest_message,
                 )
         except Exception:
             logger.exception("epaper_worker: poll failed")
@@ -184,10 +200,53 @@ def _build_status_fields(
     return data, content_key
 
 
+def _render_page(page: str, manager, local_node_name, get_radio_status, get_listener_alive,
+                  get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
+                  get_cpu_temp, get_latest_message):
+    """Build+render whichever page is currently selected (plan section
+    34's "Show on Display"), using only already-collected state - same
+    invariant as the Status Screen (section 40)."""
+    caps = manager.capabilities
+
+    if page == "radio":
+        radio_info = get_radio_status() or {}
+        mode = radio_info.get("mode", "error")
+        status = "online" if mode == "connected" else ("warning" if mode in ("reconnecting", "releasing") else "offline")
+        return radio_page.render(caps, radio_page.RadioScreenData(
+            status=status, mode=mode, node_name=local_node_name,
+            listener_running=get_listener_alive(), last_error=get_last_error(),
+        ))
+
+    if page == "power":
+        readings = get_power_readings() or {}
+        return power_page.render(caps, power_page.PowerScreenData(
+            voltage=readings.get("voltage"), current=readings.get("current"), power=readings.get("power"),
+        ))
+
+    if page == "system":
+        return system_page.render(caps, system_page.SystemScreenData(
+            cpu_percent=_bucket(get_cpu_percent()), ram_percent=_bucket(get_ram_percent()),
+            cpu_temp_c=get_cpu_temp(),
+        ))
+
+    if page == "message":
+        latest = get_latest_message() or {}
+        return message_page.render(caps, message_page.MessageScreenData(
+            sender=latest.get("sender", ""), text=latest.get("text", ""), time=latest.get("time", ""),
+        ))
+
+    return None  # caller falls back to the Status Screen
+
+
 def _poll_once(
     manager, state_lock, nodes, get_radio_status, get_cpu_percent,
     get_ram_percent, get_listener_alive, local_node_name, content_state,
     get_battery_percent=lambda: None,
+    get_active_page=lambda: "status",
+    get_last_error=lambda: "",
+    get_power_readings=lambda: {},
+    get_cpu_temp=lambda: None,
+    get_latest_message=lambda: None,
 ) -> None:
     data, content_key = _build_status_fields(
         state_lock, nodes, get_radio_status, get_cpu_percent, get_ram_percent,
@@ -202,17 +261,29 @@ def _poll_once(
         critical_title = f"LOW BATTERY ({battery_percent:.0f}%)"
 
     if critical_title:
-        # Bypasses debounce entirely (plan section 68) - deliberately
-        # doesn't touch content_state/_last content hash bookkeeping,
-        # since recovery is meant to fall back to the normal Status Screen
-        # at the next allowed (debounced) refresh, not stay pinned to
-        # whatever content hash the alert interrupted.
+        # Bypasses debounce entirely (plan section 68), and overrides
+        # whatever page is manually pinned - deliberately doesn't touch
+        # content_state/_last content hash bookkeeping, since recovery is
+        # meant to fall back to the normal Status Screen at the next
+        # allowed (debounced) refresh, not stay pinned to whatever content
+        # hash the alert interrupted.
         image = alert_page.render(
             manager.capabilities,
             alert_page.AlertScreenData(title=critical_title, detail=local_node_name),
         )
         manager.mark_dirty(image, priority=EventPriority.CRITICAL)
         return
+
+    active_page = get_active_page()
+    if active_page and active_page != "status":
+        image = _render_page(
+            active_page, manager, local_node_name, get_radio_status, get_listener_alive,
+            get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
+            get_cpu_temp, get_latest_message,
+        )
+        if image is not None:
+            manager.mark_dirty(image)
+            return
 
     data.last_update = content_state.stamp(content_key)
     image = render(manager.capabilities, data)
@@ -233,3 +304,21 @@ def build_status_image_now(
     )
     data.last_update = time.strftime("%H:%M")
     return render(manager.capabilities, data)
+
+
+def build_page_image_now(
+    page, manager, local_node_name, get_radio_status, get_listener_alive,
+    get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
+    get_cpu_temp, get_latest_message,
+):
+    """For POST /api/hardware/display/show/<page> - builds whichever page
+    was requested right now, for an immediate (CRITICAL) push. Returns
+    None for "status" or an unknown page name; the route falls back to
+    build_status_image_now() for "status" and to a 404 for a page this
+    phase didn't build (radio/power/system/message only - see
+    KNOWN_PAGES)."""
+    return _render_page(
+        page, manager, local_node_name, get_radio_status, get_listener_alive,
+        get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
+        get_cpu_temp, get_latest_message,
+    )

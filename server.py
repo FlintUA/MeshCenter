@@ -324,12 +324,22 @@ register_system_routes(app)
 # a rescan has ever run.
 from modules.display.config_store import load_epaper_config
 from modules.display.gpio_registry import GpioRegistry as _EpaperGpioRegistry
-from modules.display.service import build_display_manager, build_status_image_now
+from modules.display.service import (
+    build_display_manager,
+    build_page_image_now,
+    build_status_image_now,
+)
 
 EPAPER_CONFIG_PATH = os.path.join(DATA_DIR, "epaper_config.json")
 epaper_config = load_epaper_config(EPAPER_CONFIG_PATH)
 epaper_gpio_registry = _EpaperGpioRegistry()
 display_manager = build_display_manager(epaper_config, epaper_gpio_registry)
+
+# Which page epaper_worker's poller shows when nothing critical is
+# happening - "status" by default, pinned to something else via
+# POST /api/hardware/display/show/<page> (plan section 34). Runtime-only,
+# not persisted - a restart always comes back up on Status.
+epaper_ui_state = {"active_page": "status"}
 
 # Named functions (not inline lambdas) so both epaper_worker's thread
 # (started later, EPAPER_ENABLED-gated) and the Settings/refresh API
@@ -356,11 +366,39 @@ def _epaper_get_enabled():
 def _epaper_get_battery_percent():
     return sensor_data.get("battery_percent")
 
+def _epaper_get_active_page():
+    return epaper_ui_state.get("active_page", "status")
+
+def _epaper_get_last_error():
+    return radio_connection_manager.status(radio_health.get("listener_running", False)).get("last_error", "")
+
+def _epaper_get_power_readings():
+    return {
+        "voltage": sensor_data.get("voltage"),
+        "current": sensor_data.get("current"),
+        "power": sensor_data.get("power"),
+    }
+
+def _epaper_get_cpu_temp():
+    return _read_cpu_temperature()
+
+def _epaper_get_latest_message():
+    with state_lock:
+        return dict(messages[-1]) if messages else None
+
 def _epaper_build_status_image_now():
     return build_status_image_now(
         display_manager, state_lock, nodes,
         _epaper_get_radio_status, _epaper_get_cpu_percent, _epaper_get_ram_percent,
         _epaper_get_listener_alive, LOCAL_NODE_NAME,
+    )
+
+def _epaper_build_page_image_now(page):
+    return build_page_image_now(
+        page, display_manager, LOCAL_NODE_NAME,
+        _epaper_get_radio_status, _epaper_get_listener_alive, _epaper_get_last_error,
+        _epaper_get_power_readings, _epaper_get_cpu_percent, _epaper_get_ram_percent,
+        _epaper_get_cpu_temp, _epaper_get_latest_message,
     )
 
 register_hardware_display_routes(
@@ -369,6 +407,8 @@ register_hardware_display_routes(
     config_path=EPAPER_CONFIG_PATH,
     gpio_registry=epaper_gpio_registry,
     build_status_image_now=_epaper_build_status_image_now,
+    build_page_image_now=_epaper_build_page_image_now,
+    ui_state=epaper_ui_state,
 )
 
 # ===== STATIC FILES =====
@@ -5708,6 +5748,11 @@ if __name__ == "__main__":
                 local_node_name=LOCAL_NODE_NAME,
                 get_enabled=_epaper_get_enabled,
                 get_battery_percent=_epaper_get_battery_percent,
+                get_active_page=_epaper_get_active_page,
+                get_last_error=_epaper_get_last_error,
+                get_power_readings=_epaper_get_power_readings,
+                get_cpu_temp=_epaper_get_cpu_temp,
+                get_latest_message=_epaper_get_latest_message,
             ),
             daemon=True,
         ).start()

@@ -1,15 +1,19 @@
 """Original (not vendored) SSD1681 protocol implementation for the WeAct
 Studio 1.54" 200x200 monochrome e-paper module. e-Paper Stage 2 plan
-(WeAct 1.54"), Phase 1. See LICENSE_NOTICE.md in this directory for why
-this is written from scratch against the public SSD1681 protocol rather
-than vendored from WeAct's C reference (their repo has no LICENSE), and
-for exactly which facts (pins, SPI mode, BUSY polarity, register values)
-were cross-referenced against that reference.
+(WeAct 1.54"), Phases 1-2. See _weact_ssd1681_LICENSE_NOTICE.md in this
+directory for why this is written from scratch against the public SSD1681
+protocol rather than vendored from WeAct's C reference (their repo has no
+LICENSE), and for exactly which facts (pins, SPI mode, BUSY polarity,
+register values) were cross-referenced against that reference.
 
-Temporary location (tools/_weact_driver/), same as Stage 1's Phase 1 - a
-DisplayDriver-wrapped version lives at
-modules/display/drivers/weact_154.py from Phase 2 onward, only once the
-standalone test below has passed 2-3 clean runs in a row.
+Phase 1 standalone bring-up (tools/test_epaper_weact.py) passed 3/3 clean
+runs against this exact code, after the user physically re-verified the
+DIN/CLK/CS/DC wiring - so this module moved here (from its Phase 1
+temporary location, tools/_weact_driver/) unmodified, wrapped by
+weact_154.py's DisplayDriver implementation in this same directory.
+tools/test_epaper_weact.py still imports directly from here as a
+minimal-dependency smoke test, same convention as Stage 1's
+tools/test_epaper.py.
 """
 
 from __future__ import annotations

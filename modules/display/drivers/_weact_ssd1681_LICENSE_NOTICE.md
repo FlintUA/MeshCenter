@@ -37,11 +37,11 @@ branch) in the WeAct ZIP above.
   mode 0 / 4MHz - do not assume these carry over between panels.)
 - BUSY polarity: HIGH = busy, LOW = idle. This is the **opposite** of
   Stage 1's Waveshare 2.13g panel, which uses a different, non-SSD1681
-  controller. Not yet physically confirmed on the actual dev cable - see
-  `tools/test_epaper_weact.py`'s raw BUSY diagnostic, which prints BUSY's
-  actual level during reset/power-up before the real init sequence ever
-  runs, specifically so this assumption gets checked against real
-  hardware instead of silently trusted.
+  controller. Confirmed on the actual dev cable via
+  `tools/test_epaper_weact.py`'s raw BUSY diagnostic plus a separate
+  pull-up/pull-down flip test (both agree at every sample point and
+  correctly track a reset pulse - not a floating pin, not a polarity
+  guess).
 - Full-refresh init/update/sleep register sequence (0x12 SWRESET, 0x01
   driver output control, 0x11 data entry mode, 0x44/0x45 RAM address
   window, 0x3C border waveform, 0x18 temp sensor, 0x4E/0x4F RAM counter,
@@ -53,8 +53,15 @@ branch) in the WeAct ZIP above.
 ## What's still unconfirmed
 
 The controller is not chip-photo-confirmed as SSD1681 - the command set
-matching the standard SSD1681 register map is strong corroborating
-evidence, not direct visual confirmation. If Phase 1's standalone test
-fails in a way that doesn't match "wrong pin" or "polarity" (the two
-usual suspects per Stage 1's playbook), a chip photo becomes the next
-diagnostic step.
+matching the standard SSD1681 register map, plus a fully successful
+Phase 1 bring-up (3/3 clean runs, correct visual output), is strong
+corroborating evidence, not direct visual confirmation. Not worth
+pursuing further unless a future problem stops matching this driver's
+behavior.
+
+## Phase 2 update
+
+This file and `_weact_ssd1681.py` moved here from their Phase 1 temporary
+location (`tools/_weact_driver/`) after the standalone test passed 3/3
+clean runs - see `weact_154.py` in this directory for the `DisplayDriver`
+wrapper. Unmodified otherwise.

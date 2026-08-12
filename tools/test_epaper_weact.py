@@ -5,26 +5,27 @@ Run directly on the dev node over SSH:
 
     (venv) flint@meshcenter-test:~/meshcenter$ python3 tools/test_epaper_weact.py
 
-Uses the original (not vendored - see tools/_weact_driver/LICENSE_NOTICE.md)
-SSD1681 protocol implementation in tools/_weact_driver/ssd1681.py. That
-location and this script are both temporary, Phase 1 only - Phase 2 wraps
-this behind modules/display/drivers/weact_154.py's DisplayDriver
-interface, with configurable pins instead of this script's hardcoded
-defaults.
+Uses the original (not vendored - see
+modules/display/drivers/_weact_ssd1681_LICENSE_NOTICE.md) SSD1681 protocol
+implementation, imported directly from its Phase 2 permanent home
+(modules/display/drivers/_weact_ssd1681.py) as a minimal-dependency smoke
+test - same convention as Stage 1's tools/test_epaper.py. See
+tools/test_epaper_weact_driver.py for the same scenario run through
+modules/display/drivers/weact_154.py's DisplayDriver interface instead.
 
 Step 0 (raw BUSY diagnostic, run BEFORE the real init): prints BUSY's
 actual level during power-up/reset, so the assumed HIGH=busy polarity
-(cross-referenced from WeAct's C reference, not measured - see
-LICENSE_NOTICE.md) gets checked against real hardware instead of silently
-trusted. If this doesn't show BUSY settling to a stable LOW after reset,
-STOP and investigate before running the real init - don't let wait_busy()
-spin against a polarity assumption that turned out wrong.
+(cross-referenced from WeAct's C reference, then confirmed via a
+pull-up/pull-down flip test - see the LICENSE_NOTICE.md) gets checked
+against real hardware instead of silently trusted.
 
 Then: init -> clear -> checkerboard + Cyrillic/umlaut text test pattern
 (section 50: check crisp black-on-white at small size immediately, not
 deferred) -> measure real refresh duration -> sleep -> clean exit.
 
-Stop condition: 2-3 clean runs in a row before moving to Phase 2.
+Phase 1 passed 3/3 clean runs (2026-08-12), after physically re-verifying
+DIN/CLK/CS/DC wiring. Stable timings: init ~0.30s, clear ~1.76-1.81s,
+display ~1.76s, sleep ~0.14s.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("test_epaper_weact")
@@ -133,7 +134,7 @@ def parse_args():
 
 
 def main() -> int:
-    from _weact_driver.ssd1681 import Ssd1681, Ssd1681Timeout
+    from modules.display.drivers._weact_ssd1681 import Ssd1681, Ssd1681Timeout
 
     args = parse_args()
 

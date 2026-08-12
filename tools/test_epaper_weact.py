@@ -1,0 +1,171 @@
+"""Standalone hardware test for the WeAct Studio 1.54" 200x200 B/W
+e-paper module. e-Paper Stage 2 plan (WeAct 1.54"), Phase 1.
+
+Run directly on the dev node over SSH:
+
+    (venv) flint@meshcenter-test:~/meshcenter$ python3 tools/test_epaper_weact.py
+
+Uses the original (not vendored - see tools/_weact_driver/LICENSE_NOTICE.md)
+SSD1681 protocol implementation in tools/_weact_driver/ssd1681.py. That
+location and this script are both temporary, Phase 1 only - Phase 2 wraps
+this behind modules/display/drivers/weact_154.py's DisplayDriver
+interface, with configurable pins instead of this script's hardcoded
+defaults.
+
+Step 0 (raw BUSY diagnostic, run BEFORE the real init): prints BUSY's
+actual level during power-up/reset, so the assumed HIGH=busy polarity
+(cross-referenced from WeAct's C reference, not measured - see
+LICENSE_NOTICE.md) gets checked against real hardware instead of silently
+trusted. If this doesn't show BUSY settling to a stable LOW after reset,
+STOP and investigate before running the real init - don't let wait_busy()
+spin against a polarity assumption that turned out wrong.
+
+Then: init -> clear -> checkerboard + Cyrillic/umlaut text test pattern
+(section 50: check crisp black-on-white at small size immediately, not
+deferred) -> measure real refresh duration -> sleep -> clean exit.
+
+Stop condition: 2-3 clean runs in a row before moving to Phase 2.
+"""
+
+from __future__ import annotations
+
+import logging
+import signal
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("test_epaper_weact")
+
+STEP_TIMEOUT_SECONDS = 60
+FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+TEST_LINES = ["MeshCenter", "WeAct 1.54 TEST", "Вузол Мюнхен äöüß", "PASS"]
+
+
+class StepTimeout(Exception):
+    pass
+
+
+def _alarm_handler(signum, frame):
+    raise StepTimeout(f"Step exceeded {STEP_TIMEOUT_SECONDS}s - check wiring/polarity/pins")
+
+
+def _timed_step(name, fn, *args, **kwargs):
+    old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
+    signal.alarm(STEP_TIMEOUT_SECONDS)
+    t0 = time.monotonic()
+    try:
+        result = fn(*args, **kwargs)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+    elapsed = time.monotonic() - t0
+    log.info("%s took %.2fs", name, elapsed)
+    return result, elapsed
+
+
+def raw_busy_diagnostic(epd):
+    """Sample BUSY through power-up/reset, independent of wait_busy()'s
+    own polarity assumption, before trusting it for the real init."""
+    log.info("--- Raw BUSY diagnostic (before trusting HIGH=busy assumption) ---")
+    log.info("BUSY before reset: %d", epd.raw_busy_level())
+    epd._rst.off()
+    time.sleep(0.05)
+    log.info("BUSY during reset (RST low): %d", epd.raw_busy_level())
+    epd._rst.on()
+    log.info("Sampling BUSY for 2s after reset released...")
+    for i in range(10):
+        log.info("  t=%.1fs BUSY=%d", i * 0.2, epd.raw_busy_level())
+        time.sleep(0.2)
+    log.info(
+        "If BUSY assumption (HIGH=busy) is correct, expect it to have "
+        "settled to a stable 0 (idle) by now, not stuck at 1 or toggling."
+    )
+
+
+def build_test_image(width, height):
+    from PIL import Image, ImageDraw, ImageFont
+
+    image = Image.new("1", (width, height), 1)  # 1 = white
+    draw = ImageDraw.Draw(image)
+
+    # Checkerboard bands (top half) - crisp black/white, no dithering.
+    box = 20
+    for row in range(height // 2 // box):
+        for col in range(width // box):
+            if (row + col) % 2 == 0:
+                draw.rectangle(
+                    [col * box, row * box, (col + 1) * box, (row + 1) * box], fill=0
+                )
+
+    try:
+        font = ImageFont.truetype(FONT_PATH, 14)
+    except OSError:
+        log.warning("Could not load %s, falling back to PIL default font", FONT_PATH)
+        font = ImageFont.load_default()
+
+    y = height // 2 + 4
+    for line in TEST_LINES:
+        draw.text((4, y), line, fill=0, font=font)
+        y += 18
+
+    return image
+
+
+def main() -> int:
+    from _weact_driver.ssd1681 import Ssd1681, Ssd1681Timeout
+
+    try:
+        epd = Ssd1681()
+    except Exception:
+        log.exception("Failed to construct Ssd1681() - GPIO/SPI backend did not initialize")
+        return 1
+
+    raw_busy_diagnostic(epd)
+
+    durations = {}
+    try:
+        _, durations["init"] = _timed_step("init", epd.init)
+
+        log.info("Clearing display...")
+        _, durations["clear"] = _timed_step("clear", epd.clear)
+
+        log.info("Building test image (checkerboard + Cyrillic/umlaut text)...")
+        image = build_test_image(epd.WIDTH, epd.HEIGHT)
+        buf = image.tobytes()
+
+        log.info("Displaying test image...")
+        _, durations["display"] = _timed_step("display", epd.display, buf)
+
+        log.info("Sleeping display...")
+        _, durations["sleep"] = _timed_step("sleep", epd.sleep)
+
+    except (StepTimeout, Ssd1681Timeout) as exc:
+        log.error("TIMEOUT: %s", exc)
+        _safe_close(epd)
+        return 1
+    except Exception:
+        log.exception("Unexpected failure during test sequence")
+        _safe_close(epd)
+        return 1
+
+    _safe_close(epd)
+    log.info("--- Summary ---")
+    for step, seconds in durations.items():
+        log.info("  %-8s %.2fs", step, seconds)
+    log.info("PASS - now check the physical panel: crisp checkerboard, readable Cyrillic/umlaut text")
+    return 0
+
+
+def _safe_close(epd):
+    try:
+        epd.close()
+    except Exception:
+        log.exception("Cleanup (close) also failed - GPIO/SPI may be left open")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

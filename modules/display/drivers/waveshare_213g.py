@@ -108,7 +108,13 @@ class Waveshare213gDriver(DisplayDriver):
         which calls stop() on exactly such a driver."""
         try:
             if self._started and self._epdconfig is not None:
-                self._epdconfig.module_exit()
+                # cleanup=True is required here - the vendor's default
+                # (False) only calls .off() on the 4 gpiozero pin objects,
+                # not .close(). .off() leaves the pin claimed at the
+                # pin-factory level (lgpio), so a plain module_exit() call
+                # looked like a clean stop but never actually released the
+                # physical GPIO lines - see tools/test_gpio_cleanup.py.
+                self._epdconfig.module_exit(cleanup=True)
         finally:
             self._epd = None
             self._epdconfig = None

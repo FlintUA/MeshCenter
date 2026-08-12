@@ -93,6 +93,28 @@ class DisplayManager:
         self._stop_flag = threading.Event()
         self._worker: threading.Thread | None = None
 
+        # Coordinates the worker thread against swap_driver_and_start()
+        # (called from a Flask request thread via /reinit) - without this,
+        # both could call start()/render() on self._driver at once, and the
+        # Waveshare driver's vendor wrapper monkey-patches module-level
+        # shared state (epdconfig.implementation), so a concurrent call
+        # from two threads corrupts it out from under each other (observed
+        # live: a start() timeout immediately followed by
+        # GPIODeviceClosed('Button is closed or uninitialized')).
+        # _pause_for_reinit: "clear to proceed" gate, inverted from the
+        #   usual Event idiom on purpose - starts *set* (worker runs
+        #   normally). swap_driver_and_start() clear()s it before it
+        #   touches self._driver, so the worker's wait() (checked *before*
+        #   starting a new _refresh() cycle) blocks until set() is called
+        #   again in swap_driver_and_start()'s finally.
+        # _worker_idle: set whenever the worker is NOT currently inside
+        #   _refresh() - swap_driver_and_start() waits for this (bounded)
+        #   before it's safe to stop the old driver / start the new one.
+        self._pause_for_reinit = threading.Event()
+        self._pause_for_reinit.set()
+        self._worker_idle = threading.Event()
+        self._worker_idle.set()
+
         self._status = DisplayStatus.DISABLED
         self._stats = RefreshStats()
         self._last_hash: str | None = None
@@ -162,49 +184,66 @@ class DisplayManager:
             debounce_seconds if debounce_seconds is not None else DEFAULT_DEBOUNCE_SECONDS[mode]
         )
 
-    def replace_driver(self, new_driver: DisplayDriver) -> None:
-        """Swap the wrapped driver (e.g. after a GPIO/SPI/timeout config
-        change) without tearing down the worker thread or losing
-        debounce/stats state - only the physical-driver half of the
-        manager changes. Stops the old driver first to release its
-        GPIO/SPI claim before the new one can be started. Deliberately
-        NOT part of the "applied live" settings path (set_refresh_mode) -
-        a bad pin value here can reproduce the BUSY-hang debugging from
-        Phases 1-2, so callers are expected to pair this with
-        try_start_now() and only persist the new config if that succeeds
-        (see api/api_hardware_display.py's re-init route)."""
-        old_driver = self._driver
-        try:
-            old_driver.stop()
-        except Exception:
-            logger.exception("[EPAPER] replace_driver: failed to stop the old driver cleanly")
-        self._driver = new_driver
-        self._last_hash = None  # force a real refresh against the new driver next time
-        self._status = DisplayStatus.CONFIGURED
+    def swap_driver_and_start(
+        self, new_driver: DisplayDriver, timeout: float | None = None,
+    ) -> tuple[bool, str | None]:
+        """Atomically swap the wrapped driver and validate it starts -
+        replaces the old two-step replace_driver()+try_start_now() API,
+        which had a race: the worker thread could call start()/render() on
+        self._driver in the window between those two calls (or even
+        concurrently with either one), and the Waveshare driver's vendor
+        wrapper monkey-patches module-level shared state
+        (epdconfig.implementation), so two threads touching it at once
+        corrupts it out from under each other - confirmed live via a
+        start() timeout immediately followed by
+        GPIODeviceClosed('Button is closed or uninitialized').
 
-    def try_start_now(self, timeout: float | None = None) -> tuple[bool, str | None]:
-        """Synchronously attempt to start the current driver, bounded by a
-        timeout. Only for the explicit GPIO/SPI re-init action - the
-        normal async refresh pipeline always goes through _ensure_started()
-        instead. Gives the caller an immediate pass/fail (e.g. "GPIO24
-        conflicts" or a BUSY-timeout) instead of only discovering a bad
-        pin config on the next debounced refresh, minutes later."""
+        Pauses the worker (it won't start a new _refresh() cycle) and waits
+        for any cycle already in flight to finish before touching
+        self._driver at all, so start()/render() are never reachable from
+        two threads at once for the same driver instance. Bounded by
+        `timeout` even if the worker is wedged (e.g. inside its own 75s
+        watchdog) - a still-running old driver session is abandoned rather
+        than let a stuck worker hang a reinit request forever; the caller
+        (api/api_hardware_display.py's re-init route) is on a Flask request
+        thread and already expects a bounded wait here.
+
+        Only for the explicit GPIO/SPI/model re-init action - the normal
+        async refresh pipeline always goes through _ensure_started()
+        instead. Deliberately NOT part of the "applied live" settings path
+        (set_refresh_mode) - a bad pin value here can reproduce the
+        BUSY-hang debugging from Phases 1-2, so callers are expected to
+        only persist the new config if this returns True."""
         timeout = timeout if timeout is not None else self._refresh_timeout
-        self._status = DisplayStatus.INITIALIZING
+        self._pause_for_reinit.clear()  # block the worker from starting a new cycle
+        try:
+            self._worker_idle.wait(timeout=timeout)
 
-        def _start_or_raise():
-            if not self._driver.start():
-                raise RuntimeError(self._driver.get_status().get("error") or "start() returned False")
+            old_driver = self._driver
+            try:
+                old_driver.stop()
+            except Exception:
+                logger.exception("[EPAPER] swap_driver_and_start: failed to stop the old driver cleanly")
+            self._driver = new_driver
+            self._last_hash = None  # force a real refresh against the new driver next time
+            self._status = DisplayStatus.INITIALIZING
 
-        completed, error = _run_with_timeout(_start_or_raise, timeout)
-        if not completed:
-            self._status = DisplayStatus.ERROR
-            return False, f"start() timed out after {timeout:.0f}s"
-        if error is not None:
-            self._status = DisplayStatus.ERROR
-            return False, str(error)
-        self._status = DisplayStatus.CONFIGURED
-        return True, None
+            def _start_or_raise():
+                if not new_driver.start():
+                    raise RuntimeError(new_driver.get_status().get("error") or "start() returned False")
+
+            completed, error = _run_with_timeout(_start_or_raise, timeout)
+            if not completed:
+                self._status = DisplayStatus.ERROR
+                return False, f"start() timed out after {timeout:.0f}s"
+            if error is not None:
+                self._status = DisplayStatus.ERROR
+                return False, str(error)
+            self._status = DisplayStatus.CONFIGURED
+            return True, None
+        finally:
+            self._pause_for_reinit.set()  # let the worker resume
+            self._wake.set()  # in case a frame arrived while we were paused
 
     # -- worker thread --------------------------------------------------
 
@@ -227,7 +266,20 @@ class DisplayManager:
                 if image is None:
                     continue
 
-            self._refresh(image)
+            # Cooperative pause point (see swap_driver_and_start()) - don't
+            # start touching self._driver while a reinit is mid-swap. Not
+            # inside _refresh() itself: the point is to never let a driver
+            # method call and a reinit's own start() overlap, so the
+            # boundary has to be before the first one, not wrapped around it.
+            self._pause_for_reinit.wait()
+            if self._stop_flag.is_set():
+                return
+
+            self._worker_idle.clear()
+            try:
+                self._refresh(image)
+            finally:
+                self._worker_idle.set()
 
     def _take_pending(self) -> tuple[Any, EventPriority]:
         with self._lock:

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -271,14 +272,181 @@ def part3_debounce_survives_drifting_content() -> bool:
     return True
 
 
+class _FakeGatedDriver:
+    """DisplayDriver stand-in that (a) can hold start() open on a
+    controllable gate, so a test can deterministically catch the worker
+    thread *inside* start() rather than hoping a sleep() wins a timing
+    race, and (b) tracks - across all instances, via a class-level lock -
+    whether two instances' start()/render()/stop() are ever "active"
+    (entered but not yet returned) at the same time. That's the exact
+    failure mode swap_driver_and_start() exists to prevent (see
+    manager.py): the vendor Waveshare wrapper monkey-patches module-level
+    shared state, so two instances' start()/render() running concurrently
+    corrupts each other regardless of which instances they are - this
+    check doesn't care about identity, only about overlap."""
+
+    _active_lock = threading.Lock()
+    _active: str | None = None
+    violations: list[str] = []
+
+    def __init__(self, name: str, start_gate: threading.Event | None = None):
+        self.name = name
+        self.display_name = name
+        self.id = name
+        self._started = False
+        self._start_gate = start_gate
+        self.entered_start = threading.Event()
+        self.start_returned = threading.Event()
+        self.stop_called = threading.Event()
+
+    def _enter(self, where: str) -> None:
+        with _FakeGatedDriver._active_lock:
+            if _FakeGatedDriver._active is not None:
+                _FakeGatedDriver.violations.append(
+                    f"{self.name}.{where}() entered while {_FakeGatedDriver._active} was still active"
+                )
+            _FakeGatedDriver._active = f"{self.name}.{where}"
+
+    def _exit(self) -> None:
+        with _FakeGatedDriver._active_lock:
+            _FakeGatedDriver._active = None
+
+    def detect(self) -> dict[str, Any] | None:
+        return {"model": self.name}
+
+    def start(self, **options: Any) -> bool:
+        self._enter("start")
+        try:
+            self.entered_start.set()
+            if self._start_gate is not None:
+                self._start_gate.wait(timeout=5)
+            self._started = True
+            return True
+        finally:
+            self.start_returned.set()
+            self._exit()
+
+    def stop(self) -> None:
+        self.stop_called.set()
+        self._enter("stop")
+        try:
+            self._started = False
+        finally:
+            self._exit()
+
+    def get_status(self) -> dict[str, Any]:
+        return {"ok": True, "started": self._started, "model": self.name}
+
+    def render(self, image: Any, fast: bool = False) -> None:
+        self._enter("render")
+        self._exit()
+
+    def clear(self) -> None:
+        pass
+
+    def sleep(self) -> None:
+        pass
+
+
+class _FakeImage:
+    def tobytes(self):
+        return b"fake"
+
+
+def part4_reinit_does_not_race_worker() -> bool:
+    """Regression test for a real race found live (2026-08-12): the worker
+    thread and swap_driver_and_start() (called from a Flask request thread
+    via /reinit) could both call start()/render() on the same driver
+    instance at once, since nothing paused the worker during a reinit.
+    Observed live as a start() timeout immediately followed by
+    GPIODeviceClosed('Button is closed or uninitialized').
+
+    Deterministic by construction, not by luck: driver_a's start() is held
+    open on a gate until the test has *confirmed* (via entered_start, not
+    a sleep) that the worker is genuinely inside it, then confirms the
+    concurrently-started reinit is genuinely still blocked (driver_a not
+    yet stopped, driver_b not yet started) before releasing the gate -
+    matching the lesson from the GpioRegistry HTTP-test mistake: a test
+    that can't distinguish bug-present from bug-fixed proves nothing."""
+    from modules.display.manager import DisplayManager
+    from modules.display.models import EventPriority
+
+    log.info("=== Part 4: swap_driver_and_start() never overlaps the worker on one driver ===")
+
+    _FakeGatedDriver.violations.clear()
+    _FakeGatedDriver._active = None
+
+    start_gate = threading.Event()  # held closed - driver_a's start() blocks here
+    driver_a = _FakeGatedDriver("driver_a", start_gate=start_gate)
+    manager = DisplayManager(driver_a, refresh_timeout=5.0)
+    manager.start()
+
+    manager.mark_dirty(_FakeImage(), priority=EventPriority.CRITICAL)  # bypass debounce
+    if not driver_a.entered_start.wait(timeout=5):
+        manager.stop()
+        log.error("FAIL: worker never reached driver_a.start() - test setup broken")
+        return False
+
+    driver_b = _FakeGatedDriver("driver_b")
+    reinit_result: dict[str, Any] = {}
+
+    def _do_reinit():
+        ok, error = manager.swap_driver_and_start(driver_b, timeout=5.0)
+        reinit_result["ok"] = ok
+        reinit_result["error"] = error
+
+    reinit_thread = threading.Thread(target=_do_reinit, daemon=True)
+    reinit_thread.start()
+
+    # Prove the reinit is genuinely still blocked - not "probably" via a
+    # bigger sleep, but by checking the actual state it must not have
+    # reached yet: driver_a hasn't been stopped, driver_b hasn't started.
+    time.sleep(0.5)
+    if driver_a.stop_called.is_set() or driver_b.entered_start.is_set():
+        manager.stop()
+        log.error(
+            "FAIL: swap_driver_and_start() proceeded (driver_a stopped=%s, "
+            "driver_b started=%s) while driver_a.start() was still running",
+            driver_a.stop_called.is_set(), driver_b.entered_start.is_set(),
+        )
+        return False
+
+    # Now let driver_a.start() finish - the reinit should unblock and
+    # proceed in order: driver_a.start() returns, THEN driver_a.stop(),
+    # THEN driver_b.start().
+    start_gate.set()
+    reinit_thread.join(timeout=10)
+    manager.stop()
+
+    if reinit_thread.is_alive():
+        log.error("FAIL: swap_driver_and_start() never returned")
+        return False
+    if not reinit_result.get("ok"):
+        log.error("FAIL: swap_driver_and_start() reported failure: %s", reinit_result.get("error"))
+        return False
+    if not driver_a.start_returned.is_set() or not driver_a.stop_called.is_set():
+        log.error("FAIL: expected driver_a.start() to return and driver_a.stop() to be called")
+        return False
+    if not driver_b.entered_start.is_set():
+        log.error("FAIL: driver_b.start() was never called")
+        return False
+    if _FakeGatedDriver.violations:
+        log.error("FAIL: overlapping driver method calls detected: %s", _FakeGatedDriver.violations)
+        return False
+
+    log.info("PASS: reinit correctly waited for the in-flight worker cycle, no overlapping driver calls")
+    return True
+
+
 def main() -> int:
     ok1 = part1_real_hardware()
     ok2 = part2_simulated_timeout()
     ok3 = part3_debounce_survives_drifting_content()
-    if ok1 and ok2 and ok3:
+    ok4 = part4_reinit_does_not_race_worker()
+    if ok1 and ok2 and ok3 and ok4:
         log.info("ALL PASS")
         return 0
-    log.error("FAILED: part1=%s part2=%s part3=%s", ok1, ok2, ok3)
+    log.error("FAILED: part1=%s part2=%s part3=%s part4=%s", ok1, ok2, ok3, ok4)
     return 1
 
 

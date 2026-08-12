@@ -104,7 +104,7 @@ class Waveshare213gDriver(DisplayDriver):
         An early `if not self._started: return` here (an earlier version
         of this method) skipped that release entirely, leaking the claim
         until process restart - this matters in practice for
-        DisplayManager.replace_driver()'s reinit-failure rollback path,
+        DisplayManager.swap_driver_and_start()'s reinit-failure rollback path,
         which calls stop() on exactly such a driver."""
         try:
             if self._started and self._epdconfig is not None:

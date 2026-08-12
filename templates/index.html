@@ -1288,6 +1288,11 @@
                                 <summary data-i18n="settings.epaper_advanced">Advanced (GPIO / SPI)</summary>
                                 <div class="settings-card-note" data-i18n="settings.epaper_advanced_warning">These fields do not apply automatically. A wrong value can hang the display until the process restarts - always use "Apply &amp; Re-init" to validate before saving.</div>
 
+                                <div class="settings-option settings-option--select">
+                                    <label class="settings-option-label" for="epaperModelSelect" data-i18n="settings.epaper_model">Display model</label>
+                                    <select id="epaperModelSelect" class="settings-select" onchange="epaperModelChanged(this.value)"></select>
+                                </div>
+
                                 <div class="epaper-pin-grid">
                                     <div><label for="epaperPinRst">RST</label><input id="epaperPinRst" type="number" min="0" max="27"></div>
                                     <div><label for="epaperPinDc">DC</label><input id="epaperPinDc" type="number" min="0" max="27"></div>
@@ -1929,7 +1934,7 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="/static/chat.js?v=20260810-epaper-pages"></script>
+<script src="/static/chat.js?v=20260812-epaper-model-select"></script>
 <script src="/static/media.js?v=20260806-stage9-i18n"></script>
 <script src="/static/weather.js?v=20260808-weather-provider"></script>
 

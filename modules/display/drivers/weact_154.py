@@ -90,10 +90,18 @@ class Weact154Driver(DisplayDriver):
             return False
 
     def stop(self) -> None:
-        if not self._started:
-            return
+        """Always releases the GPIO registry claim, even if this driver
+        never got past a failed start() - see e-Paper Stage 2 plan
+        (WeAct 1.54"), Phase 4 notes: start() claims GPIO before
+        attempting init(), so a driver that fails partway through start()
+        still holds a claim that only stop() can release. An early
+        `if not self._started: return` here (an earlier version of this
+        method) skipped that release entirely, leaking the claim until
+        process restart - this matters in practice for
+        DisplayManager.replace_driver()'s reinit-failure rollback path,
+        which calls stop() on exactly such a driver."""
         try:
-            if self._epd is not None:
+            if self._started and self._epd is not None:
                 self._epd.close()
         finally:
             self._epd = None

@@ -586,6 +586,7 @@
     "epaper_show_power": "Питание",
     "epaper_show_system": "Система",
     "epaper_show_message": "Сообщение",
+    "epaper_model": "Модель дисплея",
     "epaper_reinit": "Применить и переинициализировать",
     "epaper_settings_failed": "Не удалось обновить настройки дисплея",
     "epaper_action_queued": "Поставлено в очередь - дисплей обновится в ближайшее время",

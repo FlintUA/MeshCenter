@@ -762,6 +762,15 @@ async function loadEpaperSettings() {
         if (modeSelect) modeSelect.value = config.refresh_mode || 'debounce';
         if (debounceInput) debounceInput.value = config.debounce_seconds ?? 30;
 
+        window.epaperAvailableModels = data.available_models || [];
+        const modelSelect = document.getElementById('epaperModelSelect');
+        if (modelSelect) {
+            modelSelect.innerHTML = window.epaperAvailableModels
+                .map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.display_name)}</option>`)
+                .join('');
+            modelSelect.value = config.model || '';
+        }
+
         const pins = config.pins || {};
         const spi = config.spi || {};
         const setField = (id, value) => {
@@ -817,6 +826,28 @@ function setEpaperDebounceSeconds(value) {
     _epaperPostSettings({ debounce_seconds: seconds });
 }
 
+function epaperModelChanged(modelId) {
+    // Prefills the pin fields with the newly-selected model's own
+    // defaults, for review before "Apply & Re-init" - does NOT save or
+    // reinit by itself (e-Paper Stage 2 plan, Phase 4: a model switch
+    // changes DisplayCapabilities, same explicit-confirm treatment as a
+    // GPIO/SPI change, never autosaved).
+    const models = window.epaperAvailableModels || [];
+    const model = models.find(m => m.id === modelId);
+    if (!model) return;
+
+    const pins = model.default_pins || {};
+    const setField = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.value = value ?? '';
+    };
+    setField('epaperPinRst', pins.rst);
+    setField('epaperPinDc', pins.dc);
+    setField('epaperPinCs', pins.cs);
+    setField('epaperPinBusy', pins.busy);
+    setField('epaperPinPwr', pins.pwr);
+}
+
 async function _epaperTriggerAction(path, button, busyLabel) {
     if (button) {
         button.disabled = true;
@@ -860,7 +891,10 @@ async function epaperReinitDisplay(button) {
         return Number.isFinite(value) ? value : undefined;
     };
 
+    const modelSelect = document.getElementById('epaperModelSelect');
+
     const payload = {
+        model: modelSelect ? modelSelect.value : undefined,
         pins: {
             rst: getInt('epaperPinRst'),
             dc: getInt('epaperPinDc'),

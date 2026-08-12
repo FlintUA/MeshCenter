@@ -26,8 +26,10 @@ import threading
 import time
 from typing import Any, Callable
 
-from modules.display.config_store import DEFAULT_EPAPER_CONFIG
+from modules.display.config_store import DEFAULT_EPAPER_CONFIG, DEFAULT_MODEL
+from modules.display.drivers.base import DisplayDriver
 from modules.display.drivers.waveshare_213g import Waveshare213gDriver
+from modules.display.drivers.weact_154 import Weact154Driver
 from modules.display.gpio_registry import GpioRegistry
 from modules.display.manager import DisplayManager
 from modules.display.models import EventPriority, RefreshMode
@@ -37,6 +39,15 @@ from modules.display.pages import power as power_page
 from modules.display.pages import radio as radio_page
 from modules.display.pages import system as system_page
 from modules.display.pages.status import StatusScreenData, render
+
+# One entry per supported panel - e-Paper Stage 2 plan (WeAct 1.54"),
+# Phase 4. Both driver classes share the same (pins, spi, gpio_registry)
+# constructor shape by convention (see DisplayDriver), so selecting a
+# model is just picking which class to instantiate.
+DRIVER_CLASSES: dict[str, type[DisplayDriver]] = {
+    "waveshare_213g": Waveshare213gDriver,
+    "weact_154": Weact154Driver,
+}
 
 # Pages selectable via POST /api/hardware/display/show/<page> (plan
 # section 34). "status" is the default/fallback - an unknown or not-yet-
@@ -76,8 +87,12 @@ def _bucket(value: float | None, step: int = _SIGNIFICANCE_BUCKET) -> float | No
     return round(value / step) * step
 
 
-def build_driver(config: dict, gpio_registry: GpioRegistry) -> Waveshare213gDriver:
-    return Waveshare213gDriver(
+def build_driver(config: dict, gpio_registry: GpioRegistry) -> DisplayDriver:
+    model = config.get("model", DEFAULT_MODEL)
+    driver_cls = DRIVER_CLASSES.get(model)
+    if driver_cls is None:
+        raise ValueError(f"Unknown e-paper model: {model!r}")
+    return driver_cls(
         pins=config.get("pins"), spi=config.get("spi"), gpio_registry=gpio_registry,
     )
 

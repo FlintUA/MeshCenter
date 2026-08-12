@@ -39,6 +39,7 @@ from storage.device_manager import DeviceManager
 from api.api_node_tools import register_node_tools_routes
 from api.api_node_icons import register_node_icon_routes
 from api.api_weather import register_weather_routes
+from api.api_hardware_display import register_hardware_display_routes
 from weather.weather_manager import WeatherManager
 from weather.providers.openweather import OpenWeatherProvider, WeatherConfig as OpenWeatherConfig
 from weather.providers.weatherapi import WeatherApiProvider, WeatherApiConfig
@@ -59,6 +60,10 @@ required_vars = [
     "MAX_HISTORY_MESSAGES", "CHANNEL_CHAT_ID", "CHANNEL_CHAT_NAME",
     "KNOWN_NODES", "KNOWN_NODE_INFO"
 ]
+
+# Experimental (feature/epaper-display branch), off unless a local config.py
+# explicitly opts in - see config.example.py.
+EPAPER_ENABLED = globals().get("EPAPER_ENABLED", False)
 
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 # Radio-scoped paths are resolved after the accepted instance identity loads.
@@ -310,6 +315,101 @@ register_camera_routes(app, camera, handle_errors)
 # /video_feed or anything else camera.py already owns.
 register_camera_manager_routes(app, device_manager, handle_errors)
 register_system_routes(app)
+
+# Constructing DisplayManager (and the driver it wraps) never touches
+# SPI/GPIO by itself - only display_manager.start(), called later from the
+# EPAPER_ENABLED-gated block below, does. Built unconditionally so
+# /api/hardware/display can report {"enabled": false} on installs without
+# a display, matching how camera_manager's routes work above even before
+# a rescan has ever run.
+from modules.display.config_store import load_epaper_config
+from modules.display.gpio_registry import GpioRegistry as _EpaperGpioRegistry
+from modules.display.service import (
+    build_display_manager,
+    build_page_image_now,
+    build_status_image_now,
+)
+
+EPAPER_CONFIG_PATH = os.path.join(DATA_DIR, "epaper_config.json")
+epaper_config = load_epaper_config(EPAPER_CONFIG_PATH)
+epaper_gpio_registry = _EpaperGpioRegistry()
+display_manager = build_display_manager(epaper_config, epaper_gpio_registry)
+
+# Which page epaper_worker's poller shows when nothing critical is
+# happening - "status" by default, pinned to something else via
+# POST /api/hardware/display/show/<page> (plan section 34). Runtime-only,
+# not persisted - a restart always comes back up on Status.
+epaper_ui_state = {"active_page": "status"}
+
+# Named functions (not inline lambdas) so both epaper_worker's thread
+# (started later, EPAPER_ENABLED-gated) and the Settings/refresh API
+# routes below share exactly one definition of each. All reference
+# server.py globals (radio_connection_manager, radio_health, nodes,
+# state_lock, ...) by name rather than capturing them at def time - safe
+# because Python resolves globals at call time, and none of these
+# functions are actually called until well after those globals exist.
+def _epaper_get_radio_status():
+    return radio_connection_manager.status(radio_health.get("listener_running", False))
+
+def _epaper_get_cpu_percent():
+    return _cpu_current_usage
+
+def _epaper_get_ram_percent():
+    return _read_memory_percent()
+
+def _epaper_get_listener_alive():
+    return radio_health.get("listener_running", False)
+
+def _epaper_get_enabled():
+    return epaper_config.get("enabled", True)
+
+def _epaper_get_battery_percent():
+    return sensor_data.get("battery_percent")
+
+def _epaper_get_active_page():
+    return epaper_ui_state.get("active_page", "status")
+
+def _epaper_get_last_error():
+    return radio_connection_manager.status(radio_health.get("listener_running", False)).get("last_error", "")
+
+def _epaper_get_power_readings():
+    return {
+        "voltage": sensor_data.get("voltage"),
+        "current": sensor_data.get("current"),
+        "power": sensor_data.get("power"),
+    }
+
+def _epaper_get_cpu_temp():
+    return _read_cpu_temperature()
+
+def _epaper_get_latest_message():
+    with state_lock:
+        return dict(messages[-1]) if messages else None
+
+def _epaper_build_status_image_now():
+    return build_status_image_now(
+        display_manager, state_lock, nodes,
+        _epaper_get_radio_status, _epaper_get_cpu_percent, _epaper_get_ram_percent,
+        _epaper_get_listener_alive, LOCAL_NODE_NAME,
+    )
+
+def _epaper_build_page_image_now(page):
+    return build_page_image_now(
+        page, display_manager, LOCAL_NODE_NAME,
+        _epaper_get_radio_status, _epaper_get_listener_alive, _epaper_get_last_error,
+        _epaper_get_power_readings, _epaper_get_cpu_percent, _epaper_get_ram_percent,
+        _epaper_get_cpu_temp, _epaper_get_latest_message,
+    )
+
+register_hardware_display_routes(
+    app, display_manager, EPAPER_ENABLED, handle_errors,
+    config=epaper_config,
+    config_path=EPAPER_CONFIG_PATH,
+    gpio_registry=epaper_gpio_registry,
+    build_status_image_now=_epaper_build_status_image_now,
+    build_page_image_now=_epaper_build_page_image_now,
+    ui_state=epaper_ui_state,
+)
 
 # ===== STATIC FILES =====
 @app.route('/static/<path:filename>')
@@ -5623,7 +5723,41 @@ if __name__ == "__main__":
         pause_listen.set()
         print(f"[IDENTITY] Listener not started because status={identity_status}", flush=True)
     threading.Thread(target=cpu_history_worker, daemon=True).start()
-    
+
+    if EPAPER_ENABLED:
+        from modules.display.service import epaper_worker
+
+        # display_manager itself was already constructed at module load
+        # time (see register_hardware_display_routes above) - only
+        # start() actually touches SPI/GPIO. Only actually started if the
+        # persisted runtime "enabled" toggle (epaper_config.json, distinct
+        # from this EPAPER_ENABLED master switch) also allows it - the
+        # worker thread itself is always started so that flipping that
+        # toggle back on later (via the Settings POST route) takes effect
+        # without a restart.
+        if epaper_config.get("enabled", True):
+            display_manager.start()
+        threading.Thread(
+            target=epaper_worker,
+            args=(display_manager, state_lock, nodes),
+            kwargs=dict(
+                get_radio_status=_epaper_get_radio_status,
+                get_cpu_percent=_epaper_get_cpu_percent,
+                get_ram_percent=_epaper_get_ram_percent,
+                get_listener_alive=_epaper_get_listener_alive,
+                local_node_name=LOCAL_NODE_NAME,
+                get_enabled=_epaper_get_enabled,
+                get_battery_percent=_epaper_get_battery_percent,
+                get_active_page=_epaper_get_active_page,
+                get_last_error=_epaper_get_last_error,
+                get_power_readings=_epaper_get_power_readings,
+                get_cpu_temp=_epaper_get_cpu_temp,
+                get_latest_message=_epaper_get_latest_message,
+            ),
+            daemon=True,
+        ).start()
+        print("[EPAPER] Display manager + worker started", flush=True)
+
     identity_status = RADIO_IDENTITY_RESULT.get("status", "NOT_CHECKED")
     detected_radio = RADIO_IDENTITY_RESULT.get("detected") or {}
     banner_radio_name = detected_radio.get("long_name") or LOCAL_NODE_NAME

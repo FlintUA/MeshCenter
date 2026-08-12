@@ -731,6 +731,196 @@ function updateSettingsUi() {
     notifySettingsUpdated();
 }
 
+// ===== E-PAPER DISPLAY SETTINGS (e-Paper Stage 1 plan, Phase 7) =====
+// enabled/refresh_mode/debounce_seconds apply live and autosave on
+// change, matching every other setting on this page. pins/spi/timeout
+// ("Advanced") deliberately do NOT autosave - a typo there risks
+// reproducing the BUSY-hang debugging from Phases 1-2, this time on a
+// live device instead of at wiring time. Those only ever apply through
+// epaperReinitDisplay(), which is a single explicit action gated by the
+// GPIO conflict check and a synchronous re-init confirmation on the
+// server before anything is persisted.
+
+async function loadEpaperSettings() {
+    const card = document.getElementById('epaperSettingsCard');
+    if (!card) return;
+
+    try {
+        const response = await fetch('/api/hardware/display/settings', { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+            card.style.display = 'none';
+            return;
+        }
+        card.style.display = '';
+
+        const config = data.config || {};
+        const enabledToggle = document.getElementById('epaperEnabledToggle');
+        const modeSelect = document.getElementById('epaperRefreshMode');
+        const debounceInput = document.getElementById('epaperDebounceSeconds');
+        if (enabledToggle) enabledToggle.checked = !!config.enabled;
+        if (modeSelect) modeSelect.value = config.refresh_mode || 'debounce';
+        if (debounceInput) debounceInput.value = config.debounce_seconds ?? 30;
+
+        const pins = config.pins || {};
+        const spi = config.spi || {};
+        const setField = (id, value) => {
+            const el = document.getElementById(id);
+            if (el) el.value = value ?? '';
+        };
+        setField('epaperPinRst', pins.rst);
+        setField('epaperPinDc', pins.dc);
+        setField('epaperPinCs', pins.cs);
+        setField('epaperPinBusy', pins.busy);
+        setField('epaperPinPwr', pins.pwr);
+        setField('epaperSpiBus', spi.bus);
+        setField('epaperSpiDevice', spi.device);
+        setField('epaperRefreshTimeout', config.refresh_timeout);
+    } catch (error) {
+        console.error('[EPAPER] Failed to load settings:', error);
+        card.style.display = 'none';
+    }
+}
+
+async function _epaperPostSettings(payload) {
+    try {
+        const response = await fetch('/api/hardware/display/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+        return true;
+    } catch (error) {
+        console.error('[EPAPER] Settings update failed:', error);
+        showToast(window.I18N.t('settings.epaper_settings_failed'), 'error');
+        return false;
+    }
+}
+
+function setEpaperEnabled(enabled) {
+    _epaperPostSettings({ enabled });
+}
+
+function setEpaperRefreshMode(mode) {
+    const debounceInput = document.getElementById('epaperDebounceSeconds');
+    _epaperPostSettings({
+        refresh_mode: mode,
+        debounce_seconds: debounceInput ? Number(debounceInput.value) : undefined,
+    });
+}
+
+function setEpaperDebounceSeconds(value) {
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds < 0) return;
+    _epaperPostSettings({ debounce_seconds: seconds });
+}
+
+async function _epaperTriggerAction(path, button, busyLabel) {
+    if (button) {
+        button.disabled = true;
+        button.dataset.originalText = button.dataset.originalText || button.innerHTML;
+    }
+    try {
+        const response = await fetch(path, { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+        showToast(window.I18N.t('settings.epaper_action_queued'), 'success');
+    } catch (error) {
+        console.error(`[EPAPER] ${path} failed:`, error);
+        showToast(window.I18N.t('settings.epaper_settings_failed'), 'error');
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+function epaperTestDisplay(button) {
+    _epaperTriggerAction('/api/hardware/display/test', button);
+}
+
+function epaperClearDisplay(button) {
+    _epaperTriggerAction('/api/hardware/display/clear', button);
+}
+
+function epaperRefreshDisplay(button) {
+    _epaperTriggerAction('/api/hardware/display/refresh', button);
+}
+
+async function epaperReinitDisplay(button) {
+    const statusEl = document.getElementById('epaperReinitStatus');
+    const getInt = id => {
+        const el = document.getElementById(id);
+        const value = el ? parseInt(el.value, 10) : NaN;
+        return Number.isFinite(value) ? value : undefined;
+    };
+    const getFloat = id => {
+        const el = document.getElementById(id);
+        const value = el ? parseFloat(el.value) : NaN;
+        return Number.isFinite(value) ? value : undefined;
+    };
+
+    const payload = {
+        pins: {
+            rst: getInt('epaperPinRst'),
+            dc: getInt('epaperPinDc'),
+            cs: getInt('epaperPinCs'),
+            busy: getInt('epaperPinBusy'),
+            pwr: getInt('epaperPinPwr'),
+        },
+        spi: {
+            bus: getInt('epaperSpiBus'),
+            device: getInt('epaperSpiDevice'),
+        },
+        refresh_timeout: getFloat('epaperRefreshTimeout'),
+    };
+
+    if (button) button.disabled = true;
+    if (statusEl) {
+        statusEl.textContent = window.I18N.t('settings.epaper_reinit_in_progress');
+        statusEl.className = 'reference-location-status';
+    }
+
+    try {
+        const response = await fetch('/api/hardware/display/reinit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Re-init failed');
+        if (statusEl) {
+            statusEl.textContent = window.I18N.t('settings.epaper_reinit_success');
+            statusEl.className = 'reference-location-status reference-location-status-ok';
+        }
+        showToast(window.I18N.t('settings.epaper_reinit_success'), 'success');
+    } catch (error) {
+        console.error('[EPAPER] Re-init failed:', error);
+        if (statusEl) {
+            statusEl.textContent = `${window.I18N.t('settings.epaper_reinit_failed')}: ${error.message || error}`;
+            statusEl.className = 'reference-location-status reference-location-status-error';
+        }
+        showToast(window.I18N.t('settings.epaper_reinit_failed'), 'error');
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+async function epaperShowPage(page, button) {
+    if (button) button.disabled = true;
+    try {
+        const response = await fetch(`/api/hardware/display/show/${encodeURIComponent(page)}`, { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+        showToast(window.I18N.t('settings.epaper_action_queued'), 'success');
+    } catch (error) {
+        console.error(`[EPAPER] show/${page} failed:`, error);
+        showToast(window.I18N.t('settings.epaper_settings_failed'), 'error');
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
 function degreesToRadians(value) {
     return value * Math.PI / 180;
 }
@@ -11295,6 +11485,47 @@ function formatPeripheralMetric(value, unit = '') {
     return `${escapeHtml(text)}${unit}`;
 }
 
+function renderDisplayCard(hardwareDisplayData, profileId) {
+    // Read-only for now (e-Paper Stage 1 plan Phase 6) - no enable/disable
+    // or settings here yet, that's Phase 7. Nothing rendered at all when
+    // the feature isn't enabled server-side (EPAPER_ENABLED in config.py),
+    // matching how this card simply doesn't exist on installs without the
+    // hardware, rather than showing a permanently "disabled" placeholder.
+    if (!hardwareDisplayData || !hardwareDisplayData.enabled) return '';
+
+    const eyebrow = escapeHtml(window.I18N.t('devices.active_profile', { id: deviceDashboardValue(profileId) }));
+    const isOnline = hardwareDisplayData.status === 'online';
+    const statusClass = isOnline ? 'device-status-ok' : 'device-status-warning';
+    const statusLabel = isOnline
+        ? window.I18N.t('devices.display_online')
+        : window.I18N.t('devices.display_offline');
+    const lastRefresh = hardwareDisplayData.last_successful_refresh
+        ? new Date(hardwareDisplayData.last_successful_refresh * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : '—';
+    const avgDuration = typeof hardwareDisplayData.average_duration === 'number'
+        ? `${hardwareDisplayData.average_duration.toFixed(1)}s`
+        : '—';
+
+    return `
+        <section class="peripheral-card">
+            <div class="peripheral-card-header">
+                <div>
+                    <div class="device-card-eyebrow">${eyebrow}</div>
+                    <h3>${deviceDashboardValue(hardwareDisplayData.model)}</h3>
+                </div>
+                <div class="device-status-pill ${statusClass}">
+                    <span class="device-status-dot"></span>${statusLabel}
+                </div>
+            </div>
+            <dl class="device-detail-list">
+                <div><dt>${escapeHtml(window.I18N.t('devices.display_refreshes'))}</dt><dd>${deviceDashboardValue(hardwareDisplayData.refresh_count)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.display_errors'))}</dt><dd>${deviceDashboardValue(hardwareDisplayData.error_count)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.display_avg_duration'))}</dt><dd>${avgDuration}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.display_last_refresh'))}</dt><dd>${lastRefresh}</dd></div>
+            </dl>
+        </section>`;
+}
+
 function renderCameraManagerCards(cameraManagerData, profileId) {
     const eyebrow = escapeHtml(window.I18N.t('devices.active_profile', { id: deviceDashboardValue(profileId) }));
 
@@ -11461,15 +11692,19 @@ async function loadPeripheralDevices(showFeedback = false) {
     }
 
     try {
-        const [response, cameraManagerResponse] = await Promise.all([
+        const [response, cameraManagerResponse, hardwareDisplayResponse] = await Promise.all([
             fetch('/api/devices', { cache: 'no-store' }),
             fetch('/api/devices/cameras', { cache: 'no-store' }).catch(() => null),
+            fetch('/api/hardware/display', { cache: 'no-store' }).catch(() => null),
         ]);
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || window.I18N.t('devices.unable_to_load'));
         const devices = Array.isArray(data.devices) ? data.devices : [];
         const cameraManagerData = cameraManagerResponse && cameraManagerResponse.ok
             ? await cameraManagerResponse.json().catch(() => null)
+            : null;
+        const hardwareDisplayData = hardwareDisplayResponse && hardwareDisplayResponse.ok
+            ? await hardwareDisplayResponse.json().catch(() => null)
             : null;
 
         // The new camera-driver framework (camera_manager.py) replaces the
@@ -11514,10 +11749,11 @@ async function loadPeripheralDevices(showFeedback = false) {
         }).join('');
 
         const cameraCards = renderCameraManagerCards(cameraManagerData, data.profile_id);
+        const displayCard = renderDisplayCard(hardwareDisplayData, data.profile_id);
 
         container.dataset.loaded = '1';
         container.innerHTML = `
-            <div class="peripheral-grid">${cameraCards}${cards}</div>
+            <div class="peripheral-grid">${cameraCards}${displayCard}${cards}</div>
             <section class="peripheral-card peripheral-add-card" aria-disabled="true">
                 <div class="peripheral-add-icon">＋</div>
                 <h3>${escapeHtml(window.I18N.t('devices.add_device'))}</h3>
@@ -11800,6 +12036,7 @@ function switchMainTab(tab) {
         if (messagesView) messagesView.style.display = 'none';
 
         updateStatusDock('settings');
+        loadEpaperSettings();
     } else if (tab === 'about') {
         if (chatHeader) chatHeader.style.display = 'none';
         if (chatListContainer) chatListContainer.style.display = 'none';

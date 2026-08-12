@@ -2857,6 +2857,7 @@ body {
 .settings-card--weather-provider { grid-area: 2 / 2 / 3 / 3; }
 .settings-card--map              { grid-area: 1 / 3 / 2 / 4; }
 .settings-card--reference        { grid-area: 2 / 3 / 3 / 4; }
+.settings-card--epaper           { grid-area: 3 / 1 / 4 / 4; }
 
 .settings-card {
     background: var(--mc-card-bg);
@@ -2889,7 +2890,8 @@ body {
     .settings-card--map,
     .settings-card--telemetry,
     .settings-card--weather-provider,
-    .settings-card--reference {
+    .settings-card--reference,
+    .settings-card--epaper {
         grid-area: auto;
     }
 }
@@ -2906,7 +2908,8 @@ body {
     .settings-card--map,
     .settings-card--telemetry,
     .settings-card--weather-provider,
-    .settings-card--reference {
+    .settings-card--reference,
+    .settings-card--epaper {
         grid-area: auto;
     }
 }
@@ -5310,6 +5313,60 @@ body.context-chat-mode .settings-view {
     color: #66756b;
     font-size: 9px;
     line-height: 1.4;
+}
+
+.reference-location-status-ok {
+    color: #1a7f4b;
+}
+
+.reference-location-status-error {
+    color: #c0392b;
+}
+
+/* E-Paper Display settings card (e-Paper Stage 1 plan, Phase 7) */
+
+.settings-option--checkbox {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.settings-option--checkbox .settings-option-label {
+    margin-bottom: 0;
+}
+
+.epaper-advanced {
+    margin-top: 16px;
+    border-top: 1px solid #e6e9ef;
+    padding-top: 12px;
+}
+
+.epaper-advanced summary {
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+    color: #374151;
+}
+
+.epaper-pin-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.epaper-pin-grid label {
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    color: #6b7280;
+    margin-bottom: 3px;
+}
+
+.epaper-pin-grid input {
+    width: 100%;
+    box-sizing: border-box;
 }
 
 @media (max-width: 520px) {

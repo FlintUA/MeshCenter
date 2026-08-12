@@ -77,7 +77,14 @@ def main() -> int:
                 alert_page.render(caps, alert_page.AlertScreenData(
                     title=t("radio_offline_title", locale), reason=t("connection_lost", locale),
                     node_name="Flint TAP2", device_path="/dev/ttyACM0", last_seen="12:34",
-                ), locale=locale).save(out_dir / f"alert_{model}.png")
+                ), locale=locale).save(out_dir / f"alert_radio_{model}.png")
+
+                # Worst-case width check: a 3-digit-looking (but capped at
+                # 100) percentage in the title, same as service.py builds it.
+                alert_page.render(caps, alert_page.AlertScreenData(
+                    title=t("low_battery_title", locale, percent=100), reason=t("critically_low_power", locale),
+                    node_name="Flint TAP2", device_path="/dev/ttyACM0", last_seen="12:34",
+                ), locale=locale).save(out_dir / f"alert_battery_{model}.png")
 
                 print(f"OK   {locale}/{model}")
             except Exception:

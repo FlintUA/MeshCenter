@@ -75,7 +75,7 @@ _CATALOG: dict[str, dict[str, str]] = {
         "offline": "Offline",
         "yes": "Ja",
         "no": "Nein",
-        "radio_offline_title": "FUNKGERÄT OFFLINE",
+        "radio_offline_title": "FUNK OFFLINE",
         "connection_lost": "Verbindung verloren",
         "low_battery_title": "AKKU SCHWACH ({percent:.0f}%)",
         "critically_low_power": "Kritisch niedrige Leistung",

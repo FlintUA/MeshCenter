@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from modules.display.drivers.base import DisplayCapabilities
 from modules.display.i18n import DEFAULT_LOCALE, t
-from modules.display.renderer import draw_text, load_font, new_canvas
+from modules.display.renderer import draw_text, load_font, new_canvas, text_width
 
 
 @dataclass
@@ -39,10 +39,11 @@ def render(caps: DisplayCapabilities, data: PowerScreenData, locale: str = DEFAU
         (t("current", locale), _fmt(data.current, "mA")),
         (t("power", locale), _fmt(data.power, "mW")),
     ]
+    value_x = 4 + max(text_width(f"{label}:", label_font) for label, _ in rows) + 6
     y = 30
     for label, value in rows:
         draw_text(image, (4, y), f"{label}:", "black", label_font)
-        draw_text(image, (90, y), value, "black", value_font)
+        draw_text(image, (value_x, y), value, "black", value_font)
         y += 22
 
     return image

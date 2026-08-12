@@ -83,6 +83,15 @@ def draw_inverted_text(image: Image.Image, xy, text: str, font) -> None:
     draw_text(image, xy, text, "white", font)
 
 
+def text_width(text: str, font) -> int:
+    """Rendered pixel width of `text` in `font` - used to position a value
+    column after a translated label instead of a fixed pixel offset sized
+    for the (shortest) English text. See e.g. status.py's row loop: "Last
+    RX:" and "Letzter Empfang:" don't fit the same hardcoded column without
+    overlapping the value that follows it."""
+    return int(font.getlength(text))
+
+
 def draw_text(image: Image.Image, xy: tuple[int, int], text: str, fill: str, font) -> None:
     """Draw text with hard (non-antialiased) glyph edges, then flat-fill
     with `fill`.

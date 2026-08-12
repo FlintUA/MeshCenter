@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from modules.display.drivers.base import DisplayCapabilities
 from modules.display.i18n import DEFAULT_LOCALE, t
-from modules.display.renderer import draw_state_text, draw_text, load_font, new_canvas
+from modules.display.renderer import draw_state_text, draw_text, load_font, new_canvas, text_width
 
 
 @dataclass
@@ -49,13 +49,17 @@ def render(caps: DisplayCapabilities, data: StatusScreenData, locale: str = DEFA
         (t("nodes", locale), str(data.node_count), None),
         (t("last_rx", locale), data.last_rx, None),
     ]
+    # Value column starts after the widest translated label in this locale,
+    # not a fixed pixel offset sized for English - a longer label (e.g. de
+    # "Letzter Empfang:") would otherwise overlap the value that follows it.
+    value_x = 4 + max(text_width(f"{label}:", label_font) for label, _, _ in rows) + 6
     y = 40
     for label, value, state in rows:
         draw_text(image, (4, y), f"{label}:", "black", label_font)
         if state:
-            draw_state_text(image, caps, (70, y), value, state, value_font)
+            draw_state_text(image, caps, (value_x, y), value, state, value_font)
         else:
-            draw_text(image, (70, y), value, "black", value_font)
+            draw_text(image, (value_x, y), value, "black", value_font)
         y += 16
 
     if data.cpu_percent is not None and data.ram_percent is not None:

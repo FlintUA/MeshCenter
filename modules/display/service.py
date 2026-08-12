@@ -60,13 +60,28 @@ logger = logging.getLogger("epaper_service")
 
 POLL_INTERVAL_SECONDS = 5.0
 
-# Plan section 68: radio offline / critically low power bypass debounce
-# entirely via the Alert Screen. "Internal fault" and "hardware display
-# error" from that section's list aren't wired here - the former has no
-# single well-defined signal in server.py yet, and alerting *on the
-# display* about the display itself being broken doesn't make sense
-# (DisplayManager.status == ERROR already means the display can't
-# reliably show anything anyway - see the Hardware card instead).
+# Plan section 68 lists 5 critical-event triggers for the Alert Screen.
+# Final disposition (not a TODO - each of the other 3 was a deliberate
+# decision, made once, not revisited absent a real reason to):
+#   1. Radio offline - wired below.
+#   2. Critically low power - wired below (CRITICAL_LOW_BATTERY_PERCENT).
+#   3. "Hardware display error" - deliberately NOT wired, permanently.
+#      Alerting *on the display* about the display itself being broken is
+#      incoherent - DisplayManager.status == ERROR already means the
+#      display can't reliably show anything anyway (see the Hardware card
+#      for that signal instead).
+#   4. "Internal fault" - deliberately NOT wired. No single well-defined
+#      signal for this exists in server.py today, and inventing one just
+#      for this alert would be speculative. Revisit only if a concrete
+#      "internal fault" concept is added to server.py for other reasons.
+#   5. General "critical hardware errors" (across all peripherals) - NOT
+#      wired, and intentionally not folded into #4. There is no cross-
+#      device-type health registry to poll (DeviceDriver/CameraManager is
+#      camera-only; power/environment sensors and the e-paper driver
+#      itself aren't registered anywhere in common). Building one just for
+#      this would be speculative infrastructure. Tracked as its own
+#      backlog item with an explicit trigger condition (not "someday") -
+#      see epaper_stage2_weact.md / MEMORY.md's e-paper backlog entry.
 CRITICAL_LOW_BATTERY_PERCENT = 10
 
 # Plan section 20: don't refresh the screen just because of trivial

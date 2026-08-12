@@ -151,7 +151,7 @@ def epaper_worker(
                     get_power_readings, get_cpu_temp, get_latest_message,
                 )
         except Exception:
-            logger.exception("epaper_worker: poll failed")
+            logger.exception("[EPAPER] epaper_worker: poll failed")
         stop_event.wait(POLL_INTERVAL_SECONDS)
 
 

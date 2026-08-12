@@ -177,7 +177,7 @@ class DisplayManager:
         try:
             old_driver.stop()
         except Exception:
-            logger.exception("replace_driver: failed to stop the old driver cleanly")
+            logger.exception("[EPAPER] replace_driver: failed to stop the old driver cleanly")
         self._driver = new_driver
         self._last_hash = None  # force a real refresh against the new driver next time
         self._status = DisplayStatus.CONFIGURED
@@ -270,12 +270,23 @@ class DisplayManager:
 
     def _refresh(self, image: Any) -> None:
         if time.monotonic() < self._error_cooldown_until:
-            logger.debug("Skipping refresh - still in post-error cooldown")
+            logger.debug("[EPAPER] Skipping refresh - still in post-error cooldown")
+            return
+
+        # Plan section 44: missing hardware (no /dev/spidevN.M) should be
+        # a distinct, graceful UNAVAILABLE - not treated as a fault that
+        # retries 3x and enters a 60s error cooldown loop forever. detect()
+        # is a cheap path check (see Waveshare213gDriver.detect()), safe to
+        # call on every refresh attempt without a timeout wrapper.
+        if self._driver.detect() is None:
+            if self._status != DisplayStatus.UNAVAILABLE:
+                logger.warning("[EPAPER] Display hardware not detected - marking UNAVAILABLE")
+            self._status = DisplayStatus.UNAVAILABLE
             return
 
         image_hash = _hash_image(image)
         if image_hash == self._last_hash:
-            logger.debug("Frame unchanged since last refresh, skipping physical refresh")
+            logger.debug("[EPAPER] Frame unchanged since last refresh, skipping physical refresh")
             return
 
         self._status = DisplayStatus.REFRESHING
@@ -295,7 +306,7 @@ class DisplayManager:
             if self._consecutive_errors >= MAX_CONSECUTIVE_RETRIES + 1:
                 self._error_cooldown_until = time.monotonic() + ERROR_COOLDOWN_SECONDS
                 logger.error(
-                    "Display refresh failed %d times in a row, entering %.0fs cooldown",
+                    "[EPAPER] Display refresh failed %d times in a row, entering %.0fs cooldown",
                     self._consecutive_errors,
                     ERROR_COOLDOWN_SECONDS,
                 )
@@ -311,7 +322,7 @@ class DisplayManager:
                 return True
             if not completed:
                 logger.error(
-                    "Display refresh timed out after %.0fs (attempt %d/%d) - "
+                    "[EPAPER] Display refresh timed out after %.0fs (attempt %d/%d) - "
                     "treating driver as needing a fresh start()",
                     self._refresh_timeout,
                     attempt + 1,
@@ -324,7 +335,7 @@ class DisplayManager:
                 self._driver.stop()
             else:
                 logger.error(
-                    "Display refresh raised %r (attempt %d/%d)",
+                    "[EPAPER] Display refresh raised %r (attempt %d/%d)",
                     error, attempt + 1, MAX_CONSECUTIVE_RETRIES + 1,
                 )
         return False
@@ -357,13 +368,13 @@ class DisplayManager:
         completed, error = _run_with_timeout(_start_or_raise, self._refresh_timeout)
         if not completed:
             logger.error(
-                "Display start() timed out after %.0fs (attempt %d/%d)",
+                "[EPAPER] Display start() timed out after %.0fs (attempt %d/%d)",
                 self._refresh_timeout, attempt + 1, MAX_CONSECUTIVE_RETRIES + 1,
             )
             return False
         if error is not None:
             logger.error(
-                "Display start() raised %r (attempt %d/%d)",
+                "[EPAPER] Display start() raised %r (attempt %d/%d)",
                 error, attempt + 1, MAX_CONSECUTIVE_RETRIES + 1,
             )
             return False

@@ -50,3 +50,12 @@ class GpioRegistry:
     def release(self, owner: str) -> None:
         for pin in [p for p, o in self._claimed.items() if o == owner]:
             del self._claimed[pin]
+
+    def get_owner(self, pin: int) -> str | None:
+        """Who (if anyone) currently claims `pin`. A legitimate piece of
+        this class's own public API - "who holds this pin" is a
+        reasonable question for logging or diagnostics - not just a test
+        hook, though it's also what makes the release-before-check
+        invariant in api_hardware_display.py's /reinit route (see
+        tests exercising it) actually verifiable in the first place."""
+        return self._claimed.get(pin)

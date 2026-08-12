@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from modules.display.drivers.base import DisplayCapabilities
-from modules.display.renderer import color_for_state, draw_text, load_font, new_canvas
+from modules.display.renderer import draw_state_text, draw_text, load_font, new_canvas
 
 
 @dataclass
@@ -27,21 +27,22 @@ def render(caps: DisplayCapabilities, data: RadioScreenData):
     label_font = load_font(12)
     value_font = load_font(12, bold=True)
 
-    draw_text(image, (4, 2), "Radio", color_for_state(data.status), title_font)
+    draw_state_text(image, caps, (4, 2), "Radio", data.status, title_font)
     draw_text(image, (4, 22), data.node_name or "-", "black", label_font)
 
     listener_label = "yes" if data.listener_running else "no"
+    listener_state = "online" if data.listener_running else "offline"
     rows = [
-        ("Mode", data.mode, color_for_state(data.status)),
-        ("Listener", listener_label, "black" if data.listener_running else "red"),
+        ("Mode", data.mode, data.status),
+        ("Listener", listener_label, listener_state),
     ]
     y = 42
-    for label, value, color in rows:
+    for label, value, state in rows:
         draw_text(image, (4, y), f"{label}:", "black", label_font)
-        draw_text(image, (70, y), value, color, value_font)
+        draw_state_text(image, caps, (70, y), value, state, value_font)
         y += 16
 
     if data.last_error:
-        draw_text(image, (4, y), f"Error: {data.last_error[:32]}", "red", label_font)
+        draw_state_text(image, caps, (4, y), f"Error: {data.last_error[:32]}", "critical", label_font)
 
     return image

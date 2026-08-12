@@ -96,8 +96,19 @@ CRITICAL_LOW_BATTERY_PERCENT = 10
 # stays identical across insignificant drift.
 _SIGNIFICANCE_BUCKET = 5
 
+# CPU temperature is a different unit/scale than a CPU/RAM percentage - a
+# 5-degree bucket would be far too coarse (real thermal drift is usually
+# under 1C between polls), and reusing _SIGNIFICANCE_BUCKET's step for it
+# would be a unit mismatch, not a shared constant. This exists for the
+# same reason _SIGNIFICANCE_BUCKET does: the System Screen shows 1-decimal
+# values (matching the web UI footer's precision, see system.py's fmt()),
+# and unbucketed raw values jitter on nearly every poll - showing that
+# raw jitter as text would reintroduce the exact refresh-per-tick problem
+# _SIGNIFICANCE_BUCKET was added to fix (e-Paper Stage 1 plan, Phase 5).
+_TEMP_SIGNIFICANCE_BUCKET = 1.0
 
-def _bucket(value: float | None, step: int = _SIGNIFICANCE_BUCKET) -> float | None:
+
+def _bucket(value: float | None, step: float = _SIGNIFICANCE_BUCKET) -> float | None:
     if value is None:
         return None
     return round(value / step) * step
@@ -258,7 +269,7 @@ def _render_page(page: str, manager, local_node_name, get_radio_status, get_list
     if page == "system":
         return system_page.render(caps, system_page.SystemScreenData(
             cpu_percent=_bucket(get_cpu_percent()), ram_percent=_bucket(get_ram_percent()),
-            cpu_temp_c=get_cpu_temp(),
+            cpu_temp_c=_bucket(get_cpu_temp(), step=_TEMP_SIGNIFICANCE_BUCKET),
         ), locale=locale)
 
     if page == "message":

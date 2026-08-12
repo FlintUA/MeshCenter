@@ -10,7 +10,7 @@ from system_log import get_system_events, log_system_event
 MESHCenter_SERVICE = "meshcenter.service"
 
 
-def register_system_routes(app):
+def register_system_routes(app, get_cpu_temperature=None):
 
     @app.route("/api/system/log")
     def api_system_log():
@@ -120,11 +120,18 @@ def register_system_routes(app):
         except Exception:
             pass
 
-        try:
-            with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
-                result["cpu_temp"] = round(int(f.read().strip()) / 1000, 1)
-        except Exception:
-            pass
+        # Not a second independent sensor read - shares the same source
+        # server.py's e-paper System Screen uses (_read_cpu_temperature()),
+        # passed in via get_cpu_temperature so both surfaces show the same
+        # number instead of two code paths that happen to read the same
+        # file and could silently drift apart (as they did before this
+        # was unified - see the e-paper System Screen fix this shipped
+        # alongside).
+        if get_cpu_temperature is not None:
+            try:
+                result["cpu_temp"] = get_cpu_temperature()
+            except Exception:
+                pass
 
         try:
             result["load_avg"] = os.getloadavg()[0]

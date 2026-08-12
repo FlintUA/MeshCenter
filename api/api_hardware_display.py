@@ -163,15 +163,16 @@ def register_hardware_display_routes(
         # actual physical pins are identical (both panels use the same
         # HAT header). Without this, reconfiguring onto the very pins the
         # current driver already holds would incorrectly look like a
-        # conflict with itself. replace_driver() below also releases this
-        # via the old driver's stop() - doing it here too is redundant but
-        # harmless (GpioRegistry.release() is idempotent).
+        # conflict with itself. swap_driver_and_start() below also releases
+        # this via the old driver's stop() - doing it here too is redundant
+        # but harmless (GpioRegistry.release() is idempotent).
         gpio_registry.release(config.get("model", DEFAULT_MODEL))
         try:
             gpio_registry.check(new_config["pins"], owner=new_config.get("model", DEFAULT_MODEL))
         except GpioConflictError as exc:
-            # The live driver itself was never touched (replace_driver()
-            # hasn't run yet at this point) - it's still actively holding
+            # The live driver itself was never touched
+            # (swap_driver_and_start() hasn't run yet at this point) - it's
+            # still actively holding
             # its current pins. Restore its registry claim before
             # returning, or the registry would incorrectly believe those
             # pins are free while the running driver still uses them.
@@ -183,16 +184,14 @@ def register_hardware_display_routes(
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
-        display_manager.replace_driver(new_driver)
-        ok, error = display_manager.try_start_now(timeout=REINIT_CHECK_TIMEOUT)
+        ok, error = display_manager.swap_driver_and_start(new_driver, timeout=REINIT_CHECK_TIMEOUT)
 
         if not ok:
             # Roll back to the previous, already-working configuration
             # rather than leaving the live manager on a driver we just
             # proved doesn't work.
             old_driver = build_driver(config, gpio_registry)
-            display_manager.replace_driver(old_driver)
-            display_manager.try_start_now(timeout=REINIT_CHECK_TIMEOUT)
+            display_manager.swap_driver_and_start(old_driver, timeout=REINIT_CHECK_TIMEOUT)
             return jsonify({"ok": False, "error": error}), 400
 
         config.update(new_config)

@@ -29,6 +29,7 @@ Stop condition: 2-3 clean runs in a row before moving to Phase 2.
 
 from __future__ import annotations
 
+import argparse
 import logging
 import signal
 import sys
@@ -41,6 +42,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("test_epaper_weact")
 
 STEP_TIMEOUT_SECONDS = 60
+DEFAULT_FIXED_DELAY_SECONDS = 3.0
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 TEST_LINES = ["MeshCenter", "WeAct 1.54 TEST", "Вузол Мюнхен äöüß", "PASS"]
 
@@ -115,14 +117,45 @@ def build_test_image(width, height):
     return image
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--no-busy",
+        action="store_true",
+        help="Bypass wait_busy() entirely; sleep a fixed delay instead (diagnostic only, "
+             "for when BUSY doesn't seem to reflect real panel activity).",
+    )
+    parser.add_argument(
+        "--fixed-delay", type=float, default=DEFAULT_FIXED_DELAY_SECONDS,
+        help=f"Seconds to sleep per step when --no-busy is set (default: {DEFAULT_FIXED_DELAY_SECONDS}).",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
     from _weact_driver.ssd1681 import Ssd1681, Ssd1681Timeout
+
+    args = parse_args()
 
     try:
         epd = Ssd1681()
     except Exception:
         log.exception("Failed to construct Ssd1681() - GPIO/SPI backend did not initialize")
         return 1
+
+    if args.no_busy:
+        delay = args.fixed_delay
+        log.warning(
+            "--no-busy: wait_busy() disabled, sleeping %.1fs per call instead. "
+            "Diagnostic mode only - not a real pass/fail on BUSY wiring.",
+            delay,
+        )
+
+        def _fixed_delay_wait_busy():
+            log.info("[no-busy] sleeping %.1fs instead of polling BUSY", delay)
+            time.sleep(delay)
+
+        epd.wait_busy = _fixed_delay_wait_busy
 
     raw_busy_diagnostic(epd)
 
@@ -156,7 +189,10 @@ def main() -> int:
     log.info("--- Summary ---")
     for step, seconds in durations.items():
         log.info("  %-8s %.2fs", step, seconds)
-    log.info("PASS - now check the physical panel: crisp checkerboard, readable Cyrillic/umlaut text")
+    if args.no_busy:
+        log.info("PASS (--no-busy mode) - now check the physical panel: did it actually update?")
+    else:
+        log.info("PASS - now check the physical panel: crisp checkerboard, readable Cyrillic/umlaut text")
     return 0
 
 

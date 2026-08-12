@@ -29,13 +29,18 @@ def render(caps: DisplayCapabilities, data: SystemScreenData, locale: str = DEFA
 
     draw_text(image, (4, 2), t("system", locale), "black", title_font)
 
+    # 1 decimal place - matches the web UI footer's precision convention
+    # for these same three metrics (static/chat.js's formatDockPercent()/
+    # formatTemperature()); this is the only Python-side formatter for
+    # them, so there's nowhere else a second, differently-precisioned one
+    # could creep in.
     def fmt(value, unit):
-        return f"{value:.0f}{unit}" if value is not None else "--"
+        return f"{value:.1f}{unit}" if value is not None else "--"
 
     rows = [
         (t("cpu", locale), fmt(data.cpu_percent, "%")),
         (t("ram", locale), fmt(data.ram_percent, "%")),
-        (t("temp", locale), fmt(data.cpu_temp_c, "C")),
+        (t("temp", locale), fmt(data.cpu_temp_c, "°C")),
     ]
     value_x = 4 + max(text_width(f"{label}:", label_font) for label, _ in rows) + 6
     y = 30

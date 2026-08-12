@@ -17,6 +17,7 @@ import csv
 import uuid
 import ast
 import sqlite3
+from pathlib import Path
 from contextlib import contextmanager
 from collections import defaultdict, deque
 from datetime import datetime
@@ -314,7 +315,7 @@ register_camera_routes(app, camera, handle_errors)
 # api/api_camera_manager.py's module docstring. Does not touch
 # /video_feed or anything else camera.py already owns.
 register_camera_manager_routes(app, device_manager, handle_errors)
-register_system_routes(app)
+register_system_routes(app, get_cpu_temperature=lambda: _read_cpu_temperature())
 
 # Constructing DisplayManager (and the driver it wraps) never touches
 # SPI/GPIO by itself - only display_manager.start(), called later from the

@@ -79,10 +79,11 @@ def main() -> int:
                     node_name="Flint TAP2", device_path="/dev/ttyACM0", last_seen="12:34",
                 ), locale=locale).save(out_dir / f"alert_radio_{model}.png")
 
-                # Worst-case width check: a 3-digit-looking (but capped at
-                # 100) percentage in the title, same as service.py builds it.
+                # Realistic worst case: service.py's CRITICAL_LOW_BATTERY_PERCENT
+                # is 10, so battery_percent here is always <=10 (2 digits max) -
+                # not 100, which this title never actually renders in practice.
                 alert_page.render(caps, alert_page.AlertScreenData(
-                    title=t("low_battery_title", locale, percent=100), reason=t("critically_low_power", locale),
+                    title=t("low_battery_title", locale, percent=10), reason=t("critically_low_power", locale),
                     node_name="Flint TAP2", device_path="/dev/ttyACM0", last_seen="12:34",
                 ), locale=locale).save(out_dir / f"alert_battery_{model}.png")
 

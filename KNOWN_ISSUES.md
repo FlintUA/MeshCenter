@@ -1,14 +1,53 @@
 # MeshCenter — Known Issues (feature/time-system)
 
-## KI-001: e-Paper driver hang on start
-Status: pre-existing, not a Stage 3 regression
-Symptom: `[EPAPER] Display start() timed out`, refresh_count: 0
-Likely cause: BUSY-pin race on the Waveshare HAT (see commit be5937b)
-Stage 3 impact: clock overlay added to the renderer, hash-split dedup
-implemented and proven by isolated test. Physical-panel visual check
-pending until the hardware issue is resolved.
-Pending: verify 12h-format clearance on WeAct 154 - Ukrainian title
-"Повідомлення" (131px) + "10:52 AM" (56px) leaves ~5px margin.
+## KI-001: e-Paper driver hang on start (Waveshare 2.13" color HAT) - RESOLVED
+Status: resolved 2026-08-13, on dev node (.104)
+Original symptom: `[EPAPER] Display start() timed out after 75s`, repeated
+across all 3 retry attempts, refresh_count stuck at 0.
+Root cause: NOT a hardware BUSY-pin race as originally suspected. A
+standalone script bypassing the long-running service process started the
+exact same driver cleanly in under 1s, with real BUSY transitions
+(1->0->1->0->1) and a clean `get_status()`. Restarting meshcenter.service
+(a fresh process) then also started cleanly - refresh_count:1,
+last_duration ~21.5s (realistic for a full 4-color refresh), and the
+result was visually confirmed on the physical panel (test pattern, System
+page, and the Stage 3 clock overlay all rendered correctly, time matched
+the Pi's clock). The hang was orphaned GPIO/vendor-module state left
+behind after repeatedly switching drivers (WeAct <-> Waveshare) on the
+same physical GPIO pins within one long-running process - exactly the
+"orphaned thread still touching epdconfig.implementation" scenario
+already called out in waveshare_213g.py's own docstring.
+Fix: `sudo systemctl restart meshcenter.service` (fresh process) cleared
+the stuck state. No code change was needed.
+Follow-up: if this recurs WITHOUT a driver switch beforehand, treat it as
+a new/different issue - this specific instance is now closed.
+Stage 3 impact: now fully physically verified on real hardware (previously verified only via logs and an isolated fake-driver test).
+
+## KI-001b: WeAct 1.54" panel - no visible refresh despite clean protocol (open)
+Status: open, unresolved (dev node .104)
+Symptom: the same physical WeAct panel that previously worked completes
+clear()/render() calls successfully - BUSY genuinely transitions during
+init(), the SSD1681 command sequence is protocol-correct, refresh_count
+increments, error_count stays 0 - but the physical panel shows zero
+visible change on any command (clear, checkerboard+text test pattern,
+or the normal status page).
+Ruled out: wrong host, disabled feature flag, wrong config schema, wiring
+order (RST/DC/CS/BUSY physically re-verified twice by the user), and the
+RST/BUSY signals specifically (confirmed responsive via a live GPIO
+trace during a real init() call). Waveshare 2.13" now confirmed working
+correctly on this exact Pi using the same GPIO pin numbers (see KI-001
+above), which weakens a "Pi-side GPIO/SPI hardware fault" theory - note
+this doesn't fully rule out a WeAct-board-specific fault, since each HAT
+is a physically separate board/cable even when both use the same pin
+numbering convention.
+Suspected: the SPI bulk-data lines (MOSI/GPIO10, CLK/GPIO11) - the actual
+pixel-data path - were never individually tested (only RST/DC/CS/BUSY
+were traced); or an internal panel/flex-cable fault (e.g. ESD or handling
+damage), since the failure appeared only after this exact panel was
+uninstalled and reinstalled.
+Next step: continuity-test MOSI/CLK specifically with the panel
+disconnected and powered off, or physically inspect/reseat just that
+wire pair.
 
 ## KI-002: meshtastic 2.7.11 has no getTime()
 Status: library limitation

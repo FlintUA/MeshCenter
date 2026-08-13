@@ -89,6 +89,9 @@ class DisplayManager:
         self._lock = threading.Lock()
         self._pending_image: Any = None
         self._pending_priority = EventPriority.NORMAL
+        # Optional caller-supplied hash to use for dedup instead of hashing
+        # `_pending_image`'s bytes - see mark_dirty()'s content_hash param.
+        self._pending_content_hash: str | None = None
         self._wake = threading.Event()
         self._stop_flag = threading.Event()
         self._worker: threading.Thread | None = None
@@ -155,12 +158,34 @@ class DisplayManager:
         self._driver.stop()
         self._status = DisplayStatus.DISABLED
 
-    def mark_dirty(self, image: Any, priority: EventPriority = EventPriority.NORMAL) -> None:
+    def mark_dirty(
+        self,
+        image: Any,
+        priority: EventPriority = EventPriority.NORMAL,
+        content_hash: str | None = None,
+    ) -> None:
         """Record the latest desired frame and wake the worker. Never
         blocks and never queues - a frame that arrives while an earlier
-        one is still pending simply replaces it (plan section 42)."""
+        one is still pending simply replaces it (plan section 42).
+
+        `content_hash`, if given, is what _refresh() compares against
+        `_last_hash` for physical-refresh dedup, *instead of* hashing
+        `image`'s own bytes (see _refresh()). e-Paper Stage 3 (time
+        system): callers that overlay a live clock onto an otherwise-
+        unchanged page (modules/display/service.py) need the dedup
+        decision to ignore that clock text - it changes every minute by
+        design, and hashing the final image's bytes would make the hash
+        change every minute too, forcing a real panel refresh once a
+        minute and defeating this manager's entire dedup purpose. Passing
+        the hash of the pre-clock-overlay image here keeps dedup keyed to
+        actual content changes while still letting the clock itself be
+        part of `image`, the thing that's actually sent to the driver.
+        Callers that don't care (alert screens, manual "show now" pushes,
+        tests) simply omit it and get the previous byte-hash behavior
+        unchanged."""
         with self._lock:
             self._pending_image = image
+            self._pending_content_hash = content_hash
             if priority == EventPriority.CRITICAL:
                 self._pending_priority = EventPriority.CRITICAL
         self._wake.set()
@@ -255,12 +280,12 @@ class DisplayManager:
             if self._stop_flag.is_set():
                 break
 
-            image, priority = self._take_pending()
+            image, priority, content_hash = self._take_pending()
             if image is None:
                 continue
 
             if priority != EventPriority.CRITICAL:
-                image, priority = self._debounce(image, priority)
+                image, priority, content_hash = self._debounce(image, priority, content_hash)
                 if self._stop_flag.is_set():
                     return
                 if image is None:
@@ -277,17 +302,23 @@ class DisplayManager:
 
             self._worker_idle.clear()
             try:
-                self._refresh(image)
+                self._refresh(image, content_hash)
             finally:
                 self._worker_idle.set()
 
-    def _take_pending(self) -> tuple[Any, EventPriority]:
+    def _take_pending(self) -> tuple[Any, EventPriority, str | None]:
         with self._lock:
-            image, priority = self._pending_image, self._pending_priority
-            self._pending_image, self._pending_priority = None, EventPriority.NORMAL
-        return image, priority
+            image, priority, content_hash = (
+                self._pending_image, self._pending_priority, self._pending_content_hash,
+            )
+            self._pending_image, self._pending_priority, self._pending_content_hash = (
+                None, EventPriority.NORMAL, None,
+            )
+        return image, priority, content_hash
 
-    def _debounce(self, image: Any, priority: EventPriority) -> tuple[Any, EventPriority]:
+    def _debounce(
+        self, image: Any, priority: EventPriority, content_hash: str | None,
+    ) -> tuple[Any, EventPriority, str | None]:
         """Wait out the configured debounce window, merging in any newer
         frame that arrives during the wait (plan sections 66-69) and
         letting a CRITICAL event short-circuit the remaining wait.
@@ -308,19 +339,19 @@ class DisplayManager:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return image, priority
+                return image, priority, content_hash
             if self._stop_flag.is_set():
-                return None, priority
+                return None, priority, content_hash
             if self._wake.wait(timeout=remaining):
                 self._wake.clear()
-                newer_image, newer_priority = self._take_pending()
+                newer_image, newer_priority, newer_hash = self._take_pending()
                 if newer_image is None:
                     continue
                 if newer_priority == EventPriority.CRITICAL:
-                    return newer_image, newer_priority
-                image, priority = newer_image, newer_priority
+                    return newer_image, newer_priority, newer_hash
+                image, priority, content_hash = newer_image, newer_priority, newer_hash
 
-    def _refresh(self, image: Any) -> None:
+    def _refresh(self, image: Any, content_hash: str | None = None) -> None:
         if time.monotonic() < self._error_cooldown_until:
             logger.debug("[EPAPER] Skipping refresh - still in post-error cooldown")
             return
@@ -336,7 +367,10 @@ class DisplayManager:
             self._status = DisplayStatus.UNAVAILABLE
             return
 
-        image_hash = _hash_image(image)
+        # Prefer the caller-supplied content_hash (see mark_dirty()) over
+        # hashing `image`'s own bytes - this is what lets a live clock be
+        # part of the rendered image without defeating dedup every minute.
+        image_hash = content_hash if content_hash is not None else _hash_image(image)
         if image_hash == self._last_hash:
             logger.debug("[EPAPER] Frame unchanged since last refresh, skipping physical refresh")
             return

@@ -6,7 +6,7 @@
     <meta name="app-version" content="{{ app_version }}">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260809-camera-selector">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260813-schedule-engine">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -128,6 +128,54 @@
                 </div>
 
             </div>
+            </section>
+
+            <!-- Time & Timers card: live clock now; schedule/timer sections
+                 are placeholders wired up in later stages. -->
+            <section class="time-card module-card" id="timeCard" aria-labelledby="timeCardTitle">
+                <div class="time-card-header">
+                    <span class="time-card-title" id="timeCardTitle" data-i18n="time.card_title">Time &amp; Timers</span>
+                </div>
+                <div class="time-card-body" id="timeCardBody">
+                    <div class="time-clock-section">
+                        <span class="time-clock-display" id="timeClockDisplay">--:--</span>
+                        <span class="time-clock-source" id="timeClockSource"></span>
+                    </div>
+                    <div class="time-schedules-section" id="timeSchedulesSection">
+                        <div class="time-section-label" data-i18n="time.schedules">Schedules</div>
+                        <div id="timeSchedulesList"></div>
+                        <button class="btn btn-sm" id="addScheduleBtn" data-i18n="time.new_schedule">+ New schedule</button>
+                    </div>
+                    <div class="time-timers-section" id="timeTimersSection" style="display:none;">
+                        <div class="time-section-label" data-i18n="time.timers">Timers</div>
+                        <div id="timeTimersList"></div>
+                        <button class="btn btn-sm" id="addTimerBtn" onclick="openTimerForm()" data-i18n="time.new_timer">+ Timer</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Notifications card: backend event queue (schedule/timer/system
+                 sources), separate from the sessionStorage-based notification
+                 center in the header dock. -->
+            <section class="notifications-card module-card" id="notificationsCard" aria-labelledby="notificationsCardTitle">
+                <div class="notifications-card-header" id="notificationsCardHeader"
+                     onclick="toggleNotificationsCard()" role="button"
+                     aria-expanded="false" aria-controls="notificationsCardBody">
+                    <span class="notifications-card-title" id="notificationsCardTitle">
+                        <span data-i18n="notifications.card_title">Notifications</span>
+                        <span class="notifications-badge" id="notificationsBadge" style="display:none">0</span>
+                    </span>
+                    <div class="notifications-card-actions">
+                        <button class="btn btn-sm notifications-clear-btn" id="notificationsClearBtn"
+                                onclick="event.stopPropagation(); clearAllNotifications()"
+                                data-i18n="notifications.clear_all" style="display:none">Clear</button>
+                        <span class="notifications-chevron" id="notificationsChevron">▸</span>
+                    </div>
+                </div>
+                <div class="notifications-card-body" id="notificationsCardBody" style="display:none">
+                    <div id="notificationsList"></div>
+                    <div class="notifications-empty" id="notificationsEmpty" data-i18n="notifications.card_empty">No notifications</div>
+                </div>
             </section>
 
             <!-- Weather module: provider access stays on the backend -->
@@ -972,6 +1020,9 @@
                                     <button id="shutdownSystemBtn" class="system-action-btn danger" onclick="runSystemAction('shutdown', this)">
                                         ⏻ Shutdown
                                     </button>
+                                    <button id="testNotificationBtn" class="system-action-btn" onclick="testNotification()">
+                                        🔔 <span data-i18n="notifications.test_btn">Test notification</span>
+                                    </button>
                                 </div>
                             </div>
 
@@ -1093,6 +1144,14 @@
                                 <div class="settings-segmented">
                                     <button id="unitPressureHpa" onclick="setUnitSetting('pressure', 'hpa')">hPa</button>
                                     <button id="unitPressureMmhg" onclick="setUnitSetting('pressure', 'mmhg')">mmHg</button>
+                                </div>
+                            </div>
+
+                            <div class="settings-option">
+                                <div class="settings-option-label" data-i18n="time.format_label">Time format</div>
+                                <div class="settings-segmented">
+                                    <button id="timeFormat24Btn" onclick="setTimeFormat('24')" data-i18n="time.format_24">24 h</button>
+                                    <button id="timeFormat12Btn" onclick="setTimeFormat('12')" data-i18n="time.format_12">12 h</button>
                                 </div>
                             </div>
                         </div>
@@ -1798,6 +1857,35 @@
     </button>
 </div>
 
+<div class="modal-overlay schedule-modal" id="scheduleModal" style="display: none;" onclick="closeScheduleForm()">
+    <div class="modal-content schedule-modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span id="scheduleModalTitle" data-i18n="time.new_schedule">New schedule</span>
+            <button class="modal-close" onclick="closeScheduleForm()">✕</button>
+        </div>
+        <div class="modal-body" id="scheduleModalBody"></div>
+        <div class="schedule-modal-footer">
+            <button class="modal-action-btn danger" id="scheduleModalDeleteBtn" style="display:none" onclick="deleteScheduleFromForm()" data-i18n="common.delete">Delete</button>
+            <button class="modal-action-btn" onclick="closeScheduleForm()" data-i18n="common.cancel">Cancel</button>
+            <button class="modal-action-btn schedule-save-btn" onclick="saveScheduleForm()" data-i18n="common.save">Save</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay schedule-modal" id="timerModal" style="display: none;" onclick="closeTimerForm()">
+    <div class="modal-content schedule-modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <span data-i18n="time.new_timer">New timer</span>
+            <button class="modal-close" onclick="closeTimerForm()">✕</button>
+        </div>
+        <div class="modal-body" id="timerModalBody"></div>
+        <div class="schedule-modal-footer">
+            <button class="modal-action-btn" onclick="closeTimerForm()" data-i18n="common.cancel">Cancel</button>
+            <button class="modal-action-btn schedule-save-btn" onclick="createTimerFromForm()" data-i18n="time.timer_start">▶ Start</button>
+        </div>
+    </div>
+</div>
+
 <div class="modal-overlay" id="messageInfoModal" style="display: none;" onclick="closeMessageInfo()">
     <div class="modal-content message-info-modal" onclick="event.stopPropagation()">
         <div class="modal-header">
@@ -1934,7 +2022,7 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="/static/chat.js?v=20260812-epaper-model-select"></script>
+<script src="/static/chat.js?v=20260813-timer-prefs"></script>
 <script src="/static/media.js?v=20260806-stage9-i18n"></script>
 <script src="/static/weather.js?v=20260808-weather-provider"></script>
 

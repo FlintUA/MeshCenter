@@ -8138,6 +8138,194 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
 }
 
 /* Weather is intentionally a display-only module in this milestone. */
+/* ============================================================
+   TIME & TIMERS CARD
+   ============================================================ */
+.time-card {
+    flex: 0 0 auto;
+    margin: 10px 10px 12px;
+    overflow: hidden;
+    border: 1px solid #dce4ed;
+    border-radius: 11px;
+    background: linear-gradient(160deg, #f8fbff 0%, #eef4fa 100%);
+    box-shadow: 0 3px 10px rgba(37, 56, 78, 0.06);
+}
+
+.time-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 11px 12px 8px;
+}
+
+.time-card-title {
+    color: #2d4057;
+    font-size: 13px;
+    font-weight: 750;
+}
+
+.time-card-body {
+    padding: 0 12px 12px;
+}
+
+.time-clock-section {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 4px 0 10px;
+}
+
+.time-clock-display {
+    color: #263b52;
+    font-size: 24px;
+    font-weight: 750;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+
+.time-clock-source {
+    color: #79879a;
+    font-size: 10px;
+}
+
+.time-section-label {
+    color: #79879a;
+    font-size: 10px;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    margin-bottom: 4px;
+}
+
+/* ============================================================
+   NOTIFICATIONS CARD
+   ============================================================ */
+.notifications-card {
+    flex: 0 0 auto;
+    margin: 10px 10px 12px;
+    overflow: hidden;
+    border: 1px solid #dce4ed;
+    border-radius: 11px;
+    background: linear-gradient(160deg, #f8fbff 0%, #eef4fa 100%);
+    box-shadow: 0 3px 10px rgba(37, 56, 78, 0.06);
+}
+
+.notifications-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 11px 12px 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.notifications-card-title {
+    display: flex;
+    align-items: center;
+    color: #2d4057;
+    font-size: 13px;
+    font-weight: 750;
+}
+
+.notifications-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.notifications-badge {
+    display: inline-block;
+    background: #c0392b;
+    color: #fff;
+    border-radius: 10px;
+    padding: 1px 6px;
+    font-size: 0.75rem;
+    margin-left: 6px;
+    line-height: 1.4;
+}
+
+.notifications-card-body {
+    padding: 0 12px 12px;
+}
+
+.notifications-item {
+    display: grid;
+    grid-template-columns: auto auto 1fr auto;
+    gap: 6px;
+    align-items: start;
+    padding: 6px 4px;
+    cursor: pointer;
+    border-bottom: 1px solid #e6ecf3;
+}
+
+.notifications-item:last-child {
+    border-bottom: none;
+}
+
+.notifications-item--read {
+    opacity: 0.55;
+}
+
+.notifications-item-icon {
+    font-size: 0.85rem;
+}
+
+.notifications-item-time {
+    color: #79879a;
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.notifications-item-title {
+    color: #263b52;
+    font-weight: 500;
+    font-size: 0.875rem;
+}
+
+.notifications-item-body {
+    grid-column: 3;
+    color: #6b7a8d;
+    font-size: 0.8rem;
+}
+
+.notifications-item-dismiss {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+    color: #9aa8ba;
+}
+
+.notifications-item-dismiss:hover {
+    color: #9a3434;
+}
+
+.notifications-divider {
+    color: #79879a;
+    font-size: 0.75rem;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    padding: 8px 4px 4px;
+    margin-top: 4px;
+}
+
+.notifications-empty {
+    color: #79879a;
+    font-size: 0.85rem;
+    padding: 12px 4px;
+    text-align: center;
+}
+
+.notifications-chevron {
+    color: #79879a;
+    font-size: 0.75rem;
+    transition: transform 0.15s;
+}
+
 .weather-card {
     flex: 0 0 auto;
     margin: 10px 10px 12px;
@@ -14170,3 +14358,335 @@ body[data-theme="dark"] .waypoint-action-toast.error {
         font-size: 10px;
     }
 }
+
+/* ============================================================
+   SCHEDULES (Time & Timers card + schedule edit modal)
+   Stage 6 - Schedule Engine MVP.
+   No --mc-* custom properties exist anywhere in this stylesheet (every
+   var(--mc-*, fallback) usage always resolves to its fallback - confirmed
+   by grep), so this block uses plain hardcoded colors matching the
+   .time-card / .notifications-card / .modal-* palette already established
+   above, instead of inventing new custom properties.
+   ============================================================ */
+.time-schedules-empty {
+    color: #93a2b3;
+    font-size: 11px;
+    padding: 4px 0 8px;
+}
+
+.time-schedule-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 4px;
+    border-bottom: 1px solid #e6ecf3;
+}
+.time-schedule-row:last-child { border-bottom: 0; }
+.time-schedule-row.is-disabled { opacity: .55; }
+
+.time-schedule-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    cursor: pointer;
+    flex: 1;
+}
+
+.time-schedule-label {
+    font-size: 12px;
+    font-weight: 650;
+    color: #2d4057;
+    overflow-wrap: anywhere;
+}
+
+.time-schedule-summary {
+    font-size: 10px;
+    color: #79879a;
+}
+
+.time-schedule-actions {
+    display: flex;
+    gap: 4px;
+    flex: 0 0 auto;
+}
+
+.btn.btn-sm {
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid #cbd5e1;
+    border-radius: 7px;
+    background: #f4f7fa;
+    color: #445366;
+    cursor: pointer;
+    transition: background .15s;
+}
+.btn.btn-sm:hover { background: #e6ecf3; }
+
+.schedule-modal-content {
+    max-width: 420px;
+    width: 92vw;
+}
+
+.schedule-form-row {
+    margin-bottom: 12px;
+}
+.schedule-form-row:last-child { margin-bottom: 0; }
+.schedule-form-row > label {
+    display: block;
+    font-size: 11px;
+    font-weight: 650;
+    color: #79879a;
+    text-transform: uppercase;
+    letter-spacing: .02em;
+    margin-bottom: 4px;
+}
+
+.schedule-input,
+.schedule-select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #fff;
+    color: #263b52;
+    font: inherit;
+    font-size: 13px;
+}
+.schedule-input--narrow {
+    width: 72px;
+    display: inline-block;
+}
+
+.schedule-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #445366; }
+.schedule-inline-label { font-size: 11px; color: #93a2b3; margin-right: 6px; }
+
+.schedule-days-label {
+    font-size: 10px;
+    color: #93a2b3;
+    margin: 8px 0 4px;
+}
+
+.schedule-day-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.schedule-day-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    font-size: 11px;
+    color: #445366;
+    cursor: pointer;
+    user-select: none;
+}
+.schedule-day-chip input { margin: 0; }
+
+.schedule-action-params {
+    padding: 10px;
+    border: 1px solid #e6ecf3;
+    border-radius: 9px;
+    background: #f8fbff;
+}
+
+.schedule-target-picker {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+}
+.schedule-radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: #445366;
+    cursor: pointer;
+}
+.schedule-target-picker .schedule-select {
+    width: auto;
+    min-width: 160px;
+    flex: 1 1 160px;
+}
+
+.schedule-form-section {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid #e6ecf3;
+}
+.schedule-section-heading {
+    font-size: 11px;
+    font-weight: 650;
+    color: #79879a;
+    text-transform: uppercase;
+    letter-spacing: .02em;
+    margin-bottom: 8px;
+}
+
+.schedule-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #263b52;
+    cursor: pointer;
+    margin-bottom: 8px;
+}
+
+.schedule-placeholder-note {
+    font-size: 12px;
+    color: #79879a;
+    margin: 0;
+    line-height: 1.4;
+}
+
+.schedule-form-error {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: #fde9eb;
+    color: #a43d45;
+    font-size: 12px;
+}
+
+.schedule-modal-footer {
+    display: flex;
+    gap: 8px;
+    padding: 12px 18px 16px;
+    border-top: 1px solid #e8e8e8;
+}
+.schedule-modal-footer .modal-action-btn { width: auto; flex: 1; }
+.schedule-modal-footer .schedule-save-btn { background: #2d6ca3; color: #fff; }
+.schedule-modal-footer .schedule-save-btn:hover { background: #255984; }
+.schedule-modal-footer #scheduleModalDeleteBtn { flex: 0 0 auto; }
+
+/* TIMERS (Time & Timers card, Stage 7 - session-scoped in-memory timers).
+   Reuses .schedule-input / .schedule-select / .schedule-form-row /
+   .schedule-checkbox-row / .schedule-section-heading / .schedule-target-picker
+   / modal-* classes from the Stage 6 schedule block above - only the
+   timer-list-row and small/danger button variants below are new. */
+.timers-empty {
+    color: #93a2b3;
+    font-size: 11px;
+    padding: 4px 0 8px;
+}
+
+.timer-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 4px;
+    border-bottom: 1px solid #e6ecf3;
+}
+.timer-item:last-child { border-bottom: 0; }
+.timer-item--finished { opacity: .6; }
+
+.timer-item-label {
+    font-size: 12px;
+    font-weight: 650;
+    color: #2d4057;
+    overflow-wrap: anywhere;
+    flex: 1;
+    min-width: 0;
+}
+
+.timer-display {
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    font-weight: 650;
+    color: #2d6ca3;
+    flex: 0 0 auto;
+}
+
+.timer-controls {
+    display: flex;
+    gap: 4px;
+    flex: 0 0 auto;
+}
+
+.btn.btn-xs {
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #f4f7fa;
+    color: #445366;
+    cursor: pointer;
+    transition: background .15s;
+}
+.btn.btn-xs:hover { background: #e6ecf3; }
+
+.btn.btn-xs.btn-danger {
+    border-color: #e3b4b8;
+    color: #a43d45;
+    background: #fdf1f2;
+}
+.btn.btn-xs.btn-danger:hover { background: #fde9eb; }
+
+[data-theme="dark"] .time-schedule-row { border-bottom-color: #2a3f54; }
+[data-theme="dark"] .time-schedule-label { color: #e5eff8; }
+[data-theme="dark"] .time-schedule-summary,
+[data-theme="dark"] .time-schedules-empty,
+[data-theme="dark"] .schedule-inline-label,
+[data-theme="dark"] .schedule-days-label,
+[data-theme="dark"] .schedule-section-heading,
+[data-theme="dark"] .schedule-placeholder-note,
+[data-theme="dark"] .schedule-form-row > label {
+    color: #9eb3c8;
+}
+[data-theme="dark"] .btn.btn-sm {
+    background: #203449;
+    border-color: #415a72;
+    color: #dbe8f5;
+}
+[data-theme="dark"] .btn.btn-sm:hover { background: #263b50; }
+[data-theme="dark"] .schedule-input,
+[data-theme="dark"] .schedule-select {
+    background: #132334;
+    border-color: #385068;
+    color: #e5eff8;
+}
+[data-theme="dark"] .schedule-day-chip {
+    border-color: #415a72;
+    color: #dbe8f5;
+}
+[data-theme="dark"] .schedule-action-params {
+    background: #16283a;
+    border-color: #2a3f54;
+}
+[data-theme="dark"] .schedule-form-section { border-top-color: #2a3f54; }
+[data-theme="dark"] .schedule-checkbox-row { color: #e5eff8; }
+[data-theme="dark"] .schedule-radio { color: #dbe8f5; }
+[data-theme="dark"] .schedule-form-error {
+    background: rgba(207,71,82,.17);
+    color: #ff9299;
+}
+[data-theme="dark"] .schedule-modal-footer { border-top-color: #344b61; }
+[data-theme="dark"] .timer-item { border-bottom-color: #2a3f54; }
+[data-theme="dark"] .timer-item-label { color: #e5eff8; }
+[data-theme="dark"] .timer-display { color: #7fb0dc; }
+[data-theme="dark"] .timers-empty { color: #9eb3c8; }
+[data-theme="dark"] .btn.btn-xs {
+    background: #203449;
+    border-color: #415a72;
+    color: #dbe8f5;
+}
+[data-theme="dark"] .btn.btn-xs:hover { background: #263b50; }
+[data-theme="dark"] .btn.btn-xs.btn-danger {
+    background: rgba(207,71,82,.17);
+    border-color: #6b3239;
+    color: #ff9299;
+}
+[data-theme="dark"] .btn.btn-xs.btn-danger:hover { background: rgba(207,71,82,.28); }

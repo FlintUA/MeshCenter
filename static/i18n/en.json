@@ -945,6 +945,7 @@
   },
   "time": {
     "card_title": "Time & Timers",
+    "week_number": "Week {n}",
     "format_label": "Time format",
     "format_24": "24 h",
     "format_12": "12 h",

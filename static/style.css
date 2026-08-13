@@ -8141,9 +8141,30 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
 /* ============================================================
    TIME & TIMERS CARD
    ============================================================ */
+/* Standard clip-based visually-hidden utility: keeps content in the DOM
+   and accessible to screen readers/aria-labelledby while removing it from
+   visual layout. Not display:none/visibility:hidden, which would also
+   remove it from the accessibility tree. No .visually-hidden/.sr-only
+   utility existed anywhere in this stylesheet before this rule (checked). */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 .time-card {
     flex: 0 0 auto;
-    margin: 10px 10px 12px;
+    /* Left-column module cards use a margin-bottom-only spacing mechanism
+       (no top margin) so gaps between siblings don't stack in this flex
+       column - matches .node-card's margin-bottom: 6px in the right
+       column's #nodesList exactly (individual margin-bottom, no margin-top). */
+    margin: 0 10px 6px;
     overflow: hidden;
     border: 1px solid #dce4ed;
     border-radius: 11px;
@@ -8156,7 +8177,11 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     align-items: flex-start;
     justify-content: space-between;
     gap: 8px;
-    padding: 11px 12px 8px;
+    /* The title is visually-hidden (see .time-card-title) - this header
+       only exists in the DOM for the a11y label now, so it carries no
+       visible padding of its own; the hero clock below supplies the
+       card's top spacing. */
+    padding: 0;
 }
 
 .time-card-title {
@@ -8169,19 +8194,32 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     padding: 0 12px 12px;
 }
 
-.time-clock-section {
+/* ===== Time hero (Fix 3: expanded clock/date/week block) ===== */
+.time-hero {
     display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 4px 0 10px;
+    flex-direction: column;
+    gap: 2px;
+    padding: 14px 0 12px;
 }
 
-.time-clock-display {
+.time-hero-clock {
     color: #263b52;
-    font-size: 24px;
+    font-size: 38px;
     font-weight: 750;
     line-height: 1;
     font-variant-numeric: tabular-nums;
+}
+
+.time-hero-date {
+    color: #2d4057;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.time-hero-week {
+    color: #79879a;
+    font-size: 11px;
+    font-weight: 600;
 }
 
 .time-clock-source {
@@ -8203,7 +8241,8 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
    ============================================================ */
 .notifications-card {
     flex: 0 0 auto;
-    margin: 10px 10px 12px;
+    /* margin-bottom-only, see .time-card comment above. */
+    margin: 0 10px 6px;
     overflow: hidden;
     border: 1px solid #dce4ed;
     border-radius: 11px;
@@ -8328,7 +8367,8 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
 
 .weather-card {
     flex: 0 0 auto;
-    margin: 10px 10px 12px;
+    /* margin-bottom-only, see .time-card comment above. */
+    margin: 0 10px 6px;
     overflow: hidden;
     border: 1px solid #dce4ed;
     border-radius: 11px;
@@ -9355,7 +9395,7 @@ html[data-theme="dark"] .system-log-panel {
    one visual container while preserving their existing IDs/API.
    ============================================================ */
 .node-info-panel {
-    margin: 0 10px 10px;
+    margin: 0 10px 6px;
     overflow: hidden;
     flex: 0 0 auto;
     border: 1px solid #ccd6e2;
@@ -14634,6 +14674,22 @@ body[data-theme="dark"] .waypoint-action-toast.error {
     background: #fdf1f2;
 }
 .btn.btn-xs.btn-danger:hover { background: #fde9eb; }
+
+/* #timeCard dark theme - reference: .node-info-panel's working dark
+   override (body/html[data-theme=dark] .node-info-panel, ~line 9501):
+   bg #172638, border #263c52, shadow rgba(0,0,0,.24). Text colors reuse
+   this same section's existing schedule/timer dark convention
+   (#e5eff8 primary, #9eb3c8 muted) rather than inventing new ones. */
+body[data-theme="dark"] #timeCard,
+html[data-theme="dark"] #timeCard {
+    border-color: #263c52;
+    background: #172638;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .24);
+}
+[data-theme="dark"] .time-hero-clock { color: #e5eff8; }
+[data-theme="dark"] .time-hero-date { color: #dbe8f5; }
+[data-theme="dark"] .time-hero-week { color: #9eb3c8; }
+[data-theme="dark"] .time-section-label { color: #9eb3c8; }
 
 [data-theme="dark"] .time-schedule-row { border-bottom-color: #2a3f54; }
 [data-theme="dark"] .time-schedule-label { color: #e5eff8; }

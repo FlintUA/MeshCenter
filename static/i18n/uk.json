@@ -945,6 +945,7 @@
   },
   "time": {
     "card_title": "Час і таймери",
+    "week_number": "Тиждень {n}",
     "format_label": "Формат часу",
     "format_24": "24 г",
     "format_12": "12 г",

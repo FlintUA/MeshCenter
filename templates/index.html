@@ -6,7 +6,7 @@
     <meta name="app-version" content="{{ app_version }}">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260813-schedule-engine">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260813-time-hero">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -134,11 +134,13 @@
                  are placeholders wired up in later stages. -->
             <section class="time-card module-card" id="timeCard" aria-labelledby="timeCardTitle">
                 <div class="time-card-header">
-                    <span class="time-card-title" id="timeCardTitle" data-i18n="time.card_title">Time &amp; Timers</span>
+                    <span class="time-card-title visually-hidden" id="timeCardTitle" data-i18n="time.card_title">Time &amp; Timers</span>
                 </div>
                 <div class="time-card-body" id="timeCardBody">
-                    <div class="time-clock-section">
-                        <span class="time-clock-display" id="timeClockDisplay">--:--</span>
+                    <div class="time-hero">
+                        <div class="time-hero-clock" id="timeClockDisplay">--:--</div>
+                        <div class="time-hero-date" id="timeClockDate"></div>
+                        <div class="time-hero-week" id="timeClockWeek"></div>
                         <span class="time-clock-source" id="timeClockSource"></span>
                     </div>
                     <div class="time-schedules-section" id="timeSchedulesSection">
@@ -2022,7 +2024,7 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="/static/chat.js?v=20260813-timer-prefs"></script>
+<script src="/static/chat.js?v=20260813-time-hero"></script>
 <script src="/static/media.js?v=20260806-stage9-i18n"></script>
 <script src="/static/weather.js?v=20260808-weather-provider"></script>
 

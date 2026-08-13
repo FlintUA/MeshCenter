@@ -76,7 +76,7 @@ function registerNodeDetailTab(tab) {
 // ─── Time Formatter ───────────────────────────────────────────────
 const TimeFormatter = {
   _getLocale() {
-    return I18N?.currentLang || navigator.language || 'en';
+    return I18N?.locale || navigator.language || 'en';
   },
   _is12h() {
     return (appSettings?.units?.time_format || '24') === '12';
@@ -197,13 +197,45 @@ function updateTimeCardSource(data) {
 }
 
 function updateTimeCardClock() {
-  const el = document.getElementById('timeClockDisplay');
-  if (!el) return;
   const now = TimeFormatter.now();
-  el.textContent = TimeFormatter.formatTime(now);
-  const tz = TimeFormatter._serverTimezone;
-  el.title = TimeFormatter.formatTooltip(now, tz)
-    + (TimeFormatter._syncStatus === 'degraded' ? `\n⚠ ${window.I18N.t('time.not_synchronized')}` : '');
+
+  const clockEl = document.getElementById('timeClockDisplay');
+  if (clockEl) {
+    clockEl.textContent = TimeFormatter.formatTime(now);
+    // Tooltip now only needs timezone + sync status - the date itself is
+    // shown right below in .time-hero-date, so repeating it here would be
+    // redundant (formatTooltip() used to supply the full date+time+tz).
+    const tz = TimeFormatter._serverTimezone;
+    clockEl.title = (tz || '')
+      + (TimeFormatter._syncStatus === 'degraded' ? `${tz ? '\n' : ''}⚠ ${window.I18N.t('time.not_synchronized')}` : '');
+  }
+
+  const dateEl = document.getElementById('timeClockDate');
+  if (dateEl) {
+    dateEl.textContent = new Intl.DateTimeFormat(
+      TimeFormatter._getLocale(), {
+        weekday: 'long',
+        day:     'numeric',
+        month:   'long',
+        year:    'numeric',
+        ...TimeFormatter._tzOption()
+      }
+    ).format(now);
+  }
+
+  const weekEl = document.getElementById('timeClockWeek');
+  if (weekEl) {
+    weekEl.textContent = window.I18N.t('time.week_number')
+      .replace('{n}', _getISOWeek(now));
+  }
+}
+
+function _getISOWeek(date) {
+  const d = new Date(Date.UTC(
+    date.getFullYear(), date.getMonth(), date.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
 }
 
 function initTimeCard() {

@@ -40,6 +40,16 @@ from modules.display.pages import power as power_page
 from modules.display.pages import radio as radio_page
 from modules.display.pages import system as system_page
 from modules.display.pages.status import StatusScreenData, render
+from modules.display.renderer import load_font
+from modules.display.time_helper import draw_epaper_clock, format_epaper_time
+
+# meshsrv.time_service (Stage 2 of the Time System feature) is the single
+# source of truth for "what timezone is the system actually in" - imported
+# here rather than duplicating a timedatectl probe, same
+# not-reinventing-what-already-exists rule Stage 1/2 followed for CPU/RAM
+# readers. Read-only: this module never calls anything that would let the
+# e-paper worker mutate time/timezone state.
+from meshsrv.time_service import get_status as get_time_status
 
 # One entry per supported panel - e-Paper Stage 2 plan (WeAct 1.54"),
 # Phase 4. Both driver classes share the same (pins, spi, gpio_registry)
@@ -114,6 +124,42 @@ def _bucket(value: float | None, step: float = _SIGNIFICANCE_BUCKET) -> float | 
     return round(value / step) * step
 
 
+# Same small font every page already uses for its own labels (status.py/
+# radio.py/power.py/system.py/message.py each call load_font(12) as
+# "label_font") - not a new size introduced just for the clock.
+_CLOCK_FONT_SIZE = 12
+
+
+def _mark_dirty_with_clock(
+    manager: DisplayManager, image, time_str: str, priority: EventPriority = EventPriority.NORMAL,
+) -> None:
+    """Overlay the live clock onto an already-fully-rendered page image,
+    then hand it to DisplayManager.mark_dirty() - hashing the *pre-overlay*
+    image for dedup instead of the final (clock-included) one.
+
+    This is the fix for e-Paper Stage 3's core risk (see manager.py's
+    mark_dirty() docstring for the mechanism): DisplayManager._refresh()
+    hashes raw image bytes to decide whether a physical panel write is
+    actually needed. `time_str` changes every minute by construction, so
+    if it were baked into `image` before hashing, every single poll where
+    the minute ticked over would look like "new content" and force a real
+    refresh - directly the behavior the task's hard constraints forbid.
+    Hashing the image as it looked *before* the clock was drawn keeps
+    dedup keyed to the content that actually matters (radio/CPU/node
+    counts/etc.), while the physical write - on the polls where one does
+    happen for a real content reason - still shows the current clock,
+    since drawing happens in-place on the same object passed to
+    mark_dirty()."""
+    content_hash = hashlib.sha256(image.tobytes()).hexdigest()
+    draw_epaper_clock(image, time_str, load_font(_CLOCK_FONT_SIZE))
+    manager.mark_dirty(image, priority=priority, content_hash=content_hash)
+
+
+def _current_clock_text(get_time_format) -> str:
+    time_status = get_time_status() or {}
+    return format_epaper_time(get_time_format(), time_status.get("timezone", "UTC"))
+
+
 def build_driver(config: dict, gpio_registry: GpioRegistry) -> DisplayDriver:
     model = config.get("model", DEFAULT_MODEL)
     driver_cls = DRIVER_CLASSES.get(model)
@@ -180,6 +226,7 @@ def epaper_worker(
     get_latest_message: Callable[[], dict[str, Any] | None] = lambda: None,
     get_display_language: Callable[[], str] = lambda: DEFAULT_LOCALE,
     get_temperature_unit: Callable[[], str] = lambda: "c",
+    get_time_format: Callable[[], str] = lambda: "24",
     stop_event: threading.Event | None = None,
 ) -> None:
     stop_event = stop_event or threading.Event()
@@ -193,7 +240,7 @@ def epaper_worker(
                     get_ram_percent, get_listener_alive, local_node_name, content_state,
                     get_battery_percent, get_active_page, get_last_error,
                     get_power_readings, get_cpu_temp, get_latest_message, get_display_language,
-                    get_temperature_unit,
+                    get_temperature_unit, get_time_format,
                 )
         except Exception:
             logger.exception("[EPAPER] epaper_worker: poll failed")
@@ -301,12 +348,14 @@ def _poll_once(
     get_latest_message=lambda: None,
     get_display_language=lambda: DEFAULT_LOCALE,
     get_temperature_unit=lambda: "c",
+    get_time_format=lambda: "24",
 ) -> None:
     data, content_key = _build_status_fields(
         state_lock, nodes, get_radio_status, get_cpu_percent, get_ram_percent,
         get_listener_alive, local_node_name,
     )
     locale = get_display_language()
+    clock_text = _current_clock_text(get_time_format)
 
     battery_percent = get_battery_percent()
     critical_title = None
@@ -353,29 +402,41 @@ def _poll_once(
             get_cpu_temp, get_latest_message, locale, get_temperature_unit(),
         )
         if image is not None:
-            manager.mark_dirty(image)
+            _mark_dirty_with_clock(manager, image, clock_text)
             return
 
     data.last_update = content_state.stamp(content_key)
     image = render(manager.capabilities, data, locale=locale)
-    manager.mark_dirty(image)
+    _mark_dirty_with_clock(manager, image, clock_text)
 
 
 def build_status_image_now(
     manager, state_lock, nodes, get_radio_status, get_cpu_percent,
     get_ram_percent, get_listener_alive, local_node_name,
     locale: str = DEFAULT_LOCALE,
+    time_format: str = "24",
 ):
     """Same status-screen content as the poller, but stamps "last update"
     with the current time unconditionally - for an explicit manual action
     (POST /api/hardware/display/refresh), where "now" genuinely is the
-    event, unlike a routine 5s poll tick."""
+    event, unlike a routine 5s poll tick.
+
+    Also draws the live clock (same corner/font as the poller's
+    _mark_dirty_with_clock()) directly into the returned image - unlike
+    the poller, this is a one-shot manual action that the caller already
+    pushes with EventPriority.CRITICAL and no content_hash (see
+    api/api_hardware_display.py), so there's no recurring-refresh risk
+    here to guard against with a pre-overlay hash split."""
     data, _content_key = _build_status_fields(
         state_lock, nodes, get_radio_status, get_cpu_percent, get_ram_percent,
         get_listener_alive, local_node_name,
     )
     data.last_update = time.strftime("%H:%M")
-    return render(manager.capabilities, data, locale=locale)
+    image = render(manager.capabilities, data, locale=locale)
+    time_status = get_time_status() or {}
+    clock_text = format_epaper_time(time_format, time_status.get("timezone", "UTC"))
+    draw_epaper_clock(image, clock_text, load_font(_CLOCK_FONT_SIZE))
+    return image
 
 
 def build_page_image_now(
@@ -384,15 +445,25 @@ def build_page_image_now(
     get_cpu_temp, get_latest_message,
     locale: str = DEFAULT_LOCALE,
     temperature_unit: str = "c",
+    time_format: str = "24",
 ):
     """For POST /api/hardware/display/show/<page> - builds whichever page
     was requested right now, for an immediate (CRITICAL) push. Returns
     None for "status" or an unknown page name; the route falls back to
     build_status_image_now() for "status" and to a 404 for a page this
     phase didn't build (radio/power/system/message only - see
-    KNOWN_PAGES)."""
-    return _render_page(
+    KNOWN_PAGES).
+
+    Draws the live clock into the returned image for the same reason
+    build_status_image_now() does - see its docstring."""
+    image = _render_page(
         page, manager, local_node_name, get_radio_status, get_listener_alive,
         get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
         get_cpu_temp, get_latest_message, locale, temperature_unit,
     )
+    if image is None:
+        return None
+    time_status = get_time_status() or {}
+    clock_text = format_epaper_time(time_format, time_status.get("timezone", "UTC"))
+    draw_epaper_clock(image, clock_text, load_font(_CLOCK_FONT_SIZE))
+    return image

@@ -367,3 +367,165 @@ def register_system_routes(app, get_cpu_temperature=None):
         except Exception:
             pass
         return jsonify(result)
+
+    @app.route("/api/time")
+    def api_get_time():
+        from meshsrv.time_service import get_status
+
+        return jsonify(get_status())
+
+    @app.route("/api/notifications", methods=["GET"])
+    def api_get_notifications():
+        from meshsrv.notification_service import get_all, get_unread_count
+
+        return jsonify({"notifications": get_all(), "unread_count": get_unread_count()})
+
+    @app.route("/api/notifications/test", methods=["POST"])
+    def api_test_notification():
+        from meshsrv.notification_service import push_notification
+
+        event = push_notification(
+            level="info", source="system",
+            title="Notification test", body="The notifications card is working correctly"
+        )
+        return jsonify({"ok": True, "event": event})
+
+    @app.route("/api/notifications/read-all", methods=["POST"])
+    def api_mark_all_notifications_read():
+        from meshsrv.notification_service import mark_all_read
+
+        count = mark_all_read()
+        return jsonify({"marked": count})
+
+    @app.route("/api/notifications/<nid>/read", methods=["PATCH"])
+    def api_mark_notification_read(nid):
+        from meshsrv.notification_service import mark_read
+
+        ok = mark_read(nid)
+        return jsonify({"ok": ok})
+
+    @app.route("/api/notifications/<nid>", methods=["DELETE"])
+    def api_delete_notification(nid):
+        from meshsrv.notification_service import delete_one
+
+        ok = delete_one(nid)
+        return jsonify({"ok": ok})
+
+    @app.route("/api/notifications", methods=["DELETE"])
+    def api_clear_notifications():
+        from meshsrv.notification_service import clear_all
+
+        count = clear_all()
+        return jsonify({"cleared": count})
+
+    @app.route("/api/schedules", methods=["GET"])
+    def api_get_schedules():
+        from meshsrv.schedule_engine import get_all_rules
+
+        return jsonify(get_all_rules())
+
+    @app.route("/api/schedules", methods=["POST"])
+    def api_create_schedule():
+        from meshsrv.schedule_engine import create_rule
+
+        data = request.get_json(force=True)
+        return jsonify(create_rule(data)), 201
+
+    @app.route("/api/schedules/<sid>", methods=["PUT"])
+    def api_update_schedule(sid):
+        from meshsrv.schedule_engine import update_rule
+
+        data = request.get_json(force=True)
+        result = update_rule(sid, data)
+        if result is None:
+            return jsonify({"error": "not found"}), 404
+        return jsonify(result)
+
+    @app.route("/api/schedules/<sid>/toggle", methods=["PATCH"])
+    def api_toggle_schedule(sid):
+        from meshsrv.schedule_engine import toggle_rule
+
+        result = toggle_rule(sid)
+        if result is None:
+            return jsonify({"error": "not found"}), 404
+        return jsonify(result)
+
+    @app.route("/api/schedules/<sid>", methods=["DELETE"])
+    def api_delete_schedule(sid):
+        from meshsrv.schedule_engine import delete_rule
+
+        ok = delete_rule(sid)
+        return jsonify({"ok": ok})
+
+    @app.route("/api/timers", methods=["GET"])
+    def api_get_timers():
+        from meshsrv.timer_service import get_all
+
+        return jsonify(get_all())
+
+    @app.route("/api/timers", methods=["POST"])
+    def api_create_timer():
+        from meshsrv.timer_service import create_timer
+
+        data = request.get_json(force=True)
+        label = data.get("label", "")
+        duration_s = data.get("duration_s")
+        notify_cfg = data.get("notify")
+        t = create_timer(label, duration_s, notify_cfg)
+        return jsonify(t), 201
+
+    @app.route("/api/timers/<tid>/stop", methods=["PATCH"])
+    def api_stop_timer(tid):
+        from meshsrv.timer_service import stop_timer
+
+        t = stop_timer(tid)
+        if t is None:
+            return jsonify({"error": "not found"}), 404
+        return jsonify(t)
+
+    @app.route("/api/timers/<tid>/reset", methods=["PATCH"])
+    def api_reset_timer(tid):
+        from meshsrv.timer_service import reset_timer
+
+        t = reset_timer(tid)
+        if t is None:
+            return jsonify({"error": "not found"}), 404
+        return jsonify(t)
+
+    @app.route("/api/timers/<tid>/finish", methods=["POST"])
+    def api_finish_timer(tid):
+        from meshsrv.timer_service import mark_finished
+        from meshsrv.notification_service import push_notification
+
+        t = mark_finished(tid)
+        if t is None:
+            return jsonify({"error": "not found"}), 404
+
+        label = t.get("label") or "Timer"
+        push_notification(level="info", source="timer", title=label, body="Timer finished")
+
+        notify = t.get("notify", {})
+        m = notify.get("mesh_message", {})
+        if notify.get("enabled") and m.get("enabled"):
+            signal = (notify.get("signal") or "").strip()
+            if signal:
+                try:
+                    from meshsrv.schedule_actions import send_mesh_message
+
+                    send_mesh_message(
+                        message=signal,
+                        target_type=m.get("target_type", "node"),
+                        node_id=m.get("node_id", ""),
+                        channel_index=m.get("channel_index", 0)
+                    )
+                except Exception as e:
+                    print(f"[Timer] mesh send failed: {e}", flush=True)
+
+        return jsonify(t)
+
+    @app.route("/api/timers/<tid>", methods=["DELETE"])
+    def api_delete_timer(tid):
+        from meshsrv.timer_service import delete_timer
+
+        ok = delete_timer(tid)
+        return jsonify({"ok": ok})

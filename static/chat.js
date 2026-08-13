@@ -73,6 +73,1031 @@ function registerNodeDetailTab(tab) {
     return true;
 }
 
+// ─── Time Formatter ───────────────────────────────────────────────
+const TimeFormatter = {
+  _getLocale() {
+    return I18N?.currentLang || navigator.language || 'en';
+  },
+  _is12h() {
+    return (appSettings?.units?.time_format || '24') === '12';
+  },
+  _serverEpoch:     null,
+  _localSnapshotMs: null,
+  _serverTimezone:  null,
+  _syncStatus:      'pending', // 'synced' | 'degraded' | 'pending'
+
+  // Best-known current time: server-synced clock once /api/time has
+  // answered at least once, falling back to the browser clock until then.
+  now() {
+    if (this._serverEpoch === null) return new Date();
+    const elapsedMs = Date.now() - this._localSnapshotMs;
+    return new Date((this._serverEpoch * 1000) + elapsedMs);
+  },
+
+  syncFromServer(data) {
+    this._serverEpoch     = data.utc;
+    this._localSnapshotMs = Date.now();
+    this._serverTimezone  = data.timezone || null;
+    this._syncStatus      = 'synced';
+  },
+
+  markDegraded() {
+    this._syncStatus = 'degraded';
+  },
+
+  // Intl.DateTimeFormat options fragment picking the MeshCenter host's
+  // timezone once known via syncFromServer(); empty otherwise so Intl
+  // falls back to the browser's own timezone.
+  _tzOption() {
+    const mode = appSettings?.time?.timezone_mode || 'meshcenter';
+    if (mode === 'meshcenter' && this._serverTimezone) {
+      return { timeZone: this._serverTimezone };
+    }
+    return {};
+  },
+
+  formatTime(date) {
+    if (!date) return '--';
+    const d = (date instanceof Date) ? date : new Date(date * 1000);
+    if (isNaN(d)) return '--';
+    return new Intl.DateTimeFormat(this._getLocale(), {
+      hour:   'numeric',
+      minute: '2-digit',
+      hour12: this._is12h(),
+      ...this._tzOption()
+    }).format(d);
+  },
+  formatDate(date) {
+    if (!date) return '--';
+    const d = (date instanceof Date) ? date : new Date(date * 1000);
+    if (isNaN(d)) return '--';
+    return new Intl.DateTimeFormat(this._getLocale(), {
+      day:   'numeric',
+      month: 'long',
+      year:  'numeric',
+      ...this._tzOption()
+    }).format(d);
+  },
+  formatDateTime(date) {
+    if (!date) return '--';
+    const d = (date instanceof Date) ? date : new Date(date * 1000);
+    if (isNaN(d)) return '--';
+    return new Intl.DateTimeFormat(this._getLocale(), {
+      day:    'numeric',
+      month:  'short',
+      year:   'numeric',
+      hour:   'numeric',
+      minute: '2-digit',
+      hour12: this._is12h(),
+      ...this._tzOption()
+    }).format(d);
+  },
+  formatTooltip(date, timezone) {
+    if (!date) return '--';
+    const d = (date instanceof Date) ? date : new Date(date * 1000);
+    if (isNaN(d)) return '--';
+    const datePart = new Intl.DateTimeFormat(this._getLocale(), {
+      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+      ...this._tzOption()
+    }).format(d);
+    const timePart = new Intl.DateTimeFormat(this._getLocale(), {
+      hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: this._is12h(),
+      ...this._tzOption()
+    }).format(d);
+    return timezone ? `${datePart}\n${timePart}\n${timezone}` : `${datePart}\n${timePart}`;
+  }
+};
+
+// ─── Time Card — Server Sync ──────────────────────────────────────
+const TIME_RESYNC_INTERVAL_MS = 5 * 60 * 1000;
+let _timeResyncTimer = null;
+
+async function syncTimeWithServer() {
+  try {
+    const resp = await fetch('/api/time');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    TimeFormatter.syncFromServer(data);
+    updateTimeCardSource(data);
+  } catch (e) {
+    TimeFormatter.markDegraded();
+    updateTimeCardSource(null);
+    console.warn('Time sync failed:', e);
+  }
+}
+
+function updateTimeCardSource(data) {
+  const el = document.getElementById('timeClockSource');
+  if (!el) return;
+  if (!data) {
+    el.textContent = TimeFormatter._serverEpoch ? `(${window.I18N.t('time.not_synchronized')})` : '';
+    return;
+  }
+  el.textContent = data.synchronized ? '' : `(${window.I18N.t('time.not_synchronized')})`;
+}
+
+function updateTimeCardClock() {
+  const el = document.getElementById('timeClockDisplay');
+  if (!el) return;
+  const now = TimeFormatter.now();
+  el.textContent = TimeFormatter.formatTime(now);
+  const tz = TimeFormatter._serverTimezone;
+  el.title = TimeFormatter.formatTooltip(now, tz)
+    + (TimeFormatter._syncStatus === 'degraded' ? `\n⚠ ${window.I18N.t('time.not_synchronized')}` : '');
+}
+
+function initTimeCard() {
+  syncTimeWithServer();
+  setInterval(updateTimeCardClock, 1000);
+  _timeResyncTimer = setInterval(syncTimeWithServer, TIME_RESYNC_INTERVAL_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      syncTimeWithServer();
+    }
+  });
+  loadTimers();
+}
+
+// ─── Notifications Card ───────────────────────────────────────────
+// Backend event queue (schedule/timer/system sources), polled separately
+// from the sessionStorage-based notification center (addNotification() /
+// notificationItems above) - this card only calls into addNotification()
+// to raise a toast for genuinely-new backend events.
+let _notifPollTimer     = null;
+let _notifLastSeenId    = sessionStorage.getItem('mc.notif.lastSeenId') || null;
+let _notifCardExpanded  = false;
+const NOTIF_POLL_MS     = 30_000;
+
+async function pollNotifications() {
+  try {
+    const resp = await fetch('/api/notifications');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    renderNotificationsCard(data.notifications, data.unread_count);
+    showToastsForNew(data.notifications);
+  } catch (e) {
+    console.warn('Notifications poll failed:', e);
+  }
+}
+
+function showToastsForNew(notifications) {
+  if (!notifications.length) return;
+  const newestId = notifications[0].id;
+
+  const newOnes = [];
+  for (const n of notifications) {
+    if (n.id === _notifLastSeenId) break;
+    newOnes.push(n);
+  }
+
+  if (_notifLastSeenId !== null) {
+    for (const n of newOnes.reverse()) {
+      const type = n.level === 'error'   ? 'error'
+                 : n.level === 'warning' ? 'warning'
+                 : 'info';
+      const text = n.body ? `${n.title}: ${n.body}` : n.title;
+      addNotification(text, type);
+    }
+  }
+
+  if (newestId !== _notifLastSeenId) {
+    _notifLastSeenId = newestId;
+    sessionStorage.setItem('mc.notif.lastSeenId', newestId);
+  }
+}
+
+function renderNotificationsCard(notifications, unreadCount) {
+  const badge = document.getElementById('notificationsBadge');
+  const clearBtn = document.getElementById('notificationsClearBtn');
+  if (badge) {
+    badge.textContent = unreadCount;
+    badge.style.display = unreadCount > 0 ? 'inline' : 'none';
+  }
+  if (clearBtn) {
+    clearBtn.style.display = notifications.length > 0 ? 'inline-block' : 'none';
+  }
+  if (unreadCount > 0 && !_notifCardExpanded) {
+    expandNotificationsCard(false);
+  }
+
+  const list  = document.getElementById('notificationsList');
+  const empty = document.getElementById('notificationsEmpty');
+  if (!list) return;
+
+  if (notifications.length === 0) {
+    list.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayStartTs = Math.floor(todayStart.getTime() / 1000);
+
+  let html = '';
+  let shownDivider = false;
+
+  for (const n of notifications) {
+    if (!shownDivider && n.timestamp < todayStartTs) {
+      html += `<div class="notifications-divider" data-i18n="notifications.earlier">Earlier</div>`;
+      shownDivider = true;
+    }
+    const icon  = n.level === 'error'   ? '⚠'
+                : n.level === 'warning' ? '⚠'
+                : '⏱';
+    const timeStr = TimeFormatter.formatTime(n.timestamp);
+    const readCls = n.read ? 'notifications-item--read' : '';
+
+    html += `
+      <div class="notifications-item ${readCls}" data-id="${n.id}"
+           onclick="markBackendNotificationRead('${n.id}', this)">
+        <span class="notifications-item-icon">${icon}</span>
+        <span class="notifications-item-time">${timeStr}</span>
+        <span class="notifications-item-title">${escapeHtml(n.title)}</span>
+        ${n.body ? `<span class="notifications-item-body">${escapeHtml(n.body)}</span>` : ''}
+        <button class="notifications-item-dismiss"
+                onclick="event.stopPropagation(); deleteNotification('${n.id}', this.closest('.notifications-item'))"
+                aria-label="Dismiss">✕</button>
+      </div>`;
+  }
+  list.innerHTML = html;
+}
+
+function toggleNotificationsCard() {
+  _notifCardExpanded ? collapseNotificationsCard() : expandNotificationsCard(true);
+}
+
+function expandNotificationsCard(animate) {
+  _notifCardExpanded = true;
+  const body    = document.getElementById('notificationsCardBody');
+  const chevron = document.getElementById('notificationsChevron');
+  const header  = document.getElementById('notificationsCardHeader');
+  if (body)    body.style.display = 'block';
+  if (chevron) chevron.textContent = '▾';
+  if (header)  header.setAttribute('aria-expanded', 'true');
+  fetch('/api/notifications/read-all', { method: 'POST' })
+    .then(() => {
+      const badge = document.getElementById('notificationsBadge');
+      if (badge) badge.style.display = 'none';
+    }).catch(() => {});
+}
+
+function collapseNotificationsCard() {
+  _notifCardExpanded = false;
+  const body    = document.getElementById('notificationsCardBody');
+  const chevron = document.getElementById('notificationsChevron');
+  const header  = document.getElementById('notificationsCardHeader');
+  if (body)    body.style.display = 'none';
+  if (chevron) chevron.textContent = '▸';
+  if (header)  header.setAttribute('aria-expanded', 'false');
+}
+
+// Named markBackendNotificationRead (not markNotificationRead) - that name
+// is already taken by the older sessionStorage-based notification center
+// above (single-arg, marks a client-side item read); this one marks a
+// backend-queue event read via the API and takes the row element too.
+async function markBackendNotificationRead(id, el) {
+  await fetch(`/api/notifications/${id}/read`, { method: 'PATCH' });
+  el?.classList.add('notifications-item--read');
+}
+
+async function deleteNotification(id, el) {
+  await fetch(`/api/notifications/${id}`, { method: 'DELETE' });
+  el?.remove();
+  await pollNotifications();
+}
+
+async function clearAllNotifications() {
+  await fetch('/api/notifications', { method: 'DELETE' });
+  await pollNotifications();
+}
+
+async function testNotification() {
+  await fetch('/api/notifications/test', { method: 'POST' });
+  await pollNotifications();
+}
+
+function initNotificationsCard() {
+  pollNotifications();
+  _notifPollTimer = setInterval(pollNotifications, NOTIF_POLL_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') pollNotifications();
+  });
+}
+
+// ─── Schedules Card (Time & Timers card, #timeSchedulesSection) ──────
+// Backend-driven schedule rules (data/schedules.json via meshsrv/
+// schedule_engine.py), rendered into the same #timeSchedulesList /
+// #addScheduleBtn hooks Stage 1 placed inside #timeCard.
+let scheduleRules = [];
+let scheduleEditingId = null;
+
+const SCHEDULE_DAY_ORDER = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+function initSchedulesCard() {
+  const section = document.getElementById('timeSchedulesSection');
+  if (section) section.style.display = '';
+
+  const addBtn = document.getElementById('addScheduleBtn');
+  if (addBtn) addBtn.addEventListener('click', () => openScheduleForm(null));
+
+  loadSchedules();
+}
+
+async function loadSchedules() {
+  try {
+    const resp = await fetch('/api/schedules');
+    if (!resp.ok) return;
+    scheduleRules = await resp.json();
+    renderSchedulesList();
+  } catch (e) {
+    console.warn('Failed to load schedules:', e);
+  }
+}
+
+function _scheduleSummaryText(rule) {
+  const t = rule.trigger || {};
+  if (t.mode === 'interval') {
+    return window.I18N.t('time.every_n_min').replace('{n}', t.interval_minutes ?? '?');
+  }
+  const days = Array.isArray(t.days) ? t.days : [];
+  const allWeekdays = SCHEDULE_DAY_ORDER.slice(0, 5).every(d => days.includes(d)) && days.length === 5;
+  const dayLabel = allWeekdays
+    ? window.I18N.t('time.weekdays')
+    : (days.length === 7 ? window.I18N.t('time.every_day') : days.join(', '));
+  return `${dayLabel} ${t.time || ''}`.trim();
+}
+
+function renderSchedulesList() {
+  const list = document.getElementById('timeSchedulesList');
+  if (!list) return;
+
+  if (!scheduleRules.length) {
+    list.innerHTML = `<div class="time-schedules-empty" data-i18n="time.schedules_empty">${escapeHtml(window.I18N.t('time.schedules_empty'))}</div>`;
+    return;
+  }
+
+  list.innerHTML = scheduleRules.map(rule => {
+    const disabledClass = rule.enabled ? '' : ' is-disabled';
+    const summary = escapeHtml(_scheduleSummaryText(rule));
+    const label = escapeHtml(rule.label || window.I18N.t('time.label_placeholder'));
+    const toggleLabel = rule.enabled ? window.I18N.t('time.disable') : window.I18N.t('time.enable');
+    return `
+      <div class="time-schedule-row${disabledClass}" data-id="${escapeHtml(rule.id)}">
+        <div class="time-schedule-info" onclick="openScheduleForm('${escapeHtml(rule.id)}')">
+          <span class="time-schedule-label">${label}</span>
+          <span class="time-schedule-summary">${summary}</span>
+        </div>
+        <div class="time-schedule-actions">
+          <button class="btn btn-sm" title="${escapeHtml(toggleLabel)}" onclick="event.stopPropagation(); toggleScheduleEnabled('${escapeHtml(rule.id)}')">${rule.enabled ? '⏸' : '▶'}</button>
+          <button class="btn btn-sm" title="${escapeHtml(window.I18N.t('common.delete'))}" onclick="event.stopPropagation(); deleteScheduleRule('${escapeHtml(rule.id)}')">🗑</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function toggleScheduleEnabled(id) {
+  try {
+    const resp = await fetch(`/api/schedules/${encodeURIComponent(id)}/toggle`, { method: 'PATCH' });
+    if (!resp.ok) return;
+    await loadSchedules();
+  } catch (e) {
+    console.warn('Failed to toggle schedule:', e);
+  }
+}
+
+async function deleteScheduleRule(id) {
+  if (!confirm(window.I18N.t('time.confirm_delete'))) return;
+  try {
+    const resp = await fetch(`/api/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!resp.ok) return;
+    await loadSchedules();
+  } catch (e) {
+    console.warn('Failed to delete schedule:', e);
+  }
+}
+
+// ─── Schedule edit form (scheduleModal) ───────────────────────────────
+
+// Dirty-flag tracking (Stage 8 audit fix): closing the modal via the X/
+// backdrop/Cancel path used to silently discard whatever the user had
+// typed, with no confirmation - _attachDirtyListeners() below wires every
+// form control rendered by openScheduleForm() to a single flag that
+// closeScheduleForm() checks before actually hiding the modal.
+let _scheduleFormDirty = false;
+
+function _attachDirtyListeners() {
+  const body = document.getElementById('scheduleModalBody');
+  if (!body) return;
+  body.querySelectorAll('input, select, textarea').forEach(el => {
+    el.addEventListener('change', () => { _scheduleFormDirty = true; });
+    el.addEventListener('input',  () => { _scheduleFormDirty = true; });
+  });
+}
+
+function _renderTargetPicker(prefix, targetType, nodeId, channelIndex) {
+  const nodes = Array.isArray(nodeCache) ? nodeCache : [];
+  const nodeOptions = nodes
+    .filter(n => n && n.node_id)
+    .map(n => {
+      const name = escapeHtml(n.clean_name || n.name || n.long_name || n.node_id);
+      const selected = n.node_id === nodeId ? ' selected' : '';
+      return `<option value="${escapeHtml(n.node_id)}"${selected}>${name}</option>`;
+    }).join('');
+
+  const channels = Array.isArray(scheduleChannelCache) ? scheduleChannelCache : [];
+  const channelOptions = channels
+    .filter(c => c && Number.isInteger(c.index))
+    .map(c => {
+      const selected = c.index === channelIndex ? ' selected' : '';
+      return `<option value="${c.index}"${selected}>${escapeHtml(c.name || `Channel ${c.index}`)}</option>`;
+    }).join('');
+
+  const nodeChecked = targetType === 'node' ? ' checked' : '';
+  const chanChecked = targetType === 'channel' ? ' checked' : '';
+
+  return `
+    <div class="schedule-target-picker" data-prefix="${prefix}">
+      <label class="schedule-radio">
+        <input type="radio" name="${prefix}TargetType" value="node"${nodeChecked} onchange="_scheduleUpdateTargetVisibility('${prefix}')">
+        <span data-i18n="time.target_node">${escapeHtml(window.I18N.t('time.target_node'))}</span>
+      </label>
+      <label class="schedule-radio">
+        <input type="radio" name="${prefix}TargetType" value="channel"${chanChecked} onchange="_scheduleUpdateTargetVisibility('${prefix}')">
+        <span data-i18n="time.target_channel">${escapeHtml(window.I18N.t('time.target_channel'))}</span>
+      </label>
+      <select id="${prefix}NodeSelect" class="schedule-select" style="display:${targetType === 'node' ? '' : 'none'}">
+        ${nodeOptions}
+      </select>
+      <select id="${prefix}ChannelSelect" class="schedule-select" style="display:${targetType === 'channel' ? '' : 'none'}">
+        ${channelOptions}
+      </select>
+    </div>`;
+}
+
+function _scheduleUpdateTargetVisibility(prefix) {
+  const picker = document.querySelector(`.schedule-target-picker[data-prefix="${prefix}"]`);
+  if (!picker) return;
+  const checked = picker.querySelector(`input[name="${prefix}TargetType"]:checked`);
+  const type = checked ? checked.value : 'node';
+  const nodeSelect = document.getElementById(`${prefix}NodeSelect`);
+  const chanSelect = document.getElementById(`${prefix}ChannelSelect`);
+  if (nodeSelect) nodeSelect.style.display = type === 'node' ? '' : 'none';
+  if (chanSelect) chanSelect.style.display = type === 'channel' ? '' : 'none';
+}
+
+function _scheduleReadTarget(prefix) {
+  const picker = document.querySelector(`.schedule-target-picker[data-prefix="${prefix}"]`);
+  if (!picker) return { target_type: 'node', node_id: '', channel_index: 0 };
+  const checked = picker.querySelector(`input[name="${prefix}TargetType"]:checked`);
+  const targetType = checked ? checked.value : 'node';
+  if (targetType === 'channel') {
+    const sel = document.getElementById(`${prefix}ChannelSelect`);
+    return { target_type: 'channel', node_id: '', channel_index: sel ? parseInt(sel.value, 10) || 0 : 0 };
+  }
+  const sel = document.getElementById(`${prefix}NodeSelect`);
+  return { target_type: 'node', node_id: sel ? sel.value : '', channel_index: 0 };
+}
+
+function _renderDataReportParams() {
+  // send_data_report's backend field-picker (_get_field_value in
+  // meshsrv/schedule_actions.py) is fully implemented against per-node
+  // telemetry (server.py's nodes[node_id].device_metrics /
+  // environment_metrics / power_metrics), but this stage does not ship a
+  // field-picker UI for it yet - only log_entry and mesh_send have edit
+  // forms. Kept as an honest placeholder rather than a fake UI.
+  return `<p class="schedule-placeholder-note" data-i18n="time.action_data_note">${escapeHtml(window.I18N.t('time.action_data_note'))}</p>`;
+}
+
+let scheduleChannelCache = [];
+
+async function _scheduleLoadChannels() {
+  try {
+    const resp = await fetch('/api/chats');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    scheduleChannelCache = data.channels || [];
+  } catch (e) {
+    console.warn('Failed to load channels for schedule form:', e);
+  }
+}
+
+async function openScheduleForm(id) {
+  await _scheduleLoadChannels();
+  scheduleEditingId = id;
+  const rule = id ? scheduleRules.find(r => r.id === id) : null;
+
+  const label = rule?.label || '';
+  const trigger = rule?.trigger || { mode: 'daily', time: '08:00', days: ['mon','tue','wed','thu','fri'], interval_minutes: 60 };
+  const actions = rule?.actions || [{ type: 'log_entry', params: {} }];
+  const primaryAction = actions[0] || { type: 'log_entry', params: {} };
+  const notify = rule?.notify || { enabled: false, signal: '', details: '', mesh_message: { enabled: false, target_type: 'node', node_id: '', channel_index: 0 } };
+  const meshMsg = notify.mesh_message || {};
+
+  const modalBody = document.getElementById('scheduleModalBody');
+  if (!modalBody) return;
+
+  const dayChips = SCHEDULE_DAY_ORDER.map(d => {
+    const checked = (trigger.days || []).includes(d) ? ' checked' : '';
+    return `<label class="schedule-day-chip">
+      <input type="checkbox" value="${d}" class="schedule-day-input"${checked}>
+      <span>${escapeHtml(window.I18N.t(`time.day_${d}`))}</span>
+    </label>`;
+  }).join('');
+
+  modalBody.innerHTML = `
+    <div class="schedule-form-row">
+      <label data-i18n="time.label_name">${escapeHtml(window.I18N.t('time.label_name'))}</label>
+      <input type="text" id="sfLabel" class="schedule-input" maxlength="80"
+             placeholder="${escapeHtml(window.I18N.t('time.label_placeholder'))}" value="${escapeHtml(label)}">
+    </div>
+
+    <div class="schedule-form-row">
+      <label data-i18n="time.when">${escapeHtml(window.I18N.t('time.when'))}</label>
+      <select id="sfMode" class="schedule-select" onchange="_scheduleUpdateModeVisibility()">
+        <option value="daily"${trigger.mode === 'daily' ? ' selected' : ''}>${escapeHtml(window.I18N.t('time.mode_daily'))}</option>
+        <option value="interval"${trigger.mode === 'interval' ? ' selected' : ''}>${escapeHtml(window.I18N.t('time.mode_interval'))}</option>
+      </select>
+    </div>
+
+    <div class="schedule-form-row" id="sfDailyFields" style="display:${trigger.mode === 'interval' ? 'none' : ''}">
+      <label data-i18n="time.time_label">${escapeHtml(window.I18N.t('time.time_label'))}</label>
+      <input type="time" id="sfTime" class="schedule-input" value="${escapeHtml(trigger.time || '08:00')}">
+      <div class="schedule-days-label" data-i18n="time.days_label">${escapeHtml(window.I18N.t('time.days_label'))}</div>
+      <div class="schedule-day-picker" id="sfDays">${dayChips}</div>
+    </div>
+
+    <div class="schedule-form-row" id="sfIntervalFields" style="display:${trigger.mode === 'interval' ? '' : 'none'}">
+      <label data-i18n="time.repeat">${escapeHtml(window.I18N.t('time.repeat'))}</label>
+      <span class="schedule-inline">
+        ${escapeHtml(window.I18N.t('time.every_n'))}
+        <input type="number" id="sfInterval" class="schedule-input schedule-input--narrow" min="1" max="10080" value="${trigger.interval_minutes || 60}">
+        ${escapeHtml(window.I18N.t('time.minutes'))}
+      </span>
+    </div>
+
+    <div class="schedule-form-row">
+      <label data-i18n="time.what">${escapeHtml(window.I18N.t('time.what'))}</label>
+      <span class="schedule-inline-label" data-i18n="time.action_label">${escapeHtml(window.I18N.t('time.action_label'))}</span>
+      <select id="sfActionType" class="schedule-select" onchange="_scheduleUpdateActionVisibility()">
+        <option value="log_entry"${primaryAction.type === 'log_entry' ? ' selected' : ''}>${escapeHtml(window.I18N.t('time.action_log'))}</option>
+        <option value="mesh_send"${primaryAction.type === 'mesh_send' ? ' selected' : ''}>${escapeHtml(window.I18N.t('time.action_mesh'))}</option>
+        <option value="send_data_report"${primaryAction.type === 'send_data_report' ? ' selected' : ''}>${escapeHtml(window.I18N.t('time.action_data'))}</option>
+      </select>
+    </div>
+
+    <div class="schedule-form-row schedule-action-params" id="sfMeshParams" style="display:${primaryAction.type === 'mesh_send' ? '' : 'none'}">
+      <input type="text" id="sfMeshMessage" class="schedule-input" maxlength="200"
+             placeholder="${escapeHtml(window.I18N.t('time.message_placeholder'))}"
+             value="${escapeHtml(primaryAction.type === 'mesh_send' ? (primaryAction.params?.message || '') : '')}">
+      ${_renderTargetPicker('ms',
+          primaryAction.type === 'mesh_send' ? (primaryAction.params?.target_type || 'node') : 'node',
+          primaryAction.type === 'mesh_send' ? (primaryAction.params?.node_id || '') : '',
+          primaryAction.type === 'mesh_send' ? (primaryAction.params?.channel_index ?? 0) : 0)}
+    </div>
+
+    <div class="schedule-form-row schedule-action-params" id="sfDataParams" style="display:${primaryAction.type === 'send_data_report' ? '' : 'none'}">
+      ${_renderDataReportParams()}
+    </div>
+
+    <div class="schedule-form-section">
+      <div class="schedule-section-heading" data-i18n="time.notify_section">${escapeHtml(window.I18N.t('time.notify_section'))}</div>
+      <label class="schedule-checkbox-row">
+        <input type="checkbox" id="sfNotifyEnabled" onchange="_scheduleUpdateNotifyVisibility()"${notify.enabled ? ' checked' : ''}>
+        <span data-i18n="time.notify_enabled">${escapeHtml(window.I18N.t('time.notify_enabled'))}</span>
+      </label>
+      <div id="sfNotifyFields" style="display:${notify.enabled ? '' : 'none'}">
+        <div class="schedule-form-row">
+          <label data-i18n="time.signal_label">${escapeHtml(window.I18N.t('time.signal_label'))}</label>
+          <input type="text" id="sfSignal" class="schedule-input" maxlength="120" value="${escapeHtml(notify.signal || '')}">
+        </div>
+        <div class="schedule-form-row">
+          <label data-i18n="time.details_label">${escapeHtml(window.I18N.t('time.details_label'))}</label>
+          <input type="text" id="sfDetails" class="schedule-input" maxlength="200" value="${escapeHtml(notify.details || '')}">
+        </div>
+        <label class="schedule-checkbox-row">
+          <input type="checkbox" id="sfNotifyAlsoMesh" onchange="_scheduleUpdateNotifyMeshVisibility()"${meshMsg.enabled ? ' checked' : ''}>
+          <span data-i18n="time.notify_also_mesh">${escapeHtml(window.I18N.t('time.notify_also_mesh'))}</span>
+        </label>
+        <div class="schedule-form-row schedule-action-params" id="sfNotifyMeshParams" style="display:${meshMsg.enabled ? '' : 'none'}">
+          ${_renderTargetPicker('nm', meshMsg.target_type || 'node', meshMsg.node_id || '', meshMsg.channel_index ?? 0)}
+        </div>
+      </div>
+    </div>
+
+    <div class="schedule-form-error" id="sfError" style="display:none"></div>
+  `;
+
+  const title = document.getElementById('scheduleModalTitle');
+  if (title) title.textContent = rule ? (rule.label || window.I18N.t('time.label_placeholder')) : window.I18N.t('time.new_schedule');
+
+  const deleteBtn = document.getElementById('scheduleModalDeleteBtn');
+  if (deleteBtn) deleteBtn.style.display = rule ? '' : 'none';
+
+  const modal = document.getElementById('scheduleModal');
+  if (modal) modal.style.display = 'flex';
+
+  _scheduleFormDirty = false;
+  _attachDirtyListeners();
+}
+
+function closeScheduleForm() {
+  if (_scheduleFormDirty) {
+    if (!confirm(window.I18N.t('time.unsaved_changes'))) return;
+  }
+  _scheduleFormDirty = false;
+  const modal = document.getElementById('scheduleModal');
+  if (modal) modal.style.display = 'none';
+  scheduleEditingId = null;
+}
+
+function _scheduleUpdateModeVisibility() {
+  const mode = document.getElementById('sfMode')?.value;
+  const daily = document.getElementById('sfDailyFields');
+  const interval = document.getElementById('sfIntervalFields');
+  if (daily) daily.style.display = mode === 'interval' ? 'none' : '';
+  if (interval) interval.style.display = mode === 'interval' ? '' : 'none';
+}
+
+function _scheduleUpdateActionVisibility() {
+  const type = document.getElementById('sfActionType')?.value;
+  const mesh = document.getElementById('sfMeshParams');
+  const data = document.getElementById('sfDataParams');
+  if (mesh) mesh.style.display = type === 'mesh_send' ? '' : 'none';
+  if (data) data.style.display = type === 'send_data_report' ? '' : 'none';
+}
+
+function _scheduleUpdateNotifyVisibility() {
+  const enabled = document.getElementById('sfNotifyEnabled')?.checked;
+  const fields = document.getElementById('sfNotifyFields');
+  if (fields) fields.style.display = enabled ? '' : 'none';
+}
+
+function _scheduleUpdateNotifyMeshVisibility() {
+  const enabled = document.getElementById('sfNotifyAlsoMesh')?.checked;
+  const fields = document.getElementById('sfNotifyMeshParams');
+  if (fields) fields.style.display = enabled ? '' : 'none';
+}
+
+function _collectFormData() {
+  const errorEl = document.getElementById('sfError');
+  const showError = (msg) => {
+    if (errorEl) { errorEl.textContent = msg; errorEl.style.display = 'block'; }
+    return null;
+  };
+
+  const label = document.getElementById('sfLabel')?.value.trim() || '';
+  const mode = document.getElementById('sfMode')?.value || 'daily';
+
+  const trigger = { type: 'schedule', mode };
+  if (mode === 'daily') {
+    trigger.time = document.getElementById('sfTime')?.value || '08:00';
+    trigger.days = Array.from(document.querySelectorAll('#sfDays .schedule-day-input:checked')).map(el => el.value);
+    if (!trigger.days.length) {
+      return showError(window.I18N.t('time.error_no_days'));
+    }
+  } else {
+    trigger.interval_minutes = parseInt(document.getElementById('sfInterval')?.value, 10) || 60;
+  }
+
+  const actionType = document.getElementById('sfActionType')?.value || 'log_entry';
+  let action = { type: actionType, params: {} };
+
+  if (actionType === 'mesh_send') {
+    const message = document.getElementById('sfMeshMessage')?.value.trim() || '';
+    const target = _scheduleReadTarget('ms');
+    action.params = { message, ...target };
+  } else if (actionType === 'send_data_report') {
+    // Backend field-picker exists (meshsrv/schedule_actions.py
+    // _get_field_value) but no UI is shipped to configure `fields` /
+    // `source_node` yet - saving this action type currently produces an
+    // action with empty params, which _do_send_data_report() handles
+    // gracefully (logs "no data available" and returns without sending).
+    action.params = {};
+  }
+
+  const notifyEnabled = document.getElementById('sfNotifyEnabled')?.checked || false;
+  const notify = {
+    enabled: notifyEnabled,
+    signal: document.getElementById('sfSignal')?.value.trim() || '',
+    details: document.getElementById('sfDetails')?.value.trim() || '',
+    mesh_message: { enabled: false, target_type: 'node', node_id: '', channel_index: 0 }
+  };
+
+  if (notifyEnabled) {
+    const alsoMesh = document.getElementById('sfNotifyAlsoMesh')?.checked || false;
+    if (alsoMesh) {
+      if (!notify.signal) {
+        return showError(window.I18N.t('time.error_no_signal'));
+      }
+      const target = _scheduleReadTarget('nm');
+      notify.mesh_message = { enabled: true, ...target };
+    }
+  }
+
+  if (errorEl) errorEl.style.display = 'none';
+  return { label, trigger, actions: [action], notify };
+}
+
+async function saveScheduleForm() {
+  const data = _collectFormData();
+  if (!data) return;
+
+  try {
+    const url = scheduleEditingId ? `/api/schedules/${encodeURIComponent(scheduleEditingId)}` : '/api/schedules';
+    const method = scheduleEditingId ? 'PUT' : 'POST';
+    const resp = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    if (!resp.ok) {
+      const errorEl = document.getElementById('sfError');
+      if (errorEl) { errorEl.textContent = `HTTP ${resp.status}`; errorEl.style.display = 'block'; }
+      return;
+    }
+    _scheduleFormDirty = false;
+    closeScheduleForm();
+    await loadSchedules();
+  } catch (e) {
+    console.warn('Failed to save schedule:', e);
+  }
+}
+
+async function deleteScheduleFromForm() {
+  if (!scheduleEditingId) return;
+  if (!confirm(window.I18N.t('time.confirm_delete'))) return;
+  try {
+    const resp = await fetch(`/api/schedules/${encodeURIComponent(scheduleEditingId)}`, { method: 'DELETE' });
+    if (!resp.ok) return;
+    _scheduleFormDirty = false;
+    closeScheduleForm();
+    await loadSchedules();
+  } catch (e) {
+    console.warn('Failed to delete schedule:', e);
+  }
+}
+
+
+// ─── Timers Card (Time & Timers card, #timeTimersSection) ────────────
+// In-memory, session-scoped backend timers (meshsrv/timer_service.py) -
+// reset on service restart, by design. The countdown itself ticks
+// client-side (setInterval below); the backend only learns a timer
+// finished when we POST /api/timers/<id>/finish at zero, which runs the
+// same notify pipeline (push_notification + optional mesh send) Schedule
+// Engine uses. Target picker reuses Stage 6's generic, prefix-based
+// _renderTargetPicker()/_scheduleReadTarget() (static/chat.js, Schedules
+// Card section above) directly with prefix 'tm' - those helpers were
+// already written generic over any prefix, not schedule-specific, so no
+// duplicate target-picker implementation is needed here.
+let _timers = [];
+let _timerTicks = {};
+
+async function loadTimers() {
+  try {
+    const resp = await fetch('/api/timers');
+    if (!resp.ok) return;
+    _timers = await resp.json();
+    renderTimersList();
+  } catch (e) {
+    console.warn('Timers load failed:', e);
+  }
+}
+
+function renderTimersList() {
+  const section = document.getElementById('timeTimersSection');
+  if (section) section.style.display = 'block';
+
+  const list = document.getElementById('timeTimersList');
+  if (!list) return;
+
+  if (!_timers.length) {
+    list.innerHTML = `<div class="timers-empty" data-i18n="time.timers_empty">${escapeHtml(window.I18N.t('time.timers_empty'))}</div>`;
+    return;
+  }
+
+  list.innerHTML = _timers.map(t => {
+    const running = !t.stopped_at && !t.finished;
+    const label = escapeHtml(t.label || 'Timer');
+    return `
+      <div class="timer-item ${t.finished ? 'timer-item--finished' : ''}" data-id="${escapeHtml(t.id)}">
+        <span class="timer-item-label">${label}</span>
+        <span class="timer-display" id="timer-display-${escapeHtml(t.id)}">${_formatTimerDisplay(t)}</span>
+        <div class="timer-controls">
+          ${running
+            ? `<button class="btn btn-xs" onclick="stopTimer('${escapeHtml(t.id)}')" data-i18n="time.timer_stop">${escapeHtml(window.I18N.t('time.timer_stop'))}</button>`
+            : `<button class="btn btn-xs" onclick="resetTimer('${escapeHtml(t.id)}')" data-i18n="time.timer_reset">${escapeHtml(window.I18N.t('time.timer_reset'))}</button>`}
+          <button class="btn btn-xs btn-danger" title="${escapeHtml(window.I18N.t('time.timer_delete'))}" onclick="deleteTimer('${escapeHtml(t.id)}')">✕</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  _timers.forEach(t => {
+    if (!t.stopped_at && !t.finished) _startLocalTick(t);
+  });
+}
+
+function _formatTimerDisplay(t) {
+  const now = Math.floor(TimeFormatter.now().getTime() / 1000);
+  const end = t.stopped_at || now;
+  const elapsed = end - t.started_at;
+  if (t.duration_s) {
+    return _formatSeconds(Math.max(0, t.duration_s - elapsed));
+  }
+  return _formatSeconds(elapsed);
+}
+
+function _formatSeconds(s) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+  return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+
+function _startLocalTick(timer) {
+  if (_timerTicks[timer.id]) return;
+  _timerTicks[timer.id] = setInterval(() => {
+    const el = document.getElementById(`timer-display-${timer.id}`);
+    if (!el) {
+      clearInterval(_timerTicks[timer.id]);
+      delete _timerTicks[timer.id];
+      return;
+    }
+    const now = Math.floor(TimeFormatter.now().getTime() / 1000);
+    const elapsed = now - timer.started_at;
+
+    if (timer.duration_s) {
+      const remaining = timer.duration_s - elapsed;
+      el.textContent = _formatSeconds(Math.max(0, remaining));
+      if (remaining <= 0 && !timer.finished) {
+        timer.finished = true;
+        clearInterval(_timerTicks[timer.id]);
+        delete _timerTicks[timer.id];
+        _onTimerFinished(timer.id);
+      }
+    } else {
+      el.textContent = _formatSeconds(elapsed);
+    }
+  }, 1000);
+}
+
+async function _onTimerFinished(id) {
+  await fetch(`/api/timers/${encodeURIComponent(id)}/finish`, { method: 'POST' });
+  await loadTimers();
+  await pollNotifications();
+}
+
+async function stopTimer(id) {
+  await fetch(`/api/timers/${encodeURIComponent(id)}/stop`, { method: 'PATCH' });
+  clearInterval(_timerTicks[id]);
+  delete _timerTicks[id];
+  await loadTimers();
+}
+
+async function resetTimer(id) {
+  await fetch(`/api/timers/${encodeURIComponent(id)}/reset`, { method: 'PATCH' });
+  clearInterval(_timerTicks[id]);
+  delete _timerTicks[id];
+  await loadTimers();
+}
+
+async function deleteTimer(id) {
+  clearInterval(_timerTicks[id]);
+  delete _timerTicks[id];
+  await fetch(`/api/timers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  await loadTimers();
+}
+
+// ─── Timer creation form (timerModal) ─────────────────────────────────
+
+function openTimerForm() {
+  const modalBody = document.getElementById('timerModalBody');
+  if (!modalBody) return;
+
+  modalBody.innerHTML = `
+    <div class="schedule-form-row">
+      <label data-i18n="time.timer_name">${escapeHtml(window.I18N.t('time.timer_name'))}</label>
+      <input type="text" id="tfLabel" class="schedule-input" maxlength="80" placeholder="Timer">
+    </div>
+
+    <div class="schedule-form-row">
+      <label data-i18n="time.timer_duration">${escapeHtml(window.I18N.t('time.timer_duration'))}</label>
+      <input type="text" id="tfDuration" class="schedule-input" placeholder="00:00:00">
+      <div class="schedule-inline-label" data-i18n="time.timer_duration_hint">${escapeHtml(window.I18N.t('time.timer_duration_hint'))}</div>
+    </div>
+
+    <div class="schedule-form-section">
+      <label class="schedule-checkbox-row">
+        <input type="checkbox" id="tfNotifyEnabled" onchange="_tfUpdateNotifyVisibility()">
+        <span data-i18n="time.timer_notify">${escapeHtml(window.I18N.t('time.timer_notify'))}</span>
+      </label>
+      <div id="tfNotifyFields" style="display:none">
+        <div class="schedule-form-row">
+          <label data-i18n="time.signal_label">${escapeHtml(window.I18N.t('time.signal_label'))}</label>
+          <input type="text" id="tfSignal" class="schedule-input" maxlength="120" oninput="tfUpdateSignalCounter()">
+          <div class="schedule-inline-label" id="tfSignalCounter">0/120</div>
+        </div>
+        <label class="schedule-checkbox-row">
+          <input type="checkbox" id="tfNotifyAlsoMesh" onchange="_tfUpdateNotifyMeshVisibility()">
+          <span data-i18n="time.notify_also_mesh">${escapeHtml(window.I18N.t('time.notify_also_mesh'))}</span>
+        </label>
+        <div class="schedule-form-row schedule-action-params" id="tfNotifyMeshParams" style="display:none">
+          ${_renderTargetPicker('tm', 'node', '', 0)}
+        </div>
+      </div>
+    </div>
+
+    <div class="schedule-form-error" id="tfError" style="display:none"></div>
+  `;
+
+  const modal = document.getElementById('timerModal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeTimerForm() {
+  const modal = document.getElementById('timerModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function _tfUpdateNotifyVisibility() {
+  const enabled = document.getElementById('tfNotifyEnabled')?.checked;
+  const fields = document.getElementById('tfNotifyFields');
+  if (fields) fields.style.display = enabled ? '' : 'none';
+}
+
+function _tfUpdateNotifyMeshVisibility() {
+  const enabled = document.getElementById('tfNotifyAlsoMesh')?.checked;
+  const fields = document.getElementById('tfNotifyMeshParams');
+  if (fields) fields.style.display = enabled ? '' : 'none';
+}
+
+function tfUpdateSignalCounter() {
+  const el = document.getElementById('tfSignal');
+  const counter = document.getElementById('tfSignalCounter');
+  if (el && counter) counter.textContent = `${el.value.length}/120`;
+}
+
+function _parseDurationToSeconds(str) {
+  const s = (str || '').trim();
+  if (!s) return null;
+  const parts = s.split(':').map(p => parseInt(p, 10));
+  if (parts.some(isNaN)) return null;
+  let seconds;
+  if (parts.length === 3) seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+  else if (parts.length === 2) seconds = parts[0] * 60 + parts[1];
+  else if (parts.length === 1) seconds = parts[0];
+  else return null;
+  return seconds > 0 ? seconds : null;
+}
+
+async function createTimerFromForm() {
+  const errorEl = document.getElementById('tfError');
+  const showError = (msg) => { if (errorEl) { errorEl.textContent = msg; errorEl.style.display = 'block'; } };
+
+  const label = document.getElementById('tfLabel')?.value.trim() || 'Timer';
+  const duration_s = _parseDurationToSeconds(document.getElementById('tfDuration')?.value);
+
+  const notifyEnabled = document.getElementById('tfNotifyEnabled')?.checked || false;
+  const notify = {
+    enabled: notifyEnabled,
+    signal: document.getElementById('tfSignal')?.value.trim() || '',
+    mesh_message: { enabled: false, target_type: 'node', node_id: '', channel_index: 0 }
+  };
+
+  if (notifyEnabled) {
+    if (!notify.signal) {
+      return showError(window.I18N.t('time.error_no_signal'));
+    }
+    const alsoMesh = document.getElementById('tfNotifyAlsoMesh')?.checked || false;
+    if (alsoMesh) {
+      // Real target picker (Stage 6 pattern), not a hardcoded placeholder -
+      // reads whichever of node/channel is selected in the 'tm' picker.
+      const target = _scheduleReadTarget('tm');
+      notify.mesh_message = { enabled: true, ...target };
+    }
+  }
+
+  if (errorEl) errorEl.style.display = 'none';
+
+  try {
+    const resp = await fetch('/api/timers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label, duration_s, notify })
+    });
+    if (!resp.ok) {
+      showError(`HTTP ${resp.status}`);
+      return;
+    }
+    closeTimerForm();
+    await loadTimers();
+  } catch (e) {
+    console.warn('Failed to create timer:', e);
+  }
+}
+
 // ===== TELEMETRY =====
 let telemetryData = {
     temperature: null,
@@ -644,6 +1669,8 @@ function updateSettingsUi() {
 
     document.getElementById('unitPressureHpa')?.classList.toggle('active', units.pressure === 'hpa');
     document.getElementById('unitPressureMmhg')?.classList.toggle('active', units.pressure === 'mmhg');
+
+    updateTimeFormatButtons();
 
     const batteryCapacityInput = document.getElementById('batteryCapacityMah');
     if (batteryCapacityInput) {
@@ -1560,6 +2587,16 @@ async function setLanguageSetting(value) {
     }
 }
 
+function setTimeFormat(fmt) {
+    return setUnitSetting('time_format', fmt);
+}
+
+function updateTimeFormatButtons() {
+    const fmt = appSettings?.units?.time_format || '24';
+    document.getElementById('timeFormat24Btn')?.classList.toggle('active', fmt === '24');
+    document.getElementById('timeFormat12Btn')?.classList.toggle('active', fmt === '12');
+}
+
 async function setUnitSetting(name, value) {
     const units = {
         ...(appSettings?.units || {}),
@@ -1768,8 +2805,8 @@ function formatNotificationTime(timestamp) {
     const today = new Date();
     const sameDay = date.toDateString() === today.toDateString();
     return sameDay
-        ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : `${date.toLocaleDateString([], { day: '2-digit', month: '2-digit' })} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        ? TimeFormatter.formatTime(date)
+        : TimeFormatter.formatDateTime(date);
 }
 
 function renderNotificationCenter() {
@@ -2100,6 +3137,9 @@ document.addEventListener('DOMContentLoaded', async function() {
     await loadSettings();
     await loadCameraPowerState();
     startCpuMonitoringUi();
+    initTimeCard();
+    initNotificationsCard();
+    initSchedulesCard();
 
     const title = document.getElementById('appTitle');
     if (title) {
@@ -3946,7 +4986,7 @@ function buildOptimisticMessage(clientId, chatId, chatType, chatName, text, repl
         owner_node_id: activeLocalNodeId || '',
         owner_profile_id: activeLocalProfileId || '',
         text: text,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        time: TimeFormatter.formatTime(new Date()),
         chat_id: chatId,
         chat_type: chatType,
         chat_name: chatName,
@@ -4367,13 +5407,7 @@ function formatNodePositionUpdated(position) {
     if (Number.isFinite(timestamp) && timestamp > 0) {
         const updatedDate = new Date(timestamp * 1000);
 
-        return updatedDate.toLocaleString([], {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
+        return TimeFormatter.formatDateTime(updatedDate);
     }
 
     return position.updated_time || '--';
@@ -4498,7 +5532,7 @@ function createWaypointMapIcon(waypoint) {
 function formatWaypointTime(timestamp) {
     const seconds = Number(timestamp);
     if (!Number.isFinite(seconds) || seconds <= 0) return '--';
-    return new Date(seconds * 1000).toLocaleString();
+    return TimeFormatter.formatDateTime(seconds);
 }
 
 function formatWaypointExpiryDetails(expireAt) {
@@ -4509,10 +5543,8 @@ function formatWaypointExpiryDetails(expireAt) {
 
     let remaining = Math.floor(seconds - Date.now() / 1000);
     const expiresDate = new Date(seconds * 1000);
-    const absoluteTime = expiresDate.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
-    const absoluteDateTime = expiresDate.toLocaleString([], {
-        day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'
-    });
+    const absoluteTime = TimeFormatter.formatTime(expiresDate);
+    const absoluteDateTime = TimeFormatter.formatDateTime(expiresDate);
 
     if (remaining <= 0) {
         return { relative: window.I18N.t('waypoints.expired'), absolute:absoluteDateTime, expired:true };
@@ -9380,7 +10412,7 @@ function renderTelemetryChart(container, records, type) {
 
     const labels = records.map(r => {
         const t = new Date(r.timestamp * 1000);
-        return t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return TimeFormatter.formatTime(t);
     });
 
     let datasets = [];
@@ -9583,13 +10615,7 @@ function renderTelemetryChart(container, records, type) {
                                 if (!context || !context.length) return '';
                                 const record = records[context[0].dataIndex];
                                 if (!record || !record.timestamp) return '';
-                                return new Date(record.timestamp * 1000).toLocaleString([], {
-                                    year: 'numeric',
-                                    month: '2-digit',
-                                    day: '2-digit',
-                                    hour: '2-digit',
-                                    minute: '2-digit'
-                                });
+                                return TimeFormatter.formatDateTime(record.timestamp);
                             },
                             label: function(context) {
                                 const label = context.dataset.label || '';
@@ -11112,7 +12138,7 @@ function formatDeviceDashboardDate(value) {
     if (!value) return '—';
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) return escapeHtml(String(value));
-    return parsed.toLocaleString();
+    return TimeFormatter.formatDateTime(parsed);
 }
 
 function deviceStatusClass(mode, identityStatus) {
@@ -11534,7 +12560,7 @@ function renderDisplayCard(hardwareDisplayData, profileId) {
         ? window.I18N.t('devices.display_online')
         : window.I18N.t('devices.display_offline');
     const lastRefresh = hardwareDisplayData.last_successful_refresh
-        ? new Date(hardwareDisplayData.last_successful_refresh * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        ? TimeFormatter.formatTime(hardwareDisplayData.last_successful_refresh)
         : '—';
     const avgDuration = typeof hardwareDisplayData.average_duration === 'number'
         ? `${hardwareDisplayData.average_duration.toFixed(1)}s`
@@ -12844,7 +13870,7 @@ async function loadCpuHistory(force = false) {
                         callbacks: {
                             title(items) {
                                 const value = items?.[0]?.parsed?.x;
-                                return value ? new Date(value).toLocaleString() : '';
+                                return value ? TimeFormatter.formatDateTime(new Date(value)) : '';
                             },
                             label(item) { return `CPU: ${Number(item.parsed.y).toFixed(1)}%`; }
                         }
@@ -12858,7 +13884,7 @@ async function loadCpuHistory(force = false) {
                         ticks: {
                             maxTicksLimit: 6,
                             callback(value) {
-                                return new Date(Number(value)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                return TimeFormatter.formatTime(new Date(Number(value)));
                             }
                         },
                         grid: { display: false }
@@ -12896,7 +13922,7 @@ function formatIdentityCheckedAt(value) {
     if (!value) return '--';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return String(value);
-    return date.toLocaleString();
+    return TimeFormatter.formatDateTime(date);
 }
 
 async function loadInstanceInfo() {

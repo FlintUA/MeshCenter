@@ -16,6 +16,7 @@ DEFAULT_SETTINGS = {
         "temperature": "c",
         "pressure": "hpa",
         "wind": "ms",
+        "time_format": "24",
     },
 
     "listener_autorecovery": {
@@ -125,6 +126,10 @@ def normalize_settings(settings):
         units.get("wind", "ms")
     ).strip().lower()
 
+    time_format = str(
+        units.get("time_format", "24")
+    ).strip().lower()
+
     if temperature not in ("c", "f", "both"):
         temperature = "c"
 
@@ -133,6 +138,9 @@ def normalize_settings(settings):
 
     if wind not in ("ms", "kmh", "mph"):
         wind = "ms"
+
+    if time_format not in ("12", "24"):
+        time_format = "24"
 
     # ---------------- Power / battery ----------------
 
@@ -326,6 +334,7 @@ def normalize_settings(settings):
             "temperature": temperature,
             "pressure": pressure,
             "wind": wind,
+            "time_format": time_format,
         },
 
         "power": {

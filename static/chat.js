@@ -511,7 +511,7 @@ function _renderTargetPicker(prefix, targetType, nodeId, channelIndex) {
     .filter(c => c && Number.isInteger(c.index))
     .map(c => {
       const selected = c.index === channelIndex ? ' selected' : '';
-      return `<option value="${c.index}"${selected}>${escapeHtml(c.name || `Channel ${c.index}`)}</option>`;
+      return `<option value="${c.index}"${selected}>${escapeHtml(formatChannelIndexLabel(c.name, c.index))}</option>`;
     }).join('');
 
   const nodeChecked = targetType === 'node' ? ' checked' : '';

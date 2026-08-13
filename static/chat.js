@@ -970,11 +970,145 @@ async function deleteTimer(id) {
   await loadTimers();
 }
 
+// ─── Timer form preferences (mirrors the Waypoint composer's
+// getWaypointComposerDefaults()/saveWaypointComposerDefaults() pattern,
+// static/chat.js ~L5908-L6030: preferences persisted server-side via
+// /api/settings under appSettings.<section>, profile-scoped through
+// profile_defaults[<activeProfileId>], NOT localStorage. Only structural
+// preferences are kept here (notify/mesh toggles, target type, selected
+// channel/node) - name, duration and signal text stay one-time values,
+// same rule the Waypoint form applies to name/description/coordinates. ──
+
+let timerActiveProfileId = "";
+
+function getTimerComposerDefaults(profileId = timerActiveProfileId) {
+  const timerSettings = appSettings?.timers || {};
+  const normalizedProfileId = normalizeWaypointProfileId(profileId);
+  const profileDefaults = normalizedProfileId
+    ? timerSettings?.profile_defaults?.[normalizedProfileId]
+    : null;
+  const saved = profileDefaults && typeof profileDefaults === 'object'
+    ? profileDefaults
+    : timerSettings;
+
+  const channelIndex = Number(saved?.channel_index);
+
+  return {
+    notifyEnabled: Boolean(saved?.notify_enabled),
+    meshEnabled: Boolean(saved?.mesh_enabled),
+    targetType: saved?.target_type === 'channel' ? 'channel' : 'node',
+    channelIndex: Number.isInteger(channelIndex) && channelIndex >= 0 && channelIndex <= 7
+      ? channelIndex
+      : 0,
+    nodeId: String(saved?.node_id || '')
+  };
+}
+
+async function loadTimerComposerContext() {
+  try {
+    const response = await fetch('/api/base_status', { cache: 'no-store' });
+    if (response.ok) {
+      const data = await response.json();
+      timerActiveProfileId = normalizeWaypointProfileId(data?.profile_id);
+    }
+  } catch (error) {
+    console.warn('[TIMER] Unable to load profile context:', error);
+  }
+
+  return getTimerComposerDefaults(timerActiveProfileId);
+}
+
+async function saveTimerComposerDefaults(notifyEnabled, meshEnabled, targetType, channelIndex, nodeId) {
+  const profileId = normalizeWaypointProfileId(timerActiveProfileId);
+  const prefs = {
+    notify_enabled: Boolean(notifyEnabled),
+    mesh_enabled: Boolean(meshEnabled),
+    target_type: targetType === 'channel' ? 'channel' : 'node',
+    channel_index: Number(channelIndex) || 0,
+    node_id: String(nodeId || '')
+  };
+
+  const timerSettings = {
+    ...(appSettings?.timers || {}),
+    ...prefs,
+    profile_defaults: {
+      ...(appSettings?.timers?.profile_defaults || {})
+    }
+  };
+
+  if (profileId) {
+    timerSettings.profile_defaults[profileId] = { ...prefs };
+  }
+
+  appSettings = {
+    ...(appSettings || {}),
+    timers: timerSettings
+  };
+
+  try {
+    const response = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({ timers: timerSettings })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.ok) {
+      throw new Error(data?.error || 'Unable to save timer defaults');
+    }
+    appSettings = data.settings || appSettings;
+  } catch (error) {
+    console.warn('[TIMER] Unable to save composer defaults:', error);
+  }
+}
+
+function _tfSaveComposerPrefs() {
+  const notifyEnabled = document.getElementById('tfNotifyEnabled')?.checked || false;
+  const meshEnabled = document.getElementById('tfNotifyAlsoMesh')?.checked || false;
+  const target = _scheduleReadTarget('tm');
+  saveTimerComposerDefaults(
+    notifyEnabled,
+    meshEnabled,
+    target.target_type,
+    target.channel_index,
+    target.node_id
+  );
+}
+
+// Attached once per openTimerForm() render, scoped to this form's own
+// elements only - does not touch the shared _scheduleUpdateTargetVisibility()/
+// _scheduleReadTarget() helpers, which are also used by the Schedule form's
+// 'ms'/'nm' pickers that have no preference-persistence of their own.
+function _tfAttachPrefsListeners() {
+  document.getElementById('tfNotifyEnabled')
+    ?.addEventListener('change', _tfSaveComposerPrefs);
+  document.getElementById('tfNotifyAlsoMesh')
+    ?.addEventListener('change', _tfSaveComposerPrefs);
+
+  const picker = document.querySelector('.schedule-target-picker[data-prefix="tm"]');
+  if (!picker) return;
+  picker.querySelectorAll('input[name="tmTargetType"]').forEach(radio => {
+    radio.addEventListener('change', _tfSaveComposerPrefs);
+  });
+  document.getElementById('tmNodeSelect')
+    ?.addEventListener('change', _tfSaveComposerPrefs);
+  document.getElementById('tmChannelSelect')
+    ?.addEventListener('change', _tfSaveComposerPrefs);
+}
+
 // ─── Timer creation form (timerModal) ─────────────────────────────────
 
-function openTimerForm() {
+async function openTimerForm() {
   const modalBody = document.getElementById('timerModalBody');
   if (!modalBody) return;
+
+  // Load the channel list (needed by _renderTargetPicker's channel <select>)
+  // and the saved preferences before rendering, so the form opens already
+  // showing the remembered state - same "populate before paint" intent as
+  // openCreateWaypointDialog(), just synchronous-to-render here because the
+  // whole form body (including the target picker) is one innerHTML write.
+  await _scheduleLoadChannels();
+  const defaults = await loadTimerComposerContext();
 
   modalBody.innerHTML = `
     <div class="schedule-form-row">
@@ -990,21 +1124,21 @@ function openTimerForm() {
 
     <div class="schedule-form-section">
       <label class="schedule-checkbox-row">
-        <input type="checkbox" id="tfNotifyEnabled" onchange="_tfUpdateNotifyVisibility()">
+        <input type="checkbox" id="tfNotifyEnabled" onchange="_tfUpdateNotifyVisibility()"${defaults.notifyEnabled ? ' checked' : ''}>
         <span data-i18n="time.timer_notify">${escapeHtml(window.I18N.t('time.timer_notify'))}</span>
       </label>
-      <div id="tfNotifyFields" style="display:none">
+      <div id="tfNotifyFields" style="display:${defaults.notifyEnabled ? '' : 'none'}">
         <div class="schedule-form-row">
           <label data-i18n="time.signal_label">${escapeHtml(window.I18N.t('time.signal_label'))}</label>
           <input type="text" id="tfSignal" class="schedule-input" maxlength="120" oninput="tfUpdateSignalCounter()">
           <div class="schedule-inline-label" id="tfSignalCounter">0/120</div>
         </div>
         <label class="schedule-checkbox-row">
-          <input type="checkbox" id="tfNotifyAlsoMesh" onchange="_tfUpdateNotifyMeshVisibility()">
+          <input type="checkbox" id="tfNotifyAlsoMesh" onchange="_tfUpdateNotifyMeshVisibility()"${defaults.meshEnabled ? ' checked' : ''}>
           <span data-i18n="time.notify_also_mesh">${escapeHtml(window.I18N.t('time.notify_also_mesh'))}</span>
         </label>
-        <div class="schedule-form-row schedule-action-params" id="tfNotifyMeshParams" style="display:none">
-          ${_renderTargetPicker('tm', 'node', '', 0)}
+        <div class="schedule-form-row schedule-action-params" id="tfNotifyMeshParams" style="display:${defaults.meshEnabled ? '' : 'none'}">
+          ${_renderTargetPicker('tm', defaults.targetType, defaults.nodeId, defaults.channelIndex)}
         </div>
       </div>
     </div>
@@ -1014,6 +1148,8 @@ function openTimerForm() {
 
   const modal = document.getElementById('timerModal');
   if (modal) modal.style.display = 'flex';
+
+  _tfAttachPrefsListeners();
 }
 
 function closeTimerForm() {

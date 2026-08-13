@@ -50,6 +50,17 @@ DEFAULT_SETTINGS = {
         # Preferences are keyed by active radio profile ID.
         "profile_defaults": {},
     },
+
+    "timers": {
+        # Legacy/global fallback used until a radio-specific preference exists.
+        "notify_enabled": False,
+        "mesh_enabled": False,
+        "target_type": "node",
+        "channel_index": 0,
+        "node_id": "",
+        # Preferences are keyed by active radio profile ID.
+        "profile_defaults": {},
+    },
 }
 
 
@@ -327,6 +338,70 @@ def normalize_settings(settings):
             ),
         }
 
+    # ---------------- Timer form defaults ----------------
+
+    timer_settings = settings.get("timers", {})
+    if not isinstance(timer_settings, dict):
+        timer_settings = {}
+
+    def _normalize_timer_defaults(raw, fallback):
+        if not isinstance(raw, dict):
+            raw = {}
+
+        target_type = str(
+            raw.get("target_type", fallback.get("target_type", "node"))
+        ).strip().lower()
+        if target_type not in ("node", "channel"):
+            target_type = "node"
+
+        try:
+            channel_index = int(
+                raw.get("channel_index", fallback.get("channel_index", 0))
+            )
+        except (TypeError, ValueError):
+            channel_index = fallback.get("channel_index", 0)
+        channel_index = max(0, min(7, channel_index))
+
+        node_id = str(
+            raw.get("node_id", fallback.get("node_id", ""))
+        ).strip()
+
+        return {
+            "notify_enabled": bool(
+                raw.get("notify_enabled", fallback.get("notify_enabled", False))
+            ),
+            "mesh_enabled": bool(
+                raw.get("mesh_enabled", fallback.get("mesh_enabled", False))
+            ),
+            "target_type": target_type,
+            "channel_index": channel_index,
+            "node_id": node_id,
+        }
+
+    timer_defaults = _normalize_timer_defaults(timer_settings, {
+        "notify_enabled": False,
+        "mesh_enabled": False,
+        "target_type": "node",
+        "channel_index": 0,
+        "node_id": "",
+    })
+
+    raw_timer_profile_defaults = timer_settings.get("profile_defaults", {})
+    if not isinstance(raw_timer_profile_defaults, dict):
+        raw_timer_profile_defaults = {}
+
+    timer_profile_defaults = {}
+    for raw_profile_id, raw_defaults in raw_timer_profile_defaults.items():
+        profile_id = str(raw_profile_id or "").strip().lower()
+        if not profile_id or not re.fullmatch(r"[a-z0-9_-]{1,64}", profile_id):
+            continue
+        if not isinstance(raw_defaults, dict):
+            continue
+
+        timer_profile_defaults[profile_id] = _normalize_timer_defaults(
+            raw_defaults, timer_defaults
+        )
+
     return {
         "language": language,
 
@@ -369,6 +444,15 @@ def normalize_settings(settings):
             "last_duration_seconds": waypoint_duration_seconds,
             "post_notification": waypoint_post_notification,
             "profile_defaults": waypoint_profile_defaults,
+        },
+
+        "timers": {
+            "notify_enabled": timer_defaults["notify_enabled"],
+            "mesh_enabled": timer_defaults["mesh_enabled"],
+            "target_type": timer_defaults["target_type"],
+            "channel_index": timer_defaults["channel_index"],
+            "node_id": timer_defaults["node_id"],
+            "profile_defaults": timer_profile_defaults,
         },
     }
 

@@ -294,35 +294,84 @@ Other Raspberry Pi models and standard Meshtastic-compatible radios with a suppo
 
 ---
 
-## Screenshots
+## 📸 Screenshots
 
-<p align="center">
-  <img width="1407" height="1292" alt="main002" src="docs/images/MeshCenter_main_light_theme.png" />
-</p>
+<details>
+<summary>🗺️ Map — Light theme</summary>
 
-<p align="center">
-  <img width="1407" height="1292" alt="main002" src="docs/images/MeshCenter_map_dark_theme.png" />
-</p>
+![MeshCenter map view light theme](docs/images/MeshCenter_map_light_theme.png)
 
-<p align="center">
-  <img width="1407" height="1292" alt="main002" src="docs/images/MeshCenter_map_light_theme.png" />
-</p>
+</details>
 
-<p align="center">
-  <img width="1407" height="1292" alt="main002" src="docs/images/MeshCenter_chats_dark_theme.png" />
-</p>
+<details>
+<summary>🗺️ Map — Dark theme</summary>
 
-<p align="center">
-  <img width="1403" height="1265" alt="main003" src="docs/images/MeshCenter_media_dark_theme.png" />
-</p>
+![MeshCenter map view dark theme](docs/images/MeshCenter_map_dark_theme.png)
 
-<p align="center">
-  <img width="1407" height="1292" alt="main002" src="docs/images/MeshCenter_system_dark_theme.png" />
-</p>
+</details>
 
-<p align="center">
-  <img width="1403" height="1265" alt="main003" src="docs/images/MeshCenter_sensors_light_theme.png" />
-</p>
+<details>
+<summary>🗺️ Map + Nodes panel — Light theme</summary>
+
+![MeshCenter map split light theme](docs/images/MeshCenter_map_split_light_theme.png)
+
+</details>
+
+<details>
+<summary>🗺️ Map + Nodes panel — Dark theme</summary>
+
+![MeshCenter map split dark theme](docs/images/MeshCenter_map_split_dark_theme.png)
+
+</details>
+
+<details>
+<summary>💬 Chats — Light theme</summary>
+
+![MeshCenter chats light theme](docs/images/MeshCenter_chats_light_theme.png)
+
+</details>
+
+<details>
+<summary>💬 Chats + Nodes panel — Dark theme</summary>
+
+![MeshCenter chats split dark theme](docs/images/MeshCenter_chats_split_dark_theme.png)
+
+</details>
+
+<details>
+<summary>🖼️ Media — Light theme</summary>
+
+![MeshCenter media light theme](docs/images/MeshCenter_media_light_theme.png)
+
+</details>
+
+<details>
+<summary>🖼️ Media + Nodes panel — Light theme</summary>
+
+![MeshCenter media split light theme](docs/images/MeshCenter_media_split_light_theme.png)
+
+</details>
+
+<details>
+<summary>📷 Camera — Light theme</summary>
+
+![MeshCenter camera light theme](docs/images/MeshCenter_camera_light_theme.png)
+
+</details>
+
+<details>
+<summary>📟 Devices — Light theme</summary>
+
+![MeshCenter devices light theme](docs/images/MeshCenter_devices_light_theme.png)
+
+</details>
+
+<details>
+<summary>ℹ️ About — Dark theme</summary>
+
+![MeshCenter about dark theme](docs/images/MeshCenter_about_dark_theme.png)
+
+</details>
 
 ---
 

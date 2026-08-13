@@ -1249,6 +1249,64 @@ This makes the project easier to maintain and extend.
 
 The goal is to keep `server.py` as the central coordinator while moving specialized logic into dedicated modules.
 
+## 🕐 Time System, Notifications & Automation
+
+### 🕐 Time System
+
+MeshCenter now maintains a single, authoritative source of time based on the Raspberry Pi. Every connected client (desktop browser, tablet, phone) sees the same device time instead of its own local browser clock.
+
+- **"Time & Timers" card** – shows the current MeshCenter time, its timezone, and sync status
+- **12h / 24h format** – switchable in Settings → Units, applied globally to every timestamp in the interface
+- **Automatic time-source detection** – NTP (`systemd-timesyncd`), hardware RTC, or the system clock, in that order of preference
+- **Meshtastic node time sync** – MeshCenter automatically sets the exact time on the connected radio node via the `setTime()` API on (re)connect
+- **e-Paper display integration** – the current time is shown on all info screens of both supported displays (Waveshare 2.13" 4-color and WeAct 1.54"), without increasing the physical refresh rate
+
+### 🔔 Notification Center
+
+A new **"Notifications"** card sits between the Time card and the Weather card.
+
+- Persistent event history – stays visible when you come back to the screen
+- Unread-count badge in the card header
+- Notifications from every source in one place: schedules, timers, system events
+- Each notification can be dismissed individually, or cleared all at once
+- Works alongside the existing toast popup system: toasts are for an immediate heads-up, the card is for history
+
+### 📅 Schedule Engine
+
+A scheduling system that runs actions automatically, on a time basis.
+
+**Two trigger modes:**
+- **At a specific time** – a fixed hour/minute, with day-of-week selection
+- **Every N minutes** – a fixed interval, independent of time of day
+
+**Three action types:**
+- 📋 **System Log entry** – a quiet log record, no other side effects
+- 📩 **Send a mesh message** – a static text message to a specific node or channel
+- 📊 **Send a data report** – an automatic report built from current telemetry (voltage, temperature, humidity, pressure, battery, weather), with field selection, a compact/line-by-line format, and a stale-data policy
+
+**Notifications on fire:**
+- A short **signal** (up to 95 characters) sent over Meshtastic to a node or channel
+- **Details** – the full text or task list, shown in the notification card and the System Log
+
+Schedules persist across service restarts. If MeshCenter doesn't have a trusted, synchronized time, schedules do not run – to avoid firing on a wrong clock.
+
+### ⏱ Timers
+
+Two modes:
+
+- **Stopwatch** – counts up from the moment it's started
+- **Countdown** – a timer for a fixed duration (HH:MM:SS); on reaching zero it automatically creates a notification and, optionally, sends a signal over Meshtastic
+
+Timers are in-memory (reset on service restart). On restart, a notification is recorded in the notification card for each timer that was reset this way.
+
+### ⚙️ Under the hood
+
+- **Centralized time formatter** (`TimeFormatter`) – a single formatting point for the whole interface, aware of the active UI language and the 12h/24h setting
+- **i18n consistency check script** (`scripts/check-i18n.py`) – automatically verifies the EN/DE/RU/UK translation catalogs stay in sync
+- **Form preference persistence** – selected channel/node and checkbox state in composer-style forms (Schedule, Timer) are saved server-side, scoped to the active radio profile
+
+These new features (Time System, Notification Center, Schedule Engine, Timers) are fully translated for all four supported interface languages (English, Deutsch, Русский, Українська) – unlike some older parts of the interface noted in the Localization (i18n) section above.
+
 ## ⚙ Action Engine
 
 MeshCenter now includes an internal Action Engine responsible for processing interactive operations between the user interface and backend services.
@@ -1491,6 +1549,15 @@ Future versions may include optional authentication.
 - **Wi‑Fi Manager** – Scan, connect, forget with saved networks indicator
 
 ---
+
+## Known Limitations
+
+| # | Description | Status |
+|---|---|---|
+| KI-001 | The e-Paper driver can hang on start with some HAT configurations | Investigating |
+| KI-002 | The Meshtastic Python API (2.7.x) does not support reading a node's current time | Waiting on upstream |
+| KI-003 | The field picker UI for the "Send data report" schedule action is still basic | Planned |
+| KI-007 | Chat-list timestamps are formatted server-side and don't react to the 12h/24h toggle | Planned |
 
 ## Troubleshooting
 

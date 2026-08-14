@@ -67,6 +67,87 @@ Typical use cases include:
 
 ---
 
+## 📸 Screenshots
+
+<details>
+<summary>🗺️ Map — Light theme</summary>
+
+![MeshCenter map view light theme](docs/images/MeshCenter_map_light_theme.png)
+
+</details>
+
+<details>
+<summary>🗺️ Map — Dark theme</summary>
+
+![MeshCenter map view dark theme](docs/images/MeshCenter_map_dark_theme.png)
+
+</details>
+
+<details>
+<summary>🗺️ Map + Nodes panel — Light theme</summary>
+
+![MeshCenter map split light theme](docs/images/MeshCenter_map_split_light_theme.png)
+
+</details>
+
+<details>
+<summary>🗺️ Map + Nodes panel — Dark theme</summary>
+
+![MeshCenter map split dark theme](docs/images/MeshCenter_map_split_dark_theme.png)
+
+</details>
+
+<details>
+<summary>💬 Chats — Light theme</summary>
+
+![MeshCenter chats light theme](docs/images/MeshCenter_chats_light_theme.png)
+
+</details>
+
+<details>
+<summary>💬 Chats + Nodes panel — Dark theme</summary>
+
+![MeshCenter chats split dark theme](docs/images/MeshCenter_chats_split_dark_theme.png)
+
+</details>
+
+<details>
+<summary>🖼️ Media — Light theme</summary>
+
+![MeshCenter media light theme](docs/images/MeshCenter_media_light_theme.png)
+
+</details>
+
+<details>
+<summary>🖼️ Media + Nodes panel — Light theme</summary>
+
+![MeshCenter media split light theme](docs/images/MeshCenter_media_split_light_theme.png)
+
+</details>
+
+<details>
+<summary>📷 Camera — Light theme</summary>
+
+![MeshCenter camera light theme](docs/images/MeshCenter_camera_light_theme.png)
+
+</details>
+
+<details>
+<summary>📟 Devices — Light theme</summary>
+
+![MeshCenter devices light theme](docs/images/MeshCenter_devices_light_theme.png)
+
+</details>
+
+<details>
+<summary>ℹ️ About — Dark theme</summary>
+
+![MeshCenter about dark theme](docs/images/MeshCenter_about_dark_theme.png)
+
+</details>
+
+---
+
 ## ✨ Highlights
 
 ***Key Features***
@@ -292,86 +373,6 @@ The current reference setup includes:
 
 Other Raspberry Pi models and standard Meshtastic-compatible radios with a supported USB serial connection may also work. The radio must first be configured with an official Meshtastic application. MeshCenter then uses the region, channels and channel keys already stored on it.
 
----
-
-## 📸 Screenshots
-
-<details>
-<summary>🗺️ Map — Light theme</summary>
-
-![MeshCenter map view light theme](docs/images/MeshCenter_map_light_theme.png)
-
-</details>
-
-<details>
-<summary>🗺️ Map — Dark theme</summary>
-
-![MeshCenter map view dark theme](docs/images/MeshCenter_map_dark_theme.png)
-
-</details>
-
-<details>
-<summary>🗺️ Map + Nodes panel — Light theme</summary>
-
-![MeshCenter map split light theme](docs/images/MeshCenter_map_split_light_theme.png)
-
-</details>
-
-<details>
-<summary>🗺️ Map + Nodes panel — Dark theme</summary>
-
-![MeshCenter map split dark theme](docs/images/MeshCenter_map_split_dark_theme.png)
-
-</details>
-
-<details>
-<summary>💬 Chats — Light theme</summary>
-
-![MeshCenter chats light theme](docs/images/MeshCenter_chats_light_theme.png)
-
-</details>
-
-<details>
-<summary>💬 Chats + Nodes panel — Dark theme</summary>
-
-![MeshCenter chats split dark theme](docs/images/MeshCenter_chats_split_dark_theme.png)
-
-</details>
-
-<details>
-<summary>🖼️ Media — Light theme</summary>
-
-![MeshCenter media light theme](docs/images/MeshCenter_media_light_theme.png)
-
-</details>
-
-<details>
-<summary>🖼️ Media + Nodes panel — Light theme</summary>
-
-![MeshCenter media split light theme](docs/images/MeshCenter_media_split_light_theme.png)
-
-</details>
-
-<details>
-<summary>📷 Camera — Light theme</summary>
-
-![MeshCenter camera light theme](docs/images/MeshCenter_camera_light_theme.png)
-
-</details>
-
-<details>
-<summary>📟 Devices — Light theme</summary>
-
-![MeshCenter devices light theme](docs/images/MeshCenter_devices_light_theme.png)
-
-</details>
-
-<details>
-<summary>ℹ️ About — Dark theme</summary>
-
-![MeshCenter about dark theme](docs/images/MeshCenter_about_dark_theme.png)
-
-</details>
 
 ---
 

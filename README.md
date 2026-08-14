@@ -148,11 +148,71 @@ Typical use cases include:
 
 ---
 
-## ⚡ Install
+## ⚡ Quick Install
 
 > **Requirements:** Raspberry Pi (Zero 2W / 3B+ / 4B), microSD card 8GB+,
-> [Raspberry Pi Imager](https://www.raspberrypi.com/software/), internet connection.
-> 💡 For manual installation or advanced options see [INSTALL.md](INSTALL.md).
+> [Raspberry Pi Imager](https://www.raspberrypi.com/software/),
+> Meshtastic node connected via USB, internet connection.
+
+### 1 — Flash the SD card
+
+Open **Raspberry Pi Imager**, choose **Raspberry Pi OS Lite (64-bit)**,
+click the ⚙️ gear icon and configure:
+- Hostname (e.g. `meshcenter`)
+- Username and password
+- WiFi network and country
+- Enable SSH
+
+Flash to the SD card.
+
+### 2 — Copy the installer
+
+After flashing, the SD card appears as a drive called **bootfs**.
+
+Download **[meshcenter-firstboot.sh](https://github.com/FlintUA/MeshCenter/releases/latest/download/meshcenter-firstboot.sh)**
+and copy it to the root of the bootfs drive.
+
+### 3 — Add one line to user-data
+
+Open the file `user-data` on the bootfs drive (it already exists after flashing).
+Add this at the end:
+
+```yaml
+runcmd:
+  - [ bash, -lc, 'if [ -f /boot/firmware/meshcenter-firstboot.sh ]; then bash /boot/firmware/meshcenter-firstboot.sh; elif [ -f /boot/meshcenter-firstboot.sh ]; then bash /boot/meshcenter-firstboot.sh; fi' ]
+```
+
+If `runcmd:` already exists in the file, add only the `- [ bash, ... ]` line under it.
+
+### 4 — Connect your Meshtastic node
+
+Connect your Meshtastic device via USB **before** powering on the Pi.
+Use a cable that supports data transfer (not charge-only).
+Connect only one Meshtastic device during first install.
+
+### 5 — Boot and wait
+
+1. Eject the SD card safely
+2. Insert it into the Raspberry Pi
+3. Power on the Pi
+4. Wait 1–2 minutes, then open **http://meshcenter.local** in your browser
+   to watch the 7-step installation progress (updates every 3 seconds)
+5. When installation completes, you will be automatically redirected to MeshCenter
+
+> ⏱ Total time: ~5 min on Pi 4B, ~10–15 min on Pi Zero 2W
+
+### 6 — Open MeshCenter
+
+```
+http://meshcenter.local:5000
+```
+
+Replace `meshcenter` with the hostname you set in Raspberry Pi Imager.
+
+> 💡 If `.local` doesn't work: find the Pi's IP in your router's
+> connected devices list and open `http://192.168.x.x:5000`
+>
+> 📖 For manual installation or advanced options see [INSTALL.md](INSTALL.md)
 
 ---
 

@@ -45,8 +45,8 @@ else
 fi
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
-log()      { echo -e "${GREEN}[MeshCenter]${NC} $*" | tee -a "$LOG_FILE"; }
-warn()     { echo -e "${YELLOW}[WARNING]${NC} $*" | tee -a "$LOG_FILE" >&2; }
+log()      { echo -e "${GREEN}[MeshCenter]${NC} $*"; }
+warn()     { echo -e "${YELLOW}[WARNING]${NC} $*" >&2; }
 progress() { echo "$*" > "$PROGRESS_FILE"; log "$*"; }
 
 fail() {

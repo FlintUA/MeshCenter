@@ -186,6 +186,12 @@ If `runcmd:` already exists in the file, add only the `- [ bash, ... ]` line und
 
 ### 4 — Connect your Meshtastic node
 
+Before connecting your Meshtastic node to Raspberry Pi, make sure the serial interface is enabled in the official Meshtastic application.
+Without the USB serial interface MeshCenter will not be able to detect or communicate with the radio.
+
+Official Meshtastic App:
+Settings → Serial → Enabled
+
 Connect your Meshtastic device via USB **before** powering on the Pi.
 Use a cable that supports data transfer (not charge-only).
 Connect only one Meshtastic device during first install.

@@ -809,6 +809,27 @@ Reload the browser with `Ctrl+F5` after a UI update.
 
 ---
 
+## 🔄 Updating
+
+```bash
+cd ~/meshcenter
+git pull
+git fetch --tags
+sudo systemctl restart meshcenter.service
+```
+
+After updating, reload the browser with **Ctrl+F5**.
+
+> **Note:** `git fetch --tags` is required to pull the latest version tag.
+> Without it, the version shown in the status bar may remain outdated.
+>
+> On some installations `sudo systemctl` requires the full path:
+> ```bash
+> sudo -n /usr/bin/systemctl restart meshcenter.service
+> ```
+
+---
+
 ## Project Structure
 
 MeshCenter has been designed as a modular application. Each subsystem has its own responsibility, making the project easier to maintain, debug and extend.

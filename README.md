@@ -148,6 +148,46 @@ Typical use cases include:
 
 ---
 
+## ⚡ Quick Install
+
+> **Requirements:** Raspberry Pi (Zero 2W / 3B+ / 4B), microSD card 8GB+,
+> [Raspberry Pi Imager](https://www.raspberrypi.com/software/), internet connection.
+
+### 1 — Flash the SD card
+
+Open **Raspberry Pi Imager**, choose **Raspberry Pi OS Lite (64-bit)**,
+click the ⚙️ gear icon and set your hostname, username, password and WiFi,
+then flash to the SD card.
+
+### 2 — Add the installer
+
+After flashing, the SD card appears as a drive called **bootfs**.
+Download **[firstrun.sh](https://raw.githubusercontent.com/FlintUA/MeshCenter/main/firstrun.sh)**
+and copy it to the root of that drive:
+
+| OS | Path |
+|---|---|
+| Windows | `D:\firstrun.sh` (D: = your SD card) |
+| macOS | `/Volumes/bootfs/firstrun.sh` |
+
+### 3 — Boot and wait
+
+Insert the SD card, power on the Pi and wait **5–10 minutes**.
+Watch the progress at **http://meshcenter.local** (port 80) while it installs.
+
+### 4 — Open MeshCenter
+
+```
+http://meshcenter.local:5000
+```
+
+Plug in your Meshtastic device via USB — MeshCenter detects it automatically.
+Configure OpenWeather API key and other options in **Settings** after installation.
+
+> 💡 For manual installation or advanced options see [INSTALL.md](INSTALL.md).
+
+---
+
 ## ✨ Highlights
 
 ***Key Features***

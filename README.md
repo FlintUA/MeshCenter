@@ -162,7 +162,7 @@ then flash to the SD card.
 ### 2 — Add the installer
 
 After flashing, the SD card appears as a drive called **bootfs**.
-Download **[firstrun.sh](https://raw.githubusercontent.com/FlintUA/MeshCenter/main/firstrun.sh)**
+Download **[firstrun.sh](https://github.com/FlintUA/MeshCenter/releases/latest/download/firstrun.sh)**
 and copy it to the root of that drive:
 
 | OS | Path |

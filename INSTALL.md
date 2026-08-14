@@ -1,4 +1,106 @@
-# MeshCenter — Installation Checklist
+# MeshCenter Installation Guide
+
+## System Requirements
+
+**Recommended:**
+- Raspberry Pi Zero 2W, 3B/3B+, or 4B
+- Raspberry Pi OS Lite 64-bit (Bookworm)
+- 8GB+ microSD card
+- Internet connection during installation
+
+**Minimum:**
+- Any Linux system with Python 3.9+
+- Debian 11 (Bullseye) / Ubuntu 22.04 LTS or newer
+- 500MB free disk space · 512MB RAM · systemd
+
+**Not supported:**
+- Windows / macOS
+- Raspberry Pi OS 32-bit (lgpio compatibility issues)
+- Debian 10 (Buster) or older (Python 3.7 — too old)
+- Alpine Linux (musl libc — pip build failures)
+
+---
+
+## Quick Install (Recommended)
+
+> **What you need:** Raspberry Pi, microSD card (8GB+), internet connection,
+> [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
+
+### Step 1 — Flash the SD card
+
+1. Open **Raspberry Pi Imager**
+2. Choose OS: **Raspberry Pi OS Lite (64-bit)**
+3. Click the ⚙️ gear icon → configure:
+   - Hostname: `meshcenter` (gives you `http://meshcenter.local:5000`)
+   - Username and password
+   - WiFi network (if not using Ethernet)
+   - Enable SSH *(optional, for advanced access)*
+4. Flash to SD card
+
+### Step 2 — Add MeshCenter installer
+
+After flashing, the SD card appears as a drive called **bootfs**.
+
+Download **[firstrun.sh](https://raw.githubusercontent.com/FlintUA/MeshCenter/main/firstrun.sh)**
+and copy it to the **root** of the bootfs drive:
+
+```
+bootfs (SD card):
+├── firstrun.sh   ← copy here
+├── cmdline.txt
+├── config.txt
+└── ...
+```
+
+- **Windows:** SD card appears as `D:\` (or similar) — copy `firstrun.sh` there
+- **Mac:** SD card appears as `/Volumes/bootfs/` — copy `firstrun.sh` there
+
+### Step 3 — Boot and wait
+
+1. Safely eject the SD card
+2. Insert it into your Raspberry Pi
+3. Connect power
+4. Wait **5–10 minutes** *(Pi Zero 2W may take up to 10 minutes)*
+
+> 💡 **Watch the progress:** open **http://meshcenter.local** (port 80)
+> in your browser while it installs. The page updates every 3 seconds.
+
+### Step 4 — Open MeshCenter
+
+Once installation completes, open in your browser:
+
+```
+http://meshcenter.local:5000
+```
+
+or use the IP address shown on the progress page.
+
+### Step 5 — Connect your radio
+
+Plug in your Meshtastic device via USB.
+MeshCenter will detect it automatically.
+
+> ⚙️ Configure OpenWeather API key and other settings in
+> **Settings → Weather** after installation.
+
+---
+
+## Updating
+
+```bash
+cd ~/meshcenter
+git pull
+git fetch --tags
+sudo -n /usr/bin/systemctl restart meshcenter.service
+```
+
+Reload the browser with Ctrl+F5 after updating.
+Note: `git fetch --tags` is required for the version shown in the status bar
+to update correctly.
+
+---
+
+## Manual Install (Advanced)
 
 A condensed, tick-off checklist for a first-time install on a Raspberry Pi. It
 mirrors the same steps as **[README.md → Installation](README.md#installation)**

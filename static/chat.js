@@ -448,6 +448,28 @@ async function loadSchedules() {
   }
 }
 
+// Locale-aware day-name formatting: instead of a hardcoded translation
+// table, ask Intl.DateTimeFormat for each weekday's short name in the
+// active locale. 2026-01-04 was a Sunday, so 2026-01-(4+n) walks through
+// Sun..Sat for n = 0..6 - DAY_INDEX maps each day code to that offset.
+function _formatDays(days) {
+    if (!days || days.length === 0) return '';
+    if (days.length === 7) return window.I18N.t('time.every_day');
+    const weekdays = ['mon','tue','wed','thu','fri'];
+    if (days.length === 5 && weekdays.every(d => days.includes(d)))
+        return window.I18N.t('time.weekdays');
+
+    const DAY_INDEX = {sun:0, mon:1, tue:2, wed:3, thu:4, fri:5, sat:6};
+    const fmt = new Intl.DateTimeFormat(
+        TimeFormatter._getLocale(), {weekday: 'short'});
+    return days
+        .map(d => {
+            const ref = new Date(2026, 0, 4 + (DAY_INDEX[d] ?? 0));
+            return fmt.format(ref);
+        })
+        .join(', ');
+}
+
 function _scheduleSummaryText(rule) {
   const t = rule.trigger || {};
   if (t.mode === 'interval') {
@@ -457,10 +479,7 @@ function _scheduleSummaryText(rule) {
     return t.datetime ? TimeFormatter.formatDateTime(new Date(t.datetime)) : '';
   }
   const days = Array.isArray(t.days) ? t.days : [];
-  const allWeekdays = SCHEDULE_DAY_ORDER.slice(0, 5).every(d => days.includes(d)) && days.length === 5;
-  const dayLabel = allWeekdays
-    ? window.I18N.t('time.weekdays')
-    : (days.length === 7 ? window.I18N.t('time.every_day') : days.join(', '));
+  const dayLabel = _formatDays(days);
   return `${dayLabel} ${t.time || ''}`.trim();
 }
 

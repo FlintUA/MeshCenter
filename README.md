@@ -205,7 +205,13 @@ Connect only one Meshtastic device during first install.
    to watch the 7-step installation progress (updates every 3 seconds)
 5. When installation completes, you will be automatically redirected to MeshCenter
 
-> ⏱ Total time: ~5 min on Pi 4B, ~10–15 min on Pi Zero 2W
+> ⏱ **Installation time:**
+> | Device | Without camera | With camera |
+> |---|---|---|
+> | Pi 4B / 3B+ | ~5 min | ~20 min |
+> | Pi Zero 2W | ~15 min | ~90 min |
+>
+> Camera support is auto-detected or enabled via `meshcenter-options` file.
 
 ### 6 — Open MeshCenter
 

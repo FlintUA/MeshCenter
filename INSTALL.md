@@ -65,6 +65,24 @@ bootfs (SD card):
 > 💡 **Watch the progress:** open **http://meshcenter.local** (port 80)
 > in your browser while it installs. The page updates every 3 seconds.
 
+### Camera support
+
+By default, camera packages are **not installed** to keep installation fast.
+Camera support is enabled automatically if a camera is detected,
+or you can force it by creating a file `meshcenter-options` on the bootfs drive:
+
+```
+INSTALL_CAMERA=yes
+```
+
+> ⚠️ **Installation time with camera support:**
+> - Pi 4B / 3B+: ~20 minutes
+> - Pi Zero 2W: up to 90 minutes
+>
+> Without camera support:
+> - Pi 4B / 3B+: ~5 minutes
+> - Pi Zero 2W: ~15 minutes
+
 ### Step 4 — Open MeshCenter
 
 Once installation completes, open in your browser:

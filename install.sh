@@ -262,6 +262,7 @@ step_system_packages() {
         avahi-daemon \
         network-manager \
         iw \
+        lsof \
         --no-install-recommends \
         -qq
 

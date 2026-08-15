@@ -508,20 +508,35 @@ Store the archive on another device. It can contain message history, node positi
 
 The following procedure was verified on a second Raspberry Pi installation.
 
-First check that the repository contains no unexpected local changes:
+**Quick update** (recommended for most users):
+
+```bash
+cd ~/meshcenter
+git pull
+git fetch --tags
+sudo -n /usr/bin/systemctl restart meshcenter.service
+```
+
+Reload the browser with **Ctrl+F5** after updating.
+
+**Safe update** (if you have local changes or want extra caution):
+
+First check for unexpected local changes:
 
 ```bash
 cd ~/meshcenter
 git status --short --branch
 ```
 
-If modified tracked files are listed, stop and review them before updating. Do not discard local changes blindly.
+If modified tracked files are listed, stop and review them before updating.
+Do not discard local changes blindly.
 
 Back up `config.py` and `data/`, then update:
 
 ```bash
 cd ~/meshcenter
 git pull --ff-only origin main
+git fetch --tags
 source venv/bin/activate
 python -m pip install -r requirements.txt
 python -m compileall -q server.py api camera meshsrv storage telemetry utils
@@ -533,14 +548,17 @@ git log -3 --oneline --decorate
 
 Expected results:
 
-- `git pull` completes with a fast-forward or reports `Already up to date`.
-- The service reports `active`.
-- The local `main` branch matches `origin/main`.
-- `config.py`, `weather_secrets.py` and `data/` remain unchanged because Git does not track them.
+- `git pull` completes with a fast-forward or reports `Already up to date`
+- The service reports `active`
+- The local `main` branch matches `origin/main`
+- `config.py`, `weather_secrets.py` and `data/` remain unchanged
+- Version in the status bar shows the new version (e.g. `v1.7.0`)
 
-Reload the browser with `Ctrl+F5` after an interface update.
-
-An `Author identity unknown` message matters only when creating a new Git commit on that Raspberry Pi. It does not prevent normal `git pull` updates.
+> **Note:** `git fetch --tags` is required for the version shown in the
+> status bar to update correctly.
+>
+> An `Author identity unknown` message matters only when creating a new
+> Git commit on that Raspberry Pi. It does not prevent normal `git pull` updates.
 
 ## 14. Troubleshooting
 

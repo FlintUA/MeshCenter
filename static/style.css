@@ -8236,6 +8236,16 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     margin-bottom: 4px;
 }
 
+/* Space between the Schedules and Timers sections so they read as two
+   separate blocks, and a little breathing room under "+ New schedule"
+   so it doesn't crowd the Timers heading right below it. */
+#timeTimersSection {
+    margin-top: 16px;
+}
+#addScheduleBtn {
+    margin-bottom: 4px;
+}
+
 /* ============================================================
    NOTIFICATIONS CARD
    ============================================================ */

@@ -883,6 +883,12 @@
     "node_label": "Node",
     "selected_label": "Selected"
   },
+  "activity": {
+    "card_title": "Activity",
+    "clear_all": "Clear",
+    "card_empty": "No notifications",
+    "earlier": "Earlier"
+  },
   "notifications": {
     "ready": "Ready",
     "open_with_message": "{message} - open notifications",
@@ -899,12 +905,8 @@
     "about": "About",
     "workspace": "Workspace",
     "title": "Notifications",
-    "recent_activity": "Recent MeshCenter activity",
+    "subtitle": "System alerts and events",
     "empty": "No notifications yet",
-    "card_title": "Notifications",
-    "clear_all": "Clear",
-    "card_empty": "No notifications",
-    "earlier": "Earlier",
     "mark_read": "Mark as read",
     "test_btn": "Test notification"
   },

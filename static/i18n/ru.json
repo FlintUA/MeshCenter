@@ -883,6 +883,12 @@
     "node_label": "Узел",
     "selected_label": "Выбран"
   },
+  "activity": {
+    "card_title": "Активность",
+    "clear_all": "Очистить",
+    "card_empty": "Нет уведомлений",
+    "earlier": "Ранее"
+  },
   "notifications": {
     "ready": "Готово",
     "open_with_message": "{message} — открыть уведомления",
@@ -899,12 +905,8 @@
     "about": "О программе",
     "workspace": "Рабочая область",
     "title": "Уведомления",
-    "recent_activity": "Последние события MeshCenter",
+    "subtitle": "Системные оповещения",
     "empty": "Пока нет уведомлений",
-    "card_title": "Уведомления",
-    "clear_all": "Очистить",
-    "card_empty": "Нет уведомлений",
-    "earlier": "Ранее",
     "mark_read": "Отметить прочитанным",
     "test_btn": "Тест уведомления"
   },

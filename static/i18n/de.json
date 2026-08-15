@@ -883,6 +883,12 @@
     "node_label": "Knoten",
     "selected_label": "Ausgewählt"
   },
+  "activity": {
+    "card_title": "Aktivität",
+    "clear_all": "Löschen",
+    "card_empty": "Keine Benachrichtigungen",
+    "earlier": "Früher"
+  },
   "notifications": {
     "ready": "Bereit",
     "open_with_message": "{message} – Benachrichtigungen öffnen",
@@ -899,12 +905,8 @@
     "about": "Über",
     "workspace": "Arbeitsbereich",
     "title": "Benachrichtigungen",
-    "recent_activity": "Letzte MeshCenter-Aktivität",
+    "subtitle": "Systembenachrichtigungen",
     "empty": "Noch keine Benachrichtigungen",
-    "card_title": "Benachrichtigungen",
-    "clear_all": "Löschen",
-    "card_empty": "Keine Benachrichtigungen",
-    "earlier": "Früher",
     "mark_read": "Als gelesen markieren",
     "test_btn": "Benachrichtigung testen"
   },

@@ -14746,3 +14746,20 @@ html[data-theme="dark"] #timeCard {
     color: #ff9299;
 }
 [data-theme="dark"] .btn.btn-xs.btn-danger:hover { background: rgba(207,71,82,.28); }
+
+/* #notificationsCard (Activity card) dark theme - same pattern as
+   #timeCard above: bg #172638, border #263c52, shadow rgba(0,0,0,.24),
+   text colors reuse the same #e5eff8 primary / #dbe8f5 secondary /
+   #9eb3c8 muted convention rather than inventing new ones. */
+body[data-theme="dark"] #notificationsCard,
+html[data-theme="dark"] #notificationsCard {
+    border-color: #263c52;
+    background: #172638;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .24);
+}
+[data-theme="dark"] .notifications-card-title { color: #e5eff8; }
+[data-theme="dark"] .notifications-item-title { color: #e5eff8; }
+[data-theme="dark"] .notifications-item-time { color: #9eb3c8; }
+[data-theme="dark"] .notifications-item-body { color: #dbe8f5; }
+[data-theme="dark"] .notifications-empty { color: #9eb3c8; }
+[data-theme="dark"] .notifications-divider { color: #9eb3c8; }

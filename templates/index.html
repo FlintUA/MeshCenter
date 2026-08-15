@@ -6,7 +6,7 @@
     <meta name="app-version" content="{{ app_version }}">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260813-time-hero">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260815-activity-card">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -164,19 +164,19 @@
                      onclick="toggleNotificationsCard()" role="button"
                      aria-expanded="false" aria-controls="notificationsCardBody">
                     <span class="notifications-card-title" id="notificationsCardTitle">
-                        <span data-i18n="notifications.card_title">Notifications</span>
+                        <span data-i18n="activity.card_title">Activity</span>
                         <span class="notifications-badge" id="notificationsBadge" style="display:none">0</span>
                     </span>
                     <div class="notifications-card-actions">
                         <button class="btn btn-sm notifications-clear-btn" id="notificationsClearBtn"
                                 onclick="event.stopPropagation(); clearAllNotifications()"
-                                data-i18n="notifications.clear_all" style="display:none">Clear</button>
+                                data-i18n="activity.clear_all" style="display:none">Clear</button>
                         <span class="notifications-chevron" id="notificationsChevron">▸</span>
                     </div>
                 </div>
                 <div class="notifications-card-body" id="notificationsCardBody" style="display:none">
                     <div id="notificationsList"></div>
-                    <div class="notifications-empty" id="notificationsEmpty" data-i18n="notifications.card_empty">No notifications</div>
+                    <div class="notifications-empty" id="notificationsEmpty" data-i18n="activity.card_empty">No notifications</div>
                 </div>
             </section>
 
@@ -1811,7 +1811,7 @@
                      hidden
                      onclick="event.stopPropagation()">
                 <header class="notification-popover-header">
-                    <div><strong data-i18n="notifications.title">Notifications</strong><span data-i18n="notifications.recent_activity">Recent MeshCenter activity</span></div>
+                    <div><strong data-i18n="notifications.title">Notifications</strong><span data-i18n="notifications.subtitle">System alerts and events</span></div>
                     <button type="button" class="notification-clear-btn" onclick="clearNotifications()" data-i18n="modals.clear">Clear</button>
                 </header>
                 <div class="notification-list" id="notificationList"></div>
@@ -2024,7 +2024,7 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="/static/chat.js?v=20260813-time-hero"></script>
+<script src="/static/chat.js?v=20260815-activity-card"></script>
 <script src="/static/media.js?v=20260806-stage9-i18n"></script>
 <script src="/static/weather.js?v=20260808-weather-provider"></script>
 

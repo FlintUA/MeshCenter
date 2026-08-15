@@ -45,6 +45,7 @@ def _normalize(r: dict) -> dict:
     t.setdefault('days', ['mon', 'tue', 'wed', 'thu', 'fri'])
     t.setdefault('time', '08:00')
     t.setdefault('interval_minutes', 60)
+    t.setdefault('datetime', '')
     t.setdefault('last_fired_at', 0)
     r.setdefault('actions', [{'type': 'log_entry', 'params': {}}])
     n = r.setdefault('notify', {})
@@ -87,6 +88,32 @@ def _should_fire(rule: dict, now_ts: int) -> bool:
         if last == 0:
             return True
         return (now_ts - last) >= interval_s
+
+    elif mode == 'once':
+        target_dt_str = trigger.get('datetime', '')
+        if not target_dt_str:
+            return False
+        last = trigger.get('last_fired_at', 0)
+        if last > 0:
+            return False  # already fired
+        import datetime as dt
+        tz_name = get_time_status().get('timezone', 'UTC')
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = None
+        try:
+            target = dt.datetime.fromisoformat(target_dt_str)
+        except ValueError:
+            return False
+        if tz and target.tzinfo is None:
+            target = target.replace(tzinfo=tz)
+        now = dt.datetime.now(tz) if tz else dt.datetime.now()
+        # Fire when the current minute matches the target minute.
+        return (now.year == target.year and now.month == target.month and
+                now.day == target.day and now.hour == target.hour and
+                now.minute == target.minute)
 
     return False
 
@@ -163,6 +190,9 @@ def _tick():
             _execute_notify(rule)
 
             rule['trigger']['last_fired_at'] = now_ts
+            if rule['trigger'].get('mode') == 'once':
+                rule['enabled'] = False
+                print(f"[Schedule] Once rule '{label}' fired and disabled", flush=True)
             changed = True
 
         if changed:

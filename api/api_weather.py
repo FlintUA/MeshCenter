@@ -19,6 +19,15 @@ _SECRET_VAR_NAMES = {
     "weatherapi": "WEATHERAPI_API_KEY",
 }
 
+# Provider website links for the "Live · <Provider>" badge. The display
+# name itself comes from each WeatherProvider's own display_name attribute
+# (weather/providers/*.py) rather than being duplicated here - only the
+# website URL isn't part of that existing interface.
+_PROVIDER_URLS = {
+    "openweather": "https://openweathermap.org",
+    "weatherapi": "https://www.weatherapi.com",
+}
+
 
 def _normalize_api_key(value):
     key = str(value or "").strip()
@@ -107,6 +116,12 @@ def register_weather_routes(
             location_name=location.get("name", ""),
             location_source=location.get("source", "configured"),
         )
+        active_id = weather_manager.active_id
+        payload["provider"] = {
+            "id": active_id,
+            "name": weather_manager.active().display_name,
+            "url": _PROVIDER_URLS.get(active_id, "#"),
+        }
         return jsonify(payload), 200 if payload.get("ok") else 503
 
     @app.get("/api/weather/config")

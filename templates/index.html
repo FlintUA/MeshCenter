@@ -6,7 +6,7 @@
     <meta name="app-version" content="{{ app_version }}">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260815-activity-card">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260815-weather-provider">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -200,7 +200,10 @@
                         </div>
                     </div>
 
-                    <button class="weather-state-badge weather-summary-state" id="weatherStateBadge" type="button" onclick="handleWeatherBadgeClick()" title="Refresh weather or open Weather Provider settings" data-i18n-title="weather.refresh_or_configure_tooltip" data-i18n="common.loading_short">Loading</button>
+                    <div class="weather-state-group" id="weatherStateGroup">
+                        <button class="weather-state-badge" id="weatherStateBadge" type="button" onclick="handleWeatherBadgeClick()" title="Refresh weather or open Weather Provider settings" data-i18n-title="weather.refresh_or_configure_tooltip" data-i18n="common.loading_short">Loading</button>
+                        <a class="weather-provider-link" id="weatherProviderLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none"></a>
+                    </div>
                 </div>
 
                 <div class="weather-metrics">
@@ -2026,7 +2029,7 @@
 </script>
 <script src="/static/chat.js?v=20260815-activity-card"></script>
 <script src="/static/media.js?v=20260806-stage9-i18n"></script>
-<script src="/static/weather.js?v=20260808-weather-provider"></script>
+<script src="/static/weather.js?v=20260815-weather-provider"></script>
 
 <div class="modal-overlay" id="wifiConnectModal" style="display:none;" onclick="closeWifiConnectModal()">
     <div class="modal-content wifi-connect-modal" onclick="event.stopPropagation()">

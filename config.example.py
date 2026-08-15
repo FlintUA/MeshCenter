@@ -39,7 +39,7 @@ CHATS_FILE = f"{DATA_DIR}/chats.json"
 # ===== MESSAGE SETTINGS =====
 MAX_HISTORY_MESSAGES = 1000
 CHANNEL_CHAT_ID = "channel"
-CHANNEL_CHAT_NAME = "LongFast Channel 0"
+CHANNEL_CHAT_NAME = "LongFast [0]"
 
 # ===== KNOWN NODES (pre-populated with your mesh) =====
 KNOWN_NODES = {

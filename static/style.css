@@ -14184,6 +14184,83 @@ body[data-theme="dark"] .waypoint-action-toast.error {
     background: #99434e;
 }
 
+/* Telemetry stat cards (#telemetryCards inside #telemetryModal) - no
+   existing dark coverage for .telemetry-card, so this follows the
+   #timeCard pattern (~line 14683: bg #172638, border #263c52, text
+   #e5eff8 primary / #9eb3c8 muted). */
+[data-theme="dark"] .telemetry-card {
+    background: #172638;
+    border-color: #263c52;
+}
+[data-theme="dark"] .telemetry-card .card-label,
+[data-theme="dark"] .telemetry-card .card-range {
+    color: #9eb3c8;
+}
+[data-theme="dark"] .telemetry-card .card-value {
+    color: #e5eff8;
+}
+
+/* Custom telemetry export dialog (openCustomTelemetryExport(),
+   static/chat.js) - a separate overlay from .modal-overlay/.modal-content
+   (custom-export-*/export-* classes), so it isn't covered by the
+   .modal-overlay/.modal-content dark rules above. Reuses those same
+   colors (#1b2d40/#3a526a/#d9e7f5, #263b50 buttons) rather than the
+   #timeCard palette, since this dialog fills the exact same "modal
+   dialog" role as every other already-dark-themed dialog in the app. */
+[data-theme="dark"] .custom-export-overlay {
+    background: rgba(3, 10, 18, .72);
+}
+[data-theme="dark"] .custom-export-dialog {
+    background: #1b2d40;
+    border-color: #3a526a;
+    box-shadow: 0 22px 55px rgba(0, 0, 0, .52);
+}
+[data-theme="dark"] .custom-export-header {
+    border-bottom-color: #344b61;
+}
+[data-theme="dark"] .custom-export-title {
+    color: #f4f8fc;
+}
+[data-theme="dark"] .custom-export-subtitle,
+[data-theme="dark"] .export-date-grid label span {
+    color: #9eb3c8;
+}
+[data-theme="dark"] .custom-export-close {
+    color: #a9bed1;
+}
+[data-theme="dark"] .custom-export-close:hover {
+    color: #ffffff;
+}
+[data-theme="dark"] .export-section-title,
+[data-theme="dark"] .export-radio-row,
+[data-theme="dark"] .export-format-option {
+    color: #d9e7f5;
+}
+[data-theme="dark"] .export-date-grid input,
+[data-theme="dark"] .export-format-option,
+[data-theme="dark"] .custom-export-cancel {
+    background: #132334;
+    border-color: #385068;
+    color: #e5eff8;
+}
+[data-theme="dark"] .export-series-summary {
+    background: #16283a;
+    border-color: #2a3f54;
+    color: #d9e7f5;
+}
+[data-theme="dark"] .custom-export-footer {
+    background: #16283a;
+    border-top-color: #344b61;
+}
+[data-theme="dark"] .custom-export-cancel:hover {
+    background: #1b2d40;
+}
+[data-theme="dark"] .custom-export-primary {
+    background: #1769c2;
+    border-color: #1769c2;
+    color: #fff;
+}
+
 @media (max-width: 720px) {
     .dock-notification-status {
         width: min(48vw, 360px);
@@ -14531,6 +14608,40 @@ body[data-theme="dark"] .waypoint-action-toast.error {
 
 .schedule-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #445366; }
 .schedule-inline-label { font-size: 11px; color: #93a2b3; margin-right: 6px; }
+
+.timer-duration-picker {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.timer-duration-field {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+.timer-duration-field label {
+    font-size: 11px;
+    color: #93a2b3;
+}
+.timer-duration-input {
+    box-sizing: border-box;
+    width: 64px;
+    padding: 6px 4px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #fff;
+    color: #263b52;
+    font: inherit;
+    font-size: 18px;
+    text-align: center;
+}
+.timer-duration-sep {
+    margin-bottom: 16px;
+    color: #93a2b3;
+    font-size: 20px;
+    font-weight: 600;
+}
 
 .schedule-days-label {
     font-size: 10px;

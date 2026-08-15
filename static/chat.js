@@ -453,6 +453,9 @@ function _scheduleSummaryText(rule) {
   if (t.mode === 'interval') {
     return window.I18N.t('time.every_n_min').replace('{n}', t.interval_minutes ?? '?');
   }
+  if (t.mode === 'once') {
+    return t.datetime ? TimeFormatter.formatDateTime(new Date(t.datetime)) : '';
+  }
   const days = Array.isArray(t.days) ? t.days : [];
   const allWeekdays = SCHEDULE_DAY_ORDER.slice(0, 5).every(d => days.includes(d)) && days.length === 5;
   const dayLabel = allWeekdays
@@ -475,10 +478,13 @@ function renderSchedulesList() {
     const summary = escapeHtml(_scheduleSummaryText(rule));
     const label = escapeHtml(rule.label || window.I18N.t('time.label_placeholder'));
     const toggleLabel = rule.enabled ? window.I18N.t('time.disable') : window.I18N.t('time.enable');
+    const modeIcon = rule.trigger?.mode === 'interval' ? '🔁'
+                    : rule.trigger?.mode === 'once'     ? '📅'
+                    : '⏱';
     return `
       <div class="time-schedule-row${disabledClass}" data-id="${escapeHtml(rule.id)}">
         <div class="time-schedule-info" onclick="openScheduleForm('${escapeHtml(rule.id)}')">
-          <span class="time-schedule-label">${label}</span>
+          <span class="time-schedule-label"><span class="time-schedule-mode-icon" aria-hidden="true">${modeIcon}</span> ${label}</span>
           <span class="time-schedule-summary">${summary}</span>
         </div>
         <div class="time-schedule-actions">
@@ -621,7 +627,7 @@ async function openScheduleForm(id) {
   const rule = id ? scheduleRules.find(r => r.id === id) : null;
 
   const label = rule?.label || '';
-  const trigger = rule?.trigger || { mode: 'daily', time: '08:00', days: ['mon','tue','wed','thu','fri'], interval_minutes: 60 };
+  const trigger = rule?.trigger || { mode: 'daily', time: '08:00', days: ['mon','tue','wed','thu','fri'], interval_minutes: 60, datetime: '' };
   const actions = rule?.actions || [{ type: 'log_entry', params: {} }];
   const primaryAction = actions[0] || { type: 'log_entry', params: {} };
   const notify = rule?.notify || { enabled: false, signal: '', details: '', mesh_message: { enabled: false, target_type: 'node', node_id: '', channel_index: 0 } };
@@ -650,10 +656,11 @@ async function openScheduleForm(id) {
       <select id="sfMode" class="schedule-select" onchange="_scheduleUpdateModeVisibility()">
         <option value="daily"${trigger.mode === 'daily' ? ' selected' : ''}>${escapeHtml(window.I18N.t('time.mode_daily'))}</option>
         <option value="interval"${trigger.mode === 'interval' ? ' selected' : ''}>${escapeHtml(window.I18N.t('time.mode_interval'))}</option>
+        <option value="once"${trigger.mode === 'once' ? ' selected' : ''}>${escapeHtml(window.I18N.t('time.mode_once'))}</option>
       </select>
     </div>
 
-    <div class="schedule-form-row" id="sfDailyFields" style="display:${trigger.mode === 'interval' ? 'none' : ''}">
+    <div class="schedule-form-row" id="sfDailyFields" style="display:${trigger.mode === 'daily' ? '' : 'none'}">
       <label data-i18n="time.time_label">${escapeHtml(window.I18N.t('time.time_label'))}</label>
       <input type="time" id="sfTime" class="schedule-input" value="${escapeHtml(trigger.time || '08:00')}">
       <div class="schedule-days-label" data-i18n="time.days_label">${escapeHtml(window.I18N.t('time.days_label'))}</div>
@@ -667,6 +674,11 @@ async function openScheduleForm(id) {
         <input type="number" id="sfInterval" class="schedule-input schedule-input--narrow" min="1" max="10080" value="${trigger.interval_minutes || 60}">
         ${escapeHtml(window.I18N.t('time.minutes'))}
       </span>
+    </div>
+
+    <div class="schedule-form-row" id="sfOnceFields" style="display:${trigger.mode === 'once' ? '' : 'none'}">
+      <label data-i18n="time.datetime_label">${escapeHtml(window.I18N.t('time.datetime_label'))}</label>
+      <input type="datetime-local" id="sfOnceDatetime" class="schedule-input" value="${escapeHtml(trigger.datetime || '')}">
     </div>
 
     <div class="schedule-form-row">
@@ -730,6 +742,11 @@ async function openScheduleForm(id) {
   const modal = document.getElementById('scheduleModal');
   if (modal) modal.style.display = 'flex';
 
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const minDt = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  document.getElementById('sfOnceDatetime')?.setAttribute('min', minDt);
+
   _scheduleFormDirty = false;
   _attachDirtyListeners();
 }
@@ -748,8 +765,10 @@ function _scheduleUpdateModeVisibility() {
   const mode = document.getElementById('sfMode')?.value;
   const daily = document.getElementById('sfDailyFields');
   const interval = document.getElementById('sfIntervalFields');
-  if (daily) daily.style.display = mode === 'interval' ? 'none' : '';
+  const once = document.getElementById('sfOnceFields');
+  if (daily) daily.style.display = mode === 'daily' ? '' : 'none';
   if (interval) interval.style.display = mode === 'interval' ? '' : 'none';
+  if (once) once.style.display = mode === 'once' ? '' : 'none';
 }
 
 function _scheduleUpdateActionVisibility() {
@@ -789,6 +808,12 @@ function _collectFormData() {
     if (!trigger.days.length) {
       return showError(window.I18N.t('time.error_no_days'));
     }
+  } else if (mode === 'once') {
+    const dtVal = document.getElementById('sfOnceDatetime')?.value;
+    if (!dtVal) {
+      return showError(window.I18N.t('time.error_no_datetime'));
+    }
+    trigger.datetime = dtVal;
   } else {
     trigger.interval_minutes = parseInt(document.getElementById('sfInterval')?.value, 10) || 60;
   }
@@ -1150,7 +1175,22 @@ async function openTimerForm() {
 
     <div class="schedule-form-row">
       <label data-i18n="time.timer_duration">${escapeHtml(window.I18N.t('time.timer_duration'))}</label>
-      <input type="text" id="tfDuration" class="schedule-input" placeholder="00:00:00">
+      <div class="timer-duration-picker">
+        <div class="timer-duration-field">
+          <input type="number" id="tfHours" min="0" max="99" value="0" class="timer-duration-input">
+          <label data-i18n="time.hours">${escapeHtml(window.I18N.t('time.hours'))}</label>
+        </div>
+        <span class="timer-duration-sep">:</span>
+        <div class="timer-duration-field">
+          <input type="number" id="tfMinutes" min="0" max="59" value="0" class="timer-duration-input">
+          <label data-i18n="time.minutes_short">${escapeHtml(window.I18N.t('time.minutes_short'))}</label>
+        </div>
+        <span class="timer-duration-sep">:</span>
+        <div class="timer-duration-field">
+          <input type="number" id="tfSeconds" min="0" max="59" value="0" class="timer-duration-input">
+          <label data-i18n="time.seconds_short">${escapeHtml(window.I18N.t('time.seconds_short'))}</label>
+        </div>
+      </div>
       <div class="schedule-inline-label" data-i18n="time.timer_duration_hint">${escapeHtml(window.I18N.t('time.timer_duration_hint'))}</div>
     </div>
 
@@ -1207,25 +1247,15 @@ function tfUpdateSignalCounter() {
   if (el && counter) counter.textContent = `${el.value.length}/120`;
 }
 
-function _parseDurationToSeconds(str) {
-  const s = (str || '').trim();
-  if (!s) return null;
-  const parts = s.split(':').map(p => parseInt(p, 10));
-  if (parts.some(isNaN)) return null;
-  let seconds;
-  if (parts.length === 3) seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
-  else if (parts.length === 2) seconds = parts[0] * 60 + parts[1];
-  else if (parts.length === 1) seconds = parts[0];
-  else return null;
-  return seconds > 0 ? seconds : null;
-}
-
 async function createTimerFromForm() {
   const errorEl = document.getElementById('tfError');
   const showError = (msg) => { if (errorEl) { errorEl.textContent = msg; errorEl.style.display = 'block'; } };
 
   const label = document.getElementById('tfLabel')?.value.trim() || 'Timer';
-  const duration_s = _parseDurationToSeconds(document.getElementById('tfDuration')?.value);
+  const h = parseInt(document.getElementById('tfHours')?.value, 10) || 0;
+  const m = parseInt(document.getElementById('tfMinutes')?.value, 10) || 0;
+  const s = parseInt(document.getElementById('tfSeconds')?.value, 10) || 0;
+  const duration_s = (h * 3600 + m * 60 + s) || null;
 
   const notifyEnabled = document.getElementById('tfNotifyEnabled')?.checked || false;
   const notify = {

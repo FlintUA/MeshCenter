@@ -3461,12 +3461,19 @@ function getChatNodeShortName(chat) {
 }
 
 // Appends "[index]" to a channel name, stripping a redundant trailing
-// "Channel <index>" fragment from the name first (e.g. the primary channel's
-// resolved name "LongFast Channel 0" becomes "LongFast [0]" instead of
-// "LongFast Channel 0 [0]"). Shared by the main chat channel list and the
-// Waypoint composer's channel picker so both stay in sync.
+// "Channel <index>" fragment and/or an already-appended "[N]" bracket from
+// the name first (e.g. the primary channel's resolved name
+// "LongFast Channel 0" becomes "LongFast [0]" instead of
+// "LongFast Channel 0 [0]", and a name that already arrived pre-bracketed
+// as "LongFast [0]" doesn't become "LongFast [0] [0]"). Shared by the main
+// chat channel list and the Waypoint composer's channel picker, whose
+// `name` values come from different backend sources (server.py's stored
+// chats vs. api/api_chat.py's live discovery) that aren't guaranteed to
+// agree on whether the index is already embedded — so this needs to be
+// idempotent either way.
 function formatChannelIndexLabel(name, index) {
-    const trimmedName = String(name || '').trim();
+    let trimmedName = String(name || '').trim();
+    trimmedName = trimmedName.replace(/\s*\[\d+\]\s*$/, '').trim();
     const suffixPattern = new RegExp(`^(.*?)\\s*channel\\s+${index}$`, 'i');
     const match = trimmedName.match(suffixPattern);
     const displayName = (match ? match[1].trim() : trimmedName) || 'Channel';

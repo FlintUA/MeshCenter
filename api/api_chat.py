@@ -303,7 +303,7 @@ def register_chat_routes(
             return [{
                 "id": CHANNEL_CHAT_ID,
                 "index": 0,
-                "name": CHANNEL_CHAT_NAME,
+                "name": f"{CHANNEL_CHAT_NAME} [0]",
                 "type": "channel",
                 "is_channel": True,
                 "is_demo": False,
@@ -360,7 +360,7 @@ def register_chat_routes(
                     discovered.append({
                         "id": channel_chat_id(index),
                         "index": index,
-                        "name": f"{name} [{index}]" if int(index) > 0 else str(name),
+                        "name": f"{name} [{index}]",
                         "type": "channel",
                         "is_channel": True,
                         "is_demo": False,
@@ -397,7 +397,7 @@ def register_chat_routes(
         fallback = [{
             "id": CHANNEL_CHAT_ID,
             "index": 0,
-            "name": CHANNEL_CHAT_NAME,
+            "name": f"{CHANNEL_CHAT_NAME} [0]",
             "type": "channel",
             "is_channel": True,
             "is_demo": False,
@@ -578,7 +578,7 @@ def register_chat_routes(
 
         final_chat_id = CHANNEL_CHAT_ID
         receiver_name = "Broadcast"
-        chat_name = CHANNEL_CHAT_NAME
+        chat_name = f"{CHANNEL_CHAT_NAME} [0]"
         chat_type = "channel"
         channel_index = 0
 

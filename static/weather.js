@@ -158,6 +158,23 @@ function setWeatherState(state, label) {
     if (badge) badge.textContent = label;
 }
 
+// The provider link is a separate element next to weatherStateBadge rather
+// than nested inside it: the badge is a <button> updated via .textContent
+// (so it can't render an <a> tag at all), and putting an <a> inside a
+// <button> that already has its own onclick would be invalid, conflicting
+// nested-interactive-content HTML anyway.
+function setWeatherProviderLink(provider) {
+    const link = document.getElementById('weatherProviderLink');
+    if (!link) return;
+    if (provider && provider.name) {
+        link.textContent = provider.name;
+        link.href = provider.url || '#';
+        link.style.display = '';
+    } else {
+        link.style.display = 'none';
+    }
+}
+
 function renderWeather(data) {
     weatherLastData = data;
     weatherSetupRequired = false;
@@ -180,6 +197,7 @@ function renderWeather(data) {
     } else {
         setWeatherState('online', window.I18N.t('weather.status_live'));
     }
+    setWeatherProviderLink(data.provider);
 }
 
 // Matches the display names chat.js's setWeatherProvider() toast uses -
@@ -204,6 +222,7 @@ function renderWeatherError(data) {
     weatherText('weatherFeelsLike', activeWeatherProviderDisplayName());
     weatherText('weatherUpdated', weatherSetupRequired ? window.I18N.t('weather.click_setup') : window.I18N.t('weather.retry_later'));
     renderWeatherForecast([]);
+    setWeatherProviderLink(null);
 }
 
 function currentWeatherReferenceSignature() {

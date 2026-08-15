@@ -9357,10 +9357,28 @@ html[data-theme="dark"] .system-log-panel {
     white-space: nowrap;
 }
 .weather-current-copy { min-width: 0; }
-.weather-summary-state {
+.weather-state-group {
     position: absolute;
     left: 12px;
     bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.weather-provider-link {
+    color: inherit;
+    font-size: 9px;
+    font-weight: 650;
+    text-decoration: none;
+    opacity: 0.85;
+}
+.weather-provider-link:hover {
+    opacity: 1;
+    text-decoration: underline;
+}
+.weather-provider-link::before {
+    content: "· ";
 }
 
 @media (max-width: 420px) {

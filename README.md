@@ -203,7 +203,12 @@ Connect only one Meshtastic device during first install.
 3. Power on the Pi
 4. Wait 1–2 minutes, then open **http://meshcenter.local** in your browser
    to watch the 7-step installation progress (updates every 3 seconds)
-5. When installation completes, you will be automatically redirected to MeshCenter
+5. When installation completes, the Pi reboots automatically to apply
+   system group changes (radio/camera/GPIO permissions)
+
+> 🔄 The Pi reboots automatically after installation to apply
+> all system settings. MeshCenter will be available ~30 seconds
+> after the reboot at **http://meshcenter.local:5000**
 
 > ⏱ **Installation time:**
 > | Device | Without camera | With camera |
@@ -212,6 +217,7 @@ Connect only one Meshtastic device during first install.
 > | Pi Zero 2W | ~15 min | ~90 min |
 >
 > Camera support is auto-detected or enabled via `meshcenter-options` file.
+> Times above don't include the ~30s reboot at the end.
 
 ### 6 — Open MeshCenter
 

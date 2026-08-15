@@ -90,7 +90,6 @@ import http.server, socketserver, os
 
 PORT = 80
 PROGRESS_FILE = "/tmp/meshcenter-progress.txt"
-REDIRECT_FILE = "/tmp/meshcenter-redirect.txt"
 APP_PORT = 5000
 
 STEPS = [
@@ -195,17 +194,6 @@ HTML_PAGE = """<!DOCTYPE html>
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        # If installation is done — redirect to :5000
-        try:
-            redirect_url = open(REDIRECT_FILE).read().strip()
-            if redirect_url:
-                self.send_response(302)
-                self.send_header('Location', redirect_url)
-                self.end_headers()
-                return
-        except FileNotFoundError:
-            pass
-
         try:
             status = open(PROGRESS_FILE).read().strip()
         except Exception:
@@ -252,7 +240,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             footer = "Starting..."
             refresh_tag = '<meta http-equiv="refresh" content="3">'
         elif current_step >= 7:
-            footer = "Finishing up..."
+            footer = "Finishing up — the Pi will reboot shortly. Reopen this page after ~30s."
             refresh_tag = '<meta http-equiv="refresh" content="2">'
         else:
             footer = "Page refreshes every 3 seconds."
@@ -300,18 +288,6 @@ update_progress() {
         [[ "$INSTALL_CAMERA" == "yes" ]] && echo "CAMERA:yes" || true
     } > "$PROGRESS_FILE"
     log "Step ${step}/7: ${message}"
-}
-
-stop_progress_server() {
-    if [[ -n "$PROGRESS_PID" ]]; then
-        # Write the redirect URL — the page picks it up on its next refresh.
-        local ip
-        ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-        echo "http://${ip}:${APP_PORT}/" > /tmp/meshcenter-redirect.txt
-        sleep 4  # give the browser a chance to catch the redirect
-        kill "$PROGRESS_PID" 2>/dev/null || true
-        PROGRESS_PID=""
-    fi
 }
 
 trap 'rc=$?; log "ERROR: unexpected failure at line $LINENO (exit code $rc)"; exit $rc' ERR
@@ -908,6 +884,18 @@ log "Log:        $LOG_FILE"
 log "============================================================"
 
 update_progress 7 "Installation complete"
-stop_progress_server
+
+# Group membership changes (dialout, gpio, i2c, ...) applied earlier via
+# usermod only take effect for new sessions — meshcenter.service was started
+# in this same first-boot session, so the radio device may not be usable
+# until the user's group list is re-resolved. Reboot to guarantee the
+# service comes back up with correct permissions instead of leaving the
+# user to debug a working install that can't see its own radio.
+log "Rebooting to apply group membership changes..."
+log "MeshCenter will be available at http://${HOST_NAME}.local:${APP_PORT} after reboot"
+log "============================================================"
+
+# Schedule the reboot a few seconds out so this log line has time to flush.
+( sleep 5 && reboot ) &
 
 exit 0

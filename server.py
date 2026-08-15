@@ -880,7 +880,7 @@ def load_chats():
         if CHANNEL_CHAT_ID not in chats:
             chats[CHANNEL_CHAT_ID] = {
                 "id": CHANNEL_CHAT_ID,
-                "name": CHANNEL_CHAT_NAME,
+                "name": f"{CHANNEL_CHAT_NAME} [0]",
                 "type": "channel",
                 "last_message": "",
                 "last_time": "",
@@ -890,8 +890,9 @@ def load_chats():
             # Keep the persisted primary-channel name in sync with the
             # current config.py — otherwise a stale name written by an old
             # CHANNEL_CHAT_NAME value survives in chats.json forever, since
-            # this used to be a one-time seed.
-            chats[CHANNEL_CHAT_ID]["name"] = CHANNEL_CHAT_NAME
+            # this used to be a one-time seed. Bracketed to match
+            # api/api_chat.py's discover_radio_channels() format.
+            chats[CHANNEL_CHAT_ID]["name"] = f"{CHANNEL_CHAT_NAME} [0]"
         save_chats()
 
 def save_nodes():
@@ -2699,7 +2700,7 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
                 chat_name = chats.get(chat_id, {}).get("name")
                 if not chat_name:
                     if chat_id == CHANNEL_CHAT_ID:
-                        chat_name = CHANNEL_CHAT_NAME
+                        chat_name = f"{CHANNEL_CHAT_NAME} [0]"
                     else:
                         channel_index = chat_id.split(":", 1)[-1] if ":" in chat_id else chat_id
                         chat_name = f"Channel {channel_index}"
@@ -3457,7 +3458,7 @@ def listen_meshtastic():
                             with state_lock:
                                 chats[chat_id] = {
                                     "id": chat_id,
-                                    "name": CHANNEL_CHAT_NAME if incoming_channel_index == 0 else f"Channel {incoming_channel_index} [{incoming_channel_index}]",
+                                    "name": f"{CHANNEL_CHAT_NAME} [0]" if incoming_channel_index == 0 else f"Channel {incoming_channel_index} [{incoming_channel_index}]",
                                     "type": "channel",
                                     "last_message": "",
                                     "last_time": "",
@@ -5274,7 +5275,7 @@ def api_waypoint_send():
 
         if post_notification:
             channel_id = channel_chat_id(channel_index)
-            channel_name = CHANNEL_CHAT_NAME if channel_index == 0 else f"Channel {channel_index} [{channel_index}]"
+            channel_name = f"{CHANNEL_CHAT_NAME} [0]" if channel_index == 0 else f"Channel {channel_index} [{channel_index}]"
             add_message(
                 "me",
                 LOCAL_NODE_NAME,

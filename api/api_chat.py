@@ -393,6 +393,41 @@ def register_chat_routes(
             with channel_cache_lock:
                 channel_cache["timestamp"] = now_ts
                 channel_cache["channels"] = [dict(item) for item in discovered]
+
+            # Auto-seed chats.json for newly discovered channels so they
+            # appear in the UI immediately, without waiting for a first
+            # incoming message. chats/state_lock/save_chats are already
+            # available as closures from register_chat_routes()'s
+            # parameters — no need to import them from server.
+            try:
+                with state_lock:
+                    seeded = False
+                    for ch in discovered:
+                        chat_id = ch["id"]
+                        if chat_id in chats:
+                            continue
+                        # ch["name"] is always "{base} [{index}]" (see the
+                        # f-string above) — strip that exact suffix rather
+                        # than a blind rsplit(" ["), which would mangle a
+                        # channel name that itself legitimately contains " [".
+                        suffix = f" [{ch['index']}]"
+                        bare_name = ch["name"][:-len(suffix)] if ch["name"].endswith(suffix) else ch["name"]
+                        chats[chat_id] = {
+                            "id": chat_id,
+                            "name": bare_name,
+                            "type": "channel",
+                            "last_message": "",
+                            "last_time": "",
+                            "unread": 0,
+                        }
+                        print(f"[CHANNELS] Auto-seeded chat: {chat_id} ({bare_name})", flush=True)
+                        seeded = True
+                    if seeded:
+                        save_chats()
+            except Exception as seed_error:
+                print(f"[CHANNELS] Auto-seed warning: {seed_error}", flush=True)
+                # Non-fatal — channel will appear after first incoming message
+
             return discovered
 
         # Keep the previous valid configuration during a temporary serial conflict.

@@ -333,6 +333,12 @@ def register_chat_routes(
                     except Exception as wait_error:
                         print(f"[CHANNELS] waitForConfig() warning: {wait_error}", flush=True)
 
+                # Give the radio extra time to sync secondary channel roles —
+                # they can briefly still report role=DISABLED (their unset
+                # default) right after waitForConfig() returns, before the
+                # full config has actually finished trickling in.
+                time.sleep(1.5)
+
                 raw_channels = getattr(getattr(interface, "localNode", None), "channels", None) or []
 
                 for fallback_index, channel in enumerate(raw_channels):

@@ -53,6 +53,22 @@ fail() {
     exit 1
 }
 
+wait_for_apt_lock() {
+    local waited=0
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+          fuser /var/lib/dpkg/lock >/dev/null 2>&1 || \
+          fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+        if (( waited == 0 )); then
+            log "Waiting for apt lock to be released..."
+        fi
+        sleep 3
+        (( waited += 3 ))
+        if (( waited > 120 )); then
+            fail "apt lock was not released within 120 seconds."
+        fi
+    done
+}
+
 start_progress_server() {
     echo "Starting MeshCenter installation..." > "$PROGRESS_FILE"
 
@@ -259,6 +275,7 @@ log "Install directory: $INSTALL_DIR"
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update -qq
+wait_for_apt_lock
 apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -296,6 +313,7 @@ update_progress "Step 2/7: Installing system packages..."
 log "Installing MeshCenter system dependencies..."
 
 apt-get update -qq
+wait_for_apt_lock
 apt-get install -y --no-install-recommends \
     git \
     python3 \
@@ -313,6 +331,7 @@ systemctl start avahi-daemon || true
 # --system-site-packages can expose it inside MeshCenter's environment.
 if apt-cache show python3-picamera2 >/dev/null 2>&1; then
     log "Installing optional Raspberry Pi camera packages..."
+    wait_for_apt_lock
     apt-get install -y --no-install-recommends \
         python3-picamera2 \
         rpicam-apps \

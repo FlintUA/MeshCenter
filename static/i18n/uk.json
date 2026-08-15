@@ -883,6 +883,12 @@
     "node_label": "Вузол",
     "selected_label": "Вибрано"
   },
+  "activity": {
+    "card_title": "Активність",
+    "clear_all": "Очистити",
+    "card_empty": "Немає сповіщень",
+    "earlier": "Раніше"
+  },
   "notifications": {
     "ready": "Готово",
     "open_with_message": "{message} — відкрити сповіщення",
@@ -899,12 +905,8 @@
     "about": "Про програму",
     "workspace": "Робоча область",
     "title": "Сповіщення",
-    "recent_activity": "Останні події MeshCenter",
+    "subtitle": "Системні сповіщення",
     "empty": "Поки що немає сповіщень",
-    "card_title": "Сповіщення",
-    "clear_all": "Очистити",
-    "card_empty": "Немає сповіщень",
-    "earlier": "Раніше",
     "mark_read": "Позначити як прочитане",
     "test_btn": "Тест сповіщення"
   },

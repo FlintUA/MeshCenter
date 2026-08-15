@@ -332,7 +332,7 @@ function renderNotificationsCard(notifications, unreadCount) {
 
   for (const n of notifications) {
     if (!shownDivider && n.timestamp < todayStartTs) {
-      html += `<div class="notifications-divider" data-i18n="notifications.earlier">Earlier</div>`;
+      html += `<div class="notifications-divider" data-i18n="activity.earlier">Earlier</div>`;
       shownDivider = true;
     }
     const icon  = n.level === 'error'   ? '⚠'

@@ -14200,6 +14200,17 @@ body[data-theme="dark"] .waypoint-action-toast.error {
     color: #e5eff8;
 }
 
+/* Chart area background - the <canvas> itself paints transparent
+   (.telemetry-chart-container canvas { background: transparent !important }),
+   so the surrounding well needs its own dark background instead of the
+   light-mode #f0f2f5. Slightly darker than the .telemetry-card bg
+   (#172638) so the cards and chart don't visually merge into one flat
+   surface, but still clearly not black. */
+[data-theme="dark"] .telemetry-chart-container {
+    background: #1a2535;
+    border-color: #263c52;
+}
+
 /* Custom telemetry export dialog (openCustomTelemetryExport(),
    static/chat.js) - a separate overlay from .modal-overlay/.modal-content
    (custom-export-*/export-* classes), so it isn't covered by the

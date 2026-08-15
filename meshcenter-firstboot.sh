@@ -411,7 +411,8 @@ apt-get install -y --no-install-recommends \
     avahi-daemon \
     network-manager \
     iw \
-    usbutils
+    usbutils \
+    lsof
 
 systemctl enable avahi-daemon >/dev/null 2>&1 || true
 systemctl start avahi-daemon || true

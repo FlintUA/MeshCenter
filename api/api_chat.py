@@ -360,7 +360,7 @@ def register_chat_routes(
                     discovered.append({
                         "id": channel_chat_id(index),
                         "index": index,
-                        "name": str(name),
+                        "name": f"{name} [{index}]" if int(index) > 0 else str(name),
                         "type": "channel",
                         "is_channel": True,
                         "is_demo": False,

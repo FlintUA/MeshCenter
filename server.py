@@ -886,7 +886,13 @@ def load_chats():
                 "last_time": "",
                 "unread": 0
             }
-            save_chats()
+        else:
+            # Keep the persisted primary-channel name in sync with the
+            # current config.py — otherwise a stale name written by an old
+            # CHANNEL_CHAT_NAME value survives in chats.json forever, since
+            # this used to be a one-time seed.
+            chats[CHANNEL_CHAT_ID]["name"] = CHANNEL_CHAT_NAME
+        save_chats()
 
 def save_nodes():
     with state_lock:
@@ -3451,7 +3457,7 @@ def listen_meshtastic():
                             with state_lock:
                                 chats[chat_id] = {
                                     "id": chat_id,
-                                    "name": CHANNEL_CHAT_NAME if incoming_channel_index == 0 else f"Channel {incoming_channel_index}",
+                                    "name": CHANNEL_CHAT_NAME if incoming_channel_index == 0 else f"Channel {incoming_channel_index} [{incoming_channel_index}]",
                                     "type": "channel",
                                     "last_message": "",
                                     "last_time": "",
@@ -5268,7 +5274,7 @@ def api_waypoint_send():
 
         if post_notification:
             channel_id = channel_chat_id(channel_index)
-            channel_name = CHANNEL_CHAT_NAME if channel_index == 0 else f"Channel {channel_index}"
+            channel_name = CHANNEL_CHAT_NAME if channel_index == 0 else f"Channel {channel_index} [{channel_index}]"
             add_message(
                 "me",
                 LOCAL_NODE_NAME,

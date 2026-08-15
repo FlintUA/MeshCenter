@@ -23,8 +23,9 @@
 
 ## Quick Install (Recommended)
 
-> **What you need:** Raspberry Pi, microSD card (8GB+), internet connection,
-> [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
+> **What you need:** Raspberry Pi, microSD card (8GB+),
+> [Raspberry Pi Imager](https://www.raspberrypi.com/software/),
+> Meshtastic node connected via USB, internet connection.
 
 ### Step 1 — Flash the SD card
 
@@ -41,29 +42,52 @@
 
 After flashing, the SD card appears as a drive called **bootfs**.
 
-Download **[firstrun.sh](https://github.com/FlintUA/MeshCenter/releases/latest/download/firstrun.sh)**
+Download **[meshcenter-firstboot.sh](https://github.com/FlintUA/MeshCenter/releases/latest/download/meshcenter-firstboot.sh)**
 and copy it to the **root** of the bootfs drive:
 
 ```
 bootfs (SD card):
-├── firstrun.sh   ← copy here
+├── meshcenter-firstboot.sh   ← copy here
+├── user-data
 ├── cmdline.txt
 ├── config.txt
 └── ...
 ```
 
-- **Windows:** SD card appears as `D:\` (or similar) — copy `firstrun.sh` there
-- **Mac:** SD card appears as `/Volumes/bootfs/` — copy `firstrun.sh` there
+- **Windows:** SD card appears as `D:\` (or similar) — copy `meshcenter-firstboot.sh` there
+- **Mac:** SD card appears as `/Volumes/bootfs/` — copy `meshcenter-firstboot.sh` there
 
-### Step 3 — Boot and wait
+### Step 3 — Add one line to user-data
+
+Open the file `user-data` on the bootfs drive (it already exists after flashing).
+Add this at the end:
+
+```yaml
+runcmd:
+  - [ bash, -lc, 'if [ -f /boot/firmware/meshcenter-firstboot.sh ]; then bash /boot/firmware/meshcenter-firstboot.sh; elif [ -f /boot/meshcenter-firstboot.sh ]; then bash /boot/meshcenter-firstboot.sh; fi' ]
+```
+
+If `runcmd:` already exists in the file, add only the `- [ bash, ... ]` line under it.
+
+### Step 4 — Connect your radio
+
+Connect your Meshtastic device via USB **before** powering on the Pi.
+Use a cable that supports data transfer (not charge-only).
+Connect only one Meshtastic device during first install.
+
+### Step 5 — Boot and wait
 
 1. Safely eject the SD card
 2. Insert it into your Raspberry Pi
 3. Connect power
-4. Wait **5–10 minutes** *(Pi Zero 2W may take up to 10 minutes)*
+4. Wait 1–2 minutes, then open **http://meshcenter.local** (port 80) in your
+   browser to watch the 7-step installation progress (updates every 3 seconds)
+5. When installation completes, the Pi reboots automatically to apply system
+   group changes (radio/camera/GPIO permissions)
 
-> 💡 **Watch the progress:** open **http://meshcenter.local** (port 80)
-> in your browser while it installs. The page updates every 3 seconds.
+> 🔄 The Pi reboots automatically after installation to apply all system
+> settings. MeshCenter will be available ~30 seconds after the reboot at
+> **http://meshcenter.local:5000**
 
 ### Camera support
 
@@ -75,28 +99,23 @@ or you can force it by creating a file `meshcenter-options` on the bootfs drive:
 INSTALL_CAMERA=yes
 ```
 
-> ⚠️ **Installation time with camera support:**
-> - Pi 4B / 3B+: ~20 minutes
-> - Pi Zero 2W: up to 90 minutes
+> ⏱ **Installation time:**
+> | Device | Without camera | With camera |
+> |---|---|---|
+> | Pi 4B / 3B+ | ~5 min | ~20 min |
+> | Pi Zero 2W | ~15 min | ~90 min |
 >
-> Without camera support:
-> - Pi 4B / 3B+: ~5 minutes
-> - Pi Zero 2W: ~15 minutes
+> Times above don't include the ~30s reboot at the end.
 
-### Step 4 — Open MeshCenter
+### Step 6 — Open MeshCenter
 
-Once installation completes, open in your browser:
+Once installation completes and the Pi has rebooted, open in your browser:
 
 ```
 http://meshcenter.local:5000
 ```
 
-or use the IP address shown on the progress page.
-
-### Step 5 — Connect your radio
-
-Plug in your Meshtastic device via USB.
-MeshCenter will detect it automatically.
+or use the IP address shown on the progress page before the reboot.
 
 > ⚙️ Configure OpenWeather API key and other settings in
 > **Settings → Weather** after installation.

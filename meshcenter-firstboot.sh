@@ -34,6 +34,19 @@ RADIO_WAIT_SECONDS=180
 RADIO_INFO_TIMEOUT=45
 SERVICE_WAIT_SECONDS=30
 
+# ─── Camera support ───────────────────────────────────────────────────────────
+# Camera packages (python3-picamera2 + rpicam-apps) pull 200+ dependencies
+# and can add up to 90 minutes of install time on Pi Zero 2W.
+#
+# Detection priority:
+#   1. meshcenter-options file on bootfs (explicit user choice)
+#   2. vcgencmd get_camera (auto-detect connected camera)
+#   3. Default: no camera (fastest installation)
+#
+# To force camera installation, create meshcenter-options on bootfs:
+#   echo "INSTALL_CAMERA=yes" > /boot/firmware/meshcenter-options
+INSTALL_CAMERA=no
+
 PROGRESS_PORT=80
 PROGRESS_FILE="/tmp/meshcenter-progress.txt"
 PROGRESS_PID=""
@@ -80,6 +93,26 @@ PROGRESS_FILE = "/tmp/meshcenter-progress.txt"
 REDIRECT_FILE = "/tmp/meshcenter-redirect.txt"
 APP_PORT = 5000
 
+STEPS = [
+    (1, "Preparing system"),
+    (2, "Installing system packages"),
+    (3, "Downloading MeshCenter"),
+    (4, "Installing Python dependencies"),
+    (5, "Waiting for Meshtastic radio"),
+    (6, "Configuring MeshCenter"),
+    (7, "Starting service"),
+]
+
+STEP_HINTS = {
+    2: "~2 min on Pi 4B / ~5 min on Pi Zero 2W",
+    4: "longest step — up to 5 min on Pi 4B, up to 15 min on Pi Zero 2W",
+    5: "up to 3 min — plug in your Meshtastic device now if not connected",
+}
+
+CAMERA_HINT = {
+    2: "~20 min on Pi Zero 2W (camera packages included)",
+}
+
 HTML_PAGE = """<!DOCTYPE html>
 <html>
 <head>
@@ -101,37 +134,49 @@ HTML_PAGE = """<!DOCTYPE html>
             background: #fff;
             border-radius: 12px;
             box-shadow: 0 4px 24px rgba(0,0,0,0.08);
-            padding: 40px;
-            max-width: 520px;
+            padding: 32px 36px;
+            max-width: 480px;
             width: 100%;
         }}
         .logo {{
             color: #2d7d46;
-            font-size: 28px;
+            font-size: 22px;
             font-weight: 700;
-            margin-bottom: 8px;
+            margin-bottom: 4px;
         }}
         .subtitle {{
             color: #718096;
-            font-size: 14px;
-            margin-bottom: 32px;
+            font-size: 13px;
+            margin-bottom: 24px;
+        }}
+        .steps {{
+            list-style: none;
+            margin-bottom: 20px;
         }}
         .step {{
-            background: #f0faf4;
-            border: 1px solid #c6f6d5;
-            border-left: 4px solid #2d7d46;
-            border-radius: 8px;
-            padding: 18px 20px;
-            font-size: 17px;
-            font-weight: 500;
-            color: #22543d;
-            line-height: 1.5;
-            margin-bottom: 20px;
-            min-height: 60px;
+            display: flex;
+            align-items: flex-start;
+            padding: 7px 0;
+            font-size: 14px;
+            border-bottom: 1px solid #f0f4f8;
+            gap: 10px;
         }}
-        .hint {{
-            color: #a0aec0;
+        .step:last-child {{ border-bottom: none; }}
+        .step-icon {{ width: 20px; flex-shrink: 0; text-align: center; }}
+        .step-body {{ flex: 1; }}
+        .step-label {{ font-weight: 500; }}
+        .step-label.done {{ color: #718096; }}
+        .step-label.active {{ color: #22543d; }}
+        .step-label.pending {{ color: #a0aec0; }}
+        .step-hint {{
             font-size: 12px;
+            color: #e07b00;
+            margin-top: 3px;
+            font-style: italic;
+        }}
+        .footer {{
+            color: #a0aec0;
+            font-size: 11px;
             text-align: center;
         }}
     </style>
@@ -140,8 +185,10 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="card">
         <div class="logo">🟢 MeshCenter</div>
         <div class="subtitle">Automatic installation in progress</div>
-        <div class="step">{status}</div>
-        <div class="hint">{hint}</div>
+        <ul class="steps">
+{steps_html}
+        </ul>
+        <div class="footer">{footer}</div>
     </div>
 </body>
 </html>"""
@@ -162,16 +209,59 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             status = open(PROGRESS_FILE).read().strip()
         except Exception:
-            status = "Starting..."
+            status = "1"
 
-        status_html = status.replace('\n', '<br>')
-        refresh_tag = '<meta http-equiv="refresh" content="3">'
-        hint = "This page refreshes every 3 seconds."
+        # Determine the current step from the status file
+        current_step = 0
+        camera_mode = False
+        for line in status.splitlines():
+            if line.startswith("STEP:"):
+                try:
+                    current_step = int(line.split(":")[1])
+                except Exception:
+                    pass
+            if line == "CAMERA:yes":
+                camera_mode = True
+
+        steps_html = ""
+        for num, label in STEPS:
+            if num < current_step:
+                icon = "✅"
+                cls = "done"
+                hint = ""
+            elif num == current_step:
+                icon = "⏳"
+                cls = "active"
+                hints = CAMERA_HINT if camera_mode else STEP_HINTS
+                hint_text = hints.get(num, "")
+                hint = f'<div class="step-hint">⏱ {hint_text}</div>' if hint_text else ""
+            else:
+                icon = "⬜"
+                cls = "pending"
+                hint = ""
+
+            steps_html += f'''            <li class="step">
+                <span class="step-icon">{icon}</span>
+                <div class="step-body">
+                    <div class="step-label {cls}">{num}/7 &nbsp; {label}</div>
+                    {hint}
+                </div>
+            </li>\n'''
+
+        if current_step == 0:
+            footer = "Starting..."
+            refresh_tag = '<meta http-equiv="refresh" content="3">'
+        elif current_step >= 7:
+            footer = "Finishing up..."
+            refresh_tag = '<meta http-equiv="refresh" content="2">'
+        else:
+            footer = "Page refreshes every 3 seconds."
+            refresh_tag = '<meta http-equiv="refresh" content="3">'
 
         body = HTML_PAGE.format(
             refresh_tag=refresh_tag,
-            status=status_html,
-            hint=hint
+            steps_html=steps_html,
+            footer=footer
         ).encode('utf-8')
 
         self.send_response(200)
@@ -203,10 +293,13 @@ PYEOF
 }
 
 update_progress() {
-    # Update the progress-page status. %b lets callers pass \n for a
-    # second line, which the page's Python side turns into <br>.
-    printf '%b\n' "$*" > "$PROGRESS_FILE"
-    log "$*"
+    local step="$1"
+    local message="$2"
+    {
+        echo "STEP:${step}"
+        [[ "$INSTALL_CAMERA" == "yes" ]] && echo "CAMERA:yes" || true
+    } > "$PROGRESS_FILE"
+    log "Step ${step}/7: ${message}"
 }
 
 stop_progress_server() {
@@ -240,10 +333,30 @@ log "============================================================"
 log "Device: $(tr -d '\0' </proc/device-tree/model 2>/dev/null || echo unknown)"
 log "OS: $(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown}")"
 
+# Read user options from bootfs if present
+for OPTIONS_PATH in /boot/firmware/meshcenter-options /boot/meshcenter-options; do
+    if [[ -f "$OPTIONS_PATH" ]]; then
+        log "Reading options from $OPTIONS_PATH"
+        # shellcheck source=/dev/null
+        source "$OPTIONS_PATH"
+        break
+    fi
+done
+
+# Auto-detect camera if not explicitly set
+if [[ "$INSTALL_CAMERA" == "no" ]]; then
+    if vcgencmd get_camera 2>/dev/null | grep -q "detected=1"; then
+        log "Camera detected via vcgencmd — enabling camera support"
+        INSTALL_CAMERA=yes
+    fi
+fi
+
+log "Camera support: $INSTALL_CAMERA"
+
 # ---------------------------------------------------------------------------
 # 1. Resolve the normal user created by Raspberry Pi Imager
 # ---------------------------------------------------------------------------
-update_progress "Step 1/7: Preparing system..."
+update_progress 1 "Preparing system"
 
 TARGET_USER=""
 TARGET_HOME=""
@@ -308,7 +421,7 @@ log "Internet access is available."
 # ---------------------------------------------------------------------------
 # 4. Install system packages required by MeshCenter
 # ---------------------------------------------------------------------------
-update_progress "Step 2/7: Installing system packages..."
+update_progress 2 "Installing system packages"
 
 log "Installing MeshCenter system dependencies..."
 
@@ -329,15 +442,21 @@ systemctl start avahi-daemon || true
 
 # Picamera2 is optional. Install it before creating the venv so
 # --system-site-packages can expose it inside MeshCenter's environment.
-if apt-cache show python3-picamera2 >/dev/null 2>&1; then
-    log "Installing optional Raspberry Pi camera packages..."
-    wait_for_apt_lock
-    apt-get install -y --no-install-recommends \
-        python3-picamera2 \
-        rpicam-apps \
-        || log "WARNING: camera packages could not be installed; continuing without camera support."
+if [[ "$INSTALL_CAMERA" == "yes" ]]; then
+    log "Installing camera packages (python3-picamera2 + rpicam-apps)..."
+    log "Note: this step can take up to 90 min on Pi Zero 2W"
+    if apt-cache show python3-picamera2 >/dev/null 2>&1; then
+        wait_for_apt_lock
+        apt-get install -y --no-install-recommends \
+            python3-picamera2 \
+            rpicam-apps \
+            || log "WARNING: camera packages could not be installed; continuing without camera support."
+    else
+        log "WARNING: python3-picamera2 not available in this repository."
+    fi
 else
-    log "WARNING: python3-picamera2 is not available in this image/repository."
+    log "Camera support skipped (INSTALL_CAMERA=no)"
+    log "To enable: create meshcenter-options on bootfs with INSTALL_CAMERA=yes"
 fi
 
 # Add the normal user to useful hardware groups that actually exist.
@@ -352,7 +471,7 @@ log "System dependencies installed."
 # ---------------------------------------------------------------------------
 # 5. Clone MeshCenter
 # ---------------------------------------------------------------------------
-update_progress "Step 3/7: Downloading MeshCenter..."
+update_progress 3 "Downloading MeshCenter"
 
 if [[ -e "$INSTALL_DIR" ]]; then
     fail "$INSTALL_DIR already exists. Refusing to overwrite an existing installation."
@@ -369,7 +488,7 @@ log "MeshCenter repository cloned."
 # ---------------------------------------------------------------------------
 # 6. Create Python virtual environment and install requirements
 # ---------------------------------------------------------------------------
-update_progress "Step 4/7: Installing Python dependencies...\n(longest step — up to 5 min on Pi Zero 2W)"
+update_progress 4 "Installing Python dependencies"
 
 log "Creating Python virtual environment..."
 
@@ -406,7 +525,7 @@ lsusb || true
 #   Do not blindly assume /dev/ttyACM0. Probe every ACM/USB serial candidate
 #   and accept it only if Meshtastic CLI returns a valid local identity.
 # ---------------------------------------------------------------------------
-update_progress "Step 5/7: Waiting for Meshtastic radio...\n(waiting up to 3 min — plug in your device now if not connected)"
+update_progress 5 "Waiting for Meshtastic radio"
 
 log "Waiting for a Meshtastic serial device..."
 
@@ -548,7 +667,7 @@ log "  Hardware:   ${HW_MODEL:-unknown}"
 # The repository file stays untouched and generic.
 # Only the newly created config.py receives installation-specific values.
 # ---------------------------------------------------------------------------
-update_progress "Step 6/7: Configuring MeshCenter..."
+update_progress 6 "Configuring MeshCenter"
 
 TEMPLATE_CONFIG="$INSTALL_DIR/config.example.py"
 LIVE_CONFIG="$INSTALL_DIR/config.py"
@@ -670,7 +789,7 @@ chown -R "$TARGET_USER:$TARGET_USER" "$INSTALL_DIR/data"
 # ---------------------------------------------------------------------------
 # 9. Install sudoers files and systemd service from repository templates
 # ---------------------------------------------------------------------------
-update_progress "Step 7/7: Starting MeshCenter service..."
+update_progress 7 "Starting service"
 
 log "Installing MeshCenter system service..."
 
@@ -788,7 +907,7 @@ log "mDNS:       http://${HOST_NAME}.local:${APP_PORT}"
 log "Log:        $LOG_FILE"
 log "============================================================"
 
-update_progress "✅ Installation complete!\nOpening MeshCenter..."
+update_progress 7 "Installation complete"
 stop_progress_server
 
 exit 0

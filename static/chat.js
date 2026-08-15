@@ -9237,9 +9237,14 @@ const Workspace = {
 
     applyTheme() {
         const resolvedTheme = this.resolveTheme();
+        const themeChanged = document.documentElement.dataset.theme !== resolvedTheme;
         document.documentElement.dataset.theme = resolvedTheme;
         document.documentElement.dataset.themePreference = this.state.theme;
         document.documentElement.style.colorScheme = resolvedTheme;
+        // Chart.js bakes axis/grid/legend/tooltip colors in at creation
+        // time, so a live theme switch needs an explicit rebuild of any
+        // currently-open telemetry chart.
+        if (themeChanged) _refreshTelemetryChartOnThemeChange();
     },
 
     apply() {
@@ -10592,6 +10597,17 @@ function telemetryRecordHasType(record, type) {
         .some(value => value !== null && value !== undefined && Number.isFinite(Number(value)));
 }
 
+// Called from Workspace.applyTheme() when the resolved theme actually
+// changes. Re-reads the currently open telemetry modal's type/range
+// instead of caching state, so it stays correct even if the user changed
+// range/series selection since the chart was first drawn.
+function _refreshTelemetryChartOnThemeChange() {
+    if (!telemetryChart) return;
+    const modal = document.getElementById('telemetryModal');
+    const type = modal?.dataset.type;
+    if (type) renderTelemetryWithRange(type, telemetryTimeRange);
+}
+
 function renderTelemetryWithRange(type, minutes) {
     const container = document.getElementById('telemetryChartContainer');
     const recordsCount = document.getElementById('telemetryRecordsCount');
@@ -10633,6 +10649,13 @@ function renderTelemetryChart(container, records, type) {
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
+
+    // Dark theme: only axis/grid/legend/tooltip chrome changes here - the
+    // per-series line/fill colors (SENSOR_COLORS/SENSOR_BG_COLORS) already
+    // work on a dark background and are left untouched.
+    const isDark = document.documentElement.dataset.theme === 'dark';
+    const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+    const tickColor = isDark ? '#a0aec0' : '#666';
 
     const labels = records.map(r => {
         const t = new Date(r.timestamp * 1000);
@@ -10760,14 +10783,14 @@ function renderTelemetryChart(container, records, type) {
 
     let yConfig = {
         position: 'left',
-        grid: { color: 'rgba(0,0,0,0.08)', drawBorder: true },
-        ticks: { font: { size: 9 }, color: '#666' }
+        grid: { color: gridColor, drawBorder: true },
+        ticks: { font: { size: 9 }, color: tickColor }
     };
 
     let y1Config = {
         position: 'right',
         grid: { drawOnChartArea: false, drawBorder: true },
-        ticks: { font: { size: 9 }, color: '#666' }
+        ticks: { font: { size: 9 }, color: tickColor }
     };
 
     let y2Config = {
@@ -10776,7 +10799,7 @@ function renderTelemetryChart(container, records, type) {
         grid: { drawOnChartArea: false, drawBorder: true },
         ticks: {
             font: { size: 9 },
-            color: '#666',
+            color: tickColor,
             callback: value => value.toFixed(1)
         }
     };
@@ -10826,13 +10849,13 @@ function renderTelemetryChart(container, records, type) {
                 plugins: {
                     legend: {
                         position: 'top',
-                        labels: { usePointStyle: true, padding: 15, font: { size: 11 }, color: '#333' }
+                        labels: { usePointStyle: true, padding: 15, font: { size: 11 }, color: isDark ? '#cbd5e0' : '#333' }
                     },
                     tooltip: {
-                        backgroundColor: 'rgba(255,255,255,0.95)',
-                        titleColor: '#333',
-                        bodyColor: '#666',
-                        borderColor: 'rgba(0,0,0,0.1)',
+                        backgroundColor: isDark ? '#0f1923' : 'rgba(255,255,255,0.95)',
+                        titleColor: isDark ? '#e2e8f0' : '#333',
+                        bodyColor: isDark ? '#cbd5e0' : '#666',
+                        borderColor: isDark ? '#263c52' : 'rgba(0,0,0,0.1)',
                         borderWidth: 1,
                         callbacks: {
                             title: function(context) {
@@ -10861,8 +10884,8 @@ function renderTelemetryChart(container, records, type) {
                 },
                 scales: {
                     x: {
-                        grid: { color: 'rgba(0,0,0,0.06)', drawBorder: true },
-                        ticks: { maxTicksLimit: 20, font: { size: 9 }, color: '#666' }
+                        grid: { color: gridColor, drawBorder: true },
+                        ticks: { maxTicksLimit: 20, font: { size: 9 }, color: tickColor }
                     },
                     y: yConfig,
                     y1: y1Config,

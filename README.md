@@ -1579,11 +1579,14 @@ The browser never communicates directly with the Meshtastic node. All communicat
 
 ## Data Storage
 
-MeshCenter intentionally avoids using an SQL database.
+MeshCenter intentionally avoids an SQL database for almost everything.
 
-Instead, all application data is stored as JSON files.
+Nearly all application data is stored as JSON files. Waypoints are the one
+exception: they're stored in a per-profile SQLite database
+(`waypoints.db`), since querying/filtering a growing waypoint set fits a
+real database better than a flat JSON file - everything else stays JSON.
 
-**Advantages of this approach:**
+**Advantages of the JSON-first approach:**
 
 - No database server required
 - Easy backups
@@ -1602,11 +1605,10 @@ deleted_dm.json
 sensors.json
 settings.json
 camera_config.json
+waypoints.db
 node_icons/
 screenshots/
 ```
-
-Future versions may optionally support SQLite for installations with very large datasets, but JSON storage will remain the default.
 
 ---
 

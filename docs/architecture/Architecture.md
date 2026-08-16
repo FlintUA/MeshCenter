@@ -33,7 +33,7 @@ The architecture follows several principles.
 ```
                     Browser
                        │
-                 HTTP / WebSocket
+              HTTP (fetch + polling)
                        │
                 ┌───────────────┐
                 │ Flask Backend │

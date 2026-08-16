@@ -64,11 +64,22 @@ frames into self._last_frame (mirroring camera.py's existing
 get_camera_frame()/last_frame pattern for the CSI driver).
 stream_mjpeg() (possibly several concurrent viewers) and capture_photo()
 both just read that buffered frame - neither ever touches stream_off or
-reopens the device during normal operation. The device is only actually
-closed on an explicit stop() or a genuine resolution change, both of
-which still use STOP_START_SETTLE_SECONDS as a precaution, but those are
-now rare, deliberate operations instead of something every photo capture
-triggered.
+reopens the device on every single operation, unlike the first version
+of this file. The device is closed on an explicit stop(), a genuine
+resolution change, or the idle watchdog (see IDLE_STOP_SECONDS) - all
+three still use STOP_START_SETTLE_SECONDS as a precaution, but these are
+deliberately rare/debounced operations rather than something every photo
+capture or tab switch triggers.
+
+IDLE_STOP_SECONDS exists because the persistent thread above has a real,
+measured cost: confirmed live that it burns ~100-130% of one CPU core
+continuously on a Pi 4B+ (software YUYV->JPEG path) for as long as it's
+running, regardless of whether anything is actually consuming
+stream_mjpeg() - the frontend leaving the Camera tab doesn't stop it
+(stopVideoFeed() is purely client-side, no backend call). The idle
+watchdog trades back some of the max-robustness-to-disconnect stance
+above for CPU/power savings, but only after a genuinely extended idle
+period (not on every tab switch) - see the constant's own comment.
 """
 
 from __future__ import annotations
@@ -109,6 +120,21 @@ YUYV_JPEG_QUALITY = 80
 # How long capture_photo() waits for the background reader thread to
 # deliver a first frame on a cold start, before giving up.
 FIRST_FRAME_TIMEOUT_SECONDS = 3.0
+
+# How long with zero active stream_mjpeg() consumers before the idle
+# watchdog stops the reader thread and releases the device, trading the
+# persistent-thread design's max-robustness-to-disconnect stance for
+# CPU/power savings (confirmed live: the background reader thread alone
+# costs ~100-130% of one CPU core continuously on a Pi 4B+ running the
+# YUYV software-encode path, whether or not anyone's actually watching -
+# see the project's usb-camera-plan notes). Deliberately NOT instant:
+# leaving the Camera tab and coming back within this window (ordinary
+# tab-switching) never triggers a stop/reopen cycle - only a genuinely
+# extended idle period does, keeping real stop()/start() cycles rare
+# rather than something every tab switch does, which is what this
+# module's persistent-thread design exists to avoid in the first place
+# (see the module docstring's E3500 fragility findings).
+IDLE_STOP_SECONDS = 60
 
 # Frame sizes this exact camera (Logitech QuickCam E 3500) was confirmed to
 # support live via Device.info.frame_sizes() on camtest. Used as a fallback
@@ -304,6 +330,7 @@ class UsbCameraDriver(CameraDriver):
         self._pixel_format: str | None = None
         self._stream_generation = 0
         self._reader_thread: threading.Thread | None = None
+        self._idle_watchdog_thread: threading.Thread | None = None
 
         # Populated by _reader_loop(), read by stream_mjpeg()/capture_photo().
         # Separate from self._lock (which guards start/stop control flow)
@@ -312,6 +339,13 @@ class UsbCameraDriver(CameraDriver):
         self._frame_lock = threading.Lock()
         self._last_frame: bytes | None = None
         self._last_frame_time = 0.0
+
+        # Tracks active stream_mjpeg() consumers for the idle watchdog (see
+        # IDLE_STOP_SECONDS) - separate lock from _frame_lock since this is
+        # consumer bookkeeping, not frame data.
+        self._activity_lock = threading.Lock()
+        self._active_consumers = 0
+        self._last_activity_time = 0.0
 
     # ------------------------------------------------------------
     # DeviceDriver
@@ -412,6 +446,17 @@ class UsbCameraDriver(CameraDriver):
                 )
                 self._reader_thread.start()
 
+                with self._activity_lock:
+                    self._active_consumers = 0
+                    self._last_activity_time = time.time()
+                self._idle_watchdog_thread = threading.Thread(
+                    target=self._idle_watchdog_loop,
+                    args=(generation,),
+                    name=f"usb-camera-idle-watchdog-{generation}",
+                    daemon=True,
+                )
+                self._idle_watchdog_thread.start()
+
                 print(
                     f"[USB CAMERA] Started {self.dev_path} ({self._model}) "
                     f"at {self._resolution} {self._pixel_format}",
@@ -431,10 +476,12 @@ class UsbCameraDriver(CameraDriver):
 
     def stop(self) -> None:
         with self._lock:
-            self._stream_generation += 1  # tells _reader_loop() to exit
+            self._stream_generation += 1  # tells _reader_loop()/watchdog to exit
             self._started = False
             thread = self._reader_thread
             self._reader_thread = None
+            watchdog = self._idle_watchdog_thread
+            self._idle_watchdog_thread = None
             device = self._device
             self._device = None
 
@@ -444,6 +491,17 @@ class UsbCameraDriver(CameraDriver):
         # for no reason.
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
+
+        # The idle watchdog itself can be the one calling stop() (see
+        # _idle_watchdog_loop()) - joining it from within itself would
+        # deadlock, so only join when some other thread is doing the
+        # stopping (an explicit /api/camera/power off, a driver switch, ...).
+        if (
+            watchdog is not None
+            and watchdog.is_alive()
+            and threading.current_thread() is not watchdog
+        ):
+            watchdog.join(timeout=2.0)
 
         if device is not None:
             self._stream_off_safe(device)
@@ -479,28 +537,39 @@ class UsbCameraDriver(CameraDriver):
             print("[USB CAMERA] Cannot start for streaming", flush=True)
             return
 
-        my_generation = self._stream_generation
-        frame_interval = 1.0 / max(1, self._fps)
-        last_sent_time = 0.0
-        last_frame_time_seen = 0.0
+        with self._activity_lock:
+            self._active_consumers += 1
+        try:
+            my_generation = self._stream_generation
+            frame_interval = 1.0 / max(1, self._fps)
+            last_sent_time = 0.0
+            last_frame_time_seen = 0.0
 
-        while my_generation == self._stream_generation:
-            now = time.time()
-            if now - last_sent_time < frame_interval:
-                time.sleep(0.01)
-                continue
+            while my_generation == self._stream_generation:
+                now = time.time()
+                if now - last_sent_time < frame_interval:
+                    time.sleep(0.01)
+                    continue
 
-            with self._frame_lock:
-                data = self._last_frame
-                frame_time = self._last_frame_time
+                with self._frame_lock:
+                    data = self._last_frame
+                    frame_time = self._last_frame_time
 
-            if not data or frame_time == last_frame_time_seen:
-                time.sleep(0.01)
-                continue
+                if not data or frame_time == last_frame_time_seen:
+                    time.sleep(0.01)
+                    continue
 
-            yield data
-            last_sent_time = now
-            last_frame_time_seen = frame_time
+                yield data
+                last_sent_time = now
+                last_frame_time_seen = frame_time
+        finally:
+            # Only the last consumer to leave starts the idle clock - see
+            # _idle_watchdog_loop(). Reader thread keeps running regardless
+            # of consumer count; this only decides when it's OK to stop it.
+            with self._activity_lock:
+                self._active_consumers = max(0, self._active_consumers - 1)
+                if self._active_consumers == 0:
+                    self._last_activity_time = time.time()
 
     def capture_photo(self, resolution: str | None = None) -> bytes:
         with self._lock:
@@ -510,6 +579,13 @@ class UsbCameraDriver(CameraDriver):
             elif not self._started:
                 if not self.start():
                     return b""
+
+        # Counts as activity even though it's not an open stream_mjpeg()
+        # consumer - a burst of standalone photo captures shouldn't get
+        # idle-stopped between shots (see _idle_watchdog_loop()).
+        with self._activity_lock:
+            if self._active_consumers == 0:
+                self._last_activity_time = time.time()
 
         # Wait for the background reader thread to deliver a frame,
         # outside self._lock so start()/stop() aren't blocked by this
@@ -630,6 +706,33 @@ class UsbCameraDriver(CameraDriver):
         except Exception as error:
             if generation == self._stream_generation:
                 print(f"[USB CAMERA] Reader thread error: {error}", flush=True)
+
+    def _idle_watchdog_loop(self, generation: int) -> None:
+        """Stops the reader thread (and releases the device) after
+        IDLE_STOP_SECONDS with zero active stream_mjpeg() consumers - see
+        that constant's own comment for the CPU/power tradeoff this makes.
+        Runs on its own thread, separate from _reader_thread, specifically
+        so it can call self.stop() without a self-join deadlock (stop()
+        checks for that explicitly too, as a second guard)."""
+        while generation == self._stream_generation:
+            time.sleep(5)
+            if generation != self._stream_generation:
+                break
+
+            with self._activity_lock:
+                if self._active_consumers > 0:
+                    idle_seconds = 0.0
+                else:
+                    idle_seconds = time.time() - self._last_activity_time
+
+            if idle_seconds >= IDLE_STOP_SECONDS:
+                print(
+                    f"[USB CAMERA] Idle for {idle_seconds:.0f}s with no "
+                    "active viewers - stopping to save CPU/power",
+                    flush=True,
+                )
+                self.stop()
+                break
 
     @staticmethod
     def _stream_off_safe(device) -> None:

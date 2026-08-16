@@ -381,7 +381,11 @@ def init_camera():
 
 
 def stop_camera():
-    """Safely stop camera and invalidate old MJPEG generators."""
+    """Halt the capture pipeline but keep the Picamera2 object itself
+    alive - used internally by switch_camera_mode() and the photo-retry
+    paths, both of which need to reconfigure/retry on the same picam2
+    instance right after calling this. Use close_camera() instead when
+    the device should be fully released (e.g. camera powered off)."""
     global camera_started, CAMERA_ACTIVE
     global stream_generation, last_frame, last_frame_time
 
@@ -400,6 +404,28 @@ def stop_camera():
         last_frame_time = 0
 
         return True
+
+
+def close_camera():
+    """Fully release the camera: stop the pipeline, close() the
+    Picamera2 object, and drop the reference. Restores the behavior
+    api_camera.py's close_camera_device() used to implement inline
+    before the camera_manager cutover - CsiCameraDriver.stop() calls
+    this (not stop_camera()) so powering the camera off actually frees
+    the underlying resource instead of just halting capture."""
+    global picam2, CAMERA_AVAILABLE
+
+    stop_camera()
+
+    with camera_lock:
+        if picam2 is not None:
+            try:
+                picam2.close()
+                print("[CAMERA] Closed", flush=True)
+            except Exception as e:
+                print(f"[CAMERA] Close error: {e}", flush=True)
+            picam2 = None
+        CAMERA_AVAILABLE = False
 
 
 def switch_camera_mode(mode, resolution=None, fps=None):

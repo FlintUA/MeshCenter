@@ -89,7 +89,13 @@ class CsiCameraDriver(CameraDriver):
         return camera_module.switch_camera_mode("video", resolution=target_resolution, fps=target_fps)
 
     def stop(self) -> None:
-        camera_module.stop_camera()
+        # close_camera(), not stop_camera(): CameraDriver.stop() means
+        # "fully release the device" (matching UsbCameraDriver.stop(),
+        # which does close its device) - stop_camera() alone only halts
+        # the pipeline and leaves picam2 open, which used to be a real
+        # regression here after the camera_manager cutover (the pre-cutover
+        # close_camera_device() called picam2.close() itself inline).
+        camera_module.close_camera()
 
     def get_status(self) -> dict[str, Any]:
         status = camera_module.get_camera_status()

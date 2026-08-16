@@ -14211,6 +14211,58 @@ body[data-theme="dark"] .waypoint-action-toast.error {
     border-color: #263c52;
 }
 
+/* Telemetry modal shell background. .modal-overlay.telemetry-modal
+   .modal-content (~line 1810) hardcodes background:#ffffff unconditionally
+   at specificity (0,3,0), which beats the generic
+   [data-theme="dark"] .modal-content rule (0,2,0) - so that generic dark
+   override never actually applied to this modal. Out-specified here
+   ((0,4,0): one attribute + three classes) instead of touching the
+   light-mode rule or the shared .modal-content rule other modals use.
+   .modal-header / .modal-header span / .modal-close already have correct
+   dark-theme text colors (confirmed via computed styles) - they just
+   needed an actually-dark parent background to be visible against;
+   nothing else to change there.
+   Verified live via DevTools computed styles on the dev node before and
+   after: modal bg was rgb(255,255,255) unconditionally, is now
+   rgb(27,45,64) in dark theme, and header/close text (already
+   rgb(244,248,252)/rgb(169,190,209)) reads correctly against it. */
+[data-theme="dark"] .modal-overlay.telemetry-modal .modal-content {
+    background: #1b2d40;
+}
+
+/* .telemetry-time-controls .time-btn is NOT touched here - verified live
+   via DevTools that it already renders dark/theme-aware colors
+   (computed background rgb(22,34,49) = var(--mc-bg-subtle), text
+   rgb(195,209,223) = var(--mc-text-secondary)) from a rule in
+   static/ui-kit.css (`.time-btn, .cpu-range-btn, .telemetry-time-controls
+   .time-btn`), which loads after this file and ties this file's
+   .time-btn rule on specificity, so it already wins the cascade. Its
+   :hover/.active variants are covered by the same ui-kit.css rule set and
+   already look correct too - nothing here would improve on it, and
+   duplicating it would just be two sources of truth for the same colors.
+
+   .telemetry-export-btn and .telemetry-records-count have no such
+   coverage anywhere (verified: still rendering their unconditional
+   light-mode white background / #888 text), so those genuinely need
+   dark-theme rules. Reused this codebase's existing "secondary button on
+   dark" colors (#263b50/#dbe8f5/#415a72, #304a62 hover - see
+   [data-theme="dark"] .modal-action-btn:not(.danger) a few lines up)
+   instead of inventing new ones, for consistency with every other
+   secondary button already dark-themed in this file. */
+[data-theme="dark"] .telemetry-export-btn {
+    background: #263b50;
+    color: #dbe8f5;
+    border-color: #415a72;
+}
+[data-theme="dark"] .telemetry-export-btn:hover {
+    background: #304a62;
+    color: #dbe8f5;
+    border-color: #415a72;
+}
+[data-theme="dark"] .telemetry-records-count {
+    color: #9eb3c8;
+}
+
 /* Custom telemetry export dialog (openCustomTelemetryExport(),
    static/chat.js) - a separate overlay from .modal-overlay/.modal-content
    (custom-export-*/export-* classes), so it isn't covered by the

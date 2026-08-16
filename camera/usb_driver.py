@@ -1,17 +1,36 @@
-"""USB/UVC camera driver — raw V4L2 via linuxpy, MJPEG passthrough.
+"""USB/UVC camera driver — raw V4L2 via linuxpy, MJPEG passthrough with a
+YUYV software-encode fallback for cameras that don't offer MJPEG at all.
 
-Confirmed hardware (camtest, Raspberry Pi 3B+, 192.168.2.107,
-2026-08-08): Logitech QuickCam E 3500, USB id 046d:09a4, at /dev/video0
-(/dev/video1 is its paired metadata node, not a capture device). Native
-MJPEG at 160x120, 176x144, 320x240, 352x288, 640x480 - verified live via
-Device.info.frame_sizes().
+Confirmed hardware:
+- camtest, Raspberry Pi 3B+, 192.168.2.107, 2026-08-08: Logitech QuickCam
+  E 3500, USB id 046d:09a4, at /dev/video0 (/dev/video1 is its paired
+  metadata node, not a capture device). Native MJPEG at 160x120, 176x144,
+  320x240, 352x288, 640x480 - verified live via Device.info.frame_sizes().
+- camtest, board swapped to a Raspberry Pi 4B+, 2026-08-16: Microsoft
+  USB3.0 HD CAMERA, USB id 045e:8888. `v4l2-ctl --list-formats-ext`
+  confirmed this camera has **no MJPEG at all** - only YUYV, at
+  1920x1080@30fps and 1280x720@60fps (no smaller sizes exist for it).
 
-No decode/re-encode happens here: the camera already produces MJPEG in
-hardware, so each frame linuxpy hands back (confirmed to start with the
-JPEG SOI marker 0xFFD8) is forwarded to CameraDriver.stream_mjpeg()
-unmodified. This is the "MJPEG passthrough" half of the plan - contrast
-with csi_driver.py, which has to decode a raw sensor frame and re-encode
-it via PIL because Picamera2 has no native MJPEG capture path.
+For an MJPEG-capable camera, no decode/re-encode happens: the camera
+already produces MJPEG in hardware, so each frame linuxpy hands back
+(confirmed to start with the JPEG SOI marker 0xFFD8) is forwarded to
+CameraDriver.stream_mjpeg() unmodified - this is the "MJPEG passthrough"
+half of the plan, contrasting with csi_driver.py, which always has to
+decode+re-encode via PIL because Picamera2 has no native MJPEG capture
+path.
+
+For a YUYV-only camera, this driver decodes+re-encodes in software
+itself (see _yuyv_to_rgb()/_reader_loop_yuyv()) rather than relying on
+Picamera2/libcamera's uvcvideo pipeline handler to do it - confirmed
+live that handler doesn't actually work for this: requesting RGB888,
+BGR888, YUV420, or XRGB8888 from Picamera2 for a YUYV-only uvcvideo
+camera all silently return the same raw 2-channel (H, W, 2) buffer
+regardless of what format was asked for (no ISP/conversion behind that
+pipeline handler, unlike bcm2835-isp for real CSI sensors) - so
+camera_manager.py's build_camera_manager() deliberately does NOT let a
+YUYV-only camera register through csi_driver.py even when Picamera2 can
+see it (see that file's dedup logic) - it always comes through here
+instead, where the conversion is actually implemented.
 
 Uses `linuxpy.video.device` directly, not the `v4l2py` package - v4l2py
 3.0 is just a deprecated compatibility shim ("v4l2py is no longer being
@@ -55,11 +74,14 @@ triggered.
 from __future__ import annotations
 
 import glob
+import io
 import os
 import re
 import threading
 import time
 from typing import Any, Iterator
+
+from PIL import Image
 
 from camera.camera_driver import CameraDriver
 
@@ -68,6 +90,21 @@ from camera.camera_driver import CameraDriver
 # now by stop()+start() and genuine resolution changes, not by every
 # capture_photo() call.
 STOP_START_SETTLE_SECONDS = 0.5
+
+# Conservative fps cap for the software YUYV->JPEG path (see
+# _reader_loop_yuyv()). Benchmarked live on the Microsoft USB3.0 HD CAMERA
+# hardware (a Pi 4B+, 4 cores): decode+re-encode alone averages ~100ms/frame
+# at 1280x720 (~10fps ceiling on a single core) and ~240ms/frame at
+# 1920x1080 (~4fps) - far below the camera's own advertised 30/60fps rates,
+# which only describe raw YUYV capture, not producing a JPEG frame from it.
+# MJPEG-capable cameras (pure passthrough, no conversion cost) aren't
+# affected by this cap.
+YUYV_MAX_FPS = 10
+
+# JPEG quality used when re-encoding a software-converted YUYV frame -
+# separate from any camera-side quality setting since there isn't one for
+# this path (the camera never encodes anything itself).
+YUYV_JPEG_QUALITY = 80
 
 # How long capture_photo() waits for the background reader thread to
 # deliver a first frame on a cold start, before giving up.
@@ -81,6 +118,74 @@ CONFIRMED_RESOLUTIONS = ["160x120", "176x144", "320x240", "352x288", "640x480"]
 
 DEFAULT_RESOLUTION = "640x480"
 DEFAULT_FPS = 30
+
+
+def _probe_pixel_formats(device) -> set[str]:
+    """Pixel format names (e.g. {"YUYV"} or {"MJPEG", "YUYV"}) this
+    already-open device's frame_sizes() advertises. Used both to decide
+    MJPEG-passthrough vs. YUYV-software-encode in _apply_format(), and by
+    camera_manager.py's build_camera_manager() to decide whether a camera
+    Picamera2 also sees via uvcvideo actually has a working CSI path
+    (MJPEG only - see this module's docstring for why YUYV doesn't work
+    there)."""
+    try:
+        return {frame_size.pixel_format.name for frame_size in device.info.frame_sizes()}
+    except Exception:
+        return set()
+
+
+def _yuyv_to_rgb(data: bytes, width: int, height: int):
+    """Decode a raw YUYV (YUY2) 4:2:2 packed frame into an (H, W, 3) RGB
+    uint8 array - vectorized with numpy (no per-pixel Python loop) since
+    this runs once per frame on the reader thread. Standard BT.601
+    limited-range coefficients, same ones ffmpeg/most V4L2 tooling use.
+
+    Byte layout per pixel pair: Y0 U Y1 V (U/V shared between the pair).
+    """
+    import numpy as np
+
+    yuyv = np.frombuffer(data, dtype=np.uint8).reshape(height, width // 2, 4).astype(np.int32)
+    y0 = yuyv[..., 0]
+    u = yuyv[..., 1] - 128
+    y1 = yuyv[..., 2]
+    v = yuyv[..., 3] - 128
+
+    def _yuv_to_rgb(y, u, v):
+        c = y - 16
+        r = (298 * c + 409 * v + 128) >> 8
+        g = (298 * c - 100 * u - 208 * v + 128) >> 8
+        b = (298 * c + 516 * u + 128) >> 8
+        return np.clip(r, 0, 255), np.clip(g, 0, 255), np.clip(b, 0, 255)
+
+    r0, g0, b0 = _yuv_to_rgb(y0, u, v)
+    r1, g1, b1 = _yuv_to_rgb(y1, u, v)
+
+    rgb = np.empty((height, width, 3), dtype=np.uint8)
+    rgb[:, 0::2, 0], rgb[:, 0::2, 1], rgb[:, 0::2, 2] = r0, g0, b0
+    rgb[:, 1::2, 0], rgb[:, 1::2, 1], rgb[:, 1::2, 2] = r1, g1, b1
+    return rgb
+
+
+def _sizes_for_pixel_format(device, format_name: str) -> list[tuple[int, int]]:
+    """(width, height) tuples this already-open device advertises for one
+    pixel format, sorted smallest-first."""
+    try:
+        from linuxpy.video.device import PixelFormat
+
+        target = PixelFormat[format_name]
+    except (ImportError, KeyError):
+        return []
+
+    sizes: set[tuple[int, int]] = set()
+    for frame_size in device.info.frame_sizes():
+        if frame_size.pixel_format != target:
+            continue
+        info = frame_size.info
+        width = getattr(info, "width", None)
+        height = getattr(info, "height", None)
+        if width and height:
+            sizes.add((width, height))
+    return sorted(sizes, key=lambda wh: wh[0] * wh[1])
 
 
 def _read_sys_text(path: str) -> str:
@@ -157,6 +262,7 @@ def discover_usb_cameras() -> list[dict[str, Any]]:
                 if Capability.VIDEO_CAPTURE not in caps:
                     continue
                 card_name = str(device.info.card or "").strip()
+                formats = _probe_pixel_formats(device)
             finally:
                 device.close()
         except Exception as error:
@@ -168,6 +274,7 @@ def discover_usb_cameras() -> list[dict[str, Any]]:
             "card": card_name,
             "vendor_id": vendor_id,
             "product_id": product_id,
+            "formats": formats,
         })
     return found
 
@@ -191,6 +298,10 @@ class UsbCameraDriver(CameraDriver):
         self._model = card_name or ""
         self._resolution = DEFAULT_RESOLUTION
         self._fps = DEFAULT_FPS
+        # Set by _apply_format() once a device is actually opened - "MJPG"
+        # (passthrough) or "YUYV" (software encode, see _reader_loop_yuyv()).
+        # None until the first successful start().
+        self._pixel_format: str | None = None
         self._stream_generation = 0
         self._reader_thread: threading.Thread | None = None
 
@@ -278,16 +389,23 @@ class UsbCameraDriver(CameraDriver):
                     self._device = None
                     return False
 
-                self._resolution = target_resolution
-                self._fps = target_fps
+                # _apply_format() sets self._resolution/self._fps/self._pixel_format
+                # itself, since for a YUYV-only camera the actually-negotiated
+                # values can differ from what was requested (e.g. this camera
+                # has no 640x480 YUYV mode at all - see that method).
                 self._started = True
                 self._stream_generation += 1
                 self._last_frame = None
                 self._last_frame_time = 0.0
 
                 generation = self._stream_generation
+                reader_target = (
+                    self._reader_loop_yuyv
+                    if self._pixel_format == "YUYV"
+                    else self._reader_loop_mjpeg
+                )
                 self._reader_thread = threading.Thread(
-                    target=self._reader_loop,
+                    target=reader_target,
                     args=(self._device, generation),
                     name=f"usb-camera-reader-{generation}",
                     daemon=True,
@@ -296,7 +414,7 @@ class UsbCameraDriver(CameraDriver):
 
                 print(
                     f"[USB CAMERA] Started {self.dev_path} ({self._model}) "
-                    f"at {self._resolution} MJPEG",
+                    f"at {self._resolution} {self._pixel_format}",
                     flush=True,
                 )
                 return True
@@ -348,6 +466,7 @@ class UsbCameraDriver(CameraDriver):
             "dev_path": self.dev_path,
             "resolution": self._resolution,
             "fps": self._fps,
+            "pixel_format": self._pixel_format,
             "last_frame_age_seconds": frame_age,
         }
 
@@ -415,11 +534,12 @@ class UsbCameraDriver(CameraDriver):
     # Internal helpers
     # ------------------------------------------------------------
 
-    def _reader_loop(self, device, generation: int) -> None:
+    def _reader_loop_mjpeg(self, device, generation: int) -> None:
         """Runs on a background thread for the lifetime of one start()
         cycle - reads frames as fast as the camera produces them and
         stashes the latest one, so stream_mjpeg()/capture_photo() never
-        have to touch the device directly."""
+        have to touch the device directly. Pure passthrough: no decode/
+        re-encode, see this module's docstring."""
         warned_bad_format = False
         try:
             for frame in device:
@@ -458,6 +578,59 @@ class UsbCameraDriver(CameraDriver):
             if generation == self._stream_generation:
                 print(f"[USB CAMERA] Reader thread error: {error}", flush=True)
 
+    def _reader_loop_yuyv(self, device, generation: int) -> None:
+        """Software fallback for cameras with no MJPEG at all (see this
+        module's docstring for why Picamera2/libcamera can't be used for
+        this either) - every frame is decoded from raw YUYV and re-encoded
+        to JPEG here, unlike _reader_loop_mjpeg()'s pure passthrough."""
+        try:
+            width, height = (int(part) for part in self._resolution.split("x"))
+        except (TypeError, ValueError):
+            print(
+                f"[USB CAMERA] Cannot start YUYV reader: bad resolution "
+                f"{self._resolution!r}",
+                flush=True,
+            )
+            return
+
+        expected_bytes = width * height * 2
+        warned_bad_size = False
+        try:
+            for frame in device:
+                if generation != self._stream_generation:
+                    break
+                data = bytes(frame)
+                if len(data) != expected_bytes:
+                    if not warned_bad_size:
+                        print(
+                            f"[USB CAMERA] Dropping frame(s): expected "
+                            f"{expected_bytes} bytes for {width}x{height} YUYV, "
+                            f"got {len(data)}",
+                            flush=True,
+                        )
+                        warned_bad_size = True
+                    continue
+
+                try:
+                    rgb = _yuyv_to_rgb(data, width, height)
+                    img = Image.fromarray(rgb)
+                    buf = io.BytesIO()
+                    img.save(buf, format="JPEG", quality=YUYV_JPEG_QUALITY)
+                    jpeg_bytes = buf.getvalue()
+                except Exception as convert_error:
+                    print(
+                        f"[USB CAMERA] YUYV->JPEG conversion failed: {convert_error}",
+                        flush=True,
+                    )
+                    continue
+
+                with self._frame_lock:
+                    self._last_frame = jpeg_bytes
+                    self._last_frame_time = time.time()
+        except Exception as error:
+            if generation == self._stream_generation:
+                print(f"[USB CAMERA] Reader thread error: {error}", flush=True)
+
     @staticmethod
     def _stream_off_safe(device) -> None:
         """Best-effort VIDIOC_STREAMOFF - swallow errors, this is always
@@ -486,16 +659,59 @@ class UsbCameraDriver(CameraDriver):
         try:
             from linuxpy.video.device import BufferType
 
-            device.set_format(BufferType.VIDEO_CAPTURE, width, height, "MJPG")
+            available = _probe_pixel_formats(device)
+            if "MJPEG" in available:
+                pixel_format = "MJPG"
+            elif "YUYV" in available:
+                pixel_format = "YUYV"
+            else:
+                print(
+                    f"[USB CAMERA] No usable pixel format among {sorted(available) or 'none reported'}",
+                    flush=True,
+                )
+                return False
+
+            if pixel_format == "YUYV":
+                sizes = _sizes_for_pixel_format(device, "YUYV")
+                if sizes and (width, height) not in sizes:
+                    # No MJPEG on this camera means no small discrete sizes
+                    # either, in the one case tested live (a Microsoft
+                    # USB3.0 HD CAMERA only offers 1280x720/1920x1080) -
+                    # pick the smallest available instead of letting
+                    # set_format() silently round to whatever the driver
+                    # feels like.
+                    width, height = sizes[0]
+                    print(
+                        f"[USB CAMERA] {resolution} not available in YUYV, "
+                        f"using {width}x{height} instead",
+                        flush=True,
+                    )
+                if fps > YUYV_MAX_FPS:
+                    # See YUYV_MAX_FPS's own comment - every frame is
+                    # decoded+re-encoded here, so the camera's advertised
+                    # fps (which only describes raw capture) isn't
+                    # achievable in practice.
+                    print(
+                        f"[USB CAMERA] Capping fps to {YUYV_MAX_FPS} for the "
+                        f"software YUYV->JPEG path (requested {fps})",
+                        flush=True,
+                    )
+                    fps = YUYV_MAX_FPS
+
+            device.set_format(BufferType.VIDEO_CAPTURE, width, height, pixel_format)
             try:
                 device.set_fps(BufferType.VIDEO_CAPTURE, fps)
             except Exception as fps_error:
-                # Frame rate is a nice-to-have; MJPEG capture at the
-                # camera's default fps for this resolution still works.
+                # Frame rate is a nice-to-have; capture at the camera's
+                # default fps for this resolution still works.
                 print(f"[USB CAMERA] set_fps() failed, continuing without it: {fps_error}", flush=True)
+
+            self._resolution = f"{width}x{height}"
+            self._fps = fps
+            self._pixel_format = pixel_format
             return True
         except Exception as error:
-            print(f"[USB CAMERA] Format negotiation failed ({width}x{height} MJPG): {error}", flush=True)
+            print(f"[USB CAMERA] Format negotiation failed ({width}x{height}): {error}", flush=True)
             return False
 
     def _reconfigure(self, resolution: str, fps: int) -> bool:
@@ -507,7 +723,7 @@ class UsbCameraDriver(CameraDriver):
 
     def _probe_resolutions(self) -> list[str]:
         try:
-            from linuxpy.video.device import Device as V4LDevice, PixelFormat
+            from linuxpy.video.device import Device as V4LDevice
         except ImportError:
             return []
 
@@ -515,16 +731,13 @@ class UsbCameraDriver(CameraDriver):
             device = V4LDevice(self.dev_path)
             device.open()
             try:
-                sizes: set[str] = set()
-                for frame_size in device.info.frame_sizes():
-                    if frame_size.pixel_format != PixelFormat.MJPEG:
-                        continue
-                    info = frame_size.info
-                    width = getattr(info, "width", None)
-                    height = getattr(info, "height", None)
-                    if width and height:
-                        sizes.add(f"{width}x{height}")
-                return sorted(sizes, key=lambda s: int(s.split("x")[0]))
+                available = _probe_pixel_formats(device)
+                # Prefer MJPEG sizes (what actually gets negotiated - see
+                # _apply_format()); only fall back to YUYV sizes for a
+                # camera that has no MJPEG at all.
+                pixel_format = "MJPEG" if "MJPEG" in available else "YUYV"
+                sizes = _sizes_for_pixel_format(device, pixel_format)
+                return [f"{w}x{h}" for w, h in sizes]
             finally:
                 device.close()
         except Exception as error:

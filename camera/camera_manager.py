@@ -147,17 +147,53 @@ def build_camera_manager(persisted_active_id: str | None = None) -> CameraManage
     descriptor). Dev/prod and any future USB camera on hardware without
     uvcvideo support are unaffected: csi_driver.py reports no USB ids
     there, so usb_driver.py's cameras register normally.
+
+    Visibility to Picamera2 alone isn't enough to trust the "csi" slot,
+    though: confirmed live that libcamera's uvcvideo pipeline handler has
+    no actual ISP/format-conversion behind it (unlike bcm2835-isp for real
+    CSI sensors) - for a camera that only offers YUYV (no MJPEG to
+    decode), Picamera2 silently returns the raw 2-channel YUYV buffer
+    regardless of what output format is requested, which camera.py can't
+    use. So a masquerading "csi" camera is only registered there when it
+    actually has MJPEG (usb_driver.py's own "formats" field from
+    discover_usb_cameras() is the source of truth for that, not the fact
+    that Picamera2 happens to see it) - otherwise it's left for
+    usb_driver.py, which has its own YUYV->JPEG software path (see that
+    module's docstring).
     """
     drivers: dict[str, CameraDriver] = {}
     csi_usb_ids: tuple[str, str] | None = None
 
+    usb_found = discover_usb_cameras()
+    usb_formats_by_ids = {
+        (str(found.get("vendor_id") or "").lower(), str(found.get("product_id") or "").lower()):
+            found.get("formats") or set()
+        for found in usb_found
+    }
+
     csi_driver = CsiCameraDriver()
     csi_info = csi_driver.detect()
     if csi_info is not None:
-        drivers[csi_driver.id] = csi_driver
-        csi_usb_ids = csi_info.get("usb_ids")
+        ids = csi_info.get("usb_ids")
+        csi_functional = True
+        if ids is not None:
+            csi_functional = "MJPEG" in usb_formats_by_ids.get(ids, set())
+            if not csi_functional:
+                print(
+                    f"[CAMERA MANAGER] Not using the csi slot for {ids[0]}:{ids[1]} - "
+                    "Picamera2 sees it via uvcvideo but it has no MJPEG, and "
+                    "libcamera's software format conversion doesn't work for "
+                    "YUYV-only cameras on this build (confirmed live: RGB888/"
+                    "BGR888/YUV420/XRGB8888 all come back as raw 2-channel YUYV "
+                    "data). Registering it as its own usb_driver.py entry "
+                    "instead, which has its own YUYV->JPEG software path.",
+                    flush=True,
+                )
+        if csi_functional:
+            drivers[csi_driver.id] = csi_driver
+            csi_usb_ids = ids
 
-    for found in discover_usb_cameras():
+    for found in usb_found:
         vendor_id = str(found.get("vendor_id") or "").lower()
         product_id = str(found.get("product_id") or "").lower()
         if vendor_id and product_id and csi_usb_ids == (vendor_id, product_id):

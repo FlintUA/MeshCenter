@@ -55,6 +55,19 @@ def register_camera_manager_routes(app, device_manager, handle_errors):
     def api_devices_cameras_rescan():
         """The only place build_camera_manager() gets called - see the
         module docstring for why that's deliberate."""
+        previous = state["manager"]
+        if previous is not None:
+            # Without this, the previous manager's active driver (its
+            # background reader thread + open /dev/videoN, for
+            # usb_driver.py) is simply abandoned when state["manager"] is
+            # replaced below - confirmed live via lsof that the device
+            # stayed held open across a rescan. Same stop-before-replace
+            # CameraManager.set_active() already does for a same-manager
+            # switch, just applied across the manager replacement here too.
+            active = previous.active()
+            if active is not None:
+                active.stop()
+
         devices_data = device_manager.load_or_create()
         state["manager"] = build_camera_manager(
             persisted_active_id=devices_data.get("active_camera_id")

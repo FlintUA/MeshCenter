@@ -29,11 +29,42 @@ so the base64 round-trip would be pure overhead here.
 from __future__ import annotations
 
 import io
+import re
 import time
 from typing import Any, Iterator
 
 from camera import camera as camera_module
 from camera.camera_driver import CameraDriver
+
+# libcamera's uvcvideo pipeline handler always suffixes a USB camera's Id
+# with "-vendor:product" (confirmed live on a Pi 4B+ with two UVC webcams:
+# a Logitech C170's *Model* string is just "Webcam C170: Webcam C170" - no
+# vendor:product anywhere - while a Logitech E3500's Model happens to be
+# the generic uvcvideo fallback "UVC Camera (046d:09a4)", which does. Model
+# formatting apparently depends on whether the camera has its own USB
+# product-string descriptor, so it's not a reliable place to look for
+# this - both cameras' Id ends in "-vendor:product" regardless. A real CSI
+# sensor's Id is a platform device path (e.g. an i2c bus path) with no such
+# suffix, so this correctly reports no USB ids for genuine CSI hardware.
+_USB_ID_SUFFIX_RE = re.compile(r"-([0-9a-fA-F]{4}):([0-9a-fA-F]{4})$")
+
+
+def _detect_usb_ids() -> tuple[str, str] | None:
+    """USB vendor:product ids of the camera camera.py's Picamera2()
+    actually opened (always index 0 of global_camera_info()), if it's a
+    USB webcam seen through uvcvideo rather than a real CSI sensor."""
+    try:
+        from picamera2 import Picamera2
+
+        info = Picamera2.global_camera_info()
+        if not info:
+            return None
+        match = _USB_ID_SUFFIX_RE.search(str(info[0].get("Id") or ""))
+        if not match:
+            return None
+        return match.group(1).lower(), match.group(2).lower()
+    except Exception:
+        return None
 
 
 class CsiCameraDriver(CameraDriver):
@@ -45,7 +76,7 @@ class CsiCameraDriver(CameraDriver):
             if not camera_module.init_camera():
                 return None
         model = str(getattr(camera_module, "CAMERA_MODEL", "") or "").strip()
-        return {"model": model or "CSI Camera"}
+        return {"model": model or "CSI Camera", "usb_ids": _detect_usb_ids()}
 
     def start(self, resolution: str | None = None, fps: int | None = None, **_options: Any) -> bool:
         if not camera_module.CAMERA_AVAILABLE:

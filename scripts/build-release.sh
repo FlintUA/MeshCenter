@@ -42,6 +42,7 @@ WHITELIST=(
     api
     camera
     deploy
+    devices
     docs
     meshsrv
     static
@@ -49,8 +50,8 @@ WHITELIST=(
     telemetry
     templates
     utils
+    weather
     server.py
-    weather_service.py
     wsgi.py
     system_log.py
     config.example.py
@@ -87,7 +88,7 @@ MISSING=0
 for entry in "${WHITELIST[@]}"; do
     src="$REPO_ROOT/$entry"
     if [ ! -e "$src" ]; then
-        echo "!! Missing whitelisted path, skipping: $entry" >&2
+        echo "!! Missing whitelisted path: $entry" >&2
         MISSING=1
         continue
     fi
@@ -104,7 +105,12 @@ done
 
 if [ "$MISSING" -ne 0 ]; then
     echo "!! One or more whitelisted paths were missing from the repo (see above)." >&2
-    echo "!! Review WHITELIST in this script before publishing the archive." >&2
+    echo "!! A release with a missing required path is broken, not just incomplete -" >&2
+    echo "!! e.g. dropping weather/ or devices/ silently ships an archive whose" >&2
+    echo "!! imports fail at runtime. Fix WHITELIST or restore the missing path" >&2
+    echo "!! before publishing. Refusing to build." >&2
+    rm -rf "$STAGE_DIR"
+    exit 1
 fi
 
 echo "==> Applying denylist cleanup inside staged copy"

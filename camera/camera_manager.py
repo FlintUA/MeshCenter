@@ -110,6 +110,24 @@ class CameraManager:
             return
         yield from driver.stream_mjpeg()
 
+    def mjpeg_multipart_stream(self) -> Iterator[bytes]:
+        """Wraps stream_mjpeg()'s raw JPEG frames in the
+        multipart/x-mixed-replace envelope /video_feed needs - drivers
+        themselves only ever hand back raw JPEG bytes (see
+        camera_driver.py's CameraDriver contract), this is the one place
+        that boundary format is built, same layout camera.py's own
+        generate_mjpeg_stream() used before the cutover to this manager."""
+        for frame in self.stream_mjpeg():
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                b"Pragma: no-cache\r\n"
+                b"Expires: 0\r\n\r\n"
+                + frame
+                + b"\r\n"
+            )
+
     def capture_photo(self, resolution: str | None = None) -> bytes:
         driver = self.active()
         if driver is None:

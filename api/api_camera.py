@@ -1,12 +1,17 @@
 from flask import request, jsonify, Response, send_from_directory
 from pathlib import Path
+import base64
 import json
 import threading
 
 
 
-def register_camera_routes(app, camera, handle_errors):
+def register_camera_routes(app, camera, camera_manager_state, handle_errors):
     power_lock = threading.RLock()
+
+    def _active_driver():
+        manager = camera_manager_state.get("manager")
+        return manager.active() if manager else None
 
     project_dir = Path(__file__).resolve().parents[1]
     data_dir = Path(getattr(camera, "DATA_DIR", project_dir / "data"))
@@ -52,107 +57,28 @@ def register_camera_routes(app, camera, handle_errors):
             )
 
     def close_camera_device():
-        camera.stop_camera()
-
-        picam2 = getattr(camera, "picam2", None)
-
-        if picam2 is not None:
-            try:
-                picam2.close()
-                print(
-                    "[CAMERA POWER] Picamera2 device closed",
-                    flush=True
-                )
-            except Exception as error:
-                print(
-                    f"[CAMERA POWER] Close warning: {error}",
-                    flush=True
-                )
-
-        try:
-            camera.picam2 = None
-        except Exception:
-            pass
-
-        try:
-            camera.camera_started = False
-        except Exception:
-            pass
-
-        try:
-            camera.CAMERA_ACTIVE = False
-        except Exception:
-            pass
+        driver = _active_driver()
+        if driver is not None:
+            driver.stop()
 
     def start_camera_device():
-        picam2 = getattr(camera, "picam2", None)
-
-        if picam2 is None:
-            initializer = getattr(
-                camera,
-                "init_camera",
-                None
-            )
-
-            if not callable(initializer):
-                raise RuntimeError(
-                    "camera.init_camera() is unavailable"
-                )
-
-            if not initializer():
-                raise RuntimeError(
-                    "Camera initialization failed"
-                )
-
-        switcher = getattr(
-            camera,
-            "switch_camera_mode",
-            None
-        )
-
-        if not callable(switcher):
-            raise RuntimeError(
-                "camera.switch_camera_mode() is unavailable"
-            )
-
-        video_config = getattr(
-            camera,
-            "VIDEO_CONFIG",
-            {}
-        ) or {}
-
-        resolution = video_config.get(
-            "resolution"
-        )
-
-        fps = video_config.get(
-            "fps"
-        )
-
-        started = switcher(
-            "video",
-            resolution=resolution,
-            fps=fps
-        )
-
-        if not started:
-            raise RuntimeError(
-                "Camera video mode failed to start"
-            )
+        driver = _active_driver()
+        if driver is None:
+            raise RuntimeError("No active camera")
+        if not driver.start():
+            raise RuntimeError("Camera failed to start")
 
     def public_power_state():
+        manager = camera_manager_state.get("manager")
+        status = manager.get_status() if manager else {}
         return {
             "ok": True,
             "enabled": bool(power_state["enabled"]),
             "status": power_state["status"],
             "error": power_state["error"],
-            "available": bool(
-                getattr(camera, "CAMERA_AVAILABLE", False)
-            ),
-            "started": bool(
-                getattr(camera, "camera_started", False)
-            ),
-            "mode": getattr(camera, "CAMERA_MODE", None)
+            "available": bool(status.get("ok")),
+            "started": bool(status.get("started")),
+            "mode": None,
         }
 
     load_power_state()
@@ -170,16 +96,19 @@ def register_camera_routes(app, camera, handle_errors):
             )
     @app.route('/video_feed')
     def video_feed():
-        """MJPEG video stream."""
+        """MJPEG video stream - dispatches through whichever driver
+        camera_manager_state currently has active (CSI or USB), not just
+        camera.py's CSI-only path."""
         if not power_state["enabled"]:
             return "Camera is turned off", 409
 
-        if not camera.CAMERA_AVAILABLE:
+        manager = camera_manager_state.get("manager")
+        if manager is None or manager.active() is None:
             print("[CAMERA] ❌ Camera not available", flush=True)
             return "Camera not available", 503
 
         return Response(
-            camera.generate_mjpeg_stream(),
+            manager.mjpeg_multipart_stream(),
             mimetype='multipart/x-mixed-replace; boundary=frame'
         )
 
@@ -236,8 +165,12 @@ def register_camera_routes(app, camera, handle_errors):
 
     @app.route("/api/camera/status")
     def api_camera_status():
-        """Статус камеры"""
-        return jsonify(camera.get_camera_status())
+        """Статус камеры - whichever driver is currently active. Not
+        consumed by the frontend today (checked before the cutover), so
+        the field set here doesn't need to exactly match camera.py's old
+        get_camera_status() shape."""
+        manager = camera_manager_state.get("manager")
+        return jsonify(manager.get_status() if manager else {"ok": False})
 
     @app.route("/api/camera/settings", methods=["GET"])
     def api_camera_settings():
@@ -358,15 +291,31 @@ def register_camera_routes(app, camera, handle_errors):
     @app.route("/api/photo/capture", methods=["POST"])
     @handle_errors
     def api_photo_capture():
-        """Захват фото для превью"""
+        """Захват фото для превью - dispatches through whichever driver
+        is active. Response shape kept compatible with what the frontend
+        actually reads (image_data, preview_resolution) - see
+        camera.capture_photo_preview()'s richer shape for what's dropped
+        (width/height/quality/mode), none of it read by static/chat.js."""
         if not power_state["enabled"]:
             return jsonify({
                 "ok": False,
                 "error": "Camera is turned off"
             }), 409
 
-        result, status = camera.capture_photo_preview()
-        return jsonify(result), status
+        manager = camera_manager_state.get("manager")
+        driver = manager.active() if manager else None
+        if driver is None:
+            return jsonify({"ok": False, "error": "No active camera"}), 503
+
+        jpeg_bytes = driver.capture_photo()
+        if not jpeg_bytes:
+            return jsonify({"ok": False, "error": "Capture failed"}), 500
+
+        return jsonify({
+            "ok": True,
+            "image_data": base64.b64encode(jpeg_bytes).decode("utf-8"),
+            "preview_resolution": manager.get_status().get("resolution"),
+        })
 
     @app.route("/api/photo/save", methods=["POST"])
     @handle_errors

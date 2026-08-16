@@ -925,6 +925,7 @@
     "message_not_found": "Nachricht nicht gefunden.",
     "invalid_reply_to": "Ungültige Antwort.",
     "empty_message": "Die Nachricht darf nicht leer sein.",
+    "message_too_long": "Nachricht zu lang: {bytes} Bytes, maximal {max} (Meshtastic-Protokollgrenze).",
     "invalid_target_node": "Ungültiger Zielknoten.",
     "channel_not_configured": "Dieser Kanal ist auf dem Funkgerät nicht konfiguriert.",
     "reply_missing_packet_id": "Diese Nachricht hat keine Meshtastic-Paket-ID. Antworte auf eine neu empfangene Nachricht.",

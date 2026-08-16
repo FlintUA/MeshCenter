@@ -5,6 +5,16 @@ import threading
 import queue
 import re
 
+# Meshtastic protobufs: Data.payload max_size (see meshtastic/protobufs
+# mesh.options, mesh_pb2.Constants.DATA_PAYLOAD_LEN) - the hard protocol
+# ceiling for a single message's payload, not a UI preference. The
+# meshtastic library's sendText()/sendData() raises "Data payload too
+# big" if exceeded rather than chunking or truncating, so this is
+# validated here (byte length, not character count - UTF-8 text like
+# Cyrillic uses more bytes per character) to give the user an honest
+# rejection before a send attempt fails deep in the send worker.
+MESHTASTIC_MAX_PAYLOAD_BYTES = 233
+
 
 def register_chat_routes(
     app,
@@ -607,6 +617,15 @@ def register_chat_routes(
 
         if not text:
             return jsonify({"ok": False, "error": "empty or invalid message", "error_code": "empty_message"}), 400
+
+        text_bytes = len(text.encode("utf-8"))
+        if text_bytes > MESHTASTIC_MAX_PAYLOAD_BYTES:
+            return jsonify({
+                "ok": False,
+                "error": f"Message too long: {text_bytes} bytes, max {MESHTASTIC_MAX_PAYLOAD_BYTES}",
+                "error_code": "message_too_long",
+                "error_params": {"bytes": text_bytes, "max": MESHTASTIC_MAX_PAYLOAD_BYTES},
+            }), 400
 
         if chat_id and not is_channel_chat_id(chat_id) and not is_valid_node_id(chat_id):
             return jsonify({"ok": False, "error": "Invalid chat_id", "error_code": "invalid_chat_id"}), 400

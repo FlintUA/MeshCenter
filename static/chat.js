@@ -5245,7 +5245,8 @@ async function submitOutgoingMessage(chatId, chatType, chatName, text, replyTo) 
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || `HTTP ${response.status}`);
+            const reason = window.I18N.tOrFallback('errors.' + (errorData.error_code || ''), errorData.error_params, errorData.error || `HTTP ${response.status}`);
+            throw new Error(reason);
         }
 
         // The server has already stored the real message (status

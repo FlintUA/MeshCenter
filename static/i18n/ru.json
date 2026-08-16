@@ -925,6 +925,7 @@
     "message_not_found": "Сообщение не найдено.",
     "invalid_reply_to": "Недействительный ответ.",
     "empty_message": "Сообщение не может быть пустым.",
+    "message_too_long": "Сообщение слишком длинное: {bytes} байт, максимум {max} (ограничение протокола Meshtastic).",
     "invalid_target_node": "Недействительный целевой узел.",
     "channel_not_configured": "Этот канал не настроен на радиостанции.",
     "reply_missing_packet_id": "У этого сообщения нет ID пакета Meshtastic. Ответьте на недавно полученное сообщение.",

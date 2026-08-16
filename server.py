@@ -323,7 +323,12 @@ def handle_errors(f):
             }), 500
     return decorated_function
 
-register_camera_routes(app, camera, camera_manager_state, handle_errors)
+# Returns whether the camera is persisted enabled - read later in the
+# __main__ block to decide whether to build camera_manager_state["manager"]
+# at startup at all (see that block's own comment).
+camera_power_enabled_at_startup = register_camera_routes(
+    app, camera, camera_manager_state, device_manager, handle_errors
+)
 # Shares camera_manager_state with register_camera_routes() above (see
 # that variable's own comment) - both /video_feed and the Devices tab's
 # rescan/switch routes now dispatch through the same CameraManager
@@ -5712,35 +5717,54 @@ if __name__ == "__main__":
     # variable's own comment above register_camera_routes()) so
     # api_camera.py's /video_feed and api_camera_manager.py's Devices tab
     # routes dispatch through this exact instance, not separate ones.
-    devices_data = device_manager.load_or_create()
-    camera_manager_state["manager"] = build_camera_manager(
-        persisted_active_id=devices_data.get("active_camera_id")
-    )
+    #
+    # Skipped entirely when the camera is persisted off
+    # (camera_power_enabled_at_startup, from camera_power.json) - the
+    # camera must not be touched at all without being asked, not
+    # detected-then-immediately-closed. build_camera_manager() does real
+    # device I/O (CsiCameraDriver.detect() opens Picamera2, USB discovery
+    # briefly opens each /dev/videoN to probe capabilities/formats), which
+    # is exactly the kind of "the camera turns on without being asked"
+    # this needs to avoid. api_camera.py's start_camera_device() builds
+    # camera_manager_state["manager"] lazily instead (see its
+    # _ensure_manager()) the moment someone actually turns the camera on -
+    # via /api/camera/power or the Devices/Camera tab UI.
+    if camera_power_enabled_at_startup:
+        devices_data = device_manager.load_or_create()
+        camera_manager_state["manager"] = build_camera_manager(
+            persisted_active_id=devices_data.get("active_camera_id")
+        )
 
-    # Keep devices.json in sync with whatever camera actually got
-    # detected - it used to only ever hold "" or whatever model was
-    # recorded the first time the file was created, so swapping the
-    # physical camera left a stale value on disk even though the Devices
-    # tab was already showing the live-detected one.
-    active_camera_status = camera_manager_state["manager"].get_status()
-    active_camera_id = camera_manager_state["manager"].active_id
-    detected_camera_model = str(active_camera_status.get("model") or "").strip()
-    if detected_camera_model and active_camera_id:
-        try:
-            # devices.json schema v2: "cameras" is keyed by CameraDriver id
-            # (see camera/camera_manager.py) - unlike the old CSI-only path,
-            # this can be any driver id, not just "csi".
-            cameras = devices_data.setdefault("devices", {}).setdefault("cameras", {})
-            stored_camera = cameras.setdefault(active_camera_id, {})
-            if stored_camera.get("model") != detected_camera_model:
-                stored_camera["model"] = detected_camera_model
-                device_manager.save(devices_data)
-                print(
-                    f"[CAMERA] Recorded detected model in devices.json: {detected_camera_model}",
-                    flush=True,
-                )
-        except Exception as error:
-            print(f"[CAMERA] Failed to persist detected model: {error}", flush=True)
+        # Keep devices.json in sync with whatever camera actually got
+        # detected - it used to only ever hold "" or whatever model was
+        # recorded the first time the file was created, so swapping the
+        # physical camera left a stale value on disk even though the
+        # Devices tab was already showing the live-detected one.
+        active_camera_status = camera_manager_state["manager"].get_status()
+        active_camera_id = camera_manager_state["manager"].active_id
+        detected_camera_model = str(active_camera_status.get("model") or "").strip()
+        if detected_camera_model and active_camera_id:
+            try:
+                # devices.json schema v2: "cameras" is keyed by CameraDriver
+                # id (see camera/camera_manager.py) - unlike the old
+                # CSI-only path, this can be any driver id, not just "csi".
+                cameras = devices_data.setdefault("devices", {}).setdefault("cameras", {})
+                stored_camera = cameras.setdefault(active_camera_id, {})
+                if stored_camera.get("model") != detected_camera_model:
+                    stored_camera["model"] = detected_camera_model
+                    device_manager.save(devices_data)
+                    print(
+                        f"[CAMERA] Recorded detected model in devices.json: {detected_camera_model}",
+                        flush=True,
+                    )
+            except Exception as error:
+                print(f"[CAMERA] Failed to persist detected model: {error}", flush=True)
+    else:
+        print(
+            "[CAMERA] Skipping camera detection at startup - camera is "
+            "persisted off (camera_power.json)",
+            flush=True,
+        )
 
     # Start radio workers only for the accepted physical radio.  This prevents
     # another USB node from contaminating the active profile.

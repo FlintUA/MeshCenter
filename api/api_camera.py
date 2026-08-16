@@ -4,14 +4,31 @@ import base64
 import json
 import threading
 
+from camera.camera_manager import build_camera_manager
 
 
-def register_camera_routes(app, camera, camera_manager_state, handle_errors):
+def register_camera_routes(app, camera, camera_manager_state, device_manager, handle_errors):
     power_lock = threading.RLock()
 
     def _active_driver():
         manager = camera_manager_state.get("manager")
         return manager.active() if manager else None
+
+    def _ensure_manager():
+        """Like _active_driver() but builds camera_manager_state["manager"]
+        if it doesn't exist yet - needed because server.py deliberately
+        skips building it at startup when the camera is persisted off (see
+        that file's __main__ block), so turning the camera back on has to
+        be able to build it lazily, the same way api_camera_manager.py's
+        /api/camera/active already does for its own lazy-build case."""
+        manager = camera_manager_state.get("manager")
+        if manager is None:
+            devices_data = device_manager.load_or_create()
+            manager = build_camera_manager(
+                persisted_active_id=devices_data.get("active_camera_id")
+            )
+            camera_manager_state["manager"] = manager
+        return manager
 
     project_dir = Path(__file__).resolve().parents[1]
     data_dir = Path(getattr(camera, "DATA_DIR", project_dir / "data"))
@@ -62,7 +79,8 @@ def register_camera_routes(app, camera, camera_manager_state, handle_errors):
             driver.stop()
 
     def start_camera_device():
-        driver = _active_driver()
+        manager = _ensure_manager()
+        driver = manager.active()
         if driver is None:
             raise RuntimeError("No active camera")
         if not driver.start():
@@ -329,3 +347,10 @@ def register_camera_routes(app, camera, camera_manager_state, handle_errors):
 
         result, status = camera.save_highres_photo()
         return jsonify(result), status
+
+    # Read by server.py's __main__ block, at import time - before it
+    # decides whether to call build_camera_manager() (real device I/O,
+    # including opening the camera briefly to detect() it) at startup.
+    # See that file's own comment for why "camera is persisted off" means
+    # skipping that entirely rather than detecting-then-immediately-closing.
+    return power_state["enabled"]

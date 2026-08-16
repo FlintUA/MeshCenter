@@ -14263,6 +14263,35 @@ body[data-theme="dark"] .waypoint-action-toast.error {
     color: #9eb3c8;
 }
 
+/* Camera tab "off" placeholder (#cameraOffPlaceholder, shown over the
+   preview area when the camera is powered down). .video-panel/.video-header
+   and the VIDEO/FPS/SCREENSHOT fields below are already dark-themed via
+   the shared var(--mc-*) design tokens (confirmed live) - only this
+   overlay and its contents were still hardcoded to a light gradient.
+   Reuses the exact same tokens driving the rest of this card instead of
+   introducing new hex values: var(--mc-card-bg) (#162433, same as
+   .video-panel), var(--mc-text) (#f2f7fc, same token .video-title uses),
+   var(--mc-text-secondary) (#c3d1df, same as .control-group label).
+
+   The pastel green/red power buttons (.camera-off-start-btn,
+   #cameraPowerBtn in both states) were checked for contrast and left
+   alone - all three combos exceed WCAG AA 4.5:1 as "soft badge" accents
+   (#e9f7ed/#216b3a: 5.88:1, #fff5f5/#a32929: 6.75:1,
+   #eef9f1/#267340: 5.39:1), so no dark-theme override needed there. */
+[data-theme="dark"] .camera-off-placeholder {
+    background: var(--mc-card-bg);
+}
+[data-theme="dark"] .camera-off-title {
+    color: var(--mc-text);
+}
+[data-theme="dark"] .camera-off-text {
+    color: var(--mc-text-secondary);
+}
+[data-theme="dark"] .camera-off-icon {
+    filter: none;
+    opacity: 0.95;
+}
+
 /* Custom telemetry export dialog (openCustomTelemetryExport(),
    static/chat.js) - a separate overlay from .modal-overlay/.modal-content
    (custom-export-*/export-* classes), so it isn't covered by the

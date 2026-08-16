@@ -292,26 +292,41 @@ def build_camera_controls():
     return result
 
 
-def apply_camera_controls():
-    """Apply supported controls to the currently configured camera."""
-    if picam2 is None:
-        return False
+def filter_supported_controls(requested):
+    """Drop any control the currently opened camera doesn't advertise.
 
-    requested = build_camera_controls()
+    build_camera_controls() always includes the full CSI/ISP control set
+    (Sharpness, NoiseReductionMode, etc.) unconditionally - correct for a
+    real CSI sensor, but a USB webcam seen through libcamera's uvcvideo
+    pipeline handler (see camera/csi_driver.py) typically advertises a
+    much smaller set. Passing an unsupported control straight into
+    Picamera2.create_preview_configuration()/create_still_configuration()
+    raises immediately (confirmed live: "Control Sharpness is not
+    advertised by libcamera") - this must run before controls reach
+    either that or set_controls().
+    """
     available = getattr(picam2, "camera_controls", {}) or {}
-
     supported = {
         name: value
         for name, value in requested.items()
         if name in available
     }
-
     skipped = sorted(set(requested) - set(supported))
     if skipped:
         print(
             f"[CAMERA] Unsupported controls skipped: {', '.join(skipped)}",
             flush=True,
         )
+    return supported
+
+
+def apply_camera_controls():
+    """Apply supported controls to the currently configured camera."""
+    if picam2 is None:
+        return False
+
+    requested = build_camera_controls()
+    supported = filter_supported_controls(requested)
 
     if not supported:
         print("[CAMERA] No supported image controls to apply", flush=True)
@@ -410,6 +425,7 @@ def switch_camera_mode(mode, resolution=None, fps=None):
 
                 initial_controls = build_camera_controls()
                 initial_controls["FrameRate"] = fps_val
+                initial_controls = filter_supported_controls(initial_controls)
 
                 config = picam2.create_preview_configuration(
                     main={
@@ -450,6 +466,7 @@ def switch_camera_mode(mode, resolution=None, fps=None):
             )
 
             initial_controls = build_camera_controls()
+            initial_controls = filter_supported_controls(initial_controls)
 
             config = picam2.create_still_configuration(
                 main={

@@ -3607,11 +3607,18 @@ async function loadChatList() {
 
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
         const forceChannelRefresh = initialChannelRefreshPending;
         const chatsUrl = forceChannelRefresh
             ? '/api/chats?refresh_channels=1'
             : '/api/chats';
+        // A forced channel refresh makes the server stop the listener, wait
+        // for the serial port to release, open a fresh connection, and wait
+        // out a cooldown before resuming (see api/api_chat.py's
+        // discover_radio_channels()/radio_session() budget notes) - that
+        // alone can approach 15s on a slow/first connect, so it needs more
+        // slack than the plain cached-list request or this reliably aborts
+        // on first page load.
+        const timeoutId = setTimeout(() => controller.abort(), forceChannelRefresh ? 30000 : 15000);
 
         const response = await fetch(chatsUrl, {
             signal: controller.signal,
@@ -10829,8 +10836,21 @@ function renderTelemetryChart(container, records, type) {
     }
 
     if (type === 'power') {
-        yConfig.min = 3.40;
-        yConfig.max = 4.30;
+        const voltageValues = datasets
+            .filter(d => d.metricType === 'voltage')
+            .flatMap(d => d.data)
+            .filter(v => v !== null && v !== undefined && !isNaN(v));
+
+        if (voltageValues.length > 0) {
+            const minVoltage = Math.min(...voltageValues);
+            const maxVoltage = Math.max(...voltageValues);
+            const padding = Math.max(0.05, (maxVoltage - minVoltage) * 0.1);
+            yConfig.min = Math.floor((minVoltage - padding) * 100) / 100;
+            yConfig.max = Math.ceil((maxVoltage + padding) * 100) / 100;
+        } else {
+            yConfig.min = 3.40;
+            yConfig.max = 4.30;
+        }
 
         y1Config.min = 250;
         y1Config.max = 1000;

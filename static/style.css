@@ -3027,7 +3027,7 @@ body {
 }
 
 .custom-export-dialog {
-    width: min(520px, 100%);
+    width: min(380px, 100%);
     background: #ffffff;
     border-radius: 16px;
     box-shadow: 0 18px 45px rgba(0, 0, 0, 0.25);
@@ -3123,6 +3123,7 @@ body {
 .export-datetime-row {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
 }
 
@@ -3135,9 +3136,12 @@ body {
    crushing the date input - which has no competing width of its own - to
    near-zero trying to compensate. */
 .export-date-grid .export-date-input {
-    flex: 1 1 auto;
-    min-width: 0;
-    width: auto;
+    /* Sized to content (a native date input's natural rendered width),
+       not flex-grown to fill the row - stretching it to match the row's
+       full width just wasted space the dialog didn't need to be that
+       wide for in the first place. */
+    flex: 0 0 auto;
+    width: 140px;
 }
 
 .export-date-grid .export-time-input {
@@ -3174,6 +3178,7 @@ body {
 
 .export-format-row {
     display: flex;
+    flex-direction: column;
     gap: 10px;
 }
 
@@ -3213,16 +3218,6 @@ body {
     border: 1px solid #1a73e8;
     background: #1a73e8;
     color: white;
-}
-
-@media (max-width: 600px) {
-    .export-date-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .export-format-row {
-        flex-direction: column;
-    }
 }
 
 /* ============================================================

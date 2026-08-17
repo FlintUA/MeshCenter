@@ -1,7 +1,9 @@
 from flask import request, jsonify, Response, send_from_directory
 from pathlib import Path
+from datetime import datetime
 import base64
 import json
+import os
 import threading
 
 from camera.camera_manager import build_camera_manager
@@ -354,15 +356,59 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
     @app.route("/api/photo/save", methods=["POST"])
     @handle_errors
     def api_photo_save():
-        """Сохранить фото в максимальном качестве"""
+        """Сохранить фото в максимальном качестве - dispatches through
+        whichever driver is active, same as /api/photo/capture, but also
+        persists the result to disk (see camera.py's generic, driver-
+        agnostic screenshot helpers below - none of them reference the old
+        CSI-only CAMERA_AVAILABLE flag that camera.save_highres_photo()
+        used to gate on, which is what made this route return "Camera not
+        available" for the USB driver even after capture_photo() itself
+        was migrated)."""
         if not power_state["enabled"]:
             return jsonify({
                 "ok": False,
                 "error": "Camera is turned off"
             }), 409
 
-        result, status = camera.save_highres_photo()
-        return jsonify(result), status
+        manager = camera_manager_state.get("manager")
+        driver = manager.active() if manager else None
+        if driver is None:
+            return jsonify({"ok": False, "error": "No active camera"}), 503
+
+        jpeg_bytes = driver.capture_photo()
+        if not jpeg_bytes:
+            return jsonify({"ok": False, "error": "Capture failed"}), 500
+
+        try:
+            from PIL import Image
+            import io
+
+            with Image.open(io.BytesIO(jpeg_bytes)) as img:
+                width, height = img.width, img.height
+        except Exception:
+            width, height = None, None
+
+        dt = datetime.now()
+        day_dir = camera.get_screenshot_day_dir(dt)
+        filename = camera.make_screenshot_filename(dt, prefix="MC_PHOTO")
+        filepath = os.path.join(day_dir, filename)
+
+        with open(filepath, "wb") as f:
+            f.write(jpeg_bytes)
+
+        rel_path = os.path.relpath(filepath, camera.SCREENSHOTS_DIR).replace("\\", "/")
+        camera.cleanup_old_screenshots(max_mb=500, keep_days=30)
+
+        return jsonify({
+            "ok": True,
+            "success": True,
+            "filename": rel_path,
+            "display_name": filename,
+            "filepath": filepath,
+            "size": os.path.getsize(filepath),
+            "width": width,
+            "height": height,
+        })
 
     # Read by server.py's __main__ block, at import time - before it
     # decides whether to call build_camera_manager() (real device I/O,

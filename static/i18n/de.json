@@ -844,6 +844,8 @@
     "custom_range": "Benutzerdefinierter Zeitraum",
     "date_from": "Von",
     "date_to": "Bis",
+    "hour": "Stunde",
+    "minute": "Minute",
     "series": "Reihen",
     "no_series_selected": "Keine Reihe ausgewählt",
     "format": "Format",

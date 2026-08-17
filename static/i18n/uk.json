@@ -844,6 +844,8 @@
     "custom_range": "Довільний період",
     "date_from": "Від",
     "date_to": "До",
+    "hour": "Година",
+    "minute": "Хвилина",
     "series": "Ряди",
     "no_series_selected": "Ряди не вибрано",
     "format": "Формат",

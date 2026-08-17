@@ -844,6 +844,8 @@
     "custom_range": "Произвольный период",
     "date_from": "С",
     "date_to": "По",
+    "hour": "Час",
+    "minute": "Минута",
     "series": "Ряды",
     "no_series_selected": "Ряды не выбраны",
     "format": "Формат",

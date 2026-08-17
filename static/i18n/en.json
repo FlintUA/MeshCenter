@@ -844,6 +844,8 @@
     "custom_range": "Custom range",
     "date_from": "From",
     "date_to": "To",
+    "hour": "Hour",
+    "minute": "Minute",
     "series": "Series",
     "no_series_selected": "No series selected",
     "format": "Format",

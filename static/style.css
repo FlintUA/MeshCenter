@@ -3116,6 +3116,40 @@ body {
     font-size: 13px;
 }
 
+.export-datetime-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.export-date-input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.export-time-input {
+    width: 48px;
+    flex: 0 0 auto;
+    text-align: center;
+    padding: 9px 4px;
+    border: 1px solid #d7dce5;
+    border-radius: 10px;
+    font-size: 13px;
+}
+
+.export-time-sep {
+    color: #6b7280;
+    font-weight: 600;
+}
+
+.export-ampm-select {
+    flex: 0 0 auto;
+    padding: 9px 6px;
+    border: 1px solid #d7dce5;
+    border-radius: 10px;
+    font-size: 13px;
+}
+
 .export-series-summary {
     background: #f5f7fb;
     border: 1px solid #e5e8ec;
@@ -14335,11 +14369,16 @@ body[data-theme="dark"] .waypoint-action-toast.error {
     color: #d9e7f5;
 }
 [data-theme="dark"] .export-date-grid input,
+[data-theme="dark"] .export-time-input,
+[data-theme="dark"] .export-ampm-select,
 [data-theme="dark"] .export-format-option,
 [data-theme="dark"] .custom-export-cancel {
     background: #132334;
     border-color: #385068;
     color: #e5eff8;
+}
+[data-theme="dark"] .export-time-sep {
+    color: #9eb3c8;
 }
 [data-theme="dark"] .export-series-summary {
     background: #16283a;

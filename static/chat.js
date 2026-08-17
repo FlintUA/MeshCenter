@@ -10460,12 +10460,12 @@ function openCustomTelemetryExport() {
                     <div class="export-date-grid">
                         <label>
                             <span>${escapeHtml(window.I18N.t('nodes.date_from'))}</span>
-                            <input type="datetime-local" id="exportStartDate" value="${datetimeLocalValue(from)}">
+                            ${buildExportDateTimeFieldHtml('exportStart', from)}
                         </label>
 
                         <label>
                             <span>${escapeHtml(window.I18N.t('nodes.date_to'))}</span>
-                            <input type="datetime-local" id="exportEndDate" value="${datetimeLocalValue(now)}">
+                            ${buildExportDateTimeFieldHtml('exportEnd', now)}
                         </label>
                     </div>
                 </div>
@@ -10517,10 +10517,79 @@ function updateCustomExportMode() {
     }
 }
 
-function datetimeLocalValue(date) {
-    const pad = n => String(n).padStart(2, '0');
+function getExportAmPmLabels() {
+    const fmt = new Intl.DateTimeFormat(TimeFormatter._getLocale(), { hour: 'numeric', hour12: true });
+    const partAt = hour => fmt.formatToParts(new Date(2000, 0, 1, hour, 0)).find(p => p.type === 'dayPeriod')?.value;
 
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    return { am: partAt(1) || 'AM', pm: partAt(13) || 'PM' };
+}
+
+// Native <input type="datetime-local">/<input type="time"> always render their
+// picker in the browser/OS locale's hour format, ignoring appSettings.units.time_format
+// entirely - there is no attribute to force 12h/24h on them. So the export
+// range fields are built from a plain date input plus hand-rolled hour/minute
+// (+ AM/PM when the app is in 12h mode) inputs instead, kept in sync with
+// TimeFormatter._is12h() like every other time display in this file.
+function buildExportDateTimeFieldHtml(idPrefix, date) {
+    const pad = n => String(n).padStart(2, '0');
+    const dateValue = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    const hour24 = date.getHours();
+    const minute = date.getMinutes();
+
+    if (TimeFormatter._is12h()) {
+        const { am, pm } = getExportAmPmLabels();
+        const isPm = hour24 >= 12;
+        let hour12 = hour24 % 12;
+        if (hour12 === 0) hour12 = 12;
+
+        return `
+            <div class="export-datetime-row">
+                <input type="date" id="${idPrefix}Date" value="${dateValue}" class="export-date-input">
+                <input type="number" id="${idPrefix}Hour" min="1" max="12" value="${hour12}" class="export-time-input" aria-label="${escapeHtml(window.I18N.t('nodes.hour'))}">
+                <span class="export-time-sep">:</span>
+                <input type="number" id="${idPrefix}Minute" min="0" max="59" value="${pad(minute)}" class="export-time-input" aria-label="${escapeHtml(window.I18N.t('nodes.minute'))}">
+                <select id="${idPrefix}Ampm" class="export-ampm-select">
+                    <option value="${escapeHtml(am)}" ${!isPm ? 'selected' : ''}>${escapeHtml(am)}</option>
+                    <option value="${escapeHtml(pm)}" ${isPm ? 'selected' : ''}>${escapeHtml(pm)}</option>
+                </select>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="export-datetime-row">
+            <input type="date" id="${idPrefix}Date" value="${dateValue}" class="export-date-input">
+            <input type="number" id="${idPrefix}Hour" min="0" max="23" value="${pad(hour24)}" class="export-time-input" aria-label="${escapeHtml(window.I18N.t('nodes.hour'))}">
+            <span class="export-time-sep">:</span>
+            <input type="number" id="${idPrefix}Minute" min="0" max="59" value="${pad(minute)}" class="export-time-input" aria-label="${escapeHtml(window.I18N.t('nodes.minute'))}">
+        </div>
+    `;
+}
+
+// Reads an idPrefix's date + hour/minute(+AM/PM) fields back into a Date,
+// mirroring the encoding buildExportDateTimeFieldHtml() rendered them in.
+function readExportDateTime(idPrefix) {
+    const dateStr = document.getElementById(`${idPrefix}Date`)?.value;
+    const hourInput = document.getElementById(`${idPrefix}Hour`);
+    const minuteInput = document.getElementById(`${idPrefix}Minute`);
+    const ampmSelect = document.getElementById(`${idPrefix}Ampm`);
+
+    if (!dateStr || !hourInput || !minuteInput) return null;
+
+    const [year, month, day] = dateStr.split('-').map(Number);
+    let hour = parseInt(hourInput.value, 10);
+    const minute = parseInt(minuteInput.value, 10);
+
+    if (![year, month, day, hour, minute].every(Number.isFinite)) return null;
+
+    if (ampmSelect) {
+        const { pm } = getExportAmPmLabels();
+        const isPm = ampmSelect.value === pm;
+        hour = hour % 12;
+        if (isPm) hour += 12;
+    }
+
+    return new Date(year, month - 1, day, hour, minute);
 }
 
 function getTelemetryRangeLabel(minutes) {
@@ -10564,16 +10633,16 @@ function runCustomTelemetryExport() {
     }
 
     if (mode === 'custom') {
-        const startValue = document.getElementById('exportStartDate')?.value;
-        const endValue = document.getElementById('exportEndDate')?.value;
+        const startDate = readExportDateTime('exportStart');
+        const endDate = readExportDateTime('exportEnd');
 
-        if (!startValue || !endValue) {
+        if (!startDate || !endDate) {
             alert(window.I18N.t('nodes.select_start_end_date'));
             return;
         }
 
-        const startTs = Math.floor(new Date(startValue).getTime() / 1000);
-        const endTs = Math.floor(new Date(endValue).getTime() / 1000);
+        const startTs = Math.floor(startDate.getTime() / 1000);
+        const endTs = Math.floor(endDate.getTime() / 1000);
 
         if (!startTs || !endTs || startTs >= endTs) {
             alert(window.I18N.t('nodes.invalid_date_range'));

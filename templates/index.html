@@ -1502,23 +1502,12 @@
                     <section class="about-section" id="aboutSectionChangelog" role="tabpanel" hidden>
                         <div class="about-section-heading"><h2>Changelog</h2><p>Current release highlights.</p></div>
                         <article class="about-release-card">
-                            <div class="about-release-head"><div><span class="about-version">v1.3.0</span><h2>Waypoints &amp; Actions Update</h2></div><span class="about-current-label">Current</span></div>
+                            <div class="about-release-head"><div><span class="about-version">v{{ app_version }}</span><h2>Auto-Installer, Time Card &amp; Channel Fixes</h2></div><span class="about-current-label">Current</span></div>
                             <ul>
-                                <li>Added full waypoint management: create, edit, delete and send waypoints directly from MeshCenter, with persistent storage.</li>
-                                <li>Added channel activity notifications and unread message indicators.</li>
-                                <li>Introduced a new extensible Action Engine for centralized node actions.</li>
-                                <li>Added runtime identity detection for the connected local node.</li>
-                                <li>Messaging, telemetry and UI reliability improvements.</li>
-                            </ul>
-                            <a class="about-primary-link" href="https://github.com/FlintUA/MeshCenter/releases" target="_blank" rel="noopener noreferrer">View full release history ↗</a>
-                        </article>
-                        <article class="about-release-card">
-                            <div class="about-release-head"><div><span class="about-version">v1.1.0</span><h2>Workspace Foundation</h2></div></div>
-                            <ul>
-                                <li>Introduced Workspace preferences for this browser.</li>
-                                <li>Added panel visibility controls to the status bar.</li>
-                                <li>Added Light and Dark theme framework.</li>
-                                <li>Added Compact Mode and persistent interface settings.</li>
+                                <li>Fully automated first-boot installer (cloud-init) for a fresh Raspberry Pi - no terminal interaction, auto-detects the connected radio, generates config.py, with a live 7-step progress page.</li>
+                                <li>Redesigned Time card with full date and week number display.</li>
+                                <li>A series of channel name and channel discovery fixes.</li>
+                                <li>Optional camera support during install, auto-detected via vcgencmd, off by default to save install time on Pi Zero 2W.</li>
                             </ul>
                             <a class="about-primary-link" href="https://github.com/FlintUA/MeshCenter/releases" target="_blank" rel="noopener noreferrer">View full release history ↗</a>
                         </article>

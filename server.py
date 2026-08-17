@@ -90,10 +90,20 @@ def resolve_app_version(project_dir, fallback="dev"):
     """Return the app version from git: the exact tag when HEAD is tagged
     (e.g. "1.3.0" from "v1.3.0"), otherwise a tag+distance+hash description
     (e.g. "1.5.0-42-gd586650") so a checkout ahead of the latest reachable
-    tag still reports something more useful than a bare "dev"."""
+    tag still reports something more useful than a bare "dev".
+
+    Restricted to "v<digit>*"-shaped tags via --match - git describe
+    otherwise happily returns *any* reachable tag, including one-off
+    non-release tags (a local rollback anchor like "prod-pre-cutover-backup",
+    the older "milestone-node-inspector" marker) if they happen to sit
+    topologically closer to HEAD than the actual latest version tag. That's
+    exactly what made a node's version display show a backup tag's name
+    instead of a version number after such a tag was created locally for a
+    deploy rollback point.
+    """
     try:
         result = subprocess.run(
-            ["git", "describe", "--tags", "--abbrev=0"],
+            ["git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"],
             cwd=project_dir,
             capture_output=True,
             text=True,
@@ -107,7 +117,7 @@ def resolve_app_version(project_dir, fallback="dev"):
 
     try:
         result = subprocess.run(
-            ["git", "describe", "--tags", "--always"],
+            ["git", "describe", "--tags", "--always", "--match", "v[0-9]*"],
             cwd=project_dir,
             capture_output=True,
             text=True,

@@ -6141,6 +6141,66 @@ body.context-chat-mode .settings-view {
     pointer-events: none;
 }
 
+.top-processes-section {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #dfe4eb;
+}
+
+.top-processes-toggle {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 4px 2px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: #34445f;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+}
+
+.top-processes-toggle:hover { color: #145fc6; }
+
+.top-processes-panel {
+    margin-top: 6px;
+}
+
+.top-processes-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+.top-processes-table th {
+    text-align: left;
+    color: #8592a3;
+    font-weight: 600;
+    padding: 3px 6px;
+    border-bottom: 1px solid #dfe4eb;
+}
+
+.top-processes-table td {
+    padding: 4px 6px;
+    border-bottom: 1px solid #edf0f4;
+    font-variant-numeric: tabular-nums;
+}
+
+.top-processes-table td:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 140px;
+}
+
+.top-processes-updated {
+    margin-top: 6px;
+    color: #8592a3;
+    font-size: 10px;
+}
+
 #dockContextText {
     display: flex;
     align-items: center;

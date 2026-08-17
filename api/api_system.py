@@ -180,6 +180,53 @@ def register_system_routes(app, get_cpu_temperature=None):
 
         return jsonify(result)
 
+    @app.route("/api/system/top-processes")
+    def api_system_top_processes():
+        """On-demand top-5 CPU consumers, system-wide (not just MeshCenter).
+
+        Stateless by design - no cross-request Process cache - so there's
+        nothing to prune when a process dies and no memory growth over time.
+        psutil.Process.cpu_percent(None) returns 0.0 on its first call per
+        Process object (no prior sample to diff against), so every call here
+        primes all handles, sleeps briefly, then samples again - the whole
+        cost is one blocking sleep inside this single request, not a
+        background loop, matching the "diagnostics you look at occasionally"
+        budget this endpoint is for (see the frontend's on-open-only polling).
+        """
+        import psutil
+
+        SAMPLE_WINDOW_S = 0.35
+
+        try:
+            procs = list(psutil.process_iter(["pid", "name"]))
+
+            for proc in procs:
+                try:
+                    proc.cpu_percent(None)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+            time.sleep(SAMPLE_WINDOW_S)
+
+            results = []
+            for proc in procs:
+                try:
+                    cpu = proc.cpu_percent(None)
+                    name = proc.info.get("name") or "?"
+                    results.append({
+                        "pid": proc.pid,
+                        "name": name,
+                        "cpu_percent": round(cpu, 1),
+                    })
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            results.sort(key=lambda item: item["cpu_percent"], reverse=True)
+
+            return jsonify({"ok": True, "processes": results[:5]})
+        except Exception as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
     def get_saved_wifi_names():
         try:
             out = subprocess.check_output(

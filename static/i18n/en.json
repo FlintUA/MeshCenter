@@ -489,7 +489,11 @@
     "restarts_label": "Restarts",
     "seconds_ago": "{seconds} s ago",
     "system_information_title": "System Information",
-    "uptime_label": "Uptime"
+    "uptime_label": "Uptime",
+    "top_processes_title": "Top processes",
+    "process_column": "Process",
+    "cpu_column": "CPU",
+    "updated_seconds_ago": "Updated {seconds} s ago"
   },
   "settings": {
     "title": "Settings",

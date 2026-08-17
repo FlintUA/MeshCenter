@@ -1018,6 +1018,8 @@
     "minutes_short": "мин",
     "seconds_short": "сек",
     "timer_notify": "Уведомить при завершении",
+    "timer_pause": "Пауза",
+    "timer_resume": "Продолжить",
     "timer_stop": "Стоп",
     "timer_reset": "Сброс",
     "timer_delete": "Удалить",

@@ -960,30 +960,40 @@ function renderTimersList() {
   }
 
   list.innerHTML = _timers.map(t => {
-    const running = !t.stopped_at && !t.finished;
     const label = escapeHtml(t.label || 'Timer');
+    const nonTerminalControls = t.state === 'running'
+      ? `<button class="btn btn-xs" onclick="pauseTimer('${escapeHtml(t.id)}')" data-i18n="time.timer_pause">${escapeHtml(window.I18N.t('time.timer_pause'))}</button>`
+      : `<button class="btn btn-xs" onclick="resumeTimer('${escapeHtml(t.id)}')" data-i18n="time.timer_resume">${escapeHtml(window.I18N.t('time.timer_resume'))}</button>`;
+    const stopOrReset = (t.state === 'running' || t.state === 'paused')
+      ? `<button class="btn btn-xs" onclick="stopTimer('${escapeHtml(t.id)}')" data-i18n="time.timer_stop">${escapeHtml(window.I18N.t('time.timer_stop'))}</button>`
+      : `<button class="btn btn-xs" onclick="resetTimer('${escapeHtml(t.id)}')" data-i18n="time.timer_reset">${escapeHtml(window.I18N.t('time.timer_reset'))}</button>`;
     return `
-      <div class="timer-item ${t.finished ? 'timer-item--finished' : ''}" data-id="${escapeHtml(t.id)}">
+      <div class="timer-item ${t.state === 'finished' ? 'timer-item--finished' : ''}" data-id="${escapeHtml(t.id)}">
         <span class="timer-item-label">${label}</span>
         <span class="timer-display" id="timer-display-${escapeHtml(t.id)}">${_formatTimerDisplay(t)}</span>
         <div class="timer-controls">
-          ${running
-            ? `<button class="btn btn-xs" onclick="stopTimer('${escapeHtml(t.id)}')" data-i18n="time.timer_stop">${escapeHtml(window.I18N.t('time.timer_stop'))}</button>`
-            : `<button class="btn btn-xs" onclick="resetTimer('${escapeHtml(t.id)}')" data-i18n="time.timer_reset">${escapeHtml(window.I18N.t('time.timer_reset'))}</button>`}
+          ${(t.state === 'running' || t.state === 'paused') ? nonTerminalControls : ''}
+          ${stopOrReset}
           <button class="btn btn-xs btn-danger" title="${escapeHtml(window.I18N.t('time.timer_delete'))}" onclick="deleteTimer('${escapeHtml(t.id)}')">✕</button>
         </div>
       </div>`;
   }).join('');
 
   _timers.forEach(t => {
-    if (!t.stopped_at && !t.finished) _startLocalTick(t);
+    if (t.state === 'running') _startLocalTick(t);
   });
+}
+
+function _timerElapsed(t, nowSeconds) {
+  if (t.state === 'running' && t.segment_started_at !== null) {
+    return t.accumulated_s + (nowSeconds - t.segment_started_at);
+  }
+  return t.accumulated_s;
 }
 
 function _formatTimerDisplay(t) {
   const now = Math.floor(TimeFormatter.now().getTime() / 1000);
-  const end = t.stopped_at || now;
-  const elapsed = end - t.started_at;
+  const elapsed = _timerElapsed(t, now);
   if (t.duration_s) {
     return _formatSeconds(Math.max(0, t.duration_s - elapsed));
   }
@@ -1008,13 +1018,13 @@ function _startLocalTick(timer) {
       return;
     }
     const now = Math.floor(TimeFormatter.now().getTime() / 1000);
-    const elapsed = now - timer.started_at;
+    const elapsed = _timerElapsed(timer, now);
 
     if (timer.duration_s) {
       const remaining = timer.duration_s - elapsed;
       el.textContent = _formatSeconds(Math.max(0, remaining));
-      if (remaining <= 0 && !timer.finished) {
-        timer.finished = true;
+      if (remaining <= 0 && timer.state !== 'finished') {
+        timer.state = 'finished';
         clearInterval(_timerTicks[timer.id]);
         delete _timerTicks[timer.id];
         _onTimerFinished(timer.id);
@@ -1029,6 +1039,18 @@ async function _onTimerFinished(id) {
   await fetch(`/api/timers/${encodeURIComponent(id)}/finish`, { method: 'POST' });
   await loadTimers();
   await pollNotifications();
+}
+
+async function pauseTimer(id) {
+  await fetch(`/api/timers/${encodeURIComponent(id)}/pause`, { method: 'PATCH' });
+  clearInterval(_timerTicks[id]);
+  delete _timerTicks[id];
+  await loadTimers();
+}
+
+async function resumeTimer(id) {
+  await fetch(`/api/timers/${encodeURIComponent(id)}/resume`, { method: 'PATCH' });
+  await loadTimers();
 }
 
 async function stopTimer(id) {

@@ -474,6 +474,24 @@ def register_system_routes(app, get_cpu_temperature=None):
         t = create_timer(label, duration_s, notify_cfg)
         return jsonify(t), 201
 
+    @app.route("/api/timers/<tid>/pause", methods=["PATCH"])
+    def api_pause_timer(tid):
+        from meshsrv.timer_service import pause_timer
+
+        t = pause_timer(tid)
+        if t is None:
+            return jsonify({"error": "not found"}), 404
+        return jsonify(t)
+
+    @app.route("/api/timers/<tid>/resume", methods=["PATCH"])
+    def api_resume_timer(tid):
+        from meshsrv.timer_service import resume_timer
+
+        t = resume_timer(tid)
+        if t is None:
+            return jsonify({"error": "not found"}), 404
+        return jsonify(t)
+
     @app.route("/api/timers/<tid>/stop", methods=["PATCH"])
     def api_stop_timer(tid):
         from meshsrv.timer_service import stop_timer

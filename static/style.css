@@ -7510,6 +7510,12 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     height: 36px;
 }
 
+.chat-icon.dm.node-short-name.favorite {
+    background: #fbe8a6;
+    color: #6b5200;
+    border: 1px solid #e6c765;
+}
+
 
 /* ============================================================
    Selected Node Inspector: rounded tabs + direct state controls

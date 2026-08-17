@@ -212,7 +212,7 @@ function updateTimeCardClock() {
 
   const dateEl = document.getElementById('timeClockDate');
   if (dateEl) {
-    dateEl.textContent = new Intl.DateTimeFormat(
+    const formattedDate = new Intl.DateTimeFormat(
       TimeFormatter._getLocale(), {
         weekday: 'long',
         day:     'numeric',
@@ -221,6 +221,12 @@ function updateTimeCardClock() {
         ...TimeFormatter._tzOption()
       }
     ).format(now);
+    // Intl lowercases the weekday for ru-RU/uk-UA (grammatically correct
+    // there for a weekday named mid-sentence) but capitalizes it for
+    // en-US/de-DE - the weekday is always the leading token across all 4
+    // locales here, so capitalizing just the first character normalizes
+    // this to one consistent look without hardcoding weekday names.
+    dateEl.textContent = formattedDate.charAt(0).toUpperCase() + formattedDate.slice(1);
   }
 
   const weekEl = document.getElementById('timeClockWeek');
@@ -3537,7 +3543,9 @@ function renderChatItem(chat) {
     const isSelected = (chat.id === currentChatId);
     const selectedClass = isSelected ? 'selected' : '';
     const icon = chat.is_channel ? (isDemo ? '🔒' : '📡') : getChatNodeShortName(chat);
-    const iconClass = chat.is_channel ? `channel${isDemo ? ' demo' : ''}` : 'dm node-short-name';
+    const iconClass = chat.is_channel
+        ? `channel${isDemo ? ' demo' : ''}`
+        : `dm node-short-name${chat.favorite ? ' favorite' : ''}`;
     const lastMsg = chat.last_message || window.I18N.t('chat.no_messages_yet_short');
     const time = chat.last_time || '';
     const ignored = chat.ignored ? '🚫 ' : '';
@@ -9682,7 +9690,7 @@ async function loadNodesManagement() {
                         <span class="name">${escapeHtml(node.name)}</span>
                         <span class="id">${escapeHtml(node.node_id)}</span>
                     </div>
-                    <span class="status ${statusClass}">${escapeHtml(statusText)}</span>
+                    ${node.ignored ? `<span class="status ${statusClass}">${escapeHtml(statusText)}</span>` : ''}
                 </div>
             `;
         }).join('');
@@ -13049,9 +13057,9 @@ async function loadPeripheralDevices(showFeedback = false) {
             if (device.id === 'environment') {
                 details = `
                     <div><dt>${escapeHtml(window.I18N.t('devices.driver'))}</dt><dd>${deviceDashboardValue(device.driver)}</dd></div>
-                    <div><dt>${escapeHtml(window.I18N.t('node_panel.temperature'))}</dt><dd>${formatPeripheralMetric(values.temperature, '°')}</dd></div>
+                    <div><dt>${escapeHtml(window.I18N.t('node_panel.temperature'))}</dt><dd>${values.temperature === null || values.temperature === undefined || values.temperature === '' ? '—' : formatTemperature(values.temperature)}</dd></div>
                     <div><dt>${escapeHtml(window.I18N.t('node_panel.humidity'))}</dt><dd>${formatPeripheralMetric(values.humidity, '%')}</dd></div>
-                    <div><dt>${escapeHtml(window.I18N.t('node_panel.pressure'))}</dt><dd>${formatPeripheralMetric(values.pressure, ' hPa')}</dd></div>`;
+                    <div><dt>${escapeHtml(window.I18N.t('node_panel.pressure'))}</dt><dd>${values.pressure === null || values.pressure === undefined || values.pressure === '' ? '—' : formatPressure(values.pressure)}</dd></div>`;
             } else if (device.id === 'power') {
                 details = `
                     <div><dt>${escapeHtml(window.I18N.t('devices.driver'))}</dt><dd>${deviceDashboardValue(device.driver)}</dd></div>
@@ -14239,8 +14247,16 @@ async function loadInstanceInfo() {
 
 async function loadSystemInfo() {
     try {
-        const response = await fetch('/api/system/info');
+        const [response, cpuHistoryResponse] = await Promise.all([
+            fetch('/api/system/info'),
+            fetch('/api/system/cpu-history?range=30m', { cache: 'no-store' })
+        ]);
         const data = await response.json();
+        // Same source the status-bar dock reads (dockCpuState) - `current`
+        // is a real CPU-usage percentage from cpu_history_worker(), not the
+        // raw os.getloadavg() value api/system/info's own load_avg field
+        // carries (a unitless load-average number, not a percentage).
+        const cpuHistoryData = cpuHistoryResponse.ok ? await cpuHistoryResponse.json() : {};
 
         const hostnameEl = document.getElementById('systemHostname');
         if (hostnameEl) hostnameEl.textContent = data.hostname || '--';
@@ -14257,15 +14273,15 @@ async function loadSystemInfo() {
 
         const cpuLoadEl = document.getElementById('systemCpuLoad');
         if (cpuLoadEl) {
-            cpuLoadEl.textContent = data.load_avg !== null && data.load_avg !== undefined
-                ? data.load_avg.toFixed(2)
-                : '--';
+            const cpuPercent = Number(cpuHistoryData?.current);
+            cpuLoadEl.textContent = Number.isFinite(cpuPercent) ? `${cpuPercent.toFixed(1)}%` : '--';
         }
 
         const ramEl = document.getElementById('systemRam');
         if (ramEl) {
+            const ramPercent = Number(cpuHistoryData?.ram_percent);
             ramEl.textContent = data.ram_used_mb !== null && data.ram_total_mb !== null
-                ? `${data.ram_used_mb} / ${data.ram_total_mb} MB`
+                ? `${data.ram_used_mb} / ${data.ram_total_mb} MB${Number.isFinite(ramPercent) ? ` (${ramPercent.toFixed(0)}%)` : ''}`
                 : '--';
         }
 

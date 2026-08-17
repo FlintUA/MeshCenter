@@ -3097,7 +3097,11 @@ body {
 
 .export-date-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    /* Single column, not side-by-side: each row now holds date + hour +
+       minute (+ AM/PM select in 12h mode) - four fields don't fit two
+       abreast at this dialog's width without clipping the second ("To")
+       field off the edge, as happened with the old 1fr 1fr layout. */
+    grid-template-columns: 1fr;
     gap: 12px;
 }
 

@@ -1018,6 +1018,8 @@
     "minutes_short": "хв",
     "seconds_short": "с",
     "timer_notify": "Сповістити при завершенні",
+    "timer_pause": "Пауза",
+    "timer_resume": "Продовжити",
     "timer_stop": "Стоп",
     "timer_reset": "Скинути",
     "timer_delete": "Видалити",

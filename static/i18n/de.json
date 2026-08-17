@@ -1018,6 +1018,8 @@
     "minutes_short": "Min",
     "seconds_short": "Sek",
     "timer_notify": "Benachrichtigen",
+    "timer_pause": "Pause",
+    "timer_resume": "Fortsetzen",
     "timer_stop": "Stopp",
     "timer_reset": "Zurücksetzen",
     "timer_delete": "Entfernen",

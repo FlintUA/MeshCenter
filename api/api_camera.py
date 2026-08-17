@@ -329,10 +329,26 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
         if not jpeg_bytes:
             return jsonify({"ok": False, "error": "Capture failed"}), 500
 
+        # Read the real dimensions out of the captured JPEG itself rather
+        # than manager.get_status()['resolution'] - for usb_driver.py,
+        # capture_photo() shoots at the camera's actual max resolution and
+        # then restores whatever the live stream was running at before
+        # returning (see that method's docstring), so by the time this
+        # line runs get_status() already reflects the *restored* stream,
+        # not the photo that was just taken.
+        try:
+            from PIL import Image
+            import io
+
+            with Image.open(io.BytesIO(jpeg_bytes)) as img:
+                preview_resolution = f"{img.width}x{img.height}"
+        except Exception:
+            preview_resolution = manager.get_status().get("resolution")
+
         return jsonify({
             "ok": True,
             "image_data": base64.b64encode(jpeg_bytes).decode("utf-8"),
-            "preview_resolution": manager.get_status().get("resolution"),
+            "preview_resolution": preview_resolution,
         })
 
     @app.route("/api/photo/save", methods=["POST"])

@@ -572,12 +572,54 @@ class UsbCameraDriver(CameraDriver):
                     self._last_activity_time = time.time()
 
     def capture_photo(self, resolution: str | None = None) -> bytes:
+        """Shoots at the camera's real maximum resolution automatically
+        (via _max_capture_resolution()) unless resolution is given
+        explicitly - the user never picks a resolution for photos, see
+        the module docstring's CAPTURE-AT-MAX-RESOLUTION note.
+
+        If a live stream is already running at a different resolution,
+        this briefly stops it, captures one frame at the target
+        resolution, then restarts it at exactly what was running before -
+        the only way to do this at all, since this hardware doesn't
+        support two concurrent format/streaming contexts (confirmed live:
+        a second open() succeeds, but set_format() on it fails with
+        [Errno 16] Device or resource busy while the first is streaming).
+        This uses the same stop()+reopen path _reconfigure() already used
+        for a live resolution change, deliberately not used for ordinary
+        streaming (see module docstring's E3500 fragility notes) - but a
+        one-shot, user-triggered photo capture is a fundamentally
+        different frequency/risk profile than continuous or repeated
+        switching, and was verified live (repeated capture-while-streaming
+        cycles, monitored via dmesg) before shipping - see the commit this
+        landed in for that verification.
+
+        Note for callers: this necessarily bumps _stream_generation twice
+        (once to stop for the photo, once to resume streaming), which
+        means any currently-open stream_mjpeg() consumer's loop condition
+        will see the generation change and exit - an active /video_feed
+        HTTP connection will end, not just pause. The frontend already
+        handles this the same way it does for the old CSI capture path
+        (dim + disable during capture, reconnect /video_feed afterward -
+        see capturePhotoPreview() in chat.js).
+        """
         with self._lock:
-            if resolution and resolution != self._resolution:
-                if not self.start(resolution=resolution):
-                    return b""
-            elif not self._started:
-                if not self.start():
+            target_resolution = (
+                resolution or self._max_capture_resolution() or self._resolution
+            )
+            temporary_switch = self._started and target_resolution != self._resolution
+            original_resolution = self._resolution
+            original_fps = self._fps
+
+            if temporary_switch:
+                self.stop()
+                time.sleep(STOP_START_SETTLE_SECONDS)
+
+            if not self._started:
+                if not self.start(resolution=target_resolution):
+                    if temporary_switch:
+                        # Best-effort: try to leave the stream as it was
+                        # rather than leaving the camera fully stopped.
+                        self.start(resolution=original_resolution, fps=original_fps)
                     return b""
 
         # Counts as activity even though it's not an open stream_mjpeg()
@@ -587,10 +629,28 @@ class UsbCameraDriver(CameraDriver):
             if self._active_consumers == 0:
                 self._last_activity_time = time.time()
 
-        # Wait for the background reader thread to deliver a frame,
-        # outside self._lock so start()/stop() aren't blocked by this
-        # wait. Usually near-instant if streaming was already running -
-        # this timeout only matters on a cold start.
+        # Outside self._lock so start()/stop() aren't blocked by this wait -
+        # same reasoning as before, now also covers the temporary-switch case.
+        photo = self._wait_for_frame()
+
+        if temporary_switch:
+            with self._lock:
+                self.stop()
+                time.sleep(STOP_START_SETTLE_SECONDS)
+                if not self.start(resolution=original_resolution, fps=original_fps):
+                    print(
+                        "[USB CAMERA] Failed to resume the live stream at "
+                        f"{original_resolution} after photo capture - camera "
+                        "left stopped, needs an explicit power cycle to recover",
+                        flush=True,
+                    )
+
+        return photo
+
+    def _wait_for_frame(self) -> bytes:
+        """Wait for the background reader thread to deliver a frame -
+        usually near-instant if already streaming at the target
+        resolution, matters most right after a fresh start()."""
         deadline = time.time() + FIRST_FRAME_TIMEOUT_SECONDS
         while time.time() < deadline:
             with self._frame_lock:
@@ -601,6 +661,17 @@ class UsbCameraDriver(CameraDriver):
 
         print("[USB CAMERA] capture_photo() timed out waiting for a frame", flush=True)
         return b""
+
+    def _max_capture_resolution(self) -> str | None:
+        """Largest resolution this camera actually advertises (queried
+        live via _probe_resolutions(), not assumed) - used by
+        capture_photo() to shoot at the camera's real maximum
+        automatically instead of whatever compromise resolution live
+        streaming is using."""
+        resolutions = self._probe_resolutions()
+        if not resolutions:
+            return None
+        return resolutions[-1]
 
     def list_resolutions(self) -> list[str]:
         resolutions = self._probe_resolutions()

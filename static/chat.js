@@ -12158,7 +12158,17 @@ async function capturePhotoPreview() {
     const placeholder = document.getElementById('photoPlaceholder');
     const status = document.getElementById('photoStatus');
     const saveBtn = document.getElementById('photoSaveBtn');
-    
+    // For a USB-backed camera, capture_photo() briefly stops and restarts
+    // the live stream to shoot at the camera's real max resolution (see
+    // usb_driver.py) - /video_feed's connection ends, not just pauses, so
+    // without this the live feed would just look frozen/broken for ~1-2s
+    // with no explanation. Same dim-and-reconnect pattern
+    // captureCameraPhoto() already uses for the old CSI highres-save path,
+    // which has the same kind of stream disruption during capture.
+    const videoFeed = document.getElementById('videoFeed');
+
+    if (videoFeed) videoFeed.classList.add('camera-capturing');
+
     try {
         if (status) {
             status.textContent = `⏳ ${window.I18N.t('camera.capturing_preview')}`;
@@ -12170,16 +12180,16 @@ async function capturePhotoPreview() {
         }
         if (display) display.style.display = 'none';
         if (placeholder) placeholder.style.display = 'flex';
-        
+
         console.log('[PHOTO] Capturing preview with quality:', currentPhotoQuality);
         const response = await fetch('/api/photo/capture', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });
-        
+
         const data = await response.json();
         console.log('[PHOTO] Response:', data);
-        
+
         if (data.ok && data.image_data) {
             if (display) {
                 display.src = 'data:image/jpeg;base64,' + data.image_data;
@@ -12220,6 +12230,15 @@ async function capturePhotoPreview() {
             saveBtn.textContent = `💾 ${window.I18N.t('common.save')}`;
         }
         if (placeholder) placeholder.style.display = 'flex';
+    } finally {
+        if (videoFeed) videoFeed.classList.remove('camera-capturing');
+        // capture_photo() has already fully restored the stream (it's
+        // synchronous - the HTTP response only comes back after the resume
+        // start() call returns) by the time this fetch resolves, but the
+        // resumed reader thread still needs a moment to deliver its first
+        // frame - same 1200ms buffer captureCameraPhoto() already uses
+        // before reconnecting, for the same reason.
+        setTimeout(() => { refreshVideoFeed(); }, 1200);
     }
 }
 

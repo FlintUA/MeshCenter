@@ -29,6 +29,9 @@ from meshsrv.radio_manager import RadioConnectionManager
 from meshsrv.runtime_identity import resolve_meshtastic_cli, resolve_serial_port, meshtastic_command, discover_serial_ports
 from meshsrv.instance_manager import InstanceManager
 from meshsrv.radio_identity import detect_radio_identity, detect_connected_radio, compare_radio_identity
+from meshsrv.time_service import start_background_thread as start_time_service
+from meshsrv.node_time_sync import try_sync as try_node_time_sync, STARTUP_SYNC_DELAY_S
+from meshsrv.schedule_engine import start as start_schedule_engine
 from api.api_camera import register_camera_routes
 from api.api_camera_manager import register_camera_manager_routes
 from api.api_chat import register_chat_routes
@@ -426,12 +429,22 @@ def _epaper_get_temperature_unit():
     with state_lock:
         return normalize_settings(settings).get("units", {}).get("temperature", "c")
 
+def _epaper_get_time_format():
+    # Same settings.units.time_format ("12"/"24") the Time card / server-
+    # synced clock use (Time System Stage 1/2) - resolved down to the
+    # normalized primitive here, same convention as
+    # _epaper_get_temperature_unit() above, rather than handing the whole
+    # settings dict into modules/display/*.
+    with state_lock:
+        return normalize_settings(settings).get("units", {}).get("time_format", "24")
+
 def _epaper_build_status_image_now():
     return build_status_image_now(
         display_manager, state_lock, nodes,
         _epaper_get_radio_status, _epaper_get_cpu_percent, _epaper_get_ram_percent,
         _epaper_get_listener_alive, LOCAL_NODE_NAME,
         locale=_epaper_get_display_language(),
+        time_format=_epaper_get_time_format(),
     )
 
 def _epaper_build_page_image_now(page):
@@ -442,6 +455,7 @@ def _epaper_build_page_image_now(page):
         _epaper_get_cpu_temp, _epaper_get_latest_message,
         locale=_epaper_get_display_language(),
         temperature_unit=_epaper_get_temperature_unit(),
+        time_format=_epaper_get_time_format(),
     )
 
 register_hardware_display_routes(
@@ -554,6 +568,18 @@ listen_process = None
 pause_listen = threading.Event()
 radio_connection_manager = None
 
+# Attempt-level throttle for _attempt_node_time_sync(): the sync itself
+# pauses/resumes the listener (via radio_session()), which produces its
+# own "listener_start" transition once it hands the port back - without
+# this guard that self-generated transition would immediately queue
+# another sync attempt, forever (observed live: a restart storm every
+# ~5-10s). This tracks the last *attempt* (not just successful syncs,
+# which node_time_sync.MIN_SYNC_INTERVAL_S already throttles) so a
+# failing/slow attempt can't retrigger itself either.
+_node_time_sync_attempt_lock = threading.Lock()
+_node_time_sync_last_attempt_ts = 0.0
+NODE_TIME_SYNC_ATTEMPT_COOLDOWN_S = 300
+
 radio_health = {
     "status": "STARTING",
     "status_reason": "Service is starting",
@@ -626,6 +652,29 @@ def radio_event(event, error=""):
                     "INFO",
                     "Meshtastic listener is running"
                 )
+                # Fire-and-forget: only on an actual stopped->running
+                # transition (real connect/reconnect), never on every
+                # poll/request. Runs in its own thread because it needs to
+                # briefly pause and reclaim the radio via radio_session(),
+                # which must not happen while state_lock is held here.
+                #
+                # Attempt-cooldown check happens here (not just inside
+                # node_time_sync's own success throttle) because the sync
+                # itself causes another "listener_start" transition when it
+                # hands the port back - without gating the attempt itself,
+                # that self-generated transition re-triggers immediately.
+                global _node_time_sync_last_attempt_ts
+                should_attempt_sync = False
+                with _node_time_sync_attempt_lock:
+                    if (now_ts - _node_time_sync_last_attempt_ts) >= NODE_TIME_SYNC_ATTEMPT_COOLDOWN_S:
+                        _node_time_sync_last_attempt_ts = now_ts
+                        should_attempt_sync = True
+                if should_attempt_sync:
+                    threading.Thread(
+                        target=_attempt_node_time_sync,
+                        daemon=True,
+                        name="node-time-sync",
+                    ).start()
 
         elif event == "listener_stop":
             was_running = bool(
@@ -856,7 +905,15 @@ def load_chats():
                 "last_time": "",
                 "unread": 0
             }
-            save_chats()
+        else:
+            # Keep the persisted primary-channel name in sync with the
+            # current config.py — otherwise a stale name written by an old
+            # CHANNEL_CHAT_NAME value survives in chats.json forever, since
+            # this used to be a one-time seed. Stored bare: the "[index]"
+            # suffix is a display concern added by api/api_chat.py and
+            # static/chat.js, not something persisted here.
+            chats[CHANNEL_CHAT_ID]["name"] = CHANNEL_CHAT_NAME
+        save_chats()
 
 def save_nodes():
     with state_lock:
@@ -3101,6 +3158,57 @@ def radio_session(device=None, timeout=8, cooldown=2.0, extra_release_wait=None)
             time.sleep(cooldown)
         if is_radio_available():
             pause_listen.clear()
+
+
+def _attempt_node_time_sync():
+    """Best-effort node clock sync, run after a fresh listener (re)connect.
+
+    listen_meshtastic() only ever talks to the radio through a
+    `meshtastic --listen` subprocess whose stdout is text-parsed - there is
+    no live SerialInterface object anywhere to reuse here. This mirrors the
+    pattern in api/api_chat.py's discover_radio_channels(): pause the
+    listener via radio_session(), open a short-lived SerialInterface just
+    for this call, and let radio_session() resume the listener afterwards.
+
+    Called from radio_event() in its own daemon thread (never inline, and
+    never from a request handler) so a slow/busy radio can't block Flask.
+    """
+    if RADIO_IDENTITY_RESULT.get("status") != "MATCH":
+        return
+
+    # Let the freshly (re)started listener subprocess settle before we
+    # pause it again to grab the port - see STARTUP_SYNC_DELAY_S docstring
+    # in meshsrv/node_time_sync.py for why (avoids Serial port still busy
+    # contention observed on a cold restart).
+    time.sleep(STARTUP_SYNC_DELAY_S)
+
+    interface = None
+    try:
+        with radio_session(device=MESHTASTIC_PORT, timeout=10, cooldown=2.0):
+            from meshtastic.serial_interface import SerialInterface
+            interface = SerialInterface(devPath=MESHTASTIC_PORT)
+
+            wait_for_config = getattr(interface, "waitForConfig", None)
+            if callable(wait_for_config):
+                try:
+                    wait_for_config()
+                except Exception as wait_error:
+                    print(f"[TIME SYNC] waitForConfig() warning: {wait_error}", flush=True)
+
+            try_node_time_sync(
+                interface=interface,
+                log_fn=lambda msg, level="INFO": log_system_event(
+                    title="Node Time Sync", details=msg, level=level, source="time_sync"
+                ),
+            )
+    except Exception as error:
+        print(f"[TIME SYNC] Attempt failed: {error}", flush=True)
+    finally:
+        if interface is not None:
+            try:
+                interface.close()
+            except Exception:
+                pass
 
 
 def update_base_status_from_info(info_output=None):
@@ -5779,6 +5887,19 @@ if __name__ == "__main__":
         pause_listen.set()
         print(f"[IDENTITY] Listener not started because status={identity_status}", flush=True)
     threading.Thread(target=cpu_history_worker, daemon=True).start()
+    start_time_service()
+    start_schedule_engine(
+        nodes=nodes,
+        state_lock=state_lock,
+        radio_session=radio_session,
+        get_meshtastic_port=lambda: MESHTASTIC_PORT,
+        is_radio_available=is_radio_available,
+        RadioBusyError=RadioBusyError,
+        LOCAL_NODE_ID=LOCAL_NODE_ID,
+        add_message=add_message,
+        LOCAL_NODE_NAME=LOCAL_NODE_NAME,
+        CHANNEL_CHAT_ID=CHANNEL_CHAT_ID,
+    )
 
     if EPAPER_ENABLED:
         from modules.display.service import epaper_worker
@@ -5811,6 +5932,7 @@ if __name__ == "__main__":
                 get_latest_message=_epaper_get_latest_message,
                 get_display_language=_epaper_get_display_language,
                 get_temperature_unit=_epaper_get_temperature_unit,
+                get_time_format=_epaper_get_time_format,
             ),
             daemon=True,
         ).start()

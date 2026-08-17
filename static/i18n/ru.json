@@ -51,6 +51,7 @@
     "waiting_for_data": "Ожидание текущих данных",
     "charts": "Графики",
     "environment": "Окружающая среда",
+    "power_card_title": "Питание",
     "waiting_for_charge_data": "Ожидание данных о заряде",
     "battery_percent_unavailable": "Процент заряда батареи пока недоступен",
     "current_unavailable": "Данные о потреблении тока пока недоступны",

@@ -51,6 +51,7 @@
     "waiting_for_data": "Warte auf aktuelle Daten",
     "charts": "Diagramme",
     "environment": "Umgebung",
+    "power_card_title": "Versorgung",
     "waiting_for_charge_data": "Warte auf Ladedaten",
     "battery_percent_unavailable": "Akkuprozentwert ist noch nicht verfügbar",
     "current_unavailable": "Stromverbrauch ist noch nicht verfügbar",

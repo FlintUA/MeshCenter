@@ -51,6 +51,7 @@
     "waiting_for_data": "Waiting for current data",
     "charts": "Charts",
     "environment": "Environment",
+    "power_card_title": "Power Supply",
     "waiting_for_charge_data": "Waiting for charge data",
     "battery_percent_unavailable": "Battery percentage is not available yet",
     "current_unavailable": "Current consumption is not available yet",

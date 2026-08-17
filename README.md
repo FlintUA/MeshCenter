@@ -1162,6 +1162,7 @@ Features include:
 - Unread message indicators
 - Conversation highlighting
 - Improved notification synchronization
+- Optional browser (OS-level) notification popups for timers, schedules and new messages — see "Notification Center" below
 
 ### 📈 Telemetry
 
@@ -1206,9 +1207,13 @@ Telemetry history is stored locally and can be displayed as charts with selectab
 
 ### 📷 Camera
 
-MeshCenter includes camera support based on Raspberry Pi Camera and Picamera2.
+MeshCenter includes camera support based on Raspberry Pi Camera (CSI, via Picamera2) and USB/UVC webcams — both are handled through a shared driver framework (`camera_manager`), so `/video_feed`, live preview and photo capture work the same way regardless of which camera is active.
 
 The camera subsystem is designed for lightweight live viewing and photo capture on low-power hardware.
+
+#### Multiple Cameras
+
+If more than one camera is detected (e.g. a CSI camera and a USB webcam plugged in at the same time), the `Devices` tab lists each one as its own card with live status, and the `Camera` tab's source selector lets you switch which one is currently active without restarting MeshCenter. Duplicate detection avoids listing the same physical camera twice when it happens to be reachable through both a CSI and USB code path.
 
 #### Live Video
 
@@ -1314,6 +1319,7 @@ MeshCenter provides a dedicated System workspace that gives you full visibility 
 
 - Live CPU usage graph with selectable ranges: 30m, 1h, 6h, 12h, 24h
 - Current CPU usage, RAM usage and temperature are also shown in the status dock
+- An on-demand, collapsible **Top Processes** panel underneath shows the 5 highest CPU consumers system-wide (not just MeshCenter) — queried only when opened, with no background polling while collapsed
 
 #### System Log
 
@@ -1427,6 +1433,7 @@ A new **"Notifications"** card sits between the Time card and the Weather card.
 - Notifications from every source in one place: schedules, timers, system events
 - Each notification can be dismissed individually, or cleared all at once
 - Works alongside the existing toast popup system: toasts are for an immediate heads-up, the card is for history
+- **Browser notifications** (opt-in, Settings → Browser Notifications) — duplicates selected event categories (timer finished, schedule triggered, new channel message, new direct message) into a real OS-level notification popup, useful when the tab is in the background. Suppressed while the tab is visibly focused. Requires the page to be served over a secure context (HTTPS or `localhost`) — plain-HTTP LAN access, MeshCenter's default, needs a one-time browser flag override for testing (see the User Guide) until/unless HTTPS is set up
 
 ### 📅 Schedule Engine
 
@@ -1453,6 +1460,8 @@ Two modes:
 
 - **Stopwatch** – counts up from the moment it's started
 - **Countdown** – a timer for a fixed duration (HH:MM:SS); on reaching zero it automatically creates a notification and, optionally, sends a signal over Meshtastic
+
+Timers can be **paused and resumed** without losing elapsed time — the running count freezes on pause and continues from exactly where it left off on resume, across as many pause/resume cycles as needed. Stop remains a separate, terminal action (only Reset can restart a stopped timer from zero).
 
 Timers are in-memory (reset on service restart). On restart, a notification is recorded in the notification card for each timer that was reset this way.
 
@@ -1634,6 +1643,7 @@ GET    /api/radio_health
 GET    /api/system/info
 GET    /api/system/network
 GET    /api/system/cpu-history
+GET    /api/system/top-processes
 POST   /api/system/action
 
 GET    /api/nodes
@@ -1647,6 +1657,13 @@ GET    /api/camera/status
 POST   /api/camera/settings
 POST   /api/photo/capture
 POST   /api/photo/save
+
+GET    /api/timers
+POST   /api/timers
+PATCH  /api/timers/<id>/pause
+PATCH  /api/timers/<id>/resume
+PATCH  /api/timers/<id>/stop
+PATCH  /api/timers/<id>/reset
 
 GET    /api/weather/current
 ```
@@ -1956,10 +1973,15 @@ Possible future integrations include:
 
 | Version | Highlights |
 |----------|------------|
-| v1.4.0 | Localization (i18n) infrastructure — language switching, translation runtime, first slice of localized errors and weather; translations pending |
+| v1.7.0 | Auto-Installer (cloud-init), redesigned Time card, channel name/discovery fixes |
+| v1.6.0 | Time System, Notifications & Automation — Schedule Engine, Timers, Notification Center |
+| v1.5.0 | Localization (i18n) foundation & reliability fixes |
+| v1.4.0 | Multi-Radio Profiles & Node Manager |
 | v1.3.0 | Waypoints, Notifications, Action Engine |
 | v1.2.0 | Interactive Map |
 | v1.0.0 | First Stable Release |
+
+See the [GitHub Releases page](https://github.com/FlintUA/MeshCenter/releases) for full release notes.
 
 ---
 

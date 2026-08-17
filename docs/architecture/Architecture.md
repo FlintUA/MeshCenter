@@ -103,6 +103,8 @@ Provides
 
 - gallery
 
+- CSI and USB/UVC cameras through one driver framework, including multiple cameras with a source selector
+
 Future
 
 - video recording
@@ -248,8 +250,6 @@ Examples
 - Remote management
 
 - OTA updates
-
-- Multiple cameras
 
 ---
 

@@ -481,11 +481,26 @@ Open `Workspace > System` to inspect:
 - Meshtastic listener and Radio Health state
 - Recent system events
 
+Below the CPU Usage chart, an on-demand **"Top processes"** panel shows the 5 processes currently using the most CPU, system-wide (not just MeshCenter's own process) — useful for spotting what's actually loading the Pi. It only queries on click, not continuously, so it adds no background load while collapsed.
+
 `Restart Listener` restarts only radio listening. `Restart MeshCenter` restarts the application service. Raspberry Pi reboot and shutdown affect the whole host and should be used only when intended.
 
 The Wi-Fi Manager can change the Raspberry Pi network connection. Changing to another network can immediately disconnect the current browser session. Reopen MeshCenter at the new IP address after the connection changes.
 
 The Workspace menu also controls Base and Nodes panel visibility, theme and compact mode. These visual preferences are stored in the current browser, not globally on the Raspberry Pi.
+
+### Browser notifications
+
+`Settings > Browser Notifications` can duplicate selected events (timer finished, schedule triggered, new channel message, new direct message) into a real operating-system notification popup, in addition to the in-app Notifications card — useful when the MeshCenter tab is in the background. It only fires while the tab is open (even backgrounded); it cannot deliver anything once the browser is fully closed, and it stays quiet while the tab is the one visibly in front of you (the in-app UI already covers that case).
+
+The browser's Notification API requires a secure context (HTTPS or `localhost`). Since MeshCenter is served over plain HTTP by default, most browsers block the permission prompt outright on a LAN address like `http://192.168.1.50:5000`. Until MeshCenter supports HTTPS, you can test this feature per-device with a one-time browser override:
+
+1. Open `chrome://flags/#unsafely-treat-insecure-origin-as-secure` (Chrome/Edge).
+2. Enter your MeshCenter address(es), comma-separated if you use more than one (e.g. `http://192.168.1.50:5000`).
+3. Set the flag to **Enabled** and relaunch the browser.
+4. Open `Settings > Browser Notifications`, enable it, and accept the permission prompt.
+
+This is a local, per-browser setting — it does not change anything on the Raspberry Pi, and needs repeating on each device/browser you want notifications on.
 
 ## 12. Back up MeshCenter
 

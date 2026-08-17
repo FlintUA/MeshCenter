@@ -324,13 +324,28 @@ def register_system_routes(app, get_cpu_temperature=None):
             return jsonify({"ok": False, "error": str(e), "networks": []}), 500
         return jsonify(result)
 
+    def _validate_ssid(ssid):
+        # 802.11 spec limits SSID to 32 octets (bytes) max
+        if not ssid:
+            return "SSID is required"
+        if len(ssid.encode("utf-8")) > 32:
+            return "SSID exceeds maximum length of 32 bytes"
+        if ssid.startswith("-"):
+            return "Invalid SSID format"
+        if any(ord(c) < 32 or ord(c) == 127 for c in ssid):
+            return "SSID contains invalid control characters"
+        return None
+
     @app.route("/api/system/wifi/connect", methods=["POST"])
     def api_system_wifi_connect():
         data = request.get_json(force=True)
         ssid = (data.get("ssid") or "").strip()
         password = data.get("password") or ""
-        if not ssid:
-            return jsonify({"ok": False, "error": "SSID is required"}), 400
+        err = _validate_ssid(ssid)
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+        if any(c in password for c in ("\x00", "\r", "\n")):
+            return jsonify({"ok": False, "error": "Password contains invalid characters"}), 400
         def run_nmcli(args, timeout=30):
             return subprocess.check_output(["sudo", "-n", "/usr/bin/nmcli"] + args, text=True, stderr=subprocess.STDOUT, timeout=timeout)
         try:
@@ -362,8 +377,9 @@ def register_system_routes(app, get_cpu_temperature=None):
     def api_system_wifi_forget():
         data = request.get_json(force=True)
         ssid = (data.get("ssid") or "").strip()
-        if not ssid:
-            return jsonify({"ok": False, "error": "SSID is required"}), 400
+        err = _validate_ssid(ssid)
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
         try:
             out = subprocess.check_output(["sudo", "-n", "/usr/bin/nmcli", "connection", "delete", ssid], text=True, stderr=subprocess.STDOUT, timeout=15)
             return jsonify({"ok": True, "message": out.strip()})

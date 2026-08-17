@@ -197,6 +197,22 @@ def build_camera_manager(persisted_active_id: str | None = None) -> CameraManage
         if ids is not None:
             csi_functional = "MJPEG" in usb_formats_by_ids.get(ids, set())
             if not csi_functional:
+                # detect() just opened Picamera2 to read the model/probe
+                # usb_ids (camera_module.init_camera(), inside
+                # csi_driver.py) and never closes it on its own - if this
+                # driver isn't going to be registered/used, that handle
+                # would otherwise linger indefinitely and fight
+                # usb_driver.py for the same physical device on every
+                # subsequent start()/rescan. Confirmed live on camtest:
+                # without this, /video_feed failed with "[Errno 16]
+                # Device or resource busy" on every attempt after a
+                # rescan, recoverable only by explicitly releasing this
+                # handle - not a real USB disconnect (lsusb/dmesg showed
+                # the device fully present throughout). stop() is safe to
+                # call on a never-started driver - it's csi_driver.py's
+                # own close_camera(), which no-ops cleanly if picam2 is
+                # already None.
+                csi_driver.stop()
                 print(
                     f"[CAMERA MANAGER] Not using the csi slot for {ids[0]}:{ids[1]} - "
                     "Picamera2 sees it via uvcvideo but it has no MJPEG, and "

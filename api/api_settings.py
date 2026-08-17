@@ -61,6 +61,20 @@ DEFAULT_SETTINGS = {
         # Preferences are keyed by active radio profile ID.
         "profile_defaults": {},
     },
+
+    "browser_notifications": {
+        # Whether the user has opted in via Settings. Notification.permission
+        # itself (granted/denied/default) is native per-browser-origin state,
+        # queried live client-side - never stored here, since it isn't
+        # meaningfully a server-side preference.
+        "enabled": False,
+        "categories": {
+            "timer": True,
+            "schedule": True,
+            "channel_message": False,
+            "dm_message": True,
+        },
+    },
 }
 
 
@@ -402,6 +416,18 @@ def normalize_settings(settings):
             raw_defaults, timer_defaults
         )
 
+    # ---------------- Browser notifications ----------------
+
+    browser_notif = settings.get("browser_notifications", {})
+    if not isinstance(browser_notif, dict):
+        browser_notif = {}
+
+    browser_notif_categories = browser_notif.get("categories", {})
+    if not isinstance(browser_notif_categories, dict):
+        browser_notif_categories = {}
+
+    default_categories = DEFAULT_SETTINGS["browser_notifications"]["categories"]
+
     return {
         "language": language,
 
@@ -453,6 +479,14 @@ def normalize_settings(settings):
             "channel_index": timer_defaults["channel_index"],
             "node_id": timer_defaults["node_id"],
             "profile_defaults": timer_profile_defaults,
+        },
+
+        "browser_notifications": {
+            "enabled": bool(browser_notif.get("enabled", False)),
+            "categories": {
+                key: bool(browser_notif_categories.get(key, default))
+                for key, default in default_categories.items()
+            },
         },
     }
 

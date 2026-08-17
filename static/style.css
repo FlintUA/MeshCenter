@@ -3122,12 +3122,21 @@ body {
     gap: 6px;
 }
 
-.export-date-input {
+/* Both qualified with .export-date-grid to out-specificity the generic
+   ".export-date-grid input { width: 100% }" rule above, written for the
+   old single-input-per-field layout - without this, that rule's (class +
+   type) specificity beats these (class-only) ones regardless of source
+   order, stretching the hour/minute boxes to the full column width
+   (flex-shrink:0 lets them overflow instead of shrinking back) and
+   crushing the date input - which has no competing width of its own - to
+   near-zero trying to compensate. */
+.export-date-grid .export-date-input {
     flex: 1 1 auto;
     min-width: 0;
+    width: auto;
 }
 
-.export-time-input {
+.export-date-grid .export-time-input {
     width: 48px;
     flex: 0 0 auto;
     text-align: center;

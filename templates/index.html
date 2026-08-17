@@ -1161,6 +1161,46 @@
                             </div>
                         </div>
 
+                        <div class="settings-card settings-card--browser-notifications">
+                            <div class="settings-card-title">🔔 <span data-i18n="settings.browser_notifications">Browser Notifications</span></div>
+                            <div class="settings-card-text" data-i18n="settings.browser_notifications_description">
+                                Show a system notification popup for selected events, in addition to the in-app Notifications panel - especially useful when this tab is in the background.
+                            </div>
+
+                            <div class="settings-option">
+                                <span data-i18n="common.enabled">Enabled</span>
+                                <label class="switch">
+                                    <input type="checkbox" id="browserNotificationsEnabled" onchange="toggleBrowserNotifications(this.checked)">
+                                    <span class="slider round"></span>
+                                </label>
+                            </div>
+
+                            <div id="browserNotificationsPermissionNote" class="settings-card-note" hidden></div>
+
+                            <div id="browserNotificationsCategories" style="display:none;">
+                                <div class="settings-option">
+                                    <span data-i18n="settings.browser_notif_timer">Timer finished</span>
+                                    <input type="checkbox" id="browserNotifCatTimer" onchange="updateBrowserNotificationCategory('timer', this.checked)">
+                                </div>
+                                <div class="settings-option">
+                                    <span data-i18n="settings.browser_notif_schedule">Schedule triggered</span>
+                                    <input type="checkbox" id="browserNotifCatSchedule" onchange="updateBrowserNotificationCategory('schedule', this.checked)">
+                                </div>
+                                <div class="settings-option">
+                                    <span data-i18n="settings.browser_notif_channel">New channel message</span>
+                                    <input type="checkbox" id="browserNotifCatChannel" onchange="updateBrowserNotificationCategory('channel_message', this.checked)">
+                                </div>
+                                <div class="settings-option">
+                                    <span data-i18n="settings.browser_notif_dm">New direct message</span>
+                                    <input type="checkbox" id="browserNotifCatDm" onchange="updateBrowserNotificationCategory('dm_message', this.checked)">
+                                </div>
+                            </div>
+
+                            <div class="settings-card-text settings-card-note" data-i18n="settings.browser_notifications_limitation">
+                                Only works while this browser tab is open (even in the background) - not when the browser is fully closed.
+                            </div>
+                        </div>
+
                         <div class="map-settings-card settings-card settings-card--map">
                             <div class="map-settings-title">
                                 🗺 <span data-i18n="settings.map">Map</span>

@@ -295,6 +295,13 @@ function showToastsForNew(notifications) {
                  : 'info';
       const text = n.body ? `${n.title}: ${n.body}` : n.title;
       addNotification(text, type);
+
+      const browserCategory = n.source === 'timer' ? 'timer'
+                             : n.source === 'schedule_engine' ? 'schedule'
+                             : null;
+      if (browserCategory) {
+        maybeShowBrowserNotification(browserCategory, n.title, n.body || '', null);
+      }
     }
   }
 
@@ -2000,7 +2007,178 @@ function updateSettingsUi() {
     updateReferenceLocationFields();
     updateReferenceLocationSummary();
     markReferenceLocationStateSaved();
+    updateBrowserNotificationsUi();
     notifySettingsUpdated();
+}
+
+// ===== BROWSER NOTIFICATIONS (Web Notifications API) =====
+// Duplicates selected events into a real OS-level notification popup, on
+// top of (not instead of) the in-app Notifications panel above - mainly
+// useful when this tab is backgrounded. Two independent event sources feed
+// the single choke point maybeShowBrowserNotification():
+//   1. showToastsForNew() below, for the existing backend queue
+//      (timer/schedule_engine) - already-detected "genuinely new" events.
+//   2. detectAndNotifyNewMessages(), a small diff this feature adds on top
+//      of loadChatList()'s per-chat unread counts - channel/DM messages
+//      never flowed through the backend notification queue before this,
+//      so there was nothing to hook into for that case.
+
+function updateBrowserNotificationsUi() {
+    const settings = appSettings?.browser_notifications || {};
+    const enabled = !!settings.enabled;
+    const categories = settings.categories || {};
+
+    const checkbox = document.getElementById('browserNotificationsEnabled');
+    if (checkbox) checkbox.checked = enabled;
+
+    const categoriesEl = document.getElementById('browserNotificationsCategories');
+    if (categoriesEl) categoriesEl.style.display = enabled ? 'block' : 'none';
+
+    const catTimer = document.getElementById('browserNotifCatTimer');
+    if (catTimer) catTimer.checked = categories.timer !== false;
+    const catSchedule = document.getElementById('browserNotifCatSchedule');
+    if (catSchedule) catSchedule.checked = categories.schedule !== false;
+    const catChannel = document.getElementById('browserNotifCatChannel');
+    if (catChannel) catChannel.checked = !!categories.channel_message;
+    const catDm = document.getElementById('browserNotifCatDm');
+    if (catDm) catDm.checked = categories.dm_message !== false;
+
+    const note = document.getElementById('browserNotificationsPermissionNote');
+    if (!note) return;
+
+    if (typeof Notification === 'undefined') {
+        note.hidden = false;
+        note.textContent = window.I18N.t('settings.browser_notifications_unsupported');
+    } else if (Notification.permission === 'denied') {
+        note.hidden = false;
+        note.textContent = window.I18N.t('settings.browser_notifications_blocked');
+    } else {
+        note.hidden = true;
+    }
+}
+
+async function toggleBrowserNotifications(enabled) {
+    const checkbox = document.getElementById('browserNotificationsEnabled');
+
+    if (enabled) {
+        if (typeof Notification === 'undefined') {
+            if (checkbox) checkbox.checked = false;
+            updateBrowserNotificationsUi();
+            return;
+        }
+
+        if (Notification.permission === 'default') {
+            // Must stay directly in this click-handler call chain - browsers
+            // only honor requestPermission() as tied to a real user gesture,
+            // not when called after an intervening await elsewhere.
+            const result = await Notification.requestPermission();
+            if (result !== 'granted') {
+                if (checkbox) checkbox.checked = false;
+                updateBrowserNotificationsUi();
+                return;
+            }
+        } else if (Notification.permission === 'denied') {
+            if (checkbox) checkbox.checked = false;
+            updateBrowserNotificationsUi();
+            return;
+        }
+    }
+
+    try {
+        const response = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ browser_notifications: { enabled } })
+        });
+        const data = await response.json();
+        if (!data.ok) {
+            alert(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }));
+            return;
+        }
+        appSettings = data.settings;
+        updateBrowserNotificationsUi();
+    } catch (error) {
+        alert(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }));
+    }
+}
+
+async function updateBrowserNotificationCategory(key, checked) {
+    const categories = {
+        ...(appSettings?.browser_notifications?.categories || {}),
+        [key]: checked
+    };
+
+    try {
+        const response = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ browser_notifications: { categories } })
+        });
+        const data = await response.json();
+        if (!data.ok) {
+            alert(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }));
+            return;
+        }
+        appSettings = data.settings;
+    } catch (error) {
+        alert(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }));
+    }
+}
+
+// Single choke point every source funnels through - checks permission,
+// the opt-in toggle, the per-category toggle, and suppresses whenever this
+// tab is the one visibly in front of the user (the in-app toast/badge
+// already covers that case, a popup on top would just be redundant).
+function maybeShowBrowserNotification(category, title, body, chatId) {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    if (!appSettings?.browser_notifications?.enabled) return;
+    if (!appSettings?.browser_notifications?.categories?.[category]) return;
+    if (document.visibilityState === 'visible' && document.hasFocus()) return;
+
+    try {
+        const notif = new Notification(title, {
+            body: body || '',
+            icon: '/static/meshcenter_logo.png',
+            tag: `mc-${category}-${chatId || Date.now()}`
+        });
+        notif.onclick = () => {
+            window.focus();
+            if (chatId) {
+                const chat = chatListCache.find(c => c.id === chatId);
+                if (chat) openChat(chat.id, chat.name, chat.type, 'chat');
+            }
+            notif.close();
+        };
+    } catch (e) {
+        console.warn('Browser notification failed:', e);
+    }
+}
+
+// Diffs chatListCache's per-chat unread count against the previous poll to
+// detect genuinely new channel/DM messages - unlike timer/schedule, these
+// never flowed through the backend notification queue (see the module
+// comment above), so there is nothing existing to hook into for this case.
+let _chatListEverLoadedForNotify = false;
+function detectAndNotifyNewMessages(previousChats, nextChats) {
+    if (!_chatListEverLoadedForNotify) {
+        _chatListEverLoadedForNotify = true;
+        return;
+    }
+
+    const previousById = new Map(previousChats.map(chat => [chat.id, chat]));
+
+    for (const chat of nextChats) {
+        const previous = previousById.get(chat.id);
+        const previousUnread = previous ? (previous.unread || 0) : 0;
+        const nextUnread = chat.unread || 0;
+        if (nextUnread <= previousUnread) continue;
+
+        const category = chat.is_channel ? 'channel_message' : 'dm_message';
+        const title = chat.is_channel && chat.last_sender
+            ? `${chat.name}: ${chat.last_sender}`
+            : chat.name;
+        maybeShowBrowserNotification(category, title, truncateText(chat.last_message || '', 120), chat.id);
+    }
 }
 
 // ===== E-PAPER DISPLAY SETTINGS (e-Paper Stage 1 plan, Phase 7) =====
@@ -3668,6 +3846,8 @@ async function loadChatList() {
         const nextActivitySignature = nextActiveChat
             ? `${nextActiveChat.last_time || ''}|${nextActiveChat.last_message || ''}`
             : '';
+
+        detectAndNotifyNewMessages(chatListCache, nextChatList);
 
         chatListCache = nextChatList;
         totalUnreadCount = data.total_unread || 0;

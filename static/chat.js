@@ -13307,6 +13307,11 @@ function switchMainTab(tab) {
     if (nodeManagerView) nodeManagerView.style.display = 'none';
     if (photoView) photoView.style.display = 'none';
     if (systemView) systemView.style.display = 'none';
+    // The System workspace's top-processes panel polls only while visibly
+    // open (see toggleTopProcesses()) - systemView going display:none here
+    // doesn't stop a running setInterval on its own, so stop it explicitly
+    // on every tab switch rather than only on the panel's own toggle-close.
+    stopTopProcessesPolling();
     if (settingsView) settingsView.style.display = 'none';
     if (aboutView) aboutView.style.display = 'none';
     if (mapView) mapView.style.display = 'none';
@@ -14025,6 +14030,30 @@ function ensureCpuHistoryPanel() {
             <canvas id="cpuUsageHistoryCanvas"></canvas>
             <div id="cpuHistoryEmpty" class="cpu-history-empty">Collecting CPU data…</div>
         </div>
+        <div class="top-processes-section">
+            <button type="button"
+                    id="topProcessesToggle"
+                    class="top-processes-toggle"
+                    onclick="toggleTopProcesses()"
+                    aria-expanded="false"
+                    aria-controls="topProcessesPanel">
+                <span>${escapeHtml(window.I18N.t('system.top_processes_title'))}</span>
+                <span id="topProcessesArrow">▾</span>
+            </button>
+            <div id="topProcessesPanel" class="top-processes-panel" style="display:none;">
+                <table class="top-processes-table">
+                    <thead>
+                        <tr>
+                            <th>${escapeHtml(window.I18N.t('system.process_column'))}</th>
+                            <th>PID</th>
+                            <th>${escapeHtml(window.I18N.t('system.cpu_column'))}</th>
+                        </tr>
+                    </thead>
+                    <tbody id="topProcessesTbody"></tbody>
+                </table>
+                <div id="topProcessesUpdated" class="top-processes-updated"></div>
+            </div>
+        </div>
     `;
     systemCard.appendChild(panel);
 
@@ -14037,6 +14066,83 @@ function ensureCpuHistoryPanel() {
         });
         loadCpuHistory(true);
     });
+}
+
+// ─── Top processes (on-demand, System Info card) ──────────────────
+// Mirrors toggleRadioHealthHistory()'s disclosure pattern. Polling only
+// runs while the panel is visibly open (cleared on close) - this is
+// diagnostic-only data nobody needs updated in the background, and the
+// backend's own cost (a 0.35s psutil sample window) is meant to be paid
+// on-demand, not on a fixed timer regardless of whether anyone's looking.
+let topProcessesRefreshTimer = null;
+let topProcessesTickTimer = null;
+let topProcessesLastFetchMs = null;
+
+function stopTopProcessesPolling() {
+    clearInterval(topProcessesRefreshTimer);
+    clearInterval(topProcessesTickTimer);
+    topProcessesRefreshTimer = null;
+    topProcessesTickTimer = null;
+
+    const panel = document.getElementById('topProcessesPanel');
+    const arrow = document.getElementById('topProcessesArrow');
+    const button = document.getElementById('topProcessesToggle');
+    if (panel) panel.style.display = 'none';
+    if (arrow) arrow.textContent = '▾';
+    if (button) button.setAttribute('aria-expanded', 'false');
+}
+
+function toggleTopProcesses() {
+    const panel = document.getElementById('topProcessesPanel');
+    if (!panel) return;
+
+    const opening = panel.style.display === 'none';
+
+    if (!opening) {
+        stopTopProcessesPolling();
+        return;
+    }
+
+    const arrow = document.getElementById('topProcessesArrow');
+    const button = document.getElementById('topProcessesToggle');
+    panel.style.display = 'block';
+    if (arrow) arrow.textContent = '▴';
+    if (button) button.setAttribute('aria-expanded', 'true');
+
+    loadTopProcesses();
+    topProcessesRefreshTimer = setInterval(loadTopProcesses, 7000);
+    topProcessesTickTimer = setInterval(updateTopProcessesFreshness, 1000);
+}
+
+function updateTopProcessesFreshness() {
+    const el = document.getElementById('topProcessesUpdated');
+    if (!el || topProcessesLastFetchMs === null) return;
+    const seconds = Math.max(0, Math.round((Date.now() - topProcessesLastFetchMs) / 1000));
+    el.textContent = window.I18N.t('system.updated_seconds_ago', { seconds });
+}
+
+async function loadTopProcesses() {
+    const tbody = document.getElementById('topProcessesTbody');
+    if (!tbody) return;
+
+    try {
+        const response = await fetch('/api/system/top-processes');
+        const data = await response.json();
+        if (!data.ok || !Array.isArray(data.processes)) return;
+
+        tbody.innerHTML = data.processes.map(proc => `
+            <tr>
+                <td>${escapeHtml(proc.name)}</td>
+                <td>${escapeHtml(String(proc.pid))}</td>
+                <td>${escapeHtml(proc.cpu_percent.toFixed(1))}%</td>
+            </tr>
+        `).join('');
+
+        topProcessesLastFetchMs = Date.now();
+        updateTopProcessesFreshness();
+    } catch (e) {
+        console.warn('Top processes load failed:', e);
+    }
 }
 
 function cpuMetricClass(value, warning = 50, danger = 80) {

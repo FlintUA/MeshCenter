@@ -489,7 +489,11 @@
     "restarts_label": "Перезапуски",
     "seconds_ago": "{seconds} с тому",
     "system_information_title": "Інформація про систему",
-    "uptime_label": "Час роботи"
+    "uptime_label": "Час роботи",
+    "top_processes_title": "Топ процесів",
+    "process_column": "Процес",
+    "cpu_column": "CPU",
+    "updated_seconds_ago": "Оновлено {seconds} с тому"
   },
   "settings": {
     "title": "Налаштування",

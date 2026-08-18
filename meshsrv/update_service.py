@@ -247,7 +247,3 @@ def apply_update(project_dir: str, upstream: str) -> dict[str, Any]:
         "previous_sha": previous_sha,
         "output": (pull.stdout + pull.stderr).strip(),
     }
-
-# INTENTIONAL SYNTAX ERROR for live restart-timeout testing - reverted immediately after
-def broken(
-

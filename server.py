@@ -5830,7 +5830,32 @@ def api_system_cpu_history():
 # ЗАПУСК
 # ============================================================
 
-if __name__ == "__main__":
+_runtime_started = False
+
+def start_runtime():
+    """Runs everything server.py needs before it can actually serve traffic:
+    radio identity verification, loading persisted state, starting every
+    background worker (listener, telemetry, radio health, CPU history,
+    update checks, schedule engine, time service, optionally e-Paper), and
+    building the camera driver if it's persisted on.
+
+    Historically all of this lived directly under `if __name__ ==
+    "__main__":` below, which meant `from server import app` (e.g. under
+    `gunicorn wsgi:app`) got working Flask routes but silently NO
+    background workers and no radio listener - see wsgi.py, which now
+    calls this at import time instead.
+
+    Safe to call at most once per process - a second call would start a
+    second set of listener/worker threads. `if __name__ == "__main__":`
+    calls this itself, so importing server.py alone (e.g. under pytest,
+    see tests/conftest.py) never triggers it.
+    """
+    global _runtime_started
+    if _runtime_started:
+        print("[INIT] start_runtime() already ran in this process - skipping.", flush=True)
+        return
+    _runtime_started = True
+
     # Verify the physical radio before loading or mutating radio-profile data.
     startup_info_output = verify_radio_identity()
     identity_status = RADIO_IDENTITY_RESULT.get("status", "NOT_CHECKED")
@@ -6050,5 +6075,8 @@ if __name__ == "__main__":
         f"    Photo: {camera.PHOTO_CONFIG['resolution']} preview, {camera.PHOTO_SAVE_CONFIG['resolution']} save\n"
     )
 
+
+if __name__ == "__main__":
+    start_runtime()
     app.run(host=APP_HOST, port=APP_PORT, debug=False, threaded=True)
 

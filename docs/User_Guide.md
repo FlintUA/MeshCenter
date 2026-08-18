@@ -9,7 +9,7 @@ MeshCenter is designed for a Raspberry Pi connected by USB to a standard Meshtas
 ### Required hardware
 
 - Raspberry Pi Zero 2 W, Raspberry Pi 3, 4 or 5
-- Raspberry Pi OS Bookworm or newer
+- Debian 11 (Bullseye) or newer - Raspberry Pi OS Bookworm or Trixie
 - Reliable microSD card, 16 GB minimum and 32 GB recommended
 - Stable power supply
 - Local network connection by Wi-Fi or Ethernet
@@ -36,6 +36,15 @@ Use an official Meshtastic application to configure the connected radio before i
 MeshCenter reads and uses the channels already stored on the radio. Channel creation, region settings, modem presets and keys remain under the official Meshtastic applications.
 
 ## 2. Clean installation
+
+> This section walks through the **Manual Installation** path (SSH onto an
+> already-running Pi, radio connected whenever convenient before or after)
+> step by step. If you'd rather flash an SD card once and have MeshCenter
+> install itself unattended - radio connected *before* first boot, no SSH
+> session needed - see **[INSTALL.md → Automatic Installation](../INSTALL.md#automatic-installation)**
+> instead; the two paths solve the same problem differently and aren't meant
+> to be combined. **[INSTALL.md](../INSTALL.md)** is also the canonical
+> reference for both if this section and it ever seem to disagree.
 
 ### Install Raspberry Pi OS and enable SSH
 

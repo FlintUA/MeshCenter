@@ -1,16 +1,40 @@
 # MeshCenter Installation Guide
 
+This is the canonical installation reference for MeshCenter - other docs
+(README.md, docs/User_Guide.md) link here instead of repeating these steps,
+so there is only one place to keep in sync with `install.sh` and
+`meshcenter-firstboot.sh`.
+
+## Choose your installation method
+
+MeshCenter has two independent install paths - pick the one that matches
+your situation, they are not interchangeable steps of the same process:
+
+- **[Automatic Installation](#automatic-installation)** - flash an SD card
+  with Raspberry Pi Imager, drop `meshcenter-firstboot.sh` onto it, connect
+  the Meshtastic radio *before* first boot, power on. No prompts, no SSH
+  session required during install. Runs on Raspberry Pi OS Lite 64-bit
+  (Debian 13 / Trixie) - `meshcenter-firstboot.sh`'s own tested target.
+- **[Manual Installation](#manual-installation)** - SSH into an already
+  running Pi (or any Debian/Ubuntu Linux system) and run `install.sh`
+  yourself, or work through the checklist by hand. Accepts Debian 11
+  (Bullseye) or newer - Bookworm and Trixie both included - or Ubuntu 22.04
+  LTS or newer; not limited to Raspberry Pi OS or to Trixie specifically
+  (see `install.sh`'s own preflight checks). The radio can be connected
+  before or after this path - MeshCenter falls back to a placeholder
+  configuration if none is found and lets you set it later via Settings.
+
 ## System Requirements
 
 **Recommended:**
 - Raspberry Pi Zero 2W, 3B/3B+, or 4B
-- Raspberry Pi OS Lite 64-bit (Bookworm)
+- Raspberry Pi OS Lite 64-bit - Bookworm or Trixie (Automatic install targets Trixie specifically)
 - 8GB+ microSD card
 - Internet connection during installation
 
-**Minimum:**
+**Minimum (Manual install):**
 - Any Linux system with Python 3.9+
-- Debian 11 (Bullseye) / Ubuntu 22.04 LTS or newer
+- Debian 11 (Bullseye) or newer / Ubuntu 22.04 LTS or newer
 - 500MB free disk space · 512MB RAM · systemd
 
 **Not supported:**
@@ -21,7 +45,11 @@
 
 ---
 
-## Quick Install (Recommended)
+## Automatic Installation
+
+Zero-touch provisioning via Raspberry Pi Imager's cloud-init and
+`meshcenter-firstboot.sh` - the radio must be connected before the Pi's
+first boot, and the whole process runs unattended.
 
 > **What you need:** Raspberry Pi, microSD card (8GB+),
 > [Raspberry Pi Imager](https://www.raspberrypi.com/software/),
@@ -154,20 +182,19 @@ to update correctly.
 
 ---
 
-## Manual Install (Advanced)
+## Manual Installation
 
-A condensed, tick-off checklist for a first-time install on a Raspberry Pi. It
-mirrors the same steps as **[README.md → Installation](README.md#installation)**
-but in checklist form, and calls out the steps that are easy to skip and only
-surface as a problem later.
+SSH into an already-running Pi (or any Debian/Ubuntu Linux box - see
+System Requirements above) and run `install.sh`, or work through the same
+steps by hand with this checklist. It calls out the steps that are easy to
+skip and only surface as a problem later - **install.sh automates all of
+this** (`curl -sSL https://raw.githubusercontent.com/FlintUA/MeshCenter/main/install.sh | bash`),
+so read the checklist once to understand what happens, then either let the
+script do it or follow along by hand if you want control over each step.
 
-For full explanations, hardware requirements, and extended troubleshooting,
-see:
-
-- **[README.md → Installation](README.md#installation)** — the detailed,
-  narrated walkthrough this checklist is based on.
-- **[docs/User_Guide.md](docs/User_Guide.md)** — first-run checks, backup,
-  safe updates, and the System/Wi-Fi sudo actions section.
+For everyday operation after install - first-run checks, backup, safe
+updates, and the System/Wi-Fi sudo actions section - see
+**[docs/User_Guide.md](docs/User_Guide.md)**.
 
 Run `./scripts/verify-install.sh` at the end (or at any point) to check most
 of this automatically.
@@ -182,7 +209,8 @@ of this automatically.
 - [ ] **Serial access enabled** on the radio: `Settings → Security → Serial
       enabled` in the Meshtastic app. If this is off, the Pi still sees the
       USB device but MeshCenter can't read the radio identity.
-- [ ] Raspberry Pi OS Bookworm (or newer) flashed, SSH enabled, and you can
+- [ ] Debian 11 (Bullseye) or newer flashed (Raspberry Pi OS Bookworm/Trixie,
+      or Ubuntu 22.04+ LTS on non-Pi hardware), SSH enabled, and you can
       log in: `ssh <user>@<hostname>.local`
 
 ## Checklist

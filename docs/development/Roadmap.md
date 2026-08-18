@@ -62,13 +62,15 @@ In Progress
 
 ## Advanced Monitoring
 
-Planned
-
-- Extended telemetry
+Completed
 
 - CPU history
 
 - Sensor history
+
+Planned
+
+- Extended telemetry
 
 - Power analytics
 
@@ -82,13 +84,15 @@ Planned
 
 ## Node Management
 
+Completed
+
+- Favorites
+
 Planned
 
 - Node groups
 
 - Tags
-
-- Favorites
 
 - Bulk operations
 
@@ -100,15 +104,17 @@ Planned
 
 ## Automation
 
-Ideas
+Completed
 
 - Scheduled actions
+
+- Notifications
+
+Ideas
 
 - Rules
 
 - Event triggers
-
-- Notifications
 
 - Sensor alerts
 
@@ -118,6 +124,10 @@ Ideas
 
 ## Camera
 
+Completed
+
+- Multiple cameras
+
 Ideas
 
 - Motion detection
@@ -125,8 +135,6 @@ Ideas
 - Recording
 
 - Time-lapse
-
-- Multiple cameras
 
 ---
 

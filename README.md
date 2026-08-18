@@ -22,7 +22,7 @@ A complete browser-based control center for Meshtastic® base stations running o
   <img src="https://img.shields.io/github/v/release/FlintUA/MeshCenter" alt="Release">
   <img src="https://img.shields.io/github/license/FlintUA/MeshCenter" alt="License">
   <img src="https://img.shields.io/badge/Python-3.11+-blue" alt="Python">
-  <img src="https://img.shields.io/badge/Raspberry%20Pi-Bookworm-C51A4A" alt="Platform">
+  <img src="https://img.shields.io/badge/Raspberry%20Pi-Bookworm%20%2F%20Trixie-C51A4A" alt="Platform">
   <img src="https://img.shields.io/badge/Meshtastic-Compatible-success" alt="Meshtastic">
   <img src="https://img.shields.io/badge/Status-Active%20Development-brightgreen" alt="Status">
 </p>
@@ -150,87 +150,20 @@ Typical use cases include:
 
 ## ⚡ Quick Install
 
-> **Requirements:** Raspberry Pi (Zero 2W / 3B+ / 4B), microSD card 8GB+,
-> [Raspberry Pi Imager](https://www.raspberrypi.com/software/),
-> Meshtastic node connected via USB, internet connection.
+The fastest path is **Automatic Installation**: flash an SD card with
+Raspberry Pi Imager, drop `meshcenter-firstboot.sh` onto the bootfs drive,
+connect your Meshtastic radio via USB **before** first boot, then power on
+— MeshCenter installs itself unattended (~5-20 min depending on hardware
+and whether camera support is requested) and is reachable at
+`http://meshcenter.local:5000` once it reboots.
 
-### 1 — Flash the SD card
+Prefer to install over SSH on an already-running Pi (or any Debian/Ubuntu
+Linux box) instead? That's **Manual Installation** — `curl -sSL
+https://raw.githubusercontent.com/FlintUA/MeshCenter/main/install.sh | bash`.
 
-Open **Raspberry Pi Imager**, choose **Raspberry Pi OS Lite (64-bit)**,
-click the ⚙️ gear icon and configure:
-- Hostname (e.g. `meshcenter`)
-- Username and password
-- WiFi network and country
-- Enable SSH
-
-Flash to the SD card.
-
-### 2 — Copy the installer
-
-After flashing, the SD card appears as a drive called **bootfs**.
-
-Download **[meshcenter-firstboot.sh](https://github.com/FlintUA/MeshCenter/releases/latest/download/meshcenter-firstboot.sh)**
-and copy it to the root of the bootfs drive.
-
-### 3 — Add one line to user-data
-
-Open the file `user-data` on the bootfs drive (it already exists after flashing).
-Add this at the end:
-
-```yaml
-runcmd:
-  - [ bash, -lc, 'if [ -f /boot/firmware/meshcenter-firstboot.sh ]; then bash /boot/firmware/meshcenter-firstboot.sh; elif [ -f /boot/meshcenter-firstboot.sh ]; then bash /boot/meshcenter-firstboot.sh; fi' ]
-```
-
-If `runcmd:` already exists in the file, add only the `- [ bash, ... ]` line under it.
-
-### 4 — Connect your Meshtastic node
-
-Before connecting your Meshtastic node to Raspberry Pi, make sure the serial interface is enabled in the official Meshtastic application.
-Without the USB serial interface MeshCenter will not be able to detect or communicate with the radio.
-
-Official Meshtastic App:
-Settings → Serial → Enabled
-
-Connect your Meshtastic device via USB **before** powering on the Pi.
-Use a cable that supports data transfer (not charge-only).
-Connect only one Meshtastic device during first install.
-
-### 5 — Boot and wait
-
-1. Eject the SD card safely
-2. Insert it into the Raspberry Pi
-3. Power on the Pi
-4. Wait 1–2 minutes, then open **http://meshcenter.local** in your browser
-   to watch the 7-step installation progress (updates every 3 seconds)
-5. When installation completes, the Pi reboots automatically to apply
-   system group changes (radio/camera/GPIO permissions)
-
-> 🔄 The Pi reboots automatically after installation to apply
-> all system settings. MeshCenter will be available ~30 seconds
-> after the reboot at **http://meshcenter.local:5000**
-
-> ⏱ **Installation time:**
-> | Device | Without camera | With camera |
-> |---|---|---|
-> | Pi 4B / 3B+ | ~5 min | ~20 min |
-> | Pi Zero 2W | ~15 min | ~90 min |
->
-> Camera support is auto-detected or enabled via `meshcenter-options` file.
-> Times above don't include the ~30s reboot at the end.
-
-### 6 — Open MeshCenter
-
-```
-http://meshcenter.local:5000
-```
-
-Replace `meshcenter` with the hostname you set in Raspberry Pi Imager.
-
-> 💡 If `.local` doesn't work: find the Pi's IP in your router's
-> connected devices list and open `http://192.168.x.x:5000`
->
-> 📖 For manual installation or advanced options see [INSTALL.md](INSTALL.md)
+Full step-by-step instructions for both paths, system requirements, and the
+serial-access checklist that trips up most first installs: see
+**[INSTALL.md](INSTALL.md)**.
 
 ---
 
@@ -597,226 +530,15 @@ the radio identity. Typical symptoms are:
 
 This is the most common cause of USB detection failure.
 
-> **Tick-off checklist:** the same steps below are also available as a
-> condensed checklist in **[INSTALL.md](INSTALL.md)**, including the sudoers
-> step that's easy to miss, plus `scripts/verify-install.sh` to check an
-> install automatically.
-
 ### Installation Validation
 
-The installation procedure described in this repository has been successfully validated on a clean Raspberry Pi Zero 2 W using a **RAK WisMesh TAP v2 (RAK3312)** with standard Meshtastic firmware.
+The installation procedure has been successfully validated on a clean Raspberry Pi Zero 2 W using a **RAK WisMesh TAP v2 (RAK3312)** with standard Meshtastic firmware - installed entirely from the documentation, confirming no undocumented configuration steps are required. Primarily tested on Raspberry Pi Zero 2W; also works on Raspberry Pi 3, 4 and 5.
 
-The system was installed entirely from the documentation, confirming that no undocumented configuration steps are required.
+### Requirements, step-by-step instructions (Automatic or Manual), and troubleshooting
 
-MeshCenter runs on **Raspberry Pi OS Bookworm** (or newer). It is primarily tested on Raspberry Pi Zero 2W and also works on Raspberry Pi 3, 4 and 5.
+**[INSTALL.md](INSTALL.md) is the canonical installation guide** - hardware/software requirements, the Automatic path (Raspberry Pi Imager + `meshcenter-firstboot.sh`, unattended) and the Manual path (`install.sh` over SSH, or the same steps by hand), plus the sudoers step that's easy to miss and `scripts/verify-install.sh` to check an install automatically.
 
-This section is a complete beginner-friendly install path from a fresh Pi to a working web interface. For first-run checks, interface usage, backup, safe update details and extended troubleshooting, see the **[Practical User Guide](docs/User_Guide.md)**.
-
-### Requirements
-
-**Hardware**
-
-- Raspberry Pi Zero 2W or newer
-- microSD card (16 GB minimum, 32 GB recommended)
-- Computer with a microSD card reader for preparing Raspberry Pi OS
-- Stable power supply
-- Meshtastic-compatible radio with a **data-capable** USB cable (serial connection)
-- Wi-Fi or Ethernet (for access to the web interface)
-- Raspberry Pi Camera (optional)
-
-**Software**
-
-- Raspberry Pi OS Bookworm (64-bit recommended)
-- Raspberry Pi Imager
-- Python 3.11 or newer
-- Git
-
-**Before installing MeshCenter**, configure the radio with an official Meshtastic app (Android or Desktop):
-
-1. Set the correct LoRa region.
-2. Configure channels and channel keys.
-3. Set the node long name and short name.
-4. Confirm that the radio can exchange messages with another node.
-
-MeshCenter reads the channels already stored on the radio. It does not create or edit channels itself.
-
-### 1. Write Raspberry Pi OS and enable SSH
-
-MeshCenter can run headless, without a monitor or keyboard. Use the official [Raspberry Pi Imager](https://www.raspberrypi.com/software/) to prepare the microSD card.
-
-1. Select your Raspberry Pi model.
-2. Select **Raspberry Pi OS Lite (64-bit)**.
-3. Select the correct microSD card.
-4. In **OS Customisation**, configure:
-
-   - A unique hostname, for example `meshcenter`
-   - Your time zone, country and keyboard layout
-   - A Linux username and strong password
-   - Wi-Fi SSID and password
-   - **Remote Access > Enable SSH > Use password authentication**
-
-Write and verify the image, insert the microSD card into the Raspberry Pi and connect the power supply. Allow several minutes for the first boot.
-
-From a computer on the same local network, open PowerShell, Windows Terminal or another terminal and connect with:
-
-```bash
-ssh <username>@<hostname>.local
-```
-
-Example:
-
-```bash
-ssh flint@meshcenter.local
-```
-
-At the first connection, enter `yes`, then enter the password created in Raspberry Pi Imager. The password is not displayed while typing.
-
-If the `.local` hostname does not work, find the Raspberry Pi address in the router's connected-device list:
-
-```bash
-ssh <username>@<raspberry-pi-ip>
-```
-
-After a successful connection, the Raspberry Pi terminal is ready for the commands below.
-
-For more detailed instructions, see the [Practical User Guide](docs/User_Guide.md).
-
-### 2. Prepare Raspberry Pi OS
-
-```bash
-sudo apt update
-sudo apt install -y git python3 python3-venv python3-pip network-manager iw lsof
-```
-
-Optional camera support (install **before** creating the virtual environment):
-
-```bash
-sudo apt install -y python3-picamera2 rpicam-apps
-```
-
-Allow the current user to access the USB serial port, then reboot:
-
-```bash
-sudo usermod -aG dialout "$USER"
-sudo reboot
-```
-
-After reboot, reconnect (SSH or local terminal) and continue.
-
-### 3. Clone the repository
-
-```bash
-cd ~
-git clone https://github.com/FlintUA/MeshCenter.git meshcenter
-cd ~/meshcenter
-```
-
-### 4. Create the Python environment
-
-`--system-site-packages` is required so Picamera2 and other Raspberry Pi system packages are visible inside the virtual environment.
-
-```bash
-python3 -m venv --system-site-packages venv
-source venv/bin/activate
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install -r requirements.txt
-```
-
-Confirm that the Meshtastic CLI is installed inside the venv:
-
-```bash
-which meshtastic
-meshtastic --version
-```
-
-`which meshtastic` should show a path under `~/meshcenter/venv/bin/`.
-
-### 5. Find and test the USB radio
-
-Connect the Meshtastic radio and list serial devices:
-
-```bash
-ls -l /dev/ttyACM* /dev/ttyUSB* 2>/dev/null
-```
-
-Most RAK4631-based nodes appear as `/dev/ttyACM0`. Some radios use `/dev/ttyUSB0`.
-
-Test communication (replace the port if needed):
-
-```bash
-source ~/meshcenter/venv/bin/activate
-meshtastic --port /dev/ttyACM0 --info
-```
-
-**Do not continue** until this command shows local node information without permission or serial-port errors. Note the local node ID, long name and short name from the output — you will need them in the next step.
-
-### 6. Create the local configuration
-
-```bash
-cd ~/meshcenter
-cp config.example.py config.py
-mkdir -p data
-```
-
-Open `config.py` and set at least:
-
-```python
-MESHTASTIC_PORT = "/dev/ttyACM0"
-
-LOCAL_NODE_ID = "!xxxxxxxx"
-LOCAL_NODE_NAME = "My Base Station"
-```
-
-Replace the example values with those reported by `meshtastic --info`.  
-`MESHTASTIC_CMD` and `DATA_DIR` are resolved automatically from the project directory.
-
-`config.py`, optional `weather_secrets.py` and the `data/` folder are local files and are **not** overwritten by normal Git updates.
-
-**Optional weather:** copy `weather_secrets.example.py` to `weather_secrets.py` and insert an API key for OpenWeather and/or WeatherAPI. Which provider is active is chosen in **Workspace → Settings → Weather Provider**; the location can later be chosen in **Workspace → Settings → Reference location**.
-
-### 7. First manual start
-
-```bash
-cd ~/meshcenter
-source venv/bin/activate
-python server.py
-```
-
-On the Pi, find the IP address:
-
-```bash
-hostname -I
-```
-
-From another device on the same local network open:
-
-```text
-http://<raspberry-pi-ip>:5000
-```
-
-Stop the manual server with `Ctrl+C` before installing the systemd service.
-
-### 8. Run as a system service (recommended)
-
-Render and install the service template for the current user:
-
-```bash
-cd ~/meshcenter
-MESH_USER="$(id -un)"
-MESH_HOME="$HOME"
-sed -e "s|__MESH_USER__|$MESH_USER|g" \
-    -e "s|__MESH_HOME__|$MESH_HOME|g" \
-    deploy/meshcenter.service \
-    | sudo tee /etc/systemd/system/meshcenter.service >/dev/null
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now meshcenter.service
-sudo systemctl status meshcenter.service --no-pager -l
-```
-
-Expected state: `active (running)`.
-
-**System and Wi‑Fi actions** (restart MeshCenter, reboot/shutdown Pi, scan/connect Wi‑Fi) need extra narrowly scoped sudo rules. Full commands are in the [Practical User Guide → Enable System and Wi‑Fi actions](docs/User_Guide.md#enable-system-and-wi-fi-actions).
+For first-run checks, interface usage, backup, safe updates and extended troubleshooting after install, see the **[Practical User Guide](docs/User_Guide.md)**, including [Enable System and Wi‑Fi actions](docs/User_Guide.md#enable-system-and-wi-fi-actions) for the sudo rules restart/reboot/Wi‑Fi actions in the UI need.
 
 ### Radio Configuration Mode (after install)
 
@@ -1726,10 +1448,12 @@ Future versions may include optional authentication.
 
 | # | Description | Status |
 |---|---|---|
-| KI-001 | The e-Paper driver can hang on start with some HAT configurations | Investigating |
+| KI-001 | The e-Paper driver could hang on start with the Waveshare 2.13" color HAT | Resolved |
 | KI-002 | The Meshtastic Python API (2.7.x) does not support reading a node's current time | Waiting on upstream |
 | KI-003 | The field picker UI for the "Send data report" schedule action is still basic | Planned |
 | KI-007 | Chat-list timestamps are formatted server-side and don't react to the 12h/24h toggle | Planned |
+
+Full history and root-cause details for these and other known issues: see [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
 ## Troubleshooting
 

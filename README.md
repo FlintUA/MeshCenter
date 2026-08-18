@@ -876,27 +876,7 @@ This approach provides several advantages:
 - Safe configuration using the official tools
 - Automatic synchronization of channels and radio state
 
-### Updating MeshCenter
-
-Full safe-update procedure (backup, checks, verification): **[User Guide → Update MeshCenter safely](docs/User_Guide.md#13-update-meshcenter-safely)**.
-
-Short version when the working tree is clean:
-
-```bash
-cd ~/meshcenter
-git status --short --branch          # review any local changes first
-# back up config.py and data/ if needed
-git pull --ff-only origin main
-source venv/bin/activate
-python -m pip install -r requirements.txt
-sudo systemctl restart meshcenter.service
-```
-
-Reload the browser with `Ctrl+F5` after a UI update.
-
----
-
-## 🔄 Updating
+## 🔄 Updating MeshCenter
 
 ```bash
 cd ~/meshcenter

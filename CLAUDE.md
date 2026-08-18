@@ -8,7 +8,7 @@ MeshCenter is a Flask web control center for a Meshtastic LoRa radio attached to
 
 ## Running it
 
-There is no build step, package.json, linter config, or test suite in this repo — don't invent `npm run`, `pytest`, or lint commands that don't exist here.
+There is no build step, package.json, or linter config in this repo — don't invent `npm run` or lint commands that don't exist here. There **is** a pytest test suite (`tests/`, `pytest.ini`) and a GitHub Actions CI workflow (`.github/workflows/ci.yml`) — see "Testing" below.
 
 ```bash
 python3 -m venv --system-site-packages venv   # --system-site-packages required for Picamera2 on the Pi
@@ -20,12 +20,23 @@ mkdir -p data
 
 python server.py                               # dev run, http://<host>:5000
 # or, in production:
-sudo systemctl restart meshcenter.service       # see deploy/meshcenter.service
+sudo systemctl restart meshcenter.service       # runs gunicorn - see "Deployment" below
 ```
 
 `config.py` and `weather_secrets.py` are gitignored local files; `server.py` exits at import time if `config.py` is missing or missing required variables (see the `required_vars` check near the top of `server.py`). When changing code that reads config, check `config.example.py` for the authoritative variable list.
 
-Manual verification is normally done against a real or simulated radio (`meshtastic --port <dev> --info`) and by exercising the REST endpoints/UI in a browser — there's no automated test harness to run instead.
+### Testing
+
+```bash
+pip install -r requirements-dev.txt   # adds pytest on top of requirements.txt - never installed on a production Pi
+pytest                                 # run from the repo root; picks up pytest.ini automatically
+```
+
+`tests/conftest.py` makes `server.py` importable without a Pi or a radio attached (a synthetic `config.py`, a fake Meshtastic CLI/serial port, a stub for the Pi-only `libcamera` import) - it does **not** start `start_runtime()`'s background threads/radio listener, so the suite is safe to run anywhere, including CI. As of PR #69 this covers CLI-output parsing, `normalize_settings()`, node ID validation, `sanitize_text()`, the auth/message-queue/radio-identity/profile-manager logic, and the gunicorn runtime lock - not full end-to-end coverage, but a real regression net. Run `pytest` locally before opening a PR.
+
+`.github/workflows/ci.yml` runs on every PR and push to `main`: `python -m compileall` (all Python), `bash -n` on every installer/deploy shell script, `node --check` on the non-vendored `static/*.js` files, then `pytest`. It does not run linters (none configured) or touch real hardware.
+
+Beyond that, manual verification against a real or simulated radio (`meshtastic --port <dev> --info`) and exercising the REST endpoints/UI in a browser is still how anything touching the actual radio listener, camera, or e-Paper hardware gets validated - the test suite deliberately doesn't attempt to fake real hardware I/O for those.
 
 ## Architecture
 
@@ -85,4 +96,10 @@ Routes are split between `server.py` (nodes, chats, waypoints, telemetry, system
 
 ## Deployment
 
-`deploy/meshcenter.service` is a template (`__MESH_USER__` / `__MESH_HOME__` placeholders filled via `sed` at install time, see README step 8) for running under systemd. Its `ExecStart` runs `python server.py` directly — that means production actually serves requests through Flask's built-in Werkzeug dev server (`app.run(..., debug=False, threaded=True)` at the bottom of `server.py`), not through a real WSGI server. `wsgi.py` (`from server import app`) exists and is correctly importable, but nothing in this deployment path invokes it via Gunicorn/uWSGI/Waitress — it is currently dead code, not the production entrypoint its own docstring claims. `debug=False` keeps the interactive debugger (the actual RCE-risk part of the dev server) off, and this is a LAN-only single-user deployment, so the practical exposure is limited — but don't describe `wsgi.py` as "the" production entrypoint elsewhere in this repo until something in `deploy/` actually runs it that way. `deploy/meshcenter.sudoers` and `deploy/meshcenter-wifi.sudoers` grant the narrowly-scoped sudo rules needed for the in-app system actions (restart/reboot/shutdown) and Wi-Fi management (NetworkManager) respectively — extend these rather than widening sudo access when adding new privileged actions.
+`deploy/meshcenter.service` is a template (`__MESH_USER__` / `__MESH_HOME__` placeholders filled via `sed` at install time, see INSTALL.md) for running under systemd. As of PR #69, its `ExecStart` runs `gunicorn -c gunicorn.conf.py wsgi:app`, not `python server.py` directly - production is a real WSGI server now, not Flask's Werkzeug dev server. `wsgi.py` does `from server import app, start_runtime` and calls `start_runtime()` explicitly at import time, since a WSGI server never executes `server.py`'s own `if __name__ == "__main__":` block.
+
+`gunicorn.conf.py` (repo root, loaded automatically by `-c` + `WorkingDirectory`) hardcodes `workers = 1` - not a performance choice, a correctness requirement. The radio listener owns the serial port exclusively and all runtime state (`nodes`/`chats`/`messages`/`settings`) lives in one process's memory behind `state_lock`; a second worker process would run its own `start_runtime()` and race the first for the same serial port. `start_runtime()` also takes an OS-level `flock()` on `data/runtime.lock` (`_acquire_runtime_lock()` in `server.py`) as a second, independent guard in case `workers` is ever overridden - a second process fails loudly (`[FATAL] ...`) instead of silently corrupting state. `worker_class = "gthread"` (not the `sync` default) is what lets `/video_feed`'s long-lived MJPEG stream coexist with ordinary API traffic instead of blocking the whole process for whoever's watching the camera.
+
+Rollback to the old direct-run command is a one-line `ExecStart` edit, documented in `deploy/meshcenter.service` itself; `python server.py` still works exactly as before for local/manual runs, `start_runtime()`/`app.run()` unchanged.
+
+`deploy/meshcenter.sudoers` and `deploy/meshcenter-wifi.sudoers` grant the narrowly-scoped sudo rules needed for the in-app system actions (restart/reboot/shutdown) and Wi-Fi management (NetworkManager) respectively — extend these rather than widening sudo access when adding new privileged actions.

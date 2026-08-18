@@ -107,6 +107,23 @@ INSTALL_CAMERA=yes
 >
 > Times above don't include the ~30s reboot at the end.
 
+### e-Paper display support
+
+Off by default (matching `EPAPER_ENABLED = False` in config.py) - there's no
+auto-detection for this the way there is for a camera, since a HAT can't be
+probed the same way. To install its packages (`python3-gpiozero` +
+`python3-spidev`), add this to the same `meshcenter-options` file on the
+bootfs drive:
+
+```
+INSTALL_EPAPER=yes
+```
+
+You'll still need to set `EPAPER_ENABLED = True` in `config.py` afterwards
+to actually turn the feature on. For the manual installer
+(`install.sh`), set the same-named environment variable instead:
+`INSTALL_EPAPER=yes curl -sSL .../install.sh | bash`.
+
 ### Step 6 — Open MeshCenter
 
 Once installation completes and the Pi has rebooted, open in your browser:

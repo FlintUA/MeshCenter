@@ -517,7 +517,26 @@
     "updates_preflight_up_to_date": "Уже на останньому коміті цієї гілки.",
     "updates_preflight_no_upstream": "Для цієї гілки не налаштована відстежувана віддалена гілка.",
     "updates_preflight_fetch_failed": "Не вдалося зв'язатися з GitHub, щоб отримати останні коміти.",
-    "updates_apply_confirm": "Оновити MeshCenter з {current} до {latest}? Сервіс перезапуститься автоматично."
+    "updates_apply_confirm": "Оновити MeshCenter з {current} до {latest}? Сервіс перезапуститься автоматично.",
+    "security_title": "Безпека",
+    "security_description": "Захистіть MeshCenter спільним паролем.",
+    "security_mode_label": "Режим доступу",
+    "security_mode_trusted": "Довірена локальна мережа",
+    "security_mode_protected": "Захищено паролем",
+    "security_password_label": "Пароль",
+    "security_password_placeholder": "Новий пароль",
+    "security_password_confirm_placeholder": "Підтвердіть пароль",
+    "security_set_password_btn": "Встановити пароль",
+    "security_change_password_btn": "Змінити пароль",
+    "security_password_set_note": "Пароль встановлено.",
+    "security_password_not_set_note": "Пароль ще не задано - задайте його перед увімкненням захисту.",
+    "security_saved": "Збережено.",
+    "security_password_mismatch": "Паролі не збігаються.",
+    "security_password_too_short": "Пароль має містити щонайменше 4 символи.",
+    "security_enable_requires_password": "Задайте пароль перед увімкненням захисту.",
+    "security_save_failed": "Не вдалося зберегти: {reason}",
+    "security_logout_btn": "Вийти",
+    "security_logout_note": "Діє лише для цієї сесії браузера."
   },
   "settings": {
     "title": "Налаштування",
@@ -1062,5 +1081,12 @@
     "timer_reset": "Скинути",
     "timer_delete": "Видалити",
     "timer_start": "▶ Старт"
+  },
+  "auth": {
+    "login_title": "MeshCenter",
+    "login_subtitle": "Цей MeshCenter захищено паролем.",
+    "password_label": "Пароль",
+    "login_error": "Невірний пароль.",
+    "login_submit": "Увійти"
   }
 }

@@ -13672,6 +13672,7 @@ function switchMainTab(tab) {
         loadInstanceInfo();
         loadRadioHealth();
         loadUpdatesStatus();
+        loadSecurityStatus();
 
     } else if (tab === 'map') {
         MapLayout.state.mode = 'full';
@@ -15127,6 +15128,115 @@ async function toggleUpdatesAutoCheck(checked) {
     } catch (error) {
         alert(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }));
     }
+}
+
+// ===== Security (optional password protection) =====
+
+async function loadSecurityStatus() {
+    try {
+        const response = await fetch('/api/security');
+        const data = await response.json();
+        if (data.ok) renderSecurityStatus(data);
+    } catch (error) {
+        console.warn('Security status load failed:', error);
+    }
+}
+
+function renderSecurityStatus(data) {
+    const enabledToggle = document.getElementById('securityEnabled');
+    if (enabledToggle) enabledToggle.checked = !!data.enabled;
+
+    const statusEl = document.getElementById('securityPasswordStatus');
+    if (statusEl) {
+        statusEl.textContent = data.password_set
+            ? window.I18N.t('system.security_password_set_note')
+            : window.I18N.t('system.security_password_not_set_note');
+    }
+
+    const saveBtn = document.getElementById('securitySavePasswordBtn');
+    if (saveBtn) {
+        saveBtn.textContent = data.password_set
+            ? window.I18N.t('system.security_change_password_btn')
+            : window.I18N.t('system.security_set_password_btn');
+    }
+}
+
+function renderSecurityResult(message, isError) {
+    const el = document.getElementById('securitySaveResult');
+    if (!el) return;
+    el.textContent = message;
+    el.style.color = isError ? '#e14d68' : '';
+}
+
+async function toggleSecurityEnabled(checked) {
+    try {
+        const response = await fetch('/api/security', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: checked })
+        });
+        const data = await response.json();
+        if (data.ok) {
+            renderSecurityStatus(data);
+            renderSecurityResult(window.I18N.t('system.security_saved'), false);
+        } else {
+            const enabledToggle = document.getElementById('securityEnabled');
+            if (enabledToggle) enabledToggle.checked = !checked;
+            const message = data.error_code === 'no_password_set'
+                ? window.I18N.t('system.security_enable_requires_password')
+                : window.I18N.t('system.security_save_failed', { reason: data.error || window.I18N.t('errors.unknown_error') });
+            renderSecurityResult(message, true);
+        }
+    } catch (error) {
+        const enabledToggle = document.getElementById('securityEnabled');
+        if (enabledToggle) enabledToggle.checked = !checked;
+        renderSecurityResult(window.I18N.t('system.security_save_failed', { reason: error.message }), true);
+    }
+}
+
+async function saveSecurityPassword() {
+    const newPasswordInput = document.getElementById('securityNewPassword');
+    const confirmInput = document.getElementById('securityConfirmPassword');
+    const newPassword = newPasswordInput?.value || '';
+    const confirmPassword = confirmInput?.value || '';
+
+    if (newPassword.length < 4) {
+        renderSecurityResult(window.I18N.t('system.security_password_too_short'), true);
+        return;
+    }
+    if (newPassword !== confirmPassword) {
+        renderSecurityResult(window.I18N.t('system.security_password_mismatch'), true);
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/security', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: newPassword })
+        });
+        const data = await response.json();
+        if (data.ok) {
+            renderSecurityStatus(data);
+            renderSecurityResult(window.I18N.t('system.security_saved'), false);
+            if (newPasswordInput) newPasswordInput.value = '';
+            if (confirmInput) confirmInput.value = '';
+        } else {
+            renderSecurityResult(data.error || window.I18N.t('errors.unknown_error'), true);
+        }
+    } catch (error) {
+        renderSecurityResult(window.I18N.t('system.security_save_failed', { reason: error.message }), true);
+    }
+}
+
+async function securityLogout() {
+    try {
+        await fetch('/api/logout', { method: 'POST' });
+    } catch (error) {
+        // Best-effort - redirect regardless, /login itself is safe to load
+        // even if this request failed.
+    }
+    window.location.href = '/login';
 }
 
 function renderUpdatesResult(html) {

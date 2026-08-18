@@ -517,7 +517,26 @@
     "updates_preflight_up_to_date": "Bereits auf dem neuesten Commit dieses Branches.",
     "updates_preflight_no_upstream": "Für diesen Branch ist kein Upstream-Tracking-Branch konfiguriert.",
     "updates_preflight_fetch_failed": "GitHub konnte nicht erreicht werden, um die neuesten Commits zu holen.",
-    "updates_apply_confirm": "MeshCenter von {current} auf {latest} aktualisieren? Der Dienst startet automatisch neu."
+    "updates_apply_confirm": "MeshCenter von {current} auf {latest} aktualisieren? Der Dienst startet automatisch neu.",
+    "security_title": "Sicherheit",
+    "security_description": "Schütze dieses MeshCenter mit einem gemeinsamen Passwort.",
+    "security_mode_label": "Zugriffsmodus",
+    "security_mode_trusted": "Vertrauenswürdiges lokales Netzwerk",
+    "security_mode_protected": "Passwortgeschützt",
+    "security_password_label": "Passwort",
+    "security_password_placeholder": "Neues Passwort",
+    "security_password_confirm_placeholder": "Passwort bestätigen",
+    "security_set_password_btn": "Passwort festlegen",
+    "security_change_password_btn": "Passwort ändern",
+    "security_password_set_note": "Ein Passwort ist gesetzt.",
+    "security_password_not_set_note": "Noch kein Passwort gesetzt - lege eines fest, bevor du den Schutz aktivierst.",
+    "security_saved": "Gespeichert.",
+    "security_password_mismatch": "Die Passwörter stimmen nicht überein.",
+    "security_password_too_short": "Das Passwort muss mindestens 4 Zeichen lang sein.",
+    "security_enable_requires_password": "Lege ein Passwort fest, bevor du den Schutz aktivierst.",
+    "security_save_failed": "Konnte nicht gespeichert werden: {reason}",
+    "security_logout_btn": "Abmelden",
+    "security_logout_note": "Gilt nur für diese Browser-Sitzung."
   },
   "settings": {
     "title": "Einstellungen",
@@ -1062,5 +1081,12 @@
     "timer_reset": "Zurücksetzen",
     "timer_delete": "Entfernen",
     "timer_start": "▶ Start"
+  },
+  "auth": {
+    "login_title": "MeshCenter",
+    "login_subtitle": "Dieses MeshCenter ist passwortgeschützt.",
+    "password_label": "Passwort",
+    "login_error": "Falsches Passwort.",
+    "login_submit": "Anmelden"
   }
 }

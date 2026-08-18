@@ -1075,6 +1075,38 @@
 
                         </div>
 
+                            <!-- Security -->
+                            <div class="system-card">
+                                <div class="system-card-title">🔐 <span data-i18n="system.security_title">Security</span></div>
+                                <div class="system-card-text" data-i18n="system.security_description">
+                                    Protect this MeshCenter with a single shared password.
+                                </div>
+
+                                <div class="settings-option">
+                                    <span data-i18n="system.security_mode_protected">Password protected</span>
+                                    <label class="switch">
+                                        <input type="checkbox" id="securityEnabled" onchange="toggleSecurityEnabled(this.checked)">
+                                        <span class="slider round"></span>
+                                    </label>
+                                </div>
+
+                                <div id="securityPasswordStatus" class="settings-card-note"></div>
+
+                                <div class="settings-option-label" style="margin-top:10px;" data-i18n="system.security_password_label">Password</div>
+                                <div class="settings-inline-input" style="flex-direction:column;align-items:stretch;gap:8px;">
+                                    <input type="password" id="securityNewPassword" class="settings-number-input" autocomplete="new-password" data-i18n-placeholder="system.security_password_placeholder" placeholder="New password" style="width:100%;">
+                                    <input type="password" id="securityConfirmPassword" class="settings-number-input" autocomplete="new-password" data-i18n-placeholder="system.security_password_confirm_placeholder" placeholder="Confirm password" style="width:100%;">
+                                    <button type="button" class="btn btn-xs" id="securitySavePasswordBtn" onclick="saveSecurityPassword()" data-i18n="system.security_set_password_btn">Set password</button>
+                                </div>
+
+                                <div id="securitySaveResult" class="settings-card-note"></div>
+
+                                <div class="settings-card-text settings-card-note" data-i18n="system.security_logout_note">
+                                    Only applies to this browser session.
+                                </div>
+                                <button type="button" class="btn btn-xs" onclick="securityLogout()" data-i18n="system.security_logout_btn">Sign out</button>
+                            </div>
+
                         </div>
 
                     </div>
@@ -2101,7 +2133,7 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="/static/chat.js?v=20260818-xss-fix-onclick-names"></script>
+<script src="/static/chat.js?v=20260818-security-card"></script>
 <script src="/static/media.js?v=20260806-stage9-i18n"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 

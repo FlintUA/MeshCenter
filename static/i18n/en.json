@@ -517,7 +517,26 @@
     "updates_preflight_up_to_date": "Already on the latest commit for this branch.",
     "updates_preflight_no_upstream": "This branch has no upstream tracking branch configured.",
     "updates_preflight_fetch_failed": "Could not reach GitHub to fetch the latest commits.",
-    "updates_apply_confirm": "Update MeshCenter from {current} to {latest}? The service will restart automatically."
+    "updates_apply_confirm": "Update MeshCenter from {current} to {latest}? The service will restart automatically.",
+    "security_title": "Security",
+    "security_description": "Protect this MeshCenter with a single shared password.",
+    "security_mode_label": "Access mode",
+    "security_mode_trusted": "Local trusted network",
+    "security_mode_protected": "Password protected",
+    "security_password_label": "Password",
+    "security_password_placeholder": "New password",
+    "security_password_confirm_placeholder": "Confirm password",
+    "security_set_password_btn": "Set password",
+    "security_change_password_btn": "Change password",
+    "security_password_set_note": "A password is set.",
+    "security_password_not_set_note": "No password set yet - set one before enabling protection.",
+    "security_saved": "Saved.",
+    "security_password_mismatch": "Passwords do not match.",
+    "security_password_too_short": "Password must be at least 4 characters.",
+    "security_enable_requires_password": "Set a password before enabling protection.",
+    "security_save_failed": "Could not save: {reason}",
+    "security_logout_btn": "Sign out",
+    "security_logout_note": "Only applies to this browser session."
   },
   "settings": {
     "title": "Settings",
@@ -1062,5 +1081,12 @@
     "timer_reset": "Reset",
     "timer_delete": "Remove",
     "timer_start": "▶ Start"
+  },
+  "auth": {
+    "login_title": "MeshCenter",
+    "login_subtitle": "This MeshCenter is password protected.",
+    "password_label": "Password",
+    "login_error": "Incorrect password.",
+    "login_submit": "Sign in"
   }
 }

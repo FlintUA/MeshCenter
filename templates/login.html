@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="{{ ui_language }}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MeshCenter</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260817-session-a-ui-fixes">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+    <style>
+        /* Standalone page - not part of the app shell, so override the
+           workspace-oriented body reset (fixed height, no text selection)
+           from style.css instead of fighting its specificity. */
+        html, body {
+            height: auto;
+            min-height: 100vh;
+            overflow: auto;
+            user-select: auto;
+            background: var(--theme-app-bg, #eef3f8);
+        }
+        .login-page {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+        .login-card {
+            width: 100%;
+            max-width: 340px;
+            background: var(--card-bg, #fff);
+            border: 1px solid var(--border-color, #d8e1ec);
+            border-radius: 14px;
+            box-shadow: var(--theme-shadow, 0 8px 24px rgba(29, 53, 87, .08));
+            padding: 28px 26px;
+        }
+        .login-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 19px;
+            font-weight: 600;
+            color: var(--text-primary, #172033);
+            margin-bottom: 6px;
+        }
+        .login-subtitle {
+            font-size: 13px;
+            color: var(--text-secondary, #506983);
+            margin-bottom: 20px;
+        }
+        .login-field label {
+            display: block;
+            font-size: 13px;
+            color: var(--text-secondary, #506983);
+            margin-bottom: 6px;
+        }
+        .login-field input[type="password"] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border-color, #d8e1ec);
+            border-radius: 8px;
+            background: var(--theme-panel-bg, #fff);
+            color: var(--text-primary, #172033);
+            font-size: 15px;
+        }
+        .login-field input[type="password"]:focus {
+            outline: none;
+            border-color: var(--primary-color, #1769e0);
+        }
+        .login-error {
+            margin-top: 12px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: color-mix(in srgb, #e14d68 12%, var(--card-bg, #fff));
+            color: #e14d68;
+            font-size: 13px;
+        }
+        .login-submit {
+            width: 100%;
+            margin-top: 18px;
+            padding: 10px 12px;
+            border: none;
+            border-radius: 8px;
+            background: var(--primary-color, #1769e0);
+            color: #fff;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .login-submit:hover { filter: brightness(1.05); }
+    </style>
+</head>
+<body>
+    <div class="login-page">
+        <div class="login-card">
+            <div class="login-title">🔒 <span data-i18n="auth.login_title">MeshCenter</span></div>
+            <div class="login-subtitle" data-i18n="auth.login_subtitle">This MeshCenter is password protected.</div>
+
+            <form method="post" action="/login">
+                <input type="hidden" name="next" value="{{ next }}">
+                <div class="login-field">
+                    <label for="loginPassword" data-i18n="auth.password_label">Password</label>
+                    <input type="password" id="loginPassword" name="password" autofocus autocomplete="current-password" required>
+                </div>
+
+                {% if error %}
+                <div class="login-error" data-i18n="auth.login_error">Incorrect password.</div>
+                {% endif %}
+
+                <button type="submit" class="login-submit" data-i18n="auth.login_submit">Sign in</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Match whatever theme the user last picked in the app - avoids a
+        // light-mode flash for a dark-mode user landing here after a
+        // session expired mid-workflow.
+        (function () {
+            try {
+                var saved = JSON.parse(localStorage.getItem('meshcenter.workspace') || '{}');
+                var pref = saved.theme || 'system';
+                var resolved = pref === 'system'
+                    ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+                    : pref;
+                document.documentElement.dataset.theme = resolved;
+            } catch (error) { /* default light theme */ }
+        })();
+    </script>
+    <script src="/static/i18n.js?v=20260806-6"></script>
+    <script>
+        window.I18N.init("{{ ui_language }}").then(function () { window.I18N.applyStaticDom(); });
+    </script>
+</body>
+</html>

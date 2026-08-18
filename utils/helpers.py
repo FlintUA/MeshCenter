@@ -76,14 +76,6 @@ def normalize_node_id_with_aliases(node_id):
     return normalize_node_id(node_id)
 
 
-def is_valid_node_id(node_id, channel_chat_id=None):
-    if not node_id:
-        return False
-    if channel_chat_id is not None and node_id == channel_chat_id:
-        return True
-    return node_id.startswith("!") and len(node_id) >= 5
-
-
 def sanitize_text(text):
     if not text:
         return ""

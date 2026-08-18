@@ -6215,6 +6215,92 @@ body.context-chat-mode .settings-view {
     font-size: 10px;
 }
 
+.updates-version-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 12px;
+    color: #6b7280;
+    margin-bottom: 6px;
+}
+
+.updates-version-row strong {
+    margin-left: 6px;
+    color: #1f2937;
+}
+
+.updates-status-text {
+    font-size: 12px;
+    color: #34445f;
+    margin-bottom: 8px;
+}
+
+.updates-changelog-toggle {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 4px 2px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: #34445f;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+}
+
+.updates-changelog-toggle:hover { color: #145fc6; }
+
+.updates-changelog-panel {
+    margin-top: 6px;
+    max-height: 160px;
+    overflow-y: auto;
+    border-radius: 7px;
+    background: rgba(0, 0, 0, 0.02);
+    padding: 8px 10px;
+    font-size: 12px;
+    color: #4b5563;
+    white-space: pre-wrap;
+}
+
+.updates-actions {
+    display: flex;
+    gap: 8px;
+    margin: 10px 0;
+}
+
+.updates-result-panel {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #f5f7fb;
+    font-size: 12px;
+}
+
+.updates-result-success { color: #239b62; font-weight: 600; }
+.updates-result-error { color: #d74343; font-weight: 600; margin-bottom: 6px; }
+.updates-result-pending { color: #6b7280; }
+.updates-result-hint { color: #6b7280; margin: 6px 0; }
+
+.updates-rollback-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+}
+
+.updates-rollback-command {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+    background: #eef1f6;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 11px;
+}
+
 #dockContextText {
     display: flex;
     align-items: center;

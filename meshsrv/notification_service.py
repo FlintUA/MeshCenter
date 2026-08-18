@@ -23,7 +23,7 @@ def push_notification(level: str, source: str, title: str, body: str = "") -> di
     """Add a notification to the queue.
 
     level: 'info' | 'warning' | 'error'.
-    source: 'schedule_engine' | 'timer' | 'system' | 'radio' | 'telemetry'.
+    source: 'schedule_engine' | 'timer' | 'system' | 'radio' | 'telemetry' | 'update'.
     Returns the created event.
     """
     event: dict[str, Any] = {

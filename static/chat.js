@@ -1424,6 +1424,23 @@ let telemetryVisibleSeries = {
     }
 };
 
+const TELEMETRY_SERIES_KEYS = {
+    environment: ['temperature', 'humidity', 'pressure'],
+    power: ['voltage', 'current', 'power']
+};
+
+function telemetrySeriesLabel(key) {
+    const labels = {
+        temperature: window.I18N.t('node_panel.temperature'),
+        humidity: window.I18N.t('node_panel.humidity'),
+        pressure: window.I18N.t('node_panel.pressure'),
+        voltage: window.I18N.t('node_panel.voltage'),
+        current: window.I18N.t('node_panel.current'),
+        power: window.I18N.t('node_panel.power')
+    };
+    return labels[key] || key;
+}
+
 function celsiusToFahrenheit(c) {
     return (c * 9 / 5) + 32;
 }
@@ -10625,7 +10642,7 @@ function openCustomTelemetryExport() {
     const rangeMinutes = telemetryTimeRange || 1440;
     const from = new Date(now.getTime() - rangeMinutes * 60 * 1000);
 
-    const seriesText = getTelemetryVisibleSeriesText(type);
+    const seriesKeys = TELEMETRY_SERIES_KEYS[type] || [];
     const rangeLabel = getTelemetryRangeLabel(rangeMinutes);
 
     const overlay = document.createElement('div');
@@ -10674,7 +10691,14 @@ function openCustomTelemetryExport() {
 
                 <div class="export-section">
                     <div class="export-section-title">${escapeHtml(window.I18N.t('nodes.series'))}</div>
-                    <div class="export-series-summary">${escapeHtml(seriesText)}</div>
+                    <div class="export-series-checks" id="exportSeriesChecks">
+                        ${seriesKeys.map(key => `
+                            <label class="export-series-check">
+                                <input type="checkbox" value="${key}" ${telemetryVisibleSeries[type]?.[key] ? 'checked' : ''}>
+                                <span>${escapeHtml(telemetrySeriesLabel(key))}</span>
+                            </label>
+                        `).join('')}
+                    </div>
                 </div>
 
                 <div class="export-section">
@@ -10801,18 +10825,10 @@ function getTelemetryRangeLabel(minutes) {
 
 function getTelemetryVisibleSeriesText(type) {
     const visible = telemetryVisibleSeries[type] || {};
-    const labels = {
-        temperature: window.I18N.t('node_panel.temperature'),
-        humidity: window.I18N.t('node_panel.humidity'),
-        pressure: window.I18N.t('node_panel.pressure'),
-        voltage: window.I18N.t('node_panel.voltage'),
-        current: window.I18N.t('node_panel.current'),
-        power: window.I18N.t('node_panel.power')
-    };
 
     const active = Object.keys(visible)
         .filter(key => visible[key])
-        .map(key => labels[key] || key);
+        .map(telemetrySeriesLabel);
 
     return active.length > 0 ? active.join(' • ') : window.I18N.t('nodes.no_series_selected');
 }
@@ -10824,8 +10840,11 @@ function runCustomTelemetryExport() {
     const format = document.querySelector('input[name="exportFormat"]:checked')?.value || 'csv';
     const mode = document.querySelector('input[name="exportRangeMode"]:checked')?.value || 'visible';
 
-    const series = Object.keys(telemetryVisibleSeries[type] || {})
-        .filter(key => telemetryVisibleSeries[type][key])
+    // Read from the dialog's own checkboxes, not telemetryVisibleSeries -
+    // these are seeded from the chart's current toggle state when the
+    // dialog opens, but editable here without touching the chart itself.
+    const series = Array.from(document.querySelectorAll('#exportSeriesChecks input[type="checkbox"]:checked'))
+        .map(checkbox => checkbox.value)
         .join(',');
 
     const nodeId = modal?.dataset?.nodeId || '';

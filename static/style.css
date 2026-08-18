@@ -14541,6 +14541,27 @@ body[data-theme="dark"] .waypoint-action-toast.error {
 [data-theme="dark"] .export-time-sep {
     color: #9eb3c8;
 }
+[data-theme="dark"] .updates-version-row {
+    color: #9eb3c8;
+}
+[data-theme="dark"] .updates-version-row strong {
+    color: #e5eff8;
+}
+[data-theme="dark"] .updates-status-text,
+[data-theme="dark"] .updates-changelog-toggle {
+    color: #d9e7f5;
+}
+[data-theme="dark"] .updates-changelog-panel {
+    background: rgba(255, 255, 255, 0.04);
+    color: #c3d3e2;
+}
+[data-theme="dark"] .updates-result-panel {
+    background: #16283a;
+}
+[data-theme="dark"] .updates-rollback-command {
+    background: #0f1c2a;
+    color: #e5eff8;
+}
 [data-theme="dark"] .custom-export-footer {
     background: #16283a;
     border-top-color: #344b61;

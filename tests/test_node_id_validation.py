@@ -1,16 +1,14 @@
-"""Tests for node ID format validation.
+"""Tests for node ID format validation - server.py's own
+is_valid_node_id()/is_valid_chat_id()/normalize_node_id(), the ones actually
+wired into every route.
 
-server.py has its own is_valid_node_id()/is_valid_chat_id()/normalize_node_id()
-(the ones actually wired into every route) - utils/helpers.py has a second,
-textually similar but NOT equivalent copy that nothing currently imports
-(only utils.helpers.now() is actually used elsewhere, by telemetry.py).
-Both are tested here: the real, enforced server.py behavior is the main
-target of task item (c); the utils/helpers.py copy is covered too so its
-looser behavior is pinned down and visible next to it, rather than silently
-diverging further - see test_is_valid_node_id_utils_helpers_is_looser below.
+utils/helpers.py used to have a second, textually similar but looser
+is_valid_node_id() that nothing imported - it was removed (see that file's
+git history) once confirmed unused; only utils.helpers.now() is actually
+used elsewhere, by telemetry.py. The test that documented the divergence
+between the two copies (test_is_valid_node_id_utils_helpers_is_looser) went
+with it, since there's no longer a second copy to diverge from.
 """
-
-import utils.helpers as helpers
 
 
 def test_is_valid_node_id_accepts_well_formed_ids(server_module):
@@ -62,19 +60,3 @@ def test_normalize_node_id_passes_through_well_formed_id(server_module):
 def test_normalize_node_id_returns_none_for_empty_input(server_module):
     assert server_module.normalize_node_id("") is None
     assert server_module.normalize_node_id(None) is None
-
-
-def test_is_valid_node_id_utils_helpers_is_looser(server_module):
-    """Documents a real gap: utils/helpers.py's is_valid_node_id() only
-    checks a "!" prefix and a minimum length, not that the rest is 8 hex
-    digits - server.py's own version (tested above) is the strict one
-    actually enforced on every route. Nothing currently imports the
-    utils/helpers.py copy, so this isn't exploitable today, but the two
-    functions silently disagree, which is exactly the kind of drift a
-    future refactor (consolidating validation into one place) should
-    resolve rather than papering over.
-    """
-    # Rejected by server.py's strict regex (see test above)...
-    assert server_module.is_valid_node_id("!aabbccdg") is False
-    # ...but accepted by utils/helpers.py's loose prefix+length check.
-    assert helpers.is_valid_node_id("!aabbccdg") is True

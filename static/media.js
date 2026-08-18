@@ -16,7 +16,17 @@ function mediaEscapeHtml(value) {
 }
 
 function mediaFilenameForHandler(filename) {
-    return JSON.stringify(String(filename ?? ''));
+    // JSON.stringify() produces a valid double-quoted JS string literal but
+    // does NOT escape a single quote - it isn't special to JSON. The result
+    // is spliced into a single-quoted onclick='...' attribute
+    // (renderMediaItem() below), so a raw ' here would break out of that
+    // attribute and let arbitrary HTML/JS follow (e.g. an injected
+    // onmouseover=...). Filenames are currently server-generated from a
+    // timestamp, so this isn't reachable today, but nothing enforces that
+    // staying true - ' is valid both inside a JSON/JS string literal
+    // and has no special meaning in HTML attribute text, so this can never
+    // be broken out of regardless of what filename contains.
+    return JSON.stringify(String(filename ?? '')).replaceAll("'", '\\u0027');
 }
 
 async function loadMediaGallery(force = false) {

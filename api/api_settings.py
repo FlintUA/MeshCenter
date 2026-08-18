@@ -62,6 +62,13 @@ DEFAULT_SETTINGS = {
         "profile_defaults": {},
     },
 
+    "updates": {
+        # Background GitHub-release check only - never auto-applies an
+        # update, just caches the result and (optionally) notifies.
+        "auto_check": True,
+        "interval": 86400,
+    },
+
     "browser_notifications": {
         # Whether the user has opted in via Settings. Notification.permission
         # itself (granted/denied/default) is native per-browser-origin state,
@@ -73,6 +80,7 @@ DEFAULT_SETTINGS = {
             "schedule": True,
             "channel_message": False,
             "dm_message": True,
+            "update": True,
         },
     },
 }
@@ -416,6 +424,23 @@ def normalize_settings(settings):
             raw_defaults, timer_defaults
         )
 
+    # ---------------- Updates ----------------
+
+    updates_settings = settings.get("updates", {})
+    if not isinstance(updates_settings, dict):
+        updates_settings = {}
+
+    updates_auto_check = bool(updates_settings.get("auto_check", True))
+
+    try:
+        updates_interval = int(updates_settings.get("interval", 86400))
+    except (TypeError, ValueError):
+        updates_interval = 86400
+    # Floor at 5 minutes - matches check_worker()'s own floor, just
+    # reflected back here so the UI never shows a value it wouldn't
+    # actually honor.
+    updates_interval = max(300, updates_interval)
+
     # ---------------- Browser notifications ----------------
 
     browser_notif = settings.get("browser_notifications", {})
@@ -479,6 +504,11 @@ def normalize_settings(settings):
             "channel_index": timer_defaults["channel_index"],
             "node_id": timer_defaults["node_id"],
             "profile_defaults": timer_profile_defaults,
+        },
+
+        "updates": {
+            "auto_check": updates_auto_check,
+            "interval": updates_interval,
         },
 
         "browser_notifications": {

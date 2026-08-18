@@ -32,11 +32,13 @@ from meshsrv.radio_identity import detect_radio_identity, detect_connected_radio
 from meshsrv.time_service import start_background_thread as start_time_service
 from meshsrv.node_time_sync import try_sync as try_node_time_sync, STARTUP_SYNC_DELAY_S
 from meshsrv.schedule_engine import start as start_schedule_engine
+from meshsrv import update_service
 from api.api_camera import register_camera_routes
 from api.api_camera_manager import register_camera_manager_routes
 from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes, normalize_settings, SUPPORTED_LANGUAGES
 from api.api_system import register_system_routes
+from api.api_updates import register_updates_routes
 from system_log import log_system_event
 from storage.waypoint_store import WaypointStore
 from storage.profile_manager import ProfileManager
@@ -162,6 +164,12 @@ if missing_vars:
 
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR, exist_ok=True)
+
+# Instance-scoped, like instance.json/settings.json - the installed
+# version and git state belong to this machine, not to whichever radio
+# profile happens to be active.
+UPDATE_CHECK_FILE = os.path.join(DATA_DIR, "update_check.json")
+update_service.configure(UPDATE_CHECK_FILE)
 
 # Persistent identity of this MeshCenter installation. This stage only
 # normalizes and stores accepted identity data; it does not switch radios.
@@ -347,7 +355,8 @@ camera_power_enabled_at_startup = register_camera_routes(
 # rescan/switch routes now dispatch through the same CameraManager
 # instance.
 register_camera_manager_routes(app, device_manager, handle_errors, camera_manager_state)
-register_system_routes(app, get_cpu_temperature=lambda: _read_cpu_temperature())
+register_system_routes(app, get_cpu_temperature=lambda: _read_cpu_temperature(), get_app_version=lambda: APP_VERSION)
+register_updates_routes(app, resolve_version=lambda: APP_VERSION, project_dir=PROJECT_DIR, handle_errors=handle_errors)
 
 # Constructing DisplayManager (and the driver it wraps) never touches
 # SPI/GPIO by itself - only display_manager.start(), called later from the
@@ -5897,6 +5906,31 @@ if __name__ == "__main__":
         pause_listen.set()
         print(f"[IDENTITY] Listener not started because status={identity_status}", flush=True)
     threading.Thread(target=cpu_history_worker, daemon=True).start()
+
+    def _notify_update_available(status):
+        from meshsrv.notification_service import push_notification
+        push_notification(
+            level="info",
+            source="update",
+            title=f"MeshCenter {status.get('latest_version')} available",
+            body=status.get("release_name") or "",
+        )
+
+    def _get_normalized_settings():
+        # settings.clear()/.update() in api_update_settings() is a
+        # non-atomic two-step mutation - read it under the same lock that
+        # guards that write, like every other consumer of the global
+        # `settings` dict, instead of risking this background thread
+        # observing it transiently empty between the clear and the update.
+        with state_lock:
+            return normalize_settings(settings)
+
+    threading.Thread(
+        target=update_service.check_worker,
+        args=(APP_VERSION, _get_normalized_settings, _notify_update_available),
+        daemon=True,
+    ).start()
+
     start_time_service()
     start_schedule_engine(
         nodes=nodes,

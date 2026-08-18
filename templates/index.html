@@ -867,6 +867,47 @@
 
                             </div>
 
+                            <!-- Updates -->
+                            <div class="system-card updates-card">
+                                <div class="system-card-title">⬆️ <span data-i18n="system.updates_title">Updates</span></div>
+
+                                <div class="updates-version-row">
+                                    <div>
+                                        <span data-i18n="system.updates_current_label">Current version</span>
+                                        <strong id="updatesCurrentVersion">--</strong>
+                                    </div>
+                                    <div id="updatesLatestRow" style="display:none;">
+                                        <span data-i18n="system.updates_latest_label">Latest</span>
+                                        <strong id="updatesLatestVersion">--</strong>
+                                    </div>
+                                </div>
+
+                                <div id="updatesStatusText" class="updates-status-text"></div>
+
+                                <div id="updatesChangelogToggleWrap" style="display:none;">
+                                    <button type="button" id="updatesChangelogToggle" class="updates-changelog-toggle" onclick="toggleUpdatesChangelog()" aria-expanded="false">
+                                        <span data-i18n="system.updates_changelog">What's new</span>
+                                        <span id="updatesChangelogArrow">▾</span>
+                                    </button>
+                                    <div id="updatesChangelogPanel" class="updates-changelog-panel" style="display:none;"></div>
+                                </div>
+
+                                <div class="updates-actions">
+                                    <button type="button" class="btn btn-xs" id="updatesCheckBtn" onclick="checkForUpdatesNow(this)" data-i18n="system.updates_check_now">Check now</button>
+                                    <button type="button" class="btn btn-xs updates-apply-btn" id="updatesApplyBtn" onclick="applyUpdate(this)" style="display:none;" data-i18n="system.updates_apply">Update</button>
+                                </div>
+
+                                <div class="system-row">
+                                    <span data-i18n="system.updates_auto_check">Auto-check for updates</span>
+                                    <label class="switch">
+                                        <input type="checkbox" id="updatesAutoCheckEnabled" onchange="toggleUpdatesAutoCheck(this.checked)">
+                                        <span class="slider round"></span>
+                                    </label>
+                                </div>
+
+                                <div id="updatesResultPanel" class="updates-result-panel" style="display:none;"></div>
+                            </div>
+
                             <!-- System Log -->
                             <div class="system-card system-log-card">
                                 <button
@@ -1193,6 +1234,10 @@
                                 <div class="settings-option">
                                     <span data-i18n="settings.browser_notif_dm">New direct message</span>
                                     <input type="checkbox" id="browserNotifCatDm" onchange="updateBrowserNotificationCategory('dm_message', this.checked)">
+                                </div>
+                                <div class="settings-option">
+                                    <span data-i18n="settings.browser_notif_update">Update available</span>
+                                    <input type="checkbox" id="browserNotifCatUpdate" onchange="updateBrowserNotificationCategory('update', this.checked)">
                                 </div>
                             </div>
 
@@ -2056,7 +2101,7 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="/static/chat.js?v=20260817-top-processes"></script>
+<script src="/static/chat.js?v=20260818-updates-card"></script>
 <script src="/static/media.js?v=20260806-stage9-i18n"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 

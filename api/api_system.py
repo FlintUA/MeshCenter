@@ -10,7 +10,7 @@ from system_log import get_system_events, log_system_event
 MESHCenter_SERVICE = "meshcenter.service"
 
 
-def register_system_routes(app, get_cpu_temperature=None):
+def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
     @app.route("/api/system/log")
     def api_system_log():
@@ -103,6 +103,7 @@ def register_system_routes(app, get_cpu_temperature=None):
             "model": None,
             "os": None,
             "kernel": platform.release(),
+            "app_version": get_app_version() if get_app_version else None,
         }
 
         try:

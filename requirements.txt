@@ -10,3 +10,10 @@ psutil>=5.9.0
 # PyPI as of 2026-08) - this range covers both without floating past 2.7.
 meshtastic>=2.7.9,<2.8.0
 v4l2py>=3.0.0
+# Production WSGI server (see gunicorn.conf.py / deploy/meshcenter.service).
+# Pinned to the 23.x line - gunicorn's own worker/arbiter internals (the
+# gthread worker class specifically, which /video_feed's long-lived MJPEG
+# stream depends on for not blocking the rest of the app - see
+# gunicorn.conf.py) are exactly the kind of thing a major version bump could
+# change without MeshCenter's own code ever noticing until it's live.
+gunicorn>=23.0.0,<24.0.0

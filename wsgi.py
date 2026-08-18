@@ -14,9 +14,12 @@ from server import app, start_runtime
 # If gunicorn (or uwsgi) is run with more than one worker process, each
 # worker process runs this module-level code independently and would start
 # its own radio listener - only one process may own the serial port at a
-# time. Production deployment via gunicorn (not yet wired into
-# deploy/meshcenter.service - the systemd unit still runs `python server.py`
-# directly) must use exactly one worker: `gunicorn --workers 1 wsgi:app`.
+# time. deploy/meshcenter.service now runs this under gunicorn with
+# `workers = 1` hardcoded in gunicorn.conf.py - never override that. As a
+# second, independent line of defense in case it ever is,
+# server.py's start_runtime() also takes an OS-level file lock
+# (_acquire_runtime_lock()) that makes a second worker process fail loudly
+# instead of silently racing the first one for the serial port.
 start_runtime()
 
 if __name__ == "__main__":

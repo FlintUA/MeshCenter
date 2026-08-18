@@ -9,7 +9,18 @@ User=__MESH_USER__
 WorkingDirectory=__MESH_HOME__/meshcenter
 Environment="PATH=__MESH_HOME__/meshcenter/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=__MESH_HOME__/meshcenter/venv/bin/python __MESH_HOME__/meshcenter/server.py
+# Production WSGI server - see gunicorn.conf.py (workers/threads/timeout,
+# loaded automatically from WorkingDirectory above) and wsgi.py (calls
+# server.py's start_runtime() at import time, so gunicorn actually gets a
+# working radio listener + background workers, not just Flask routes).
+#
+# Rollback: if this ever needs to be reverted on a live node without a full
+# git revert, just change the line below back to:
+#   ExecStart=__MESH_HOME__/meshcenter/venv/bin/python __MESH_HOME__/meshcenter/server.py
+# then `sudo systemctl daemon-reload && sudo systemctl restart meshcenter` -
+# server.py's own `python server.py` direct-run path is unchanged and still
+# fully supported.
+ExecStart=__MESH_HOME__/meshcenter/venv/bin/gunicorn -c __MESH_HOME__/meshcenter/gunicorn.conf.py wsgi:app
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

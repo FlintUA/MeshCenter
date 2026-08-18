@@ -18,6 +18,14 @@ import uuid
 import ast
 import sqlite3
 import secrets
+try:
+    import fcntl  # POSIX only - always present on the Pi/Linux this app runs
+    # on in production. Absent on Windows, where a developer might still
+    # `import server` for tests (see tests/conftest.py) without ever
+    # actually running the service - _acquire_runtime_lock() below degrades
+    # to a no-op rather than crashing that import in that case.
+except ImportError:
+    fcntl = None
 from pathlib import Path
 from contextlib import contextmanager
 from collections import defaultdict, deque
@@ -371,6 +379,12 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=7)
 # first run, so a generic settings.json save can never silently wipe it.
 AUTH_FILE = os.path.join(DATA_DIR, "auth.json")
 auth_state = load_auth_state(AUTH_FILE, AUTH_ENABLED, AUTH_PASSWORD_HASH)
+
+# OS-level guard against two MeshCenter processes both running
+# start_runtime() at once - see that function's own acquire call and
+# _acquire_runtime_lock() near it below for why this exists alongside the
+# in-process _runtime_started flag.
+RUNTIME_LOCK_FILE = os.path.join(DATA_DIR, "runtime.lock")
 
 def handle_errors(f):
     """Декоратор для обработки ошибок в API"""
@@ -5831,6 +5845,54 @@ def api_system_cpu_history():
 # ============================================================
 
 _runtime_started = False
+_runtime_lock_handle = None
+
+def _acquire_runtime_lock():
+    """OS-level guard against two MeshCenter processes both calling
+    start_runtime() at once - e.g. gunicorn accidentally run with more than
+    one worker (see gunicorn.conf.py's own comment on why workers=1 is
+    mandatory, not a performance knob). Two processes each opening the same
+    Meshtastic serial port is a race for the device and for the in-memory
+    state every route reads/writes, not just wasted resources.
+
+    This is a second, independent line of defense: server.py's
+    _runtime_started flag above only stops a second call *within the same
+    process* (e.g. an accidental double-call) - it's a fresh False in every
+    new process, so it can't see a second gunicorn worker at all. An
+    exclusive, non-blocking flock() on a file under DATA_DIR can, because
+    the lock is visible across processes on the same machine.
+
+    Holds the lock for the lifetime of the process by keeping the file
+    descriptor open in the module-level _runtime_lock_handle - closing it
+    (including via garbage collection) would release the OS-level lock, so
+    it must not be allowed to go out of scope.
+    """
+    global _runtime_lock_handle
+    if fcntl is None:
+        print(
+            "[INIT] fcntl unavailable on this platform - OS-level runtime "
+            "lock skipped (expected only off Linux; production always runs "
+            "on the Pi).",
+            flush=True,
+        )
+        return
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    handle = open(RUNTIME_LOCK_FILE, "w")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        print(
+            "[FATAL] Another MeshCenter process already holds the radio - "
+            "refusing to start a second listener.",
+            flush=True,
+        )
+        sys.exit(1)
+
+    handle.write(f"{os.getpid()}\n")
+    handle.flush()
+    _runtime_lock_handle = handle
 
 def start_runtime():
     """Runs everything server.py needs before it can actually serve traffic:
@@ -5854,6 +5916,7 @@ def start_runtime():
     if _runtime_started:
         print("[INIT] start_runtime() already ran in this process - skipping.", flush=True)
         return
+    _acquire_runtime_lock()
     _runtime_started = True
 
     # Verify the physical radio before loading or mutating radio-profile data.

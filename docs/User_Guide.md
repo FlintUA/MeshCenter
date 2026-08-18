@@ -489,6 +489,14 @@ The Wi-Fi Manager can change the Raspberry Pi network connection. Changing to an
 
 The Workspace menu also controls Base and Nodes panel visibility, theme and compact mode. These visual preferences are stored in the current browser, not globally on the Raspberry Pi.
 
+### Updates
+
+The **Updates** card checks GitHub for a newer release (once a day by default - togglable, and never more often than the interval you set) and shows the current version, the latest version, and the real release changelog. **Check now** refreshes that check on demand.
+
+**Update** runs a safety check first: the working tree must be clean and able to fast-forward to the latest commit with no local commits of its own in the way. If that check fails, it tells you exactly why (uncommitted changes, diverged history, unreachable GitHub) instead of trying to resolve it for you - fix the underlying issue (over SSH if needed) and try again. If the check passes, confirming applies the update and restarts the service automatically.
+
+While the service restarts, the card polls until it comes back on the expected version. If it doesn't respond within 60 seconds, the card shows the commit it was on before the update and a ready-to-copy rollback command (`git checkout <sha> && sudo systemctl restart meshcenter.service`) rather than waiting forever - there's no automatic rollback, so if the web interface stays unreachable, use that command over SSH.
+
 ### Browser notifications
 
 `Settings > Browser Notifications` can duplicate selected events (timer finished, schedule triggered, new channel message, new direct message) into a real operating-system notification popup, in addition to the in-app Notifications card — useful when the MeshCenter tab is in the background. It only fires while the tab is open (even backgrounded); it cannot deliver anything once the browser is fully closed, and it stays quiet while the tab is the one visibly in front of you (the in-app UI already covers that case).
@@ -520,6 +528,8 @@ sudo systemctl is-active meshcenter.service
 Store the archive on another device. It can contain message history, node positions, images, settings and the private weather API key.
 
 ## 13. Update MeshCenter safely
+
+If you don't need or want the command line, use the **Updates** card in `Workspace > System` instead - see "System, Wi-Fi and Workspace" above. It checks GitHub for a new release, shows the changelog, and only offers to update after confirming the working tree is clean and can fast-forward safely; if it isn't safe, it explains why instead of guessing. The command-line procedure below is the fallback for when the web interface itself is unreachable, or if you prefer the terminal.
 
 The following procedure was verified on a second Raspberry Pi installation.
 

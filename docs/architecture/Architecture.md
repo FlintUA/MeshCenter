@@ -249,7 +249,7 @@ Examples
 
 - Remote management
 
-- OTA updates
+- Fully unattended/fleet-wide OTA updates (the System workspace's Updates card already covers manual, single-device, user-confirmed updates - see `meshsrv/update_service.py`)
 
 ---
 

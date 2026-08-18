@@ -3787,7 +3787,7 @@ function renderChatItem(chat) {
 
     const clickHandler = isDemo
         ? `showToast(${JSON.stringify(window.I18N.t('chat.channel_not_configured_toast'))}, 'info')`
-        : `openChat('${escapeHtml(chat.id)}', '${escapeHtml(chat.name)}', '${escapeHtml(chat.type)}', 'chat')`;
+        : `openChat('${escapeHtml(chat.id)}', '${escapeJsString(chat.name)}', '${escapeHtml(chat.type)}', 'chat')`;
     const demoClass = isDemo ? 'demo-channel' : '';
     const displayName = chat.is_channel && Number.isInteger(chat.index)
         ? formatChannelIndexLabel(chat.name, chat.index)
@@ -7724,10 +7724,10 @@ function renderNodeDetails(node) {
     actionsMenu.style.display = 'none';
     actionsMenu.innerHTML = `
         <div class="node-actions-menu-inner">
-            <button onclick="openChat('${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', 'dm')">📨 ${escapeHtml(window.I18N.t('nodes.send_message'))}</button>
-            <button onclick="runNodeTool('request_position', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">📍 ${escapeHtml(window.I18N.t('nodes.request_position'))}</button>
-            <button onclick="runNodeTool('request_telemetry', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">📊 ${escapeHtml(window.I18N.t('nodes.request_telemetry'))}</button>
-            <button onclick="runNodeTool('traceroute', '${escapeHtml(nodeId)}', '${escapeHtml(displayName)}', this)">🔍 ${escapeHtml(window.I18N.t('nodes.traceroute'))}</button>
+            <button onclick="openChat('${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', 'dm')">📨 ${escapeHtml(window.I18N.t('nodes.send_message'))}</button>
+            <button onclick="runNodeTool('request_position', '${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', this)">📍 ${escapeHtml(window.I18N.t('nodes.request_position'))}</button>
+            <button onclick="runNodeTool('request_telemetry', '${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', this)">📊 ${escapeHtml(window.I18N.t('nodes.request_telemetry'))}</button>
+            <button onclick="runNodeTool('traceroute', '${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', this)">🔍 ${escapeHtml(window.I18N.t('nodes.traceroute'))}</button>
             <button onclick="setNodeAsReference('${escapeHtml(nodeId)}')">📍 ${escapeHtml(window.I18N.t('nodes.set_as_reference'))}</button>
         </div>
     `;
@@ -7799,7 +7799,7 @@ function renderOverviewPane(node) {
                 <span class="last-msg-time">${escapeHtml(node.last_time || '')}</span>
             </div>` : ''}
             <div class="node-detail-quick-actions">
-                <button class="quick-action" onclick="openChat('${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', 'dm')">💬 ${escapeHtml(window.I18N.t('nodes.message_button'))}</button>
+                <button class="quick-action" onclick="openChat('${escapeHtml(node.node_id)}', '${escapeJsString(node.clean_name || node.name || node.node_id)}', 'dm')">💬 ${escapeHtml(window.I18N.t('nodes.message_button'))}</button>
                 <button class="quick-action" onclick="openExternalNodeMap(${node.position?.latitude || 0}, ${node.position?.longitude || 0})" ${!hasPosition ? 'disabled' : ''}>🗺 ${escapeHtml(window.I18N.t('nodes.external_map'))}</button>
                 <button class="quick-action" onclick="toggleNodeActionsMenu(event)">⚡ ${escapeHtml(window.I18N.t('nodes.more'))}</button>
             </div>
@@ -7842,7 +7842,7 @@ function renderRadioPane(node) {
                 ${historyHtml}
             </div>
             <div class="radio-actions">
-                <button class="radio-action" onclick="runNodeTool('traceroute', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">🔍 ${escapeHtml(window.I18N.t('nodes.run_traceroute'))}</button>
+                <button class="radio-action" onclick="runNodeTool('traceroute', '${escapeHtml(node.node_id)}', '${escapeJsString(node.clean_name || node.name || node.node_id)}', this)">🔍 ${escapeHtml(window.I18N.t('nodes.run_traceroute'))}</button>
                 <button class="radio-action" onclick="refreshNodeMetrics('${escapeHtml(node.node_id)}')">↻ ${escapeHtml(window.I18N.t('common.refresh'))}</button>
             </div>
         </div>
@@ -7892,13 +7892,13 @@ function renderPositionPane(node) {
                 <button onclick='openNodeMap(${pos.latitude}, ${pos.longitude}, ${JSON.stringify(String(node.node_id || ""))})'>🗺 ${escapeHtml(window.I18N.t('nodes.locate_on_map'))}</button>
                 <button onclick="copyCoordinates('${pos.latitude}', '${pos.longitude}')">📋 ${escapeHtml(window.I18N.t('nodes.copy_coordinates'))}</button>
                 <button onclick="setNodeAsReference('${escapeHtml(node.node_id)}')">📍 ${escapeHtml(window.I18N.t('nodes.set_as_reference'))}</button>
-                <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">📡 ${escapeHtml(window.I18N.t('nodes.request_new_position'))}</button>
+                <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeJsString(node.clean_name || node.name || node.node_id)}', this)">📡 ${escapeHtml(window.I18N.t('nodes.request_new_position'))}</button>
             </div>
             <div class="position-reference">${escapeHtml(window.I18N.t('nodes.reference_prefix', { name: referenceName }))}</div>
             ` : `
             <div class="position-no-data">
                 <span>📍 ${escapeHtml(window.I18N.t('nodes.no_known_position'))}</span>
-                <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeHtml(node.clean_name || node.name || node.node_id)}', this)">${escapeHtml(window.I18N.t('nodes.request_position'))}</button>
+                <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeJsString(node.clean_name || node.name || node.node_id)}', this)">${escapeHtml(window.I18N.t('nodes.request_position'))}</button>
             </div>
             `}
         </div>
@@ -7988,7 +7988,10 @@ function renderDataPane(node) {
     const hasEnv = hasTemperature || hasHumidity || hasPressure;
     const hasPower = hasPowerVoltage || hasCurrent || hasPowerValue;
     const nodeId = escapeHtml(node.node_id);
-    const nodeName = escapeHtml(node.clean_name || node.name || node.node_id);
+    // Only ever used inside onclick="...('${nodeName}'...)" below (JS-string
+    // context, not HTML text) - escapeJsString(), not escapeHtml(), or a
+    // longName containing a single quote breaks out of the attribute.
+    const nodeName = escapeJsString(node.clean_name || node.name || node.node_id);
 
     const deviceRows = [
         hasBattery ? `<div><span class="label">${escapeHtml(window.I18N.t('node_panel.battery'))}</span><span class="value">${escapeHtml(formatBatteryPercent(node.battery_level))}%</span></div>` : '',

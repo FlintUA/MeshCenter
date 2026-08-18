@@ -47,6 +47,18 @@ SERVICE_WAIT_SECONDS=30
 #   echo "INSTALL_CAMERA=yes" > /boot/firmware/meshcenter-options
 INSTALL_CAMERA=no
 
+# ─── e-Paper display support ──────────────────────────────────────────────────
+# python3-gpiozero and python3-spidev back the e-Paper display driver
+# (modules/display/) - off by default, matching EPAPER_ENABLED=False in
+# config.example.py (this hardware is opt-in, not every install has a HAT
+# wired up). No auto-detection exists for it the way vcgencmd detects a
+# camera, so this is manual-only.
+#
+# To install e-Paper support, create meshcenter-options on bootfs:
+#   echo "INSTALL_EPAPER=yes" > /boot/firmware/meshcenter-options
+# (remember to also set EPAPER_ENABLED=True in config.py afterwards)
+INSTALL_EPAPER=no
+
 PROGRESS_PORT=80
 PROGRESS_FILE="/tmp/meshcenter-progress.txt"
 PROGRESS_PID=""
@@ -328,6 +340,7 @@ if [[ "$INSTALL_CAMERA" == "no" ]]; then
 fi
 
 log "Camera support: $INSTALL_CAMERA"
+log "e-Paper support: $INSTALL_EPAPER"
 
 # ---------------------------------------------------------------------------
 # 1. Resolve the normal user created by Raspberry Pi Imager
@@ -363,6 +376,7 @@ log "Install directory: $INSTALL_DIR"
 # ---------------------------------------------------------------------------
 export DEBIAN_FRONTEND=noninteractive
 
+wait_for_apt_lock
 apt-get update -qq
 wait_for_apt_lock
 apt-get install -y --no-install-recommends \
@@ -401,6 +415,7 @@ update_progress 2 "Installing system packages"
 
 log "Installing MeshCenter system dependencies..."
 
+wait_for_apt_lock
 apt-get update -qq
 wait_for_apt_lock
 apt-get install -y --no-install-recommends \
@@ -436,6 +451,20 @@ else
     log "To enable: create meshcenter-options on bootfs with INSTALL_CAMERA=yes"
 fi
 
+# gpiozero/spidev back the e-Paper display driver - optional, off by default
+# (see EPAPER_ENABLED in config.example.py).
+if [[ "$INSTALL_EPAPER" == "yes" ]]; then
+    log "Installing e-Paper display packages (python3-gpiozero + python3-spidev)..."
+    wait_for_apt_lock
+    apt-get install -y --no-install-recommends \
+        python3-gpiozero \
+        python3-spidev \
+        || log "WARNING: e-Paper packages could not be installed; continuing without e-Paper support."
+else
+    log "e-Paper support skipped (INSTALL_EPAPER=no)"
+    log "To enable: create meshcenter-options on bootfs with INSTALL_EPAPER=yes"
+fi
+
 # Add the normal user to useful hardware groups that actually exist.
 for group in dialout video render gpio i2c spi; do
     if getent group "$group" >/dev/null 2>&1; then
@@ -461,6 +490,11 @@ runuser -u "$TARGET_USER" -- \
 
 [[ -d "$INSTALL_DIR/.git" ]] || fail "Repository clone did not create $INSTALL_DIR/.git"
 log "MeshCenter repository cloned."
+
+# Shared radio-identity-parsing/config-generation logic (also used by
+# install.sh) - only available now that the repo has actually been cloned.
+# shellcheck source=installer/common.sh
+source "$INSTALL_DIR/installer/common.sh"
 
 # ---------------------------------------------------------------------------
 # 6. Create Python virtual environment and install requirements
@@ -571,58 +605,11 @@ RADIO_INFO_FILE="$(cut -d'|' -f2- "$VALID_RADIOS_FILE")"
 
 log "Using Meshtastic radio: $RADIO_PORT"
 
-# Parse identity with Python.
+# Parse identity (shared with install.sh - see installer/common.sh).
 # node_id is derived from myNodeNum because it is stable and avoids relying on
 # the order/content of the node database printed by --info.
-IDENTITY_JSON="$(
-python3 - "$RADIO_INFO_FILE" "$RADIO_PORT" <<'PY'
-import json
-import re
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-port = sys.argv[2]
-text = path.read_text(errors="replace")
-
-m_num = re.search(r'"myNodeNum"\s*:\s*(\d+)', text)
-if not m_num:
-    raise SystemExit("myNodeNum not found")
-
-node_num = int(m_num.group(1))
-if not 0 <= node_num <= 0xFFFFFFFF:
-    raise SystemExit(f"myNodeNum is outside uint32 range: {node_num}")
-
-node_id = f"!{node_num:08x}"
-
-m_owner = re.search(r'^Owner:\s*(.*?)\s+\(([^()]*)\)\s*$', text, re.MULTILINE)
-if m_owner:
-    long_name = m_owner.group(1).strip()
-    short_name = m_owner.group(2).strip()
-else:
-    m_owner = re.search(r'^Owner:\s*(.*?)\s*$', text, re.MULTILINE)
-    if not m_owner:
-        raise SystemExit("Owner line not found")
-    long_name = m_owner.group(1).strip()
-    short_name = ""
-
-m_hw = re.search(r'"hwModel"\s*:\s*"([^"]+)"', text)
-hardware = (m_hw.group(1) if m_hw else "").strip()
-
-if not long_name:
-    long_name = node_id
-if not short_name:
-    short_name = node_id[-4:].upper()
-
-print(json.dumps({
-    "node_id": node_id,
-    "long_name": long_name,
-    "short_name": short_name,
-    "hardware": hardware,
-    "port": port,
-}, ensure_ascii=False))
-PY
-)" || fail "Could not parse Meshtastic identity."
+IDENTITY_JSON="$(parse_meshtastic_identity_from_info "$RADIO_INFO_FILE" "$RADIO_PORT")" \
+    || fail "Could not parse Meshtastic identity."
 
 NODE_ID="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["node_id"])' "$IDENTITY_JSON")"
 LONG_NAME="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["long_name"])' "$IDENTITY_JSON")"
@@ -654,106 +641,22 @@ LIVE_CONFIG="$INSTALL_DIR/config.py"
 
 log "Creating production config.py from config.example.py..."
 
-python3 - \
-    "$TEMPLATE_CONFIG" \
-    "$LIVE_CONFIG" \
-    "$NODE_ID" \
-    "$LONG_NAME" \
-    "$SHORT_NAME" \
-    "$HW_MODEL" \
-    "$RADIO_PORT" <<'PY'
-import ast
-import json
-import re
-import sys
-from pathlib import Path
-
-template = Path(sys.argv[1])
-output = Path(sys.argv[2])
-node_id, long_name, short_name, hw_model, radio_port = sys.argv[3:8]
-
-text = template.read_text(encoding="utf-8")
-
-def replace_simple_assignment(source: str, name: str, value) -> str:
-    replacement = f"{name} = {value!r}"
-    pattern = rf"(?m)^{re.escape(name)}\s*=.*$"
-    new, count = re.subn(pattern, replacement, source, count=1)
-    if count != 1:
-        raise RuntimeError(f"Could not find assignment for {name}")
-    return new
-
-def replace_top_level_assignment_block(source: str, name: str, replacement: str) -> str:
-    tree = ast.parse(source)
-    target = None
-    for node in tree.body:
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            names = []
-            if isinstance(node, ast.Assign):
-                for t in node.targets:
-                    if isinstance(t, ast.Name):
-                        names.append(t.id)
-            elif isinstance(node.target, ast.Name):
-                names.append(node.target.id)
-            if name in names:
-                target = node
-                break
-    if target is None or not hasattr(target, "end_lineno"):
-        raise RuntimeError(f"Could not find top-level assignment for {name}")
-    lines = source.splitlines()
-    start = target.lineno - 1
-    end = target.end_lineno
-    lines[start:end] = replacement.splitlines()
-    return "\n".join(lines) + ("\n" if source.endswith("\n") else "")
-
-text = replace_simple_assignment(text, "MESHTASTIC_PORT", radio_port)
-text = replace_simple_assignment(text, "LOCAL_NODE_ID", node_id)
-text = replace_simple_assignment(text, "LOCAL_NODE_NAME", long_name)
-
-known_nodes = (
-    "KNOWN_NODES = {\n"
-    f"    {node_id!r}: {long_name!r},\n"
-    "}"
-)
-text = replace_top_level_assignment_block(text, "KNOWN_NODES", known_nodes)
-
-known_node_info = (
-    "KNOWN_NODE_INFO = {\n"
-    f"    {node_id!r}: {{'short_name': {short_name!r}, 'hw_model': {hw_model!r}}},\n"
-    "}"
-)
-text = replace_top_level_assignment_block(text, "KNOWN_NODE_INFO", known_node_info)
-
-# Validate generated Python before writing.
-ast.parse(text)
-
-output.write_text(text, encoding="utf-8")
-PY
-
-chown "$TARGET_USER:$TARGET_USER" "$LIVE_CONFIG"
-chmod 0644 "$LIVE_CONFIG"
-
-# Validate the exact values that will be imported by server.py.
-runuser -u "$TARGET_USER" -- \
-    env HOME="$TARGET_HOME" USER="$TARGET_USER" LOGNAME="$TARGET_USER" \
-    "$INSTALL_DIR/venv/bin/python" - "$LIVE_CONFIG" "$NODE_ID" "$LONG_NAME" "$RADIO_PORT" <<'PY'
-import importlib.util
-import sys
-
-path, expected_id, expected_name, expected_port = sys.argv[1:5]
-spec = importlib.util.spec_from_file_location("meshcenter_generated_config", path)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-
-checks = {
-    "LOCAL_NODE_ID": (module.LOCAL_NODE_ID, expected_id),
-    "LOCAL_NODE_NAME": (module.LOCAL_NODE_NAME, expected_name),
-    "MESHTASTIC_PORT": (module.MESHTASTIC_PORT, expected_port),
+# Shared with install.sh - see installer/common.sh. The write step always
+# runs as plain `python3` (stdlib-only, no venv needed); only the final
+# re-import validation uses the target user's venv python via runuser,
+# same as before this was extracted.
+run_as_target() {
+    runuser -u "$TARGET_USER" -- \
+        env HOME="$TARGET_HOME" USER="$TARGET_USER" LOGNAME="$TARGET_USER" \
+        "$@"
 }
-bad = [f"{key}: {actual!r} != {expected!r}"
-       for key, (actual, expected) in checks.items() if actual != expected]
-if bad:
-    raise SystemExit("; ".join(bad))
-PY
+
+generate_config_from_radio \
+    "$TEMPLATE_CONFIG" "$LIVE_CONFIG" \
+    "$NODE_ID" "$LONG_NAME" "$SHORT_NAME" "$HW_MODEL" "$RADIO_PORT" \
+    "$TARGET_USER:$TARGET_USER" \
+    "$INSTALL_DIR/venv/bin/python" run_as_target \
+    || fail "Could not generate production config.py."
 
 log "Production config.py created and validated."
 

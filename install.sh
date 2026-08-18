@@ -2,10 +2,12 @@
 # MeshCenter Installer
 # https://github.com/FlintUA/MeshCenter
 #
-# Usage (automatic):
-#   Placed on SD card as firstrun.sh — runs on first Pi boot
+# This is the manual installer (curl | bash, or run locally). For
+# unattended provisioning via Raspberry Pi Imager's cloud-init user-data,
+# see meshcenter-firstboot.sh instead - it discovers the radio and
+# generates config.py before starting the service, without any prompts.
 #
-# Usage (manual):
+# Usage:
 #   curl -sSL https://raw.githubusercontent.com/FlintUA/MeshCenter/main/install.sh | bash
 #   or: bash install.sh
 #
@@ -280,6 +282,18 @@ step_system_packages() {
         warn "python3-picamera2 not available on this system — camera feature will be unavailable."
     fi
 
+    # e-Paper display support (gpiozero/spidev) — optional and off by default,
+    # matching EPAPER_ENABLED=False in config.example.py: not every install
+    # has a HAT wired up, so this isn't installed unless explicitly requested.
+    # To enable: INSTALL_EPAPER=yes curl -sSL .../install.sh | bash
+    if [[ "${INSTALL_EPAPER:-no}" == "yes" ]]; then
+        log "Installing e-Paper display packages (python3-gpiozero + python3-spidev)..."
+        sudo apt-get install -y python3-gpiozero python3-spidev --no-install-recommends -qq \
+            || warn "e-Paper packages failed to install — e-Paper display feature will be unavailable."
+    else
+        log "e-Paper support skipped (set INSTALL_EPAPER=yes to install python3-gpiozero/python3-spidev)"
+    fi
+
     log "System packages installed ✓"
 }
 
@@ -341,23 +355,12 @@ step_venv() {
     log "Python dependencies installed ✓"
 }
 
-# ─── Step 6: Config ───────────────────────────────────────────────────────────
-step_config() {
-    progress "6/9 Configuring MeshCenter..."
-
-    mkdir -p "${INSTALL_DIR}/data"
-
-    if [[ ! -f "${INSTALL_DIR}/config.py" ]]; then
-        cp "${INSTALL_DIR}/config.example.py" "${INSTALL_DIR}/config.py"
-        log "config.py created from template ✓"
-    else
-        log "config.py already exists — not overwritten ✓"
-    fi
-}
-
-# ─── Step 7: Detect radio ─────────────────────────────────────────────────────
+# ─── Step 6: Detect radio ─────────────────────────────────────────────────────
+# Runs before step_config() (swapped from the original 6/7 order) so a
+# connected radio can actually be queried for real config values below -
+# it needs the venv's `meshtastic` CLI from step_venv either way.
 step_detect_radio() {
-    progress "7/9 Detecting Meshtastic radio..."
+    progress "6/9 Detecting Meshtastic radio..."
 
     # Add user to dialout for serial access
     sudo usermod -a -G dialout "$USER" 2>/dev/null || true
@@ -377,6 +380,114 @@ step_detect_radio() {
         log "No Meshtastic device detected. Connect it later via Settings."
     fi
 }
+
+# ─── Step 7: Config ───────────────────────────────────────────────────────────
+step_config() {
+    progress "7/9 Configuring MeshCenter..."
+
+    mkdir -p "${INSTALL_DIR}/data"
+
+    if [[ -f "${INSTALL_DIR}/config.py" ]]; then
+        log "config.py already exists — not overwritten ✓"
+        return 0
+    fi
+
+    if [[ -n "$RADIO_PORT" ]] && step_config_from_detected_radio; then
+        return 0
+    fi
+
+    # No radio, or it didn't respond usefully - this has always been a
+    # supported path (see step_detect_radio's own tolerance for "not found")
+    # so fall back exactly like before this change, just with a clearer
+    # pointer to where to fix it up afterwards.
+    cp "${INSTALL_DIR}/config.example.py" "${INSTALL_DIR}/config.py"
+    log "config.py created from template ✓"
+    warn "LOCAL_NODE_ID is still the config.example.py placeholder (!xxxxxxxx)."
+    warn "Set your real node ID/name later via MeshCenter's Settings, or edit"
+    warn "${INSTALL_DIR}/config.py directly (LOCAL_NODE_ID/LOCAL_NODE_NAME)."
+}
+
+# Attempts to query the radio detected by step_detect_radio() and generate a
+# real config.py from it (shared logic - see installer/common.sh, also used
+# by meshcenter-firstboot.sh). Returns non-zero on any failure - step_config()
+# falls back to the config.example.py placeholder in that case, this must
+# never abort the install.
+#
+# The whole body runs in a subshell with `set +e` and the global ERR trap
+# cleared: several commands below (source, mktemp, the python3 -c calls) are
+# plain statements, not the direct condition of an `if`/`&&` - under the
+# main script's `set -euo pipefail` + `trap ... ERR`, any one of those
+# failing would abort the *entire install* immediately, before this
+# function ever got a chance to `return 1` and let step_config() fall back.
+# Scoping the relaxation to a subshell keeps the rest of install.sh exactly
+# as strict as before.
+step_config_from_detected_radio() (
+    set +e
+    trap - ERR
+
+    log "Querying Meshtastic radio at ${RADIO_PORT}..."
+
+    # shellcheck source=installer/common.sh
+    source "${INSTALL_DIR}/installer/common.sh"
+
+    local info_file
+    info_file="$(mktemp)"
+
+    # sudo usermod -a -G dialout in step_detect_radio only takes effect on a
+    # new login session, not this already-running script - `sg dialout -c`
+    # applies that group membership immediately, without needing to
+    # re-login. Falls back to a direct attempt if `sg` isn't available
+    # (works if the user was already in dialout from a previous run).
+    local probe_ok=0
+    if command -v sg &>/dev/null; then
+        if timeout 30 sg dialout -c "meshtastic --port '$RADIO_PORT' --info" >"$info_file" 2>&1; then
+            probe_ok=1
+        fi
+    else
+        if timeout 30 meshtastic --port "$RADIO_PORT" --info >"$info_file" 2>&1; then
+            probe_ok=1
+        fi
+    fi
+
+    if [[ "$probe_ok" -ne 1 ]] || ! grep -q '"myNodeNum"' "$info_file" || ! grep -q '^Owner:' "$info_file"; then
+        log "Radio at ${RADIO_PORT} did not return a valid Meshtastic identity."
+        rm -f "$info_file"
+        return 1
+    fi
+
+    local identity_json node_id long_name short_name hw_model
+    if ! identity_json="$(parse_meshtastic_identity_from_info "$info_file" "$RADIO_PORT")"; then
+        log "Could not parse Meshtastic identity from ${RADIO_PORT}."
+        rm -f "$info_file"
+        return 1
+    fi
+    rm -f "$info_file"
+
+    node_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["node_id"])' "$identity_json")"
+    long_name="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["long_name"])' "$identity_json")"
+    short_name="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["short_name"])' "$identity_json")"
+    hw_model="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["hardware"])' "$identity_json")"
+
+    if [[ ! "$node_id" =~ ^![0-9a-fA-F]{8}$ ]]; then
+        log "Detected node ID is invalid: $node_id"
+        return 1
+    fi
+
+    # No chown needed (install.sh already runs as the owning user, unlike
+    # firstboot's root-then-handoff-to-target-user flow) and no runner
+    # prefix for validation - step_venv already activated the venv in this
+    # same shell, so plain `python3` already resolves inside it.
+    if ! generate_config_from_radio \
+        "${INSTALL_DIR}/config.example.py" "${INSTALL_DIR}/config.py" \
+        "$node_id" "$long_name" "$short_name" "$hw_model" "$RADIO_PORT" \
+        "" python3; then
+        log "Could not generate config.py from the detected radio."
+        return 1
+    fi
+
+    log "config.py created with detected radio: $node_id ($long_name) ✓"
+    return 0
+)
 
 # ─── Step 8: systemd service ──────────────────────────────────────────────────
 step_systemd() {
@@ -488,8 +599,8 @@ main() {
     step_swap
     step_clone
     step_venv
-    step_config
     step_detect_radio
+    step_config
     step_systemd
     step_cleanup
     step_done

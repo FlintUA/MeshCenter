@@ -48,6 +48,12 @@ jobs:
               bash -n "$script"
             done
           fi
+          if [ -d installer ]; then
+            find installer -name '*.sh' -print0 | while IFS= read -r -d '' script; do
+              echo "bash -n $script"
+              bash -n "$script"
+            done
+          fi
 
       - name: JavaScript syntax check (node --check)
         run: |

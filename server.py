@@ -17,10 +17,11 @@ import csv
 import uuid
 import ast
 import sqlite3
+import secrets
 from pathlib import Path
 from contextlib import contextmanager
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from camera import camera
 from camera.camera_manager import build_camera_manager
 from telemetry import telemetry
@@ -39,6 +40,7 @@ from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes, normalize_settings, SUPPORTED_LANGUAGES
 from api.api_system import register_system_routes
 from api.api_updates import register_updates_routes
+from api.api_auth import register_auth_routes, load_auth_state
 from system_log import log_system_event
 from storage.waypoint_store import WaypointStore
 from storage.profile_manager import ProfileManager
@@ -71,6 +73,13 @@ required_vars = [
 # Experimental (feature/epaper-display branch), off unless a local config.py
 # explicitly opts in - see config.example.py.
 EPAPER_ENABLED = globals().get("EPAPER_ENABLED", False)
+
+# Bootstrap-only defaults for the optional password protection feature - see
+# config.example.py. Off unless a local config.py explicitly opts in; only
+# consulted the very first time MeshCenter starts (data/auth.json is the
+# source of truth after that).
+AUTH_ENABLED = globals().get("AUTH_ENABLED", False)
+AUTH_PASSWORD_HASH = globals().get("AUTH_PASSWORD_HASH", "")
 
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 # Radio-scoped paths are resolved after the accepted instance identity loads.
@@ -326,6 +335,42 @@ if not os.path.exists(SCREENSHOTS_DIR):
 
 app = Flask(__name__)
 waypoint_store = WaypointStore(WAYPOINTS_DB_FILE)
+
+# Flask session cookies (used by the optional password protection below)
+# require a SECRET_KEY. Generated once and persisted to disk - like
+# instance.json/auth.json, instance-scoped rather than per-radio-profile -
+# so sessions survive a restart instead of invalidating on every deploy.
+SECRET_KEY_FILE = os.path.join(DATA_DIR, "secret_key.txt")
+
+def _load_or_create_secret_key(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            key = f.read().strip()
+        if key:
+            return key
+    except OSError:
+        pass
+    key = secrets.token_hex(32)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(key)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except OSError as error:
+        print(f"[AUTH] Could not persist secret key: {error}", flush=True)
+    return key
+
+app.secret_key = _load_or_create_secret_key(SECRET_KEY_FILE)
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=7)
+
+# Optional whole-app password protection - see api/api_auth.py and
+# config.example.py's AUTH_ENABLED/AUTH_PASSWORD_HASH. Off by default;
+# data/auth.json (not settings.json) is the source of truth after the
+# first run, so a generic settings.json save can never silently wipe it.
+AUTH_FILE = os.path.join(DATA_DIR, "auth.json")
+auth_state = load_auth_state(AUTH_FILE, AUTH_ENABLED, AUTH_PASSWORD_HASH)
 
 def handle_errors(f):
     """Декоратор для обработки ошибок в API"""
@@ -4263,6 +4308,11 @@ def resolve_ui_language():
 
     supported = [lang for lang in SUPPORTED_LANGUAGES if lang != "auto"]
     return request.accept_languages.best_match(supported, default="en")
+
+# Registered here (rather than alongside the other register_*_routes calls
+# near app = Flask(__name__)) because it needs state_lock/resolve_ui_language,
+# both defined above this point but not yet when app/auth_state were created.
+register_auth_routes(app, state_lock, auth_state, AUTH_FILE, handle_errors, resolve_ui_language=resolve_ui_language)
 
 # Each provider owns its own ui.language -> provider-language-code mapping
 # (see WeatherProvider.LANGUAGE_MAP in weather/providers/base.py) since that

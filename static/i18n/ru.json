@@ -517,7 +517,26 @@
     "updates_preflight_up_to_date": "Уже на последнем коммите этой ветки.",
     "updates_preflight_no_upstream": "Для этой ветки не настроена отслеживаемая удалённая ветка.",
     "updates_preflight_fetch_failed": "Не удалось связаться с GitHub, чтобы получить последние коммиты.",
-    "updates_apply_confirm": "Обновить MeshCenter с {current} до {latest}? Сервис перезапустится автоматически."
+    "updates_apply_confirm": "Обновить MeshCenter с {current} до {latest}? Сервис перезапустится автоматически.",
+    "security_title": "Безопасность",
+    "security_description": "Защитите MeshCenter общим паролем.",
+    "security_mode_label": "Режим доступа",
+    "security_mode_trusted": "Доверенная локальная сеть",
+    "security_mode_protected": "Защищено паролем",
+    "security_password_label": "Пароль",
+    "security_password_placeholder": "Новый пароль",
+    "security_password_confirm_placeholder": "Подтвердите пароль",
+    "security_set_password_btn": "Установить пароль",
+    "security_change_password_btn": "Изменить пароль",
+    "security_password_set_note": "Пароль установлен.",
+    "security_password_not_set_note": "Пароль ещё не задан - задайте его перед включением защиты.",
+    "security_saved": "Сохранено.",
+    "security_password_mismatch": "Пароли не совпадают.",
+    "security_password_too_short": "Пароль должен содержать не менее 4 символов.",
+    "security_enable_requires_password": "Задайте пароль перед включением защиты.",
+    "security_save_failed": "Не удалось сохранить: {reason}",
+    "security_logout_btn": "Выйти",
+    "security_logout_note": "Действует только для этой сессии браузера."
   },
   "settings": {
     "title": "Настройки",
@@ -1062,5 +1081,12 @@
     "timer_reset": "Сброс",
     "timer_delete": "Удалить",
     "timer_start": "▶ Старт"
+  },
+  "auth": {
+    "login_title": "MeshCenter",
+    "login_subtitle": "Этот MeshCenter защищён паролем.",
+    "password_label": "Пароль",
+    "login_error": "Неверный пароль.",
+    "login_submit": "Войти"
   }
 }

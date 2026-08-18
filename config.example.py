@@ -80,3 +80,17 @@ WEATHER_CACHE_SECONDS = 600
 # Waveshare 2.13" e-Paper HAT (G) actually wired up - see the e-Paper Stage
 # 1 plan and modules/display/ for details.
 EPAPER_ENABLED = False
+
+# ===== OPTIONAL PASSWORD PROTECTION =====
+# Off by default - MeshCenter is intended for a trusted local network, but a
+# guest Wi-Fi/VPN/accidental port-forward can expose it, so a single shared
+# password is available as an opt-in layer. AUTH_PASSWORD_HASH is only ever
+# used to seed data/auth.json the first time MeshCenter starts (it becomes
+# the source of truth afterwards, editable from Settings -> Security in the
+# web UI) - once auth.json exists these two variables are ignored.
+# Leave AUTH_PASSWORD_HASH empty to keep protection off even if
+# AUTH_ENABLED=True, so a stray "True" here can never lock you out with no
+# password set. Generate a hash with:
+#   python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('your-password'))"
+AUTH_ENABLED = False
+AUTH_PASSWORD_HASH = ""

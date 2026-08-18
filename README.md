@@ -878,6 +878,8 @@ This approach provides several advantages:
 
 ## 🔄 Updating MeshCenter
 
+The easiest way is the **Updates** card in the System workspace (see "System Monitor & Radio Health" above) - it checks for a new release, shows the changelog, and applies it with a safety check plus a one-click restart. The manual steps below remain the fallback for when the web interface itself is unreachable:
+
 ```bash
 cd ~/meshcenter
 git pull
@@ -1311,6 +1313,15 @@ MeshCenter provides a dedicated System workspace that gives you full visibility 
 - If the Meshtastic listener stops, MeshCenter can automatically restart it after a configurable delay (30–300 seconds)
 - The recovery mechanism respects a safety limit (max 3 attempts in 30 minutes) to avoid restart loops
 
+#### Updates
+
+An **Updates** card checks GitHub Releases for a newer version - a background check (daily by default, togglable in Settings) caches the result server-side, so the browser never calls the GitHub API directly and multiple open tabs never multiply the request rate. The card shows the current and latest version plus the real release changelog, with two actions:
+
+- **Check now** - an on-demand refresh of the cached release info.
+- **Update** - runs a safety preflight first (clean working tree, a real upstream, no diverged or ahead local history) and shows an honest error naming the exact problem if it isn't safe, rather than trying to resolve it automatically. Only if the preflight passes does it ask for confirmation, then applies the update with a plain fast-forward merge and restarts the service.
+
+After restarting, the interface polls for the service to come back with the expected version and reports success once confirmed. If it doesn't come back within 60 seconds, it shows the pre-update commit and a ready-to-copy rollback command instead of waiting indefinitely - there is no automatic rollback, by design (a same-process update can't reliably fix itself if the new code fails to start).
+
 ### 🌦️ Weather Module
 
 MeshCenter shows current weather conditions and a 3‑day forecast for your location, sourced from a pluggable weather provider (`weather/providers/`) - currently OpenWeather or WeatherAPI. The active provider is chosen in **Settings → Weather Provider**.
@@ -1644,6 +1655,11 @@ PATCH  /api/timers/<id>/pause
 PATCH  /api/timers/<id>/resume
 PATCH  /api/timers/<id>/stop
 PATCH  /api/timers/<id>/reset
+
+GET    /api/updates/status
+POST   /api/updates/check
+GET    /api/updates/preflight
+POST   /api/updates/apply
 
 GET    /api/weather/current
 ```

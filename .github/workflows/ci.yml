@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements-dev.txt
+
+      - name: Byte-compile all Python sources
+        run: python -m compileall -q .
+
+      - name: Shell script syntax check (bash -n)
+        run: |
+          set -e
+          for script in install.sh meshcenter-firstboot.sh deploy.sh; do
+            echo "bash -n $script"
+            bash -n "$script"
+          done
+          if [ -d tools ]; then
+            find tools -name '*.sh' -print0 | while IFS= read -r -d '' script; do
+              echo "bash -n $script"
+              bash -n "$script"
+            done
+          fi
+          if [ -d scripts ]; then
+            find scripts -name '*.sh' -print0 | while IFS= read -r -d '' script; do
+              echo "bash -n $script"
+              bash -n "$script"
+            done
+          fi
+
+      - name: JavaScript syntax check (node --check)
+        run: |
+          set -e
+          for script in static/chat.js static/i18n.js static/media.js static/weather.js; do
+            echo "node --check $script"
+            node --check "$script"
+          done
+
+      - name: Run pytest
+        run: python -m pytest

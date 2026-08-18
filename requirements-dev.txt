@@ -1,0 +1,4 @@
+# Dev/CI-only dependencies - never installed on a production Pi (see
+# CLAUDE.md: production installs `pip install -r requirements.txt` only).
+-r requirements.txt
+pytest>=7.4,<9

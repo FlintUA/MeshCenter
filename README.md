@@ -662,6 +662,7 @@ MeshCenter is built with a lightweight and practical technology stack:
 
 - Python
 - Flask
+- Gunicorn (production WSGI server)
 - HTML5
 - CSS3
 - JavaScript
@@ -1297,6 +1298,8 @@ MeshCenter consists of several independent modules that work together.
 
 The browser never communicates directly with the Meshtastic node. All communication is handled by the Flask application, which coordinates the different subsystems.
 
+In production, requests reach the Flask application through [Gunicorn](https://gunicorn.org/) (see `gunicorn.conf.py` / `wsgi.py`), not shown separately above to keep the diagram focused on MeshCenter's own subsystems.
+
 ---
 
 ## Data Storage
@@ -1384,6 +1387,12 @@ GET    /api/updates/preflight
 POST   /api/updates/apply
 
 GET    /api/weather/current
+
+GET    /api/security
+POST   /api/security
+GET    /login
+POST   /login
+POST   /api/logout
 ```
 
 The API is primarily intended for the built-in web interface, but it also allows future integrations with third-party applications.
@@ -1423,7 +1432,14 @@ Current security model:
 
 If remote access is required, it is recommended to use a VPN or another secure tunnel instead of exposing the web interface directly to the Internet.
 
-Future versions may include optional authentication.
+### Optional password protection
+
+MeshCenter can be protected with a single shared password - **Settings → Security**. It's a single on/off switch, not a multi-user system: one password guards the entire application (every API route, including `restart`/`reboot`/`shutdown` and Wi‑Fi management), not individual users or features.
+
+- **Off by default.** Existing installs and fresh installs both start unprotected - nothing changes until you set a password and turn it on.
+- When enabled, an unauthenticated browser is redirected to a login page (`/login`); unauthenticated API requests get `401`. Static assets and the login page itself stay reachable so the login form can render.
+- The password is hashed (`werkzeug.security`, never stored in plain text) in `data/auth.json`, not in `config.py` or `settings.json` - it isn't wiped by an unrelated settings save and never comes back in a settings API response.
+- This is one shared secret for the whole app, not per-user accounts - it doesn't replace a VPN for remote access, it's meant to reduce exposure on a shared or guest local network.
 
 ---
 
@@ -1712,6 +1728,8 @@ Contributions are welcome.
 If you find a bug, have an idea for an improvement or would like to contribute code, please open an Issue or submit a Pull Request.
 
 Suggestions for improving the documentation are also greatly appreciated.
+
+Before opening a Pull Request, install `requirements-dev.txt` and run `pytest` from the repo root - it's quick (well under a minute) and catches regressions in the areas it covers (CLI-output parsing, settings normalization, node ID validation, auth, and more - see `tests/`). GitHub Actions CI runs the same suite plus `python -m compileall`, `bash -n` on the installer scripts, and `node --check` on `static/*.js` on every PR and push to `main`, so it'll be checked either way - running it locally first just means you find out sooner.
 
 ### Reporting Issues
 

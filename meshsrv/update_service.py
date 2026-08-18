@@ -247,3 +247,4 @@ def apply_update(project_dir: str, upstream: str) -> dict[str, Any]:
         "previous_sha": previous_sha,
         "output": (pull.stdout + pull.stderr).strip(),
     }
+# trailing marker commit for live end-to-end apply-update testing on dev

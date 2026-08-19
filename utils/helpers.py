@@ -74,18 +74,3 @@ def normalize_node_id_with_aliases(node_id):
     if not node_id:
         return None
     return normalize_node_id(node_id)
-
-
-def sanitize_text(text):
-    if not text:
-        return ""
-    if len(text) > 500:
-        text = text[:500]
-    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
-    return text
-
-
-def friendly_unknown_node_name(node_id):
-    if node_id and node_id.startswith("!") and len(node_id) >= 5:
-        return "Meshtastic " + node_id[-4:]
-    return node_id or "Unknown"

@@ -4,9 +4,9 @@ listener and write into a radio profile: on the configured radio matching
 the physically detected one, or blocked on a mismatch (see server.py's
 verify_radio_identity()/start_runtime(), which gate listen_meshtastic() and
 parse_nodes_from_info() on `identity_status == "MATCH"`). No server.py
-import needed - this module only depends on meshsrv.meshsrv (subprocess
-wrapper, not called here) and meshsrv.runtime_identity, neither of which
-touch hardware at import time.
+import needed - this module only depends on meshsrv.meshtastic_transport
+(subprocess wrapper, not called here) and meshsrv.runtime_identity, neither
+of which touch hardware at import time.
 """
 
 from meshsrv.radio_identity import compare_radio_identity, parse_radio_identity

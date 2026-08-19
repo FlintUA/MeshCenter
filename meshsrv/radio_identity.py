@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
-from meshsrv import meshsrv
+from meshsrv import meshtastic_transport
 from meshsrv.runtime_identity import discover_serial_ports
 
 IDENTITY_MATCH = "MATCH"
@@ -157,7 +157,7 @@ def detect_radio_identity(cli_path: str, serial_port: str, timeout: int = 25) ->
     checked_at = utc_now_iso()
     configured = {"port": str(serial_port or "").strip()}
     try:
-        completed = meshsrv.get_info(cli_path, serial_port=serial_port, timeout=timeout)
+        completed = meshtastic_transport.get_info(cli_path, serial_port=serial_port, timeout=timeout)
         output = (completed.stdout or "") + (completed.stderr or "")
         if completed.returncode != 0:
             message = output.strip() or f"Meshtastic CLI exited with code {completed.returncode}"

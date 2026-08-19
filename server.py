@@ -26,14 +26,13 @@ try:
     # to a no-op rather than crashing that import in that case.
 except ImportError:
     fcntl = None
-from pathlib import Path
 from contextlib import contextmanager
-from collections import defaultdict, deque
+from collections import defaultdict
 from datetime import datetime, timedelta
 from camera import camera
 from camera.camera_manager import build_camera_manager
 from telemetry import telemetry
-from meshsrv import meshsrv
+from meshsrv import meshtastic_transport
 from meshsrv.radio_manager import RadioConnectionManager
 from meshsrv.runtime_identity import resolve_meshtastic_cli, resolve_serial_port, meshtastic_command, discover_serial_ports
 from meshsrv.instance_manager import InstanceManager
@@ -48,12 +47,21 @@ from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes, normalize_settings, SUPPORTED_LANGUAGES
 from api.api_system import register_system_routes
 from api.api_updates import register_updates_routes
+from system.cpu_history import (
+    get_current_usage as get_cpu_current_usage,
+    read_cpu_temperature,
+    read_memory_percent,
+    load_cpu_history,
+    cpu_history_worker,
+    register_cpu_history_routes,
+)
 from api.api_auth import register_auth_routes, load_auth_state
 from system_log import log_system_event
 from storage.waypoint_store import WaypointStore
 from storage.profile_manager import ProfileManager
 from storage.device_manager import DeviceManager
 from api.api_node_tools import register_node_tools_routes
+from api.api_waypoints import register_waypoint_routes
 from api.api_node_icons import register_node_icon_routes
 from api.api_weather import register_weather_routes
 from api.api_hardware_display import register_hardware_display_routes
@@ -386,6 +394,12 @@ auth_state = load_auth_state(AUTH_FILE, AUTH_ENABLED, AUTH_PASSWORD_HASH)
 # in-process _runtime_started flag.
 RUNTIME_LOCK_FILE = os.path.join(DATA_DIR, "runtime.lock")
 
+# Path is DATA_DIR-derived like the other instance-scoped files above, so it
+# stays in server.py - the actual sampling/storage/route logic lives in
+# system/cpu_history.py, which takes this as an explicit parameter instead
+# of depending on DATA_DIR/server.py itself.
+CPU_HISTORY_FILE = os.path.join(DATA_DIR, "cpu_history.json")
+
 def handle_errors(f):
     """Декоратор для обработки ошибок в API"""
     @wraps(f)
@@ -414,7 +428,8 @@ camera_power_enabled_at_startup = register_camera_routes(
 # rescan/switch routes now dispatch through the same CameraManager
 # instance.
 register_camera_manager_routes(app, device_manager, handle_errors, camera_manager_state)
-register_system_routes(app, get_cpu_temperature=lambda: _read_cpu_temperature(), get_app_version=lambda: APP_VERSION)
+register_system_routes(app, get_cpu_temperature=lambda: read_cpu_temperature(), get_app_version=lambda: APP_VERSION)
+register_cpu_history_routes(app, CPU_HISTORY_FILE)
 register_updates_routes(app, resolve_version=lambda: APP_VERSION, project_dir=PROJECT_DIR, handle_errors=handle_errors)
 
 # Constructing DisplayManager (and the driver it wraps) never touches
@@ -454,10 +469,10 @@ def _epaper_get_radio_status():
     return radio_connection_manager.status(radio_health.get("listener_running", False))
 
 def _epaper_get_cpu_percent():
-    return _cpu_current_usage
+    return get_cpu_current_usage()
 
 def _epaper_get_ram_percent():
-    return _read_memory_percent()
+    return read_memory_percent()
 
 def _epaper_get_listener_alive():
     return radio_health.get("listener_running", False)
@@ -482,7 +497,7 @@ def _epaper_get_power_readings():
     }
 
 def _epaper_get_cpu_temp():
-    return _read_cpu_temperature()
+    return read_cpu_temperature()
 
 def _epaper_get_latest_message():
     with state_lock:
@@ -1904,7 +1919,7 @@ def get_telemetry_from_info(info_output=None):
 
     try:
         if info_output is None:
-            result = meshsrv.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
+            result = meshtastic_transport.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
             output = result.stdout + result.stderr
         else:
             output = str(info_output)
@@ -2120,7 +2135,7 @@ def parse_nodes_from_info(info_output=None):
     global nodes
     try:
         if info_output is None:
-            result = subprocess.run(meshtastic_command(MESHTASTIC_CMD, MESHTASTIC_PORT, "--info"), capture_output=True, text=True, timeout=30)
+            result = meshtastic_transport.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=30)
             output = result.stdout + result.stderr
         else:
             output = str(info_output)
@@ -3293,7 +3308,7 @@ def update_base_status_from_info(info_output=None):
     global base_status
     try:
         if info_output is None:
-            result = meshsrv.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
+            result = meshtastic_transport.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
             output = result.stdout + result.stderr
         else:
             output = str(info_output)
@@ -4236,6 +4251,35 @@ register_node_tools_routes(
 )
 register_node_icon_routes(app, PROFILE_DATA_DIR, LOCAL_NODE_ID, is_valid_node_id)
 
+# LOCAL_NODE_ID/LOCAL_NODE_NAME/MESHTASTIC_CMD/MESHTASTIC_PORT are passed by
+# value here, same as register_node_tools_routes() above - all four are
+# assigned exactly once at startup (before any register_*_routes() call),
+# never reassigned while the process is running (a radio profile switch
+# restarts the whole process instead of mutating them in place - see
+# CLAUDE.md's "Multi-radio profiles" section), so there is no accessor-
+# function-style staleness risk here the way system/cpu_history.py's
+# get_current_usage() exists for a value that genuinely does change while
+# the process runs.
+register_waypoint_routes(
+    app,
+    waypoint_store,
+    get_node_name,
+    handle_errors,
+    is_radio_available,
+    prepare_radio_command,
+    radio_lock,
+    pause_listen,
+    add_message,
+    log_system_event,
+    channel_chat_id,
+    MESHTASTIC_PORT,
+    MESHTASTIC_CMD,
+    PROJECT_DIR,
+    LOCAL_NODE_ID,
+    LOCAL_NODE_NAME,
+    CHANNEL_CHAT_NAME,
+)
+
 
 
 def _format_bytes(value):
@@ -5124,12 +5168,7 @@ def api_rescan_nodes():
             # race the listener (or any other radio_session caller) the way
             # a bare parse_nodes_from_info() call used to: that helper runs
             # its own unlocked subprocess when given no info_output.
-            result = subprocess.run(
-                meshtastic_command(MESHTASTIC_CMD, MESHTASTIC_PORT, "--info"),
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
+            result = meshtastic_transport.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=30)
             info_output = result.stdout + result.stderr
 
         success = parse_nodes_from_info(info_output=info_output)
@@ -5194,222 +5233,6 @@ def api_delete_chat():
 @app.route("/api/telemetry")
 def api_telemetry():
     return jsonify(telemetry.telemetry_current)
-
-@app.route("/api/waypoints", methods=["GET"])
-@handle_errors
-def api_waypoints():
-    include_expired = request.args.get("include_expired", "0").lower() in ("1", "true", "yes")
-    include_hidden = request.args.get("include_hidden", "0").lower() in ("1", "true", "yes")
-    include_raw = request.args.get("include_raw", "0").lower() in ("1", "true", "yes")
-    waypoints = waypoint_store.list(
-        include_expired=include_expired,
-        include_hidden=include_hidden,
-    )
-    for waypoint in waypoints:
-        sender_id = waypoint.get("sender_id") or ""
-        waypoint["sender_name"] = get_node_name(sender_id) if sender_id else "Unknown"
-        if not include_raw:
-            waypoint.pop("raw_packet", None)
-    return jsonify({
-        "ok": True,
-        "waypoints": waypoints,
-        "total": len(waypoints),
-    })
-
-
-@app.route("/api/waypoints/<int:waypoint_id>", methods=["GET"])
-@handle_errors
-def api_waypoint_detail(waypoint_id):
-    waypoint = waypoint_store.get(waypoint_id)
-    if not waypoint:
-        return jsonify({"ok": False, "error": "Waypoint not found", "error_code": "waypoint_not_found"}), 404
-
-    sender_id = waypoint.get("sender_id") or ""
-    waypoint["sender_name"] = get_node_name(sender_id) if sender_id else "Unknown"
-    include_raw = request.args.get("include_raw", "0").lower() in ("1", "true", "yes")
-    if not include_raw:
-        waypoint.pop("raw_packet", None)
-    return jsonify({"ok": True, "waypoint": waypoint})
-
-
-@app.route("/api/waypoints/<int:waypoint_id>/hidden", methods=["POST"])
-@handle_errors
-def api_waypoint_hidden(waypoint_id):
-    data = request.get_json(silent=True) or {}
-    hidden = bool(data.get("hidden", True))
-    waypoint = waypoint_store.set_hidden(waypoint_id, hidden)
-    if not waypoint:
-        return jsonify({"ok": False, "error": "Waypoint not found", "error_code": "waypoint_not_found"}), 404
-    sender_id = waypoint.get("sender_id") or ""
-    waypoint["sender_name"] = get_node_name(sender_id) if sender_id else "Unknown"
-    waypoint.pop("raw_packet", None)
-    return jsonify({"ok": True, "waypoint": waypoint})
-
-
-@app.route("/api/waypoints/<int:waypoint_id>", methods=["DELETE"])
-@handle_errors
-def api_waypoint_delete(waypoint_id):
-    deleted = waypoint_store.delete(waypoint_id)
-    if not deleted:
-        return jsonify({"ok": False, "error": "Waypoint not found", "error_code": "waypoint_not_found"}), 404
-    return jsonify({"ok": True, "deleted": 1, "waypoint_id": waypoint_id})
-
-
-@app.route("/api/waypoints/delete", methods=["POST"])
-@handle_errors
-def api_waypoints_delete_many():
-    data = request.get_json(silent=True) or {}
-    raw_ids = data.get("waypoint_ids") or []
-    if not isinstance(raw_ids, list):
-        return jsonify({"ok": False, "error": "waypoint_ids must be a list", "error_code": "waypoint_ids_not_a_list"}), 400
-    try:
-        waypoint_ids = [int(value) for value in raw_ids]
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "Invalid waypoint ID", "error_code": "invalid_waypoint_id"}), 400
-    deleted = waypoint_store.delete_many(waypoint_ids)
-    return jsonify({"ok": True, "deleted": deleted})
-
-
-@app.route("/api/waypoints", methods=["DELETE"])
-@handle_errors
-def api_waypoints_delete_all():
-    deleted = waypoint_store.delete_all()
-    return jsonify({"ok": True, "deleted": deleted})
-
-
-@app.route("/api/waypoints/send", methods=["POST"])
-@handle_errors
-def api_waypoint_send():
-    data = request.get_json(silent=True) or {}
-    name = str(data.get("name") or "").strip()
-    description = str(data.get("description") or "").strip()
-    latitude = data.get("latitude")
-    longitude = data.get("longitude")
-    channel_index = data.get("channel_index", 0)
-    icon = data.get("icon", 128205)
-    expire_at = data.get("expire_at")
-    post_notification = bool(data.get("post_notification", True))
-
-    if not name or len(name) > 30:
-        return jsonify({"ok": False, "error": "Name is required and must be at most 30 characters", "error_code": "waypoint_invalid_name"}), 400
-    if len(description) > 100:
-        return jsonify({"ok": False, "error": "Description must be at most 100 characters", "error_code": "waypoint_invalid_description"}), 400
-    try:
-        latitude = float(latitude)
-        longitude = float(longitude)
-        channel_index = int(channel_index)
-        icon = int(icon)
-        expire_at = int(expire_at)
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "Invalid waypoint data", "error_code": "waypoint_invalid_data"}), 400
-    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
-        return jsonify({"ok": False, "error": "Coordinates are outside the valid range", "error_code": "waypoint_invalid_coordinates"}), 400
-    if not (0 <= channel_index <= 7):
-        return jsonify({"ok": False, "error": "Channel index must be between 0 and 7", "error_code": "waypoint_invalid_channel_index"}), 400
-    if expire_at <= int(time.time()) + 30:
-        return jsonify({"ok": False, "error": "Expiration must be in the future", "error_code": "waypoint_expiration_in_past"}), 400
-    if not is_radio_available():
-        return jsonify({"ok": False, "error": "Meshtastic radio is currently unavailable", "error_code": "radio_released"}), 503
-    if not prepare_radio_command(MESHTASTIC_PORT, timeout=10):
-        return jsonify({"ok": False, "error": "Meshtastic serial port is busy", "error_code": "radio_busy"}), 503
-
-    cli_path = str(MESHTASTIC_CMD or "")
-    python_path = os.path.join(os.path.dirname(cli_path), "python3")
-    if not os.path.exists(python_path):
-        python_path = sys.executable
-    sender_script = os.path.join(PROJECT_DIR, "storage", "waypoint_sender.py")
-
-    expires_text = datetime.fromtimestamp(expire_at).strftime("%d.%m.%Y %H:%M")
-    notification_text = f"📍 Waypoint: {name}"
-    if description:
-        notification_text += f"\n{description}"
-    notification_text += f"\n{latitude:.6f}, {longitude:.6f}\nExpires: {expires_text}"
-
-    payload = {
-        "port": MESHTASTIC_PORT,
-        "name": name,
-        "description": description,
-        "latitude": latitude,
-        "longitude": longitude,
-        "channel_index": channel_index,
-        "icon": icon,
-        "expire_at": expire_at,
-        "post_notification": post_notification,
-        "notification_text": notification_text,
-    }
-
-    try:
-        with radio_lock:
-            result = subprocess.run(
-                [python_path, sender_script],
-                input=json.dumps(payload, ensure_ascii=False),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=35,
-            )
-        output = (result.stdout or "").strip()
-        if result.returncode != 0:
-            print(f"[WAYPOINT SEND] Failed: {output}", flush=True)
-            return jsonify({"ok": False, "error": output[-1000:] or "Waypoint send failed", "error_code": "waypoint_send_failed"}), 500
-
-        try:
-            sender_result = json.loads(output.splitlines()[-1])
-            waypoint_id = int(sender_result["waypoint_id"])
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
-            raise RuntimeError(f"Waypoint sender returned invalid result: {output[-1000:]}") from error
-
-        saved = waypoint_store.upsert({
-            "waypoint_id": waypoint_id,
-            "sender_id": LOCAL_NODE_ID,
-            "name": name,
-            "description": description,
-            "latitude": latitude,
-            "longitude": longitude,
-            "icon": icon,
-            "expire_at": expire_at,
-            "channel_index": channel_index,
-            "received_at": time.time(),
-            "raw_packet": json.dumps({"source": "local-send", **sender_result}, ensure_ascii=False),
-        })
-        saved.pop("_event", None)
-        saved.pop("raw_packet", None)
-        saved["sender_name"] = LOCAL_NODE_NAME
-
-        if post_notification:
-            channel_id = channel_chat_id(channel_index)
-            channel_name = CHANNEL_CHAT_NAME if channel_index == 0 else f"Channel {channel_index}"
-            add_message(
-                "me",
-                LOCAL_NODE_NAME,
-                notification_text,
-                node_id=LOCAL_NODE_ID,
-                chat_id=channel_id,
-                chat_name=channel_name,
-                packet_id=sender_result.get("notification_packet_id"),
-            )
-
-        print(
-            f"[WAYPOINT SEND] Sent and saved: {name}; waypoint_id={waypoint_id}; "
-            f"lat={latitude}; lon={longitude}; channel={channel_index}",
-            flush=True,
-        )
-        log_system_event(
-            title="Waypoint sent",
-            level="OK",
-            details=f"{name}; id {waypoint_id}; {latitude:.6f}, {longitude:.6f}; channel {channel_index}",
-            source="waypoint",
-        )
-        return jsonify({
-            "ok": True,
-            "message": "Waypoint sent",
-            "waypoint": saved,
-            "notification_posted": post_notification,
-            "sender_result": sender_result,
-        })
-    finally:
-        if is_radio_available():
-            pause_listen.clear()
 
 
 @app.route("/api/telemetry/history")
@@ -5701,144 +5524,6 @@ def api_radio_health():
     )
 
     return jsonify(status)
-    
-# ============================================================
-# CPU USAGE HISTORY
-# ============================================================
-CPU_HISTORY_FILE = os.path.join(DATA_DIR, "cpu_history.json")
-CPU_SAMPLE_INTERVAL = 2.0
-CPU_HISTORY_RETENTION = 24 * 60 * 60
-cpu_history = deque()
-cpu_history_lock = threading.RLock()
-_cpu_prev_total = None
-_cpu_prev_idle = None
-_cpu_current_usage = 0.0
-
-def _read_cpu_times():
-    try:
-        with open("/proc/stat", "r", encoding="utf-8") as fh:
-            parts = fh.readline().split()
-        if not parts or parts[0] != "cpu":
-            return None, None
-        values = [int(value) for value in parts[1:]]
-        idle = values[3] + (values[4] if len(values) > 4 else 0)
-        total = sum(values)
-        return total, idle
-    except Exception:
-        return None, None
-
-def _read_cpu_temperature():
-    for path in (
-        "/sys/class/thermal/thermal_zone0/temp",
-        "/sys/devices/virtual/thermal/thermal_zone0/temp",
-    ):
-        try:
-            raw = Path(path).read_text(encoding="utf-8").strip()
-            return round(float(raw) / 1000.0, 1)
-        except Exception:
-            continue
-    return None
-
-def _read_memory_percent():
-    try:
-        values = {}
-        with open("/proc/meminfo", "r", encoding="utf-8") as fh:
-            for line in fh:
-                key, value = line.split(":", 1)
-                values[key] = int(value.strip().split()[0])
-        total = values.get("MemTotal", 0)
-        available = values.get("MemAvailable", 0)
-        if total <= 0:
-            return None
-        return round((total - available) * 100.0 / total, 1)
-    except Exception:
-        return None
-
-def _load_cpu_history():
-    data = safe_read_json(CPU_HISTORY_FILE, {"cpu": []})
-    records = data.get("cpu", []) if isinstance(data, dict) else []
-    cutoff = time.time() - CPU_HISTORY_RETENTION
-    with cpu_history_lock:
-        cpu_history.clear()
-        for item in records:
-            if not isinstance(item, dict):
-                continue
-            try:
-                ts = float(item.get("timestamp", 0))
-                usage = float(item.get("usage", 0))
-            except (TypeError, ValueError):
-                continue
-            if ts >= cutoff:
-                cpu_history.append({"timestamp": ts, "usage": round(max(0.0, min(100.0, usage)), 1)})
-
-def _save_cpu_history():
-    with cpu_history_lock:
-        payload = {"cpu": list(cpu_history)}
-    safe_write_json(CPU_HISTORY_FILE, payload)
-
-def cpu_history_worker():
-    global _cpu_prev_total, _cpu_prev_idle, _cpu_current_usage
-    _cpu_prev_total, _cpu_prev_idle = _read_cpu_times()
-    last_save = 0.0
-    while True:
-        time.sleep(CPU_SAMPLE_INTERVAL)
-        total, idle = _read_cpu_times()
-        if total is None or idle is None:
-            continue
-        if _cpu_prev_total is not None and total > _cpu_prev_total:
-            delta_total = total - _cpu_prev_total
-            delta_idle = idle - _cpu_prev_idle
-            usage = 100.0 * (delta_total - delta_idle) / delta_total
-            _cpu_current_usage = round(max(0.0, min(100.0, usage)), 1)
-            now = time.time()
-            cutoff = now - CPU_HISTORY_RETENTION
-            with cpu_history_lock:
-                cpu_history.append({"timestamp": now, "usage": _cpu_current_usage})
-                while cpu_history and cpu_history[0]["timestamp"] < cutoff:
-                    cpu_history.popleft()
-            if now - last_save >= 60:
-                try:
-                    _save_cpu_history()
-                    last_save = now
-                except Exception as exc:
-                    print(f"[CPU] History save error: {exc}", flush=True)
-        _cpu_prev_total, _cpu_prev_idle = total, idle
-
-def _downsample_cpu_records(records, max_points):
-    if len(records) <= max_points:
-        return records
-    bucket_size = len(records) / max_points
-    result = []
-    for index in range(max_points):
-        start = int(index * bucket_size)
-        end = max(start + 1, int((index + 1) * bucket_size))
-        bucket = records[start:end]
-        if not bucket:
-            continue
-        result.append({
-            "timestamp": bucket[-1]["timestamp"],
-            "usage": round(sum(item["usage"] for item in bucket) / len(bucket), 1),
-        })
-    return result
-
-@app.route("/api/system/cpu-history")
-def api_system_cpu_history():
-    range_key = str(request.args.get("range", "30m")).lower()
-    ranges = {"30m": 1800, "1h": 3600, "6h": 21600, "12h": 43200, "24h": 86400}
-    seconds = ranges.get(range_key, 1800)
-    cutoff = time.time() - seconds
-    with cpu_history_lock:
-        records = [dict(item) for item in cpu_history if item["timestamp"] >= cutoff]
-    max_points = 900 if range_key == "30m" else 720
-    records = _downsample_cpu_records(records, max_points)
-    return jsonify({
-        "ok": True,
-        "range": range_key,
-        "current": _cpu_current_usage,
-        "temperature": _read_cpu_temperature(),
-        "ram_percent": _read_memory_percent(),
-        "records": records,
-    })
 
 # ============================================================
 # ЗАПУСК
@@ -5950,7 +5635,7 @@ def start_runtime():
         normalize_settings(settings).get("weather", {}).get("provider", "openweather")
     )
     weather_manager.active().set_language(resolve_weather_language(settings.get("language", "auto")))
-    _load_cpu_history()
+    load_cpu_history(CPU_HISTORY_FILE)
 
     if identity_match:
         try:
@@ -6043,7 +5728,7 @@ def start_runtime():
     else:
         pause_listen.set()
         print(f"[IDENTITY] Listener not started because status={identity_status}", flush=True)
-    threading.Thread(target=cpu_history_worker, daemon=True).start()
+    threading.Thread(target=cpu_history_worker, args=(CPU_HISTORY_FILE,), daemon=True).start()
 
     def _notify_update_available(status):
         from meshsrv.notification_service import push_notification

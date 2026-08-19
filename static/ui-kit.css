@@ -2,46 +2,10 @@
    Shared design tokens and reusable primitives.
    Keep feature-specific layout rules in style.css. */
 
-:root {
-    /* Surfaces and text */
-
-    /* Compatibility surfaces used by feature-specific rules. */
-
-    /* Spacing and geometry */
-
-    /* Typography */
-
-    /* Workspace headers */
-
-    /* Secondary buttons - Media Refresh is the visual reference */
-
-    /* Camera controls */
-}
-
 /* ============================================================
    UI KIT STAGE 2 - unified surfaces, tabs and interaction states
    Loaded after style.css and acts as the final visual layer.
    ============================================================ */
-
-:root {
-    /* Application surfaces */
-
-    /* Borders */
-
-    /* Brand / interaction */
-
-    /* Feature compatibility surfaces */
-
-    /* Text */
-
-    /* Status */
-
-    /* Tabs */
-
-    /* Elevation */
-
-    /* Backward-compatible aliases */
-}
 
 /* ---------- Global surfaces ---------- */
 body {
@@ -595,11 +559,6 @@ a:focus-visible,
    UI KIT v1.0 - workspace alignment and shared scrollbars
    Final visual layer. Feature layout remains in style.css.
    ============================================================ */
-:root {
-    /* Scrollbars */
-
-    /* Shared workspace surfaces */
-}
 
 /* Camera must start at exactly the same top offset as System/Media. */
 .video-view {
@@ -726,8 +685,6 @@ a:focus-visible,
    UI KIT v1.0 - unified workspace header surface
    Camera, Media, System and Settings use one visual component.
    ============================================================ */
-:root {
-}
 
 .video-header.mc-workspace-header,
 .media-header.mc-workspace-header,
@@ -2903,8 +2860,6 @@ html[data-theme="dark"] .settings-select {
    UNIFIED POPOVER SURFACES — Stage 2C.7.4
    Workspace and Notifications use one shared visual language.
    ============================================================ */
-:root {
-}
 
 /* Shared shell */
 .workspace-popover,

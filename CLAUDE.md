@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-MeshCenter is a Flask web control center for a Meshtastic LoRa radio attached to a Raspberry Pi over USB serial. It talks to the radio exclusively through the official `meshtastic` CLI (never the Meshtastic Python API directly): one long-lived `meshtastic --listen` subprocess whose stdout is parsed line-by-line with string/regex matching, plus short-lived `meshtastic --info` / `--sendtext` invocations for one-off commands. There is no database — all persistence is local JSON files (one SQLite file for waypoints) under `data/`.
+MeshCenter is a Flask web control center for a Meshtastic LoRa radio attached to a Raspberry Pi over USB serial. Reads go through the official `meshtastic` CLI: one long-lived `meshtastic --listen` subprocess whose stdout is parsed line-by-line with string/regex matching, plus short-lived `meshtastic --info` invocations (consolidated in `meshsrv/meshtastic_transport.py`) for one-off status checks. Sends go through the Meshtastic Python SDK's `SerialInterface` directly, not the CLI — see `api/api_chat.py` and `meshsrv/schedule_actions.py`. There is no database — all persistence is local JSON files (one SQLite file for waypoints) under `data/`.
 
 ## Running it
 

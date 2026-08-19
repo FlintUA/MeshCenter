@@ -32,7 +32,7 @@ from datetime import datetime, timedelta
 from camera import camera
 from camera.camera_manager import build_camera_manager
 from telemetry import telemetry
-from meshsrv import meshsrv
+from meshsrv import meshtastic_transport
 from meshsrv.radio_manager import RadioConnectionManager
 from meshsrv.runtime_identity import resolve_meshtastic_cli, resolve_serial_port, meshtastic_command, discover_serial_ports
 from meshsrv.instance_manager import InstanceManager
@@ -1919,7 +1919,7 @@ def get_telemetry_from_info(info_output=None):
 
     try:
         if info_output is None:
-            result = meshsrv.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
+            result = meshtastic_transport.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
             output = result.stdout + result.stderr
         else:
             output = str(info_output)
@@ -2135,7 +2135,7 @@ def parse_nodes_from_info(info_output=None):
     global nodes
     try:
         if info_output is None:
-            result = subprocess.run(meshtastic_command(MESHTASTIC_CMD, MESHTASTIC_PORT, "--info"), capture_output=True, text=True, timeout=30)
+            result = meshtastic_transport.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=30)
             output = result.stdout + result.stderr
         else:
             output = str(info_output)
@@ -3308,7 +3308,7 @@ def update_base_status_from_info(info_output=None):
     global base_status
     try:
         if info_output is None:
-            result = meshsrv.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
+            result = meshtastic_transport.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=15)
             output = result.stdout + result.stderr
         else:
             output = str(info_output)
@@ -5168,12 +5168,7 @@ def api_rescan_nodes():
             # race the listener (or any other radio_session caller) the way
             # a bare parse_nodes_from_info() call used to: that helper runs
             # its own unlocked subprocess when given no info_output.
-            result = subprocess.run(
-                meshtastic_command(MESHTASTIC_CMD, MESHTASTIC_PORT, "--info"),
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
+            result = meshtastic_transport.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=30)
             info_output = result.stdout + result.stderr
 
         success = parse_nodes_from_info(info_output=info_output)

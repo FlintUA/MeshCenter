@@ -26,9 +26,8 @@ try:
     # to a no-op rather than crashing that import in that case.
 except ImportError:
     fcntl = None
-from pathlib import Path
 from contextlib import contextmanager
-from collections import defaultdict, deque
+from collections import defaultdict
 from datetime import datetime, timedelta
 from camera import camera
 from camera.camera_manager import build_camera_manager

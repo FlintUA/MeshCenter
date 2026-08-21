@@ -61,16 +61,36 @@ def scan_bus(bus: int = DEFAULT_BUS) -> dict:
 
 def _parse_i2cdetect_output(output: str) -> list:
     """Parse `i2cdetect -y` table output into a sorted list of "0xNN"
-    address strings. Each non-"--" cell in the table already prints the
-    full address in hex (e.g. the cell at row "60:" column 8 reads "68",
-    which is 0x60 + 8 = 0x68) - no row/column arithmetic needed."""
+    address strings.
+
+    Column position, not the cell's own text, determines the address -
+    verified against real i2cdetect output from a device with an
+    already-bound driver: a claimed address prints "UU" instead of its
+    hex value (e.g. row "60:" column 8 reads "UU", not "68"), and leading
+    reserved addresses print as blank fields rather than "--" (row "00:"
+    leaves columns 0-7 empty on this system's i2c-tools build). Both cases
+    break naive "the cell text already is the address" parsing, so this
+    reads each row as fixed-width 3-character fields instead: row "XX:"
+    is a 4-character prefix (2 hex digits + colon + space), followed by
+    16 columns of "cc " each - address = row_value + column_index,
+    regardless of whether the cell holds a hex value, "UU", or is blank.
+    """
     addresses = []
-    for line in output.splitlines():
-        line = line.strip()
-        if not line or ":" not in line:
+    for raw_line in output.splitlines():
+        line = raw_line.rstrip("\n")
+        if len(line) < 3 or line[2] != ":":
             continue
-        _row_label, _, cells = line.partition(":")
-        for cell in cells.split():
+        row_label = line[:2]
+        try:
+            row_value = int(row_label, 16)
+        except ValueError:
+            continue
+
+        remainder = line[4:]  # skip "XX: "
+        for column in range(16):
+            start = column * 3
+            cell = remainder[start:start + 2].strip()
             if _ADDRESS_CELL_RE.match(cell):
-                addresses.append(f"0x{cell.lower()}")
+                addresses.append(f"0x{row_value + column:02x}")
+
     return sorted(set(addresses))

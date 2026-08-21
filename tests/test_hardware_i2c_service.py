@@ -9,6 +9,26 @@ from unittest.mock import MagicMock, patch
 
 from hardware import i2c_service
 
+# Captured verbatim from `sudo i2cdetect -y 1` on the real test node (104) -
+# a DS3231 already bound to the rtc-ds1307 kernel driver, hence "UU" at
+# 0x68 instead of the hex value "68". Row "00:" also leaves columns 0-7
+# blank (not "--") on this i2c-tools build - both of these broke a first
+# version of the parser that assumed the printed cell text always equals
+# the address ("68" reads as 0x68 directly) and used split()-based column
+# indexing, which silently mis-locates columns once any field is blank
+# instead of "--". This fixture is what caught it during live verification.
+I2CDETECT_REAL_DS3231_UU_OUTPUT = (
+    "     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f\n"
+    "00:                         -- -- -- -- -- -- -- -- \n"
+    "10: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- \n"
+    "20: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- \n"
+    "30: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- \n"
+    "40: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- \n"
+    "50: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- \n"
+    "60: -- -- -- -- -- -- -- -- UU -- -- -- -- -- -- -- \n"
+    "70: -- -- -- -- -- -- -- --                         \n"
+)
+
 I2CDETECT_SAMPLE_OUTPUT = """\
      0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
 00:          -- -- -- -- -- -- -- -- -- -- -- -- --
@@ -51,15 +71,26 @@ def test_scan_bus_multiple_addresses_sorted_and_deduped():
     assert result["addresses"] == ["0x24", "0x68"]
 
 
-def test_scan_bus_treats_uu_cell_as_detected():
+def test_scan_bus_treats_uu_cell_as_detected_at_its_real_address():
     # "UU" means the address is claimed by an already-bound kernel driver -
-    # still counts as "detected" at this layer (the address responded),
-    # even though the resulting token isn't a parseable hex address.
-    output = "60: -- -- -- -- -- -- -- -- UU -- -- -- -- -- -- --\n"
-    with patch("subprocess.run", return_value=_completed(stdout=output)):
+    # still counts as "detected" (the address responded), and the address
+    # itself must come from the cell's row+column position, not its text
+    # ("UU" is not a parseable hex value) - this is the exact scenario a
+    # real DS3231 already bound to rtc-ds1307 produces.
+    with patch("subprocess.run", return_value=_completed(stdout=I2CDETECT_REAL_DS3231_UU_OUTPUT)):
         result = i2c_service.scan_bus(1)
-    assert result["ok"] is True
-    assert len(result["addresses"]) == 1
+    assert result == {"ok": True, "bus": 1, "addresses": ["0x68"]}
+
+
+def test_scan_bus_leading_blank_columns_do_not_shift_addresses():
+    # Row "00:" leaves columns 0-7 blank (not "--") on this i2c-tools
+    # build - naive split()-based column counting would misread every
+    # subsequent row's column offset once it hit this row. Position-based
+    # parsing must be immune to it; assert the *other* rows in the same
+    # output still resolve to the correct addresses.
+    with patch("subprocess.run", return_value=_completed(stdout=I2CDETECT_REAL_DS3231_UU_OUTPUT)):
+        result = i2c_service.scan_bus(1)
+    assert result["addresses"] == ["0x68"]
 
 
 def test_scan_bus_i2cdetect_not_installed():

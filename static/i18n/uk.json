@@ -312,7 +312,16 @@
     "display_refreshes": "Оновлення",
     "display_errors": "Помилки",
     "display_last_refresh": "Останнє оновлення",
-    "display_avg_duration": "Середня тривалість"
+    "display_avg_duration": "Середня тривалість",
+    "rtc_ready": "Готово",
+    "rtc_incomplete": "Не завершено",
+    "rtc_reboot_required": "Потрібне перезавантаження",
+    "rtc_reboot_required_detail": "Для застосування змін I2C/RTC потрібне перезавантаження.",
+    "rtc_detected": "Виявлено",
+    "rtc_configured": "Налаштовано ядром",
+    "rtc_readable": "Читається",
+    "rtc_bus_address": "Шина / адреса",
+    "rtc_linux_device": "Пристрій Linux"
   },
   "node_manager": {
     "title": "Менеджер вузлів",

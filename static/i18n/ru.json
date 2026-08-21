@@ -312,7 +312,16 @@
     "display_refreshes": "Обновления",
     "display_errors": "Ошибки",
     "display_last_refresh": "Последнее обновление",
-    "display_avg_duration": "Средняя длительность"
+    "display_avg_duration": "Средняя длительность",
+    "rtc_ready": "Готово",
+    "rtc_incomplete": "Не завершено",
+    "rtc_reboot_required": "Требуется перезагрузка",
+    "rtc_reboot_required_detail": "Для применения изменений I2C/RTC требуется перезагрузка.",
+    "rtc_detected": "Обнаружено",
+    "rtc_configured": "Настроено ядром",
+    "rtc_readable": "Читается",
+    "rtc_bus_address": "Шина / адрес",
+    "rtc_linux_device": "Устройство Linux"
   },
   "node_manager": {
     "title": "Менеджер узлов",

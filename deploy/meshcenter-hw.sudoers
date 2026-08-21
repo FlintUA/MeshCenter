@@ -1,0 +1,3 @@
+__MESH_USER__ ALL=(root) NOPASSWD: /usr/local/sbin/meshcenter-hw-config enable-i2c
+__MESH_USER__ ALL=(root) NOPASSWD: /usr/local/sbin/meshcenter-hw-config configure-rtc ds3231
+__MESH_USER__ ALL=(root) NOPASSWD: /usr/local/sbin/meshcenter-hw-config status

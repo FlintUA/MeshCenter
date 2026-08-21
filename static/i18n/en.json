@@ -312,7 +312,16 @@
     "display_refreshes": "Refreshes",
     "display_errors": "Errors",
     "display_last_refresh": "Last refresh",
-    "display_avg_duration": "Avg. duration"
+    "display_avg_duration": "Avg. duration",
+    "rtc_ready": "Ready",
+    "rtc_incomplete": "Incomplete",
+    "rtc_reboot_required": "Reboot required",
+    "rtc_reboot_required_detail": "A reboot is required to apply the I2C/RTC configuration change.",
+    "rtc_detected": "Detected",
+    "rtc_configured": "Kernel configured",
+    "rtc_readable": "Readable",
+    "rtc_bus_address": "Bus / address",
+    "rtc_linux_device": "Linux device"
   },
   "node_manager": {
     "title": "Node Manager",

@@ -9059,6 +9059,58 @@ function renderDisplayCard(hardwareDisplayData, profileId) {
         </section>`;
 }
 
+function renderRtcCard(hardwareRtcData, profileId) {
+    // Same "nothing rendered at all" convention as renderDisplayCard()
+    // above when there's no sign of the hardware at all - but unlike the
+    // display card (a single enabled/disabled flag), RTC has three
+    // independent stages (detected/configured/readable - see
+    // hardware/rtc_service.py's module docstring), so "no card" only
+    // applies when NONE of them found anything, not just the first one.
+    if (!hardwareRtcData || !hardwareRtcData.ok) return '';
+    const stages = hardwareRtcData.stages || {};
+    const detected = !!stages.detected?.ok;
+    const configured = !!stages.configured?.ok;
+    const readable = !!stages.readable?.ok;
+    if (!detected && !configured) return '';
+
+    const eyebrow = escapeHtml(window.I18N.t('devices.active_profile', { id: deviceDashboardValue(profileId) }));
+    const pending = hardwareRtcData.pending_setup;
+    const allReady = detected && configured && readable;
+    const statusClass = pending ? 'device-status-warning' : (allReady ? 'device-status-ok' : 'device-status-warning');
+    const statusLabel = pending
+        ? window.I18N.t('devices.rtc_reboot_required')
+        : (allReady ? window.I18N.t('devices.rtc_ready') : window.I18N.t('devices.rtc_incomplete'));
+
+    const stageMark = (ok) => ok ? '✓' : '✗';
+    const pendingBlock = pending ? `
+        <div class="device-action-row device-action-row-single">
+            <span class="device-status-pill device-status-warning">
+                <span class="device-status-dot"></span>${escapeHtml(window.I18N.t('devices.rtc_reboot_required_detail'))}
+            </span>
+        </div>` : '';
+
+    return `
+        <section class="peripheral-card">
+            <div class="peripheral-card-header">
+                <div>
+                    <div class="device-card-eyebrow">${eyebrow}</div>
+                    <h3>${deviceDashboardValue(hardwareRtcData.display_name || hardwareRtcData.model)}</h3>
+                </div>
+                <div class="device-status-pill ${statusClass}">
+                    <span class="device-status-dot"></span>${escapeHtml(statusLabel)}
+                </div>
+            </div>
+            <dl class="device-detail-list">
+                <div><dt>${escapeHtml(window.I18N.t('devices.rtc_detected'))}</dt><dd>${stageMark(detected)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.rtc_configured'))}</dt><dd>${stageMark(configured)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.rtc_readable'))}</dt><dd>${stageMark(readable)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.rtc_bus_address'))}</dt><dd>${deviceDashboardValue(hardwareRtcData.address)} (bus ${deviceDashboardValue(hardwareRtcData.bus)})</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.rtc_linux_device'))}</dt><dd>${deviceDashboardValue(hardwareRtcData.linux_device)}</dd></div>
+            </dl>
+            ${pendingBlock}
+        </section>`;
+}
+
 function renderCameraManagerCards(cameraManagerData, profileId) {
     const eyebrow = escapeHtml(window.I18N.t('devices.active_profile', { id: deviceDashboardValue(profileId) }));
 
@@ -9225,10 +9277,11 @@ async function loadPeripheralDevices(showFeedback = false) {
     }
 
     try {
-        const [response, cameraManagerResponse, hardwareDisplayResponse] = await Promise.all([
+        const [response, cameraManagerResponse, hardwareDisplayResponse, hardwareRtcResponse] = await Promise.all([
             fetch('/api/devices', { cache: 'no-store' }),
             fetch('/api/devices/cameras', { cache: 'no-store' }).catch(() => null),
             fetch('/api/hardware/display', { cache: 'no-store' }).catch(() => null),
+            fetch('/api/hardware/rtc', { cache: 'no-store' }).catch(() => null),
         ]);
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || window.I18N.t('devices.unable_to_load'));
@@ -9238,6 +9291,9 @@ async function loadPeripheralDevices(showFeedback = false) {
             : null;
         const hardwareDisplayData = hardwareDisplayResponse && hardwareDisplayResponse.ok
             ? await hardwareDisplayResponse.json().catch(() => null)
+            : null;
+        const hardwareRtcData = hardwareRtcResponse && hardwareRtcResponse.ok
+            ? await hardwareRtcResponse.json().catch(() => null)
             : null;
 
         // The new camera-driver framework (camera_manager.py) replaces the
@@ -9283,10 +9339,11 @@ async function loadPeripheralDevices(showFeedback = false) {
 
         const cameraCards = renderCameraManagerCards(cameraManagerData, data.profile_id);
         const displayCard = renderDisplayCard(hardwareDisplayData, data.profile_id);
+        const rtcCard = renderRtcCard(hardwareRtcData, data.profile_id);
 
         container.dataset.loaded = '1';
         container.innerHTML = `
-            <div class="peripheral-grid">${cameraCards}${displayCard}${cards}</div>
+            <div class="peripheral-grid">${cameraCards}${displayCard}${rtcCard}${cards}</div>
             <section class="peripheral-card peripheral-add-card" aria-disabled="true">
                 <div class="peripheral-add-icon">＋</div>
                 <h3>${escapeHtml(window.I18N.t('devices.add_device'))}</h3>

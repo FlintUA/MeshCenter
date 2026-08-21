@@ -65,6 +65,8 @@ from api.api_waypoints import register_waypoint_routes
 from api.api_node_icons import register_node_icon_routes
 from api.api_weather import register_weather_routes
 from api.api_hardware_display import register_hardware_display_routes
+from api.api_hardware_i2c import register_hardware_i2c_routes
+from hardware import hardware_config
 from weather.weather_manager import WeatherManager
 from weather.providers.openweather import OpenWeatherProvider, WeatherConfig as OpenWeatherConfig
 from weather.providers.weatherapi import WeatherApiProvider, WeatherApiConfig
@@ -560,6 +562,14 @@ register_hardware_display_routes(
     build_page_image_now=_epaper_build_page_image_now,
     ui_state=epaper_ui_state,
 )
+
+# I2C bus + RTC (DS3231) hardware cards - task 23, first batch. Reconciled
+# once at import time (in addition to being reconciled on every
+# /api/hardware/{i2c,rtc} poll - see hardware_config.reconcile_pending())
+# so a pending-setup record left over from before a reboot is resolved as
+# soon as possible rather than waiting for the first UI poll after start.
+register_hardware_i2c_routes(app, handle_errors, DATA_DIR)
+hardware_config.reconcile_pending(DATA_DIR)
 
 # ===== STATIC FILES =====
 @app.route('/static/<path:filename>')

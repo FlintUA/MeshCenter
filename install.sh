@@ -265,6 +265,8 @@ step_system_packages() {
         network-manager \
         iw \
         lsof \
+        i2c-tools \
+        util-linux-extra \
         --no-install-recommends \
         -qq
 
@@ -501,19 +503,31 @@ step_systemd() {
         "${INSTALL_DIR}/deploy/meshcenter.service" \
         | sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null
 
+    # Install the narrow privileged helper the I2C/RTC hardware card uses to
+    # edit /boot/firmware/config.txt (hardware/hardware_config.py calls it
+    # via `sudo -n` - see scripts/meshcenter-hw-config's own docstring for
+    # why this exists instead of editing that file from the Flask process).
+    sudo install -o root -g root -m 0755 \
+        "${INSTALL_DIR}/scripts/meshcenter-hw-config" /usr/local/sbin/meshcenter-hw-config
+
     # Render the repo's sudoers templates (service restart/reboot/poweroff,
-    # plus Wi-Fi management) instead of a partial hand-rolled set — the UI's
-    # System and Wi-Fi actions depend on both being present.
+    # Wi-Fi management, and the hardware-config helper above) instead of a
+    # partial hand-rolled set — the UI's System, Wi-Fi and hardware actions
+    # depend on all three being present.
     sed "s|__MESH_USER__|${MESH_USER}|g" "${INSTALL_DIR}/deploy/meshcenter.sudoers" \
         | sudo tee /etc/sudoers.d/${SERVICE_NAME} > /dev/null
     sed "s|__MESH_USER__|${MESH_USER}|g" "${INSTALL_DIR}/deploy/meshcenter-wifi.sudoers" \
         | sudo tee /etc/sudoers.d/${SERVICE_NAME}-wifi > /dev/null
-    sudo chmod 0440 /etc/sudoers.d/${SERVICE_NAME} /etc/sudoers.d/${SERVICE_NAME}-wifi
+    sed "s|__MESH_USER__|${MESH_USER}|g" "${INSTALL_DIR}/deploy/meshcenter-hw.sudoers" \
+        | sudo tee /etc/sudoers.d/${SERVICE_NAME}-hw > /dev/null
+    sudo chmod 0440 /etc/sudoers.d/${SERVICE_NAME} /etc/sudoers.d/${SERVICE_NAME}-wifi /etc/sudoers.d/${SERVICE_NAME}-hw
 
     sudo visudo -cf /etc/sudoers.d/${SERVICE_NAME} \
         || fail "Generated sudoers file /etc/sudoers.d/${SERVICE_NAME} failed validation."
     sudo visudo -cf /etc/sudoers.d/${SERVICE_NAME}-wifi \
         || fail "Generated sudoers file /etc/sudoers.d/${SERVICE_NAME}-wifi failed validation."
+    sudo visudo -cf /etc/sudoers.d/${SERVICE_NAME}-hw \
+        || fail "Generated sudoers file /etc/sudoers.d/${SERVICE_NAME}-hw failed validation."
 
     # Start the service
     sudo systemctl daemon-reload

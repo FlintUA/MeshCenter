@@ -312,7 +312,16 @@
     "display_refreshes": "Aktualisierungen",
     "display_errors": "Fehler",
     "display_last_refresh": "Letzte Aktualisierung",
-    "display_avg_duration": "Ø Dauer"
+    "display_avg_duration": "Ø Dauer",
+    "rtc_ready": "Bereit",
+    "rtc_incomplete": "Unvollständig",
+    "rtc_reboot_required": "Neustart erforderlich",
+    "rtc_reboot_required_detail": "Ein Neustart ist nötig, damit die I2C/RTC-Änderung wirksam wird.",
+    "rtc_detected": "Erkannt",
+    "rtc_configured": "Kernel konfiguriert",
+    "rtc_readable": "Lesbar",
+    "rtc_bus_address": "Bus / Adresse",
+    "rtc_linux_device": "Linux-Gerät"
   },
   "node_manager": {
     "title": "Knoten-Manager",

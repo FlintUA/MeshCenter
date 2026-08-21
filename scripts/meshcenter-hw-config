@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+#
+# meshcenter-hw-config - narrow, root-only helper for enabling I2C and
+# configuring an RTC overlay in /boot/firmware/config.txt.
+#
+# This is the ONLY thing allowed to touch /boot/firmware/config.txt on
+# behalf of MeshCenter's web UI: the Flask process runs as an unprivileged
+# user and calls this script through `sudo -n` (see hardware/hardware_config.py,
+# the single Python entry point for this script - nothing else in the
+# codebase should invoke it directly). Never accepts a config file path as
+# an argument - the path is fixed on purpose, so a compromised/buggy caller
+# can't be tricked into writing an arbitrary file as root.
+#
+# Usage:
+#   meshcenter-hw-config enable-i2c
+#   meshcenter-hw-config configure-rtc ds3231
+#   meshcenter-hw-config status
+#
+# All file edits are idempotent (safe to call repeatedly), atomic (temp
+# file + mv, never a partial write visible to a concurrent reader), and
+# preceded by a timestamped backup of the untouched file.
+
+set -euo pipefail
+
+CONFIG_TXT="/boot/firmware/config.txt"
+
+fail() {
+    echo "meshcenter-hw-config: error: $1" >&2
+    exit 1
+}
+
+require_config_txt() {
+    [[ -f "$CONFIG_TXT" ]] || fail "$CONFIG_TXT does not exist on this system"
+}
+
+# Appends $1 to $CONFIG_TXT if no active (non-commented) copy of it already
+# exists, backing up the original first. A commented-out copy
+# (e.g. "#dtparam=i2c_arm=on") does NOT count as already present - it is
+# left alone and the active line is appended below it, matching how a user
+# manually editing config.txt would expect an explicit request to behave.
+ensure_config_line() {
+    local line="$1"
+    require_config_txt
+
+    if grep -qxF "$line" "$CONFIG_TXT"; then
+        echo "already present: $line"
+        return 0
+    fi
+
+    local backup="${CONFIG_TXT}.bak-$(date +%Y%m%d%H%M%S)"
+    cp -p "$CONFIG_TXT" "$backup"
+
+    local tmp
+    tmp="$(mktemp "${CONFIG_TXT}.tmp.XXXXXX")"
+    cp -p "$CONFIG_TXT" "$tmp"
+    printf '%s\n' "$line" >> "$tmp"
+    mv -f "$tmp" "$CONFIG_TXT"
+
+    echo "added: $line (backup: $backup)"
+}
+
+cmd_enable_i2c() {
+    ensure_config_line "dtparam=i2c_arm=on"
+}
+
+cmd_configure_rtc() {
+    local model="${1:-}"
+    case "$model" in
+        ds3231)
+            ensure_config_line "dtoverlay=i2c-rtc,ds3231"
+            ;;
+        "")
+            fail "configure-rtc requires a model argument (supported: ds3231)"
+            ;;
+        *)
+            fail "unsupported RTC model: $model (supported: ds3231)"
+            ;;
+    esac
+}
+
+cmd_status() {
+    require_config_txt
+
+    local i2c_enabled="false"
+    if grep -qxF "dtparam=i2c_arm=on" "$CONFIG_TXT"; then
+        i2c_enabled="true"
+    fi
+
+    local rtc_overlay=""
+    if grep -qxF "dtoverlay=i2c-rtc,ds3231" "$CONFIG_TXT"; then
+        rtc_overlay="ds3231"
+    fi
+
+    printf '{"i2c_enabled": %s, "rtc_overlay": %s}\n' \
+        "$i2c_enabled" \
+        "$([[ -n "$rtc_overlay" ]] && printf '"%s"' "$rtc_overlay" || printf 'null')"
+}
+
+main() {
+    local subcommand="${1:-}"
+    case "$subcommand" in
+        enable-i2c)
+            cmd_enable_i2c
+            ;;
+        configure-rtc)
+            cmd_configure_rtc "${2:-}"
+            ;;
+        status)
+            cmd_status
+            ;;
+        *)
+            fail "unknown subcommand: ${subcommand:-<none>} (expected: enable-i2c | configure-rtc <model> | status)"
+            ;;
+    esac
+}
+
+main "$@"

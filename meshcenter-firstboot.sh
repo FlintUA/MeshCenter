@@ -427,7 +427,9 @@ apt-get install -y --no-install-recommends \
     network-manager \
     iw \
     usbutils \
-    lsof
+    lsof \
+    i2c-tools \
+    util-linux-extra
 
 systemctl enable avahi-daemon >/dev/null 2>&1 || true
 systemctl start avahi-daemon || true
@@ -682,11 +684,21 @@ MESH_HOME="$TARGET_HOME"
     || fail "Missing deploy/meshcenter.sudoers"
 [[ -f "$INSTALL_DIR/deploy/meshcenter-wifi.sudoers" ]] \
     || fail "Missing deploy/meshcenter-wifi.sudoers"
+[[ -f "$INSTALL_DIR/deploy/meshcenter-hw.sudoers" ]] \
+    || fail "Missing deploy/meshcenter-hw.sudoers"
+[[ -f "$INSTALL_DIR/scripts/meshcenter-hw-config" ]] \
+    || fail "Missing scripts/meshcenter-hw-config"
 
 sed -e "s|__MESH_USER__|${MESH_USER}|g" \
     -e "s|__MESH_HOME__|${MESH_HOME}|g" \
     "$INSTALL_DIR/deploy/meshcenter.service" \
     > /etc/systemd/system/meshcenter.service
+
+# Narrow privileged helper the I2C/RTC hardware card uses to edit
+# /boot/firmware/config.txt (hardware/hardware_config.py calls it via
+# `sudo -n` - see scripts/meshcenter-hw-config's own docstring).
+install -o root -g root -m 0755 \
+    "$INSTALL_DIR/scripts/meshcenter-hw-config" /usr/local/sbin/meshcenter-hw-config
 
 sed "s|__MESH_USER__|${MESH_USER}|g" \
     "$INSTALL_DIR/deploy/meshcenter.sudoers" \
@@ -696,14 +708,21 @@ sed "s|__MESH_USER__|${MESH_USER}|g" \
     "$INSTALL_DIR/deploy/meshcenter-wifi.sudoers" \
     > /etc/sudoers.d/meshcenter-wifi
 
+sed "s|__MESH_USER__|${MESH_USER}|g" \
+    "$INSTALL_DIR/deploy/meshcenter-hw.sudoers" \
+    > /etc/sudoers.d/meshcenter-hw
+
 chmod 0440 \
     /etc/sudoers.d/meshcenter \
-    /etc/sudoers.d/meshcenter-wifi
+    /etc/sudoers.d/meshcenter-wifi \
+    /etc/sudoers.d/meshcenter-hw
 
 visudo -cf /etc/sudoers.d/meshcenter >/dev/null \
     || fail "Generated meshcenter sudoers file is invalid."
 visudo -cf /etc/sudoers.d/meshcenter-wifi >/dev/null \
     || fail "Generated meshcenter-wifi sudoers file is invalid."
+visudo -cf /etc/sudoers.d/meshcenter-hw >/dev/null \
+    || fail "Generated meshcenter-hw sudoers file is invalid."
 
 systemctl daemon-reload
 systemctl enable meshcenter.service >/dev/null

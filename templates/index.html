@@ -2136,6 +2136,7 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
+<script src="{{ url_for('static', filename='chat-emoji.js') }}?v=20260821-domain-split"></script>
 <script src="/static/chat.js?v=20260818-security-card"></script>
 <script src="/static/media.js?v=20260818-xss-fix-delete-onclick"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>

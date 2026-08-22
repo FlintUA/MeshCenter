@@ -227,6 +227,8 @@ def epaper_worker(
     get_display_language: Callable[[], str] = lambda: DEFAULT_LOCALE,
     get_temperature_unit: Callable[[], str] = lambda: "c",
     get_time_format: Callable[[], str] = lambda: "24",
+    get_radio_identity: Callable[[], dict[str, str]] = lambda: {},
+    get_uptime_seconds: Callable[[], float | None] = lambda: None,
     stop_event: threading.Event | None = None,
 ) -> None:
     stop_event = stop_event or threading.Event()
@@ -240,7 +242,7 @@ def epaper_worker(
                     get_ram_percent, get_listener_alive, local_node_name, content_state,
                     get_battery_percent, get_active_page, get_last_error,
                     get_power_readings, get_cpu_temp, get_latest_message, get_display_language,
-                    get_temperature_unit, get_time_format,
+                    get_temperature_unit, get_time_format, get_radio_identity, get_uptime_seconds,
                 )
         except Exception:
             logger.exception("[EPAPER] epaper_worker: poll failed")
@@ -295,7 +297,10 @@ def _build_status_fields(
 def _render_page(page: str, manager, local_node_name, get_radio_status, get_listener_alive,
                   get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
                   get_cpu_temp, get_latest_message, locale: str = DEFAULT_LOCALE,
-                  temperature_unit: str = "c"):
+                  temperature_unit: str = "c",
+                  get_battery_percent: Callable[[], float | None] = lambda: None,
+                  get_radio_identity: Callable[[], dict[str, str]] = lambda: {},
+                  get_uptime_seconds: Callable[[], float | None] = lambda: None):
     """Build+render whichever page is currently selected (plan section
     34's "Show on Display"), using only already-collected state - same
     invariant as the Status Screen (section 40)."""
@@ -305,19 +310,25 @@ def _render_page(page: str, manager, local_node_name, get_radio_status, get_list
         radio_info = get_radio_status() or {}
         mode = radio_info.get("mode", "error")
         status = "online" if mode == "connected" else ("warning" if mode in ("reconnecting", "releasing") else "offline")
+        identity = get_radio_identity() or {}
         return radio_page.render(caps, radio_page.RadioScreenData(
             status=status, mode=mode, node_name=local_node_name,
             listener_running=get_listener_alive(), last_error=get_last_error(),
+            node_id=identity.get("node_id", ""), serial_port=radio_info.get("serial_port", ""),
+            hardware=identity.get("hardware", ""),
         ), locale=locale)
 
     if page == "power":
         readings = get_power_readings() or {}
         return power_page.render(caps, power_page.PowerScreenData(
+            node_name=local_node_name,
             voltage=readings.get("voltage"), current=readings.get("current"), power=readings.get("power"),
+            battery_percent=get_battery_percent(),
         ), locale=locale)
 
     if page == "system":
         return system_page.render(caps, system_page.SystemScreenData(
+            node_name=local_node_name,
             cpu_percent=_bucket(get_cpu_percent()), ram_percent=_bucket(get_ram_percent()),
             # Bucketed in Celsius (the sensor's native unit) regardless of
             # display unit - converting first would need a differently-
@@ -326,12 +337,21 @@ def _render_page(page: str, manager, local_node_name, get_radio_status, get_list
             # user-facing itself.
             cpu_temp_c=_bucket(get_cpu_temp(), step=_TEMP_SIGNIFICANCE_BUCKET),
             temperature_unit=temperature_unit,
+            # Not bucketed separately - _format_uptime()'s own "Xd Yh" /
+            # "Yh Zm" rounding is already the stabilization (see that
+            # function's docstring in system.py); a second numeric bucket
+            # on top would be redundant.
+            uptime_seconds=get_uptime_seconds(),
         ), locale=locale)
 
     if page == "message":
         latest = get_latest_message() or {}
+        kind = latest.get("kind", "rx")
         return message_page.render(caps, message_page.MessageScreenData(
+            node_name=local_node_name,
             sender=latest.get("sender", ""), text=latest.get("text", ""), time=latest.get("time", ""),
+            direction="tx" if kind == "me" else "rx",
+            chat_type=latest.get("chat_type", ""), chat_name=latest.get("chat_name", ""),
         ), locale=locale)
 
     return None  # caller falls back to the Status Screen
@@ -349,6 +369,8 @@ def _poll_once(
     get_display_language=lambda: DEFAULT_LOCALE,
     get_temperature_unit=lambda: "c",
     get_time_format=lambda: "24",
+    get_radio_identity=lambda: {},
+    get_uptime_seconds=lambda: None,
 ) -> None:
     data, content_key = _build_status_fields(
         state_lock, nodes, get_radio_status, get_cpu_percent, get_ram_percent,
@@ -400,6 +422,7 @@ def _poll_once(
             active_page, manager, local_node_name, get_radio_status, get_listener_alive,
             get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
             get_cpu_temp, get_latest_message, locale, get_temperature_unit(),
+            get_battery_percent, get_radio_identity, get_uptime_seconds,
         )
         if image is not None:
             _mark_dirty_with_clock(manager, image, clock_text)
@@ -446,6 +469,9 @@ def build_page_image_now(
     locale: str = DEFAULT_LOCALE,
     temperature_unit: str = "c",
     time_format: str = "24",
+    get_battery_percent: Callable[[], float | None] = lambda: None,
+    get_radio_identity: Callable[[], dict[str, str]] = lambda: {},
+    get_uptime_seconds: Callable[[], float | None] = lambda: None,
 ):
     """For POST /api/hardware/display/show/<page> - builds whichever page
     was requested right now, for an immediate (CRITICAL) push. Returns
@@ -460,6 +486,7 @@ def build_page_image_now(
         page, manager, local_node_name, get_radio_status, get_listener_alive,
         get_last_error, get_power_readings, get_cpu_percent, get_ram_percent,
         get_cpu_temp, get_latest_message, locale, temperature_unit,
+        get_battery_percent, get_radio_identity, get_uptime_seconds,
     )
     if image is None:
         return None

@@ -18,12 +18,23 @@ from dataclasses import dataclass
 
 from modules.display.drivers.base import DisplayCapabilities
 from modules.display.i18n import DEFAULT_LOCALE, t
-from modules.display.renderer import draw_text, has_color, load_font, new_canvas, text_width
+from modules.display.renderer import (
+    NODE_HEADER_HEIGHT,
+    draw_node_header,
+    draw_text,
+    fit_font,
+    has_color,
+    load_font,
+    new_canvas,
+)
 
 # Tried largest-first until the title fits the panel width - a fixed 18pt
 # clipped even the original English "LOW BATTERY (10%)" on WeAct's 200px
 # canvas (found via tools/test_epaper_i18n.py, pre-dates any translation:
 # same failure with locale="en"), and translated titles are rarely shorter.
+# Shared with the node-name header via renderer.fit_font() (task 37) -
+# this is just this screen's own choice of candidate sizes, not a second
+# copy of the fitting loop itself.
 _TITLE_FONT_SIZES = (18, 16, 14, 12)
 
 
@@ -42,16 +53,20 @@ def render(caps: DisplayCapabilities, data: AlertScreenData, locale: str = DEFAU
     background = "red" if has_color(caps) else "black"
     draw.rectangle([0, 0, w, h], fill=background)
 
+    # Node header on top, per this session's decision (task 37) - not in
+    # the WeAct UI Design doc, which doesn't cover ALERT at all. Draws
+    # fine over an already-solid-black canvas (has_color(caps) is False
+    # for WeAct - the header's own black rect is a harmless no-op there;
+    # on a color panel it stays legible white-on-black same as the rest
+    # of this screen's text, since draw_node_header() always paints its
+    # own black block first regardless of what's already behind it).
+    draw_node_header(image, data.node_name)
+
     available_width = w - 16
-    title_font = load_font(_TITLE_FONT_SIZES[-1], bold=True)
-    for size in _TITLE_FONT_SIZES:
-        candidate = load_font(size, bold=True)
-        if text_width(data.title, candidate) <= available_width:
-            title_font = candidate
-            break
+    title_font = fit_font(data.title, available_width, _TITLE_FONT_SIZES, bold=True)
     label_font = load_font(11)
 
-    y = 6
+    y = NODE_HEADER_HEIGHT + 8
     draw_text(image, (8, y), data.title, "white", title_font)
     y += 24
 

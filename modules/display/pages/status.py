@@ -1,6 +1,7 @@
 """Status Screen - MeshCenter's default e-paper page. e-Paper Stage 1 plan,
-Phase 4 (section 14): MeshCenter status, radio status, node name, node
-count, last RX, CPU/RAM, "Last update HH:MM".
+Phase 4 (section 14), rebuilt on the WeAct 200x200 UI Design doc's common
+five-page frame (task 37): radio status, node count, last RX as the main
+"is everything working?" glance, CPU/RAM as a small footer line.
 
 Data comes from a plain StatusScreenData the caller builds - this module
 has no knowledge of server.py's live state (that wiring is Phase 5,
@@ -14,7 +15,21 @@ from dataclasses import dataclass
 
 from modules.display.drivers.base import DisplayCapabilities
 from modules.display.i18n import DEFAULT_LOCALE, t
-from modules.display.renderer import draw_state_text, draw_text, load_font, new_canvas, text_width
+from modules.display.renderer import (
+    CONTENT_Y,
+    SEPARATOR_Y,
+    draw_inverted_status,
+    draw_label_value,
+    draw_node_header,
+    draw_page_header,
+    draw_separator,
+    draw_text,
+    load_font,
+    new_canvas,
+)
+
+_HERO_SIZES = (24, 22, 20)
+_PRIMARY_SIZES = (21, 19, 17)
 
 
 @dataclass
@@ -33,43 +48,49 @@ class StatusScreenData:
 def render(caps: DisplayCapabilities, data: StatusScreenData, locale: str = DEFAULT_LOCALE):
     image, _draw = new_canvas(caps)
     w, h = image.size
+    right = w - 4
 
-    title_font = load_font(16, bold=True)
-    label_font = load_font(12)
-    value_font = load_font(12, bold=True)
+    draw_node_header(image, data.node_name)
+    draw_page_header(image, t("status", locale))
+    draw_separator(image, SEPARATOR_Y)
 
-    # data.meshcenter_status/radio_status stay the raw "online"/"warning"/
-    # "offline" state codes for draw_state_text()'s color mapping - only the
-    # rendered text itself is translated, via t().
-    draw_state_text(image, caps, (4, 2), "MeshCenter", data.meshcenter_status, title_font)
-    draw_text(image, (4, 20), data.node_name or "-", "black", label_font)
+    # 12px, not 14 - "LETZTER EMPFANG" (de "Last RX") needs the extra room
+    # to leave any space at all for its value on a 200px row at any
+    # _PRIMARY_SIZES size (found via live i18n PNG review, task 37).
+    label_font = load_font(12, bold=True)
+    y = CONTENT_Y
 
-    rows = [
-        (t("radio", locale), t(data.radio_status, locale), data.radio_status),
-        (t("nodes", locale), str(data.node_count), None),
-        (t("last_rx", locale), data.last_rx, None),
-    ]
-    # Value column starts after the widest translated label in this locale,
-    # not a fixed pixel offset sized for English - a longer label (e.g. de
-    # "Letzter Empfang:") would otherwise overlap the value that follows it.
-    value_x = 4 + max(text_width(f"{label}:", label_font) for label, _, _ in rows) + 6
-    y = 40
-    for label, value, state in rows:
-        draw_text(image, (4, y), f"{label}:", "black", label_font)
-        if state:
-            draw_state_text(image, caps, (value_x, y), value, state, value_font)
-        else:
-            draw_text(image, (value_x, y), value, "black", value_font)
-        y += 16
+    radio_label = t(data.radio_status, locale).upper()
+    if data.radio_status == "online":
+        draw_label_value(
+            image, y, t("radio", locale).upper(), radio_label, label_font, None,
+            right=right, value_sizes=_PRIMARY_SIZES,
+        )
+    else:
+        draw_text(image, (4, y), t("radio", locale).upper(), "black", label_font)
+        draw_inverted_status(image, y + 20, radio_label, load_font(16, bold=True), right=right)
+        y += 24
+    y += 30
 
+    draw_label_value(
+        image, y, t("nodes", locale).upper(), str(data.node_count), label_font, None,
+        right=right, value_sizes=_HERO_SIZES,
+    )
+    y += 34
+
+    draw_label_value(
+        image, y, t("last_rx", locale).upper(), data.last_rx, label_font, None,
+        right=right, value_sizes=_PRIMARY_SIZES,
+    )
+
+    footer_font = load_font(15, bold=True)
+    footer_y = h - 22
+    draw_separator(image, footer_y - 6)
     if data.cpu_percent is not None and data.ram_percent is not None:
         draw_text(
-            image, (4, y),
-            f"{t('cpu', locale)} {data.cpu_percent:.0f}%  {t('ram', locale)} {data.ram_percent:.0f}%",
-            "black", label_font,
+            image, (4, footer_y),
+            f"{t('cpu', locale)} {data.cpu_percent:.0f}%   {t('ram', locale)} {data.ram_percent:.0f}%",
+            "black", footer_font,
         )
-        y += 16
-
-    draw_text(image, (4, h - 16), t("last_update", locale, time=data.last_update), "black", label_font)
 
     return image

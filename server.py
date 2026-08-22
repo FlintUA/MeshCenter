@@ -51,6 +51,7 @@ from system.cpu_history import (
     get_current_usage as get_cpu_current_usage,
     read_cpu_temperature,
     read_memory_percent,
+    read_uptime_seconds,
     load_cpu_history,
     cpu_history_worker,
     register_cpu_history_routes,
@@ -525,6 +526,28 @@ def _epaper_get_temperature_unit():
     with state_lock:
         return normalize_settings(settings).get("units", {}).get("temperature", "c")
 
+def _epaper_get_radio_identity():
+    # INSTANCE_IDENTITY.radio (the "configured"/accepted identity) is often
+    # stale or blank for fields like hardware - the real live value comes
+    # from RADIO_IDENTITY_RESULT["detected"] (populated by the actual
+    # identity check against the connected radio), falling back to the
+    # last-detected snapshot persisted in runtime.last_detected_radio, and
+    # only then to INSTANCE_IDENTITY.radio itself. This is the exact same
+    # detected-then-configured merge /api/devices/dashboard already uses
+    # for the web UI's Radio card (server.py's api_devices_dashboard(),
+    # found to be necessary live: the e-paper RADIO Screen showed "--" for
+    # HW on dev while the web UI correctly showed "RAK3312", task 37).
+    configured = INSTANCE_IDENTITY.get("radio", {})
+    runtime = INSTANCE_IDENTITY.get("runtime", {})
+    detected = RADIO_IDENTITY_RESULT.get("detected") or runtime.get("last_detected_radio", {}) or {}
+    return {
+        "node_id": detected.get("node_id") or configured.get("node_id", ""),
+        "hardware": detected.get("hardware") or configured.get("hardware", ""),
+    }
+
+def _epaper_get_uptime_seconds():
+    return read_uptime_seconds()
+
 def _epaper_get_time_format():
     # Same settings.units.time_format ("12"/"24") the Time card / server-
     # synced clock use (Time System Stage 1/2) - resolved down to the
@@ -552,6 +575,9 @@ def _epaper_build_page_image_now(page):
         locale=_epaper_get_display_language(),
         temperature_unit=_epaper_get_temperature_unit(),
         time_format=_epaper_get_time_format(),
+        get_battery_percent=_epaper_get_battery_percent,
+        get_radio_identity=_epaper_get_radio_identity,
+        get_uptime_seconds=_epaper_get_uptime_seconds,
     )
 
 register_hardware_display_routes(
@@ -5817,6 +5843,8 @@ def start_runtime():
                 get_display_language=_epaper_get_display_language,
                 get_temperature_unit=_epaper_get_temperature_unit,
                 get_time_format=_epaper_get_time_format,
+                get_radio_identity=_epaper_get_radio_identity,
+                get_uptime_seconds=_epaper_get_uptime_seconds,
             ),
             daemon=True,
         ).start()

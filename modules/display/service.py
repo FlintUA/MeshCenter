@@ -467,6 +467,7 @@ def _poll_once(
     # clears, advance_rotation() sees a large now-last_advance_ts gap and
     # advances exactly one step from wherever it left off - continuing the
     # same cycle position, never resetting to the start.
+    rotation_advanced = False
     if ui_state is not None:
         rotation_config = get_rotation_config() or {}
         if rotation_config.get("enabled"):
@@ -487,6 +488,21 @@ def _poll_once(
                     # route) stays visible until rotation's own next real
                     # tick, instead of being stomped within seconds.
                     ui_state["active_page"] = rotation_pages[new_index]
+                    rotation_advanced = True
+
+    # A rotation-driven page change bypasses debounce (CRITICAL), same as
+    # an alert - found live (task 40 follow-up): with a rotation_interval
+    # shorter than (or close to) debounce_seconds, a NORMAL-priority
+    # mark_dirty() sits in DisplayManager._debounce()'s wait and gets
+    # silently *replaced* by the next tick's newer frame before the
+    # debounce window ever elapses (see that method's own "merging in any
+    # newer frame that arrives during the wait" docstring) - the page
+    # that arrived first is never shown at all, not delayed. Over several
+    # cycles this visibly drops pages from the rotation ("only Radio and
+    # System show" with 4 pages checked, user's own live report) rather
+    # than just slowing it down. debounce_seconds still fully applies to
+    # everything else (routine Status Screen churn, non-rotation content).
+    priority = EventPriority.CRITICAL if rotation_advanced else EventPriority.NORMAL
 
     active_page = get_active_page()
     if active_page and active_page != "status":
@@ -497,12 +513,12 @@ def _poll_once(
             get_battery_percent, get_radio_identity, get_uptime_seconds,
         )
         if image is not None:
-            _mark_dirty_with_clock(manager, image, clock_text)
+            _mark_dirty_with_clock(manager, image, clock_text, priority=priority)
             return
 
     data.last_update = content_state.stamp(content_key)
     image = render(manager.capabilities, data, locale=locale)
-    _mark_dirty_with_clock(manager, image, clock_text)
+    _mark_dirty_with_clock(manager, image, clock_text, priority=priority)
 
 
 def build_status_image_now(

@@ -10,6 +10,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from modules.display.drivers.base import DisplayCapabilities
+from modules.display.models import EventPriority
 from modules.display.service import _ContentState, _poll_once, advance_rotation
 
 WEACT_CAPS = DisplayCapabilities(width=200, height=200, colors=("black", "white"))
@@ -142,6 +143,13 @@ def test_normal_poll_with_rotation_enabled_advances_active_page():
     # used internally, so this tick should have advanced.
     assert ui_state["rotation_index"] == 1
     assert ui_state["active_page"] == "radio"
+    # A genuine rotation advance must bypass debounce (CRITICAL) - see
+    # test_rotation_advance_bypasses_debounce_via_critical_priority()
+    # below for why (DisplayManager._debounce() silently drops a page
+    # whose mark_dirty() call gets superseded by the next tick's newer
+    # frame before its debounce window elapses).
+    _, kwargs = manager.mark_dirty.call_args
+    assert kwargs["priority"] == EventPriority.CRITICAL
 
 
 def test_rotation_disabled_leaves_active_page_alone():
@@ -163,3 +171,44 @@ def test_rotation_disabled_leaves_active_page_alone():
 
     assert "rotation_index" not in ui_state
     assert ui_state["active_page"] == "power"
+    # Not a rotation advance (rotation is disabled) - stays NORMAL, so
+    # routine (non-rotation) content still respects debounce_seconds as
+    # before.
+    _, kwargs = manager.mark_dirty.call_args
+    assert kwargs["priority"] == EventPriority.NORMAL
+
+
+def test_rotation_advance_bypasses_debounce_via_critical_priority():
+    """The actual bug this was written for (live report: "only Radio and
+    System show up" with all 4 pages checked and rotation_interval_seconds
+    (5s) shorter than debounce_seconds (6s)). DisplayManager._debounce()
+    silently *replaces* a still-waiting NORMAL-priority frame with a newer
+    one that arrives before its debounce window elapses - the first page
+    is never shown at all. CRITICAL priority skips that wait entirely
+    (see manager.py's _run(): "if priority != EventPriority.CRITICAL").
+    Every rotation-driven page change must use it, or fast rotation
+    intervals silently drop pages from the cycle."""
+    manager = MagicMock()
+    manager.capabilities = WEACT_CAPS
+    ui_state = {"active_page": "status", "rotation_index": 0, "rotation_last_advance_ts": None}
+    rotation_config = {
+        "enabled": True, "pages": ["status", "radio", "power", "system"], "interval_seconds": 5.0,
+    }
+    # Simulate 5 consecutive rotation ticks (one full cycle plus one) -
+    # every single one must mark_dirty() with CRITICAL, not just the
+    # first, since a shorter-than-debounce interval affects every tick
+    # equally, not just the initial one.
+    for _ in range(5):
+        ui_state["rotation_last_advance_ts"] = None  # force "advanced" every call, isolating the assertion
+        _poll_once(
+            manager, MagicMock(), {},
+            get_radio_status=lambda: {"mode": "connected", "serial_port": "/dev/ttyACM0"},
+            get_cpu_percent=lambda: 10.0,
+            get_ram_percent=lambda: 20.0,
+            get_listener_alive=lambda: True,
+            local_node_name="Test Node",
+            content_state=_ContentState(),
+            **_rotation_poll_kwargs(ui_state, rotation_config),
+        )
+        _, kwargs = manager.mark_dirty.call_args
+        assert kwargs["priority"] == EventPriority.CRITICAL, "every rotation-driven page must bypass debounce"

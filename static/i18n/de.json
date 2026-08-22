@@ -644,7 +644,7 @@
     "unable_to_save_settings_short": "Einstellungen konnten nicht gespeichert werden",
     "open_location_settings": "Standorteinstellungen öffnen",
     "epaper_title": "E-Paper-Display",
-    "epaper_description": "Waveshare 2,13\"-Statusdisplay.",
+    "epaper_description": "Einstellungen für Display und Informationsanzeige.",
     "epaper_enabled": "Aktiviert",
     "epaper_refresh_mode": "Aktualisierungsmodus",
     "epaper_mode_responsive": "Reaktionsschnell",

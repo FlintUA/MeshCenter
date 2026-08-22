@@ -193,7 +193,13 @@ function updateTimeCardSource(data) {
     el.textContent = TimeFormatter._serverEpoch ? `(${window.I18N.t('time.not_synchronized')})` : '';
     return;
   }
-  el.textContent = data.synchronized ? '' : `(${window.I18N.t('time.not_synchronized')})`;
+  if (data.quality === 'synchronized') {
+    el.textContent = window.I18N.t('time.source_ntp');
+  } else if (data.quality === 'rtc') {
+    el.textContent = window.I18N.t('time.source_rtc');
+  } else {
+    el.textContent = `${window.I18N.t('time.source_system')} (${window.I18N.t('time.not_verified')})`;
+  }
 }
 
 function updateTimeCardClock() {

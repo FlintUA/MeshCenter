@@ -1247,6 +1247,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     text-transform: uppercase;
     letter-spacing: .06em;
     margin-bottom: 3px;
+    overflow-wrap: anywhere;
 }
 
 .device-hero-main h3 {
@@ -1362,7 +1363,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
 
 .device-action-row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 9px;
     margin-top: 14px;
 }
@@ -1455,10 +1456,28 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
 
 .peripheral-card-header {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 12px;
+    gap: 6px 12px;
     margin-bottom: 12px;
+}
+
+/* The eyebrow+h3 wrapper is a flex item with no explicit width, so by
+   default it won't shrink below its content's natural size (min-width:
+   auto) - against a long translated h3 (e.g. the WeAct display's full
+   model name) plus a long RU/UK status pill (white-space: nowrap by
+   design, see .device-status-pill below), that pushed the header's total
+   width past the card's edge instead of either wrapping or shrinking
+   (task 38). min-width: 0 lets it shrink/wrap normally; flex-wrap above
+   is the fallback once it can't shrink any further - the pill drops to
+   its own full-width line rather than overlapping or getting clipped.
+   A shared selector (not a new class threaded through every render
+   function) since every Devices card - RTC/BME280/display/camera/
+   environment/power - already emits the same unclassed first child. */
+.peripheral-card-header > div:first-child {
+    min-width: 0;
+    flex: 1 1 auto;
 }
 
 .peripheral-card-header h3,
@@ -1466,10 +1485,38 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     margin: 0;
     color: var(--text-primary, #172033);
     font-size: 17px;
+    overflow-wrap: anywhere;
+}
+
+.peripheral-card-header .device-status-pill {
+    /* Once flex-wrap drops the pill to its own line (long h3 + long RU/UK
+       pill text together), align it back to the card's left edge with a
+       small top gap instead of it looking stranded flush against the row
+       above with zero breathing room. */
+    margin-top: 2px;
 }
 
 .device-action-row-single {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+}
+
+/* A .device-status-pill used as a standalone full-width banner (the RTC
+   card's "reboot required" notice - static/chat.js's setupRtc() action
+   block, .device-action-row-single .device-status-pill) has no sibling
+   eyebrow/h3 to wrap around, unlike .peripheral-card-header's pill - so
+   the fix there (let the row wrap, keep the pill's own text on one line)
+   doesn't apply here: this pill IS the whole row. A long translated
+   string (e.g. RU "Требуется перезагрузка для применения изменений
+   I2C/RTC") ran past the card's right edge, found live on a real node
+   (task 38 addendum) - grid-template-columns: minmax(0, 1fr) above stops
+   the column itself from being forced wide, and this override lets the
+   pill's text actually wrap within it instead of just overflowing a
+   now-narrower column with the same visible spillover.  Scoped to this
+   container only - .peripheral-card-header's pill keeps nowrap. */
+.device-action-row-single .device-status-pill {
+    white-space: normal;
+    width: 100%;
+    text-align: left;
 }
 
 .peripheral-add-card {

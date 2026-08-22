@@ -69,7 +69,12 @@ def render(caps: DisplayCapabilities, data: PowerScreenData, locale: str = DEFAU
     right = w - 4
 
     draw_node_header(image, data.node_name)
-    draw_page_header(image, t("power", locale))
+    # Distinct key from "power" below (the CURRENT/POWER wattage pair's own
+    # label, correctly "Мощность"/"Leistung" - actual wattage) - the page
+    # title means "power supply status" as a whole, not the wattage value
+    # specifically, and RU/UK's "Мощность"/"Потужність" read wrong there
+    # (found live - user wanted "Питание", not "Мощность", for the title).
+    draw_page_header(image, t("power_page_title", locale))
     draw_separator(image, SEPARATOR_Y)
 
     has_current_power = data.current is not None or data.power is not None

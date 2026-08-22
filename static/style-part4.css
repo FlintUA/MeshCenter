@@ -918,7 +918,14 @@
 
 .weather-key-visibility {
     flex: 0 0 auto;
-    min-width: 62px;
+    /* 62px was too tight for translated labels ("Показати"/"Anzeigen" -
+       found live, task: widen the button, not the input) - the input
+       itself already has width:100%/min-width:0 (see
+       .reference-location-card input), so it shrinks to make room
+       automatically once this button's own footprint grows. */
+    min-width: 92px;
+    padding: 0 14px;
+    white-space: nowrap;
     border: 1px solid var(--mc-border, #c8d3de);
     border-radius: 8px;
     background: var(--mc-surface-alt, #edf3f8);

@@ -1363,7 +1363,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
 
 .device-action-row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 9px;
     margin-top: 14px;
 }
@@ -1497,7 +1497,26 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
 }
 
 .device-action-row-single {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+}
+
+/* A .device-status-pill used as a standalone full-width banner (the RTC
+   card's "reboot required" notice - static/chat.js's setupRtc() action
+   block, .device-action-row-single .device-status-pill) has no sibling
+   eyebrow/h3 to wrap around, unlike .peripheral-card-header's pill - so
+   the fix there (let the row wrap, keep the pill's own text on one line)
+   doesn't apply here: this pill IS the whole row. A long translated
+   string (e.g. RU "Требуется перезагрузка для применения изменений
+   I2C/RTC") ran past the card's right edge, found live on a real node
+   (task 38 addendum) - grid-template-columns: minmax(0, 1fr) above stops
+   the column itself from being forced wide, and this override lets the
+   pill's text actually wrap within it instead of just overflowing a
+   now-narrower column with the same visible spillover.  Scoped to this
+   container only - .peripheral-card-header's pill keeps nowrap. */
+.device-action-row-single .device-status-pill {
+    white-space: normal;
+    width: 100%;
+    text-align: left;
 }
 
 .peripheral-add-card {

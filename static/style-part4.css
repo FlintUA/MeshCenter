@@ -3951,6 +3951,7 @@ html[data-theme="dark"] #timeCard {
 [data-theme="dark"] .time-hero-clock { color: #e5eff8; }
 [data-theme="dark"] .time-hero-date { color: #dbe8f5; }
 [data-theme="dark"] .time-hero-week { color: #9eb3c8; }
+[data-theme="dark"] .time-clock-source { color: #8bc0ff; }
 [data-theme="dark"] .time-section-label { color: #9eb3c8; }
 
 [data-theme="dark"] .time-schedule-row { border-bottom-color: #2a3f54; }

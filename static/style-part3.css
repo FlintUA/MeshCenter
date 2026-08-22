@@ -948,6 +948,12 @@
     padding: 14px 0 12px;
 }
 
+.time-hero-clock-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
 .time-hero-clock {
     color: #263b52;
     font-size: 38px;
@@ -968,9 +974,21 @@
     font-weight: 600;
 }
 
+/* Same look as .weather-provider-link (task 36) - same small/muted/dotted
+   style so the two "where this reading came from" indicators read as one
+   consistent pattern. That element gets its color via `color: inherit`
+   from an ancestor with its own dark-mode override; .time-clock-source
+   sits in an unrelated part of the DOM with no equivalent ancestor, so
+   this hardcodes the exact computed values (devtools, both themes)
+   instead of trying to reproduce that inheritance chain here. */
 .time-clock-source {
-    color: #79879a;
-    font-size: 10px;
+    color: #10233f;
+    font-size: 9px;
+    font-weight: 650;
+    opacity: 0.85;
+}
+.time-clock-source::before {
+    content: "· ";
 }
 
 .time-section-label {

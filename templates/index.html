@@ -8,8 +8,8 @@
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20260821-style-split">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20260821-style-split">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260821-style-split">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20260821-style-split">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260822-time-source-row">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20260822-time-source-row">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -141,10 +141,12 @@
                 </div>
                 <div class="time-card-body" id="timeCardBody">
                     <div class="time-hero">
-                        <div class="time-hero-clock" id="timeClockDisplay">--:--</div>
+                        <div class="time-hero-clock-row">
+                            <div class="time-hero-clock" id="timeClockDisplay">--:--</div>
+                            <span class="time-clock-source" id="timeClockSource"></span>
+                        </div>
                         <div class="time-hero-date" id="timeClockDate"></div>
                         <div class="time-hero-week" id="timeClockWeek"></div>
-                        <span class="time-clock-source" id="timeClockSource"></span>
                     </div>
                     <div class="time-schedules-section" id="timeSchedulesSection">
                         <div class="time-section-label" data-i18n="time.schedules">Schedules</div>

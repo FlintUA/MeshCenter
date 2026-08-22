@@ -9109,7 +9109,15 @@ function renderRtcCard(hardwareRtcData, profileId) {
         <div class="device-action-row device-action-row-single">
             <button type="button" class="mc-refresh-btn" onclick="runSystemAction('reboot', this)">${escapeHtml(window.I18N.t('devices.rtc_reboot_now_button'))}</button>
         </div>`;
-    } else if (!allReady) {
+    } else if (!detected || !configured) {
+        // Deliberately NOT "!allReady" here - a device that's already
+        // detected+configured but not readable (e.g. a /dev/rtcN
+        // permissions issue, see hardware/rtc_service.py's own docstring)
+        // has nothing this button could fix: both enable-i2c and
+        // configure-rtc would just be no-ops against config.txt, and
+        // offering it anyway would misleadingly suggest it addresses a
+        // problem it doesn't touch. Only offer it when there's an actual
+        // config.txt-controlled gap (I2C off, or the overlay missing).
         actionBlock = `
         <div class="device-action-row device-action-row-single">
             <button type="button" class="mc-refresh-btn" onclick="setupRtc(this)">${escapeHtml(window.I18N.t('devices.rtc_setup_button'))}</button>

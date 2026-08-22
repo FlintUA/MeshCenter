@@ -9092,6 +9092,15 @@ function renderRtcCard(hardwareRtcData, profileId) {
                 : window.I18N.t('devices.rtc_not_configured');
 
     const stageMark = (ok) => ok ? '✓' : '✗';
+    // Surfaced as a tooltip rather than new card content (task 27) - the
+    // setup button already tells the user what to do in the common case,
+    // so the underlying technical reason (e.g. "i2c-dev kernel module
+    // hasn't loaded") is more useful as on-hover diagnostic detail for
+    // "I clicked Enable I2C, rebooted, and it's still not working" than
+    // as always-visible card text.
+    const detectedReasonTitle = !detected && stages.detected?.reason
+        ? ` title="${escapeHtml(window.I18N.t('devices.rtc_not_detected_reason', { reason: stages.detected.reason }))}"`
+        : '';
 
     // Exactly one of these three renders: mid-reboot-wait (pending), not
     // yet fully ready (setup button - safe to click even from a partial
@@ -9131,7 +9140,7 @@ function renderRtcCard(hardwareRtcData, profileId) {
                     <div class="device-card-eyebrow">${eyebrow}</div>
                     <h3>${deviceDashboardValue(hardwareRtcData.display_name || hardwareRtcData.model)}</h3>
                 </div>
-                <div class="device-status-pill ${statusClass}">
+                <div class="device-status-pill ${statusClass}"${detectedReasonTitle}>
                     <span class="device-status-dot"></span>${escapeHtml(statusLabel)}
                 </div>
             </div>

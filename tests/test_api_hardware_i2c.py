@@ -59,13 +59,55 @@ def test_get_i2c_status_reports_scan_failure_reason(api_env):
     with patch(
         "hardware.i2c_service.scan_bus",
         return_value={"ok": False, "bus": 1, "reason": "i2cdetect not installed"},
-    ):
+    ), patch("hardware.hardware_config.helper_status", return_value={"ok": False, "reason": "boom"}):
         response = api_env["client"].get("/api/hardware/i2c")
 
     assert response.status_code == 200
     body = response.get_json()
     assert body["ok"] is False
     assert body["reason"] == "i2cdetect not installed"
+
+
+def test_get_i2c_status_success_never_calls_helper_status(api_env):
+    # No extra sudo round-trip on the common/happy path (task 27) - only
+    # pay for hardware_config.helper_status() once scan_bus() has already
+    # failed.
+    with patch(
+        "hardware.i2c_service.scan_bus",
+        return_value={"ok": True, "bus": 1, "addresses": []},
+    ), patch("hardware.hardware_config.helper_status") as mock_helper_status:
+        response = api_env["client"].get("/api/hardware/i2c")
+
+    assert response.status_code == 200
+    mock_helper_status.assert_not_called()
+
+
+def test_get_i2c_status_failure_adds_i2c_dev_module_loaded_field(api_env):
+    with patch(
+        "hardware.i2c_service.scan_bus",
+        return_value={"ok": False, "bus": 1, "reason": "/dev/i2c-1 does not exist"},
+    ), patch(
+        "hardware.hardware_config.helper_status",
+        return_value={"ok": True, "i2c_enabled": True, "rtc_overlay": None, "i2c_dev_module": False},
+    ):
+        response = api_env["client"].get("/api/hardware/i2c")
+
+    body = response.get_json()
+    assert body["i2c_dev_module_loaded"] is False
+
+
+def test_get_i2c_status_failure_helper_also_failing_omits_field(api_env):
+    with patch(
+        "hardware.i2c_service.scan_bus",
+        return_value={"ok": False, "bus": 1, "reason": "i2cdetect not installed"},
+    ), patch(
+        "hardware.hardware_config.helper_status",
+        return_value={"ok": False, "reason": "sudo is not configured"},
+    ):
+        response = api_env["client"].get("/api/hardware/i2c")
+
+    body = response.get_json()
+    assert "i2c_dev_module_loaded" not in body
 
 
 def test_post_i2c_enable_success_reports_requires_reboot(api_env):

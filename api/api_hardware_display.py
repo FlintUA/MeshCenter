@@ -29,6 +29,7 @@ from modules.display.config_store import (
     DEFAULT_MODEL,
     MODEL_DEFAULT_PINS,
     MODEL_DISPLAY_NAMES,
+    ROTATION_ALLOWED_PAGES,
     save_epaper_config,
 )
 from modules.display.gpio_registry import GpioConflictError
@@ -41,6 +42,12 @@ REINIT_CHECK_TIMEOUT = 20.0
 
 
 KNOWN_SHOW_PAGES = ("status", "radio", "power", "system", "message")
+
+# task 40: auto-rotation's own interval, deliberately separate from
+# debounce_seconds (that's the panel's physical-refresh antidebounce, a
+# different concept - see modules/display/service.py's rotation docstring).
+ROTATION_INTERVAL_MIN_SECONDS = 5.0
+ROTATION_INTERVAL_MAX_SECONDS = 3600.0
 
 
 def register_hardware_display_routes(
@@ -87,9 +94,12 @@ def register_hardware_display_routes(
     @app.route("/api/hardware/display/settings", methods=["POST"])
     @handle_errors
     def api_hardware_display_settings_post():
-        """Enable/refresh_mode/debounce_seconds only - applied live and
-        autosaved. pins/spi/refresh_timeout are rejected here; use
-        /reinit for those (see module docstring)."""
+        """Enable/refresh_mode/debounce_seconds/rotation_* only - applied
+        live and autosaved. pins/spi/refresh_timeout are rejected here;
+        use /reinit for those (see module docstring). rotation_* (task 40)
+        needs no live-apply call to display_manager the way refresh_mode/
+        debounce_seconds do - epaper_worker's poller just reads the saved
+        config directly on its next tick."""
         if not epaper_enabled or display_manager is None:
             return _disabled_response()
 
@@ -120,6 +130,35 @@ def register_hardware_display_routes(
 
         if mode_changed or "debounce_seconds" in body:
             display_manager.set_refresh_mode(RefreshMode(config["refresh_mode"]), config["debounce_seconds"])
+
+        if "rotation_enabled" in body:
+            config["rotation_enabled"] = bool(body["rotation_enabled"])
+
+        if "rotation_pages" in body:
+            pages = body["rotation_pages"]
+            if not isinstance(pages, list) or not all(isinstance(p, str) for p in pages):
+                return jsonify({"ok": False, "error": "rotation_pages must be a list of strings"}), 400
+            unknown = [p for p in pages if p not in ROTATION_ALLOWED_PAGES]
+            if unknown:
+                return jsonify({
+                    "ok": False,
+                    "error": f"rotation_pages contains unsupported page(s): {unknown!r} "
+                             f"(allowed: {list(ROTATION_ALLOWED_PAGES)!r} - 'message' can only be shown manually, not rotated)",
+                }), 400
+            config["rotation_pages"] = pages
+
+        if "rotation_interval_seconds" in body:
+            try:
+                interval = float(body["rotation_interval_seconds"])
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "rotation_interval_seconds must be a number"}), 400
+            if not (ROTATION_INTERVAL_MIN_SECONDS <= interval <= ROTATION_INTERVAL_MAX_SECONDS):
+                return jsonify({
+                    "ok": False,
+                    "error": f"rotation_interval_seconds must be between {ROTATION_INTERVAL_MIN_SECONDS:.0f} "
+                             f"and {ROTATION_INTERVAL_MAX_SECONDS:.0f}",
+                }), 400
+            config["rotation_interval_seconds"] = interval
 
         save_epaper_config(config_path, config)
         return jsonify({"ok": True, "config": config})

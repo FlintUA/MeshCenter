@@ -2238,6 +2238,16 @@ async function loadEpaperSettings() {
         if (modeSelect) modeSelect.value = config.refresh_mode || 'debounce';
         if (debounceInput) debounceInput.value = config.debounce_seconds ?? 30;
 
+        const rotationEnabledToggle = document.getElementById('epaperRotationEnabled');
+        const rotationIntervalInput = document.getElementById('epaperRotationInterval');
+        if (rotationEnabledToggle) rotationEnabledToggle.checked = !!config.rotation_enabled;
+        if (rotationIntervalInput) rotationIntervalInput.value = config.rotation_interval_seconds ?? 30;
+        const rotationPages = new Set(config.rotation_pages || []);
+        document.querySelectorAll('.epaper-rotation-page-row input[data-rotation-page]').forEach(el => {
+            el.checked = rotationPages.has(el.dataset.rotationPage);
+        });
+        _epaperUpdateRotationFieldsVisibility(!!config.rotation_enabled);
+
         window.epaperAvailableModels = data.available_models || [];
         const modelSelect = document.getElementById('epaperModelSelect');
         if (modelSelect) {
@@ -2300,6 +2310,41 @@ function setEpaperDebounceSeconds(value) {
     const seconds = Number(value);
     if (!Number.isFinite(seconds) || seconds < 0) return;
     _epaperPostSettings({ debounce_seconds: seconds });
+}
+
+function _epaperUpdateRotationFieldsVisibility(enabled) {
+    // Task 40: interval + per-page checkboxes only matter once rotation
+    // itself is on - hidden rather than just disabled, same "collapse
+    // dependent fields" convention used elsewhere in this Settings panel.
+    const intervalRow = document.getElementById('epaperRotationIntervalRow');
+    const pagesLabel = document.getElementById('epaperRotationPagesLabel');
+    if (intervalRow) intervalRow.style.display = enabled ? '' : 'none';
+    if (pagesLabel) pagesLabel.style.display = enabled ? '' : 'none';
+    document.querySelectorAll('.epaper-rotation-page-row').forEach(el => {
+        el.style.display = enabled ? '' : 'none';
+    });
+}
+
+function setEpaperRotationEnabled(enabled) {
+    _epaperUpdateRotationFieldsVisibility(enabled);
+    _epaperPostSettings({ rotation_enabled: enabled });
+}
+
+function setEpaperRotationInterval(value) {
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds < 5) return;
+    _epaperPostSettings({ rotation_interval_seconds: seconds });
+}
+
+function setEpaperRotationPages() {
+    // Manual "Show X" pin (epaperShowPage()) and rotation are independent
+    // (task 40 design) - this just saves which pages the *next* rotation
+    // tick should cycle through, in the fixed status/radio/power/system
+    // order service.py's own ROTATION_ALLOWED_PAGES uses - checkbox click
+    // order in the DOM doesn't matter, the backend re-orders regardless.
+    const pages = Array.from(document.querySelectorAll('.epaper-rotation-page-row input[data-rotation-page]:checked'))
+        .map(el => el.dataset.rotationPage);
+    _epaperPostSettings({ rotation_pages: pages });
 }
 
 function epaperModelChanged(modelId) {

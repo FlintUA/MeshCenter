@@ -8,7 +8,7 @@ import json
 
 from werkzeug.security import generate_password_hash
 
-from api.api_auth import is_protected, load_auth_state
+from api.api_auth import _is_safe_next_url, is_protected, load_auth_state
 
 
 def test_load_auth_state_first_run_defaults_to_disabled(tmp_path):
@@ -66,3 +66,22 @@ def test_is_protected_tolerates_missing_keys():
     assert is_protected({}) is False
     assert is_protected({"enabled": True}) is False
     assert is_protected({"password_hash": "somehash"}) is False
+
+
+def test_is_safe_next_url_valid_relative_paths():
+    assert _is_safe_next_url("/") is True
+    assert _is_safe_next_url("/map") is True
+    assert _is_safe_next_url("/settings?tab=general") is True
+    assert _is_safe_next_url("/chat#bottom") is True
+
+
+def test_is_safe_next_url_rejects_open_redirects():
+    assert _is_safe_next_url("https://example.com") is False
+    assert _is_safe_next_url("http://example.com") is False
+    assert _is_safe_next_url("//example.com") is False
+    assert _is_safe_next_url(r"/\\example.com") is False
+    assert _is_safe_next_url(r"/\example.com") is False
+    assert _is_safe_next_url(r"/\\/example.com") is False
+    assert _is_safe_next_url("javascript:alert(1)") is False
+    assert _is_safe_next_url("") is False
+    assert _is_safe_next_url(None) is False

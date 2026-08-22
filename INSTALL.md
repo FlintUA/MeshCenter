@@ -301,10 +301,18 @@ of this automatically.
        | sudo tee /etc/sudoers.d/meshcenter >/dev/null
    sed "s|__MESH_USER__|$MESH_USER|g" deploy/meshcenter-wifi.sudoers \
        | sudo tee /etc/sudoers.d/meshcenter-wifi >/dev/null
-   sudo chmod 440 /etc/sudoers.d/meshcenter /etc/sudoers.d/meshcenter-wifi
+   sed "s|__MESH_USER__|$MESH_USER|g" deploy/meshcenter-hw.sudoers \
+       | sudo tee /etc/sudoers.d/meshcenter-hw >/dev/null
+   sudo install -o root -g root -m 0755 scripts/meshcenter-hw-config /usr/local/sbin/meshcenter-hw-config
+   sudo chmod 440 /etc/sudoers.d/meshcenter /etc/sudoers.d/meshcenter-wifi /etc/sudoers.d/meshcenter-hw
    sudo visudo -cf /etc/sudoers.d/meshcenter        # expect: parsed OK
    sudo visudo -cf /etc/sudoers.d/meshcenter-wifi    # expect: parsed OK
+   sudo visudo -cf /etc/sudoers.d/meshcenter-hw      # expect: parsed OK
    ```
+   `meshcenter-hw.sudoers` + the installed helper are what the Devices tab's
+   I2C/RTC hardware card (task 23+) needs — the app runs fine without them,
+   that card's "Enable I2C & configure RTC" button just fails.
+
    `scripts/verify-install.sh` checks this by asking `sudo -n -l` what the
    current user can actually run passwordlessly, not by looking for these
    exact files — a Pi where the user already has broader NOPASSWD sudo some
@@ -334,6 +342,16 @@ of this automatically.
   happened on this project's own prod node: dev had it configured, prod
   didn't, and it only surfaced when a deploy needed a restart. Do this step
   during install, don't defer it.
+- **A `git pull` update never installs new sudoers/helper files** — updating
+  MeshCenter is deliberately just `git merge --ff-only` + a service restart
+  (see `meshsrv/update_service.py`), it never touches `/etc/sudoers.d/` or
+  `/usr/local/sbin/`. A node installed before `deploy/meshcenter-hw.sudoers`
+  existed (task 23) and only ever updated via `git pull` since will silently
+  be missing it — the Devices tab's I2C/RTC card just fails when clicked,
+  with no warning at update time. `./scripts/verify-install.sh` catches this
+  (`meshcenter-hw-config` sudoers/helper check) — re-run it after any update
+  that adds a new sudoers template, and apply step 9's commands for whatever
+  it flags.
 - **`config.py` doesn't exist after `git clone`** — it's gitignored by
   design (step 5). If you skip `cp config.example.py config.py`, `python
   server.py` exits immediately with a missing-config error, not a vague one.

@@ -688,6 +688,8 @@ MESH_HOME="$TARGET_HOME"
     || fail "Missing deploy/meshcenter-hw.sudoers"
 [[ -f "$INSTALL_DIR/scripts/meshcenter-hw-config" ]] \
     || fail "Missing scripts/meshcenter-hw-config"
+[[ -f "$INSTALL_DIR/deploy/99-meshcenter-rtc.rules" ]] \
+    || fail "Missing deploy/99-meshcenter-rtc.rules"
 
 sed -e "s|__MESH_USER__|${MESH_USER}|g" \
     -e "s|__MESH_HOME__|${MESH_HOME}|g" \
@@ -699,6 +701,16 @@ sed -e "s|__MESH_USER__|${MESH_USER}|g" \
 # `sudo -n` - see scripts/meshcenter-hw-config's own docstring).
 install -o root -g root -m 0755 \
     "$INSTALL_DIR/scripts/meshcenter-hw-config" /usr/local/sbin/meshcenter-hw-config
+
+# Grants the `i2c` group (already assigned to $TARGET_USER above) read
+# access to /dev/rtcN - without it, hardware/rtc_service.py's readable-stage
+# check can never succeed even once the RTC is detected and configured
+# (task 35). Declarative, not a sudo rule - unlike the helper above, this
+# needs no privileged runtime call.
+install -o root -g root -m 0644 \
+    "$INSTALL_DIR/deploy/99-meshcenter-rtc.rules" /etc/udev/rules.d/99-meshcenter-rtc.rules
+udevadm control --reload-rules
+udevadm trigger --subsystem-match=rtc
 
 sed "s|__MESH_USER__|${MESH_USER}|g" \
     "$INSTALL_DIR/deploy/meshcenter.sudoers" \

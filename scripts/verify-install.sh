@@ -149,6 +149,24 @@ if [ -n "$SUDO_LIST" ] && echo "$SUDO_LIST" | grep -qE "NOPASSWD:\s*ALL|nmcli|/u
 else
     warn "nmcli/iw not covered by passwordless sudo — Wi-Fi actions in the UI will fail (see deploy/meshcenter-wifi.sudoers)"
 fi
+# Not `bad` - this only affects the Devices tab's optional I2C/RTC card, not
+# core MeshCenter functionality. An install predating task 23 (PR #84) that
+# has only ever been updated via `git pull` + service restart will land here
+# silently: update_service.py deliberately never touches system files, so
+# deploy/meshcenter-hw.sudoers only gets installed by install.sh/
+# meshcenter-firstboot.sh themselves, never by an update - confirmed live on
+# a real node (067A40FA, task 39) whose "Enable I2C & configure RTC" button
+# failed with exactly this gap.
+if [ -n "$SUDO_LIST" ] && echo "$SUDO_LIST" | grep -qE "NOPASSWD:\s*ALL|meshcenter-hw-config"; then
+    ok "NOPASSWD sudo confirmed for meshcenter-hw-config (I2C/RTC hardware setup)"
+else
+    warn "meshcenter-hw-config not covered by passwordless sudo — the Devices tab's 'Enable I2C & configure RTC' button will fail (see deploy/meshcenter-hw.sudoers; on an install that predates this feature, updating via git pull alone will NOT add it — install the sudoers file manually or re-run install.sh/meshcenter-firstboot.sh's relevant step)"
+fi
+if [ -x "/usr/local/sbin/meshcenter-hw-config" ]; then
+    ok "meshcenter-hw-config helper installed at /usr/local/sbin/meshcenter-hw-config"
+else
+    warn "/usr/local/sbin/meshcenter-hw-config missing or not executable — the I2C/RTC hardware card will fail even with correct sudoers (see scripts/meshcenter-hw-config, installed by install.sh/meshcenter-firstboot.sh)"
+fi
 echo
 
 # --- 5. radio identity ---------------------------------------------------------

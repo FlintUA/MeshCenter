@@ -321,7 +321,19 @@
     "rtc_configured": "Настроено ядром",
     "rtc_readable": "Читается",
     "rtc_bus_address": "Шина / адрес",
-    "rtc_linux_device": "Устройство Linux"
+    "rtc_linux_device": "Устройство Linux",
+    "rtc_not_configured": "Не настроено",
+    "rtc_setup_button": "Включить I2C и настроить RTC",
+    "rtc_setup_confirm": "Включить I2C и настроить оверлей RTC?\n\nЭто изменит системный файл /boot/firmware/config.txt и потребует перезагрузки для применения.",
+    "rtc_setup_pending": "Включение I2C и настройка RTC...",
+    "rtc_setup_requested_success": "I2C включён и RTC настроен. Для применения изменений требуется перезагрузка.",
+    "rtc_setup_failed": "Не удалось включить I2C или настроить RTC",
+    "rtc_setup_failed_reason": "Ошибка настройки: {reason}",
+    "rtc_reboot_now_button": "Перезагрузить сейчас",
+    "bme280_ready": "Готово",
+    "bme280_incomplete": "Не завершено",
+    "bme280_detected": "Обнаружено",
+    "bme280_readable": "Читается"
   },
   "node_manager": {
     "title": "Менеджер узлов",

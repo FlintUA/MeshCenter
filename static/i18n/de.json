@@ -321,7 +321,19 @@
     "rtc_configured": "Kernel konfiguriert",
     "rtc_readable": "Lesbar",
     "rtc_bus_address": "Bus / Adresse",
-    "rtc_linux_device": "Linux-Gerät"
+    "rtc_linux_device": "Linux-Gerät",
+    "rtc_not_configured": "Nicht eingerichtet",
+    "rtc_setup_button": "I2C aktivieren & RTC einrichten",
+    "rtc_setup_confirm": "I2C aktivieren und den RTC-Overlay einrichten?\n\nDas ändert die Systemdatei /boot/firmware/config.txt und erfordert einen Neustart, damit es wirksam wird.",
+    "rtc_setup_pending": "I2C wird aktiviert und RTC eingerichtet...",
+    "rtc_setup_requested_success": "I2C aktiviert und RTC eingerichtet. Ein Neustart ist erforderlich, damit die Änderung wirksam wird.",
+    "rtc_setup_failed": "I2C konnte nicht aktiviert oder RTC nicht eingerichtet werden",
+    "rtc_setup_failed_reason": "Einrichtung fehlgeschlagen: {reason}",
+    "rtc_reboot_now_button": "Jetzt neu starten",
+    "bme280_ready": "Bereit",
+    "bme280_incomplete": "Unvollständig",
+    "bme280_detected": "Erkannt",
+    "bme280_readable": "Lesbar"
   },
   "node_manager": {
     "title": "Knoten-Manager",

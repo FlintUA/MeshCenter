@@ -9066,34 +9066,63 @@ function renderDisplayCard(hardwareDisplayData, profileId) {
 }
 
 function renderRtcCard(hardwareRtcData, profileId) {
-    // Same "nothing rendered at all" convention as renderDisplayCard()
-    // above when there's no sign of the hardware at all - but unlike the
-    // display card (a single enabled/disabled flag), RTC has three
-    // independent stages (detected/configured/readable - see
-    // hardware/rtc_service.py's module docstring), so "no card" only
-    // applies when NONE of them found anything, not just the first one.
+    // No longer an "invisible card" when nothing's detected - unlike
+    // renderDisplayCard()'s enabled:false case, an undetected/unconfigured
+    // RTC is exactly the state a fresh install (I2C off, no overlay) is
+    // in, and that's precisely the state this card now needs to offer a
+    // way out of (the Enable I2C & configure RTC button below). Only a
+    // genuinely malformed response (get_status() itself failed, e.g. an
+    // unsupported model) still renders nothing.
     if (!hardwareRtcData || !hardwareRtcData.ok) return '';
     const stages = hardwareRtcData.stages || {};
     const detected = !!stages.detected?.ok;
     const configured = !!stages.configured?.ok;
     const readable = !!stages.readable?.ok;
-    if (!detected && !configured) return '';
 
     const eyebrow = escapeHtml(window.I18N.t('devices.active_profile', { id: deviceDashboardValue(profileId) }));
     const pending = hardwareRtcData.pending_setup;
     const allReady = detected && configured && readable;
-    const statusClass = pending ? 'device-status-warning' : (allReady ? 'device-status-ok' : 'device-status-warning');
+    const statusClass = pending || !allReady ? 'device-status-warning' : 'device-status-ok';
     const statusLabel = pending
         ? window.I18N.t('devices.rtc_reboot_required')
-        : (allReady ? window.I18N.t('devices.rtc_ready') : window.I18N.t('devices.rtc_incomplete'));
+        : allReady
+            ? window.I18N.t('devices.rtc_ready')
+            : (detected || configured)
+                ? window.I18N.t('devices.rtc_incomplete')
+                : window.I18N.t('devices.rtc_not_configured');
 
     const stageMark = (ok) => ok ? '✓' : '✗';
-    const pendingBlock = pending ? `
+
+    // Exactly one of these three renders: mid-reboot-wait (pending), not
+    // yet fully ready (setup button - safe to click even from a partial
+    // state like "I2C already on, overlay missing", since enable-i2c is
+    // idempotent on the backend, see hardware/hardware_config.py), or
+    // nothing at all once allReady with no pending record.
+    let actionBlock = '';
+    if (pending) {
+        actionBlock = `
         <div class="device-action-row device-action-row-single">
             <span class="device-status-pill device-status-warning">
                 <span class="device-status-dot"></span>${escapeHtml(window.I18N.t('devices.rtc_reboot_required_detail'))}
             </span>
-        </div>` : '';
+        </div>
+        <div class="device-action-row device-action-row-single">
+            <button type="button" class="mc-refresh-btn" onclick="runSystemAction('reboot', this)">${escapeHtml(window.I18N.t('devices.rtc_reboot_now_button'))}</button>
+        </div>`;
+    } else if (!detected || !configured) {
+        // Deliberately NOT "!allReady" here - a device that's already
+        // detected+configured but not readable (e.g. a /dev/rtcN
+        // permissions issue, see hardware/rtc_service.py's own docstring)
+        // has nothing this button could fix: both enable-i2c and
+        // configure-rtc would just be no-ops against config.txt, and
+        // offering it anyway would misleadingly suggest it addresses a
+        // problem it doesn't touch. Only offer it when there's an actual
+        // config.txt-controlled gap (I2C off, or the overlay missing).
+        actionBlock = `
+        <div class="device-action-row device-action-row-single">
+            <button type="button" class="mc-refresh-btn" onclick="setupRtc(this)">${escapeHtml(window.I18N.t('devices.rtc_setup_button'))}</button>
+        </div>`;
+    }
 
     return `
         <section class="peripheral-card">
@@ -9113,7 +9142,92 @@ function renderRtcCard(hardwareRtcData, profileId) {
                 <div><dt>${escapeHtml(window.I18N.t('devices.rtc_bus_address'))}</dt><dd>${deviceDashboardValue(hardwareRtcData.address)} (bus ${deviceDashboardValue(hardwareRtcData.bus)})</dd></div>
                 <div><dt>${escapeHtml(window.I18N.t('devices.rtc_linux_device'))}</dt><dd>${deviceDashboardValue(hardwareRtcData.linux_device)}</dd></div>
             </dl>
-            ${pendingBlock}
+            ${actionBlock}
+        </section>`;
+}
+
+async function setupRtc(button) {
+    // Two backend calls made to look like one user-facing action (per the
+    // task's own UX decision): enabling the I2C bus without configuring an
+    // RTC overlay has no purpose for this card, and calling enable-i2c
+    // again when it's already on is a safe no-op (hardware_config.py's
+    // enable_i2c() is idempotent), so there's no need to ask the user
+    // which of the two steps they actually want.
+    if (!window.confirm(window.I18N.t('devices.rtc_setup_confirm'))) return;
+
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = window.I18N.t('devices.rtc_setup_pending');
+
+    try {
+        const enableResponse = await fetch('/api/hardware/i2c/enable', { method: 'POST' });
+        const enableData = await enableResponse.json().catch(() => ({}));
+        if (!enableResponse.ok || !enableData.ok) {
+            throw new Error(enableData.error || window.I18N.t('devices.rtc_setup_failed'));
+        }
+
+        const configureResponse = await fetch('/api/hardware/rtc/configure', { method: 'POST' });
+        const configureData = await configureResponse.json().catch(() => ({}));
+        if (!configureResponse.ok || !configureData.ok) {
+            throw new Error(configureData.error || window.I18N.t('devices.rtc_setup_failed'));
+        }
+
+        showToast(window.I18N.t('devices.rtc_setup_requested_success'), 'success');
+        await loadPeripheralDevices(false);
+    } catch (error) {
+        console.error('[DEVICES] RTC setup failed:', error);
+        showToast(window.I18N.t('devices.rtc_setup_failed_reason', { reason: error.message || String(error) }), 'error');
+        button.disabled = false;
+        button.textContent = originalText;
+    }
+}
+
+function renderBme280Card(hardwareBme280Data, profileId) {
+    // Same "nothing rendered at all" convention as renderDisplayCard() -
+    // but BME280 only has two independent stages (detected/readable, see
+    // hardware/bme280_service.py's module docstring: no Device Tree
+    // overlay/kernel driver involved, so there's no third "configured"
+    // stage the way RTC has one - not artificially adding one here just
+    // to visually match renderRtcCard()).
+    if (!hardwareBme280Data || !hardwareBme280Data.ok) return '';
+    const stages = hardwareBme280Data.stages || {};
+    const detected = !!stages.detected?.ok;
+    const readable = !!stages.readable?.ok;
+    if (!detected) return '';
+
+    // This is host-local I2C hardware, NOT the mesh-telemetry "Environmental
+    // sensor" card built elsewhere in loadPeripheralDevices() from
+    // /api/devices' sensor_data (radio telemetry from a remote node) - the
+    // same devices.active_profile eyebrow the other host-local cards
+    // (camera/display/RTC) use, and the "BME280" title itself, keep this
+    // visually distinct so the two are never mistaken for the same thing.
+    const eyebrow = escapeHtml(window.I18N.t('devices.active_profile', { id: deviceDashboardValue(profileId) }));
+    const statusClass = readable ? 'device-status-ok' : 'device-status-warning';
+    const statusLabel = readable ? window.I18N.t('devices.bme280_ready') : window.I18N.t('devices.bme280_incomplete');
+    const stageMark = (ok) => ok ? '✓' : '✗';
+
+    const values = hardwareBme280Data.values || {};
+    const valueRows = readable ? `
+                <div><dt>${escapeHtml(window.I18N.t('node_panel.temperature'))}</dt><dd>${formatTemperature(values.temperature_c)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('node_panel.humidity'))}</dt><dd>${formatPeripheralMetric(values.humidity_pct, '%')}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('node_panel.pressure'))}</dt><dd>${formatPressure(values.pressure_hpa)}</dd></div>` : '';
+
+    return `
+        <section class="peripheral-card">
+            <div class="peripheral-card-header">
+                <div>
+                    <div class="device-card-eyebrow">${eyebrow}</div>
+                    <h3>BME280</h3>
+                </div>
+                <div class="device-status-pill ${statusClass}">
+                    <span class="device-status-dot"></span>${escapeHtml(statusLabel)}
+                </div>
+            </div>
+            <dl class="device-detail-list">
+                <div><dt>${escapeHtml(window.I18N.t('devices.bme280_detected'))}</dt><dd>${stageMark(detected)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.bme280_readable'))}</dt><dd>${stageMark(readable)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.rtc_bus_address'))}</dt><dd>${deviceDashboardValue(hardwareBme280Data.address)} (bus ${deviceDashboardValue(hardwareBme280Data.bus)})</dd></div>${valueRows}
+            </dl>
         </section>`;
 }
 
@@ -9283,11 +9397,12 @@ async function loadPeripheralDevices(showFeedback = false) {
     }
 
     try {
-        const [response, cameraManagerResponse, hardwareDisplayResponse, hardwareRtcResponse] = await Promise.all([
+        const [response, cameraManagerResponse, hardwareDisplayResponse, hardwareRtcResponse, hardwareBme280Response] = await Promise.all([
             fetch('/api/devices', { cache: 'no-store' }),
             fetch('/api/devices/cameras', { cache: 'no-store' }).catch(() => null),
             fetch('/api/hardware/display', { cache: 'no-store' }).catch(() => null),
             fetch('/api/hardware/rtc', { cache: 'no-store' }).catch(() => null),
+            fetch('/api/hardware/bme280', { cache: 'no-store' }).catch(() => null),
         ]);
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || window.I18N.t('devices.unable_to_load'));
@@ -9300,6 +9415,9 @@ async function loadPeripheralDevices(showFeedback = false) {
             : null;
         const hardwareRtcData = hardwareRtcResponse && hardwareRtcResponse.ok
             ? await hardwareRtcResponse.json().catch(() => null)
+            : null;
+        const hardwareBme280Data = hardwareBme280Response && hardwareBme280Response.ok
+            ? await hardwareBme280Response.json().catch(() => null)
             : null;
 
         // The new camera-driver framework (camera_manager.py) replaces the
@@ -9346,10 +9464,11 @@ async function loadPeripheralDevices(showFeedback = false) {
         const cameraCards = renderCameraManagerCards(cameraManagerData, data.profile_id);
         const displayCard = renderDisplayCard(hardwareDisplayData, data.profile_id);
         const rtcCard = renderRtcCard(hardwareRtcData, data.profile_id);
+        const bme280Card = renderBme280Card(hardwareBme280Data, data.profile_id);
 
         container.dataset.loaded = '1';
         container.innerHTML = `
-            <div class="peripheral-grid">${cameraCards}${displayCard}${rtcCard}${cards}</div>
+            <div class="peripheral-grid">${cameraCards}${displayCard}${rtcCard}${bme280Card}${cards}</div>
             <section class="peripheral-card peripheral-add-card" aria-disabled="true">
                 <div class="peripheral-add-icon">＋</div>
                 <h3>${escapeHtml(window.I18N.t('devices.add_device'))}</h3>

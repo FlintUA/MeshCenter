@@ -66,6 +66,7 @@ from api.api_node_icons import register_node_icon_routes
 from api.api_weather import register_weather_routes
 from api.api_hardware_display import register_hardware_display_routes
 from api.api_hardware_i2c import register_hardware_i2c_routes
+from api.api_hardware_bme280 import register_hardware_bme280_routes
 from hardware import hardware_config
 from weather.weather_manager import WeatherManager
 from weather.providers.openweather import OpenWeatherProvider, WeatherConfig as OpenWeatherConfig
@@ -570,6 +571,12 @@ register_hardware_display_routes(
 # soon as possible rather than waiting for the first UI poll after start.
 register_hardware_i2c_routes(app, handle_errors, DATA_DIR)
 hardware_config.reconcile_pending(DATA_DIR)
+
+# BME280 (temperature/humidity/pressure) hardware card - task 26, second
+# I2C device built on hardware/i2c_service.py after RTC. No pending-setup
+# state or privileged helper needed here - BME280 is a plain userspace I2C
+# device once the bus itself is enabled, nothing to configure.
+register_hardware_bme280_routes(app, handle_errors)
 
 # ===== STATIC FILES =====
 @app.route('/static/<path:filename>')

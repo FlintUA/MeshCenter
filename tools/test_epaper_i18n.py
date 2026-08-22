@@ -59,18 +59,22 @@ def main() -> int:
                 radio_page.render(caps, radio_page.RadioScreenData(
                     status="offline", mode="reconnecting", node_name="Flint TAP2",
                     listener_running=False, last_error="serial timeout",
+                    node_id="!756f9960", serial_port="/dev/ttyACM0", hardware="RAK3312",
                 ), locale=locale).save(out_dir / f"radio_{model}.png")
 
                 power_page.render(caps, power_page.PowerScreenData(
-                    voltage=4.01, current=123.4, power=494.9,
+                    node_name="Flint TAP2", voltage=4.01, current=123.4, power=494.9, battery_percent=96,
                 ), locale=locale).save(out_dir / f"power_{model}.png")
 
                 system_page.render(caps, system_page.SystemScreenData(
-                    cpu_percent=45, ram_percent=60, cpu_temp_c=52,
+                    node_name="Flint TAP2", cpu_percent=45, ram_percent=60, cpu_temp_c=52,
+                    uptime_seconds=3 * 86400 + 14 * 3600,
                 ), locale=locale).save(out_dir / f"system_{model}.png")
 
                 message_page.render(caps, message_page.MessageScreenData(
-                    sender="Elektroniker.help", text="Test-Nachricht für die Sichtprüfung", time="12:34",
+                    node_name="Flint TAP2", sender="Elektroniker.help",
+                    text="Test-Nachricht für die Sichtprüfung", time="12:34",
+                    direction="rx", chat_type="channel", chat_name="LongFast",
                 ), locale=locale).save(out_dir / f"message_{model}.png")
 
                 from modules.display.i18n import t

@@ -11,6 +11,7 @@ test so tests can't leak state into each other.
 
 import json
 import time
+from unittest.mock import mock_open, patch
 
 import pytest
 
@@ -128,6 +129,27 @@ def test_read_memory_percent_returns_a_percentage_or_none():
 def test_read_cpu_temperature_returns_a_number_or_none():
     result = cpu_history_module.read_cpu_temperature()
     assert result is None or isinstance(result, float)
+
+
+# ---------------- read_uptime_seconds() ----------------
+# Mocked (not real /proc access like the trio above) - task 37 asked for
+# this new reader to be deterministic in tests rather than host-dependent,
+# since its only consumer (the e-paper System Screen) needs an exact
+# seconds value to verify formatting against.
+
+def test_read_uptime_seconds_parses_first_field():
+    with patch("builtins.open", mock_open(read_data="123456.78 98765.43\n")):
+        assert cpu_history_module.read_uptime_seconds() == 123456.78
+
+
+def test_read_uptime_seconds_missing_file_returns_none():
+    with patch("builtins.open", side_effect=FileNotFoundError()):
+        assert cpu_history_module.read_uptime_seconds() is None
+
+
+def test_read_uptime_seconds_malformed_content_returns_none():
+    with patch("builtins.open", mock_open(read_data="not a number\n")):
+        assert cpu_history_module.read_uptime_seconds() is None
 
 
 # ---------------- get_current_usage() ----------------

@@ -80,6 +80,20 @@ def read_memory_percent():
         return None
 
 
+def read_uptime_seconds():
+    """Seconds since the kernel booted - the first number in /proc/uptime
+    (the second is the sum of all cores' idle time, unused here). Distinct
+    from a Meshtastic node's own uptime_seconds telemetry (that's the
+    radio's own reported uptime, not this Raspberry Pi's - see the e-Paper
+    System Screen, task 37, which needed the host's uptime and found
+    nothing already reading it)."""
+    try:
+        with open("/proc/uptime", "r", encoding="utf-8") as fh:
+            return float(fh.readline().split()[0])
+    except Exception:
+        return None
+
+
 def load_cpu_history(cpu_history_file):
     data = safe_read_json(cpu_history_file, {"cpu": []})
     records = data.get("cpu", []) if isinstance(data, dict) else []

@@ -174,6 +174,19 @@ def test_rtc_service_exception_does_not_crash_probe(monkeypatch):
 
     monkeypatch.setattr(time_service.rtc_service, "get_status", _raise)
 
+    # _probe() falls back to reading the real /etc/timezone off disk
+    # whenever the parsed timedatectl timezone is "UTC" (see its own
+    # docstring-less fallback block) - left unmocked, this test's result
+    # silently depends on the host machine's actual /etc/timezone content
+    # (e.g. "Etc/UTC" rather than "UTC" on some systems), which is exactly
+    # what broke it during review. Force that read to fail the same way it
+    # does on a system with no /etc/timezone file at all, so the mocked
+    # "UTC" from _timedatectl_output() above is what actually survives.
+    def _raise_file_not_found(self):
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(time_service.Path, "read_text", _raise_file_not_found)
+
     result = time_service._probe()  # must not raise
 
     assert result["rtc_detected"] is False

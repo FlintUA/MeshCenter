@@ -35,6 +35,14 @@ MODEL_DISPLAY_NAMES: dict[str, str] = {
 
 DEFAULT_MODEL = "waveshare_213g"  # backward-compat default for configs saved before Stage 2
 
+# task 40: pages the auto-rotation feature is allowed to cycle through -
+# deliberately excludes "message" (KNOWN_SHOW_PAGES in
+# api/api_hardware_display.py has that one too, for manual "Show on
+# Display" only). Order here is the canonical rotation order the UI/
+# service.py both follow, regardless of what order a saved config's
+# rotation_pages list happens to be in.
+ROTATION_ALLOWED_PAGES: tuple[str, ...] = ("status", "radio", "power", "system")
+
 DEFAULT_EPAPER_CONFIG: dict = {
     "enabled": True,
     "model": DEFAULT_MODEL,
@@ -43,6 +51,13 @@ DEFAULT_EPAPER_CONFIG: dict = {
     "pins": dict(MODEL_DEFAULT_PINS[DEFAULT_MODEL]),
     "spi": {"bus": 0, "device": 0},
     "refresh_timeout": 75.0,
+    # Off by default - an empty rotation_pages list is already inert (see
+    # modules/display/service.py's _poll_once()), enabled defaulting to
+    # False is belt-and-suspenders for a config file that has
+    # rotation_pages populated but was never explicitly turned on.
+    "rotation_enabled": False,
+    "rotation_pages": [],
+    "rotation_interval_seconds": 30.0,
 }
 
 
@@ -65,6 +80,16 @@ def load_epaper_config(path: str) -> dict:
             merged["pins"] = dict(pin_defaults)
         if isinstance(data.get("spi"), dict):
             merged["spi"] = {**DEFAULT_EPAPER_CONFIG["spi"], **data["spi"]}
+        # Defense-in-depth against a hand-edited config file - the API
+        # layer (api/api_hardware_display.py) already validates
+        # rotation_pages against ROTATION_ALLOWED_PAGES before it's ever
+        # saved, so this only matters for a file edited outside that path.
+        if isinstance(data.get("rotation_pages"), list):
+            merged["rotation_pages"] = [
+                p for p in data["rotation_pages"] if p in ROTATION_ALLOWED_PAGES
+            ]
+        else:
+            merged["rotation_pages"] = []
     return merged
 
 

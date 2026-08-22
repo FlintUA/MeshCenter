@@ -26,7 +26,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from modules.display.config_store import DEFAULT_EPAPER_CONFIG, DEFAULT_MODEL
+from modules.display.config_store import DEFAULT_EPAPER_CONFIG, DEFAULT_MODEL, ROTATION_ALLOWED_PAGES
 from modules.display.drivers.base import DisplayDriver
 from modules.display.drivers.waveshare_213g import Waveshare213gDriver
 from modules.display.drivers.weact_154 import Weact154Driver
@@ -122,6 +122,44 @@ def _bucket(value: float | None, step: float = _SIGNIFICANCE_BUCKET) -> float | 
     if value is None:
         return None
     return round(value / step) * step
+
+
+def advance_rotation(
+    index: int, page_count: int, last_advance_ts: float | None, now: float, interval_seconds: float,
+) -> tuple[int, float, bool]:
+    """Pure - task 40's auto-rotation timing decision, kept separate from
+    _poll_once() so it's testable without a DisplayManager/mocked poll
+    pipeline. Returns (new_index, new_last_advance_ts, advanced).
+
+    `advanced` is True exactly when the caller should overwrite
+    ui_state["active_page"] with the page at `new_index` - False means
+    "not time yet, leave whatever's currently pinned (manual or rotation)
+    alone". This is what lets a manual "Show X" click stay visible between
+    rotation ticks instead of being stomped on every ~5s poll (see
+    _poll_once()'s own comment where this is called).
+
+    - page_count <= 0 (nothing checked for rotation): never advances.
+    - last_advance_ts is None (rotation just turned on, or a fresh
+      ui_state after a restart): advances immediately at the *current*
+      index rather than waiting out a full interval first - the user
+      enabling rotation expects to see it start, not stare at whatever
+      was already pinned for another `interval_seconds`.
+    - otherwise: advances (index+1, wrapping) once `now - last_advance_ts`
+      has reached `interval_seconds`; unchanged before that.
+
+    index wraps via modulo unconditionally, so a stale index left over
+    from a since-shrunk page list (pages unchecked while rotation was
+    running) can never point past the end of the current list.
+    """
+    if page_count <= 0:
+        return 0, last_advance_ts if last_advance_ts is not None else now, False
+
+    safe_index = index % page_count
+    if last_advance_ts is None:
+        return safe_index, now, True
+    if now - last_advance_ts >= interval_seconds:
+        return (safe_index + 1) % page_count, now, True
+    return safe_index, last_advance_ts, False
 
 
 # Same small font every page already uses for its own labels (status.py/
@@ -229,6 +267,8 @@ def epaper_worker(
     get_time_format: Callable[[], str] = lambda: "24",
     get_radio_identity: Callable[[], dict[str, str]] = lambda: {},
     get_uptime_seconds: Callable[[], float | None] = lambda: None,
+    get_rotation_config: Callable[[], dict] = lambda: {},
+    ui_state: dict | None = None,
     stop_event: threading.Event | None = None,
 ) -> None:
     stop_event = stop_event or threading.Event()
@@ -243,6 +283,7 @@ def epaper_worker(
                     get_battery_percent, get_active_page, get_last_error,
                     get_power_readings, get_cpu_temp, get_latest_message, get_display_language,
                     get_temperature_unit, get_time_format, get_radio_identity, get_uptime_seconds,
+                    get_rotation_config, ui_state,
                 )
         except Exception:
             logger.exception("[EPAPER] epaper_worker: poll failed")
@@ -371,6 +412,8 @@ def _poll_once(
     get_time_format=lambda: "24",
     get_radio_identity=lambda: {},
     get_uptime_seconds=lambda: None,
+    get_rotation_config=lambda: {},
+    ui_state=None,
 ) -> None:
     data, content_key = _build_status_fields(
         state_lock, nodes, get_radio_status, get_cpu_percent, get_ram_percent,
@@ -415,6 +458,35 @@ def _poll_once(
         )
         manager.mark_dirty(image, priority=EventPriority.CRITICAL)
         return
+
+    # Task 40: auto-rotation. Deliberately placed after the critical-alert
+    # return above (not before it) - during an active alert, _poll_once()
+    # never reaches this point at all, so rotation's own clock (last
+    # advance timestamp) simply stops advancing along with everything
+    # else, for free, with no explicit pause/resume needed. When the alert
+    # clears, advance_rotation() sees a large now-last_advance_ts gap and
+    # advances exactly one step from wherever it left off - continuing the
+    # same cycle position, never resetting to the start.
+    if ui_state is not None:
+        rotation_config = get_rotation_config() or {}
+        if rotation_config.get("enabled"):
+            checked = set(rotation_config.get("pages") or [])
+            rotation_pages = [p for p in ROTATION_ALLOWED_PAGES if p in checked]
+            if rotation_pages:
+                interval = rotation_config.get("interval_seconds") or DEFAULT_EPAPER_CONFIG["rotation_interval_seconds"]
+                new_index, new_last_ts, advanced = advance_rotation(
+                    ui_state.get("rotation_index", 0), len(rotation_pages),
+                    ui_state.get("rotation_last_advance_ts"), time.time(), interval,
+                )
+                ui_state["rotation_index"] = new_index
+                ui_state["rotation_last_advance_ts"] = new_last_ts
+                if advanced:
+                    # Only on an actual advance - not every ~5s poll tick -
+                    # so a manual "Show X" click (which writes active_page
+                    # directly, see api/api_hardware_display.py's show
+                    # route) stays visible until rotation's own next real
+                    # tick, instead of being stomped within seconds.
+                    ui_state["active_page"] = rotation_pages[new_index]
 
     active_page = get_active_page()
     if active_page and active_page != "status":

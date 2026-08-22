@@ -490,6 +490,13 @@ def _epaper_get_battery_percent():
 def _epaper_get_active_page():
     return epaper_ui_state.get("active_page", "status")
 
+def _epaper_get_rotation_config():
+    return {
+        "enabled": bool(epaper_config.get("rotation_enabled", False)),
+        "pages": list(epaper_config.get("rotation_pages") or []),
+        "interval_seconds": float(epaper_config.get("rotation_interval_seconds", 30.0)),
+    }
+
 def _epaper_get_last_error():
     return radio_connection_manager.status(radio_health.get("listener_running", False)).get("last_error", "")
 
@@ -5845,6 +5852,8 @@ def start_runtime():
                 get_time_format=_epaper_get_time_format,
                 get_radio_identity=_epaper_get_radio_identity,
                 get_uptime_seconds=_epaper_get_uptime_seconds,
+                get_rotation_config=_epaper_get_rotation_config,
+                ui_state=epaper_ui_state,
             ),
             daemon=True,
         ).start()

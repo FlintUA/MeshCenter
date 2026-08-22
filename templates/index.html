@@ -1470,6 +1470,37 @@
                                 <button type="button" class="mc-refresh-btn" onclick="epaperShowPage('message', this)"><span data-i18n="settings.epaper_show_message">Message</span></button>
                             </div>
 
+                            <div class="settings-option settings-option--checkbox" style="margin-top:14px;">
+                                <label class="settings-option-label" for="epaperRotationEnabled" data-i18n="settings.epaper_rotation_enabled">Auto-rotate pages</label>
+                                <input type="checkbox" id="epaperRotationEnabled" onchange="setEpaperRotationEnabled(this.checked)">
+                            </div>
+
+                            <div class="settings-option settings-option--select" id="epaperRotationIntervalRow" style="display:none;">
+                                <label class="settings-option-label" for="epaperRotationInterval" data-i18n="settings.epaper_rotation_interval">Rotation interval</label>
+                                <div class="settings-inline-input">
+                                    <input id="epaperRotationInterval" class="settings-number-input" type="number" min="5" max="3600" step="1" onchange="setEpaperRotationInterval(this.value)">
+                                    <span data-i18n="common.seconds">s</span>
+                                </div>
+                            </div>
+
+                            <div class="settings-option-label" id="epaperRotationPagesLabel" style="display:none;" data-i18n="settings.epaper_rotation_pages">Pages to rotate</div>
+                            <div class="settings-option settings-option--checkbox epaper-rotation-page-row" id="epaperRotationPageRowStatus" style="display:none;">
+                                <label class="settings-option-label" for="epaperRotationPageStatus" data-i18n="settings.epaper_show_status">Status</label>
+                                <input type="checkbox" id="epaperRotationPageStatus" data-rotation-page="status" onchange="setEpaperRotationPages()">
+                            </div>
+                            <div class="settings-option settings-option--checkbox epaper-rotation-page-row" id="epaperRotationPageRowRadio" style="display:none;">
+                                <label class="settings-option-label" for="epaperRotationPageRadio" data-i18n="settings.epaper_show_radio">Radio</label>
+                                <input type="checkbox" id="epaperRotationPageRadio" data-rotation-page="radio" onchange="setEpaperRotationPages()">
+                            </div>
+                            <div class="settings-option settings-option--checkbox epaper-rotation-page-row" id="epaperRotationPageRowPower" style="display:none;">
+                                <label class="settings-option-label" for="epaperRotationPagePower" data-i18n="settings.epaper_show_power">Power</label>
+                                <input type="checkbox" id="epaperRotationPagePower" data-rotation-page="power" onchange="setEpaperRotationPages()">
+                            </div>
+                            <div class="settings-option settings-option--checkbox epaper-rotation-page-row" id="epaperRotationPageRowSystem" style="display:none;">
+                                <label class="settings-option-label" for="epaperRotationPageSystem" data-i18n="settings.epaper_show_system">System</label>
+                                <input type="checkbox" id="epaperRotationPageSystem" data-rotation-page="system" onchange="setEpaperRotationPages()">
+                            </div>
+
                             <details class="epaper-advanced">
                                 <summary data-i18n="settings.epaper_advanced">Advanced (GPIO / SPI)</summary>
                                 <div class="settings-card-note" data-i18n="settings.epaper_advanced_warning">These fields do not apply automatically. A wrong value can hang the display until the process restarts - always use "Apply &amp; Re-init" to validate before saving.</div>
@@ -2144,7 +2175,7 @@
 <script src="{{ url_for('static', filename='chat-camera.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-map.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20260821-domain-split"></script>
-<script src="/static/chat.js?v=20260818-security-card"></script>
+<script src="/static/chat.js?v=20260822-epaper-rotation"></script>
 <script src="/static/media.js?v=20260818-xss-fix-delete-onclick"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 

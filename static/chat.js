@@ -9117,6 +9117,55 @@ function renderRtcCard(hardwareRtcData, profileId) {
         </section>`;
 }
 
+function renderBme280Card(hardwareBme280Data, profileId) {
+    // Same "nothing rendered at all" convention as renderDisplayCard() -
+    // but BME280 only has two independent stages (detected/readable, see
+    // hardware/bme280_service.py's module docstring: no Device Tree
+    // overlay/kernel driver involved, so there's no third "configured"
+    // stage the way RTC has one - not artificially adding one here just
+    // to visually match renderRtcCard()).
+    if (!hardwareBme280Data || !hardwareBme280Data.ok) return '';
+    const stages = hardwareBme280Data.stages || {};
+    const detected = !!stages.detected?.ok;
+    const readable = !!stages.readable?.ok;
+    if (!detected) return '';
+
+    // This is host-local I2C hardware, NOT the mesh-telemetry "Environmental
+    // sensor" card built elsewhere in loadPeripheralDevices() from
+    // /api/devices' sensor_data (radio telemetry from a remote node) - the
+    // same devices.active_profile eyebrow the other host-local cards
+    // (camera/display/RTC) use, and the "BME280" title itself, keep this
+    // visually distinct so the two are never mistaken for the same thing.
+    const eyebrow = escapeHtml(window.I18N.t('devices.active_profile', { id: deviceDashboardValue(profileId) }));
+    const statusClass = readable ? 'device-status-ok' : 'device-status-warning';
+    const statusLabel = readable ? window.I18N.t('devices.bme280_ready') : window.I18N.t('devices.bme280_incomplete');
+    const stageMark = (ok) => ok ? '✓' : '✗';
+
+    const values = hardwareBme280Data.values || {};
+    const valueRows = readable ? `
+                <div><dt>${escapeHtml(window.I18N.t('node_panel.temperature'))}</dt><dd>${formatTemperature(values.temperature_c)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('node_panel.humidity'))}</dt><dd>${formatPeripheralMetric(values.humidity_pct, '%')}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('node_panel.pressure'))}</dt><dd>${formatPressure(values.pressure_hpa)}</dd></div>` : '';
+
+    return `
+        <section class="peripheral-card">
+            <div class="peripheral-card-header">
+                <div>
+                    <div class="device-card-eyebrow">${eyebrow}</div>
+                    <h3>BME280</h3>
+                </div>
+                <div class="device-status-pill ${statusClass}">
+                    <span class="device-status-dot"></span>${escapeHtml(statusLabel)}
+                </div>
+            </div>
+            <dl class="device-detail-list">
+                <div><dt>${escapeHtml(window.I18N.t('devices.bme280_detected'))}</dt><dd>${stageMark(detected)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.bme280_readable'))}</dt><dd>${stageMark(readable)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('devices.rtc_bus_address'))}</dt><dd>${deviceDashboardValue(hardwareBme280Data.address)} (bus ${deviceDashboardValue(hardwareBme280Data.bus)})</dd></div>${valueRows}
+            </dl>
+        </section>`;
+}
+
 function renderCameraManagerCards(cameraManagerData, profileId) {
     const eyebrow = escapeHtml(window.I18N.t('devices.active_profile', { id: deviceDashboardValue(profileId) }));
 
@@ -9283,11 +9332,12 @@ async function loadPeripheralDevices(showFeedback = false) {
     }
 
     try {
-        const [response, cameraManagerResponse, hardwareDisplayResponse, hardwareRtcResponse] = await Promise.all([
+        const [response, cameraManagerResponse, hardwareDisplayResponse, hardwareRtcResponse, hardwareBme280Response] = await Promise.all([
             fetch('/api/devices', { cache: 'no-store' }),
             fetch('/api/devices/cameras', { cache: 'no-store' }).catch(() => null),
             fetch('/api/hardware/display', { cache: 'no-store' }).catch(() => null),
             fetch('/api/hardware/rtc', { cache: 'no-store' }).catch(() => null),
+            fetch('/api/hardware/bme280', { cache: 'no-store' }).catch(() => null),
         ]);
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || window.I18N.t('devices.unable_to_load'));
@@ -9300,6 +9350,9 @@ async function loadPeripheralDevices(showFeedback = false) {
             : null;
         const hardwareRtcData = hardwareRtcResponse && hardwareRtcResponse.ok
             ? await hardwareRtcResponse.json().catch(() => null)
+            : null;
+        const hardwareBme280Data = hardwareBme280Response && hardwareBme280Response.ok
+            ? await hardwareBme280Response.json().catch(() => null)
             : null;
 
         // The new camera-driver framework (camera_manager.py) replaces the
@@ -9346,10 +9399,11 @@ async function loadPeripheralDevices(showFeedback = false) {
         const cameraCards = renderCameraManagerCards(cameraManagerData, data.profile_id);
         const displayCard = renderDisplayCard(hardwareDisplayData, data.profile_id);
         const rtcCard = renderRtcCard(hardwareRtcData, data.profile_id);
+        const bme280Card = renderBme280Card(hardwareBme280Data, data.profile_id);
 
         container.dataset.loaded = '1';
         container.innerHTML = `
-            <div class="peripheral-grid">${cameraCards}${displayCard}${rtcCard}${cards}</div>
+            <div class="peripheral-grid">${cameraCards}${displayCard}${rtcCard}${bme280Card}${cards}</div>
             <section class="peripheral-card peripheral-add-card" aria-disabled="true">
                 <div class="peripheral-add-icon">＋</div>
                 <h3>${escapeHtml(window.I18N.t('devices.add_device'))}</h3>

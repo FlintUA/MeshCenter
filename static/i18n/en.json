@@ -321,7 +321,11 @@
     "rtc_configured": "Kernel configured",
     "rtc_readable": "Readable",
     "rtc_bus_address": "Bus / address",
-    "rtc_linux_device": "Linux device"
+    "rtc_linux_device": "Linux device",
+    "bme280_ready": "Ready",
+    "bme280_incomplete": "Incomplete",
+    "bme280_detected": "Detected",
+    "bme280_readable": "Readable"
   },
   "node_manager": {
     "title": "Node Manager",

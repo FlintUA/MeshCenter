@@ -321,7 +321,11 @@
     "rtc_configured": "Настроено ядром",
     "rtc_readable": "Читается",
     "rtc_bus_address": "Шина / адрес",
-    "rtc_linux_device": "Устройство Linux"
+    "rtc_linux_device": "Устройство Linux",
+    "bme280_ready": "Готово",
+    "bme280_incomplete": "Не завершено",
+    "bme280_detected": "Обнаружено",
+    "bme280_readable": "Читается"
   },
   "node_manager": {
     "title": "Менеджер узлов",

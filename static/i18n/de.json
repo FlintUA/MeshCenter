@@ -321,7 +321,11 @@
     "rtc_configured": "Kernel konfiguriert",
     "rtc_readable": "Lesbar",
     "rtc_bus_address": "Bus / Adresse",
-    "rtc_linux_device": "Linux-Gerät"
+    "rtc_linux_device": "Linux-Gerät",
+    "bme280_ready": "Bereit",
+    "bme280_incomplete": "Unvollständig",
+    "bme280_detected": "Erkannt",
+    "bme280_readable": "Lesbar"
   },
   "node_manager": {
     "title": "Knoten-Manager",

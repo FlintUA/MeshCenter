@@ -1,0 +1,19 @@
+# MeshCenter - grants the `i2c` group read access to the RTC hardware clock
+# device. Debian/Raspberry Pi OS ship no udev rule for /dev/rtcN at all, so
+# it defaults to root:root mode 0600 - confirmed live (task 35) via
+# `ls -l /dev/rtc0` on two nodes with a physical DS3231 attached, both
+# showing the identical permission gap. Without this,
+# hardware/rtc_service.py's readable-stage check (`hwclock -r`, deliberately
+# called without sudo - see that module's own docstring) can never succeed
+# for the unprivileged MeshCenter service user, even once the RTC is
+# correctly detected and configured.
+#
+# Reuses the `i2c` group rather than inventing a new one: it's already what
+# grants /dev/i2c-N access via the stock 60-i2c-aliases.rules/
+# 60-i2c-tools.rules (GROUP="i2c", MODE="0660"), and both install.sh and
+# meshcenter-firstboot.sh already put the MeshCenter user in it for that
+# reason - RTC access piggybacks on membership that already has to exist
+# for I2C detection to work at all.
+#
+# Read-only (no "w") is enough - hwclock -r only reads.
+SUBSYSTEM=="rtc", GROUP="i2c", MODE="0640"

@@ -510,6 +510,23 @@ step_systemd() {
     sudo install -o root -g root -m 0755 \
         "${INSTALL_DIR}/scripts/meshcenter-hw-config" /usr/local/sbin/meshcenter-hw-config
 
+    # I2C bus access (unprivileged, via stock 60-i2c-aliases.rules) and now
+    # RTC hardware-clock access (deploy/99-meshcenter-rtc.rules below) both
+    # ride on membership in the `i2c` group - meshcenter-firstboot.sh's
+    # first-boot path already grants this, but this manual/existing-install
+    # path (unlike its `dialout` usermod above) never did (task 35).
+    sudo usermod -a -G i2c "$USER" 2>/dev/null || true
+
+    # Grants the `i2c` group read access to /dev/rtcN - without it,
+    # hardware/rtc_service.py's readable-stage check can never succeed even
+    # once the RTC is detected and configured (task 35). Declarative, not a
+    # sudo rule - unlike the helper above, this needs no privileged runtime
+    # call.
+    sudo install -o root -g root -m 0644 \
+        "${INSTALL_DIR}/deploy/99-meshcenter-rtc.rules" /etc/udev/rules.d/99-meshcenter-rtc.rules
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger --subsystem-match=rtc
+
     # Render the repo's sudoers templates (service restart/reboot/poweroff,
     # Wi-Fi management, and the hardware-config helper above) instead of a
     # partial hand-rolled set — the UI's System, Wi-Fi and hardware actions

@@ -9,7 +9,7 @@ POST /api/settings merge-and-replace in api_settings.py, and the hash is
 never included in a settings.json snapshot handed back to the browser.
 """
 
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from flask import jsonify, redirect, request, render_template, session
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -45,6 +45,33 @@ def is_protected(auth_state):
     # An enabled flag with no usable hash never blocks access - avoids a
     # misconfigured/corrupted auth.json permanently locking out the UI.
     return bool(auth_state.get("enabled")) and bool(str(auth_state.get("password_hash") or "").strip())
+
+
+def sanitize_next_url(next_url):
+    """Ensure next_url is a relative path on the same host to prevent open redirects."""
+    if not isinstance(next_url, str):
+        return "/"
+
+    next_url = next_url.strip()
+
+    # Must start with '/' and not '//' or '/\'
+    if not next_url.startswith("/") or next_url.startswith("//") or next_url.startswith("/\\"):
+        return "/"
+
+    # Backslashes anywhere in the URL can trigger browser-specific domain resolution bypasses
+    if "\\" in next_url:
+        return "/"
+
+    try:
+        parsed = urlsplit(next_url)
+        if parsed.scheme or parsed.netloc:
+            return "/"
+        if not parsed.path.startswith("/") or parsed.path.startswith("//"):
+            return "/"
+    except Exception:
+        return "/"
+
+    return next_url
 
 
 def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, resolve_ui_language=None):
@@ -90,9 +117,7 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
         if not protected:
             return redirect("/")
 
-        next_url = request.values.get("next") or "/"
-        if not next_url.startswith("/") or next_url.startswith("//"):
-            next_url = "/"
+        next_url = sanitize_next_url(request.values.get("next"))
 
         error = None
         if request.method == "POST":

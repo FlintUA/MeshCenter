@@ -644,7 +644,7 @@
     "unable_to_save_settings_short": "Не удалось сохранить настройки",
     "open_location_settings": "Открыть настройки местоположения",
     "epaper_title": "Дисплей E-Paper",
-    "epaper_description": "Статусный дисплей Waveshare 2.13\".",
+    "epaper_description": "Настройки дисплея и отображения информации.",
     "epaper_enabled": "Включено",
     "epaper_refresh_mode": "Режим обновления",
     "epaper_mode_responsive": "Отзывчивый",

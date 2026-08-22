@@ -644,7 +644,7 @@
     "unable_to_save_settings_short": "Unable to save settings",
     "open_location_settings": "Open location settings",
     "epaper_title": "E-Paper Display",
-    "epaper_description": "Waveshare 2.13\" status display.",
+    "epaper_description": "Display and information-display settings.",
     "epaper_enabled": "Enabled",
     "epaper_refresh_mode": "Refresh mode",
     "epaper_mode_responsive": "Responsive",

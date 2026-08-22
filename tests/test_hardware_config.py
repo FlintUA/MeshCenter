@@ -75,12 +75,41 @@ def test_helper_timeout_reported_not_raised(tmp_path):
 
 
 def test_status_calls_helper_status_subcommand():
-    mock_run = MagicMock(return_value=_completed(stdout='{"i2c_enabled": true, "rtc_overlay": "ds3231"}'))
+    mock_run = MagicMock(
+        return_value=_completed(
+            stdout='{"i2c_enabled": true, "rtc_overlay": "ds3231", "i2c_dev_module": true}'
+        )
+    )
     with patch("subprocess.run", mock_run):
         result = hardware_config.helper_status()
-    assert result["ok"] is True
+    assert result == {
+        "ok": True,
+        "i2c_enabled": True,
+        "rtc_overlay": "ds3231",
+        "i2c_dev_module": True,
+    }
     args, _ = mock_run.call_args
     assert args[0] == ["sudo", "-n", hardware_config.HELPER_PATH, "status"]
+
+
+def test_status_helper_failure_passed_through_unparsed(tmp_path):
+    with patch("subprocess.run", return_value=_completed(returncode=1, stderr="boom")):
+        result = hardware_config.helper_status()
+    assert result == {"ok": False, "reason": "boom"}
+
+
+def test_status_invalid_json_reported_not_raised():
+    with patch("subprocess.run", return_value=_completed(stdout="not json")):
+        result = hardware_config.helper_status()
+    assert result["ok"] is False
+    assert "invalid JSON" in result["reason"]
+
+
+def test_status_non_object_json_reported():
+    with patch("subprocess.run", return_value=_completed(stdout="[1, 2, 3]")):
+        result = hardware_config.helper_status()
+    assert result["ok"] is False
+    assert "non-object" in result["reason"]
 
 
 # ---------------- pending-setup state machine ----------------

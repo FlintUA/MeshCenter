@@ -17,7 +17,21 @@ without hand-placing each byte.
 import subprocess
 from unittest.mock import patch
 
+import pytest
+
 from hardware import bme280_service
+
+# get_status() goes through the real i2c_service.scan_bus(), which since
+# task 27 checks /dev/i2c-N exists before ever calling i2cdetect - this
+# dev/CI machine has no such device file, so without this every test below
+# would short-circuit to "not detected" before subprocess.run's mocked
+# dispatch is ever reached. Autouse so it applies uniformly; none of these
+# tests are about that check itself (that's covered directly in
+# test_hardware_i2c_service.py).
+@pytest.fixture(autouse=True)
+def _device_file_exists():
+    with patch("hardware.i2c_service.Path.exists", return_value=True):
+        yield
 
 
 def _u16_le(value: int) -> list:

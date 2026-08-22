@@ -26,7 +26,19 @@ def register_hardware_i2c_routes(app, handle_errors, data_dir: str):
     def api_hardware_i2c_status():
         hardware_config.reconcile_pending(data_dir)
         scan = i2c_service.scan_bus()
-        return jsonify({"ok": True, **scan})
+        response = {"ok": True, **scan}
+        if not scan.get("ok"):
+            # Only pay the extra sudo round-trip (hardware_config.py's
+            # helper_status(), which shells out to the privileged helper)
+            # once the free i2c_service.scan_bus() check has already
+            # failed - i2c_dev_module_loaded (task 27) distinguishes "I2C
+            # was never enabled" from "enabled, i2c-dev registered, just
+            # waiting on a reboot to actually load" without adding that
+            # cost to the common case where the bus already works.
+            helper = hardware_config.helper_status()
+            if helper.get("ok"):
+                response["i2c_dev_module_loaded"] = helper.get("i2c_dev_module")
+        return jsonify(response)
 
     @app.route("/api/hardware/i2c/enable", methods=["POST"])
     @handle_errors

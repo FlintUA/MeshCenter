@@ -322,6 +322,7 @@
     "rtc_readable": "Lesbar",
     "rtc_bus_address": "Bus / Adresse",
     "rtc_linux_device": "Linux-Gerät",
+    "rtc_not_detected_reason": "Nicht erkannt: {reason}",
     "rtc_not_configured": "Nicht eingerichtet",
     "rtc_setup_button": "I2C aktivieren & RTC einrichten",
     "rtc_setup_confirm": "I2C aktivieren und den RTC-Overlay einrichten?\n\nDas ändert die Systemdatei /boot/firmware/config.txt und erfordert einen Neustart, damit es wirksam wird.",

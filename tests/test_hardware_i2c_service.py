@@ -7,7 +7,21 @@ subprocess.run is mocked throughout; nothing here touches real hardware.
 import subprocess
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from hardware import i2c_service
+
+# Every pre-existing test in this file exercises the subprocess.run/i2cdetect
+# path and predates the /dev/i2c-N existence check added in task 27 - none
+# of them mock Path.exists, and the check would otherwise short-circuit
+# before subprocess.run is even called (this file's dev machine, Windows or
+# a CI Linux box, has no /dev/i2c-1). Autouse so every test below keeps
+# testing what it already tests; tests for the new early-return path itself
+# override this explicitly.
+@pytest.fixture(autouse=True)
+def _device_file_exists():
+    with patch("hardware.i2c_service.Path.exists", return_value=True):
+        yield
 
 # Captured verbatim from `sudo i2cdetect -y 1` on the real test node (104) -
 # a DS3231 already bound to the rtc-ds1307 kernel driver, hence "UU" at
@@ -129,3 +143,30 @@ def test_scan_bus_passes_bus_number_as_argument_not_shell_string():
     args, kwargs = mock_run.call_args
     assert args[0] == ["i2cdetect", "-y", "3"]
     assert kwargs.get("shell") is not True
+
+
+# ---------------- /dev/i2c-N existence check (task 27) ----------------
+
+def test_scan_bus_missing_device_file_skips_subprocess_entirely():
+    # The whole point of this check is avoiding the real i2cdetect call
+    # (and its less-actionable error message) when the character device
+    # isn't there at all - assert subprocess.run is never even invoked.
+    mock_run = MagicMock()
+    with patch("hardware.i2c_service.Path.exists", return_value=False), \
+            patch("subprocess.run", mock_run):
+        result = i2c_service.scan_bus(1)
+
+    mock_run.assert_not_called()
+    assert result["ok"] is False
+    assert result["bus"] == 1
+    assert "/dev/i2c-1" in result["reason"]
+    assert "i2c-dev" in result["reason"]
+
+
+def test_scan_bus_missing_device_file_uses_correct_bus_number_in_path():
+    with patch("hardware.i2c_service.Path.exists", return_value=False), \
+            patch("subprocess.run"):
+        result = i2c_service.scan_bus(3)
+
+    assert result["bus"] == 3
+    assert "/dev/i2c-3" in result["reason"]

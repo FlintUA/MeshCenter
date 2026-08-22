@@ -18,6 +18,7 @@ before rebooting.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 from pathlib import Path
@@ -107,7 +108,32 @@ def configure_rtc(data_dir: str, model: str) -> dict:
 
 
 def helper_status() -> dict:
-    return _run_helper("status")
+    """The helper's own `status` subcommand output, parsed - fields today:
+    i2c_enabled/rtc_overlay (from config.txt) and i2c_dev_module (from
+    /etc/modules, task 27 - the piece a bare dtparam=i2c_arm=on doesn't
+    cover: /dev/i2c-N needs the i2c-dev kernel module loaded, which only
+    happens automatically once it's registered there, the same second
+    step raspi-config's own I2C-enable menu item takes).
+
+    On success, `{"ok": True, "i2c_enabled": bool, "rtc_overlay": str|None,
+    "i2c_dev_module": bool}` (whatever the helper's JSON contained,
+    merged in - forward-compatible with fields added later). On any
+    failure (sudo misconfigured, malformed output, ...) `{"ok": False,
+    "reason": "..."}`, same shape as every other function in this module.
+    """
+    result = _run_helper("status")
+    if not result.get("ok"):
+        return result
+
+    try:
+        parsed = json.loads(result.get("stdout", ""))
+    except (ValueError, TypeError) as exc:
+        return {"ok": False, "reason": f"meshcenter-hw-config status returned invalid JSON: {exc}"}
+
+    if not isinstance(parsed, dict):
+        return {"ok": False, "reason": "meshcenter-hw-config status returned a non-object JSON value"}
+
+    return {"ok": True, **parsed}
 
 
 def get_pending(data_dir: str) -> dict | None:

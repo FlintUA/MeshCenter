@@ -322,6 +322,7 @@
     "rtc_readable": "Читается",
     "rtc_bus_address": "Шина / адрес",
     "rtc_linux_device": "Устройство Linux",
+    "rtc_not_detected_reason": "Не обнаружено: {reason}",
     "rtc_not_configured": "Не настроено",
     "rtc_setup_button": "Включить I2C и настроить RTC",
     "rtc_setup_confirm": "Включить I2C и настроить оверлей RTC?\n\nЭто изменит системный файл /boot/firmware/config.txt и потребует перезагрузки для применения.",

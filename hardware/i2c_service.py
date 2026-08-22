@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from pathlib import Path
 
 DEFAULT_BUS = 1
 I2CDETECT_TIMEOUT = 10
@@ -33,6 +34,25 @@ def scan_bus(bus: int = DEFAULT_BUS) -> dict:
     "UU" cells (address claimed by an already-bound kernel driver) count as
     detected - the address responded, that's all this layer answers.
     """
+    device_path = f"/dev/i2c-{bus}"
+    if not Path(device_path).exists():
+        # A cheap, sudo-free check ahead of the real i2cdetect call - found
+        # to matter live (task 27): dtparam=i2c_arm=on alone only brings up
+        # the bus controller at the Device Tree level, not the /dev/i2c-N
+        # character device, which needs the separate i2c-dev kernel module
+        # actually loaded. i2cdetect's own error for this case
+        # ("Could not open file `/dev/i2c-N'...") doesn't explain why or
+        # what to do about it - this does, without the cost of a
+        # privileged status round-trip on every scan.
+        return {
+            "ok": False,
+            "bus": bus,
+            "reason": (
+                f"{device_path} does not exist - I2C may not be enabled yet, or the "
+                "i2c-dev kernel module hasn't loaded (enable I2C, then reboot)"
+            ),
+        }
+
     try:
         result = subprocess.run(
             ["i2cdetect", "-y", str(bus)],

@@ -20,8 +20,6 @@ from dataclasses import dataclass
 from modules.display.drivers.base import DisplayCapabilities
 from modules.display.i18n import DEFAULT_LOCALE, t
 from modules.display.renderer import (
-    CONTENT_Y,
-    SEPARATOR_Y,
     draw_label_value,
     draw_node_header,
     draw_page_header,
@@ -68,17 +66,23 @@ def render(caps: DisplayCapabilities, data: PowerScreenData, locale: str = DEFAU
     w, h = image.size
     right = w - 4
 
-    draw_node_header(image, data.node_name)
+    # Task 42: header height (and everything below it) is dynamic - see
+    # status.py's render() for the shared rationale.
+    header_height = draw_node_header(image, data.node_name)
+    page_header_y = header_height + 2
+    separator_y = header_height + 24
+    content_y = header_height + 30
+
     # Distinct key from "power" below (the CURRENT/POWER wattage pair's own
     # label, correctly "Мощность"/"Leistung" - actual wattage) - the page
     # title means "power supply status" as a whole, not the wattage value
     # specifically, and RU/UK's "Мощность"/"Потужність" read wrong there
     # (found live - user wanted "Питание", not "Мощность", for the title).
-    draw_page_header(image, t("power_page_title", locale))
-    draw_separator(image, SEPARATOR_Y)
+    draw_page_header(image, t("power_page_title", locale), y=page_header_y)
+    draw_separator(image, separator_y)
 
     has_current_power = data.current is not None or data.power is not None
-    y = CONTENT_Y
+    y = content_y
 
     # HERO voltage, centered - bigger still when current/power aren't
     # available (doc section 8's fallback: "автоматически перестраивать

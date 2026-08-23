@@ -40,7 +40,7 @@ from modules.display.pages import power as power_page
 from modules.display.pages import radio as radio_page
 from modules.display.pages import system as system_page
 from modules.display.pages.status import StatusScreenData, render
-from modules.display.renderer import load_font
+from modules.display.renderer import load_font, node_header_layout
 from modules.display.time_helper import draw_epaper_clock, format_epaper_time
 
 # meshsrv.time_service (Stage 2 of the Time System feature) is the single
@@ -169,7 +169,8 @@ _CLOCK_FONT_SIZE = 12
 
 
 def _mark_dirty_with_clock(
-    manager: DisplayManager, image, time_str: str, priority: EventPriority = EventPriority.NORMAL,
+    manager: DisplayManager, image, time_str: str, local_node_name: str,
+    priority: EventPriority = EventPriority.NORMAL,
 ) -> None:
     """Overlay the live clock onto an already-fully-rendered page image,
     then hand it to DisplayManager.mark_dirty() - hashing the *pre-overlay*
@@ -189,7 +190,13 @@ def _mark_dirty_with_clock(
     since drawing happens in-place on the same object passed to
     mark_dirty()."""
     content_hash = hashlib.sha256(image.tobytes()).hexdigest()
-    draw_epaper_clock(image, time_str, load_font(_CLOCK_FONT_SIZE))
+    # Task 42: the node-name header can be 1 or 2 lines - the clock must
+    # line up with whichever height this node's name actually produced,
+    # not the old fixed single-line offset (node_header_layout() is the
+    # same pure sizing decision draw_node_header() used to render the
+    # header already baked into `image`, just without touching an Image).
+    header_height, _lines, _font = node_header_layout(local_node_name, image.size[0])
+    draw_epaper_clock(image, time_str, load_font(_CLOCK_FONT_SIZE), y=header_height + 2)
     manager.mark_dirty(image, priority=priority, content_hash=content_hash)
 
 
@@ -513,12 +520,12 @@ def _poll_once(
             get_battery_percent, get_radio_identity, get_uptime_seconds,
         )
         if image is not None:
-            _mark_dirty_with_clock(manager, image, clock_text, priority=priority)
+            _mark_dirty_with_clock(manager, image, clock_text, local_node_name, priority=priority)
             return
 
     data.last_update = content_state.stamp(content_key)
     image = render(manager.capabilities, data, locale=locale)
-    _mark_dirty_with_clock(manager, image, clock_text, priority=priority)
+    _mark_dirty_with_clock(manager, image, clock_text, local_node_name, priority=priority)
 
 
 def build_status_image_now(
@@ -546,7 +553,8 @@ def build_status_image_now(
     image = render(manager.capabilities, data, locale=locale)
     time_status = get_time_status() or {}
     clock_text = format_epaper_time(time_format, time_status.get("timezone", "UTC"))
-    draw_epaper_clock(image, clock_text, load_font(_CLOCK_FONT_SIZE))
+    header_height, _lines, _font = node_header_layout(local_node_name, image.size[0])
+    draw_epaper_clock(image, clock_text, load_font(_CLOCK_FONT_SIZE), y=header_height + 2)
     return image
 
 
@@ -580,5 +588,6 @@ def build_page_image_now(
         return None
     time_status = get_time_status() or {}
     clock_text = format_epaper_time(time_format, time_status.get("timezone", "UTC"))
-    draw_epaper_clock(image, clock_text, load_font(_CLOCK_FONT_SIZE))
+    header_height, _lines, _font = node_header_layout(local_node_name, image.size[0])
+    draw_epaper_clock(image, clock_text, load_font(_CLOCK_FONT_SIZE), y=header_height + 2)
     return image

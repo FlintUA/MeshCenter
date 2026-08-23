@@ -12,8 +12,6 @@ from dataclasses import dataclass
 from modules.display.drivers.base import DisplayCapabilities
 from modules.display.i18n import DEFAULT_LOCALE, t
 from modules.display.renderer import (
-    CONTENT_Y,
-    SEPARATOR_Y,
     draw_inverted_status,
     draw_label_value,
     draw_node_header,
@@ -54,12 +52,18 @@ def render(caps: DisplayCapabilities, data: RadioScreenData, locale: str = DEFAU
     w, h = image.size
     right = w - 4
 
-    draw_node_header(image, data.node_name)
-    draw_page_header(image, t("radio", locale))
-    draw_separator(image, SEPARATOR_Y)
+    # Task 42: header height (and everything below it) is dynamic - see
+    # status.py's render() for the shared rationale.
+    header_height = draw_node_header(image, data.node_name)
+    page_header_y = header_height + 2
+    separator_y = header_height + 24
+    content_y = header_height + 30
+
+    draw_page_header(image, t("radio", locale), y=page_header_y)
+    draw_separator(image, separator_y)
 
     status_label = t(data.status, locale).upper()
-    y = CONTENT_Y
+    y = content_y
     if data.status == "online":
         status_font = fit_font(status_label, w - 16, _STATUS_SIZES, bold=True)
         tw = text_width(status_label, status_font)

@@ -1257,10 +1257,6 @@
         gap: 8px;
     }
 
-    .weather-current--compact {
-        min-width: 118px;
-    }
-
     .weather-current--compact .weather-icon { font-size: 32px; }
     .weather-current--compact .weather-temperature { font-size: 26px; }
 }
@@ -2105,11 +2101,21 @@ html[data-theme="dark"] .system-log-panel {
 .weather-location-block.reference-is-disabled .weather-location-coordinates { color: #8a96a5; }
 
 .weather-current--compact {
+    /* min-width was 132px - reserved more width than the icon+temperature
+       actually need, and since .weather-summary's location column is
+       minmax(0, 1fr) (grid-template-columns: minmax(0, 1fr) auto), every
+       px reserved here is a px NOT available to the location name -
+       found live: the icon sat with a gap of unused space to its left
+       instead of hugging the temperature, while "Erlangen, Germany" got
+       clipped for room that was never actually needed on this side
+       (user's own screenshot). Shrunk to fit content, gap tightened -
+       the icon now sits right next to the temperature instead of
+       floating with slack space between them. */
     display: grid;
     grid-template-columns: auto auto;
     align-items: center;
-    gap: 9px;
-    min-width: 132px;
+    gap: 5px;
+    min-width: 0;
     padding: 0;
     text-align: right;
 }
@@ -2122,7 +2128,12 @@ html[data-theme="dark"] .system-log-panel {
     line-height: 1;
 }
 .weather-current--compact .weather-condition {
-    /* Was a single forced-nowrap line with an ellipsis - a longer
+    /* max-width also sets the width of the whole temperature+condition
+       column (.weather-current-copy auto-sizes to its widest child) -
+       112px was wider than it needs to be now that the text wraps to 2
+       lines instead of demanding a single unbroken line, and every px
+       here is a px the icon (and, past that, the location name) don't
+       get. Was a single forced-nowrap line with an ellipsis - a longer
        translated condition string ("облачно с прояснениями") ran out of
        the fixed 112px column and got clipped mid-word, and on a narrower
        card the same squeeze pushed the location name (.weather-location-
@@ -2136,7 +2147,7 @@ html[data-theme="dark"] .system-log-panel {
        height). display:-webkit-box + line-clamp is the standard (if
        oddly-prefixed) cross-browser way to keep the ellipsis-on-overflow
        behavior at 2 lines instead of 1. */
-    max-width: 112px;
+    max-width: 88px;
     margin-top: 5px;
     overflow: hidden;
     font-size: 11px;

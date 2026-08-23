@@ -152,6 +152,9 @@ Typical use cases include:
 
 The fastest path is **Automatic Installation**: flash an SD card with
 Raspberry Pi Imager, drop `meshcenter-firstboot.sh` onto the bootfs drive,
+add a one-line `runcmd` entry to the bootfs drive's `user-data` file so
+cloud-init actually launches it on first boot (see INSTALL.md's Step 3 -
+skipping this is the most common reason "nothing happens" after boot),
 connect your Meshtastic radio via USB **before** first boot, then power on
 — MeshCenter installs itself unattended (~5-20 min depending on hardware
 and whether camera support is requested) and is reachable at
@@ -262,7 +265,7 @@ Waypoints can be created, stored, managed and transmitted directly from the brow
 - High-resolution photo capture
 - Integrated photo gallery with thumbnails, download and delete
 - Adjustable image quality and FPS
-- Raspberry Pi Camera support
+- Raspberry Pi Camera (CSI) and USB/UVC webcam support, side by side if both are connected
 - Media workspace to browse local captures
 
 ### 📶 Wi-Fi Manager
@@ -387,6 +390,7 @@ The current reference setup includes:
 - Supported cameras:
   - IMX219 8 MP (currently installed)
   - OV5647 5 MP (tested)
+  - USB/UVC webcam (tested, via `camera_manager`'s shared driver framework - see "Camera" below)
 - INA226 power monitor
 - BME280 environmental sensor (I2C)
 - DS3231 real-time clock (I2C)
@@ -638,6 +642,7 @@ meshcenter/
 ├── meshsrv/            # Meshtastic communication layer
 ├── modules/display/    # e-Paper display rendering, pages and drivers
 ├── storage/            # JSON storage helpers
+├── system/             # System/CPU history collection
 ├── telemetry/          # Telemetry processing
 ├── weather/            # Pluggable weather provider backend
 ├── utils/              # Shared utility functions
@@ -979,24 +984,9 @@ Photos are stored locally and are **not** transmitted through Meshtastic.
 
 ### ⚙️ Local Storage
 
-MeshCenter stores application data locally using JSON files.
+MeshCenter stores application data locally using JSON files (see "Data Storage" below for the full list of stored files).
 
 This keeps the project simple and easy to inspect, backup and repair.
-
-Typical stored files include:
-
-```
-messages.json
-nodes.json
-chats.json
-sensors.json
-telemetry_history.json
-deleted_dm.json
-settings.json
-camera_config.json
-node_icons/
-screenshots/          # camera photos
-```
 
 Local storage is useful because:
 
@@ -1133,18 +1123,7 @@ See `static/i18n/README.md` for translator notes, including terms that must neve
 
 ### 🧩 Modular Architecture
 
-MeshCenter is gradually moving from a single large server file to a modular architecture.
-
-Current modules include:
-
-```
-api/
-camera/
-meshsrv/
-storage/
-telemetry/
-utils/
-```
+MeshCenter is gradually moving from a single large server file to a modular architecture (see "Project Structure" above for the current module list).
 
 This makes the project easier to maintain and extend.
 
@@ -1322,6 +1301,8 @@ MeshCenter consists of several independent modules that work together.
 
 The browser never communicates directly with the Meshtastic node. All communication is handled by the Flask application, which coordinates the different subsystems.
 
+"Meshtastic CLI" above is a simplification: reads (the long-lived listener, plus one-off `--info` calls) go through the official Meshtastic CLI, but sends go directly through the Meshtastic Python SDK's `SerialInterface`, not the CLI - both paths share the same USB serial connection, coordinated so they never run concurrently.
+
 In production, requests reach the Flask application through [Gunicorn](https://gunicorn.org/) (see `gunicorn.conf.py` / `wsgi.py`), not shown separately above to keep the diagram focused on MeshCenter's own subsystems.
 
 ---
@@ -1354,6 +1335,7 @@ deleted_dm.json
 sensors.json
 settings.json
 camera_config.json
+auth.json           # only present once password protection is turned on
 waypoints.db
 node_icons/
 screenshots/
@@ -1397,6 +1379,18 @@ GET    /api/camera/status
 POST   /api/camera/settings
 POST   /api/photo/capture
 POST   /api/photo/save
+
+GET    /api/waypoints
+POST   /api/waypoints/send
+DELETE /api/waypoints/<id>
+
+GET    /api/hardware/i2c
+POST   /api/hardware/i2c/scan
+GET    /api/hardware/rtc
+POST   /api/hardware/rtc/configure
+GET    /api/hardware/bme280
+GET    /api/hardware/display
+POST   /api/hardware/display/show/<page>
 
 GET    /api/timers
 POST   /api/timers
@@ -1525,7 +1519,7 @@ meshtastic --info
 
 ### Camera not working
 
-Verify that Picamera2 is available:
+**CSI camera (Picamera2):** verify that Picamera2 is available:
 
 ```bash
 source venv/bin/activate
@@ -1541,6 +1535,15 @@ python3 -m venv --system-site-packages venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+**USB/UVC webcam:** verify the OS sees the device before checking MeshCenter:
+
+```bash
+ls /dev/video*
+v4l2-ctl --list-devices
+```
+
+If nothing shows up, check the physical connection and `dmesg` for USB errors; if the device is listed but MeshCenter doesn't detect it, check the System Log for the camera subsystem's own detection errors.
 
 ### Service does not start
 

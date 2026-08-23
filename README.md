@@ -152,6 +152,9 @@ Typical use cases include:
 
 The fastest path is **Automatic Installation**: flash an SD card with
 Raspberry Pi Imager, drop `meshcenter-firstboot.sh` onto the bootfs drive,
+add a one-line `runcmd` entry to the bootfs drive's `user-data` file so
+cloud-init actually launches it on first boot (see INSTALL.md's Step 3 -
+skipping this is the most common reason "nothing happens" after boot),
 connect your Meshtastic radio via USB **before** first boot, then power on
 — MeshCenter installs itself unattended (~5-20 min depending on hardware
 and whether camera support is requested) and is reachable at

@@ -13,8 +13,6 @@ from dataclasses import dataclass
 from modules.display.drivers.base import DisplayCapabilities
 from modules.display.i18n import DEFAULT_LOCALE, t
 from modules.display.renderer import (
-    CONTENT_Y,
-    SEPARATOR_Y,
     draw_node_header,
     draw_page_header,
     draw_progress_bar,
@@ -78,15 +76,21 @@ def render(caps: DisplayCapabilities, data: SystemScreenData, locale: str = DEFA
     image, _draw = new_canvas(caps)
     w, h = image.size
 
-    draw_node_header(image, data.node_name)
-    draw_page_header(image, t("system", locale))
-    draw_separator(image, SEPARATOR_Y)
+    # Task 42: header height (and everything below it) is dynamic - see
+    # status.py's render() for the shared rationale.
+    header_height = draw_node_header(image, data.node_name)
+    page_header_y = header_height + 2
+    separator_y = header_height + 24
+    content_y = header_height + 30
+
+    draw_page_header(image, t("system", locale), y=page_header_y)
+    draw_separator(image, separator_y)
 
     label_font = load_font(13, bold=True)
     value_font = load_font(23, bold=True)
     bar_x, bar_width, bar_height = 4, w - 8, 9
 
-    y = CONTENT_Y
+    y = content_y
 
     def metric_row(label: str, percent: float | None, y: int) -> int:
         text = f"{percent:.0f}%" if percent is not None else "--"

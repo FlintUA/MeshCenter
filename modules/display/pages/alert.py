@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from modules.display.drivers.base import DisplayCapabilities
 from modules.display.i18n import DEFAULT_LOCALE, t
 from modules.display.renderer import (
-    NODE_HEADER_HEIGHT,
     draw_node_header,
     draw_text,
     fit_font,
@@ -60,13 +59,13 @@ def render(caps: DisplayCapabilities, data: AlertScreenData, locale: str = DEFAU
     # on a color panel it stays legible white-on-black same as the rest
     # of this screen's text, since draw_node_header() always paints its
     # own black block first regardless of what's already behind it).
-    draw_node_header(image, data.node_name)
+    header_height = draw_node_header(image, data.node_name)
 
     available_width = w - 16
     title_font = fit_font(data.title, available_width, _TITLE_FONT_SIZES, bold=True)
     label_font = load_font(11)
 
-    y = NODE_HEADER_HEIGHT + 8
+    y = header_height + 8
     draw_text(image, (8, y), data.title, "white", title_font)
     y += 24
 

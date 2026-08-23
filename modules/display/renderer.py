@@ -95,16 +95,26 @@ def text_width(text: str, font) -> int:
 # WeAct 200x200 UI Design doc, section 2 - the common frame all five pages
 # (plus alert.py, per this session's decision) build on: an inverse node-
 # name header, a page-title/clock row, a 1px separator, then whatever
-# content the page wants. Exported so time_helper.py's draw_epaper_clock()
-# can share PAGE_HEADER_Y instead of hardcoding a second copy of it - the
-# clock is drawn by a separate call, after content-hash time (see
-# service.py's _mark_dirty_with_clock()), but on the same row as the page
-# title drawn by draw_page_header() below.
-NODE_HEADER_HEIGHT = 30
-PAGE_HEADER_Y = 32
+# content the page wants.
+#
+# Task 42: the node-name header's height is no longer a single fixed
+# constant - a name that doesn't fit one line grows the header to a
+# second line instead of silently overflowing/shrinking past readability
+# (see node_header_layout() below). PAGE_HEADER_Y/SEPARATOR_Y/CONTENT_Y
+# below are the *single-line* header's own Y values - the same +2/+24/+30
+# deltas from the header's actual height apply whether it ended up single
+# or double, so callers that need to be correct for either case compute
+# their own `page_header_y = header_height + 2` etc. from
+# draw_node_header()'s return value (see pages/*.py) rather than using
+# these constants directly. These names stay as backward-compatible
+# defaults for callers that only ever draw a short/known-single-line name
+# (draw_page_header()'s own `y` default, tests, standalone PNG tools).
+NODE_HEADER_HEIGHT_SINGLE = 30
+NODE_HEADER_HEIGHT_DOUBLE = 46
+PAGE_HEADER_Y = NODE_HEADER_HEIGHT_SINGLE + 2
 PAGE_HEADER_CLOCK_FONT_SIZE = 12
-SEPARATOR_Y = 54
-CONTENT_Y = 60
+SEPARATOR_Y = NODE_HEADER_HEIGHT_SINGLE + 24
+CONTENT_Y = NODE_HEADER_HEIGHT_SINGLE + 30
 
 _NODE_HEADER_FONT_SIZES = (22, 20, 18, 16, 14)
 
@@ -175,37 +185,110 @@ def fit_text_to_box(
     return lines[:max_lines], font, line_height
 
 
-def draw_node_header(image: Image.Image, node_name: str) -> None:
+def node_header_layout(node_name: str, width: int) -> tuple[int, list[str], ImageFont.FreeTypeFont]:
+    """Pure - no Image/ImageDraw touched - the sizing decision behind
+    draw_node_header(), split out so service.py can compute the same
+    header_height (and therefore the same page_header_y for the live
+    clock overlay) without rendering anything (see that module's
+    _mark_dirty_with_clock()/build_status_image_now()/
+    build_page_image_now()).
+
+    Returns (header_height, lines, font):
+      - header_height is NODE_HEADER_HEIGHT_SINGLE or _DOUBLE - never
+        anything else, a hard ceiling of 2 lines applies regardless of
+        how long/unbreakable `node_name` is (see the fallback below).
+      - lines is what to draw, 1 or 2 strings, one per line.
+      - font is the single ImageFont used for every returned line.
+
+    Real Meshtastic names can run well past what fits one line even at
+    the smallest candidate size (e.g. "[de.nby.n.RiBeNet.cb] SolisCultor
+    c87b", a real region-prefix + name + short-ID convention, task 42) -
+    tried single-line first (matches the old always-one-line behavior
+    exactly for anything that still fits), then 2 lines word-wrapped via
+    _wrap_to_width(), largest font that keeps both lines within width.
+    If even 2 lines at the smallest size doesn't hold the whole name, the
+    *last* line is ellipsis-truncated character by character rather than
+    letting the header grow a third line or overflow the canvas edge -
+    truncating the last (not first) line is deliberate: in the
+    "[prefix] Name" convention above, the prefix is the disposable part,
+    the meaningful text comes after it.
+    """
+    name = node_name or "-"
+    available_width = width - 16
+
+    for size in _NODE_HEADER_FONT_SIZES:
+        font = load_font(size, bold=True)
+        if text_width(name, font) <= available_width:
+            return NODE_HEADER_HEIGHT_SINGLE, [name], font
+
+    for size in _NODE_HEADER_FONT_SIZES:
+        font = load_font(size, bold=True)
+        lines = _wrap_to_width(name, font, available_width)
+        if len(lines) <= 2 and all(text_width(line, font) <= available_width for line in lines):
+            return NODE_HEADER_HEIGHT_DOUBLE, lines, font
+
+    font = load_font(_NODE_HEADER_FONT_SIZES[-1], bold=True)
+    lines = _wrap_to_width(name, font, available_width)
+    kept = lines[:2]
+    idx = len(kept) - 1
+    line = kept[idx]
+    while line and text_width(line + "…", font) > available_width:
+        line = line[:-1]
+    kept[idx] = (line + "…") if line else "…"
+    height = NODE_HEADER_HEIGHT_DOUBLE if len(kept) == 2 else NODE_HEADER_HEIGHT_SINGLE
+    return height, kept, font
+
+
+def draw_node_header(image: Image.Image, node_name: str) -> int:
     """WeAct UI Design doc, section 3: the permanent inverse header - solid
-    black across the full width, the node's name in white bold, centered,
-    always one line (never wrapped - a long name gets a smaller font
-    instead, via fit_font(), down to a 14px floor).
+    black across the full width, the node's name in white bold, centered.
+    Up to 2 lines (see node_header_layout()) instead of always exactly
+    one - a name too long even at the smallest single-line size now grows
+    the header to a second line instead of shrinking further or silently
+    overflowing the canvas edge (task 42 - found live: a real ~38-char
+    node name did exactly that under the old always-one-line behavior).
 
     Displayed in its own original case (e.g. "Flint TAP2"), not forced
     uppercase - found live: a real node's name reads correctly in the
     web UI/Meshtastic app in mixed case, and ALL-CAPS on the panel looked
-    wrong/unfamiliar next to it (user's own report)."""
+    wrong/unfamiliar next to it (user's own report).
+
+    Returns the header's actual height in px (NODE_HEADER_HEIGHT_SINGLE
+    or _DOUBLE) - callers use this to compute page_header_y/separator_y/
+    content_y for everything drawn below the header, since a 2-line
+    header pushes all of that down (see pages/*.py's render()s and
+    service.py's clock-overlay call sites)."""
     w, _h = image.size
     draw = ImageDraw.Draw(image)
-    draw.rectangle([0, 0, w, NODE_HEADER_HEIGHT - 1], fill="black")
+    header_height, lines, font = node_header_layout(node_name, w)
+    draw.rectangle([0, 0, w, header_height - 1], fill="black")
 
-    name = node_name or "-"
-    available_width = w - 16
-    font = fit_font(name, available_width, _NODE_HEADER_FONT_SIZES, bold=True)
+    line_gap = 2
+    bboxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
+    line_heights = [bbox[3] - bbox[1] for bbox in bboxes]
+    total_text_height = sum(line_heights) + line_gap * (len(lines) - 1)
+    y = max(2, (header_height - total_text_height) // 2)
+    for line, bbox, line_h in zip(lines, bboxes, line_heights):
+        text_w = bbox[2] - bbox[0]
+        x = max(4, (w - text_w) // 2)
+        draw_text(image, (x, y - bbox[1]), line, "white", font)
+        y += line_h + line_gap
 
-    bbox = draw.textbbox((0, 0), name, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
-    x = max(4, (w - text_w) // 2)
-    y = max(2, (NODE_HEADER_HEIGHT - text_h) // 2 - bbox[1])
-    draw_text(image, (x, y), name, "white", font)
+    return header_height
 
 
-def draw_page_header(image: Image.Image, page_title: str, clock_text: str | None = None) -> None:
+def draw_page_header(image: Image.Image, page_title: str, clock_text: str | None = None, y: int = PAGE_HEADER_Y) -> None:
     """WeAct UI Design doc, section 4: page title (upper-cased for display
     only - t() still returns the normal-case translated string, see this
     module's callers) at the left, clock at the right, on the row directly
     under draw_node_header()'s block.
+
+    `y` defaults to PAGE_HEADER_Y (the single-line header's own row) for
+    backward compatibility (standalone PNG tools, tests that only ever
+    draw a short name) - real page render()s (task 42) compute their own
+    `page_header_y = header_height + 2` from draw_node_header()'s return
+    value and pass it explicitly, since a 2-line node-name header pushes
+    this whole row down.
 
     clock_text is optional and deliberately NOT how the live poll path
     draws the clock - service.py's _mark_dirty_with_clock() overlays it
@@ -215,16 +298,16 @@ def draw_page_header(image: Image.Image, page_title: str, clock_text: str | None
     that don't go through that hash-then-overlay pipeline."""
     w, _h = image.size
     title_font = load_font(15, bold=True)
-    draw_text(image, (4, PAGE_HEADER_Y), page_title.upper(), "black", title_font)
+    draw_text(image, (4, y), page_title.upper(), "black", title_font)
 
     if clock_text:
-        # Same y draw_epaper_clock() uses by default - kept in sync so a
-        # standalone render (clock_text passed here) and the live overlay
-        # path (time_helper.draw_epaper_clock(), drawn separately after
-        # content-hash time) land on the identical row.
+        # Same y draw_epaper_clock() must be called with by its caller
+        # (service.py, computed from the same header_height) - kept in
+        # sync here so a standalone render (clock_text passed here) and
+        # the live overlay path land on the identical row.
         clock_font = load_font(PAGE_HEADER_CLOCK_FONT_SIZE)
         x = max(4, w - text_width(clock_text, clock_font) - 4)
-        draw_text(image, (x, PAGE_HEADER_Y), clock_text, "black", clock_font)
+        draw_text(image, (x, y), clock_text, "black", clock_font)
 
 
 def draw_separator(image: Image.Image, y: int) -> None:

@@ -16,8 +16,6 @@ from dataclasses import dataclass
 from modules.display.drivers.base import DisplayCapabilities
 from modules.display.i18n import DEFAULT_LOCALE, t
 from modules.display.renderer import (
-    CONTENT_Y,
-    SEPARATOR_Y,
     draw_inverted_status,
     draw_label_value,
     draw_node_header,
@@ -50,15 +48,24 @@ def render(caps: DisplayCapabilities, data: StatusScreenData, locale: str = DEFA
     w, h = image.size
     right = w - 4
 
-    draw_node_header(image, data.node_name)
-    draw_page_header(image, t("status", locale))
-    draw_separator(image, SEPARATOR_Y)
+    # Task 42: the node-name header can grow to 2 lines for a long name -
+    # everything below it computes its own Y from the header's actual
+    # height (the same +2/+24/+30 deltas the old fixed
+    # PAGE_HEADER_Y/SEPARATOR_Y/CONTENT_Y constants used) instead of
+    # assuming it's always the compact single-line height.
+    header_height = draw_node_header(image, data.node_name)
+    page_header_y = header_height + 2
+    separator_y = header_height + 24
+    content_y = header_height + 30
+
+    draw_page_header(image, t("status", locale), y=page_header_y)
+    draw_separator(image, separator_y)
 
     # 12px, not 14 - "LETZTER EMPFANG" (de "Last RX") needs the extra room
     # to leave any space at all for its value on a 200px row at any
     # _PRIMARY_SIZES size (found via live i18n PNG review, task 37).
     label_font = load_font(12, bold=True)
-    y = CONTENT_Y
+    y = content_y
 
     radio_label = t(data.radio_status, locale).upper()
     if data.radio_status == "online":

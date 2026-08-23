@@ -388,7 +388,9 @@ The current reference setup includes:
   - IMX219 8 MP (currently installed)
   - OV5647 5 MP (tested)
 - INA226 power monitor
-- BME280 environmental sensor
+- BME280 environmental sensor (I2C)
+- DS3231 real-time clock (I2C)
+- WeAct 1.54" e-Paper display (200×200, black-and-white)
 
 Other Raspberry Pi models and standard Meshtastic-compatible radios with a supported USB serial connection may also work. The radio must first be configured with an official Meshtastic application. MeshCenter then uses the region, channels and channel keys already stored on it.
 
@@ -632,9 +634,12 @@ meshcenter/
 │
 ├── api/                # REST API endpoints
 ├── camera/             # Camera subsystem
+├── hardware/           # I2C bus detection, RTC (DS3231) and BME280 drivers
 ├── meshsrv/            # Meshtastic communication layer
+├── modules/display/    # e-Paper display rendering, pages and drivers
 ├── storage/            # JSON storage helpers
 ├── telemetry/          # Telemetry processing
+├── weather/            # Pluggable weather provider backend
 ├── utils/              # Shared utility functions
 │
 ├── static/             # CSS, JavaScript, icons
@@ -1044,6 +1049,25 @@ An **Updates** card checks GitHub Releases for a newer version - a background ch
 - **Update** - runs a safety preflight first (clean working tree, a real upstream, no diverged or ahead local history) and shows an honest error naming the exact problem if it isn't safe, rather than trying to resolve it automatically. Only if the preflight passes does it ask for confirmation, then applies the update with a plain fast-forward merge and restarts the service.
 
 After restarting, the interface polls for the service to come back with the expected version and reports success once confirmed. If it doesn't come back within 60 seconds, it shows the pre-update commit and a ready-to-copy rollback command instead of waiting indefinitely - there is no automatic rollback, by design (a same-process update can't reliably fix itself if the new code fails to start).
+
+### 🔌 I2C Devices & Real-Time Clock
+
+MeshCenter can detect and configure host-attached I2C peripherals directly from the **Devices** tab, without needing to SSH into the Raspberry Pi.
+
+- **I2C bus detection** - a read-only scan (`i2cdetect`) reports which addresses respond on the bus, with a clear explanation if the bus isn't enabled yet or the `i2c-dev` kernel module hasn't loaded.
+- **Guided setup** - an "Enable I2C & configure RTC" action in the device card runs a narrowly-scoped privileged helper (`meshcenter-hw-config`, invoked through a dedicated sudoers rule) that enables the I2C interface and adds the Device Tree overlay for the RTC, without granting the app broad root access.
+- **Real-Time Clock (DS3231)** - status is reported in three independent stages rather than a single Online/Offline flag: **detected** (the RTC answers on the I2C bus), **configured** (the kernel has bound the overlay, so `/dev/rtc0` exists - takes effect after a reboot), and **readable** (`hwclock -r` can actually read the time off the device). Each stage surfaces its own reason when it fails, so a stuck setup is easy to diagnose instead of just showing "not working."
+- **BME280 environmental sensor** - a second I2C device type (temperature/pressure/humidity), added on top of the same generic bus-detection and device-card framework used for the RTC, without changes to the underlying architecture.
+- **Time Service integration** - the "Time & Timers" card shows the real active time source (NTP, hardware RTC, or system clock, in that order of preference), reflecting whether a configured RTC is actually being used.
+
+### 🖥️ e-Paper Display
+
+MeshCenter can drive an optional e-Paper HAT to show live status directly on the hardware, without needing a browser open - useful for a headless base-station deployment. Two panels are supported: the Waveshare 2.13" 4-color HAT and the WeAct 1.54" black-and-white module, selectable in **Settings → Hardware → e-Paper Display**.
+
+- **Five info screens plus an alert screen** - Status, Radio, Power, System and Message, each redesigned around the physical panel's resolution, plus a dedicated full-screen Alert view for critical conditions (radio offline, critically low power) that bypasses the normal update debounce.
+- **Automatic page rotation** - cycles through a configurable set of screens on a configurable interval; a critical alert interrupts rotation immediately and rotation resumes afterward, and manually requesting a specific screen from the UI ("Show on Display") always takes priority.
+- **Live clock overlay** - the current time is shown on every info screen without triggering a real panel refresh on every tick, keeping wear on the physical display to actual content changes.
+- **Node name header** - shown in its own original case (not forced uppercase) and automatically wraps to two lines when a long node name (e.g. one with a region/route prefix) wouldn't otherwise fit, instead of being clipped or overflowing the screen edge.
 
 ### 🌦️ Weather Module
 
@@ -1709,6 +1733,7 @@ Possible future integrations include:
 
 | Version | Highlights |
 |----------|------------|
+| v1.8.0 | I2C device support (RTC + BME280), e-Paper display redesign with auto-rotation, stored-XSS fix, gunicorn in production |
 | v1.7.0 | Auto-Installer (cloud-init), redesigned Time card, channel name/discovery fixes |
 | v1.6.0 | Time System, Notifications & Automation — Schedule Engine, Timers, Notification Center |
 | v1.5.0 | Localization (i18n) foundation & reliability fixes |

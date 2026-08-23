@@ -2122,13 +2122,30 @@ html[data-theme="dark"] .system-log-panel {
     line-height: 1;
 }
 .weather-current--compact .weather-condition {
+    /* Was a single forced-nowrap line with an ellipsis - a longer
+       translated condition string ("облачно с прояснениями") ran out of
+       the fixed 112px column and got clipped mid-word, and on a narrower
+       card the same squeeze pushed the location name (.weather-location-
+       name, its own separate nowrap/ellipsis) into visible overlap with
+       the icon next to it (found live, user's own side-by-side
+       screenshots). Wrapping to up to 2 lines instead gives long
+       descriptions room without growing the fixed-size icon/temperature
+       above it - .weather-summary's height simply grows to fit, no
+       overlap with .weather-state-group below (that's positioned in a
+       fixed-size reserved padding zone, not against this content's own
+       height). display:-webkit-box + line-clamp is the standard (if
+       oddly-prefixed) cross-browser way to keep the ellipsis-on-overflow
+       behavior at 2 lines instead of 1. */
     max-width: 112px;
     margin-top: 5px;
     overflow: hidden;
     font-size: 11px;
     line-height: 1.15;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
     text-overflow: ellipsis;
-    white-space: nowrap;
 }
 .weather-current-copy { min-width: 0; }
 .weather-state-group {

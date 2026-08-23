@@ -150,15 +150,18 @@ Typical use cases include:
 
 ## ⚡ Quick Install
 
-The fastest path is **Automatic Installation**: flash an SD card with
-Raspberry Pi Imager, drop `meshcenter-firstboot.sh` onto the bootfs drive,
-add a one-line `runcmd` entry to the bootfs drive's `user-data` file so
-cloud-init actually launches it on first boot (see INSTALL.md's Step 3 -
-skipping this is the most common reason "nothing happens" after boot),
-connect your Meshtastic radio via USB **before** first boot, then power on
-— MeshCenter installs itself unattended (~5-20 min depending on hardware
-and whether camera support is requested) and is reachable at
-`http://meshcenter.local:5000` once it reboots.
+The fastest path is **Automatic Installation**:
+
+1. Flash an SD card with Raspberry Pi Imager (Raspberry Pi OS Lite 64-bit).
+2. Copy [`meshcenter-firstboot.sh`](https://github.com/FlintUA/MeshCenter/releases/latest/download/meshcenter-firstboot.sh) to the **root** of the bootfs drive.
+3. Open the `user-data` file on the bootfs drive (it already exists after flashing) and add this at the end:
+   ```yaml
+   runcmd:
+     - [ bash, -lc, 'if [ -f /boot/firmware/meshcenter-firstboot.sh ]; then bash /boot/firmware/meshcenter-firstboot.sh; elif [ -f /boot/meshcenter-firstboot.sh ]; then bash /boot/meshcenter-firstboot.sh; fi' ]
+   ```
+   If `runcmd:` already exists in the file, add only the `- [ bash, ... ]` line under it. **This step is required** — without it the script just sits on the SD card and never runs.
+4. Connect your Meshtastic radio via USB **before** first boot.
+5. Power on. MeshCenter installs itself unattended (~5-20 min depending on hardware and whether camera support is requested) and is reachable at `http://meshcenter.local:5000` once it reboots.
 
 Prefer to install over SSH on an already-running Pi (or any Debian/Ubuntu
 Linux box) instead? That's **Manual Installation** — `curl -sSL

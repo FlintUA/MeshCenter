@@ -179,12 +179,17 @@ def draw_node_header(image: Image.Image, node_name: str) -> None:
     """WeAct UI Design doc, section 3: the permanent inverse header - solid
     black across the full width, the node's name in white bold, centered,
     always one line (never wrapped - a long name gets a smaller font
-    instead, via fit_font(), down to a 14px floor)."""
+    instead, via fit_font(), down to a 14px floor).
+
+    Displayed in its own original case (e.g. "Flint TAP2"), not forced
+    uppercase - found live: a real node's name reads correctly in the
+    web UI/Meshtastic app in mixed case, and ALL-CAPS on the panel looked
+    wrong/unfamiliar next to it (user's own report)."""
     w, _h = image.size
     draw = ImageDraw.Draw(image)
     draw.rectangle([0, 0, w, NODE_HEADER_HEIGHT - 1], fill="black")
 
-    name = (node_name or "-").upper()
+    name = node_name or "-"
     available_width = w - 16
     font = fit_font(name, available_width, _NODE_HEADER_FONT_SIZES, bold=True)
 

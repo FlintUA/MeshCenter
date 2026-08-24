@@ -208,8 +208,8 @@ def _loop():
         time.sleep(60 - time.time() % 60 + 0.5)
 
 
-def start(nodes=None, state_lock=None, radio_session=None, get_meshtastic_port=None,
-          is_radio_available=None, RadioBusyError=None, LOCAL_NODE_ID=None,
+def start(nodes=None, state_lock=None, radio_transport=None,
+          is_radio_available=None, LOCAL_NODE_ID=None,
           add_message=None, LOCAL_NODE_NAME=None, CHANNEL_CHAT_ID=None):
     """Start the schedule engine background thread.
 
@@ -221,15 +221,21 @@ def start(nodes=None, state_lock=None, radio_session=None, get_meshtastic_port=N
     modules never do `from server import ...` - server.py imports FROM
     meshsrv, so a reverse import would risk a circular import. Passing the
     handful of objects schedule_actions.py needs (nodes/state_lock for
-    reading node telemetry, radio_session/get_meshtastic_port/
-    is_radio_available/RadioBusyError for sending mesh messages,
-    LOCAL_NODE_ID as the default telemetry source, add_message/
-    LOCAL_NODE_NAME/CHANNEL_CHAT_ID so a successful mesh_send/
+    reading node telemetry, radio_transport/is_radio_available for sending
+    mesh messages, LOCAL_NODE_ID as the default telemetry source,
+    add_message/LOCAL_NODE_NAME/CHANNEL_CHAT_ID so a successful mesh_send/
     send_data_report also writes a local kind="me" chat-history record,
     mirroring what api/api_chat.py's send worker does) at start() call time
     avoids that entirely, exactly like node_time_sync.py avoids it by
     receiving an already-open `interface` as a parameter instead of
     importing server.py to get one.
+
+    Task 44: radio_session/get_meshtastic_port/RadioBusyError (Serial-
+    specific, direct-SerialInterface concepts) were replaced by a single
+    `radio_transport` (RadioTransport instance, see
+    meshsrv/radio_transport.py) - schedule_actions.py no longer imports
+    `meshtastic` at all, sending through radio_transport.send_text()
+    instead of opening its own SerialInterface.
 
     IMPORTANT DESIGN NOTE - _lock held during action execution:
     _tick() acquires the module-level threading.Lock() `_lock` and holds it
@@ -262,10 +268,8 @@ def start(nodes=None, state_lock=None, radio_session=None, get_meshtastic_port=N
     _configure_actions(
         nodes=nodes,
         state_lock=state_lock,
-        radio_session=radio_session,
-        get_meshtastic_port=get_meshtastic_port,
+        radio_transport=radio_transport,
         is_radio_available=is_radio_available,
-        RadioBusyError=RadioBusyError,
         LOCAL_NODE_ID=LOCAL_NODE_ID,
         add_message=add_message,
         LOCAL_NODE_NAME=LOCAL_NODE_NAME,

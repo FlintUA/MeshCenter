@@ -7,38 +7,51 @@ the dependency-injection wiring itself, not just the underlying logic.
 No server.py import needed - this module only depends on storage/
 waypoint_store.py (a real, self-contained SQLite store) and stub
 implementations of everything else register_waypoint_routes() takes as a
-parameter. Radio-dependent stubs (is_radio_available, prepare_radio_command,
+parameter. Radio-dependent stubs (is_radio_available, radio_transport,
 add_message, log_system_event, channel_chat_id) are simple fakes; the actual
-radio-send subprocess path (api_waypoint_send()'s success branch, which
-shells out to storage/waypoint_sender.py) is deliberately NOT exercised here
-- that's a live-radio operation outside this test infrastructure's scope,
+radio-send path (api_waypoint_send()'s success branch, which now calls
+radio_transport.send_waypoint() - see Task 44's migration off
+storage/waypoint_sender.py, deleted) is deliberately NOT exercised here -
+that's a live-radio operation outside this test infrastructure's scope,
 same limitation documented in CLAUDE.md for the rest of the project. Only
 api_waypoint_send()'s validation branches (everything that returns before
-reaching the subprocess call) are tested.
+reaching radio_transport.send_waypoint()) are tested.
 """
-
-import threading
 
 import pytest
 from flask import Flask
 
 from api.api_waypoints import register_waypoint_routes
+from meshsrv.radio_transport import TransportError, TransportErrorCode
 from storage.waypoint_store import WaypointStore
 
 
 class _RadioStub:
-    """Mutable is_radio_available()/prepare_radio_command() stand-in so
-    individual tests can flip availability without rebuilding the app."""
+    """Mutable is_radio_available() stand-in so individual tests can flip
+    availability without rebuilding the app."""
 
     def __init__(self):
         self.available = True
-        self.prepare_ok = True
 
     def is_radio_available(self):
         return self.available
 
-    def prepare_radio_command(self, device=None, timeout=8):
-        return self.prepare_ok
+
+class _RadioTransportStub:
+    """By default, never actually called by the validation-only tests
+    (all of them return before reaching radio_transport.send_waypoint()).
+    `raise_error`, when set, makes send_waypoint() raise it instead -
+    used to test how api_waypoint_send() maps different TransportError
+    codes onto HTTP status/error_code (see the radio_busy regression
+    test below)."""
+
+    def __init__(self, raise_error=None):
+        self.raise_error = raise_error
+
+    def send_waypoint(self, waypoint, *, timeout=15.0):
+        if self.raise_error is not None:
+            raise self.raise_error
+        raise AssertionError("send_waypoint() should not be reached by these validation-only tests")
 
 
 @pytest.fixture
@@ -75,6 +88,7 @@ def waypoint_env(tmp_path):
     def channel_chat_id(index):
         return "channel" if index == 0 else f"channel:{index}"
 
+    radio_transport = _RadioTransportStub()
     app = Flask(__name__)
     register_waypoint_routes(
         app,
@@ -82,15 +96,10 @@ def waypoint_env(tmp_path):
         get_node_name,
         handle_errors,
         radio.is_radio_available,
-        radio.prepare_radio_command,
-        threading.RLock(),
-        threading.Event(),
+        radio_transport,
         add_message,
         log_system_event,
         channel_chat_id,
-        "/dev/ttyACM0",
-        "/usr/bin/meshtastic",
-        str(tmp_path),
         "!aabbccdd",
         "Test Local Node",
         "LongFast",
@@ -101,6 +110,7 @@ def waypoint_env(tmp_path):
         "client": app.test_client(),
         "store": store,
         "radio": radio,
+        "radio_transport": radio_transport,
         "add_message_calls": add_message_calls,
         "log_event_calls": log_event_calls,
     }
@@ -241,8 +251,8 @@ def test_delete_all_waypoints(waypoint_env):
 
 
 # ---------------- POST /api/waypoints/send - validation branches only ----------------
-# The success path (real subprocess to storage/waypoint_sender.py) is
-# deliberately not exercised - see module docstring.
+# The success path (radio_transport.send_waypoint()) is deliberately not
+# exercised - see module docstring.
 
 def _valid_send_payload(**overrides):
     payload = {
@@ -312,3 +322,34 @@ def test_send_returns_503_when_radio_unavailable(waypoint_env):
     # Confirms validation passed and this really is the radio-availability
     # check that rejected it, not an earlier 400.
     assert not waypoint_env["add_message_calls"]
+
+
+def test_send_returns_503_radio_busy_when_transport_reports_busy(waypoint_env):
+    """Regression test (review finding): a busy serial port used to be a
+    distinct 503/radio_busy response (prepare_radio_command() returning
+    False), separate from any other send failure. After migrating to
+    radio_transport.send_waypoint(), TransportError(BUSY) was initially
+    collapsing into the same generic 500/waypoint_send_failed as every
+    other failure - fixed to check error.code and still return
+    503/radio_busy specifically for BUSY."""
+    waypoint_env["radio_transport"].raise_error = TransportError(
+        TransportErrorCode.BUSY, "Serial port busy: /dev/ttyACM0"
+    )
+
+    response = waypoint_env["client"].post("/api/waypoints/send", json=_valid_send_payload())
+
+    assert response.status_code == 503
+    assert response.get_json()["error_code"] == "radio_busy"
+
+
+def test_send_returns_500_waypoint_send_failed_for_other_transport_errors(waypoint_env):
+    """Non-BUSY TransportError codes keep the generic 500/waypoint_send_failed
+    response - only BUSY gets the distinct 503 treatment."""
+    waypoint_env["radio_transport"].raise_error = TransportError(
+        TransportErrorCode.TIMEOUT, "send_waypoint() exceeded 30.0s"
+    )
+
+    response = waypoint_env["client"].post("/api/waypoints/send", json=_valid_send_payload())
+
+    assert response.status_code == 500
+    assert response.get_json()["error_code"] == "waypoint_send_failed"

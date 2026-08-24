@@ -665,6 +665,7 @@
     "meshtastic_ble_connecting": "Connecting…",
     "meshtastic_ble_connect_success": "Bluetooth device connected",
     "meshtastic_ble_connect_failed": "Unable to connect",
+    "meshtastic_ble_receive_warning": "Incoming messages are not received while Bluetooth is active - you can send, but not receive. Switch back to USB to receive messages again.",
     "epaper_title": "E-Paper Display",
     "epaper_description": "Display and information-display settings.",
     "epaper_enabled": "Enabled",

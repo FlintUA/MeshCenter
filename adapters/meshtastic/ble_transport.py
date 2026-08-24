@@ -183,19 +183,58 @@ class BLETransport(TimeoutEnforced, RadioTransport):
             raise TransportError(
                 TransportErrorCode.UNSUPPORTED, f"BLETransport cannot connect to {descriptor.type}"
             )
+
+        # ROLLBACK (live Task 47 finding on TAP2): self._address/_name are
+        # about to be overwritten unconditionally below, before the new
+        # address has even been tried - a failed connect() used to leave
+        # them pointing at the bad value permanently, so a later bare
+        # reconnect() (which by contract reuses self._address, not a
+        # fresh descriptor) would retry the same bad address forever
+        # instead of the last-known-good one. Snapshot before any
+        # mutation - not just under force=True, since the mutation two
+        # lines down is unconditional for every connect() call, forced
+        # or not - and restore on every failure path below.
+        previous_address, previous_name = self._address, self._name
+
         self._address = descriptor.address or self._address
         self._name = descriptor.label or self._name
         with self._lock:
             self._state = ConnectionState.CONNECTING
 
         if force:
+            # Deliberately not fixed: tearing down a known-good session
+            # before confirming the new address is reachable is a real
+            # window (the old link is gone before the new one is proven),
+            # but there is no cheap way to validate a BLE address's
+            # connectability without actually attempting the connection -
+            # scan() doesn't guarantee connectability and adds ~10s to
+            # every call. Same trade-off already accepted elsewhere this
+            # project (predictable failure over a hidden race) - the
+            # caller is responsible for its own recovery (see
+            # api/api_meshtastic.py's fail-closed switch() recovery),
+            # this method does not attempt to silently restore the old
+            # connection itself.
             self._detach_and_close_async(timeout=timeout)
             self._force_disconnect_os_level()
 
         def _do_connect():
             from meshtastic.ble_interface import BLEInterface
 
-            return BLEInterface(address=self._address, timeout=int(timeout))
+            try:
+                return BLEInterface(address=self._address, timeout=int(timeout))
+            except Exception as exc:
+                # Point recognition for the single most common real
+                # failure (per review): map it to the ABC's already-
+                # defined-but-previously-never-raised DEVICE_NOT_FOUND
+                # instead of letting it fall through to the generic
+                # UNKNOWN wrap in _call_with_timeout. Anything else
+                # (adapter off, permission error, etc.) still falls
+                # through to UNKNOWN there.
+                message = str(exc)
+                lowered = message.lower()
+                if "no meshtastic ble peripheral" in lowered or "not found" in lowered or "no such device" in lowered:
+                    raise TransportError(TransportErrorCode.DEVICE_NOT_FOUND, message) from exc
+                raise
 
         try:
             interface = self._call_with_timeout(_do_connect, timeout=timeout, what="connect()")
@@ -203,6 +242,7 @@ class BLETransport(TimeoutEnforced, RadioTransport):
             with self._lock:
                 self._state = ConnectionState.ERROR
                 self._last_error = error
+                self._address, self._name = previous_address, previous_name
             raise
 
         node_id = self._local_node_id(interface)
@@ -224,6 +264,7 @@ class BLETransport(TimeoutEnforced, RadioTransport):
             with self._lock:
                 self._state = ConnectionState.ERROR
                 self._last_error = error
+                self._address, self._name = previous_address, previous_name
             raise error
 
         with self._lock:

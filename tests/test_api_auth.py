@@ -8,7 +8,7 @@ import json
 
 from werkzeug.security import generate_password_hash
 
-from api.api_auth import is_protected, load_auth_state
+from api.api_auth import is_protected, is_safe_redirect_url, load_auth_state
 
 
 def test_load_auth_state_first_run_defaults_to_disabled(tmp_path):
@@ -66,3 +66,20 @@ def test_is_protected_tolerates_missing_keys():
     assert is_protected({}) is False
     assert is_protected({"enabled": True}) is False
     assert is_protected({"password_hash": "somehash"}) is False
+
+
+def test_is_safe_redirect_url():
+    # Safe relative paths
+    assert is_safe_redirect_url("/") is True
+    assert is_safe_redirect_url("/login") is True
+    assert is_safe_redirect_url("/api/settings?a=1#b") is True
+
+    # Unsafe external or protocol-relative targets
+    assert is_safe_redirect_url("//evil.com") is False
+    assert is_safe_redirect_url("/\\\\evil.com") is False
+    assert is_safe_redirect_url("/\\evil.com") is False
+    assert is_safe_redirect_url("http://evil.com") is False
+    assert is_safe_redirect_url("https://evil.com") is False
+    assert is_safe_redirect_url("javascript:alert(1)") is False
+    assert is_safe_redirect_url("") is False
+    assert is_safe_redirect_url(None) is False

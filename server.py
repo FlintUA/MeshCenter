@@ -4362,6 +4362,7 @@ register_meshtastic_routes(
     serial_transport,
     ble_transport,
     MESHTASTIC_PORT,
+    LOCAL_NODE_ID,
 )
 
 @app.route("/")

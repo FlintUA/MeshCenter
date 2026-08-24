@@ -36,6 +36,7 @@ def register_meshtastic_routes(
     serial_transport,
     ble_transport,
     serial_port,
+    local_node_id,
 ):
     def _connection_payload():
         info = transport_router.get_connection_info()
@@ -44,7 +45,16 @@ def register_meshtastic_routes(
             "type": info.descriptor.type.value if info.descriptor else None,
             "address": info.descriptor.address if info.descriptor else None,
             "label": info.descriptor.label if info.descriptor else None,
-            "node_id": info.node_id,
+            # SerialTransport.get_connection_info() hard-codes node_id=None
+            # (adapters/meshtastic/serial_transport.py - the protocol
+            # doesn't hand this back on the --listen path the way BLE's
+            # config stream does, and adding it there would mean scraping
+            # NODEINFO_APP output just for a value Core already knows from
+            # its own startup config). This is our own node either way -
+            # substitute the configured LOCAL_NODE_ID whenever the
+            # transport itself didn't supply one, instead of showing a
+            # blank in the UI.
+            "node_id": info.node_id or local_node_id,
             "connected_since": info.connected_since,
             "last_error": str(info.last_error) if info.last_error else None,
             # Serial-specific, not part of RadioTransport - server.py keeps

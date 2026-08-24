@@ -211,9 +211,15 @@ except RuntimeError as error:
     print(
         "Starting anyway in a degraded state - camera, e-paper, and the "
         "web interface will work normally; the radio connection will "
-        "report an error until a Meshtastic device is connected and the "
-        "service is restarted, or a transport is explicitly reconnected "
-        "via Settings.",
+        "report an error. If the serial cable was disconnected and "
+        "reconnected, restarting the MeshCenter service is required - "
+        "switching transports in Settings does not reopen the port (that "
+        "only works between transports that are already physically "
+        "reachable, e.g. Serial<->BLE when both are actually connected; "
+        "live-verified in Task 47 that it does NOT recover a serial port "
+        "that only just came back after being physically absent at "
+        "boot - hot-reconnect without a restart is a separate, not yet "
+        "implemented, future task, see the plan doc).",
         flush=True,
     )
     print("=" * 60, flush=True)

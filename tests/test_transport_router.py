@@ -9,7 +9,12 @@ import time
 
 import pytest
 
-from meshsrv.radio_transport import ConnectionInfo, ConnectionState
+from meshsrv.radio_transport import (
+    ConnectionInfo,
+    ConnectionState,
+    TransportError,
+    TransportErrorCode,
+)
 from meshsrv.transport_router import TransportRouter
 
 
@@ -113,3 +118,75 @@ def test_concurrent_call_blocks_until_switch_completes_not_a_race():
 
     assert results["send"] == "sent-by-b", "call landed on the transport active after the switch, as required"
     assert elapsed >= 0.1
+
+
+def test_send_text_fails_fast_with_busy_within_its_own_timeout_not_the_lock_holders():
+    """Regression test for the Task 47.5 review finding: the lock-acquire
+    itself used to be unconditional, so a caller's own `timeout` only
+    ever bounded the operation *after* the lock was free - a send_text
+    landing during a long switch waited (switch duration + its own
+    timeout), not its own timeout alone. Proven here by holding the lock
+    far longer (10s) than the caller's declared budget (1s) and asserting
+    the caller still gets a bounded, fast TransportError(BUSY) - not by
+    literally reproducing a 135s switch, which would make this test slow
+    without testing anything the short version doesn't already prove."""
+    a = _FakeTransport("a")
+    router = TransportRouter(a)
+
+    lock_released = threading.Event()
+
+    def _hold_lock():
+        router._lock.acquire()
+        lock_released.wait(timeout=10)
+        router._lock.release()
+
+    holder = threading.Thread(target=_hold_lock, daemon=True)
+    holder.start()
+    time.sleep(0.1)  # let the holder actually acquire the lock first
+
+    start = time.monotonic()
+    with pytest.raises(TransportError) as excinfo:
+        router.send_text("hello", timeout=1.0)
+    elapsed = time.monotonic() - start
+
+    assert excinfo.value.code == TransportErrorCode.BUSY
+    assert elapsed < 2.0, f"took {elapsed:.2f}s - should fail within its own ~1s budget, not the holder's 10s"
+
+    lock_released.set()
+    holder.join(timeout=2)
+
+
+def test_get_connection_info_returns_synthetic_response_when_lock_busy_not_an_exception():
+    """get_connection_info() has no `timeout` parameter and must not
+    raise per the ABC contract - on a busy lock it must return a fast,
+    synthetic ConnectionInfo instead."""
+    a = _FakeTransport("a")
+    router = TransportRouter(a)
+
+    router._lock.acquire()
+    try:
+        start = time.monotonic()
+        info = router.get_connection_info()
+        elapsed = time.monotonic() - start
+
+        assert info.state == ConnectionState.CONNECTING
+        assert info.last_error.code == TransportErrorCode.BUSY
+        assert elapsed < router._INFO_LOCK_TIMEOUT_S + 1.0
+    finally:
+        router._lock.release()
+
+
+def test_is_connected_returns_false_when_lock_busy_not_an_exception():
+    a = _FakeTransport("a")
+    router = TransportRouter(a)
+
+    router._lock.acquire()
+    try:
+        start = time.monotonic()
+        result = router.is_connected()
+        elapsed = time.monotonic() - start
+
+        assert result is False
+        assert elapsed < router._INFO_LOCK_TIMEOUT_S + 1.0
+    finally:
+        router._lock.release()

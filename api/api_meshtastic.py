@@ -94,18 +94,38 @@ def register_meshtastic_routes(
         On any such failure, the old (usually serial) transport may
         already be mid-disconnect or fully disconnected - attempt to
         bring it back so the system doesn't end up with neither
-        transport usable."""
+        transport usable.
+
+        RECOVERY MUST GO THROUGH THE ROUTER TOO (live Task 47 finding on
+        TAP2, second bug caught by the same forced-failure test): the
+        first version of this called serial_transport.connect(...)
+        directly here. That reconnected the physical serial link fine,
+        but transport_router.self._active was never told about it - it
+        stayed pointed at the still-broken ble_transport, so every
+        send_*/get_* call kept routing to a transport in ERROR state
+        (observed live: a send failed with "BLETransport is not
+        connected" even though the serial listener was genuinely running
+        with a real PID). Wrapping the recovery connect in its own
+        transport_router.switch() call fixes this the same way the
+        primary switch already works: self._active only moves to
+        serial_transport if the recovery connect succeeds, atomically,
+        under the router's own lock - never a second, ad-hoc path that
+        can desync the router's bookkeeping from physical reality."""
         try:
             transport_router.switch(connect_new)
         except TransportError as error:
             recovery_error = None
             if target_transport_name != "serial":
-                try:
+                def _recover_serial():
                     serial_transport.connect(
                         ConnectionDescriptor(type=ConnectionType.SERIAL, address=serial_port),
                         force=True,
                         timeout=_RECOVERY_CONNECT_TIMEOUT_S,
                     )
+                    return serial_transport
+
+                try:
+                    transport_router.switch(_recover_serial)
                 except TransportError as recon_err:
                     recovery_error = recon_err
             if recovery_error is not None:

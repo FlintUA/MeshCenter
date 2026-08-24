@@ -12,36 +12,38 @@ server.py at startup. Until configure() has been called (should never
 happen outside of tests - server.py always calls schedule_engine.start()
 with real references), the module-level globals stay None and every
 function here degrades to a safe no-op/failure instead of crashing.
+
+Task 44: send_mesh_message() no longer opens its own
+meshtastic.serial_interface.SerialInterface - it sends through the
+injected `radio_transport` (a RadioTransport instance, see
+meshsrv/radio_transport.py) instead. This module now imports no
+`meshtastic` symbol at all.
 """
 import time
 from system_log import log_system_event
 
 _nodes = None
 _state_lock = None
-_radio_session = None
-_get_meshtastic_port = None
+_radio_transport = None
 _is_radio_available = None
-_RadioBusyError = RuntimeError
 _LOCAL_NODE_ID = None
 _add_message = None
 _LOCAL_NODE_NAME = None
 _CHANNEL_CHAT_ID = None
 
 
-def configure(nodes=None, state_lock=None, radio_session=None, get_meshtastic_port=None,
-              is_radio_available=None, RadioBusyError=None, LOCAL_NODE_ID=None,
+def configure(nodes=None, state_lock=None, radio_transport=None,
+              is_radio_available=None, LOCAL_NODE_ID=None,
               add_message=None, LOCAL_NODE_NAME=None, CHANNEL_CHAT_ID=None):
     """Called once from meshsrv.schedule_engine.start() with references
     injected from server.py. See this module's docstring."""
-    global _nodes, _state_lock, _radio_session, _get_meshtastic_port
-    global _is_radio_available, _RadioBusyError, _LOCAL_NODE_ID
+    global _nodes, _state_lock, _radio_transport
+    global _is_radio_available, _LOCAL_NODE_ID
     global _add_message, _LOCAL_NODE_NAME, _CHANNEL_CHAT_ID
     _nodes = nodes
     _state_lock = state_lock
-    _radio_session = radio_session
-    _get_meshtastic_port = get_meshtastic_port
+    _radio_transport = radio_transport
     _is_radio_available = is_radio_available
-    _RadioBusyError = RadioBusyError or RuntimeError
     _LOCAL_NODE_ID = LOCAL_NODE_ID
     _add_message = add_message
     _LOCAL_NODE_NAME = LOCAL_NODE_NAME
@@ -72,24 +74,18 @@ def _do_log_entry(rule: dict):
 def send_mesh_message(message: str, target_type: str, node_id: str, channel_index: int) -> bool:
     """Send a static text message to mesh.
 
-    Reuses the SAME primitives api/api_chat.py's send worker uses
-    (api/api_chat.py:78-204, register_chat_routes(...)'s _send_one /
-    _process_send_batch): a short-lived meshtastic.serial_interface.
-    SerialInterface opened/closed inside radio_session(), calling
-    interface.sendText(text, destinationId, wantAck, channelIndex). It does
-    NOT reuse api_chat.py's own `send_queue` - that queue is a local
-    variable closed over inside register_chat_routes() (api/api_chat.py:63),
-    not a module attribute, so nothing outside that closure (this module
-    included) can reach it; there is no server.py-level send_worker/queue
-    either (confirmed: no `send_worker`/`send_queue`/`message_queue` symbol
-    exists in server.py itself). This function is therefore an intentional,
-    independent short-lived-SerialInterface send path, structurally
-    identical to the one in api_chat.py, not a second parallel queueing
-    mechanism.
+    Task 44: sends through the injected RadioTransport's send_text()
+    instead of opening its own meshtastic.serial_interface.SerialInterface
+    - same destination/want_ack/channel_index selection logic as before,
+    same "no traceback, no import here" boundary described in the module
+    docstring. Still an independent send path from api/api_chat.py's own
+    send worker (that one is not migrated until Task 46 - see the Task 44
+    investigation report) - both will call through the same transport once
+    that migration lands, removing the duplication, not before.
     """
-    if _radio_session is None or _get_meshtastic_port is None:
+    if _radio_transport is None:
         print("[Schedule] send_mesh_message: not configured (schedule_actions.configure() "
-              "was never called with radio references)", flush=True)
+              "was never called with a radio_transport)", flush=True)
         return False
 
     if _is_radio_available is not None and not _is_radio_available():
@@ -101,81 +97,73 @@ def send_mesh_message(message: str, target_type: str, node_id: str, channel_inde
         print("[Schedule] send_mesh_message: empty message, skipped", flush=True)
         return False
 
-    device = _get_meshtastic_port() if callable(_get_meshtastic_port) else None
+    if target_type == 'node' and node_id:
+        destination = node_id
+        want_ack = True
+        channel_idx = 0
+    else:
+        destination = "^all"
+        want_ack = False
+        try:
+            channel_idx = int(channel_index or 0)
+        except (TypeError, ValueError):
+            channel_idx = 0
+
+    from meshsrv.radio_transport import OutgoingMessage
 
     try:
-        with _radio_session(device=device, timeout=10, cooldown=2.0):
-            from meshtastic.serial_interface import SerialInterface
-            interface = None
+        result = _radio_transport.send_text(
+            OutgoingMessage(
+                text=text,
+                destination_id=destination,
+                channel_index=channel_idx,
+                want_ack=want_ack,
+            ),
+            timeout=10,
+        )
+        if not result.accepted:
+            print(f"[Schedule] send_mesh_message: send failed: {result.error}", flush=True)
+            return False
+
+        print(
+            f"[Schedule] Mesh message sent: destination={destination}, "
+            f"channel_index={channel_idx}, want_ack={want_ack}",
+            flush=True
+        )
+
+        # Mirror api/api_chat.py's send worker (api/api_chat.py:117-153):
+        # a successful radio send alone leaves no trace in the local
+        # chat history, so a schedule/timer-triggered message was
+        # invisible in the MeshCenter chat UI even though it went
+        # out over the mesh. add_message/LOCAL_NODE_NAME/
+        # CHANNEL_CHAT_ID are injected via configure() (see this
+        # module's docstring and schedule_engine.start()) - they are
+        # the actual server.py function/globals, so calling
+        # add_message() here writes into server.py's own
+        # messages / chats state exactly as if api_chat.py had done it.
+        if _add_message is not None and _state_lock is not None:
             try:
-                interface = SerialInterface(devPath=device)
-
                 if target_type == 'node' and node_id:
-                    destination = node_id
-                    want_ack = True
-                    channel_idx = 0
+                    history_chat_id = node_id
                 else:
-                    destination = "^all"
-                    want_ack = False
-                    try:
-                        channel_idx = int(channel_index or 0)
-                    except (TypeError, ValueError):
-                        channel_idx = 0
+                    history_chat_id = (
+                        _CHANNEL_CHAT_ID if channel_idx == 0
+                        else f"channel:{channel_idx}"
+                    )
+                with _state_lock:
+                    _add_message(
+                        "me",
+                        _LOCAL_NODE_NAME,
+                        text,
+                        node_id=_LOCAL_NODE_ID,
+                        chat_id=history_chat_id,
+                    )
+            except Exception as history_error:
+                print(f"[Schedule] send_mesh_message: local chat-history write "
+                      f"failed (message was still sent over mesh): {history_error}",
+                      flush=True)
 
-                interface.sendText(
-                    text=text,
-                    destinationId=destination,
-                    wantAck=want_ack,
-                    channelIndex=channel_idx,
-                )
-                print(
-                    f"[Schedule] Mesh message sent: destination={destination}, "
-                    f"channel_index={channel_idx}, want_ack={want_ack}",
-                    flush=True
-                )
-
-                # Mirror api/api_chat.py's send worker (api/api_chat.py:117-153):
-                # a successful radio send alone leaves no trace in the local
-                # chat history, so a schedule/timer-triggered message was
-                # invisible in the MeshCenter chat UI even though it went
-                # out over the mesh. add_message/LOCAL_NODE_NAME/
-                # CHANNEL_CHAT_ID are injected via configure() (see this
-                # module's docstring and schedule_engine.start()) - they are
-                # the actual server.py function/globals, so calling
-                # add_message() here writes into server.py's own
-                # messages / chats state exactly as if api_chat.py had done it.
-                if _add_message is not None and _state_lock is not None:
-                    try:
-                        if target_type == 'node' and node_id:
-                            history_chat_id = node_id
-                        else:
-                            history_chat_id = (
-                                _CHANNEL_CHAT_ID if channel_idx == 0
-                                else f"channel:{channel_idx}"
-                            )
-                        with _state_lock:
-                            _add_message(
-                                "me",
-                                _LOCAL_NODE_NAME,
-                                text,
-                                node_id=_LOCAL_NODE_ID,
-                                chat_id=history_chat_id,
-                            )
-                    except Exception as history_error:
-                        print(f"[Schedule] send_mesh_message: local chat-history write "
-                              f"failed (message was still sent over mesh): {history_error}",
-                              flush=True)
-
-                return True
-            finally:
-                if interface is not None:
-                    try:
-                        interface.close()
-                    except Exception as close_error:
-                        print(f"[Schedule] send_mesh_message: interface.close() warning: {close_error}", flush=True)
-    except _RadioBusyError as e:
-        print(f"[Schedule] send_mesh_message: radio busy: {e}", flush=True)
-        return False
+        return True
     except Exception as e:
         print(f"[Schedule] send_mesh_message: error: {e}", flush=True)
         return False

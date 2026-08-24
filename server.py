@@ -38,7 +38,8 @@ from meshsrv.runtime_identity import resolve_meshtastic_cli, resolve_serial_port
 from meshsrv.instance_manager import InstanceManager
 from meshsrv.radio_identity import detect_radio_identity, detect_connected_radio, compare_radio_identity
 from meshsrv.time_service import start_background_thread as start_time_service
-from meshsrv.node_time_sync import try_sync as try_node_time_sync, STARTUP_SYNC_DELAY_S
+from meshsrv.node_time_sync import STARTUP_SYNC_DELAY_S
+from adapters.meshtastic.serial_transport import SerialTransport
 from meshsrv.schedule_engine import start as start_schedule_engine
 from meshsrv import update_service
 from api.api_camera import register_camera_routes
@@ -707,9 +708,35 @@ base_status = {
     "uptime_seconds": None, "last_update": None
 }
 
-listen_process = None
 pause_listen = threading.Event()
 radio_connection_manager = None
+
+# State kept across restarts of the listener subprocess - mirrors the
+# module-level nodeinfo_buffer/collecting_nodeinfo locals the old
+# listen_meshtastic() closed over for the lifetime of its own infinite
+# loop; now module globals since _handle_listener_line() is called once
+# per line from serial_transport.run_listener() instead.
+_nodeinfo_buffer = []
+_collecting_nodeinfo = False
+
+# The one and only SerialTransport instance Core owns (Task 44). This is
+# the sole place in server.py allowed to reach into meshtastic.* - see
+# adapters/meshtastic/serial_transport.py's module docstring. radio_lock/
+# pause_listen are passed BY REFERENCE, not copied: api/api_chat.py still
+# uses Core's own radio_session()/radio_lock/pause_listen directly and
+# unchanged until Task 46, so the same lock/event objects must be shared
+# between this transport and those still-untouched call sites.
+serial_transport = SerialTransport(
+    cli_path=MESHTASTIC_CMD,
+    port=MESHTASTIC_PORT,
+    radio_lock=radio_lock,
+    pause_listen=pause_listen,
+    on_raw_line=lambda line: _handle_listener_line(line),
+    on_lifecycle_event=lambda event: radio_event(event),
+    on_log=lambda msg, level="INFO": log_system_event(
+        title="Node Time Sync", details=msg, level=level, source="time_sync"
+    ),
+)
 
 # Attempt-level throttle for _attempt_node_time_sync(): the sync itself
 # pauses/resumes the listener (via radio_session()), which produces its
@@ -3171,72 +3198,26 @@ def get_chat_messages(chat_id):
         return [m for m in messages if m.get("chat_id") == chat_id]
 
 def stop_listener():
-    global listen_process
+    """Delegates to serial_transport's internal listener-stop logic.
 
+    Task 44: the real --listen subprocess now lives inside
+    serial_transport (its own private _listen_process), not the old
+    module-level `listen_process` global - that global is gone. This
+    function still exists, unchanged in name/signature, because api/
+    api_chat.py's radio_session()/prepare_radio_command() call it
+    directly and are not touched until Task 46; it must keep actually
+    stopping the real subprocess, which now means delegating rather than
+    duplicating the logic against a dead global (see serial_transport's
+    module docstring, 'DESIGN NOTE - radio_lock/pause_listen')."""
     print("[DEBUG] Stopping listener...", flush=True)
-    pause_listen.set()
-    time.sleep(1.5)
-
-    # listen_meshtastic() only assigns listen_process while holding
-    # radio_lock (when it creates the new Popen). Reading the global here
-    # without the same lock left a narrow window where this could observe
-    # a stale None right as the listener commits to starting a fresh
-    # process, wrongly reporting "already stopped" with nothing to kill.
-    with radio_lock:
-        proc = listen_process
-
-    if proc is None:
-        print("[DEBUG] Listener already stopped", flush=True)
-        return True
-
-    try:
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=5)
-
-        print("[DEBUG] Listener stopped", flush=True)
-        return True
-
-    except Exception as e:
-        print(f"[WARN] Error stopping listener: {e}", flush=True)
-        return False
-
-    finally:
-        with radio_lock:
-            listen_process = None
-        time.sleep(1.0)
+    return serial_transport._stop_listener_process()
 
 def wait_serial_release(device=None, timeout=8):
-    # When no explicit device is supplied, Meshtastic CLI will auto-detect it
-    # after the listener has stopped. There is no fixed path to inspect with lsof.
-    if not device:
-        return True
-
-    start = time.time()
-
-    while time.time() - start < timeout:
-        try:
-            result = subprocess.run(
-                ["lsof", "-t", device],
-                capture_output=True,
-                text=True,
-                timeout=2
-            )
-
-            if not result.stdout.strip():
-                return True
-
-        except Exception as e:
-            print(f"[WARN] wait_serial_release error: {e}", flush=True)
-
-        time.sleep(0.2)
-
-    print(f"[WARN] Serial port still busy after {timeout}s: {device}", flush=True)
-    return False
+    """Delegates to serial_transport - see stop_listener()'s docstring.
+    `device` is accepted for call-site compatibility with existing
+    api/api_chat.py callers but not forwarded: serial_transport already
+    tracks its own port internally (the same MESHTASTIC_PORT value)."""
+    return serial_transport._wait_serial_release(timeout=timeout)
 
 
 def prepare_radio_command(device=None, timeout=8):
@@ -3306,12 +3287,14 @@ def radio_session(device=None, timeout=8, cooldown=2.0, extra_release_wait=None)
 def _attempt_node_time_sync():
     """Best-effort node clock sync, run after a fresh listener (re)connect.
 
-    listen_meshtastic() only ever talks to the radio through a
-    `meshtastic --listen` subprocess whose stdout is text-parsed - there is
-    no live SerialInterface object anywhere to reuse here. This mirrors the
-    pattern in api/api_chat.py's discover_radio_channels(): pause the
-    listener via radio_session(), open a short-lived SerialInterface just
-    for this call, and let radio_session() resume the listener afterwards.
+    Task 44: the SerialInterface-opening/waitForConfig/try_sync() dance
+    moved into serial_transport.set_device_time() - this wrapper now only
+    keeps the identity gate and the STARTUP_SYNC_DELAY_S settle-before-
+    pausing behavior, both Core-level policy rather than transport
+    plumbing. `epoch_seconds` passed below is not actually used by
+    SerialTransport.set_device_time() - see that method's docstring
+    ("KNOWN SIGNATURE MISMATCH") for why that is a deliberate, named gap
+    rather than an oversight here.
 
     Called from radio_event() in its own daemon thread (never inline, and
     never from a request handler) so a slow/busy radio can't block Flask.
@@ -3325,33 +3308,10 @@ def _attempt_node_time_sync():
     # contention observed on a cold restart).
     time.sleep(STARTUP_SYNC_DELAY_S)
 
-    interface = None
     try:
-        with radio_session(device=MESHTASTIC_PORT, timeout=10, cooldown=2.0):
-            from meshtastic.serial_interface import SerialInterface
-            interface = SerialInterface(devPath=MESHTASTIC_PORT)
-
-            wait_for_config = getattr(interface, "waitForConfig", None)
-            if callable(wait_for_config):
-                try:
-                    wait_for_config()
-                except Exception as wait_error:
-                    print(f"[TIME SYNC] waitForConfig() warning: {wait_error}", flush=True)
-
-            try_node_time_sync(
-                interface=interface,
-                log_fn=lambda msg, level="INFO": log_system_event(
-                    title="Node Time Sync", details=msg, level=level, source="time_sync"
-                ),
-            )
+        serial_transport.set_device_time(int(time.time()), timeout=10)
     except Exception as error:
         print(f"[TIME SYNC] Attempt failed: {error}", flush=True)
-    finally:
-        if interface is not None:
-            try:
-                interface.close()
-            except Exception:
-                pass
 
 
 def update_base_status_from_info(info_output=None):
@@ -3413,323 +3373,251 @@ def cleanup_seen_ids():
                 seen_recent_texts.pop(key, None)
 
 def listen_meshtastic():
-    global listen_process, base_status
+    """Thin Core-side wrapper (Task 44). The retry loop, subprocess
+    Popen/read, and pause/lifecycle handling all moved into
+    serial_transport.run_listener() (adapters/meshtastic/serial_transport.py)
+    - only the identity gate stays here, since it is MeshCenter-specific
+    policy (which physical radio is expected), not generic transport
+    behavior. This is the explicit, single entry point that starts the
+    persistent listener thread - see its call site below
+    (`threading.Thread(target=listen_meshtastic, daemon=True).start()`)
+    for the precondition SerialTransport.connect() depends on
+    (documented in that method's docstring): connect() only does
+    something useful once this thread is already running.
 
+    Serial-specific, not a BLETransport requirement: BLETransport's
+    connect() (Task 45) opens its own BLEInterface directly and does not
+    need a pre-existing background thread to become useful - only
+    SerialTransport's --listen model needs this split between "thread
+    that owns the persistent process" and "connect() = pause/unpause it".
+    """
     if RADIO_IDENTITY_RESULT.get("status") != "MATCH":
         print(
             f"[IDENTITY] Listener start blocked: status={RADIO_IDENTITY_RESULT.get('status')}",
             flush=True,
         )
         return
+    serial_transport.run_listener()
 
-    nodeinfo_buffer = []
-    collecting_nodeinfo = False
-    consecutive_errors = 0
-    max_consecutive_errors = 10
 
-    while True:
-        if pause_listen.is_set():
-            time.sleep(0.5)
-            continue
+def _handle_listener_line(line):
+    """Meshtastic-protocol parsing for one raw --listen stdout line -
+    everything listen_meshtastic() used to do inline, now called from
+    serial_transport.run_listener() via the on_raw_line callback (see
+    adapters/meshtastic/serial_transport.py's 'DESIGN NOTE - listener
+    seam'). Behavior preserved 1:1, including radio_event("packet")
+    firing even for a line that strips to empty - the old loop called it
+    unconditionally before the emptiness check, so this does too."""
+    global _nodeinfo_buffer, _collecting_nodeinfo
 
-        with radio_lock:
-            listen_process = None
+    radio_event("packet")
 
-        try:
-            time.sleep(0.5)
+    if not line:
+        return
 
-            print("[DEBUG] Starting listener...")
+    try:
+        if (
+            "WARNING" in line
+            or "ERROR" in line
+            or "disconnected" in line.lower()
+            or "multiple access" in line.lower()
+        ):
+            print(f"[LISTEN WARN] {line}", flush=True)
 
-            with radio_lock:
-                if pause_listen.is_set():
-                    continue
+        if "Received nodeinfo:" in line:
+            try:
+                if process_received_nodeinfo_line(line):
+                    return
+            except Exception as e:
+                print(f"[NODEINFO] Parse error: {e}", flush=True)
 
-                listener_cmd = meshtastic_command(
-                    MESHTASTIC_CMD, MESHTASTIC_PORT, "--listen"
+        if "WAYPOINT_APP" in line or "'waypoint':" in line or '"waypoint":' in line:
+            try:
+                process_waypoint_line(line)
+            except Exception as e:
+                print(f"[WAYPOINT] Parse error: {e}", flush=True)
+
+        if "Publishing meshtastic.receive.routing:" in line:
+            try:
+                process_routing_ack_line(line)
+            except Exception as e:
+                print(f"[ACK] Parse error: {e}", flush=True)
+
+        if (
+            "TELEMETRY_APP" in line
+            or "environmentMetrics" in line
+            or "powerMetrics" in line
+            or "deviceMetrics" in line
+        ):
+            try:
+                process_telemetry_line(line)
+            except Exception as e:
+                print(f"[TELEMETRY] Parse error: {e}", flush=True)
+
+        if "TEXT_MESSAGE_APP" in line or "'text':" in line or '"text":' in line:
+            print(f"[RAW] {line[:200]}...", flush=True)
+
+        # ===== ИЗМЕНЕНИЕ №1: Новая логика сбора NODEINFO =====
+        if "NODEINFO_APP" in line or _collecting_nodeinfo:
+            _collecting_nodeinfo = True
+            _nodeinfo_buffer.append(line)
+            block = "\n".join(_nodeinfo_buffer)
+
+            has_nodeinfo = (
+                "longName" in block
+                or "long_name" in block
+                or "shortName" in block
+                or "short_name" in block
+                or "hwModel" in block
+                or "hw_model" in block
+                or "'user':" in block
+                or '"user":' in block
+            )
+
+            nodeinfo_id = extract_nodeinfo_user_id(block)
+
+            if has_nodeinfo and nodeinfo_id:
+                with state_lock:
+                    process_nodeinfo(block)
+                _nodeinfo_buffer = []
+                _collecting_nodeinfo = False
+                return
+
+            # ===== ИЗМЕНЕНИЕ №2: Не обрабатывать буфер при переполнении =====
+            if len(_nodeinfo_buffer) > 80:
+                log_node_event(
+                    "DROP_NODEINFO_BUFFER",
+                    "LISTENER",
+                    nodeinfo_id or "",
+                    extra={
+                        "buffer_lines": len(_nodeinfo_buffer),
+                        "has_nodeinfo": has_nodeinfo
+                    },
+                    raw=block
                 )
-                print(f"[DEBUG] Listener command: {listener_cmd}", flush=True)
-                listen_process = subprocess.Popen(
-                    listener_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    errors="ignore"
-                )
+                print(f"[NODEINFO] Dropping oversized buffer ({len(_nodeinfo_buffer)} lines)", flush=True)
+                _nodeinfo_buffer = []
+                _collecting_nodeinfo = False
+                return
 
-                print(f"[DEBUG] Listener started with PID: {listen_process.pid}")
-                radio_event("listener_start")
-                consecutive_errors = 0
+            return
 
-            for line in listen_process.stdout:
-                if pause_listen.is_set():
-                    break
+        # Ignore duplicate onReceive() debug events.
+        if "onReceive()" in line:
+            return
 
-                line = line.strip()
+        text = extract_text_message(line)
 
-                radio_event("packet")
+        if not text:
+            return
 
-                if not line:
-                    continue
+        radio_event("text")
 
-                try:
-                    if (
-                        "WARNING" in line
-                        or "ERROR" in line
-                        or "disconnected" in line.lower()
-                        or "multiple access" in line.lower()
-                    ):
-                        print(f"[LISTEN WARN] {line}", flush=True)
+        pid = extract_packet_id(line)
 
-                    if "Received nodeinfo:" in line:
-                        try:
-                            if process_received_nodeinfo_line(line):
-                                continue
-                        except Exception as e:
-                            print(f"[NODEINFO] Parse error: {e}", flush=True)
+        if pid:
+            with state_lock:
+                if pid in seen_ids:
+                    return
+                seen_ids.add(pid)
 
-                    if "WAYPOINT_APP" in line or "'waypoint':" in line or '"waypoint":' in line:
-                        try:
-                            process_waypoint_line(line)
-                        except Exception as e:
-                            print(f"[WAYPOINT] Parse error: {e}", flush=True)
+        sender = extract_sender(line)
+        node_id = update_node(line, sender, text)
 
-                    if "Publishing meshtastic.receive.routing:" in line:
-                        try:
-                            process_routing_ack_line(line)
-                        except Exception as e:
-                            print(f"[ACK] Parse error: {e}", flush=True)
+        # ===== ИЗМЕНЕНИЕ №4: Обновить sender после update_node =====
+        if node_id:
+            sender = get_node_name(node_id)
 
-                    if (
-                        "TELEMETRY_APP" in line
-                        or "environmentMetrics" in line
-                        or "powerMetrics" in line
-                        or "deviceMetrics" in line
-                    ):
-                        try:
-                            process_telemetry_line(line)
-                        except Exception as e:
-                            print(f"[TELEMETRY] Parse error: {e}", flush=True)
+        if is_duplicate_text(sender, text, node_id):
+            return
 
-                    if "TEXT_MESSAGE_APP" in line or "'text':" in line or '"text":' in line:
-                        print(f"[RAW] {line[:200]}...", flush=True)
+        if node_id and nodes.get(node_id, {}).get("ignored", False):
+            return
 
-                    # ===== ИЗМЕНЕНИЕ №1: Новая логика сбора NODEINFO =====
-                    if "NODEINFO_APP" in line or collecting_nodeinfo:
-                        collecting_nodeinfo = True
-                        nodeinfo_buffer.append(line)
-                        block = "\n".join(nodeinfo_buffer)
+        chat_id = CHANNEL_CHAT_ID
+        is_channel = False
 
-                        has_nodeinfo = (
-                            "longName" in block
-                            or "long_name" in block
-                            or "shortName" in block
-                            or "short_name" in block
-                            or "hwModel" in block
-                            or "hw_model" in block
-                            or "'user':" in block
-                            or '"user":' in block
-                        )
-
-                        nodeinfo_id = extract_nodeinfo_user_id(block)
-
-                        if has_nodeinfo and nodeinfo_id:
-                            with state_lock:
-                                process_nodeinfo(block)
-                            nodeinfo_buffer = []
-                            collecting_nodeinfo = False
-                            continue
-
-                        # ===== ИЗМЕНЕНИЕ №2: Не обрабатывать буфер при переполнении =====
-                        if len(nodeinfo_buffer) > 80:
-                            log_node_event(
-                                "DROP_NODEINFO_BUFFER",
-                                "LISTENER",
-                                nodeinfo_id or "",
-                                extra={
-                                    "buffer_lines": len(nodeinfo_buffer),
-                                    "has_nodeinfo": has_nodeinfo
-                                },
-                                raw=block
-                            )
-                            print(f"[NODEINFO] Dropping oversized buffer ({len(nodeinfo_buffer)} lines)", flush=True)
-                            nodeinfo_buffer = []
-                            collecting_nodeinfo = False
-                            continue
-
-                        continue
-
-                    # Ignore duplicate onReceive() debug events.
-                    if "onReceive()" in line:
-                        continue
-
-                    text = extract_text_message(line)
-
-                    if not text:
-                        continue
-
-                    radio_event("text")
-
-                    pid = extract_packet_id(line)
-
-                    if pid:
-                        with state_lock:
-                            if pid in seen_ids:
-                                continue
-                            seen_ids.add(pid)
-
-                    sender = extract_sender(line)
-                    node_id = update_node(line, sender, text)
-
-                    # ===== ИЗМЕНЕНИЕ №4: Обновить sender после update_node =====
-                    if node_id:
-                        sender = get_node_name(node_id)
-
-                    if is_duplicate_text(sender, text, node_id):
-                        continue
-
-                    if node_id and nodes.get(node_id, {}).get("ignored", False):
-                        continue
-
-                    chat_id = CHANNEL_CHAT_ID
-                    is_channel = False
-
-                    if (
-                        "'to': 4294967295" in line
-                        or '"to": 4294967295' in line
-                        or "'to': '^all'" in line
-                        or '"to": "^all"' in line
-                        or "'toId': '^all'" in line
-                        or '"toId": "^all"' in line
-                        or "broadcast" in line.lower()
-                    ):
-                        is_channel = True
-                    elif "'dest'" in line.lower() or '"dest"' in line.lower():
-                        is_channel = False
-                    elif "'to': '!" in line or '"to": "!' in line:
-                        is_channel = False
-                    elif re.search(r"'to':\s*[0-9]+,", line) or re.search(r'"to":\s*[0-9]+,', line):
-                        if "4294967295" not in line:
-                            is_channel = False
-                    else:
-                        is_channel = True
-
-                    if is_channel:
-                        incoming_channel_index = extract_channel_index(line)
-                        chat_id = channel_chat_id(incoming_channel_index)
-                        if chat_id not in chats:
-                            with state_lock:
-                                chats[chat_id] = {
-                                    "id": chat_id,
-                                    "name": CHANNEL_CHAT_NAME if incoming_channel_index == 0 else f"Channel {incoming_channel_index}",
-                                    "type": "channel",
-                                    "last_message": "",
-                                    "last_time": "",
-                                    "unread": 0,
-                                }
-                                save_chats()
-                    else:
-                        if node_id and node_id.startswith("!") and node_id != LOCAL_NODE_ID:
-                            chat_id = node_id
-                        else:
-                            from_match = re.search(r"'from':\s*'(![0-9a-f]+)'", line)
-
-                            if not from_match:
-                                from_match = re.search(r'"from":\s*"(![0-9a-f]+)"', line)
-
-                            if from_match:
-                                chat_id = from_match.group(1)
-                            else:
-                                chat_id = CHANNEL_CHAT_ID
-
-                    # ===== ИЗМЕНЕНИЕ №3: ensure_chat без force=True и с именем из базы =====
-                    if chat_id.startswith("!") and chat_id != LOCAL_NODE_ID:
-                        with state_lock:
-                            ensure_chat(
-                                chat_id,
-                                get_node_name(chat_id),
-                                force=False
-                            )
-
-                    reply_to = None
-                    incoming_reply_id = extract_reply_id(line)
-                    if incoming_reply_id:
-                        with state_lock:
-                            original = (
-                                find_message_by_packet_id(incoming_reply_id, chat_id)
-                                or find_message_by_packet_id(incoming_reply_id)
-                            )
-                            reply_to = build_reply_reference(original)
-
-                    with state_lock:
-                        add_message(
-                            "rx",
-                            sender,
-                            text,
-                            node_id,
-                            chat_id,
-                            reply_to=reply_to,
-                            packet_id=pid,
-                        )
-
-                except Exception as e:
-                    print(f"[LISTEN] Error processing line: {e}", flush=True)
-                    continue
-
-            # stop_listener() can null out the shared listen_process global
-            # from another thread at any time (e.g. via radio_session()).
-            # Snapshot it under the same radio_lock used for that write so
-            # this doesn't poll/terminate a None that just got swapped in -
-            # that used to crash this loop with "'NoneType' object has no
-            # attribute 'poll'", caught only by the generic retry handler
-            # below.
-            with radio_lock:
-                proc = listen_process
-            return_code = proc.poll() if proc is not None else None
-
-            if pause_listen.is_set():
-                print("[DEBUG] Listener paused, terminating process...", flush=True)
-                if proc is not None:
-                    try:
-                        proc.terminate()
-                        proc.wait(timeout=3)
-                    except Exception:
-                        try:
-                            proc.kill()
-                        except Exception:
-                            pass
-
-                radio_event("listener_stop")
-
-                with radio_lock:
-                    listen_process = None
-                time.sleep(0.5)
-                continue
-
-            if return_code is not None and return_code != 0:
-                print(f"[WARN] Listener process ended with code: {return_code}", flush=True)
-                consecutive_errors += 1
-            else:
-                consecutive_errors = 0
-
-            radio_event("listener_stop")
-
-            with radio_lock:
-                listen_process = None
-
-        except Exception as e:
-            consecutive_errors += 1
-            print(f"[ERROR] listen_meshtastic (attempt {consecutive_errors}): {e}", flush=True)
-            delay = min(consecutive_errors * 2, 30)
-            print(f"[ERROR] Waiting {delay}s before restart...", flush=True)
-            time.sleep(delay)
-
-        if consecutive_errors > max_consecutive_errors:
-            print("[FATAL] Too many listener errors, restarting process...", flush=True)
-            consecutive_errors = 0
-            time.sleep(5)
+        if (
+            "'to': 4294967295" in line
+            or '"to": 4294967295' in line
+            or "'to': '^all'" in line
+            or '"to": "^all"' in line
+            or "'toId': '^all'" in line
+            or '"toId": "^all"' in line
+            or "broadcast" in line.lower()
+        ):
+            is_channel = True
+        elif "'dest'" in line.lower() or '"dest"' in line.lower():
+            is_channel = False
+        elif "'to': '!" in line or '"to": "!' in line:
+            is_channel = False
+        elif re.search(r"'to':\s*[0-9]+,", line) or re.search(r'"to":\s*[0-9]+,', line):
+            if "4294967295" not in line:
+                is_channel = False
         else:
-            time.sleep(2)
+            is_channel = True
+
+        if is_channel:
+            incoming_channel_index = extract_channel_index(line)
+            chat_id = channel_chat_id(incoming_channel_index)
+            if chat_id not in chats:
+                with state_lock:
+                    chats[chat_id] = {
+                        "id": chat_id,
+                        "name": CHANNEL_CHAT_NAME if incoming_channel_index == 0 else f"Channel {incoming_channel_index}",
+                        "type": "channel",
+                        "last_message": "",
+                        "last_time": "",
+                        "unread": 0,
+                    }
+                    save_chats()
+        else:
+            if node_id and node_id.startswith("!") and node_id != LOCAL_NODE_ID:
+                chat_id = node_id
+            else:
+                from_match = re.search(r"'from':\s*'(![0-9a-f]+)'", line)
+
+                if not from_match:
+                    from_match = re.search(r'"from":\s*"(![0-9a-f]+)"', line)
+
+                if from_match:
+                    chat_id = from_match.group(1)
+                else:
+                    chat_id = CHANNEL_CHAT_ID
+
+        # ===== ИЗМЕНЕНИЕ №3: ensure_chat без force=True и с именем из базы =====
+        if chat_id.startswith("!") and chat_id != LOCAL_NODE_ID:
+            with state_lock:
+                ensure_chat(
+                    chat_id,
+                    get_node_name(chat_id),
+                    force=False
+                )
+
+        reply_to = None
+        incoming_reply_id = extract_reply_id(line)
+        if incoming_reply_id:
+            with state_lock:
+                original = (
+                    find_message_by_packet_id(incoming_reply_id, chat_id)
+                    or find_message_by_packet_id(incoming_reply_id)
+                )
+                reply_to = build_reply_reference(original)
+
+        with state_lock:
+            add_message(
+                "rx",
+                sender,
+                text,
+                node_id,
+                chat_id,
+                reply_to=reply_to,
+                packet_id=pid,
+            )
+
+    except Exception as e:
+        print(f"[LISTEN] Error processing line: {e}", flush=True)
+
 
 def telemetry_worker():
     print("[TELEMETRY] Worker started - listen-only mode", flush=True)
@@ -4316,15 +4204,10 @@ register_waypoint_routes(
     get_node_name,
     handle_errors,
     is_radio_available,
-    prepare_radio_command,
-    radio_lock,
-    pause_listen,
+    serial_transport,
     add_message,
     log_system_event,
     channel_chat_id,
-    MESHTASTIC_PORT,
-    MESHTASTIC_CMD,
-    PROJECT_DIR,
     LOCAL_NODE_ID,
     LOCAL_NODE_NAME,
     CHANNEL_CHAT_NAME,
@@ -4511,14 +4394,17 @@ def api_devices_dashboard():
         or {}
     )
 
+    # Not read inside the state_lock block below: it acquires
+    # serial_transport's own radio_lock internally, and nothing
+    # elsewhere in this codebase acquires radio_lock while already
+    # holding state_lock - keeping that ordering absent here too avoids
+    # introducing a new deadlock-risk lock nesting that didn't exist
+    # before this migration.
+    listener_pid = serial_transport.get_listener_pid()
+
     with state_lock:
         listener_running = bool(radio_health.get("listener_running", False))
         last_restart = float(radio_health.get("last_restart", 0) or 0)
-        listener_pid = (
-            int(listen_process.pid)
-            if listen_process is not None and listen_process.poll() is None
-            else None
-        )
 
     connection = radio_connection_manager.status(listener_running)
     profile_metadata = {}
@@ -5166,8 +5052,6 @@ def api_radio_connection_reconnect():
 @app.route("/api/restart_listener", methods=["POST"])
 @handle_errors
 def api_restart_listener():
-    global listen_process
-
     if RADIO_IDENTITY_RESULT.get("status") != "MATCH":
         return jsonify({
             "ok": False,
@@ -5769,6 +5653,11 @@ def start_runtime():
     # Start radio workers only for the accepted physical radio.  This prevents
     # another USB node from contaminating the active profile.
     if identity_match:
+        # THE single entry point that starts serial_transport's persistent
+        # listener (Task 44) - see listen_meshtastic()'s docstring for why
+        # SerialTransport.connect() depends on this thread already running,
+        # and why that precondition is Serial-specific rather than part of
+        # the RadioTransport contract BLETransport (Task 45) has to share.
         threading.Thread(target=listen_meshtastic, daemon=True).start()
         threading.Thread(target=cleanup_seen_ids, daemon=True).start()
         threading.Thread(target=telemetry_worker, daemon=True).start()
@@ -5808,10 +5697,8 @@ def start_runtime():
     start_schedule_engine(
         nodes=nodes,
         state_lock=state_lock,
-        radio_session=radio_session,
-        get_meshtastic_port=lambda: MESHTASTIC_PORT,
+        radio_transport=serial_transport,
         is_radio_available=is_radio_available,
-        RadioBusyError=RadioBusyError,
         LOCAL_NODE_ID=LOCAL_NODE_ID,
         add_message=add_message,
         LOCAL_NODE_NAME=LOCAL_NODE_NAME,

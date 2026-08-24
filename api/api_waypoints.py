@@ -8,9 +8,6 @@ not a Blueprint.
 """
 
 import json
-import os
-import subprocess
-import sys
 import time
 from datetime import datetime
 
@@ -23,15 +20,10 @@ def register_waypoint_routes(
     get_node_name,
     handle_errors,
     is_radio_available,
-    prepare_radio_command,
-    radio_lock,
-    pause_listen,
+    radio_transport,
     add_message,
     log_system_event,
     channel_chat_id,
-    MESHTASTIC_PORT,
-    MESHTASTIC_CMD,
-    PROJECT_DIR,
     LOCAL_NODE_ID,
     LOCAL_NODE_NAME,
     CHANNEL_CHAT_NAME,
@@ -145,14 +137,6 @@ def register_waypoint_routes(
             return jsonify({"ok": False, "error": "Expiration must be in the future", "error_code": "waypoint_expiration_in_past"}), 400
         if not is_radio_available():
             return jsonify({"ok": False, "error": "Meshtastic radio is currently unavailable", "error_code": "radio_released"}), 503
-        if not prepare_radio_command(MESHTASTIC_PORT, timeout=10):
-            return jsonify({"ok": False, "error": "Meshtastic serial port is busy", "error_code": "radio_busy"}), 503
-
-        cli_path = str(MESHTASTIC_CMD or "")
-        python_path = os.path.join(os.path.dirname(cli_path), "python3")
-        if not os.path.exists(python_path):
-            python_path = sys.executable
-        sender_script = os.path.join(PROJECT_DIR, "storage", "waypoint_sender.py")
 
         expires_text = datetime.fromtimestamp(expire_at).strftime("%d.%m.%Y %H:%M")
         notification_text = f"📍 Waypoint: {name}"
@@ -160,88 +144,92 @@ def register_waypoint_routes(
             notification_text += f"\n{description}"
         notification_text += f"\n{latitude:.6f}, {longitude:.6f}\nExpires: {expires_text}"
 
-        payload = {
-            "port": MESHTASTIC_PORT,
+        # Task 44: no longer shells out to storage/waypoint_sender.py -
+        # that one-shot subprocess script's logic is now an internal
+        # detail of radio_transport.send_waypoint() (adapters/meshtastic/
+        # serial_transport.py). prepare_radio_command()/radio_lock/
+        # pause_listen are handled inside the transport itself now.
+        from meshsrv.radio_transport import OutgoingWaypoint, TransportError, TransportErrorCode
+
+        try:
+            waypoint_result = radio_transport.send_waypoint(
+                OutgoingWaypoint(
+                    name=name,
+                    description=description,
+                    latitude=latitude,
+                    longitude=longitude,
+                    expire_at=expire_at,
+                    icon=icon,
+                    channel_index=channel_index,
+                    post_notification=post_notification,
+                    notification_text=notification_text,
+                ),
+                timeout=30,
+            )
+        except TransportError as error:
+            print(f"[WAYPOINT SEND] Failed: {error}", flush=True)
+            # BUSY (serial port occupied) is a distinct, retryable case in
+            # the old code (prepare_radio_command() -> 503 radio_busy,
+            # separate from any other send failure) - preserved here so a
+            # busy port doesn't collapse into the same generic 500 as a
+            # real send failure (regression caught in review).
+            if error.code == TransportErrorCode.BUSY:
+                return jsonify({"ok": False, "error": str(error.message), "error_code": "radio_busy"}), 503
+            return jsonify({"ok": False, "error": str(error.message), "error_code": "waypoint_send_failed"}), 500
+
+        waypoint_id = waypoint_result.waypoint_id
+        sender_result = {
+            "ok": True,
+            "waypoint_id": waypoint_result.waypoint_id,
+            "waypoint_packet_id": waypoint_result.waypoint_packet_id,
+            "notification_packet_id": waypoint_result.notification_packet_id,
+        }
+
+        saved = waypoint_store.upsert({
+            "waypoint_id": waypoint_id,
+            "sender_id": LOCAL_NODE_ID,
             "name": name,
             "description": description,
             "latitude": latitude,
             "longitude": longitude,
-            "channel_index": channel_index,
             "icon": icon,
             "expire_at": expire_at,
-            "post_notification": post_notification,
-            "notification_text": notification_text,
-        }
+            "channel_index": channel_index,
+            "received_at": time.time(),
+            "raw_packet": json.dumps({"source": "local-send", **sender_result}, ensure_ascii=False),
+        })
+        saved.pop("_event", None)
+        saved.pop("raw_packet", None)
+        saved["sender_name"] = LOCAL_NODE_NAME
 
-        try:
-            with radio_lock:
-                result = subprocess.run(
-                    [python_path, sender_script],
-                    input=json.dumps(payload, ensure_ascii=False),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    timeout=35,
-                )
-            output = (result.stdout or "").strip()
-            if result.returncode != 0:
-                print(f"[WAYPOINT SEND] Failed: {output}", flush=True)
-                return jsonify({"ok": False, "error": output[-1000:] or "Waypoint send failed", "error_code": "waypoint_send_failed"}), 500
-
-            try:
-                sender_result = json.loads(output.splitlines()[-1])
-                waypoint_id = int(sender_result["waypoint_id"])
-            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
-                raise RuntimeError(f"Waypoint sender returned invalid result: {output[-1000:]}") from error
-
-            saved = waypoint_store.upsert({
-                "waypoint_id": waypoint_id,
-                "sender_id": LOCAL_NODE_ID,
-                "name": name,
-                "description": description,
-                "latitude": latitude,
-                "longitude": longitude,
-                "icon": icon,
-                "expire_at": expire_at,
-                "channel_index": channel_index,
-                "received_at": time.time(),
-                "raw_packet": json.dumps({"source": "local-send", **sender_result}, ensure_ascii=False),
-            })
-            saved.pop("_event", None)
-            saved.pop("raw_packet", None)
-            saved["sender_name"] = LOCAL_NODE_NAME
-
-            if post_notification:
-                channel_id = channel_chat_id(channel_index)
-                channel_name = CHANNEL_CHAT_NAME if channel_index == 0 else f"Channel {channel_index}"
-                add_message(
-                    "me",
-                    LOCAL_NODE_NAME,
-                    notification_text,
-                    node_id=LOCAL_NODE_ID,
-                    chat_id=channel_id,
-                    chat_name=channel_name,
-                    packet_id=sender_result.get("notification_packet_id"),
-                )
-
-            print(
-                f"[WAYPOINT SEND] Sent and saved: {name}; waypoint_id={waypoint_id}; "
-                f"lat={latitude}; lon={longitude}; channel={channel_index}",
-                flush=True,
+        if post_notification:
+            channel_id = channel_chat_id(channel_index)
+            channel_name = CHANNEL_CHAT_NAME if channel_index == 0 else f"Channel {channel_index}"
+            add_message(
+                "me",
+                LOCAL_NODE_NAME,
+                notification_text,
+                node_id=LOCAL_NODE_ID,
+                chat_id=channel_id,
+                chat_name=channel_name,
+                packet_id=waypoint_result.notification_packet_id,
             )
-            log_system_event(
-                title="Waypoint sent",
-                level="OK",
-                details=f"{name}; id {waypoint_id}; {latitude:.6f}, {longitude:.6f}; channel {channel_index}",
-                source="waypoint",
-            )
-            return jsonify({
-                "ok": True,
-                "message": "Waypoint sent",
-                "waypoint": saved,
-                "notification_posted": post_notification,
-                "sender_result": sender_result,
-            })
-        finally:
-            if is_radio_available():
-                pause_listen.clear()
+
+        print(
+            f"[WAYPOINT SEND] Sent and saved: {name}; waypoint_id={waypoint_id}; "
+            f"lat={latitude}; lon={longitude}; channel={channel_index}",
+            flush=True,
+        )
+        log_system_event(
+            title="Waypoint sent",
+            level="OK",
+            details=f"{name}; id {waypoint_id}; {latitude:.6f}, {longitude:.6f}; channel {channel_index}",
+            source="waypoint",
+        )
+        return jsonify({
+            "ok": True,
+            "message": "Waypoint sent",
+            "waypoint": saved,
+            "notification_posted": post_notification,
+            "sender_result": sender_result,
+        })

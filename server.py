@@ -40,12 +40,15 @@ from meshsrv.radio_identity import detect_radio_identity, detect_connected_radio
 from meshsrv.time_service import start_background_thread as start_time_service
 from meshsrv.node_time_sync import STARTUP_SYNC_DELAY_S
 from adapters.meshtastic.serial_transport import SerialTransport
+from adapters.meshtastic.ble_transport import BLETransport
+from meshsrv.transport_router import TransportRouter
 from meshsrv.schedule_engine import start as start_schedule_engine
 from meshsrv import update_service
 from api.api_camera import register_camera_routes
 from api.api_camera_manager import register_camera_manager_routes
 from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes, normalize_settings, SUPPORTED_LANGUAGES
+from api.api_meshtastic import register_meshtastic_routes
 from api.api_system import register_system_routes
 from api.api_updates import register_updates_routes
 from system.cpu_history import (
@@ -737,6 +740,27 @@ serial_transport = SerialTransport(
         title="Node Time Sync", details=msg, level=level, source="time_sync"
     ),
 )
+
+# Task 46: constructed unconditionally alongside serial_transport (cheap -
+# no BLE connection attempt happens until something calls connect()).
+# `address=""` is a placeholder; the real address comes from the
+# ConnectionDescriptor passed to connect() when the user actually
+# switches to Bluetooth (POST /api/meshtastic/transport) - see
+# api/api_meshtastic.py.
+ble_transport = BLETransport(
+    address="",
+    on_log=lambda msg, level="INFO": log_system_event(
+        title="Node Time Sync", details=msg, level=level, source="time_sync"
+    ),
+)
+
+# The ONE stable RadioTransport every DI consumer (api_chat.py,
+# api_waypoints.py, schedule_actions.py) is wired to from here on -
+# switching the active concrete transport (serial_transport <->
+# ble_transport) at runtime never requires re-wiring any of them. See
+# meshsrv/transport_router.py's module docstring for why this exists
+# instead of a mutable server.py global consumers would reach into.
+transport_router = TransportRouter(serial_transport)
 
 # Attempt-level throttle for _attempt_node_time_sync(): the sync itself
 # pauses/resumes the listener (via radio_session()), which produces its
@@ -4052,13 +4076,9 @@ register_chat_routes(
     sanitize_text,
     CHANNEL_CHAT_ID,
     CHANNEL_CHAT_NAME,
-    MESHTASTIC_CMD,
-    lambda: MESHTASTIC_PORT,
+    transport_router,
     LOCAL_NODE_ID,
     LOCAL_NODE_NAME,
-    radio_lock,
-    radio_session,
-    RadioBusyError,
     get_node_name,
     ensure_chat,
     add_message,
@@ -4204,7 +4224,7 @@ register_waypoint_routes(
     get_node_name,
     handle_errors,
     is_radio_available,
-    serial_transport,
+    transport_router,
     add_message,
     log_system_event,
     channel_chat_id,
@@ -4330,6 +4350,18 @@ register_settings_routes(
     handle_errors,
     weather_manager=weather_manager,
     resolve_weather_language=resolve_weather_language,
+)
+
+register_meshtastic_routes(
+    app,
+    handle_errors,
+    state_lock,
+    settings,
+    save_settings,
+    transport_router,
+    serial_transport,
+    ble_transport,
+    MESHTASTIC_PORT,
 )
 
 @app.route("/")
@@ -5697,7 +5729,7 @@ def start_runtime():
     start_schedule_engine(
         nodes=nodes,
         state_lock=state_lock,
-        radio_transport=serial_transport,
+        radio_transport=transport_router,
         is_radio_available=is_radio_available,
         LOCAL_NODE_ID=LOCAL_NODE_ID,
         add_message=add_message,

@@ -38,11 +38,10 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
 from typing import Callable, Optional, Sequence
 
+from adapters.meshtastic._timeout_support import TimeoutEnforced
 from meshsrv import meshtastic_transport
 from meshsrv.node_time_sync import try_sync as try_node_time_sync
 from meshsrv.radio_transport import (
@@ -64,7 +63,7 @@ from meshsrv.radio_transport import (
 from meshsrv.runtime_identity import meshtastic_command
 
 
-class SerialTransport(RadioTransport):
+class SerialTransport(TimeoutEnforced, RadioTransport):
     def __init__(
         self,
         cli_path: str,
@@ -86,34 +85,13 @@ class SerialTransport(RadioTransport):
         self._listen_process: Optional[subprocess.Popen] = None
         self._connected_since: Optional[float] = None
         self._last_error: Optional[TransportError] = None
-        # NOT max_workers=1: with a single shared worker, a call queued
-        # behind an already-running one would have its own `timeout`
-        # measured from submission, not from when it actually starts
-        # executing - a slow-but-healthy call (e.g. a 20s send_messages
-        # batch) would make an unrelated concurrent call (e.g. get_nodes
-        # (timeout=15)) raise TransportError(TIMEOUT) purely from
-        # queueing, misreported as if the radio itself had hung. Real
-        # hardware serialization is already radio_lock's job (see
-        # _claim_radio); this pool exists only to give each call its own
-        # thread to abandon on timeout (see class docstring's tier-1/
-        # tier-2 split), not to serialize calls itself. Verified by
-        # tests/test_serial_transport_timeout.py::
-        # test_concurrent_calls_do_not_spuriously_timeout_each_other.
-        self._executor = ThreadPoolExecutor(thread_name_prefix="serial-transport-watchdog")
-
-    # ------------------------------------------------------------------
-    # Tier-1 timeout enforcement (docs/BACKEND_API.md "Timeouts").
-    # Non-blocking return to the caller only - see that section for why
-    # this does NOT guarantee the wrapped call actually stops.
-    # ------------------------------------------------------------------
-    def _call_with_timeout(self, fn: Callable[[], object], timeout: float, what: str):
-        future = self._executor.submit(fn)
-        try:
-            return future.result(timeout=timeout)
-        except FutureTimeoutError:
-            raise TransportError(
-                TransportErrorCode.TIMEOUT, f"{what} exceeded {timeout}s"
-            ) from None
+        # _call_with_timeout()/_executor now live in TimeoutEnforced
+        # (adapters/meshtastic/_timeout_support.py, extracted in Task 45
+        # so BLETransport doesn't duplicate the same watchdog pattern).
+        # Real hardware serialization is still this class's own job (see
+        # _claim_radio's radio_lock) - the shared mixin only gives each
+        # call its own thread to abandon on timeout, never serializes.
+        TimeoutEnforced.__init__(self, thread_name_prefix="serial-transport-watchdog")
 
     # ------------------------------------------------------------------
     # Internal radio-claim helpers - own copies of server.py's former
@@ -312,7 +290,7 @@ class SerialTransport(RadioTransport):
 
     def close(self) -> None:
         self.disconnect(timeout=15.0)
-        self._executor.shutdown(wait=False)
+        self._shutdown_executor()
 
     # ------------------------------------------------------------------
     # RadioTransport - listener (Stage A: this class owns the subprocess

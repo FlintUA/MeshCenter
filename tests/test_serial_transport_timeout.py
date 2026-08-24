@@ -103,6 +103,56 @@ def test_concurrent_calls_do_not_spuriously_timeout_each_other():
     assert results.get("first") == "long-done"
 
 
+def test_call_with_timeout_thread_is_a_daemon_and_does_not_block_process_exit():
+    """Regression test for the HOTFIX in _timeout_support.py: a call that
+    never returns (the tier-2 gap - live-observed as BLEInterface.close()
+    hanging past its own timeout during Task 45's TAP2 smoke test) must
+    not require kill -9 to let the process exit. The old
+    ThreadPoolExecutor-based implementation failed this - its worker
+    threads are not daemon threads, and concurrent.futures.thread's
+    atexit hook waits for them regardless of shutdown() state. Verified
+    two ways: (1) the caller gets TransportError(TIMEOUT) back on time
+    even though the underlying call never finishes, (2) the thread
+    actually running that stuck call is introspected and confirmed
+    daemon=True - not a full process fork, but the property that matters.
+    """
+    transport = _make_transport()
+    thread_seen = {}
+    release_event = threading.Event()
+
+    def never_returns():
+        thread_seen["thread"] = threading.current_thread()
+        release_event.wait(timeout=5)  # keeps the thread alive briefly so
+        # the assertion below can inspect it; does not affect the
+        # timeout assertion, which already completed by then.
+        return "should never be observed by the caller"
+
+    start = time.monotonic()
+    with pytest.raises(TransportError) as excinfo:
+        transport._call_with_timeout(never_returns, timeout=0.2, what="never_returns()")
+    elapsed = time.monotonic() - start
+
+    assert excinfo.value.code == TransportErrorCode.TIMEOUT
+    assert elapsed < 1.0, "the caller waited far longer than the requested timeout"
+
+    # Give the abandoned thread a moment to actually start running (the
+    # timeout above fires before it necessarily has).
+    for _ in range(50):
+        if "thread" in thread_seen:
+            break
+        time.sleep(0.02)
+    assert "thread" in thread_seen, "the abandoned call never actually started"
+    assert thread_seen["thread"].daemon is True, (
+        "the thread running a hung call is not a daemon thread - it will "
+        "block clean process exit exactly like the live TAP2 kill -9 case"
+    )
+
+    release_event.set()  # let the background thread finish so it's not
+    # left dangling for the rest of the test session (best-effort - even
+    # if it stayed stuck, being a daemon thread means it wouldn't hang
+    # the test process's own exit).
+
+
 def test_concurrent_connect_and_send_do_not_race_prepare_phase():
     """Regression test for the second review finding: with the executor
     no longer max_workers=1, connect(force=True)'s stop+wait teardown and

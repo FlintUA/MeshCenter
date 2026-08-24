@@ -169,8 +169,36 @@ def resolve_app_version(project_dir, fallback="dev"):
 APP_VERSION = resolve_app_version(PROJECT_DIR)
 print(f"[VERSION] MeshCenter {APP_VERSION}", flush=True)
 
+# CLI binary missing (not found in venv/PATH/config.py) is a broken
+# installation - nothing radio-related can ever work without it, not
+# just serial. Stays fatal, deliberately not folded into the port
+# check below.
 try:
     MESHTASTIC_CMD = resolve_meshtastic_cli(MESHTASTIC_CMD, PROJECT_DIR)
+except RuntimeError as error:
+    print("=" * 60, flush=True)
+    print(f"❌ MESHTASTIC INITIALIZATION ERROR: {error}", flush=True)
+    print("=" * 60, flush=True)
+    raise SystemExit(1)
+
+# A missing/unplugged serial port is a different, expected-to-happen,
+# recoverable condition (Task 47 live finding on TAP2: physically
+# disconnecting the radio and restarting the service put gunicorn into
+# a crash-restart loop here, well before app = Flask(...) even exists
+# below - no degraded mode was possible because the whole module failed
+# to import). Everything downstream already tolerates a stale/
+# nonexistent MESHTASTIC_PORT without crashing: SerialTransport.__init__
+# just stores it as a string; detect_radio_identity() (called from
+# verify_radio_identity(), itself only invoked inside start_runtime()
+# after `app` exists) already wraps itself in try/except and returns a
+# structured DETECTION_ERROR/NOT_FOUND result instead of raising;
+# run_listener()'s retry loop never even attempts to start unless
+# RADIO_IDENTITY_RESULT.status == "MATCH" (see the "Listener start
+# blocked" gate below). So the only broken link was this early
+# SystemExit pre-empting all of that already-designed-for degradation
+# from ever running - not fixed by continuing to raise here, only by
+# not raising.
+try:
     MESHTASTIC_PORT = resolve_serial_port(MESHTASTIC_PORT)
     print(
         f"[INIT] Meshtastic CLI resolved: {MESHTASTIC_CMD}; "
@@ -179,9 +207,16 @@ try:
     )
 except RuntimeError as error:
     print("=" * 60, flush=True)
-    print(f"❌ MESHTASTIC INITIALIZATION ERROR: {error}", flush=True)
+    print(f"⚠️  MESHTASTIC SERIAL PORT NOT FOUND: {error}", flush=True)
+    print(
+        "Starting anyway in a degraded state - camera, e-paper, and the "
+        "web interface will work normally; the radio connection will "
+        "report an error until a Meshtastic device is connected and the "
+        "service is restarted, or a transport is explicitly reconnected "
+        "via Settings.",
+        flush=True,
+    )
     print("=" * 60, flush=True)
-    raise SystemExit(1)
 
 missing_vars = []
 for var in required_vars:

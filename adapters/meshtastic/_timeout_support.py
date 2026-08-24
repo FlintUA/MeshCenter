@@ -76,7 +76,27 @@ class TimeoutEnforced:
             ) from None
 
         if status == "error":
-            raise payload
+            # HOTFIX (live Task 47 finding on TAP2): this used to `raise
+            # payload` unconditionally, re-raising whatever `fn` happened
+            # to throw - fine for TransportError (raised deliberately by
+            # a transport's own code), but any OTHER exception type
+            # (e.g. BLEInterface() raising bleak's own "device not
+            # found" error) came back to the caller in its raw,
+            # un-typed form. Every caller up the stack - connect()'s own
+            # `except TransportError`, api/api_meshtastic.py's fail-
+            # closed switch() recovery - only ever catches TransportError,
+            # so an unwrapped exception skipped all of that and reached
+            # Flask's generic error handler instead, silently bypassing
+            # the entire recovery path this was built for. Live-caught:
+            # a forced switch to a nonexistent BLE address left both
+            # transports down with no recovery attempt, because the
+            # "device not found" exception was never a TransportError to
+            # begin with. Wrap anything that isn't already one.
+            if isinstance(payload, TransportError):
+                raise payload
+            raise TransportError(
+                TransportErrorCode.UNKNOWN, f"{what} failed: {payload}"
+            ) from payload
         return payload
 
     def _shutdown_executor(self) -> None:

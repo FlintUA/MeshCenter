@@ -130,6 +130,57 @@ def test_identity_mismatch_closes_the_interface_before_raising():
     assert transport.is_connected() is False
 
 
+def test_reconnect_after_failed_connect_targets_last_known_good_address_not_the_failed_one(monkeypatch):
+    """Regression test for the Task 47 live finding on TAP2: connect()
+    used to overwrite self._address/_name unconditionally before
+    attempting the new connection, with no rollback on failure - so a
+    subsequent bare reconnect() (which reuses self._address/_name by
+    contract, see reconnect()'s own docstring - it builds its
+    ConnectionDescriptor from them, not a fresh caller-supplied address)
+    would retry the address that just failed instead of the last one
+    that actually worked. Also covers DEVICE_NOT_FOUND point-recognition
+    for the real error text observed live: "No Meshtastic BLE peripheral
+    with identifier or address '...' found. Try --ble-scan to find it."
+    """
+    good_address = "3C:DC:75:6F:99:61"
+    bad_address = "00:11:22:33:44:55"
+
+    class _FlakyBLEInterface(_FakeBLEInterface):
+        def __init__(self, address, timeout=300):
+            if address == bad_address:
+                raise Exception(
+                    f"No Meshtastic BLE peripheral with identifier or address '{address}' "
+                    "found. Try --ble-scan to find it."
+                )
+            super().__init__(address, timeout=timeout)
+
+    monkeypatch.setattr(sys.modules["meshtastic.ble_interface"], "BLEInterface", _FlakyBLEInterface)
+
+    transport = BLETransport(address=good_address)
+    transport.connect(_descriptor(good_address), timeout=5)
+    assert transport.get_connection_info().state == ConnectionState.CONNECTED
+
+    # Force-switch to a bad address - simulates POST /bluetooth/connect
+    # to a mistyped/out-of-range device while already connected to a
+    # working one (exactly what happened live on TAP2).
+    with pytest.raises(TransportError) as excinfo:
+        transport.connect(_descriptor(bad_address), force=True, timeout=5)
+    assert excinfo.value.code == TransportErrorCode.DEVICE_NOT_FOUND
+
+    # self._address must have rolled back to the last-known-good value,
+    # not stayed on the address that just failed.
+    info_after_failure = transport.get_connection_info()
+    assert info_after_failure.descriptor.address == good_address
+    assert info_after_failure.state == ConnectionState.ERROR
+
+    # reconnect() takes no address argument - by contract it rebuilds its
+    # descriptor from self._address/_name. This must now succeed against
+    # the good address, not retry the one that just failed.
+    info = transport.reconnect(timeout=5)
+    assert info.state == ConnectionState.CONNECTED
+    assert _FakeBLEInterface.instances[-1].address == good_address
+
+
 def test_disconnect_closes_interface_and_resets_state():
     transport = BLETransport(address="3C:DC:75:6F:99:61")
     transport.connect(_descriptor(), timeout=5)

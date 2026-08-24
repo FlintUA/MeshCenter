@@ -2496,6 +2496,16 @@ function _meshtasticUpdateTransportButtons(activeType) {
 
     const scanSection = document.getElementById('meshtasticBleScanSection');
     if (scanSection) scanSection.style.display = type === 'bluetooth' ? '' : 'none';
+
+    // Permanent, not a one-time confirm dialog (would be annoying on
+    // every switch) - visible for as long as Bluetooth is the selected
+    // transport, connected or not, since the receive gap exists
+    // whenever it's active, not just during a successful connection.
+    // Stage B (meshsrv.transport_router has no receive-path wiring for
+    // BLE at all yet - see MESHCENTER_FULL_PLAN_FOR_CODE.md) is what
+    // closes this, not a UI fix - see Task 47 live finding.
+    const receiveWarning = document.getElementById('meshtasticBleReceiveWarning');
+    if (receiveWarning) receiveWarning.style.display = type === 'bluetooth' ? '' : 'none';
 }
 
 function _meshtasticRenderConnectionStatus(connection) {

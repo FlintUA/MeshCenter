@@ -665,6 +665,7 @@
     "meshtastic_ble_connecting": "Підключення…",
     "meshtastic_ble_connect_success": "Пристрій Bluetooth підключено",
     "meshtastic_ble_connect_failed": "Не вдалося підключитися",
+    "meshtastic_ble_receive_warning": "Вхідні повідомлення не приймаються, поки активний Bluetooth - ви можете надсилати, але не отримувати. Перемкніться назад на USB, щоб знову отримувати повідомлення.",
     "epaper_title": "Дисплей E-Paper",
     "epaper_description": "Налаштування дисплея та відображення інформації.",
     "epaper_enabled": "Увімкнено",

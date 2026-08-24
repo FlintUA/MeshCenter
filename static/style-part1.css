@@ -3009,6 +3009,15 @@ body {
     background: rgba(31, 111, 229, 0.12);
 }
 
+.settings-card-note--warning {
+    color: #946316;
+    font-weight: 600;
+}
+
+html[data-theme="dark"] .settings-card-note--warning {
+    color: #f0c86a;
+}
+
 .telemetry-export-menu {
     position: absolute;
     right: 0;

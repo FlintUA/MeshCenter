@@ -6,7 +6,7 @@
     <meta name="app-version" content="{{ app_version }}">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20260821-style-split">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20260824-meshtastic-transport">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20260821-style-split">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260823-weather-icon-shift">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20260822-weather-key-button">
@@ -1429,6 +1429,39 @@
                             </div>
                         </div>
 
+                        <div class="settings-card settings-card--meshtastic-transport" id="meshtasticTransportCard">
+                            <div class="settings-card-title">📶 <span data-i18n="settings.meshtastic_transport_title">Radio Connection</span></div>
+                            <div class="settings-card-text" data-i18n="settings.meshtastic_transport_description">
+                                How MeshCenter talks to the Meshtastic node. Bluetooth is experimental.
+                            </div>
+
+                            <div class="settings-option">
+                                <div class="settings-option-label" data-i18n="settings.meshtastic_transport_label">Connection type</div>
+                                <div class="settings-segmented">
+                                    <button id="meshtasticTransportUsbBtn" onclick="setMeshtasticTransport('serial')" data-i18n="settings.meshtastic_transport_usb">USB</button>
+                                    <button id="meshtasticTransportBleBtn" onclick="setMeshtasticTransport('bluetooth')">
+                                        <span data-i18n="settings.meshtastic_transport_bluetooth">Bluetooth</span>
+                                        <span class="settings-experimental-badge" data-i18n="settings.meshtastic_transport_experimental_badge">Experimental</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="reference-location-status" id="meshtasticConnectionStatus"></div>
+
+                            <div id="meshtasticBleScanSection" style="display:none;">
+                                <button type="button"
+                                        id="meshtasticBleScanButton"
+                                        class="mc-refresh-btn"
+                                        onclick="meshtasticBleScan(this)">
+                                    🔍 <span data-i18n="settings.meshtastic_ble_scan">Scan for devices</span>
+                                </button>
+
+                                <div id="meshtasticBleDeviceList" class="meshtastic-ble-device-list"></div>
+
+                                <div id="meshtasticBleStatus" class="reference-location-status"></div>
+                            </div>
+                        </div>
+
                         <div class="settings-card settings-card--epaper" id="epaperSettingsCard" style="display:none;">
                             <div class="settings-card-title">🖥️ <span data-i18n="settings.epaper_title">E-Paper Display</span></div>
                             <div class="settings-card-text" data-i18n="settings.epaper_description">Waveshare 2.13" status display.</div>
@@ -2175,7 +2208,7 @@
 <script src="{{ url_for('static', filename='chat-camera.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-map.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20260821-domain-split"></script>
-<script src="/static/chat.js?v=20260822-epaper-rotation"></script>
+<script src="/static/chat.js?v=20260824-meshtastic-transport"></script>
 <script src="/static/media.js?v=20260818-xss-fix-delete-onclick"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 

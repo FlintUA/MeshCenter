@@ -69,6 +69,20 @@ DEFAULT_SETTINGS = {
         "interval": 86400,
     },
 
+    "meshtastic": {
+        # Task 46: which RadioTransport is active, and the last Bluetooth
+        # device the user connected to (so the Settings UI can offer it
+        # again without re-scanning) - never auto-connects to Bluetooth
+        # on its own at startup (MVP: server.py always starts on
+        # "serial", per the plan's BLETransport config-section note).
+        # "transport" reflects the last successful switch, purely
+        # informational for the UI until something reads it back to
+        # decide what to reconnect to.
+        "transport": "serial",
+        "ble_address": "",
+        "ble_name": "",
+    },
+
     "browser_notifications": {
         # Whether the user has opted in via Settings. Notification.permission
         # itself (granted/denied/default) is native per-browser-origin state,
@@ -229,6 +243,22 @@ def normalize_settings(settings):
 
     if weather_provider not in SUPPORTED_WEATHER_PROVIDERS:
         weather_provider = "openweather"
+
+    # ---------------- Meshtastic transport (Task 46) ----------------
+
+    meshtastic_settings = settings.get("meshtastic", {})
+    if not isinstance(meshtastic_settings, dict):
+        meshtastic_settings = {}
+
+    meshtastic_transport_name = str(
+        meshtastic_settings.get("transport", "serial")
+    ).strip().lower()
+
+    if meshtastic_transport_name not in ("serial", "bluetooth"):
+        meshtastic_transport_name = "serial"
+
+    meshtastic_ble_address = str(meshtastic_settings.get("ble_address", "") or "").strip()
+    meshtastic_ble_name = str(meshtastic_settings.get("ble_name", "") or "").strip()
 
     # ---------------- Reference location ----------------
 
@@ -474,6 +504,12 @@ def normalize_settings(settings):
 
         "maps": {
             "provider": map_provider,
+        },
+
+        "meshtastic": {
+            "transport": meshtastic_transport_name,
+            "ble_address": meshtastic_ble_address,
+            "ble_name": meshtastic_ble_name,
         },
 
         "weather": {

@@ -2958,6 +2958,57 @@ body {
     border-color: #1f6fe5;
 }
 
+/* currentColor-based, not a separate light/dark palette - sits inside
+   .settings-segmented button, whose own color already flips between
+   themes (unstyled vs .active), so the badge just rides along. */
+.settings-experimental-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: rgba(127, 127, 127, 0.22);
+    color: currentColor;
+    vertical-align: middle;
+}
+
+.meshtastic-ble-device-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.meshtastic-ble-device-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 12px;
+    border: 1px solid rgba(127, 127, 127, 0.3);
+    border-radius: 10px;
+    font-size: 13px;
+}
+
+.meshtastic-ble-device-item button {
+    border: 1px solid #1f6fe5;
+    background: transparent;
+    color: #1f6fe5;
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.meshtastic-ble-device-item button:hover {
+    background: rgba(31, 111, 229, 0.12);
+}
+
 .telemetry-export-menu {
     position: absolute;
     right: 0;

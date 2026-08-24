@@ -2032,6 +2032,7 @@ function updateSettingsUi() {
     updateReferenceLocationSummary();
     markReferenceLocationStateSaved();
     updateBrowserNotificationsUi();
+    _meshtasticUpdateTransportButtons(appSettings?.meshtastic?.transport);
     notifySettingsUpdated();
 }
 
@@ -2471,6 +2472,219 @@ async function epaperShowPage(page, button) {
     } catch (error) {
         console.error(`[EPAPER] show/${page} failed:`, error);
         showToast(window.I18N.t('settings.epaper_settings_failed'), 'error');
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+// ===== MESHTASTIC TRANSPORT (Serial <-> Bluetooth, Task 46) =====
+// Bluetooth is labeled experimental - deliberately no RSSI, PIN-pairing
+// dialog, or diagnostics panel in this first cut (see the Task 46 scope
+// note). A switch can legitimately take up to ~90s (BLE connect) or up
+// to ~135s worst case if it fails and the backend has to recover serial
+// (see api/api_meshtastic.py's _RECOVERY_CONNECT_TIMEOUT_S) - buttons
+// stay disabled and the status line reflects "in progress" for the
+// whole wait rather than looking stuck.
+
+function _meshtasticUpdateTransportButtons(activeType) {
+    const usbBtn = document.getElementById('meshtasticTransportUsbBtn');
+    const bleBtn = document.getElementById('meshtasticTransportBleBtn');
+    const type = activeType || appSettings?.meshtastic?.transport || 'serial';
+
+    usbBtn?.classList.toggle('active', type === 'serial');
+    bleBtn?.classList.toggle('active', type === 'bluetooth');
+
+    const scanSection = document.getElementById('meshtasticBleScanSection');
+    if (scanSection) scanSection.style.display = type === 'bluetooth' ? '' : 'none';
+}
+
+function _meshtasticRenderConnectionStatus(connection) {
+    const statusEl = document.getElementById('meshtasticConnectionStatus');
+    if (!statusEl) return;
+
+    const typeLabel = connection.type === 'bluetooth'
+        ? window.I18N.t('settings.meshtastic_transport_bluetooth')
+        : window.I18N.t('settings.meshtastic_transport_usb');
+
+    const stateKey = {
+        connected: 'settings.meshtastic_state_connected',
+        connecting: 'settings.meshtastic_state_connecting',
+        disconnected: 'settings.meshtastic_state_disconnected',
+        error: 'settings.meshtastic_state_error',
+    }[connection.state] || 'settings.meshtastic_state_disconnected';
+
+    const parts = [`${typeLabel} · ${window.I18N.t(stateKey)}`];
+    if (connection.node_id) parts.push(connection.node_id);
+    statusEl.textContent = parts.join(' — ');
+    statusEl.className = connection.state === 'connected'
+        ? 'reference-location-status reference-location-status-ok'
+        : (connection.state === 'error'
+            ? 'reference-location-status reference-location-status-error'
+            : 'reference-location-status');
+}
+
+async function loadMeshtasticConnectionStatus() {
+    const statusEl = document.getElementById('meshtasticConnectionStatus');
+    if (!statusEl) return;
+
+    try {
+        const response = await fetch('/api/meshtastic/connection', { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+
+        const connection = data.connection || {};
+        _meshtasticRenderConnectionStatus(connection);
+        _meshtasticUpdateTransportButtons(connection.type);
+    } catch (error) {
+        console.warn('[MESHTASTIC] Failed to load connection status:', error);
+        statusEl.textContent = window.I18N.t('settings.meshtastic_status_unavailable');
+        statusEl.className = 'reference-location-status reference-location-status-error';
+    }
+}
+
+async function setMeshtasticTransport(type) {
+    const usbBtn = document.getElementById('meshtasticTransportUsbBtn');
+    const bleBtn = document.getElementById('meshtasticTransportBleBtn');
+    const statusEl = document.getElementById('meshtasticConnectionStatus');
+
+    if (usbBtn) usbBtn.disabled = true;
+    if (bleBtn) bleBtn.disabled = true;
+    if (statusEl) {
+        statusEl.textContent = window.I18N.t('settings.meshtastic_switch_in_progress');
+        statusEl.className = 'reference-location-status';
+    }
+
+    try {
+        const response = await fetch('/api/meshtastic/transport', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+
+        _meshtasticRenderConnectionStatus(data.connection || {});
+        _meshtasticUpdateTransportButtons(data.connection?.type);
+        showToast(window.I18N.t('settings.meshtastic_switch_success'), 'success');
+
+        // The switch already persisted settings.meshtastic server-side -
+        // refresh the cached copy so other settings-driven UI stays in
+        // sync without a full page reload.
+        loadSettings();
+    } catch (error) {
+        console.error('[MESHTASTIC] Transport switch failed:', error);
+        if (statusEl) {
+            statusEl.textContent = `${window.I18N.t('settings.meshtastic_switch_failed')}: ${error.message || error}`;
+            statusEl.className = 'reference-location-status reference-location-status-error';
+        }
+        showToast(window.I18N.t('settings.meshtastic_switch_failed'), 'error');
+
+        // Switch failed - re-sync with whatever the backend actually
+        // landed on (recovery may have restored serial, or left both
+        // transports down - see api/api_meshtastic.py's fail-closed
+        // recovery path) instead of trusting the button just clicked.
+        loadMeshtasticConnectionStatus();
+    } finally {
+        if (usbBtn) usbBtn.disabled = false;
+        if (bleBtn) bleBtn.disabled = false;
+    }
+}
+
+async function meshtasticBleScan(button) {
+    const listEl = document.getElementById('meshtasticBleDeviceList');
+    const statusEl = document.getElementById('meshtasticBleStatus');
+
+    if (button) button.disabled = true;
+    if (listEl) listEl.innerHTML = '';
+    if (statusEl) {
+        statusEl.textContent = window.I18N.t('settings.meshtastic_ble_scanning');
+        statusEl.className = 'reference-location-status';
+    }
+
+    try {
+        const response = await fetch('/api/meshtastic/bluetooth/scan', { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+
+        const devices = data.devices || [];
+        if (!devices.length) {
+            if (statusEl) {
+                statusEl.textContent = window.I18N.t('settings.meshtastic_ble_no_devices');
+                statusEl.className = 'reference-location-status';
+            }
+            return;
+        }
+
+        if (statusEl) statusEl.textContent = '';
+        if (listEl) {
+            // Built via DOM APIs, not innerHTML string interpolation -
+            // device.name comes straight from BLE advertisement data
+            // (attacker-adjacent, not something MeshCenter controls),
+            // so it goes through textContent only, never into markup.
+            devices.forEach(device => {
+                const item = document.createElement('div');
+                item.className = 'meshtastic-ble-device-item';
+
+                const label = document.createElement('span');
+                label.textContent = device.name
+                    ? `${device.name} (${device.address || ''})`
+                    : (device.address || '');
+                item.appendChild(label);
+
+                const connectBtn = document.createElement('button');
+                connectBtn.type = 'button';
+                connectBtn.textContent = window.I18N.t('settings.meshtastic_ble_connect');
+                connectBtn.onclick = () => meshtasticBleConnect(device.address, device.name || '', connectBtn);
+                item.appendChild(connectBtn);
+
+                listEl.appendChild(item);
+            });
+        }
+    } catch (error) {
+        console.error('[MESHTASTIC] Bluetooth scan failed:', error);
+        if (statusEl) {
+            statusEl.textContent = `${window.I18N.t('settings.meshtastic_ble_scan_failed')}: ${error.message || error}`;
+            statusEl.className = 'reference-location-status reference-location-status-error';
+        }
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+async function meshtasticBleConnect(address, name, button) {
+    const statusEl = document.getElementById('meshtasticBleStatus');
+
+    if (button) button.disabled = true;
+    if (statusEl) {
+        statusEl.textContent = window.I18N.t('settings.meshtastic_ble_connecting');
+        statusEl.className = 'reference-location-status';
+    }
+
+    try {
+        const response = await fetch('/api/meshtastic/bluetooth/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ address, name }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+
+        _meshtasticRenderConnectionStatus(data.connection || {});
+        _meshtasticUpdateTransportButtons(data.connection?.type);
+        if (statusEl) {
+            statusEl.textContent = window.I18N.t('settings.meshtastic_ble_connect_success');
+            statusEl.className = 'reference-location-status reference-location-status-ok';
+        }
+        showToast(window.I18N.t('settings.meshtastic_ble_connect_success'), 'success');
+        loadSettings();
+    } catch (error) {
+        console.error('[MESHTASTIC] Bluetooth connect failed:', error);
+        if (statusEl) {
+            statusEl.textContent = `${window.I18N.t('settings.meshtastic_ble_connect_failed')}: ${error.message || error}`;
+            statusEl.className = 'reference-location-status reference-location-status-error';
+        }
+        showToast(window.I18N.t('settings.meshtastic_ble_connect_failed'), 'error');
+        loadMeshtasticConnectionStatus();
     } finally {
         if (button) button.disabled = false;
     }
@@ -9813,6 +10027,7 @@ function switchMainTab(tab) {
 
         updateStatusDock('settings');
         loadEpaperSettings();
+        loadMeshtasticConnectionStatus();
     } else if (tab === 'about') {
         if (chatHeader) chatHeader.style.display = 'none';
         if (chatListContainer) chatListContainer.style.display = 'none';

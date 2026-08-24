@@ -1,9 +1,10 @@
 from flask import request, jsonify
 import time
-import subprocess
 import threading
 import queue
 import re
+
+from meshsrv.radio_transport import OutgoingMessage
 
 # Meshtastic protobufs: Data.payload max_size (see meshtastic/protobufs
 # mesh.options, mesh_pb2.Constants.DATA_PAYLOAD_LEN) - the hard protocol
@@ -32,13 +33,9 @@ def register_chat_routes(
     sanitize_text,
     CHANNEL_CHAT_ID,
     CHANNEL_CHAT_NAME,
-    MESHTASTIC_CMD,
-    get_meshtastic_port,
+    radio_transport,
     LOCAL_NODE_ID,
     LOCAL_NODE_NAME,
-    radio_lock,
-    radio_session,
-    RadioBusyError,
     get_node_name,
     ensure_chat,
     add_message,
@@ -50,20 +47,14 @@ def register_chat_routes(
     is_radio_available,
     update_message_status,
 ):
-    def active_serial_port():
-        port = str(get_meshtastic_port() or "").strip()
-        if not port:
-            raise RuntimeError("Active Meshtastic serial port is not configured")
-        return port
-
     # ------------------------------------------------------------------
     # Background send worker.
     #
-    # Talking to the radio (opening a fresh SerialInterface, waiting for the
-    # listener to release the port, the mandatory cooldown before resuming
-    # --listen) reliably takes several seconds. /api/send used to do all of
-    # that inline and only answer the HTTP request once it was done, so the
-    # UI sat on a disabled "Sending..." button for the whole round trip.
+    # Talking to the radio through radio_transport (Task 46 - was a
+    # directly-opened SerialInterface here) reliably takes several
+    # seconds. /api/send used to do all of that inline and only answer
+    # the HTTP request once it was done, so the UI sat on a disabled
+    # "Sending..." button for the whole round trip.
     #
     # Now /api/send only validates the request, stores the message with
     # status="pending" and hands the actual transmission to this worker.
@@ -85,103 +76,76 @@ def register_chat_routes(
         except Exception as status_error:
             print(f"[SEND WORKER] Failed to update message status: {status_error}", flush=True)
 
-    def _send_one(interface, job):
+    def _handle_send_result(job, result):
         text = job["text"]
         final_chat_id = job["final_chat_id"]
         chat_type = job["chat_type"]
-        channel_index = job["channel_index"]
         reply_id = job["reply_id"]
         message_id = job["message_id"]
         receiver_name = job["receiver_name"]
+        want_ack = chat_type == "dm"
 
-        try:
-            destination = final_chat_id if chat_type == "dm" else "^all"
-            # Broadcast has no per-recipient ACK in the Meshtastic protocol
-            # itself - only direct messages can be meaningfully confirmed,
-            # so only they ask for one. The short-lived SerialInterface used
-            # here closes right after this call returns, long before any
-            # ACK could arrive - actual delivery confirmation is picked up
-            # later from --listen's own output (see process_routing_ack_line
-            # in server.py), not from an onResponse callback on this object.
-            want_ack = chat_type == "dm"
+        if not result.accepted:
+            error_text = str(result.error) if result.error is not None else "send failed"
+            radio_event("send_error", error_text)
+            _mark_failed(message_id, final_chat_id, error_text)
+            return
 
-            sent_packet = interface.sendText(
-                text=text,
-                destinationId=destination,
-                wantAck=want_ack,
-                channelIndex=channel_index,
-                replyId=reply_id,
-            )
+        packet_id = result.packet_id
 
-            packet_id = getattr(sent_packet, "id", None)
-            if packet_id is not None:
-                packet_id = int(packet_id)
+        print(
+            f"[SEND WORKER] chat_id={final_chat_id}, "
+            f"packet_id={packet_id}, reply_id={reply_id}, want_ack={want_ack}",
+            flush=True
+        )
 
-            print(
-                f"[SEND WORKER] destination={destination}, channel_index={channel_index}, "
-                f"packet_id={packet_id}, reply_id={reply_id}, want_ack={want_ack}",
-                flush=True
-            )
+        radio_event("send")
+        update_message_status(
+            message_id, final_chat_id, "sent",
+            packet_id=packet_id, ack_requested=want_ack,
+        )
 
-            radio_event("send")
-            update_message_status(
-                message_id, final_chat_id, "sent",
-                packet_id=packet_id, ack_requested=want_ack,
-            )
+        with state_lock:
+            old = nodes.get(LOCAL_NODE_ID, {})
+            info = get_node_info(LOCAL_NODE_ID)
 
-            with state_lock:
-                old = nodes.get(LOCAL_NODE_ID, {})
-                info = get_node_info(LOCAL_NODE_ID)
-
-                # Merge on top of the existing record instead of replacing it
-                # outright, so telemetry collected between messages
-                # (device_metrics / environment_metrics / power_metrics)
-                # survives every outgoing send instead of being wiped here.
-                node = dict(old)
-                node.update({
-                    "name": LOCAL_NODE_NAME,
-                    "node_id": LOCAL_NODE_ID,
-                    "last_seen": time.time(),
-                    "last_time": now(),
-                    "rssi": old.get("rssi"),
-                    "snr": old.get("snr"),
-                    "hop_start": old.get("hop_start", ""),
-                    "relay_node": old.get("relay_node", ""),
-                    "last_text": (
-                        f"sent to {receiver_name}: {text}"
-                        if chat_type == "dm"
-                        else f"sent: {text}"
-                    ),
-                    "short_name": info.get("short_name", old.get("short_name", "")),
-                    "hw_model": info.get("hw_model", old.get("hw_model", "")),
-                    "role": old.get("role", "CLIENT_BASE"),
-                    "ignored": old.get("ignored", False),
-                    "favorite": old.get("favorite", False),
-                    "position": old.get("position"),
-                })
-                nodes[LOCAL_NODE_ID] = node
-                save_nodes()
-
-        except subprocess.TimeoutExpired:
-            radio_event("send_error", "Meshtastic send timeout")
-            _mark_failed(message_id, final_chat_id, "timeout")
-
-        except Exception as e:
-            radio_event("send_error", str(e))
-            _mark_failed(message_id, final_chat_id, str(e))
+            # Merge on top of the existing record instead of replacing it
+            # outright, so telemetry collected between messages
+            # (device_metrics / environment_metrics / power_metrics)
+            # survives every outgoing send instead of being wiped here.
+            node = dict(old)
+            node.update({
+                "name": LOCAL_NODE_NAME,
+                "node_id": LOCAL_NODE_ID,
+                "last_seen": time.time(),
+                "last_time": now(),
+                "rssi": old.get("rssi"),
+                "snr": old.get("snr"),
+                "hop_start": old.get("hop_start", ""),
+                "relay_node": old.get("relay_node", ""),
+                "last_text": (
+                    f"sent to {receiver_name}: {text}"
+                    if chat_type == "dm"
+                    else f"sent: {text}"
+                ),
+                "short_name": info.get("short_name", old.get("short_name", "")),
+                "hw_model": info.get("hw_model", old.get("hw_model", "")),
+                "role": old.get("role", "CLIENT_BASE"),
+                "ignored": old.get("ignored", False),
+                "favorite": old.get("favorite", False),
+                "position": old.get("position"),
+            })
+            nodes[LOCAL_NODE_ID] = node
+            save_nodes()
 
     def _process_send_batch(batch):
-        """Send every job already queued in one pause/connect/resume cycle.
-
-        Pausing the listener (prepare_radio_command -> stop_listener) alone
-        costs at least ~1.5s, plus wait_serial_release polling, plus the 2s
-        cooldown before the listener resumes - all before any actual serial
-        I/O. Doing that separately for every message in a quick burst (e.g.
-        three messages sent back to back) repeatedly kills and restarts the
-        --listen subprocess and reopens the serial connection in rapid
-        succession, which is what produced occasional "Timed out waiting
-        for connection completion" failures. Draining the queue and sharing
-        a single SerialInterface across the whole batch avoids that.
+        """Send every job already queued in one send_messages() call - one
+        underlying connection for the whole batch is the transport's own
+        job now (docs/BACKEND_API.md "Batching"; SerialTransport still
+        does this via radio_lock/one SerialInterface per batch,
+        BLETransport's persistent connection makes it automatic) - this
+        function no longer opens or manages a radio connection itself,
+        it only builds the OutgoingMessage list and interprets results.
         """
         if not batch:
             return
@@ -191,27 +155,31 @@ def register_chat_routes(
                 _mark_failed(job["message_id"], job["final_chat_id"], "radio released for external configuration")
             return
 
-        try:
-            with radio_session(device=active_serial_port(), timeout=10, cooldown=2.0):
-                interface = None
-                try:
-                    from meshtastic.serial_interface import SerialInterface
+        messages = [
+            OutgoingMessage(
+                text=job["text"],
+                # Broadcast has no per-recipient ACK in the Meshtastic
+                # protocol itself - only direct messages can be
+                # meaningfully confirmed, so only they ask for one.
+                # Actual delivery confirmation is picked up later from
+                # --listen's own output (see process_routing_ack_line in
+                # server.py), not from an onResponse callback here.
+                destination_id=(job["final_chat_id"] if job["chat_type"] == "dm" else "^all"),
+                channel_index=job["channel_index"],
+                want_ack=(job["chat_type"] == "dm"),
+                reply_id=job["reply_id"],
+            )
+            for job in batch
+        ]
 
-                    interface = SerialInterface(devPath=active_serial_port())
-                    for job in batch:
-                        _send_one(interface, job)
-                finally:
-                    if interface is not None:
-                        try:
-                            interface.close()
-                        except Exception as close_error:
-                            print(f"[SEND WARN] interface.close(): {close_error}", flush=True)
-        except RadioBusyError:
-            for job in batch:
-                _mark_failed(job["message_id"], job["final_chat_id"], f"serial port busy: {active_serial_port()}")
-            return
-        finally:
-            print("[SEND] Listener resumed", flush=True)
+        # send_messages() on every RadioTransport implementation catches
+        # its own TransportError internally and always returns one
+        # SendResult per input message (never raises) - see
+        # SerialTransport/BLETransport.send_messages().
+        results = radio_transport.send_messages(messages, timeout=30)
+
+        for job, result in zip(batch, results):
+            _handle_send_result(job, result)
 
     # How long to wait, after the first job in a new batch arrives, for
     # more jobs to land before committing to a batch. Draining with
@@ -273,18 +241,6 @@ def register_chat_routes(
     def is_channel_chat_id(value):
         return value == CHANNEL_CHAT_ID or bool(re.fullmatch(r"channel:[1-7]", str(value or "")))
 
-    def is_radio_lock_busy():
-        """Return True when another thread currently owns the shared radio lock.
-
-        threading.RLock does not expose locked() on all supported Python
-        versions, so use a non-blocking acquire test instead.
-        """
-        acquired = radio_lock.acquire(blocking=False)
-        if acquired:
-            radio_lock.release()
-            return False
-        return True
-
     def discover_radio_channels(force=False):
         """Read the active channel configuration from the connected radio.
 
@@ -304,10 +260,9 @@ def register_chat_routes(
                 return cached_channels
 
         discovered = []
-        interface = None
         discovery_error = None
 
-        if not is_radio_available() or is_radio_lock_busy():
+        if not is_radio_available():
             if cached_channels:
                 return cached_channels
             return [{
@@ -322,79 +277,30 @@ def register_chat_routes(
                 "unread": 0,
             }]
 
+        # radio_transport.get_channels() already does the settle dance
+        # (waitForConfig() + the extra sleep for secondary-channel roles
+        # to finish syncing) and the DISABLED-role filtering that used to
+        # happen inline here - see SerialTransport.get_channels()/
+        # BLETransport.get_channels(). This function only maps the
+        # already-neutral ChannelInfo list onto the dict shape the
+        # frontend expects.
         try:
-            with radio_session(device=active_serial_port(), timeout=10, cooldown=2.0):
-                from meshtastic.serial_interface import SerialInterface
-                interface = SerialInterface(devPath=active_serial_port())
-
-                # SerialInterface() returns as soon as the initial handshake
-                # (myInfo) is in, but the channel list keeps trickling in
-                # afterwards as part of the same config stream. Reading
-                # interface.localNode.channels immediately after connecting
-                # can catch it half-populated - primary (index 0) tends to
-                # arrive first, so it looked fine while secondary channels
-                # briefly reported role=DISABLED (their unset default) and
-                # got filtered out below, only to show up on a later
-                # discovery call once the full config had synced.
-                wait_for_config = getattr(interface, "waitForConfig", None)
-                if callable(wait_for_config):
-                    try:
-                        wait_for_config()
-                    except Exception as wait_error:
-                        print(f"[CHANNELS] waitForConfig() warning: {wait_error}", flush=True)
-
-                # Give the radio extra time to sync secondary channel roles —
-                # they can briefly still report role=DISABLED (their unset
-                # default) right after waitForConfig() returns, before the
-                # full config has actually finished trickling in.
-                time.sleep(1.5)
-
-                raw_channels = getattr(getattr(interface, "localNode", None), "channels", None) or []
-
-                for fallback_index, channel in enumerate(raw_channels):
-                    index = getattr(channel, "index", fallback_index)
-                    try:
-                        index = int(index)
-                    except (TypeError, ValueError):
-                        index = fallback_index
-
-                    # Meshtastic currently exposes channel slots 0 through 7.
-                    if index < 0 or index > 7:
-                        continue
-
-                    settings_obj = getattr(channel, "settings", None)
-                    name = getattr(settings_obj, "name", "") if settings_obj is not None else ""
-                    role = getattr(channel, "role", None)
-                    role_text = str(role or "").upper()
-                    disabled = "DISABLED" in role_text or role == 0
-                    if disabled:
-                        continue
-
-                    if not name:
-                        name = CHANNEL_CHAT_NAME if index == 0 else f"Channel {index}"
-
-                    discovered.append({
-                        "id": channel_chat_id(index),
-                        "index": index,
-                        "name": f"{name} [{index}]",
-                        "type": "channel",
-                        "is_channel": True,
-                        "is_demo": False,
-                        "last_message": "",
-                        "last_time": "",
-                        "unread": 0,
-                    })
+            for info in radio_transport.get_channels(timeout=15):
+                name = info.name or (CHANNEL_CHAT_NAME if info.index == 0 else f"Channel {info.index}")
+                discovered.append({
+                    "id": channel_chat_id(info.index),
+                    "index": info.index,
+                    "name": f"{name} [{info.index}]",
+                    "type": "channel",
+                    "is_channel": True,
+                    "is_demo": False,
+                    "last_message": "",
+                    "last_time": "",
+                    "unread": 0,
+                })
         except Exception as error:
             discovery_error = error
             print(f"[CHANNELS] Discovery warning: {error}", flush=True)
-        finally:
-            # pause_listen/cooldown are handled by radio_session() itself;
-            # only the SerialInterface needs closing here.
-            if interface is not None:
-                try:
-                    interface.close()
-                except Exception:
-                    pass
 
         if discovered:
             # One item per slot, ordered exactly as on the radio.

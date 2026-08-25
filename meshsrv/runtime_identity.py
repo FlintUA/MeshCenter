@@ -10,14 +10,38 @@ import sys
 from pathlib import Path
 
 
+def resolve_adapter_venv_dir(project_dir: str | os.PathLike | None = None) -> Path:
+    """Well-known location of the adapter's own venv (Task 48 venv split -
+    install.sh's adapter step_venv() creates it here). Single source of
+    truth for both resolve_meshtastic_cli()'s new candidate below and the
+    Core-side IPC-client-proxy's own choice of which Python interpreter to
+    launch the adapter subprocess with - two different call sites, one
+    path, so they can never disagree about where the adapter venv lives.
+    Does not check existence - callers decide what "missing" means for
+    their own purpose (a missing CLI binary vs. a missing adapter venv are
+    different, distinguishable failures, not the same error)."""
+    project = Path(project_dir or Path(__file__).resolve().parents[1]).resolve()
+    return project / "adapters" / "meshtastic" / "venv"
+
+
 def resolve_meshtastic_cli(configured_path: str = "", project_dir: str | os.PathLike | None = None) -> str:
     """Return an absolute executable path to the Meshtastic CLI.
 
     Resolution order:
     1. Explicit path from config.py
-    2. CLI next to the active Python interpreter (virtual environment)
-    3. <project>/venv/bin/meshtastic
-    4. PATH lookup via shutil.which()
+    2. <project>/adapters/meshtastic/venv/bin/meshtastic - the adapter's
+       own venv (Task 48 venv split). Checked before the two candidates
+       below: post-split, those point at Core's own venv, which no
+       longer has `meshtastic` installed at all (moved to
+       adapters/meshtastic/requirements.txt) - live-caught risk, not
+       theoretical (see the Task 48 investigation report: run_listener()
+       staying in Core still needs this CLI binary for `--listen`/`--info`,
+       and would silently stop finding it after the split without this
+       candidate).
+    3. CLI next to the active Python interpreter (single-venv/pre-split
+       installs, and this project's own test fixtures)
+    4. <project>/venv/bin/meshtastic (same - pre-split fallback)
+    5. PATH lookup via shutil.which()
 
     Raises RuntimeError instead of allowing subprocess to receive an empty path.
     """
@@ -32,6 +56,7 @@ def resolve_meshtastic_cli(configured_path: str = "", project_dir: str | os.Path
         candidates.append(candidate)
 
     candidates.extend([
+        resolve_adapter_venv_dir(project) / "bin" / "meshtastic",
         Path(sys.executable).resolve().parent / "meshtastic",
         project / "venv" / "bin" / "meshtastic",
         Path.home() / ".local" / "bin" / "meshtastic",

@@ -4,12 +4,16 @@
 # venv (see requirements.txt) so GPLv3 code never gets imported into
 # Core's own process.
 #
-# [ble] extra pulls in bleak - adapters/meshtastic/ble_transport.py
-# imports meshtastic.ble_interface.BLEInterface, which is meshtastic's
-# own wrapper around bleak; bare `meshtastic` does NOT install bleak,
-# it's an optional extra. Without it, BLE would silently fail with an
-# ImportError surfaced as an opaque ADAPTER_UNAVAILABLE, not a clear
-# "install the [ble] extra" message.
+# adapters/meshtastic/ble_transport.py imports
+# meshtastic.ble_interface.BLEInterface, meshtastic's own wrapper around
+# bleak. No [ble] extra needed - live-verified on a real node (task 48
+# follow-up) that bleak is an unconditional base dependency of meshtastic
+# 2.7.x (`pip show meshtastic` lists it under plain "Requires:", with no
+# extras marker at all - `pip install meshtastic[ble]` just warns
+# "does not provide the extra 'ble'" and installs bleak anyway). An
+# earlier version of this file specified meshtastic[ble], based on an
+# unverified assumption that bleak was extras-gated - it wasn't; this is
+# the corrected, actually-checked version.
 #
 # Pinned to the 2.7.x line, not just >=: server.py's listen_meshtastic()
 # (Core-side, still shells out to the CLI binary this venv provides)
@@ -18,4 +22,4 @@
 # change that output format and break parsing with no warning. Currently
 # deployed: 2.7.9 (prod), 2.7.11 (dev/camtest, also the latest 2.7.x on
 # PyPI as of 2026-08) - this range covers both without floating past 2.7.
-meshtastic[ble]>=2.7.9,<2.8.0
+meshtastic>=2.7.9,<2.8.0

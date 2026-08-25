@@ -57,9 +57,9 @@ if [ -x "${ADAPTER_VENV}/bin/python" ]; then
         bad "meshtastic package not importable inside ${ADAPTER_VENV} — run: ${ADAPTER_VENV}/bin/pip install -r adapters/meshtastic/requirements.txt"
     fi
     if "${ADAPTER_VENV}/bin/python" -c "from meshtastic.ble_interface import BLEInterface" >/dev/null 2>&1; then
-        ok "BLE support (bleak, via the [ble] extra) importable inside the adapter venv"
+        ok "BLE support (bleak, a base meshtastic dependency) importable inside the adapter venv"
     else
-        bad "BLE support not importable inside ${ADAPTER_VENV} — bare 'meshtastic' was likely installed instead of 'meshtastic[ble]' (see adapters/meshtastic/requirements.txt); BLE radios will fail with an opaque ADAPTER_UNAVAILABLE"
+        bad "BLE support not importable inside ${ADAPTER_VENV} — meshtastic itself may be missing/broken (bleak is a base dependency, not an extra - see adapters/meshtastic/requirements.txt); run: ${ADAPTER_VENV}/bin/pip install -r adapters/meshtastic/requirements.txt"
     fi
     if [ -x "${ADAPTER_VENV}/bin/meshtastic" ]; then
         ok "meshtastic CLI present at ${ADAPTER_VENV}/bin/meshtastic"

@@ -272,7 +272,19 @@ class AdapterSupervisor:
         left waiting on the subprocess itself."""
         with self._proc_lock:
             if self._proc is None or self._proc.poll() is not None:
-                self._spawn_locked()
+                try:
+                    self._spawn_locked()
+                except Exception as error:
+                    # Most commonly: adapter_python doesn't exist yet (no
+                    # separate adapter venv provisioned) - must degrade to
+                    # the same clean, expected error every other failure
+                    # path in this method produces, not a raw
+                    # FileNotFoundError escaping to whichever caller
+                    # (including background threads like the node-time-sync
+                    # worker) didn't anticipate this specific failure mode.
+                    raise TransportError(
+                        TransportErrorCode.ADAPTER_UNAVAILABLE, f"failed to launch adapter subprocess: {error}"
+                    ) from error
             proc = self._proc
 
             try:

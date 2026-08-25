@@ -158,6 +158,30 @@ def test_crashed_adapter_raises_adapter_unavailable_not_a_raw_exception():
     assert excinfo.value.code == TransportErrorCode.ADAPTER_UNAVAILABLE
 
 
+def test_spawn_failure_raises_adapter_unavailable_not_a_raw_exception():
+    """Real scenario for the current, pre-venv-split state of the live
+    nodes: adapter_python points at a well-known path
+    (resolve_adapter_venv_dir()) that doesn't exist yet until install.sh's
+    venv-split step runs. subprocess.Popen(nonexistent executable) raises
+    FileNotFoundError - this must degrade the same clean way every other
+    call() failure path does, not propagate a raw exception past a caller
+    (e.g. the node-time-sync background worker) that only expects
+    TransportError."""
+    supervisor = _make_supervisor(
+        adapter_python="/nonexistent/path/to/adapter/venv/bin/python", command=None
+    )
+
+    with pytest.raises(TransportError) as excinfo:
+        supervisor.call(
+            {"operation": "get_metadata", "transport_type": "serial", "params": {}, "timeout": 5.0},
+            timeout=5.0,
+            ble_address_for_cleanup=None,
+        )
+
+    assert excinfo.value.code == TransportErrorCode.ADAPTER_UNAVAILABLE
+    assert supervisor._proc is None  # left in a clean, retryable state
+
+
 def test_kill_runs_bluetoothctl_disconnect_only_when_a_ble_address_is_given():
     supervisor = _make_supervisor()
 

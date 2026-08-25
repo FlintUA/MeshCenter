@@ -62,8 +62,29 @@ class TransportErrorCode(str, Enum):
 # Neutral models — plain data, no protobuf/library types anywhere below.
 # ---------------------------------------------------------------------------
 
-@dataclass(frozen=True)
+@dataclass
 class TransportError(Exception):
+    """NOT frozen (Task 48 follow-up, live-caught): exception objects are
+    inherently mutable in a couple of places by Python's own machinery
+    (__traceback__, __cause__/__context__ via `raise ... from ...`) -
+    freezing this was a mismatch with that contract from the moment this
+    class was introduced (Task 43.5), just never triggered until a real
+    TransportError propagated out of a generator-based @contextmanager
+    (claim_for_external_command()/_claim_radio()) for the first time:
+    contextlib's _GeneratorContextManager.__exit__ does
+    `exc.__traceback__ = traceback` when letting an exception through
+    unchanged, which a frozen dataclass's __setattr__ rejects outright -
+    dataclasses.FrozenInstanceError, masking the real underlying error.
+    Reproduced in isolation and confirmed fixed by dropping frozen=True
+    before this change landed; see
+    tests/test_adapter_ipc_client.py::test_transport_error_raised_inside_claim_propagates_cleanly_not_frozeninstanceerror
+    for the real-path regression test (not just the isolated repro).
+
+    Losing frozen=True's hashability (eq=True + not frozen -> __hash__ is
+    None) is fine here - checked before this change: nothing in this
+    codebase uses a TransportError instance as a dict key or set member.
+    """
+
     code: TransportErrorCode
     message: str
 

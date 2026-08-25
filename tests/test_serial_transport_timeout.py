@@ -14,6 +14,7 @@ import pytest
 from adapters.meshtastic.serial_transport import SerialTransport
 from meshsrv.radio_transport import (
     ConnectionDescriptor,
+    ConnectionState,
     ConnectionType,
     OutgoingMessage,
     TransportError,
@@ -218,7 +219,15 @@ def test_concurrent_connect_and_send_do_not_race_prepare_phase():
                 timeout=0.3,
             )
         except TransportError:
-            pass  # expected: no run_listener() thread here to ever report is_connected()
+            # Task 48 follow-up: connect() now actually opens/closes
+            # _open_interface() (stubbed above) instead of polling
+            # is_connected() against a listener process this instance
+            # never owns - with a fake interface that never raises, this
+            # should succeed well within 0.3s, so this except is no
+            # longer the expected path (kept defensively: this test's
+            # actual point is the critical-section overlap check below,
+            # not connect()'s own success/failure).
+            pass
 
     def run_send():
         transport.send_text(
@@ -239,3 +248,131 @@ def test_concurrent_connect_and_send_do_not_race_prepare_phase():
         "overlapped - radio_lock is not fully serializing the prepare "
         "sequence, reintroducing the serial-port-contention risk"
     )
+
+
+# --- Task 48 follow-up: connect()/disconnect() state correctness ----------
+
+
+def test_connect_reports_state_connected_not_disconnected_after_a_real_probe():
+    """Task 48 follow-up review requirement: proving connect() no longer
+    raises is not enough - it must also report the RIGHT state
+    afterward, not silently fall back to DISCONNECTED via a dead
+    is_connected() check against a listener process this instance never
+    owns (the second, distinct bug found alongside the polling-loop
+    fix). Full path through the real connect() (not a mock of
+    connect() itself) with only _open_interface() stubbed - proves
+    is_connected()/get_connection_info() correctly derive from the new
+    _last_probe_ok state set by _do_connect()'s real body."""
+    transport = _make_transport()
+
+    class _FakeInterface:
+        def close(self):
+            pass
+
+    transport._open_interface = lambda: _FakeInterface()
+
+    info = transport.connect(
+        ConnectionDescriptor(type=ConnectionType.SERIAL, address="/dev/ttyFAKE"),
+        timeout=5.0,
+    )
+
+    assert info.state == ConnectionState.CONNECTED
+    assert transport.is_connected() is True
+
+
+def test_abandoned_connect_thread_cannot_retroactively_overwrite_probe_state():
+    """Task 48 follow-up review requirement: _last_probe_ok must never be
+    written from inside the tier-1-abandoned background thread
+    (_call_with_timeout()'s documented tier-1/tier-2 gap - a timeout
+    releases the caller immediately but does not kill the thread still
+    running _do_connect()). Before this fix, a slow-but-eventually-
+    successful open() could finish AFTER the caller already received
+    TransportError(TIMEOUT) and silently flip _last_probe_ok back to
+    True behind the caller's back - a live-caught, real risk, not
+    hypothetical. Proven here: a fake interface whose open() sleeps
+    longer than the caller's declared timeout but then succeeds -
+    connect() must raise TIMEOUT on time, and is_connected() must still
+    read False even after waiting long enough for the abandoned thread
+    to have actually finished (it's a daemon thread, so the test doesn't
+    need to wait for it explicitly - just long enough that if it were
+    still writing shared state, this test would catch it)."""
+    transport = _make_transport()
+
+    class _SlowThenOkInterface:
+        def close(self):
+            pass
+
+    def _slow_open():
+        time.sleep(0.4)
+        return _SlowThenOkInterface()
+
+    transport._open_interface = _slow_open
+
+    with pytest.raises(TransportError) as excinfo:
+        transport.connect(
+            ConnectionDescriptor(type=ConnectionType.SERIAL, address="/dev/ttyFAKE"), timeout=0.1
+        )
+    assert excinfo.value.code == TransportErrorCode.TIMEOUT
+
+    # Give the abandoned background thread time to actually finish its
+    # slow-but-successful open()+close() - if _last_probe_ok were still
+    # written from inside _do_connect(), this sleep is exactly the
+    # window in which it would flip back to True after the fact.
+    time.sleep(0.5)
+
+    assert transport.is_connected() is False
+    assert transport.get_connection_info().state == ConnectionState.DISCONNECTED
+
+
+def test_connect_reports_state_disconnected_when_the_probe_fails():
+    """Mirror of the success case: a failing probe (device never
+    responds - matches StreamInterface.__init__ raising when the real
+    handshake fails) must leave is_connected() reporting False, not a
+    stale True from a previous successful connect()."""
+    transport = _make_transport()
+
+    class _FakeInterface:
+        def close(self):
+            pass
+
+    transport._open_interface = lambda: _FakeInterface()
+    transport.connect(
+        ConnectionDescriptor(type=ConnectionType.SERIAL, address="/dev/ttyFAKE"), timeout=5.0
+    )
+    assert transport.is_connected() is True  # sanity: really was connected first
+
+    def _raise_open():
+        raise TransportError(TransportErrorCode.DEVICE_NOT_FOUND, "radio did not respond")
+
+    transport._open_interface = _raise_open
+
+    with pytest.raises(TransportError):
+        transport.connect(
+            ConnectionDescriptor(type=ConnectionType.SERIAL, address="/dev/ttyFAKE"), timeout=5.0
+        )
+
+    assert transport.is_connected() is False
+
+
+def test_disconnect_is_an_explicit_successful_noop_and_clears_probe_state():
+    """Task 48 follow-up, explicit decision (not silent): this instance
+    never holds a persistent interface between calls, so disconnect()
+    has nothing to release - it must still return cleanly (no
+    exception) and mark the connection no longer proven, so a stale
+    CONNECTED doesn't linger after disconnect()."""
+    transport = _make_transport()
+
+    class _FakeInterface:
+        def close(self):
+            pass
+
+    transport._open_interface = lambda: _FakeInterface()
+    transport.connect(
+        ConnectionDescriptor(type=ConnectionType.SERIAL, address="/dev/ttyFAKE"), timeout=5.0
+    )
+    assert transport.is_connected() is True
+
+    transport.disconnect(timeout=5.0)  # must not raise
+
+    assert transport.is_connected() is False
+    assert transport.get_connection_info().state == ConnectionState.DISCONNECTED

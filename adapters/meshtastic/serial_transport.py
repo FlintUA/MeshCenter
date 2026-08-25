@@ -343,14 +343,39 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         # separate SerialTransport instance and was never meaningful here.
         return self._last_probe_ok
 
+    # Task 49 fix: a passive status read (dashboard PID display), not an
+    # action - matches meshsrv/transport_router.py's own
+    # _INFO_LOCK_TIMEOUT_S precedent exactly (same semantics:
+    # get_connection_info()/is_connected() have no timeout parameter of
+    # their own and must not raise per the ABC contract, so they get a
+    # short dedicated constant and a synthetic fallback instead of an
+    # unbounded wait or a new error shape). Reusing the same 3.0s value
+    # rather than inventing a new number.
+    _LISTENER_PID_LOCK_TIMEOUT_S = 3.0
+
     def get_listener_pid(self) -> Optional[int]:
         """NOT part of the RadioTransport ABC - Serial-specific status
         introspection for Core's /api/node-manager/dashboard, replacing
         its former direct read of the module-level `listen_process`
         global (which this class's internal _listen_process now
-        supersedes)."""
-        with self._radio_lock:
+        supersedes).
+
+        Task 49 fix: radio_lock.acquire() is now bounded
+        (_LISTENER_PID_LOCK_TIMEOUT_S) - once claim_for_external_command()
+        could hold this same lock for a full IPC round-trip (Task 48), an
+        unbounded `with radio_lock:` here could stall the whole dashboard
+        page behind an unrelated long-running radio call. On a busy lock,
+        returns None (fail-safe, matching is_connected()'s same pattern
+        in transport_router.py) rather than raising - this is a passive
+        status field, not an action; a dashboard briefly showing no PID
+        is the right degradation, not a 503 for the whole page.
+        """
+        if not self._radio_lock.acquire(timeout=self._LISTENER_PID_LOCK_TIMEOUT_S):
+            return None
+        try:
             proc = self._listen_process
+        finally:
+            self._radio_lock.release()
         return int(proc.pid) if proc is not None and proc.poll() is None else None
 
     def get_connection_info(self) -> ConnectionInfo:

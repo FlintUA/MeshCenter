@@ -3377,20 +3377,66 @@ def radio_session(device=None, timeout=8, cooldown=2.0, extra_release_wait=None)
     """Claim exclusive access to the radio for the duration of the block.
 
     Centralizes the pause-listener / wait-for-port / hold-radio_lock /
-    resume-listener dance shared by the send worker, channel discovery, and
-    node tools. ``cooldown`` is the pause before the listener resumes
-    (matches the delay send already needed to avoid "Timed out waiting for
-    connection completion" from bouncing --listen too fast); pass 0 to skip
-    it. ``extra_release_wait`` adds a second wait_serial_release() pass after
-    the block exits, for callers whose CLI subprocess can close its serial
-    descriptor slightly after returning (see node tools).
+    resume-listener dance shared by node tools and the --info-fetch path
+    (rescan_nodes) - NOT the send worker/channel discovery, which moved to
+    radio_transport.send_messages()/get_channels() in Task 46 and are
+    already covered by AdapterIPCTransport's own claim_for_external_command()
+    budget-split (Task 48 follow-up) - this docstring used to claim
+    otherwise, stale since that migration. ``cooldown`` is the pause before
+    the listener resumes (matches the delay send already needed to avoid
+    "Timed out waiting for connection completion" from bouncing --listen
+    too fast); pass 0 to skip it. ``extra_release_wait`` adds a second
+    wait_serial_release() pass after the block exits, for callers whose
+    CLI subprocess can close its serial descriptor slightly after
+    returning (see node tools).
+
+    Task 49 fix: radio_lock.acquire() used to be an unconditional
+    `with radio_lock:` with no timeout of its own - once
+    claim_for_external_command() could hold this same lock for a full
+    IPC round-trip (Task 48), a caller here could wait unboundedly behind
+    it. Now bounded: the remaining slice of `timeout` after
+    prepare_radio_command() already ran (dynamic, time.monotonic()-measured,
+    matching TransportRouter._delegate()'s Task 47.5 mechanic - not a
+    fixed proportion, and not a second independent timeout stacked on
+    top, which would let a caller's declared budget silently double).
+    Raises the SAME RadioBusyError prepare_radio_command()'s own failure
+    already raises - both existing callers (server.py's rescan_nodes,
+    api_node_tools.py) already `except RadioBusyError` and map it to
+    HTTP 503/error_code="radio_busy", so this needs no new error shape.
+
+    Lock-hold/cooldown ordering is UNCHANGED from before this fix -
+    verified, not assumed: radio_lock was already released before this
+    function's own cooldown/pause_listen.clear() ran even in the
+    original code (`with radio_lock: yield` only ever wrapped the yield
+    itself, never the surrounding prepare/cooldown), so nothing here
+    changes when the listener actually resumes.
+
+    KNOWN, DEFERRED (Task 49 follow-up, not fixed here): prepare_radio_
+    command() above still runs BEFORE radio_lock is acquired, unlike
+    _claim_radio()'s deliberate "hold the lock for the whole prepare+work
+    span" design (Task 44's own DELIBERATE DIVERGENCE fix). Two
+    concurrent radio_session() callers - or a radio_session() caller
+    racing a claim_for_external_command() caller - can still run their
+    prepare phases (pause/stop/wait-for-port-release) in parallel today.
+    Bounding the lock-acquire above doesn't fix or worsen this - it's a
+    separate, previously-unidentified question this task deliberately
+    does not resolve.
     """
+    start = time.monotonic()
     prepared = prepare_radio_command(device=device, timeout=timeout)
     try:
         if not prepared:
             raise RadioBusyError(f"Serial port busy: {device or 'auto-detect'}")
-        with radio_lock:
+        remaining = max(1.0, timeout - (time.monotonic() - start))
+        if not radio_lock.acquire(timeout=remaining):
+            raise RadioBusyError(
+                f"radio_lock busy: could not acquire within {remaining}s "
+                "- another long-running radio call is in progress"
+            )
+        try:
             yield
+        finally:
+            radio_lock.release()
     finally:
         if extra_release_wait is not None:
             wait_serial_release(device=device, timeout=extra_release_wait)

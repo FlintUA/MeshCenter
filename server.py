@@ -829,7 +829,18 @@ adapter_supervisor = AdapterSupervisor(
 # isn't populated from disk until load_settings() runs inside
 # start_runtime() (well after this module-level code), but that's fine -
 # this lambda is only ever actually called later, by which point it is.
-serial_ipc_transport = AdapterIPCTransport(ConnectionType.SERIAL, adapter_supervisor)
+# core_serial_transport=serial_transport (Task 48 follow-up, live-caught
+# gap): pauses Core's own listener via claim_for_external_command()
+# before delegating a serial-type call to the adapter subprocess -
+# without this, Core's listener and the adapter's own SerialInterface
+# raced for the same physical port with nothing coordinating them. See
+# meshsrv/adapter_ipc_client.py's module docstring ("SERIAL PORT CLAIM
+# ACROSS THE PROCESS BOUNDARY") for the live symptom, the fix, and the
+# accepted Node Tools trade-off. BLE gets no such wrapping - it never
+# shares Core's listener/serial port.
+serial_ipc_transport = AdapterIPCTransport(
+    ConnectionType.SERIAL, adapter_supervisor, core_serial_transport=serial_transport
+)
 ble_ipc_transport = AdapterIPCTransport(
     ConnectionType.BLUETOOTH,
     adapter_supervisor,

@@ -5,6 +5,8 @@ dependency, runs on any platform including this project's Windows dev
 machine), not a mocked-out simulation of subprocess behavior.
 """
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -39,6 +41,32 @@ def _make_supervisor(**overrides):
     )
     kwargs.update(overrides)
     return AdapterSupervisor(**kwargs)
+
+
+class _FakeCoreSerialTransport:
+    """Stand-in for Core's own SerialTransport instance -
+    claim_for_external_command() is the only method AdapterIPCTransport
+    ever calls on it (see meshsrv/adapter_ipc_client.py's SERIAL PORT
+    CLAIM docstring section). Records each call and can simulate the
+    claim itself taking real wall-clock time (to prove the budget split
+    actually measures elapsed time via time.monotonic(), not a fixed
+    proportion of the caller's timeout) or failing the way the real
+    _claim_radio() does (TransportError(BUSY), raised before yield -
+    i.e. before the wrapped call ever runs)."""
+
+    def __init__(self, claim_delay: float = 0.0, raise_busy: bool = False):
+        self.claim_calls = 0
+        self._claim_delay = claim_delay
+        self._raise_busy = raise_busy
+
+    @contextmanager
+    def claim_for_external_command(self, *, timeout: float = 8, cooldown: float = 2.0):
+        self.claim_calls += 1
+        if self._claim_delay:
+            time.sleep(self._claim_delay)
+        if self._raise_busy:
+            raise TransportError(TransportErrorCode.BUSY, "Serial port busy: /dev/ttyFAKE")
+        yield
 
 
 def test_scan_sends_the_scan_operation_with_this_proxys_own_transport_type():
@@ -284,3 +312,100 @@ def test_spawn_only_passes_preexec_fn_on_linux():
         ble_address_for_cleanup=None,
     )
     assert response["ok"] is True
+
+
+# --- Task 48 follow-up: serial port claim across the process boundary -----
+
+
+def test_serial_call_is_wrapped_in_claim_for_external_command():
+    """The live-caught gap this follow-up fixes: a SERIAL-type call with
+    a core_serial_transport given must go through
+    claim_for_external_command() before ever reaching the adapter."""
+    supervisor = _make_supervisor()
+    core_serial = _FakeCoreSerialTransport()
+    transport = AdapterIPCTransport(ConnectionType.SERIAL, supervisor, core_serial_transport=core_serial)
+
+    result = transport.get_metadata(timeout=5.0)
+
+    assert result["echo"] == {}
+    assert core_serial.claim_calls == 1
+
+
+def test_bluetooth_call_is_never_wrapped_in_claim_even_if_core_serial_transport_given():
+    """Defensive, matching scan()'s own guard elsewhere: BLE never shares
+    Core's listener/serial port, so it must never pay this cost - checked
+    even for the (production-impossible, but worth proving) case where a
+    core_serial_transport was mistakenly passed to a BLUETOOTH instance."""
+    supervisor = _make_supervisor()
+    core_serial = _FakeCoreSerialTransport()
+    transport = AdapterIPCTransport(ConnectionType.BLUETOOTH, supervisor, core_serial_transport=core_serial)
+
+    transport.get_metadata(timeout=5.0)
+
+    assert core_serial.claim_calls == 0
+
+
+def test_serial_call_without_core_serial_transport_behaves_exactly_as_before():
+    """Backward-compat: core_serial_transport is optional and defaults to
+    None (matches every pre-existing test in this file, none of which
+    pass it) - no wrapping, no behavior change for callers that don't
+    supply one."""
+    supervisor = _make_supervisor()
+    transport = AdapterIPCTransport(ConnectionType.SERIAL, supervisor)
+
+    result = transport.get_metadata(timeout=5.0)
+
+    assert result["echo"] == {}
+
+
+def test_claim_budget_split_is_dynamic_not_a_fixed_proportion():
+    """Task 48 follow-up review requirement: the delegated call's budget
+    must be caller_timeout - ACTUAL claim elapsed time (measured via
+    time.monotonic()), not a fixed percentage split - matching
+    TransportRouter._delegate()'s existing remaining = timeout - elapsed
+    mechanic (Task 47.5). Proven here by making the claim itself take a
+    real, measurable delay and asserting the adapter actually received a
+    reduced timeout reflecting that delay, not the original caller
+    timeout unchanged and not some fixed fraction of it."""
+    supervisor = _make_supervisor()
+    core_serial = _FakeCoreSerialTransport(claim_delay=1.0)
+    transport = AdapterIPCTransport(ConnectionType.SERIAL, supervisor, core_serial_transport=core_serial)
+
+    captured_requests = []
+    original_call = supervisor.call
+
+    def _spy_call(request, **kwargs):
+        captured_requests.append(dict(request))
+        return original_call(request, **kwargs)
+
+    supervisor.call = _spy_call
+
+    transport.get_metadata(timeout=5.0)
+
+    sent_timeout = captured_requests[0]["timeout"]
+    # Caller declared 5.0s, the claim itself measurably took ~1.0s - the
+    # delegated call must have received noticeably less than 5.0s (proves
+    # elapsed time was actually subtracted), but comfortably more than a
+    # naive fixed-percentage split would leave (proves it's not just
+    # e.g. "70% of 5.0 = 3.5" by coincidence) - bounds wide enough to
+    # absorb real scheduling jitter without being a no-op assertion.
+    assert 3.0 < sent_timeout < 4.5, f"expected ~4.0s (5.0 - ~1.0 claim delay), got {sent_timeout}"
+
+
+def test_claim_busy_error_propagates_unchanged_without_reaching_the_adapter():
+    """Task 48 follow-up review requirement: a claim that fails to free
+    the port raises TransportError(BUSY) - _claim_radio()'s existing,
+    unchanged behavior. Nothing in AdapterIPCTransport should catch and
+    reclassify it; it must propagate through the same TransportError
+    handling every other failure in _call() already uses, and the
+    adapter must never even be contacted (the claim fails before yield)."""
+    supervisor = _make_supervisor()
+    core_serial = _FakeCoreSerialTransport(raise_busy=True)
+    transport = AdapterIPCTransport(ConnectionType.SERIAL, supervisor, core_serial_transport=core_serial)
+
+    with pytest.raises(TransportError) as excinfo:
+        transport.get_metadata(timeout=5.0)
+
+    assert excinfo.value.code == TransportErrorCode.BUSY
+    assert supervisor._proc is None  # never spawned - the claim failed before any IPC attempt
+    assert transport.get_connection_info().last_error.code == TransportErrorCode.BUSY

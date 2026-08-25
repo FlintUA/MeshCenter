@@ -57,9 +57,75 @@ is complete:
 Neither layer is optional-if-the-other-exists; they cover genuinely
 different deployment shapes.
 
-Not wired into server.py yet - this is the Core-side proxy itself,
-buildable and testable independent of server.py's construction site,
-which is the next increment.
+SERIAL PORT CLAIM ACROSS THE PROCESS BOUNDARY (Task 48 follow-up, a real
+gap live-caught on TAP2, not theoretical): radio_lock/pause_listen are
+plain threading primitives - they cannot cross into the adapter's own
+process, so Core's own listener subprocess (still running, Stage A) and
+the adapter's freshly-opened SerialInterface had nothing coordinating
+which of them actually owns /dev/ttyACM0 at a given moment. Live symptom
+before this fix: a real set_device_time() call raced the listener, hit
+its own internal watchdog timeout, got killed per tier (b) above, and
+the very next serial-type call (get_channels) lost the same race on the
+respawned process. AdapterIPCTransport._call() now wraps every
+SERIAL-type call in core_serial_transport.claim_for_external_command()
+(SerialTransport.claim_for_external_command(), Task 48's original
+design intent, previously written but never actually called from
+anywhere - confirmed by grep before this fix) - pause Core's own
+listener, confirm the port is genuinely free, only then let the adapter
+open its own SerialInterface. BLE gets no such wrapping - it never
+shares Core's listener/serial port.
+
+Budget split for this claim is DYNAMIC, mirroring TransportRouter.
+_delegate()'s existing remaining = timeout - elapsed mechanic (Task
+47.5), not a fixed proportion of the caller's declared timeout: the
+claim itself gets its own small, independent budget (claim_for_
+external_command()'s own default, ~8s - unrelated to the caller's
+timeout, since "wait for the listener to actually let go of the port"
+is a fixed-magnitude operation, not something that should shrink just
+because the caller declared a short timeout) using time.monotonic() to
+measure what it *actually* took, and the delegated IPC call then gets
+max(1.0, caller_timeout - actual_claim_elapsed) - never a stacked flat
+addition (which would silently inflate a caller's declared budget) and
+never a fixed percentage (which would starve the actual operation after
+a fast claim, or overrun the caller's stated budget after a slow one -
+the same class of bug already fixed once in TransportRouter._delegate()
+during Task 47.5's review). A claim that fails to free the port in time
+raises TransportError(BUSY) - _claim_radio()'s existing, unchanged
+behavior; nothing here catches or reclassifies it, it propagates through
+_call()'s existing TransportError handling exactly like any other
+failure.
+
+KNOWN TRADE-OFF, explicitly accepted rather than silently introduced
+(Task 48 follow-up review): server.py's own radio_lock/pause_listen are
+the SAME objects passed into Core's own SerialTransport instance
+(`SerialTransport(radio_lock=radio_lock, pause_listen=pause_listen,
+...)` in server.py) - the same lock server.py's radio_session()
+acquires for the send worker, channel discovery, and
+api/api_node_tools.py's traceroute/telemetry actions
+(`radio_session(timeout=10, ...)`). Since claim_for_external_command()
+holds that same radio_lock for the FULL duration of the wrapped IPC call
+(not just the port-preparation phase - releasing it earlier would
+reopen exactly the race this fix closes), a Node Tools action that
+starts while a long serial IPC call (e.g. connect/reconnect, tens of
+seconds) is in flight now waits on an *unbounded* `with radio_lock:`
+acquire - server.py's radio_lock is a plain threading.RLock with no
+timeout on acquisition, so radio_session()'s own timeout=10 parameter
+(which only bounds the port-release-polling phase, entered only AFTER
+the lock is already held) does not help here. Previously, in the
+single-process model, radio_lock was only ever held for a fast, local
+SerialInterface open/close - this widens that window to a full
+process-boundary round-trip. Accepted for this fix because narrowing it
+back down would mean not holding the lock for the adapter's actual
+serial work, reopening the contention bug this change exists to close -
+but this is a real, load-bearing UX regression risk for Node Tools
+(a traceroute button could now hang up to the same duration as a
+concurrent connect/reconnect instead of failing fast), not dismissed as
+hypothetical. Follow-up needed: bound radio_session()'s lock acquisition
+itself (e.g. radio_lock.acquire(timeout=...) instead of a bare `with`)
+so Node Tools fails fast with "radio busy" instead of blocking
+indefinitely - out of scope for this fix since it touches radio_session()
+callers well beyond this module (send worker, channel discovery, --info
+calls) and deserves its own focused review.
 """
 from __future__ import annotations
 
@@ -71,6 +137,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
@@ -375,10 +442,17 @@ class AdapterIPCTransport(RadioTransport):
         supervisor: AdapterSupervisor,
         *,
         ble_address_provider: Optional[Callable[[], Optional[str]]] = None,
+        core_serial_transport: Optional[object] = None,
     ) -> None:
         self._transport_type = transport_type
         self._supervisor = supervisor
         self._ble_address_provider = ble_address_provider
+        # Only ever passed for the SERIAL instance - duck-typed (needs
+        # only .claim_for_external_command()), not imported for typing,
+        # to keep this Core-side module decoupled from adapters/*.py -
+        # see this module's own SERIAL PORT CLAIM docstring section for
+        # why this exists.
+        self._core_serial_transport = core_serial_transport
         self._cached_info = _adapter_unavailable_info()
 
     def _ble_cleanup_address(self) -> Optional[str]:
@@ -387,17 +461,33 @@ class AdapterIPCTransport(RadioTransport):
         return self._ble_address_provider() if self._ble_address_provider else None
 
     def _call(self, operation: str, params: dict, timeout: float):
-        request = {
-            "protocol_version": ipc_protocol.PROTOCOL_VERSION,
-            "operation": operation,
-            "transport_type": self._transport_type.value,
-            "params": params,
-            "timeout": timeout,
-        }
-        try:
-            response = self._supervisor.call(
-                request, timeout=timeout, ble_address_for_cleanup=self._ble_cleanup_address()
+        def _do_call(call_timeout: float) -> dict:
+            request = {
+                "protocol_version": ipc_protocol.PROTOCOL_VERSION,
+                "operation": operation,
+                "transport_type": self._transport_type.value,
+                "params": params,
+                "timeout": call_timeout,
+            }
+            return self._supervisor.call(
+                request, timeout=call_timeout, ble_address_for_cleanup=self._ble_cleanup_address()
             )
+
+        try:
+            if self._transport_type == ConnectionType.SERIAL and self._core_serial_transport is not None:
+                start = time.monotonic()
+                # Own independent budget (claim_for_external_command()'s
+                # own default, ~8s) - NOT sliced from the caller's
+                # timeout, since freeing the port is a fixed-magnitude
+                # operation. What it actually took IS subtracted from the
+                # caller's budget below - dynamic, not a fixed
+                # proportion (see module docstring).
+                with self._core_serial_transport.claim_for_external_command():
+                    elapsed = time.monotonic() - start
+                    remaining = max(1.0, timeout - elapsed)
+                    response = _do_call(remaining)
+            else:
+                response = _do_call(timeout)
         except TransportError as error:
             self._cached_info = ConnectionInfo(
                 state=ConnectionState.ERROR,

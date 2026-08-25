@@ -67,6 +67,20 @@ Typical use cases include:
 
 ---
 
+## License
+
+MeshCenter's own code (`server.py`, `api/`, `meshsrv/`, `static/`, `templates/`, and everything else outside `adapters/`) is MIT-licensed — see [LICENSE](LICENSE).
+
+The official [`meshtastic`](https://github.com/meshtastic/python) Python package, used to talk to the radio over serial or Bluetooth, is GPLv3-licensed. To keep GPLv3 code from linking into MeshCenter's own MIT-licensed process, it's isolated in `adapters/meshtastic/` — its own package, its own Python virtual environment (`adapters/meshtastic/venv`), running as a **separate OS process** that Core talks to over a local IPC boundary (newline-delimited JSON over stdin/stdout), never a direct Python import. Core itself never imports `meshtastic`.
+
+`adapters/meshtastic/` ships its own [LICENSE](adapters/meshtastic/LICENSE) (the GPLv3 text). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full dependency breakdown and reasoning.
+
+Process isolation — not which repository the files live in — is the architecture chosen to keep GPLv3 code out of Core's own process; per-directory licensing inside one monorepo is a standard, widely-used pattern, and a separate repository is not necessary for that architecture to work. A separate repository may be split off later purely for distribution convenience, not as a requirement of this design.
+
+For the full technical detail (timeout contracts, subprocess supervision, IPC protocol), see `CLAUDE.md`'s "GPLv3 process isolation" section.
+
+---
+
 ## 📸 Screenshots
 
 <details>
@@ -207,6 +221,23 @@ serial-access checklist that trips up most first installs: see
 
 Each radio profile keeps its own messages, nodes, telemetry, waypoints and icons.
 Data from different radios is not merged.
+
+## Connecting via USB or Bluetooth
+
+MeshCenter can talk to your Meshtastic node two ways:
+
+- **USB** (default) — a serial cable to the Raspberry Pi.
+- **Bluetooth** — no cable, but see the limitations below before relying on it.
+
+Switch between them in **Settings → Radio Connection → Connection type**. For Bluetooth: click **Scan for devices**, pick your node from the list, then **Connect**.
+
+**Bluetooth is marked "Experimental" in the interface, and here's specifically why:**
+
+- **No incoming messages, telemetry, or node info at all while Bluetooth is active** — not degraded, completely absent. You can send over Bluetooth, but MeshCenter will not receive anything until you switch back to USB.
+- **A physical USB cable reconnect (unplug/replug, or a power cycle) needs a full MeshCenter service restart to recover** — not just a click in Settings.
+- **Switching between USB and Bluetooth can take up to ~90–135 seconds in the worst case** (measured on real hardware) — it is not a quick toggle.
+
+If you need reliable message reception, stay on USB. Bluetooth is there for cable-free sending scenarios where those limitations are acceptable.
 
 ### 💬 Messaging
 
@@ -639,10 +670,11 @@ A typical installation looks like this:
 ```
 meshcenter/
 │
+├── adapters/meshtastic/  # GPLv3-isolated Meshtastic transport adapter (own venv, own LICENSE - see "License")
 ├── api/                # REST API endpoints
 ├── camera/             # Camera subsystem
 ├── hardware/           # I2C bus detection, RTC (DS3231) and BME280 drivers
-├── meshsrv/            # Meshtastic communication layer
+├── meshsrv/            # Core-side radio abstraction: RadioTransport interface, IPC client, router
 ├── modules/display/    # e-Paper display rendering, pages and drivers
 ├── storage/            # JSON storage helpers
 ├── system/             # System/CPU history collection
@@ -656,7 +688,7 @@ meshcenter/
 ├── docs/               # Documentation and images
 │   └── User_Guide.md   # Installation and practical operation guide
 │
-├── venv/               # Python virtual environment
+├── venv/               # Core's Python virtual environment (MIT-licensed code only)
 │
 ├── config.py           # Local configuration (not in git)
 ├── config.example.py   # Example configuration

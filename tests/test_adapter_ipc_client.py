@@ -210,15 +210,32 @@ def test_adapter_unavailable_info_helper_is_explicit_not_a_default():
 
 
 def test_libc_prctl_resolution_happens_at_import_time_not_inside_the_function():
-    """Real exercise of the module-load-time resolution, not a mock: this
-    dev machine is Windows, so ctypes.CDLL("libc.so.6") genuinely failed
-    when meshsrv.adapter_ipc_client was imported (module-level try/except,
-    see the module's own SAFETY comment for why it must happen there and
-    not inside _set_pdeathsig_to_sigkill() - dlopen()/dlsym() are unsafe
-    to call from preexec_fn in a multi-threaded process). Confirms _libc
-    ended up None here as a result, proving the resolution genuinely ran
-    (and failed, on this platform) at import - not skipped, not deferred."""
-    assert adapter_ipc_client._libc is None
+    """Real exercise of the module-load-time resolution (module-level
+    try/except, see the module's own SAFETY comment for why it must
+    happen there and not inside _set_pdeathsig_to_sigkill() -
+    dlopen()/dlsym() are unsafe to call from preexec_fn in a
+    multi-threaded process), on whichever real platform this actually
+    runs on - not a single hardcoded expectation. On real Linux (this
+    project's actual target, and CI's runner) libc.so.6 genuinely exists,
+    so _libc resolves to a real, usable handle with prctl bound and typed
+    - the intended, common case. On this dev machine (Windows) or any
+    other platform without that library, resolution genuinely fails and
+    _libc is None - the fallback case _set_pdeathsig_to_sigkill() must
+    tolerate. Either way, the assertion below proves the resolution
+    actually ran (not skipped, not deferred) and produced the outcome
+    that platform's ctypes.CDLL() call was always going to produce."""
+    if sys.platform == "linux":
+        assert adapter_ipc_client._libc is not None
+        assert callable(adapter_ipc_client._libc.prctl)
+        assert adapter_ipc_client._libc.prctl.argtypes == [
+            adapter_ipc_client.ctypes.c_int,
+            adapter_ipc_client.ctypes.c_ulong,
+            adapter_ipc_client.ctypes.c_ulong,
+            adapter_ipc_client.ctypes.c_ulong,
+            adapter_ipc_client.ctypes.c_ulong,
+        ]
+    else:
+        assert adapter_ipc_client._libc is None
 
 
 def test_set_pdeathsig_is_best_effort_and_never_raises():

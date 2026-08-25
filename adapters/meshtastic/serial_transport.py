@@ -85,6 +85,18 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         self._listen_process: Optional[subprocess.Popen] = None
         self._connected_since: Optional[float] = None
         self._last_error: Optional[TransportError] = None
+        # Task 48 follow-up (live-caught): on the adapter-side instance
+        # (this one, never run_listener()'d - Stage A keeps that on
+        # Core's own separate instance), _listen_process is permanently
+        # None, so is_connected() could never have reflected reality
+        # here even after connect()'s probe fix stopped raising - it
+        # would have kept reporting DISCONNECTED after a proven-good
+        # connect(). This instance's role is fully stateless-per-call
+        # (open/use/close every time, same as send_packet()/get_*()) -
+        # _last_probe_ok is the ONLY state connect()/reconnect()/
+        # disconnect() track here, set explicitly by them, never
+        # inferred from a listener process this instance never owns.
+        self._last_probe_ok: bool = False
         # _call_with_timeout()/_executor now live in TimeoutEnforced
         # (adapters/meshtastic/_timeout_support.py, extracted in Task 45
         # so BLETransport doesn't duplicate the same watchdog pattern).
@@ -223,17 +235,40 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
     def connect(
         self, descriptor: ConnectionDescriptor, *, force: bool = False, timeout: float = 30.0
     ) -> ConnectionInfo:
-        """PRECONDITION carried over from today's behavior: this only
-        does something useful once run_listener() is already running in
-        its own (Core-owned) thread - same as server.py's listener
-        thread today, which starts unconditionally at process startup
-        whenever RADIO_IDENTITY_RESULT matches, with pause_listen
-        cleared by default (threading.Event() starts unset). There was
-        never a distinct "connect" action in the pre-migration code;
-        connect()/disconnect() here are the pause_listen.clear()/
-        stop_listener()+set() pair that already existed, reframed to fit
-        the ABC. Calling connect() before run_listener() has ever been
-        started will just time out waiting for is_connected()."""
+        """Task 48 follow-up (live-caught, two related but distinct bugs
+        fixed together): this used to poll is_connected(), which checked
+        self._listen_process - state that was a valid connectivity proxy
+        pre-Task-48 (single process, run_listener() shared this same
+        instance) but is permanently None on THIS instance post-split
+        (Stage A: run_listener() only ever runs on Core's own, separate
+        SerialTransport - see that method's docstring). Two consequences,
+        both fixed here: (1) the poll loop could never succeed, so
+        connect()/reconnect() always burned their full timeout and raised
+        TIMEOUT - confirmed live on TAP2, an 87s failure on a 90s budget,
+        not radio-side slowness. (2) even after fixing the probe itself,
+        the OLD final `return self.get_connection_info()` would still
+        have reported DISCONNECTED (same is_connected() problem) despite
+        a just-proven-good connection - the exact "state lies about a
+        successful call" class of bug Task 47's fail-closed recovery work
+        was built to prevent, just newly reintroduced at a different
+        layer.
+
+        Fix: connect() now actually PROVES connectivity by opening a real
+        SerialInterface and closing it - matching send_packet()/get_*()'s
+        already-established per-call open/use/close pattern. This is not
+        a bare OS-level port open: meshtastic.stream_interface.
+        StreamInterface.__init__ (default connectNow=True, noProto=False
+        - unchanged by _open_interface()) already calls connect()+
+        waitForConfig() synchronously inside the constructor and raises
+        if the device never responds (verified by reading the actually-
+        installed library source on TAP2, not assumed) - so a clean
+        open+close is a real protocol-level handshake, not a false
+        positive for "something else is plugged into this port". Success/
+        failure is recorded in self._last_probe_ok (see __init__), which
+        is_connected()/get_connection_info() now read instead of
+        _listen_process - this instance's role is fully stateless-per-
+        call, so that's the only state left for them to reflect.
+        """
         if descriptor.type != ConnectionType.SERIAL:
             raise TransportError(
                 TransportErrorCode.UNSUPPORTED, f"SerialTransport cannot connect to {descriptor.type}"
@@ -241,24 +276,22 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         self._port = descriptor.address or self._port
 
         if force:
-            # Same reasoning as _claim_radio()'s "DELIBERATE DIVERGENCE"
-            # comment: hold radio_lock for the whole stop+wait sequence,
-            # not just individual reads/writes of _listen_process, so a
-            # concurrent send_text()/send_messages()/etc. (which now goes
-            # through _claim_radio() under the same lock) cannot race a
-            # force-reconnect's teardown.
+            # _wait_serial_release() (a real OS-level `lsof` check against
+            # a leftover process still holding the port) stays - genuinely
+            # useful regardless of which process's state is being asked
+            # about. _stop_listener_process() dropped: this instance's
+            # _listen_process is always None (see __init__), so it was
+            # already a guaranteed no-op here, just one that wasted 1.5s
+            # (self._pause_listen.set(); time.sleep(1.5)) setting a local
+            # Event nothing else in this process reads meaningfully.
             with self._radio_lock:
-                self._stop_listener_process()
                 self._wait_serial_release(timeout=timeout)
 
         def _do_connect():
-            self._pause_listen.clear()
-            deadline = time.time() + timeout
-            while time.time() < deadline:
-                if self.is_connected():
-                    return
-                time.sleep(0.2)
-            raise TransportError(TransportErrorCode.TIMEOUT, f"connect() exceeded {timeout}s")
+            self._last_probe_ok = False
+            interface = self._open_interface()  # blocks on the real handshake, raises on failure
+            interface.close()
+            self._last_probe_ok = True
 
         self._call_with_timeout(_do_connect, timeout=timeout, what="connect()")
         self._connected_since = time.time()
@@ -266,11 +299,16 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         return self.get_connection_info()
 
     def disconnect(self, *, timeout: float = 15.0) -> None:
-        def _do_disconnect():
-            self._stop_listener_process()
-
-        self._call_with_timeout(_do_disconnect, timeout=timeout, what="disconnect()")
+        """No-op by design, not by accident (Task 48 follow-up, explicit
+        decision): this instance never holds a persistent interface
+        between calls (every operation opens/uses/closes its own, same as
+        send_packet()/get_*()/the fixed connect() above) - there is
+        nothing to release. Still marks _last_probe_ok False, so a
+        subsequent get_connection_info() (e.g. the one connect() itself
+        returns after a later reconnect()) doesn't keep reporting a stale
+        CONNECTED from before this call."""
         self._connected_since = None
+        self._last_probe_ok = False
 
     def reconnect(self, *, timeout: float = 30.0) -> ConnectionInfo:
         self.disconnect(timeout=min(timeout, 15.0))
@@ -281,9 +319,11 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         )
 
     def is_connected(self) -> bool:
-        with self._radio_lock:
-            proc = self._listen_process
-        return proc is not None and proc.poll() is None
+        # Task 48 follow-up: NOT self._listen_process (see __init__'s
+        # comment on _last_probe_ok) - this instance never runs
+        # run_listener(), so that state belongs exclusively to Core's own,
+        # separate SerialTransport instance and was never meaningful here.
+        return self._last_probe_ok
 
     def get_listener_pid(self) -> Optional[int]:
         """NOT part of the RadioTransport ABC - Serial-specific status

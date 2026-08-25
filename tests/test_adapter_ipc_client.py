@@ -409,3 +409,39 @@ def test_claim_busy_error_propagates_unchanged_without_reaching_the_adapter():
     assert excinfo.value.code == TransportErrorCode.BUSY
     assert supervisor._proc is None  # never spawned - the claim failed before any IPC attempt
     assert transport.get_connection_info().last_error.code == TransportErrorCode.BUSY
+
+
+def test_transport_error_raised_inside_claim_propagates_cleanly_not_frozeninstanceerror():
+    """Real-path regression test for the live-caught FrozenInstanceError
+    bug (Task 48 follow-up review requirement - the isolated minimal
+    repro proved the mechanism, this proves the fix closes it in this
+    codebase's actual code path, not just in principle).
+
+    _FakeCoreSerialTransport.claim_for_external_command() is decorated
+    with @contextlib.contextmanager, exactly like the real
+    SerialTransport._claim_radio() it stands in for - a generator-based
+    context manager, not a class-based one. That distinction is exactly
+    what matters here: contextlib's _GeneratorContextManager.__exit__
+    does `exc.__traceback__ = traceback` when letting an exception
+    through unchanged, which used to crash on TransportError's old
+    frozen=True with dataclasses.FrozenInstanceError, masking whatever
+    the real error was.
+
+    This test forces the wrapped IPC call itself to raise a real
+    TransportError(TIMEOUT) - via fake_adapter.py's "hang" behavior and
+    a short timeout, the same mechanism (AdapterSupervisor.call() timing
+    out) that produced the live 87s timeout on TAP2 - from *inside* the
+    real `with core_serial_transport.claim_for_external_command():`
+    block, then asserts a clean TransportError(TIMEOUT) with its
+    original message reaches the caller - not FrozenInstanceError, not
+    any other masking exception."""
+    supervisor = _make_supervisor()
+    core_serial = _FakeCoreSerialTransport()
+    transport = AdapterIPCTransport(ConnectionType.SERIAL, supervisor, core_serial_transport=core_serial)
+
+    with pytest.raises(TransportError) as excinfo:
+        transport._call("get_metadata", {"_test_behavior": "hang"}, 1.0)
+
+    assert excinfo.value.code == TransportErrorCode.TIMEOUT
+    assert "did not respond within" in excinfo.value.message
+    assert core_serial.claim_calls == 1

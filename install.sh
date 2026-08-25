@@ -353,14 +353,54 @@ step_venv() {
 
     pip install --upgrade pip --quiet
     pip install -r "${INSTALL_DIR}/requirements.txt" --quiet
+    deactivate
 
     log "Python dependencies installed ✓"
+}
+
+# ─── Step 5b: Meshtastic adapter virtualenv (Task 48) ─────────────────────────
+# Separate venv for adapters/meshtastic/*.py's GPLv3 meshtastic[ble]
+# dependency, isolated from Core's MIT-licensed venv above - see CLAUDE.md
+# and meshsrv/adapter_ipc_client.py's module docstring for why. Must run
+# before step_detect_radio(): both that step and the listener started by
+# a normal service run need the `meshtastic` CLI binary this venv
+# provides (resolve_meshtastic_cli() checks this venv first, see
+# meshsrv/runtime_identity.py).
+#
+# Deliberately never calls fail() - a Core install must succeed even if
+# this venv can't be provisioned (no internet, PyPI hiccup, disk full on
+# a device already tight on space). MeshCenter's own design accounts for
+# this: Core starts normally and reports transport status
+# ADAPTER_UNAVAILABLE rather than crashing (Task 48 acceptance test) -
+# the installer should behave the same way, not be stricter than the app
+# it's installing.
+step_adapter_venv() {
+    progress "5b/9 Installing Meshtastic adapter dependencies..."
+
+    if ! python3 -m venv "${INSTALL_DIR}/adapters/meshtastic/venv" 2>>"$LOG_FILE"; then
+        warn "Could not create the Meshtastic adapter venv - MeshCenter will still start, but"
+        warn "radio connectivity will stay unavailable until this is fixed. Retry later with:"
+        warn "  python3 -m venv ${INSTALL_DIR}/adapters/meshtastic/venv"
+        warn "  ${INSTALL_DIR}/adapters/meshtastic/venv/bin/pip install -r ${INSTALL_DIR}/adapters/meshtastic/requirements.txt"
+        return 0
+    fi
+
+    if "${INSTALL_DIR}/adapters/meshtastic/venv/bin/pip" install --upgrade pip --quiet 2>>"$LOG_FILE" \
+        && "${INSTALL_DIR}/adapters/meshtastic/venv/bin/pip" install -r "${INSTALL_DIR}/adapters/meshtastic/requirements.txt" --quiet 2>>"$LOG_FILE"; then
+        log "Meshtastic adapter dependencies installed ✓"
+    else
+        warn "Meshtastic adapter dependencies failed to install - MeshCenter will still start, but"
+        warn "radio connectivity will stay unavailable until this is fixed. Retry later with:"
+        warn "  ${INSTALL_DIR}/adapters/meshtastic/venv/bin/pip install -r ${INSTALL_DIR}/adapters/meshtastic/requirements.txt"
+    fi
 }
 
 # ─── Step 6: Detect radio ─────────────────────────────────────────────────────
 # Runs before step_config() (swapped from the original 6/7 order) so a
 # connected radio can actually be queried for real config values below -
-# it needs the venv's `meshtastic` CLI from step_venv either way.
+# it needs the adapter venv's `meshtastic` CLI from step_adapter_venv
+# (falls back through resolve_meshtastic_cli()'s other candidates if that
+# venv failed to provision - see step_config_from_detected_radio() below).
 step_detect_radio() {
     progress "6/9 Detecting Meshtastic radio..."
 
@@ -432,6 +472,27 @@ step_config_from_detected_radio() (
     # shellcheck source=installer/common.sh
     source "${INSTALL_DIR}/installer/common.sh"
 
+    # Task 48: `meshtastic` is no longer guaranteed to be on PATH - Core's
+    # own venv (activated during step_venv, deactivated since) never had
+    # it, and this function historically relied on that activation's PATH
+    # leaking into this later step. Resolve the CLI the same way the app
+    # itself does at runtime (resolve_meshtastic_cli(), which checks the
+    # adapter venv from step_adapter_venv first) instead of a bare-name
+    # PATH lookup, using the system python3 - meshsrv/runtime_identity.py
+    # is stdlib-only, safe to import outside any venv.
+    local meshtastic_bin
+    meshtastic_bin="$(python3 -c "
+import sys
+sys.path.insert(0, '${INSTALL_DIR}')
+from meshsrv.runtime_identity import resolve_meshtastic_cli
+print(resolve_meshtastic_cli('', '${INSTALL_DIR}'))
+" 2>/dev/null)"
+
+    if [[ -z "$meshtastic_bin" ]]; then
+        log "Could not resolve the Meshtastic CLI binary (adapter venv may not have provisioned - see step 5b above)."
+        return 1
+    fi
+
     local info_file
     info_file="$(mktemp)"
 
@@ -442,11 +503,11 @@ step_config_from_detected_radio() (
     # (works if the user was already in dialout from a previous run).
     local probe_ok=0
     if command -v sg &>/dev/null; then
-        if timeout 30 sg dialout -c "meshtastic --port '$RADIO_PORT' --info" >"$info_file" 2>&1; then
+        if timeout 30 sg dialout -c "'$meshtastic_bin' --port '$RADIO_PORT' --info" >"$info_file" 2>&1; then
             probe_ok=1
         fi
     else
-        if timeout 30 meshtastic --port "$RADIO_PORT" --info >"$info_file" 2>&1; then
+        if timeout 30 "$meshtastic_bin" --port "$RADIO_PORT" --info >"$info_file" 2>&1; then
             probe_ok=1
         fi
     fi
@@ -630,6 +691,7 @@ main() {
     step_swap
     step_clone
     step_venv
+    step_adapter_venv
     step_detect_radio
     step_config
     step_systemd

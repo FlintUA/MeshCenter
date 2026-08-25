@@ -520,8 +520,36 @@ runuser -u "$TARGET_USER" -- \
     "$INSTALL_DIR/venv/bin/python" -m pip install \
         -r "$INSTALL_DIR/requirements.txt" --quiet
 
-MESHTASTIC_BIN="$INSTALL_DIR/venv/bin/meshtastic"
-[[ -x "$MESHTASTIC_BIN" ]] || fail "Meshtastic CLI was not installed in the MeshCenter venv."
+# Task 48: meshtastic (GPLv3) moved out of the main venv above into its
+# own venv, isolated from Core's MIT-licensed code - see CLAUDE.md and
+# adapters/meshtastic/requirements.txt. Unlike install.sh's
+# step_adapter_venv() (which tolerates this failing, since that manual
+# path can finish with radio connectivity degraded and be fixed up
+# later), this unattended path genuinely cannot proceed without it: the
+# radio-probing loop just below needs this CLI to ever produce a valid
+# config.py, and this script's own stated design (see the "Important"
+# note above) never falls back to a placeholder config - so a failure
+# here must fail loudly now, not time out mysteriously in the probing
+# loop below.
+log "Creating Meshtastic adapter virtual environment..."
+
+runuser -u "$TARGET_USER" -- \
+    env HOME="$TARGET_HOME" USER="$TARGET_USER" LOGNAME="$TARGET_USER" \
+    python3 -m venv "$INSTALL_DIR/adapters/meshtastic/venv"
+
+log "Installing Meshtastic adapter dependencies..."
+
+runuser -u "$TARGET_USER" -- \
+    env HOME="$TARGET_HOME" USER="$TARGET_USER" LOGNAME="$TARGET_USER" \
+    "$INSTALL_DIR/adapters/meshtastic/venv/bin/python" -m pip install --upgrade pip --quiet
+
+runuser -u "$TARGET_USER" -- \
+    env HOME="$TARGET_HOME" USER="$TARGET_USER" LOGNAME="$TARGET_USER" \
+    "$INSTALL_DIR/adapters/meshtastic/venv/bin/python" -m pip install \
+        -r "$INSTALL_DIR/adapters/meshtastic/requirements.txt" --quiet
+
+MESHTASTIC_BIN="$INSTALL_DIR/adapters/meshtastic/venv/bin/meshtastic"
+[[ -x "$MESHTASTIC_BIN" ]] || fail "Meshtastic CLI was not installed in the adapter venv."
 
 log "Python environment ready."
 

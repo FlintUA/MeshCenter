@@ -211,16 +211,27 @@ python3 -m venv --system-site-packages venv
 source venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r requirements.txt
+deactivate
 ```
 
-Confirm that the Meshtastic CLI was installed inside the virtual environment:
+The `meshtastic` package (GPLv3) is deliberately not part of Core's own
+venv above — it lives in a second, isolated venv:
 
 ```bash
-which meshtastic
-meshtastic --version
+python3 -m venv adapters/meshtastic/venv
+adapters/meshtastic/venv/bin/pip install --upgrade pip
+adapters/meshtastic/venv/bin/pip install -r adapters/meshtastic/requirements.txt
 ```
 
-`which meshtastic` should report a path under `~/meshcenter/venv/bin/`.
+Confirm that the Meshtastic CLI was installed there:
+
+```bash
+which adapters/meshtastic/venv/bin/meshtastic
+adapters/meshtastic/venv/bin/meshtastic --version
+```
+
+`which adapters/meshtastic/venv/bin/meshtastic` should report a path
+under `~/meshcenter/adapters/meshtastic/venv/bin/`.
 
 ### Find and test the USB radio
 
@@ -235,8 +246,7 @@ Most RAK4631-based USB installations appear as `/dev/ttyACM0`. Some radios use `
 Test communication before continuing:
 
 ```bash
-source ~/meshcenter/venv/bin/activate
-meshtastic --port /dev/ttyACM0 --info
+~/meshcenter/adapters/meshtastic/venv/bin/meshtastic --port /dev/ttyACM0 --info
 ```
 
 The command must display the local node information without permission, connection or serial-port errors. Record the local node ID, long name and short name from the output.
@@ -354,7 +364,7 @@ Do not add broad password-free sudo access. Only the commands listed in the supp
 
 Check the following items in order:
 
-1. `meshtastic --port /dev/ttyACM0 --info` can read the radio.
+1. `adapters/meshtastic/venv/bin/meshtastic --port /dev/ttyACM0 --info` can read the radio.
 2. `systemctl is-active meshcenter.service` reports `active`.
 3. The web interface opens at `http://<raspberry-pi-ip>:5000`.
 4. The bottom-right status indicator changes from `Checking` to an online state.
@@ -573,6 +583,11 @@ git pull --ff-only origin main
 git fetch --tags
 source venv/bin/activate
 python -m pip install -r requirements.txt
+deactivate
+# First update after upgrading past Task 48: this venv won't exist yet on
+# an older install (git pull never runs installer provisioning steps) -
+# create it once with: python3 -m venv adapters/meshtastic/venv
+adapters/meshtastic/venv/bin/pip install -r adapters/meshtastic/requirements.txt
 python -m compileall -q server.py api camera meshsrv storage telemetry utils
 sudo systemctl restart meshcenter.service
 sudo systemctl is-active meshcenter.service
@@ -610,8 +625,7 @@ Check the paths in the installed service and the values in `config.py`.
 ```bash
 ls -l /dev/ttyACM* /dev/ttyUSB* 2>/dev/null
 id
-source ~/meshcenter/venv/bin/activate
-meshtastic --port /dev/ttyACM0 --info
+~/meshcenter/adapters/meshtastic/venv/bin/meshtastic --port /dev/ttyACM0 --info
 ```
 
 Confirm that the user belongs to `dialout`, the USB cable carries data and `MESHTASTIC_PORT` matches the actual device.

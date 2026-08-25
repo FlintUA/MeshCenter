@@ -33,18 +33,41 @@ if [ -x "venv/bin/python" ]; then
     else
         bad "flask not importable inside venv — run: source venv/bin/activate && pip install -r requirements.txt"
     fi
+    # Task 48: meshtastic (GPLv3) no longer belongs in Core's own venv -
+    # Core never imports it directly. Its presence here isn't wrong (a
+    # pre-split install or a leftover from before the split still has it,
+    # harmlessly), but it's no longer required, so this is informational
+    # only, never `bad`.
     if venv/bin/python -c "import meshtastic" >/dev/null 2>&1; then
-        ok "meshtastic package importable inside venv"
-    else
-        bad "meshtastic package not importable inside venv"
-    fi
-    if [ -x "venv/bin/meshtastic" ]; then
-        ok "meshtastic CLI present at venv/bin/meshtastic"
-    else
-        warn "no venv/bin/meshtastic — CLI may resolve from elsewhere (MESHTASTIC_CMD in config.py)"
+        warn "meshtastic package is importable inside Core's venv — harmless leftover from a pre-split install, no longer required here (see adapters/meshtastic/venv below)"
     fi
 else
     bad "venv/bin/python missing — venv was not created (see INSTALL.md step 3)"
+fi
+echo
+
+# --- 1b. Meshtastic adapter virtual environment (Task 48 venv-split) --------
+echo "Meshtastic adapter environment (Task 48 venv-split)"
+ADAPTER_VENV="adapters/meshtastic/venv"
+if [ -x "${ADAPTER_VENV}/bin/python" ]; then
+    ok "${ADAPTER_VENV}/bin/python exists"
+    if "${ADAPTER_VENV}/bin/python" -c "import meshtastic" >/dev/null 2>&1; then
+        ok "meshtastic package importable inside the adapter venv"
+    else
+        bad "meshtastic package not importable inside ${ADAPTER_VENV} — run: ${ADAPTER_VENV}/bin/pip install -r adapters/meshtastic/requirements.txt"
+    fi
+    if "${ADAPTER_VENV}/bin/python" -c "from meshtastic.ble_interface import BLEInterface" >/dev/null 2>&1; then
+        ok "BLE support (bleak, via the [ble] extra) importable inside the adapter venv"
+    else
+        bad "BLE support not importable inside ${ADAPTER_VENV} — bare 'meshtastic' was likely installed instead of 'meshtastic[ble]' (see adapters/meshtastic/requirements.txt); BLE radios will fail with an opaque ADAPTER_UNAVAILABLE"
+    fi
+    if [ -x "${ADAPTER_VENV}/bin/meshtastic" ]; then
+        ok "meshtastic CLI present at ${ADAPTER_VENV}/bin/meshtastic"
+    else
+        warn "no ${ADAPTER_VENV}/bin/meshtastic — CLI may resolve from elsewhere (MESHTASTIC_CMD in config.py, see resolve_meshtastic_cli())"
+    fi
+else
+    bad "${ADAPTER_VENV}/bin/python missing — the adapter venv was not created. Core will still start (transport status ADAPTER_UNAVAILABLE, by design) but the radio will not connect. Run: python3 -m venv ${ADAPTER_VENV} && ${ADAPTER_VENV}/bin/pip install -r adapters/meshtastic/requirements.txt (see install.sh's step_adapter_venv — a plain 'git pull' update never runs this step on an existing install, same class of gap as task 39's sudoers checks above)"
 fi
 echo
 

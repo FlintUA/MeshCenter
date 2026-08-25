@@ -1496,14 +1496,18 @@ Full history and root-cause details for these and other known issues: see [KNOWN
 
 ### Meshtastic CLI not found
 
-Check that the CLI is installed inside the virtual environment:
+The `meshtastic` package lives in its own venv, separate from Core's
+(see CLAUDE.md's "process isolation" section) — check it's installed
+there:
 
 ```bash
-source venv/bin/activate
-which meshtastic
+which adapters/meshtastic/venv/bin/meshtastic
 ```
 
-Verify the configured path in `config.py`.
+If missing, provision it: `python3 -m venv adapters/meshtastic/venv &&
+adapters/meshtastic/venv/bin/pip install -r adapters/meshtastic/requirements.txt`
+(see INSTALL.md step 3b). Verify the configured path in `config.py` if
+you're pointing at a custom location.
 
 ### Radio not detected
 
@@ -1516,8 +1520,7 @@ ls /dev/ttyACM*
 Test communication:
 
 ```bash
-source venv/bin/activate
-meshtastic --info
+adapters/meshtastic/venv/bin/meshtastic --info
 ```
 
 ### Camera not working

@@ -41,9 +41,10 @@ class _FakeSerialTransport:
     simulates serial hardware also being unavailable, for the double-
     failure ("both down") scenario."""
 
-    def __init__(self, fail_connect=False):
+    def __init__(self, fail_connect=False, listener_pid=12345):
         self.connect_calls = []
         self.fail_connect = fail_connect
+        self._listener_pid = listener_pid
 
     def connect(self, descriptor, *, force=False, timeout=30.0):
         self.connect_calls.append(descriptor)
@@ -62,7 +63,7 @@ class _FakeSerialTransport:
         )
 
     def get_listener_pid(self):
-        return 12345
+        return self._listener_pid
 
     def send_text(self, *a, **kw):
         return "sent-by-serial"
@@ -124,6 +125,15 @@ def meshtastic_env():
     bad_address = "00:11:22:33:44:55"
     serial_transport = _FakeSerialTransport()
     ble_transport = _FakeBleTransport(bad_address=bad_address)
+    # Task 48: a second, distinct fake - production passes two different
+    # objects here too (the IPC-backed proxy vs. Core's listener-
+    # management-only instance), see register_meshtastic_routes()'s own
+    # docstring for why get_listener_pid() must never be read from the
+    # same object switch operations go through. Different listener_pid
+    # values (99999 vs. the other fake's default 12345) so a test can
+    # prove WHICH object actually answered, not just that some number
+    # came back.
+    core_serial_transport = _FakeSerialTransport(listener_pid=99999)
 
     # Start already "on BLE", the same precondition as the live TAP2
     # repro (a prior successful switch had already made ble_transport
@@ -147,6 +157,7 @@ def meshtastic_env():
         ble_transport,
         "/dev/ttyACM0",
         "!756f9960",
+        core_serial_transport,
     )
 
     return {
@@ -155,8 +166,25 @@ def meshtastic_env():
         "transport_router": transport_router,
         "serial_transport": serial_transport,
         "ble_transport": ble_transport,
+        "core_serial_transport": core_serial_transport,
         "bad_address": bad_address,
     }
+
+
+def test_listener_pid_comes_from_core_serial_transport_not_the_switch_object(meshtastic_env):
+    """Task 48 review requirement: listener_pid must be read from
+    core_serial_transport (Core's listener-management-only instance),
+    never from the `serial_transport` param that switch operations use
+    (an IPC-backed proxy in production, which has no meaningful listener
+    PID of its own - it lives in a different process). Distinguishable
+    listener_pid values on the two fakes (99999 vs. 12345) prove which
+    object actually answered, not just that a number came back."""
+    client = meshtastic_env["client"]
+
+    response = client.get("/api/meshtastic/connection")
+    data = response.get_json()
+
+    assert data["connection"]["listener_pid"] == 99999
 
 
 def test_failed_switch_recovery_repoints_the_router_at_serial(meshtastic_env):

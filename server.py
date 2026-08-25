@@ -34,13 +34,20 @@ from camera.camera_manager import build_camera_manager
 from telemetry import telemetry
 from meshsrv import meshtastic_transport
 from meshsrv.radio_manager import RadioConnectionManager
-from meshsrv.runtime_identity import resolve_meshtastic_cli, resolve_serial_port, meshtastic_command, discover_serial_ports
+from meshsrv.runtime_identity import (
+    resolve_meshtastic_cli,
+    resolve_serial_port,
+    resolve_adapter_venv_dir,
+    meshtastic_command,
+    discover_serial_ports,
+)
 from meshsrv.instance_manager import InstanceManager
 from meshsrv.radio_identity import detect_radio_identity, detect_connected_radio, compare_radio_identity
 from meshsrv.time_service import start_background_thread as start_time_service
 from meshsrv.node_time_sync import STARTUP_SYNC_DELAY_S
 from adapters.meshtastic.serial_transport import SerialTransport
-from adapters.meshtastic.ble_transport import BLETransport
+from meshsrv.radio_transport import ConnectionType
+from meshsrv.adapter_ipc_client import AdapterIPCTransport, AdapterSupervisor
 from meshsrv.transport_router import TransportRouter
 from meshsrv.schedule_engine import start as start_schedule_engine
 from meshsrv import update_service
@@ -763,13 +770,23 @@ radio_connection_manager = None
 _nodeinfo_buffer = []
 _collecting_nodeinfo = False
 
-# The one and only SerialTransport instance Core owns (Task 44). This is
-# the sole place in server.py allowed to reach into meshtastic.* - see
-# adapters/meshtastic/serial_transport.py's module docstring. radio_lock/
-# pause_listen are passed BY REFERENCE, not copied: api/api_chat.py still
-# uses Core's own radio_session()/radio_lock/pause_listen directly and
-# unchanged until Task 46, so the same lock/event objects must be shared
-# between this transport and those still-untouched call sites.
+# Task 48: Core's OWN SerialTransport instance (Task 44) - kept
+# post-venv-split ONLY for its listener-management role (run_listener(),
+# claim_for_external_command(), get_listener_pid()), all of which are
+# pure subprocess/stdlib plumbing with no meshtastic import anywhere in
+# their call path (adapters/meshtastic/serial_transport.py's only
+# `import meshtastic` is lazy, inside _open_interface() - confirmed by
+# reading the file, not assumed, during the Task 48 investigation).
+# connect()/disconnect()/reconnect()/send_*()/get_*() are NEVER called
+# on this instance anymore - that's what serial_ipc_transport below is
+# for. Passed to register_meshtastic_routes() as `core_serial_transport`
+# (get_listener_pid() only, see that function's own docstring for why
+# it's a distinct parameter from the switch-orchestration objects, not
+# the same one doing double duty). radio_lock/pause_listen are passed BY
+# REFERENCE, not copied - api/api_chat.py's radio_session()/prepare_
+# radio_command() (Node Tools' CLI-based operations, a separate,
+# already-license-safe mechanism untouched by Task 48) still use the
+# same lock/event objects directly.
 serial_transport = SerialTransport(
     cli_path=MESHTASTIC_CMD,
     port=MESHTASTIC_PORT,
@@ -782,26 +799,50 @@ serial_transport = SerialTransport(
     ),
 )
 
-# Task 46: constructed unconditionally alongside serial_transport (cheap -
-# no BLE connection attempt happens until something calls connect()).
-# `address=""` is a placeholder; the real address comes from the
-# ConnectionDescriptor passed to connect() when the user actually
-# switches to Bluetooth (POST /api/meshtastic/transport) - see
-# api/api_meshtastic.py.
-ble_transport = BLETransport(
-    address="",
+# Task 48: one persistent adapter subprocess, spawned/supervised here,
+# shared by both IPC transport proxies below (multiplexed per-request by
+# transport_type - see adapters/meshtastic/ipc_server.py's module
+# docstring for why routing is stateless rather than tracked on either
+# side). adapter_python is resolved from the SAME well-known adapter-
+# venv path resolve_meshtastic_cli() above already checks first - single
+# source of truth, see resolve_adapter_venv_dir()'s own docstring.
+adapter_supervisor = AdapterSupervisor(
+    adapter_python=str(resolve_adapter_venv_dir(PROJECT_DIR) / "bin" / "python"),
+    project_dir=PROJECT_DIR,
+    serial_port=MESHTASTIC_PORT,
+    meshtastic_cli=MESHTASTIC_CMD,
     on_log=lambda msg, level="INFO": log_system_event(
-        title="Node Time Sync", details=msg, level=level, source="time_sync"
+        title="Meshtastic Adapter", details=msg, level=level, source="adapter_ipc"
     ),
+)
+
+# The transport objects every DI consumer (api_chat.py, api_waypoints.py,
+# schedule_actions.py, api_meshtastic.py's switch orchestration) actually
+# sends/connects/gets through, post-Task-48 - IPC proxies to the adapter
+# subprocess, not the in-process SerialTransport/BLETransport instances
+# Task 44-47 used directly. ble_address_provider reads settings.meshtastic.
+# ble_address LIVE (a closure, not a value captured now) - Task 48 review
+# requirement: this must survive a Core restart, since it's what lets the
+# kill/respawn supervisor's BLE OS-level cleanup (bluetoothctl disconnect)
+# still find the right address to clean up even if Core died and came
+# back between the original connect() and a later kill. settings itself
+# isn't populated from disk until load_settings() runs inside
+# start_runtime() (well after this module-level code), but that's fine -
+# this lambda is only ever actually called later, by which point it is.
+serial_ipc_transport = AdapterIPCTransport(ConnectionType.SERIAL, adapter_supervisor)
+ble_ipc_transport = AdapterIPCTransport(
+    ConnectionType.BLUETOOTH,
+    adapter_supervisor,
+    ble_address_provider=lambda: (settings.get("meshtastic") or {}).get("ble_address") or None,
 )
 
 # The ONE stable RadioTransport every DI consumer (api_chat.py,
 # api_waypoints.py, schedule_actions.py) is wired to from here on -
-# switching the active concrete transport (serial_transport <->
-# ble_transport) at runtime never requires re-wiring any of them. See
+# switching the active concrete transport (serial_ipc_transport <->
+# ble_ipc_transport) at runtime never requires re-wiring any of them. See
 # meshsrv/transport_router.py's module docstring for why this exists
 # instead of a mutable server.py global consumers would reach into.
-transport_router = TransportRouter(serial_transport)
+transport_router = TransportRouter(serial_ipc_transport)
 
 # Attempt-level throttle for _attempt_node_time_sync(): the sync itself
 # pauses/resumes the listener (via radio_session()), which produces its
@@ -3353,13 +3394,28 @@ def _attempt_node_time_sync():
     """Best-effort node clock sync, run after a fresh listener (re)connect.
 
     Task 44: the SerialInterface-opening/waitForConfig/try_sync() dance
-    moved into serial_transport.set_device_time() - this wrapper now only
+    moved into SerialTransport.set_device_time() - this wrapper now only
     keeps the identity gate and the STARTUP_SYNC_DELAY_S settle-before-
     pausing behavior, both Core-level policy rather than transport
     plumbing. `epoch_seconds` passed below is not actually used by
     SerialTransport.set_device_time() - see that method's docstring
     ("KNOWN SIGNATURE MISMATCH") for why that is a deliberate, named gap
     rather than an oversight here.
+
+    Task 48 review finding, fixed here: this used to call
+    serial_transport.set_device_time(...) directly on Core's own
+    listener-management-only instance - a REAL radio operation
+    (SerialTransport.set_device_time() opens an interface internally,
+    needing the meshtastic import serial_transport is no longer supposed
+    to ever reach for) bypassing transport_router entirely. Two problems
+    fixed by routing through transport_router instead: (1) it would have
+    crashed once meshtastic left Core's venv - the exact "quiet
+    regression, same door" this task's own review asked to check for;
+    (2) it was hardcoded to serial regardless of which transport is
+    actually active - if BLE was the active link, this silently
+    attempted (and presumably no-op'd or failed against) a disconnected
+    serial transport instead of syncing over the link that was actually
+    live.
 
     Called from radio_event() in its own daemon thread (never inline, and
     never from a request handler) so a slow/busy radio can't block Flask.
@@ -3374,7 +3430,7 @@ def _attempt_node_time_sync():
     time.sleep(STARTUP_SYNC_DELAY_S)
 
     try:
-        serial_transport.set_device_time(int(time.time()), timeout=10)
+        transport_router.set_device_time(int(time.time()), timeout=10)
     except Exception as error:
         print(f"[TIME SYNC] Attempt failed: {error}", flush=True)
 
@@ -4400,10 +4456,11 @@ register_meshtastic_routes(
     settings,
     save_settings,
     transport_router,
-    serial_transport,
-    ble_transport,
+    serial_ipc_transport,
+    ble_ipc_transport,
     MESHTASTIC_PORT,
     LOCAL_NODE_ID,
+    serial_transport,
 )
 
 @app.route("/")

@@ -46,6 +46,16 @@ class TransportErrorCode(str, Enum):
     PAYLOAD_TOO_LARGE = "payload_too_large"
     UNSUPPORTED = "unsupported"
     UNKNOWN = "unknown"
+    # Task 48: distinct from NOT_CONNECTED/CONNECT_FAILED, which both mean
+    # "we reached the adapter and it told us a radio-level thing failed."
+    # This means the adapter subprocess ITSELF was never reached at all -
+    # never started, failed to start, or crashed before ever completing a
+    # round-trip. Matches the plan document's own acceptance-test wording
+    # ("статус транспорта — 'adapter unavailable'", pip-uninstall-meshtastic
+    # scenario) - deliberately not reusing UNKNOWN, so a caller/UI can tell
+    # "radio not connected" apart from "the whole adapter is missing" at a
+    # glance, not by string-matching last_error.message.
+    ADAPTER_UNAVAILABLE = "adapter_unavailable"
 
 
 # ---------------------------------------------------------------------------

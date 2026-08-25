@@ -196,6 +196,22 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
                     time.sleep(cooldown)
                 self._pause_listen.clear()
 
+    def claim_for_external_command(self, *, timeout: float = 8, cooldown: float = 2.0):
+        """Public alias of _claim_radio(), for Task 48's Core-side IPC-
+        client-proxy: Core keeps its own SerialTransport instance around
+        purely to own radio_lock/pause_listen and run_listener() (see
+        that method and this class's module docstring for why - it never
+        imports meshtastic in this role, only this method and
+        run_listener()/get_listener_pid() are ever called on it). It
+        needs this instance's exclusive claim on the physical serial
+        port - listener stopped, port confirmed free - for the duration
+        of one request/response round-trip to the adapter subprocess,
+        which is the thing that actually opens a SerialInterface, in a
+        different process entirely. Same context manager as
+        _claim_radio(), just exposed under a name a caller outside this
+        class is meant to use."""
+        return self._claim_radio(timeout=timeout, cooldown=cooldown)
+
     def _open_interface(self):
         from meshtastic.serial_interface import SerialInterface
 

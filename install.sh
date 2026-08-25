@@ -359,8 +359,9 @@ step_venv() {
 }
 
 # ─── Step 5b: Meshtastic adapter virtualenv (Task 48) ─────────────────────────
-# Separate venv for adapters/meshtastic/*.py's GPLv3 meshtastic[ble]
-# dependency, isolated from Core's MIT-licensed venv above - see CLAUDE.md
+# Separate venv for adapters/meshtastic/*.py's GPLv3 meshtastic
+# dependency (which pulls in bleak as a base dependency, for BLE), isolated
+# from Core's MIT-licensed venv above - see CLAUDE.md
 # and meshsrv/adapter_ipc_client.py's module docstring for why. Must run
 # before step_detect_radio(): both that step and the listener started by
 # a normal service run need the `meshtastic` CLI binary this venv

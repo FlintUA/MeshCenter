@@ -288,12 +288,30 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
                 self._wait_serial_release(timeout=timeout)
 
         def _do_connect():
-            self._last_probe_ok = False
             interface = self._open_interface()  # blocks on the real handshake, raises on failure
             interface.close()
-            self._last_probe_ok = True
 
+        # Task 48 follow-up review requirement: _last_probe_ok must NOT be
+        # written from inside _do_connect() - that function runs on a
+        # tier-1-abandoned background thread (_call_with_timeout()'s own
+        # documented tier-1/tier-2 gap: a timeout releases the CALLER
+        # immediately, but does not kill the thread still running _fn_).
+        # Writing shared instance state from that thread would let it
+        # finish LATE - after the caller already received
+        # TransportError(TIMEOUT) - and silently overwrite
+        # _last_probe_ok back to True behind the caller's back.
+        #
+        # Both writes below happen on THIS (the calling) thread only,
+        # never inside _do_connect(): pessimistically False before the
+        # attempt (so a failed retry after a previous success correctly
+        # downgrades, instead of leaving a stale True), then True only
+        # if _call_with_timeout() actually returns - which happens ONLY
+        # on a genuine in-budget success. An abandoned thread that
+        # finishes later has nothing left to mutate, no matter how long
+        # it takes - _do_connect() itself never touches this field.
+        self._last_probe_ok = False
         self._call_with_timeout(_do_connect, timeout=timeout, what="connect()")
+        self._last_probe_ok = True
         self._connected_since = time.time()
         self._last_error = None
         return self.get_connection_info()

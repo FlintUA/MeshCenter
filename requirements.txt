@@ -2,13 +2,15 @@ Flask>=3.0.0
 Pillow>=10.0.0
 requests>=2.31.0
 psutil>=5.9.0
-# Pinned to the 2.7.x line, not just >=: server.py's listen_meshtastic()
-# parses the CLI's human-readable stdout line-by-line (see CLAUDE.md's
-# "fragile by nature" note) - a future minor version bump could silently
-# change that output format and break parsing with no warning. Currently
-# deployed: 2.7.9 (prod), 2.7.11 (dev/camtest, also the latest 2.7.x on
-# PyPI as of 2026-08) - this range covers both without floating past 2.7.
-meshtastic>=2.7.9,<2.8.0
+# Task 48: the meshtastic package (GPLv3) no longer lives in Core's own
+# venv - Core never imports it directly (adapters/meshtastic/*.py are the
+# only modules that do, and they run in a separate process/venv, see
+# meshsrv/adapter_ipc_client.py). See
+# adapters/meshtastic/requirements.txt for the actual pin. Core still
+# shells out to the `meshtastic` CLI *binary* for the listener and
+# --info calls (arm's-length subprocess invocation, not an import) -
+# meshsrv/runtime_identity.py's resolve_meshtastic_cli() finds that
+# binary in the adapter venv created by install.sh's step_adapter_venv().
 v4l2py>=3.0.0
 # Production WSGI server (see gunicorn.conf.py / deploy/meshcenter.service).
 # Pinned to the 23.x line - gunicorn's own worker/arbiter internals (the

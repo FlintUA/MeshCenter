@@ -240,14 +240,25 @@ of this automatically.
    source venv/bin/activate
    python -m pip install --upgrade pip setuptools wheel
    python -m pip install -r requirements.txt
-   which meshtastic   # should print a path under ~/meshcenter/venv/bin/
+   deactivate
+   ```
+   > Core's own venv above deliberately does **not** include the
+   > `meshtastic` package (GPLv3) — see CLAUDE.md. It lives in a second,
+   > separate venv, created next.
+
+3b. [ ] **Meshtastic adapter environment** (Task 48 — isolated from Core's
+   venv above so GPLv3 code never gets imported into Core's own process)
+   ```bash
+   python3 -m venv adapters/meshtastic/venv
+   adapters/meshtastic/venv/bin/pip install --upgrade pip
+   adapters/meshtastic/venv/bin/pip install -r adapters/meshtastic/requirements.txt
+   which adapters/meshtastic/venv/bin/meshtastic   # should print a path under adapters/meshtastic/venv/bin/
    ```
 
 4. [ ] **Test the radio before configuring MeshCenter**
    ```bash
    ls -l /dev/ttyACM* /dev/ttyUSB* 2>/dev/null
-   source ~/meshcenter/venv/bin/activate
-   meshtastic --port /dev/ttyACM0 --info
+   adapters/meshtastic/venv/bin/meshtastic --port /dev/ttyACM0 --info
    ```
    Do not continue until this prints node info with no permission/serial
    errors. Note the local node ID, long name and short name.

@@ -1,0 +1,21 @@
+# Dependencies for the Meshtastic adapter subprocess only (Task 48) -
+# installed into its own venv (adapters/meshtastic/venv, created by
+# install.sh's step_adapter_venv()), isolated from Core's MIT-licensed
+# venv (see requirements.txt) so GPLv3 code never gets imported into
+# Core's own process.
+#
+# [ble] extra pulls in bleak - adapters/meshtastic/ble_transport.py
+# imports meshtastic.ble_interface.BLEInterface, which is meshtastic's
+# own wrapper around bleak; bare `meshtastic` does NOT install bleak,
+# it's an optional extra. Without it, BLE would silently fail with an
+# ImportError surfaced as an opaque ADAPTER_UNAVAILABLE, not a clear
+# "install the [ble] extra" message.
+#
+# Pinned to the 2.7.x line, not just >=: server.py's listen_meshtastic()
+# (Core-side, still shells out to the CLI binary this venv provides)
+# parses the CLI's human-readable stdout line-by-line (see CLAUDE.md's
+# "fragile by nature" note) - a future minor version bump could silently
+# change that output format and break parsing with no warning. Currently
+# deployed: 2.7.9 (prod), 2.7.11 (dev/camtest, also the latest 2.7.x on
+# PyPI as of 2026-08) - this range covers both without floating past 2.7.
+meshtastic[ble]>=2.7.9,<2.8.0

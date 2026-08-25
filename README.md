@@ -1818,11 +1818,7 @@ Providing detailed information helps identify and resolve problems more quickly.
 
 ## License
 
-This project is released under the MIT License.
-
-You are free to use, modify and distribute the software in accordance with the terms of the license.
-
-See the [LICENSE](LICENSE) file for details.
+See the [License](#license) section near the top of this document — MeshCenter's own code is MIT-licensed, with the GPLv3-licensed `meshtastic` dependency isolated in `adapters/meshtastic/` behind a process boundary.
 
 ---
 

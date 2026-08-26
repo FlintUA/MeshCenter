@@ -785,11 +785,6 @@ def capture_screenshot():
         return {"success": False, "error": str(e)}
 
 
-def screenshot_exists(filename):
-    filepath = safe_screenshot_path(filename)
-    return filepath is not None and os.path.exists(filepath)
-
-
 def list_screenshots():
     try:
         files = []

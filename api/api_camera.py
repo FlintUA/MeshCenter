@@ -1,4 +1,4 @@
-from flask import request, jsonify, Response, send_from_directory
+from flask import request, jsonify, Response, send_file
 from pathlib import Path
 from datetime import datetime
 import base64
@@ -265,15 +265,18 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
 
     @app.route("/api/camera/screenshot/<path:filename>")
     def api_camera_screenshot_file(filename):
-        """Получить скриншот"""
-        if not camera.screenshot_exists(filename):
+        """Получить скриншот - serves the same path safe_screenshot_path()
+        already validated, instead of re-passing the raw filename to a
+        second, independent path-resolution step (send_from_directory's
+        own safe_join()). Not a vulnerability fix - both layers already
+        agreed on every case tried - just removes the latent fragility of
+        two validation points that only work if they happen to stay in
+        sync."""
+        filepath = camera.safe_screenshot_path(filename)
+        if filepath is None or not os.path.isfile(filepath):
             return jsonify({"ok": False, "error": "File not found"}), 404
 
-        return send_from_directory(
-            camera.SCREENSHOTS_DIR,
-            filename,
-            mimetype="image/jpeg"
-        )
+        return send_file(filepath, mimetype="image/jpeg")
 
     @app.route("/api/camera/screenshots", methods=["GET"])
     def api_camera_screenshots_list():

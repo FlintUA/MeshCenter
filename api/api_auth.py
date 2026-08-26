@@ -1,14 +1,23 @@
 """Optional whole-app password protection.
 
-Off by default (see config.example.py's AUTH_ENABLED / AUTH_PASSWORD_HASH).
-Single shared password, no usernames/roles - a Flask session cookie is set
-on successful login and checked in a before_request hook. State (enabled
+On by default as of config.example.py's AUTH_ENABLED=True (P1 #5
+stabilization follow-up) - a fresh install with no data/auth.json yet
+gets a randomly generated initial password (see load_auth_state()'s
+generation branch below), not silent no-protection. Single shared
+password, no usernames/roles - a Flask session cookie is set on
+successful login and checked in a before_request hook. State (enabled
 flag + password hash) lives in its own data/auth.json rather than
 settings.json, so it can never be silently wiped by the generic
 POST /api/settings merge-and-replace in api_settings.py, and the hash is
 never included in a settings.json snapshot handed back to the browser.
+
+The login route's `next` redirect target is validated by
+_is_safe_redirect_target() - see that function's own docstring for the
+open-redirect vulnerability independently reproduced and fixed there.
 """
 
+import os
+import secrets
 from urllib.parse import quote, urlsplit
 
 from flask import jsonify, redirect, request, render_template, session
@@ -24,6 +33,38 @@ _EXEMPT_PATH_PREFIXES = ("/static/",)
 _EXEMPT_PATHS = ("/login",)
 
 
+def _generate_initial_password():
+    """16 hex characters, 64 bits of entropy - easy to read and retype
+    from a terminal or log line, no ambiguous 0/O or 1/l/I characters
+    since hex digits are only 0-9a-f. A separate, patchable function so
+    tests can spy on whether generation was ever attempted, not just
+    inspect its result."""
+    return secrets.token_hex(8)
+
+
+def _write_initial_password_file(auth_file, plaintext_password):
+    """One-time plaintext copy of a freshly generated password, next to
+    auth.json. auth.json itself only ever stores the hash (fine to be
+    world-readable, same as before this change) - this file is the
+    actual credential in recoverable form, so unlike safe_write_json()'s
+    default permissions it must be locked down explicitly. Never
+    overwritten by anything else - deleting it (or its content no longer
+    matching the live password) is the user's own signal that they've
+    saved/changed the password elsewhere.
+    """
+    directory = os.path.dirname(auth_file) or "."
+    path = os.path.join(directory, "initial_password.txt")
+    try:
+        os.makedirs(directory, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(plaintext_password + "\n")
+        os.chmod(path, 0o600)
+        return path
+    except OSError as error:
+        print(f"[AUTH] Could not write {path}: {error}", flush=True)
+        return None
+
+
 def load_auth_state(auth_file, bootstrap_enabled=False, bootstrap_password_hash=""):
     data = safe_read_json(auth_file, default=None)
     if isinstance(data, dict) and ("password_hash" in data or "enabled" in data):
@@ -32,9 +73,37 @@ def load_auth_state(auth_file, bootstrap_enabled=False, bootstrap_password_hash=
             "password_hash": str(data.get("password_hash") or ""),
         }
 
-    # First run: seed from config.py's bootstrap values (both off/empty by
-    # default), same pattern as WEATHER_PROVIDER's config->settings.json handoff.
+    # First run: seed from config.py's bootstrap values, same pattern as
+    # WEATHER_PROVIDER's config->settings.json handoff.
     bootstrap_password_hash = str(bootstrap_password_hash or "")
+
+    if bool(bootstrap_enabled) and not bootstrap_password_hash.strip():
+        # New install with AUTH_ENABLED=True and no hash set - the normal
+        # case now that config.example.py defaults to True. Generate a
+        # real one-time password and persist it immediately (unlike the
+        # plain bootstrap-in-memory below, which nothing ever writes to
+        # disk) instead of silently staying unprotected - covers every
+        # startup path uniformly (install.sh, meshcenter-firstboot.sh,
+        # and CLAUDE.md's own documented manual `cp config.example.py
+        # config.py` path, which installer-side generation alone would
+        # have missed).
+        plaintext_password = _generate_initial_password()
+        state = {
+            "enabled": True,
+            "password_hash": generate_password_hash(plaintext_password),
+        }
+        safe_write_json(auth_file, state)
+        password_file = _write_initial_password_file(auth_file, plaintext_password)
+
+        print(f"[AUTH] No password configured - generated one: {plaintext_password}", flush=True)
+        if password_file:
+            print(
+                f"[AUTH] Saved to {password_file} (readable only by this service's own "
+                "user) - log in and change it via Settings -> Security.",
+                flush=True,
+            )
+        return state
+
     return {
         "enabled": bool(bootstrap_enabled) and bool(bootstrap_password_hash.strip()),
         "password_hash": bootstrap_password_hash,

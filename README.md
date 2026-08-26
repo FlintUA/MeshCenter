@@ -1370,7 +1370,7 @@ deleted_dm.json
 sensors.json
 settings.json
 camera_config.json
-auth.json           # only present once password protection is turned on
+auth.json           # created on first start (fresh installs) or once you turn protection on (existing installs)
 waypoints.db
 node_icons/
 screenshots/
@@ -1489,9 +1489,13 @@ If remote access is required, it is recommended to use a VPN or another secure t
 
 MeshCenter can be protected with a single shared password - **Settings → Security**. It's a single on/off switch, not a multi-user system: one password guards the entire application (every API route, including `restart`/`reboot`/`shutdown` and Wi‑Fi management), not individual users or features.
 
-- **Off by default.** Existing installs and fresh installs both start unprotected - nothing changes until you set a password and turn it on.
+- **On by default for fresh installs.** The first time MeshCenter starts with no `data/auth.json` yet, it generates a random password, prints it once to the console/log, and saves it to `data/initial_password.txt` (readable only by the service's own user). Log in with it, then change it via **Settings → Security**.
+  - **Existing installs are not affected.** `config.py` is a local, gitignored file - `git pull`/updating never touches it, and every existing install already has `AUTH_ENABLED = False` written into its own `config.py` from whenever it was installed. Nothing changes on an existing install unless you edit `config.py` yourself.
+  - Set `AUTH_ENABLED = False` in `config.py` to opt out of protection (and generation) entirely, same as before.
+  - **Forgot the generated password?** SSH in and either read `data/initial_password.txt` if it's still there, or remove `data/auth.json` and restart the service (`sudo systemctl restart meshcenter.service`) - protection turns back off (the same "empty hash never locks you out" rule below), log in and set a new password via Settings → Security.
+  - **Regenerating `config.py` from a fresh `config.example.py`** (e.g. comparing against upstream, or a from-scratch reinstall that leaves `data/` behind) will pick up `AUTH_ENABLED = True` again. If `data/auth.json` isn't present at that point, MeshCenter generates a new password the next time it starts, even if you didn't expect a "fresh install" experience - check `data/initial_password.txt`/the log if the app unexpectedly asks you to log in after such a change.
 - When enabled, an unauthenticated browser is redirected to a login page (`/login`); unauthenticated API requests get `401`. Static assets and the login page itself stay reachable so the login form can render.
-- The password is hashed (`werkzeug.security`, never stored in plain text) in `data/auth.json`, not in `config.py` or `settings.json` - it isn't wiped by an unrelated settings save and never comes back in a settings API response.
+- The password is hashed (`werkzeug.security`, never stored in plain text) in `data/auth.json`, not in `config.py` or `settings.json` - it isn't wiped by an unrelated settings save and never comes back in a settings API response. `config.py`'s `AUTH_PASSWORD_HASH` is only ever consulted the first time (to seed `auth.json`, or to generate a password when it's left empty) - once `auth.json` exists, `config.py`'s two auth variables are ignored on every later restart.
 - This is one shared secret for the whole app, not per-user accounts - it doesn't replace a VPN for remote access, it's meant to reduce exposure on a shared or guest local network.
 
 ---

@@ -35,7 +35,28 @@ if len(sys.argv) != 2:
     sys.exit(2)
 
 EXTRACTED_DIR = Path(sys.argv[1]).resolve()
+
+print("==> checking adapters/ is physically absent from the extracted archive")
+assert not (EXTRACTED_DIR / "adapters").exists(), (
+    "adapters/ is present in the extracted Core archive - CORE_WHITELIST leaked it, "
+    "or this ran against the wrong directory. The whole point of this smoke test is "
+    "proving Core runs without adapters/ on disk, not just without its venv - fix the "
+    "whitelist rather than the assumption."
+)
+
 sys.path.insert(0, str(EXTRACTED_DIR))
+
+try:
+    import adapters  # noqa: F401
+except ModuleNotFoundError:
+    pass
+else:
+    raise AssertionError(
+        "`import adapters` succeeded - some adapters package is importable "
+        "(shadowed from outside the extracted archive?). This smoke test's guarantee "
+        "only holds if adapters really isn't importable at all, not just absent as a "
+        "directory under EXTRACTED_DIR."
+    )
 
 
 class _AutoVivifyingStub:

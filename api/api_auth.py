@@ -9,7 +9,7 @@ POST /api/settings merge-and-replace in api_settings.py, and the hash is
 never included in a settings.json snapshot handed back to the browser.
 """
 
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from flask import jsonify, redirect, request, render_template, session
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -45,6 +45,23 @@ def is_protected(auth_state):
     # An enabled flag with no usable hash never blocks access - avoids a
     # misconfigured/corrupted auth.json permanently locking out the UI.
     return bool(auth_state.get("enabled")) and bool(str(auth_state.get("password_hash") or "").strip())
+
+
+def is_safe_redirect_url(target):
+    """Validate redirect target URL to prevent Open Redirect vulnerabilities.
+
+    Only relative paths starting with a single '/' are allowed. Protocol-relative
+    URLs starting with '//' or '/\' and external schemes/netlocs are rejected.
+    """
+    if not target or not isinstance(target, str):
+        return False
+    if not target.startswith("/") or target.startswith(("//", "/\\")):
+        return False
+    try:
+        parsed = urlparse(target)
+        return not parsed.netloc and not parsed.scheme
+    except Exception:
+        return False
 
 
 def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, resolve_ui_language=None):
@@ -91,7 +108,7 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
             return redirect("/")
 
         next_url = request.values.get("next") or "/"
-        if not next_url.startswith("/") or next_url.startswith("//"):
+        if not is_safe_redirect_url(next_url):
             next_url = "/"
 
         error = None

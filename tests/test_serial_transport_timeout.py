@@ -12,6 +12,7 @@ from contextlib import contextmanager
 import pytest
 
 from adapters.meshtastic.serial_transport import SerialTransport
+from meshsrv.serial_port_supervisor import SerialPortSupervisor
 from meshsrv.radio_transport import (
     ConnectionDescriptor,
     ConnectionState,
@@ -157,18 +158,37 @@ def test_call_with_timeout_thread_is_a_daemon_and_does_not_block_process_exit():
 def test_concurrent_connect_and_send_do_not_race_prepare_phase():
     """Regression test for the second review finding: with the executor
     no longer max_workers=1, connect(force=True)'s stop+wait teardown and
-    send_text()'s _claim_radio() prepare phase could, before this fix,
-    both be "in progress" at once (each individual read/write of
-    _listen_process was already lock-protected, so this was never a data
-    race - but the two *sequences* themselves were not mutually
+    send_text()'s claim_exclusive_access() prepare phase could, before
+    this fix, both be "in progress" at once (each individual read/write
+    of listener state was already lock-protected, so this was never a
+    data race - but the two *sequences* themselves were not mutually
     exclusive, meaning e.g. two overlapping stop_listener_process() calls
-    could run redundantly). Both paths now hold self._radio_lock for
-    their entire prepare sequence (see _claim_radio()'s "DELIBERATE
-    DIVERGENCE" comment and connect()'s force branch) - this test proves
-    the two critical sections never overlap in wall-clock time, using an
-    exclusive-entry counter that would go above 1 if they did.
+    could run redundantly). Both paths now hold radio_lock for their
+    entire prepare sequence (see claim_exclusive_access()'s "DELIBERATE
+    DIVERGENCE" comment in meshsrv/serial_port_supervisor.py and
+    connect()'s force branch) - this test proves the two critical
+    sections never overlap in wall-clock time, using an exclusive-entry
+    counter that would go above 1 if they did.
+
+    Stabilization follow-up (P0 #1): the tracked methods now live on a
+    SerialPortSupervisor, composed into SerialTransport rather than
+    implemented on it directly - injected via the supervisor= DI seam
+    (same pattern as AdapterSupervisor(command=...) elsewhere) instead of
+    monkey-patching private methods directly on the transport.
     """
-    transport = _make_transport()
+    supervisor = SerialPortSupervisor(
+        cli_path="/does/not/matter/for/this/test",
+        port="/dev/ttyFAKE",
+        radio_lock=threading.RLock(),
+        pause_listen=threading.Event(),
+    )
+    transport = SerialTransport(
+        cli_path="/does/not/matter/for/this/test",
+        port="/dev/ttyFAKE",
+        radio_lock=supervisor._radio_lock,
+        pause_listen=supervisor._pause_listen,
+        supervisor=supervisor,
+    )
     violations = []
     in_critical_section = {"count": 0}
     counter_lock = threading.Lock()
@@ -186,7 +206,7 @@ def test_concurrent_connect_and_send_do_not_race_prepare_phase():
             with counter_lock:
                 in_critical_section["count"] -= 1
 
-    original_stop = transport._stop_listener_process
+    original_stop = supervisor.stop_listener_process
 
     def tracked_stop():
         with _track_critical_section():
@@ -196,8 +216,8 @@ def test_concurrent_connect_and_send_do_not_race_prepare_phase():
         with _track_critical_section():
             return True
 
-    transport._stop_listener_process = tracked_stop
-    transport._wait_serial_release = tracked_wait
+    supervisor.stop_listener_process = tracked_stop
+    supervisor.wait_serial_release = tracked_wait
 
     class _FakePacket:
         id = 1
@@ -377,39 +397,10 @@ def test_disconnect_is_an_explicit_successful_noop_and_clears_probe_state():
     assert transport.is_connected() is False
     assert transport.get_connection_info().state == ConnectionState.DISCONNECTED
 
-
-# --- Task 49: get_listener_pid()'s bounded radio_lock acquire -------------
-
-
-def test_get_listener_pid_returns_none_on_a_busy_lock_within_its_short_budget():
-    """Task 49 fix: once claim_for_external_command() can hold this same
-    radio_lock for a full IPC round-trip, get_listener_pid()'s old
-    unconditional `with self._radio_lock:` could stall the whole
-    dashboard page behind it. Now bounded by
-    _LISTENER_PID_LOCK_TIMEOUT_S (3.0s, reusing meshsrv/transport_router.
-    py's own _INFO_LOCK_TIMEOUT_S precedent) and, on a busy lock, returns
-    None - a synthetic fallback matching is_connected()'s same fail-safe
-    pattern, not a raised exception - a passive status field degrading
-    gracefully, not an action failing loudly."""
-    transport = _make_transport()
-    transport._radio_lock.acquire()
-    try:
-        start = time.monotonic()
-        result = transport.get_listener_pid()
-        elapsed = time.monotonic() - start
-    finally:
-        transport._radio_lock.release()
-
-    assert result is None
-    assert elapsed < transport._LISTENER_PID_LOCK_TIMEOUT_S + 1.0, (
-        f"took {elapsed:.2f}s - should give up within its own short budget, not block indefinitely"
-    )
-
-
-def test_get_listener_pid_still_works_normally_when_the_lock_is_free():
-    """Sanity check alongside the busy-lock test above: the bounded
-    acquire must not change behavior in the ordinary, uncontended case -
-    still reports None when there's genuinely no listener process (this
-    instance never runs run_listener() in these tests)."""
-    transport = _make_transport()
-    assert transport.get_listener_pid() is None
+# get_listener_pid()'s bounded radio_lock acquire (Task 49) moved to
+# tests/test_serial_port_supervisor.py, along with the rest of what was
+# extracted out of this class during the P0 #1 stabilization follow-up
+# (run_listener(), the private stop_listener_process()/wait_serial_release()
+# pair, claim_exclusive_access()/claim_for_external_command()) - those
+# methods now live on meshsrv/serial_port_supervisor.py's
+# SerialPortSupervisor, not on SerialTransport.

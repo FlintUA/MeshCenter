@@ -67,10 +67,14 @@ before this fix: a real set_device_time() call raced the listener, hit
 its own internal watchdog timeout, got killed per tier (b) above, and
 the very next serial-type call (get_channels) lost the same race on the
 respawned process. AdapterIPCTransport._call() now wraps every
-SERIAL-type call in core_serial_transport.claim_for_external_command()
-(SerialTransport.claim_for_external_command(), Task 48's original
-design intent, previously written but never actually called from
-anywhere - confirmed by grep before this fix) - pause Core's own
+SERIAL-type call in core_serial_transport.claim_exclusive_access()
+(originally SerialTransport.claim_for_external_command() - Task 48's
+original design intent, previously written but never actually called
+from anywhere - confirmed by grep before this fix; renamed to
+claim_exclusive_access() and moved to meshsrv/serial_port_supervisor.py
+during the P0 #1 stabilization follow-up, once the same method turned
+out to be called from SerialTransport's own internal send/get methods
+too, not just "externally" as the old name implied) - pause Core's own
 listener, confirm the port is genuinely free, only then let the adapter
 open its own SerialInterface. BLE gets no such wrapping - it never
 shares Core's listener/serial port.
@@ -78,8 +82,8 @@ shares Core's listener/serial port.
 Budget split for this claim is DYNAMIC, mirroring TransportRouter.
 _delegate()'s existing remaining = timeout - elapsed mechanic (Task
 47.5), not a fixed proportion of the caller's declared timeout: the
-claim itself gets its own small, independent budget (claim_for_
-external_command()'s own default, ~8s - unrelated to the caller's
+claim itself gets its own small, independent budget (claim_exclusive_
+access()'s own default, ~8s - unrelated to the caller's
 timeout, since "wait for the listener to actually let go of the port"
 is a fixed-magnitude operation, not something that should shrink just
 because the caller declared a short timeout) using time.monotonic() to
@@ -90,19 +94,23 @@ never a fixed percentage (which would starve the actual operation after
 a fast claim, or overrun the caller's stated budget after a slow one -
 the same class of bug already fixed once in TransportRouter._delegate()
 during Task 47.5's review). A claim that fails to free the port in time
-raises TransportError(BUSY) - _claim_radio()'s existing, unchanged
-behavior; nothing here catches or reclassifies it, it propagates through
+raises TransportError(BUSY) - claim_exclusive_access()'s existing,
+unchanged behavior (originally _claim_radio(), see the rename note
+above); nothing here catches or reclassifies it, it propagates through
 _call()'s existing TransportError handling exactly like any other
 failure.
 
 KNOWN TRADE-OFF, explicitly accepted rather than silently introduced
-(Task 48 follow-up review): server.py's own radio_lock/pause_listen are
-the SAME objects passed into Core's own SerialTransport instance
-(`SerialTransport(radio_lock=radio_lock, pause_listen=pause_listen,
-...)` in server.py) - the same lock server.py's radio_session()
-acquires for the send worker, channel discovery, and
-api/api_node_tools.py's traceroute/telemetry actions
-(`radio_session(timeout=10, ...)`). Since claim_for_external_command()
+(Task 48 follow-up review; the radio_session() bound mentioned below was
+since closed by Task 49 - see meshsrv/serial_port_supervisor.py and
+server.py's radio_session() for the current state): server.py's own
+radio_lock/pause_listen are the SAME objects passed into Core's own
+SerialPortSupervisor instance (`SerialPortSupervisor(radio_lock=
+radio_lock, pause_listen=pause_listen, ...)` in server.py, originally a
+SerialTransport instance before the P0 #1 stabilization follow-up) - the
+same lock server.py's radio_session() acquires for the send worker,
+channel discovery, and api/api_node_tools.py's traceroute/telemetry
+actions (`radio_session(timeout=10, ...)`). Since claim_exclusive_access()
 holds that same radio_lock for the FULL duration of the wrapped IPC call
 (not just the port-preparation phase - releasing it earlier would
 reopen exactly the race this fix closes), a Node Tools action that
@@ -448,10 +456,10 @@ class AdapterIPCTransport(RadioTransport):
         self._supervisor = supervisor
         self._ble_address_provider = ble_address_provider
         # Only ever passed for the SERIAL instance - duck-typed (needs
-        # only .claim_for_external_command()), not imported for typing,
-        # to keep this Core-side module decoupled from adapters/*.py -
-        # see this module's own SERIAL PORT CLAIM docstring section for
-        # why this exists.
+        # only .claim_exclusive_access()), not imported for typing, to
+        # keep this Core-side module decoupled from adapters/*.py - see
+        # this module's own SERIAL PORT CLAIM docstring section for why
+        # this exists.
         self._core_serial_transport = core_serial_transport
         self._cached_info = _adapter_unavailable_info()
 
@@ -476,13 +484,13 @@ class AdapterIPCTransport(RadioTransport):
         try:
             if self._transport_type == ConnectionType.SERIAL and self._core_serial_transport is not None:
                 start = time.monotonic()
-                # Own independent budget (claim_for_external_command()'s
-                # own default, ~8s) - NOT sliced from the caller's
-                # timeout, since freeing the port is a fixed-magnitude
-                # operation. What it actually took IS subtracted from the
-                # caller's budget below - dynamic, not a fixed
-                # proportion (see module docstring).
-                with self._core_serial_transport.claim_for_external_command():
+                # Own independent budget (claim_exclusive_access()'s own
+                # default, ~8s) - NOT sliced from the caller's timeout,
+                # since freeing the port is a fixed-magnitude operation.
+                # What it actually took IS subtracted from the caller's
+                # budget below - dynamic, not a fixed proportion (see
+                # module docstring).
+                with self._core_serial_transport.claim_exclusive_access():
                     elapsed = time.monotonic() - start
                     remaining = max(1.0, timeout - elapsed)
                     response = _do_call(remaining)

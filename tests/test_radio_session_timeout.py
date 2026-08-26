@@ -29,10 +29,10 @@ def _stub_prepare(server_module, monkeypatch):
 
 def test_radio_session_raises_radio_busy_error_within_its_own_budget_not_unboundedly(_stub_prepare):
     """Regression test for the live-caught Task 49 gap: once
-    claim_for_external_command() can hold radio_lock for a full IPC
+    claim_exclusive_access() can hold radio_lock for a full IPC
     round-trip, a radio_session() caller must not wait behind it forever.
     Holds radio_lock from this thread (simulating a long-running
-    claim_for_external_command() call elsewhere), then calls
+    claim_exclusive_access() call elsewhere), then calls
     radio_session(timeout=1.0, cooldown=0) in a separate thread and
     confirms it raises RadioBusyError - the SAME error
     prepare_radio_command()'s own failure already raises, no new error

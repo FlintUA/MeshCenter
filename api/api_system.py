@@ -325,13 +325,30 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
             return jsonify({"ok": False, "error": str(e), "networks": []}), 500
         return jsonify(result)
 
+    def _is_valid_ssid(ssid):
+        """Validate SSID to prevent CLI argument injection and malformed input."""
+        if not isinstance(ssid, str):
+            return False
+        ssid_clean = ssid.strip()
+        if not ssid_clean or len(ssid_clean) > 64:
+            return False
+        # Prevent option injection flags (e.g. -option) when passed to CLI commands
+        if ssid_clean.startswith("-"):
+            return False
+        # Prevent control characters and newlines
+        if any(ord(c) < 32 or ord(c) == 127 for c in ssid_clean):
+            return False
+        return True
+
     @app.route("/api/system/wifi/connect", methods=["POST"])
     def api_system_wifi_connect():
-        data = request.get_json(force=True)
+        data = request.get_json(force=True) or {}
         ssid = (data.get("ssid") or "").strip()
         password = data.get("password") or ""
         if not ssid:
             return jsonify({"ok": False, "error": "SSID is required"}), 400
+        if not _is_valid_ssid(ssid):
+            return jsonify({"ok": False, "error": "Invalid SSID"}), 400
         def run_nmcli(args, timeout=30):
             return subprocess.check_output(["sudo", "-n", "/usr/bin/nmcli"] + args, text=True, stderr=subprocess.STDOUT, timeout=timeout)
         try:
@@ -361,10 +378,12 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
     @app.route("/api/system/wifi/forget", methods=["POST"])
     def api_system_wifi_forget():
-        data = request.get_json(force=True)
+        data = request.get_json(force=True) or {}
         ssid = (data.get("ssid") or "").strip()
         if not ssid:
             return jsonify({"ok": False, "error": "SSID is required"}), 400
+        if not _is_valid_ssid(ssid):
+            return jsonify({"ok": False, "error": "Invalid SSID"}), 400
         try:
             out = subprocess.check_output(["sudo", "-n", "/usr/bin/nmcli", "connection", "delete", ssid], text=True, stderr=subprocess.STDOUT, timeout=15)
             return jsonify({"ok": True, "message": out.strip()})

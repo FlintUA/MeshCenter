@@ -6,10 +6,17 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 def register_node_icon_routes(app, data_dir, local_node_id, node_id_validator):
     icons_dir = Path(data_dir) / "node_icons"
     icons_dir.mkdir(parents=True, exist_ok=True)
+    base_dir = icons_dir.resolve()
 
     def icon_path(node_id):
         safe_name = node_id.lstrip("!").lower()
-        return icons_dir / f"{safe_name}.png"
+        # Defensive path traversal check: ensure target stays strictly within icons_dir
+        target = (icons_dir / f"{safe_name}.png").resolve()
+        try:
+            target.relative_to(base_dir)
+        except ValueError:
+            return None
+        return target
 
     @app.route("/api/nodes/<node_id>/icon", methods=["GET"])
     def get_node_icon(node_id):
@@ -18,6 +25,8 @@ def register_node_icon_routes(app, data_dir, local_node_id, node_id_validator):
             return jsonify({"ok": False, "error": "Invalid node_id"}), 400
 
         path = icon_path(normalized_id)
+        if path is None:
+            return jsonify({"ok": False, "error": "Invalid node_id"}), 400
         if not path.exists():
             return jsonify({"ok": False, "error": "Node icon not found"}), 404
 
@@ -29,6 +38,10 @@ def register_node_icon_routes(app, data_dir, local_node_id, node_id_validator):
     def upload_node_icon(node_id):
         normalized_id = node_id if node_id.startswith("!") else f"!{node_id}"
         if not node_id_validator(normalized_id):
+            return jsonify({"ok": False, "error": "Invalid node_id"}), 400
+
+        destination = icon_path(normalized_id)
+        if destination is None:
             return jsonify({"ok": False, "error": "Invalid node_id"}), 400
 
         uploaded = request.files.get("icon")
@@ -49,7 +62,6 @@ def register_node_icon_routes(app, data_dir, local_node_id, node_id_validator):
                 x = (256 - source.width) // 2
                 y = (256 - source.height) // 2
                 canvas.alpha_composite(source, (x, y))
-                destination = icon_path(normalized_id)
                 temporary = destination.with_suffix(".tmp")
                 canvas.save(temporary, format="PNG", optimize=True)
                 temporary.replace(destination)
@@ -69,6 +81,8 @@ def register_node_icon_routes(app, data_dir, local_node_id, node_id_validator):
             return jsonify({"ok": False, "error": "Invalid node_id"}), 400
 
         path = icon_path(normalized_id)
+        if path is None:
+            return jsonify({"ok": False, "error": "Invalid node_id"}), 400
         if path.exists():
             path.unlink()
         return jsonify({"ok": True, "node_id": normalized_id})

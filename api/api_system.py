@@ -327,11 +327,12 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
     @app.route("/api/system/wifi/connect", methods=["POST"])
     def api_system_wifi_connect():
-        data = request.get_json(force=True)
-        ssid = (data.get("ssid") or "").strip()
-        password = data.get("password") or ""
-        if not ssid:
-            return jsonify({"ok": False, "error": "SSID is required"}), 400
+        data = request.get_json(silent=True) or {}
+        raw_ssid = str(data.get("ssid") or "")
+        ssid = raw_ssid.strip()
+        password = str(data.get("password") or "")
+        if not ssid or ssid.startswith("-") or any(ord(c) < 32 or ord(c) == 127 for c in raw_ssid):
+            return jsonify({"ok": False, "error": "Invalid SSID"}), 400
         def run_nmcli(args, timeout=30):
             return subprocess.check_output(["sudo", "-n", "/usr/bin/nmcli"] + args, text=True, stderr=subprocess.STDOUT, timeout=timeout)
         try:
@@ -344,7 +345,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
             err = e.output.strip() if e.output else str(e)
             if "key-mgmt" in err or "property is missing" in err or "secrets were required" in err:
                 try:
-                    run_nmcli(["connection", "delete", ssid], timeout=10)
+                    run_nmcli(["connection", "delete", "--", ssid], timeout=10)
                 except Exception:
                     pass
                 try:
@@ -361,12 +362,13 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
     @app.route("/api/system/wifi/forget", methods=["POST"])
     def api_system_wifi_forget():
-        data = request.get_json(force=True)
-        ssid = (data.get("ssid") or "").strip()
-        if not ssid:
-            return jsonify({"ok": False, "error": "SSID is required"}), 400
+        data = request.get_json(silent=True) or {}
+        raw_ssid = str(data.get("ssid") or "")
+        ssid = raw_ssid.strip()
+        if not ssid or ssid.startswith("-") or any(ord(c) < 32 or ord(c) == 127 for c in raw_ssid):
+            return jsonify({"ok": False, "error": "Invalid SSID"}), 400
         try:
-            out = subprocess.check_output(["sudo", "-n", "/usr/bin/nmcli", "connection", "delete", ssid], text=True, stderr=subprocess.STDOUT, timeout=15)
+            out = subprocess.check_output(["sudo", "-n", "/usr/bin/nmcli", "connection", "delete", "--", ssid], text=True, stderr=subprocess.STDOUT, timeout=15)
             return jsonify({"ok": True, "message": out.strip()})
         except subprocess.CalledProcessError as e:
             return jsonify({"ok": False, "error": e.output.strip() if e.output else str(e)}), 500

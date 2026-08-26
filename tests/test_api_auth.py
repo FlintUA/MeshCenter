@@ -1,18 +1,28 @@
 """Tests for api/api_auth.py's load_auth_state()/is_protected() - the
 bootstrap and lockout-avoidance logic behind the optional password
-protection feature added in PR #63 - plus _is_safe_redirect_target()/the
-login route's `next` handling (open-redirect fix, see that function's own
-docstring for the live-reproduced vulnerability this replaced). No
-server.py import needed; this module has no hardware/CLI dependencies of
-its own.
+protection feature added in PR #63, plus two later additions that both
+touch this same bootstrap path: the P1 #5 stabilization follow-up
+(config.example.py now defaults AUTH_ENABLED=True with no hash, so a
+fresh install with no data/auth.json yet must generate and persist a
+real one-time password instead of the old "stays silently disabled"
+behavior - see load_auth_state()'s own docstring/comments), and
+_is_safe_redirect_target()/the login route's `next` handling (open-
+redirect fix, see that function's own docstring for the live-reproduced
+vulnerability this replaced). No server.py import needed; this module
+has no hardware/CLI dependencies of its own.
 """
 
 import json
+import stat
+import sys
 import threading
+from unittest.mock import MagicMock
 
+import pytest
 from flask import Flask
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
+import api.api_auth as api_auth
 from api.api_auth import _is_safe_redirect_target, is_protected, load_auth_state, register_auth_routes
 
 
@@ -22,13 +32,79 @@ def test_load_auth_state_first_run_defaults_to_disabled(tmp_path):
     assert state == {"enabled": False, "password_hash": ""}
 
 
-def test_load_auth_state_bootstrap_enabled_without_hash_stays_disabled(tmp_path):
-    # config.py's AUTH_ENABLED=True with an empty AUTH_PASSWORD_HASH must
-    # never result in a locked, password-less app - this is the exact
-    # scenario config.example.py's own comment warns about.
+def test_load_auth_state_no_bootstrap_args_never_calls_the_generator(tmp_path, monkeypatch):
+    # AUTH_ENABLED=False in config.py (bootstrap_enabled defaults to
+    # False) must not just "not activate" generation - the generator must
+    # never even run. A spy proves that, not just the resulting state.
+    generator = MagicMock(wraps=api_auth._generate_initial_password)
+    monkeypatch.setattr(api_auth, "_generate_initial_password", generator)
+
+    auth_file = tmp_path / "auth.json"
+    state = load_auth_state(str(auth_file))
+
+    assert state == {"enabled": False, "password_hash": ""}
+    generator.assert_not_called()
+    assert not auth_file.exists()
+    assert not (tmp_path / "initial_password.txt").exists()
+
+
+def test_load_auth_state_bootstrap_enabled_without_hash_generates_a_password(tmp_path):
+    # New behavior (P1 #5): config.py's AUTH_ENABLED=True with an empty
+    # AUTH_PASSWORD_HASH - config.example.py's new default - must
+    # generate a real password and persist it, not stay silently
+    # disabled. The old "never lock you out with no password set"
+    # invariant is preserved differently now: the generated hash always
+    # corresponds to a password the operator is shown, not "no password
+    # required at all".
     auth_file = tmp_path / "auth.json"
     state = load_auth_state(str(auth_file), bootstrap_enabled=True, bootstrap_password_hash="")
-    assert state["enabled"] is False
+
+    assert state["enabled"] is True
+    assert state["password_hash"], "must generate a real hash, not stay empty"
+
+    # Persisted to disk immediately - unlike the plain in-memory bootstrap
+    # path, nothing else would ever write auth.json for this case.
+    on_disk = json.loads(auth_file.read_text(encoding="utf-8"))
+    assert on_disk == state
+
+    # The plaintext copy is written next to auth.json, and check_password_hash
+    # against it must match what got persisted - proves the printed/saved
+    # plaintext is the actual password behind the stored hash, not a
+    # decoy or a different generation call.
+    password_file = tmp_path / "initial_password.txt"
+    assert password_file.exists()
+    plaintext = password_file.read_text(encoding="utf-8").strip()
+    assert check_password_hash(state["password_hash"], plaintext)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file mode bits not meaningful on Windows")
+def test_load_auth_state_generated_password_file_is_owner_only(tmp_path):
+    auth_file = tmp_path / "auth.json"
+    load_auth_state(str(auth_file), bootstrap_enabled=True, bootstrap_password_hash="")
+
+    password_file = tmp_path / "initial_password.txt"
+    mode = stat.S_IMODE(password_file.stat().st_mode)
+    assert mode == 0o600, f"expected 0600, got {oct(mode)} - plaintext password file must be owner-only"
+
+
+def test_load_auth_state_generation_never_writes_config_py_hash_back(tmp_path):
+    # Documented recovery path relies on this: config.py's own
+    # AUTH_PASSWORD_HASH must stay empty after generation, so deleting
+    # auth.json and restarting re-bootstraps to disabled (see
+    # test_load_auth_state_no_bootstrap_args_never_calls_the_generator),
+    # not back to the same generated password. load_auth_state() only
+    # ever receives config.py's values as function arguments - it has no
+    # way to write back to config.py, but this test pins that this stays
+    # true even if that changes.
+    auth_file = tmp_path / "auth.json"
+    load_auth_state(str(auth_file), bootstrap_enabled=True, bootstrap_password_hash="")
+
+    # Re-running with the ORIGINAL (still-empty) bootstrap hash, as
+    # config.py itself would supply on every restart, must now hit the
+    # "auth.json already exists" early-return branch, not generate again.
+    state_again = load_auth_state(str(auth_file), bootstrap_enabled=True, bootstrap_password_hash="")
+    first_hash = json.loads(auth_file.read_text(encoding="utf-8"))["password_hash"]
+    assert state_again["password_hash"] == first_hash
 
 
 def test_load_auth_state_bootstrap_enabled_with_hash_is_enabled(tmp_path):
@@ -47,6 +123,26 @@ def test_load_auth_state_existing_file_ignores_bootstrap_args(tmp_path):
 
     state = load_auth_state(str(auth_file), bootstrap_enabled=False, bootstrap_password_hash="")
     assert state == {"enabled": True, "password_hash": "stored-hash"}
+
+
+def test_load_auth_state_existing_file_never_calls_the_generator(tmp_path, monkeypatch):
+    # Same scenario as test_load_auth_state_existing_file_ignores_bootstrap_args,
+    # but proving the generation branch is physically unreachable once
+    # auth.json exists - not just "produces the same result as if it had
+    # run and then been overridden". bootstrap_enabled=True here
+    # specifically to make sure an existing file wins even when the
+    # config.py values that WOULD trigger generation are also present.
+    generator = MagicMock(wraps=api_auth._generate_initial_password)
+    monkeypatch.setattr(api_auth, "_generate_initial_password", generator)
+
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(json.dumps({"enabled": True, "password_hash": "stored-hash"}), encoding="utf-8")
+
+    state = load_auth_state(str(auth_file), bootstrap_enabled=True, bootstrap_password_hash="")
+
+    assert state == {"enabled": True, "password_hash": "stored-hash"}
+    generator.assert_not_called()
+    assert not (tmp_path / "initial_password.txt").exists()
 
 
 def test_load_auth_state_tolerates_corrupt_file(tmp_path):

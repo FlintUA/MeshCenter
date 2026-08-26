@@ -44,15 +44,16 @@ def _make_supervisor(**overrides):
 
 
 class _FakeCoreSerialTransport:
-    """Stand-in for Core's own SerialTransport instance -
-    claim_for_external_command() is the only method AdapterIPCTransport
-    ever calls on it (see meshsrv/adapter_ipc_client.py's SERIAL PORT
-    CLAIM docstring section). Records each call and can simulate the
-    claim itself taking real wall-clock time (to prove the budget split
-    actually measures elapsed time via time.monotonic(), not a fixed
-    proportion of the caller's timeout) or failing the way the real
-    _claim_radio() does (TransportError(BUSY), raised before yield -
-    i.e. before the wrapped call ever runs)."""
+    """Stand-in for Core's own SerialPortSupervisor instance -
+    claim_exclusive_access() (renamed from claim_for_external_command()
+    during the P0 #1 stabilization follow-up) is the only method
+    AdapterIPCTransport ever calls on it (see meshsrv/adapter_ipc_client.py's
+    SERIAL PORT CLAIM docstring section). Records each call and can
+    simulate the claim itself taking real wall-clock time (to prove the
+    budget split actually measures elapsed time via time.monotonic(),
+    not a fixed proportion of the caller's timeout) or failing the way
+    the real claim_exclusive_access() does (TransportError(BUSY), raised
+    before yield - i.e. before the wrapped call ever runs)."""
 
     def __init__(self, claim_delay: float = 0.0, raise_busy: bool = False):
         self.claim_calls = 0
@@ -60,7 +61,7 @@ class _FakeCoreSerialTransport:
         self._raise_busy = raise_busy
 
     @contextmanager
-    def claim_for_external_command(self, *, timeout: float = 8, cooldown: float = 2.0):
+    def claim_exclusive_access(self, *, timeout: float = 8, cooldown: float = 2.0):
         self.claim_calls += 1
         if self._claim_delay:
             time.sleep(self._claim_delay)
@@ -317,10 +318,10 @@ def test_spawn_only_passes_preexec_fn_on_linux():
 # --- Task 48 follow-up: serial port claim across the process boundary -----
 
 
-def test_serial_call_is_wrapped_in_claim_for_external_command():
+def test_serial_call_is_wrapped_in_claim_exclusive_access():
     """The live-caught gap this follow-up fixes: a SERIAL-type call with
     a core_serial_transport given must go through
-    claim_for_external_command() before ever reaching the adapter."""
+    claim_exclusive_access() before ever reaching the adapter."""
     supervisor = _make_supervisor()
     core_serial = _FakeCoreSerialTransport()
     transport = AdapterIPCTransport(ConnectionType.SERIAL, supervisor, core_serial_transport=core_serial)
@@ -394,8 +395,8 @@ def test_claim_budget_split_is_dynamic_not_a_fixed_proportion():
 
 def test_claim_busy_error_propagates_unchanged_without_reaching_the_adapter():
     """Task 48 follow-up review requirement: a claim that fails to free
-    the port raises TransportError(BUSY) - _claim_radio()'s existing,
-    unchanged behavior. Nothing in AdapterIPCTransport should catch and
+    the port raises TransportError(BUSY) - claim_exclusive_access()'s
+    existing, unchanged behavior. Nothing in AdapterIPCTransport should catch and
     reclassify it; it must propagate through the same TransportError
     handling every other failure in _call() already uses, and the
     adapter must never even be contacted (the claim fails before yield)."""
@@ -417,21 +418,22 @@ def test_transport_error_raised_inside_claim_propagates_cleanly_not_frozeninstan
     repro proved the mechanism, this proves the fix closes it in this
     codebase's actual code path, not just in principle).
 
-    _FakeCoreSerialTransport.claim_for_external_command() is decorated
-    with @contextlib.contextmanager, exactly like the real
-    SerialTransport._claim_radio() it stands in for - a generator-based
-    context manager, not a class-based one. That distinction is exactly
-    what matters here: contextlib's _GeneratorContextManager.__exit__
-    does `exc.__traceback__ = traceback` when letting an exception
-    through unchanged, which used to crash on TransportError's old
-    frozen=True with dataclasses.FrozenInstanceError, masking whatever
-    the real error was.
+    _FakeCoreSerialTransport.claim_exclusive_access() is decorated with
+    @contextlib.contextmanager, exactly like the real
+    SerialPortSupervisor.claim_exclusive_access() it stands in for - a
+    generator-based context manager, not a class-based one. That
+    distinction is exactly what matters here: contextlib's
+    _GeneratorContextManager.__exit__ does `exc.__traceback__ =
+    traceback` when letting an exception through unchanged, which used
+    to crash on TransportError's old frozen=True with
+    dataclasses.FrozenInstanceError, masking whatever the real error
+    was.
 
     This test forces the wrapped IPC call itself to raise a real
     TransportError(TIMEOUT) - via fake_adapter.py's "hang" behavior and
     a short timeout, the same mechanism (AdapterSupervisor.call() timing
     out) that produced the live 87s timeout on TAP2 - from *inside* the
-    real `with core_serial_transport.claim_for_external_command():`
+    real `with core_serial_transport.claim_exclusive_access():`
     block, then asserts a clean TransportError(TIMEOUT) with its
     original message reaches the caller - not FrozenInstanceError, not
     any other masking exception."""

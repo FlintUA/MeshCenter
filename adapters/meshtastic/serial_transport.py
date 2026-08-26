@@ -1,44 +1,51 @@
-"""SerialTransport — the RadioTransport implementation over the Meshtastic
-CLI's `--listen` subprocess and short-lived `SerialInterface` calls.
+"""SerialTransport — the RadioTransport implementation over short-lived
+`SerialInterface` calls (connect/disconnect/send_*/get_*/set_device_time).
 
 Task 44: extends (does not rewrite) meshsrv/meshtastic_transport.py per the
-Backend Protocol v1 interface (meshsrv/radio_transport.py). Behavior is
-carried over 1:1 from server.py's former listen_meshtastic()/
-stop_listener()/wait_serial_release()/prepare_radio_command()/
-radio_session()/_attempt_node_time_sync() and storage/waypoint_sender.py -
-see each method's docstring for exactly which prior code it replaces.
+Backend Protocol v1 interface (meshsrv/radio_transport.py).
 
 This is the ONLY module in Core allowed to `import meshtastic` - that is
 the whole point of Backend Protocol v1 (see docs/BACKEND_API.md "Where
-this comes from"). meshsrv/schedule_actions.py already stopped importing
-it as of this same Task 44 change; api/api_chat.py and api/api_waypoints.py
-still do their own SerialInterface calls directly and are migrated in
-Task 46, not here - see the Task 44 investigation report for why that is
-deliberate, not an oversight.
+this comes from"), and as of the stabilization follow-up below, the only
+thing left in this module that actually needs it.
 
-DESIGN NOTE - listener seam (per user direction ahead of implementation):
-the retry/reconnect loop and subprocess plumbing live here, but the actual
-Meshtastic-protocol parsing (process_nodeinfo, extract_text_message, etc.)
-stays in Core exactly as before - this class only ever hands Core a raw,
-stripped stdout line via `on_raw_line`. When Task 48 moves this class
-behind a subprocess boundary, only that one narrow seam needs to become a
-normalized JSON event stream; nothing about the parsing logic has to move
-or be rewritten.
+DESIGN NOTE - listener subprocess moved out (stabilization follow-up, P0
+#1 of the independent audit, after Task 44/48/49): the `--listen`
+subprocess retry/reconnect loop and the exclusive-access-claim logic this
+class used to own directly (run_listener()/get_listener_pid()/
+claim_for_external_command()/the private _stop_listener_process()/
+_wait_serial_release() pair) moved to meshsrv/serial_port_supervisor.py's
+SerialPortSupervisor - MIT, stdlib-only, no meshtastic import. Not because
+that logic was "Core-only" (it wasn't - it's used by this class's own
+send_*/get_*/connect() too, on this instance's own composed supervisor,
+constructed with its own local radio_lock/pause_listen, never shared with
+Core's), but because server.py previously imported THIS class directly
+just to reach that slice of behavior - a real boundary smell (a class
+living in a GPLv3-labeled directory, imported by Core) even though the
+meshtastic import itself is lazy and never reached via that path. This
+class now composes a SerialPortSupervisor (self._supervisor, see
+__init__) instead of implementing that logic itself; server.py composes
+its own SerialPortSupervisor directly and no longer imports anything from
+adapters/ at all. Meshtastic-protocol parsing (process_nodeinfo,
+extract_text_message, etc.) stays in Core, unchanged - the supervisor only
+ever hands Core a raw, stripped stdout line via `on_raw_line`, exactly as
+before this move.
 
 DESIGN NOTE - radio_lock/pause_listen: still owned and constructed by
-Core (server.py), passed in here by reference, exactly as they are today
-passed into RadioConnectionManager. This is deliberate, not an oversight:
-api/api_chat.py keeps using Core's own radio_session()/radio_lock/
-pause_listen directly and unchanged until Task 46, so those objects can't
-become private internals of this class yet - they're shared with code
-this task does not touch.
+Core (server.py) for Core's own SerialPortSupervisor, passed by reference;
+this class's own composed SerialPortSupervisor gets its own separate,
+locally-constructed pair instead (see adapters/meshtastic/ipc_server.py's
+construction) - the two never share a lock, by design (Stage A: this
+instance never runs a listener subprocess, so there is nothing for Core's
+listener and this instance's own claims to actually contend over
+directly - contention across the process boundary is what
+claim_exclusive_access() on Core's own supervisor coordinates instead,
+see meshsrv/adapter_ipc_client.py).
 """
 from __future__ import annotations
 
-import subprocess
 import threading
 import time
-from contextlib import contextmanager
 from typing import Callable, Optional, Sequence
 
 from adapters.meshtastic._timeout_support import TimeoutEnforced
@@ -60,7 +67,7 @@ from meshsrv.radio_transport import (
     TransportErrorCode,
     WaypointResult,
 )
-from meshsrv.runtime_identity import meshtastic_command
+from meshsrv.serial_port_supervisor import SerialPortSupervisor
 
 
 class SerialTransport(TimeoutEnforced, RadioTransport):
@@ -73,6 +80,7 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         on_raw_line: Optional[Callable[[str], None]] = None,
         on_lifecycle_event: Optional[Callable[[str], None]] = None,
         on_log: Optional[Callable[[str, str], None]] = None,
+        supervisor: Optional[SerialPortSupervisor] = None,
     ) -> None:
         self._cli_path = cli_path
         self._port = port
@@ -82,7 +90,32 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         self._on_lifecycle_event = on_lifecycle_event or (lambda event: None)
         self._on_log = on_log or (lambda msg, level="INFO": None)
 
-        self._listen_process: Optional[subprocess.Popen] = None
+        # Stabilization follow-up (P0 #1, independent audit): the
+        # listener-subprocess-management + exclusive-access-claim logic
+        # that used to live directly on this class moved to
+        # meshsrv/serial_port_supervisor.py's SerialPortSupervisor - MIT,
+        # stdlib-only, no meshtastic import - so server.py can depend on
+        # it without importing anything from adapters/. This class now
+        # composes one instead of implementing that logic itself.
+        # `supervisor` is a backward-compatible addition, not a change to
+        # existing behavior: both existing construction call sites
+        # (server.py's Core-owned instance, adapters/meshtastic/
+        # ipc_server.py's adapter-owned instance) keep working unchanged,
+        # each getting its own default-constructed supervisor sharing
+        # this instance's own radio_lock/pause_listen/cli_path/port -
+        # `supervisor=` exists purely as a test-only DI seam, matching
+        # the AdapterSupervisor(command=...) precedent in
+        # meshsrv/adapter_ipc_client.py.
+        self._supervisor = supervisor or SerialPortSupervisor(
+            cli_path=cli_path,
+            port=port,
+            radio_lock=radio_lock,
+            pause_listen=pause_listen,
+            on_raw_line=on_raw_line,
+            on_lifecycle_event=on_lifecycle_event,
+            on_log=on_log,
+        )
+
         self._connected_since: Optional[float] = None
         self._last_error: Optional[TransportError] = None
         # Task 48 follow-up (live-caught): on the adapter-side instance
@@ -101,128 +134,10 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         # (adapters/meshtastic/_timeout_support.py, extracted in Task 45
         # so BLETransport doesn't duplicate the same watchdog pattern).
         # Real hardware serialization is still this class's own job (see
-        # _claim_radio's radio_lock) - the shared mixin only gives each
-        # call its own thread to abandon on timeout, never serializes.
+        # self._supervisor.claim_exclusive_access()'s radio_lock) - the
+        # shared mixin only gives each call its own thread to abandon on
+        # timeout, never serializes.
         TimeoutEnforced.__init__(self, thread_name_prefix="serial-transport-watchdog")
-
-    # ------------------------------------------------------------------
-    # Internal radio-claim helpers - own copies of server.py's former
-    # stop_listener()/wait_serial_release()/prepare_radio_command()/
-    # radio_session(), using the SAME radio_lock/pause_listen Core passed
-    # in. Deliberately does not check RadioConnectionManager.commands_
-    # allowed() - that Core-level policy gate (external configuration
-    # mode) stays in Core; callers are expected to check
-    # is_radio_available()-equivalent state before calling into this
-    # transport, same as _process_send_batch() already does today.
-    # ------------------------------------------------------------------
-    def _stop_listener_process(self) -> bool:
-        self._pause_listen.set()
-        time.sleep(1.5)
-
-        with self._radio_lock:
-            proc = self._listen_process
-
-        if proc is None:
-            return True
-
-        try:
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=5)
-            return True
-        except Exception as e:
-            print(f"[SerialTransport] Error stopping listener: {e}", flush=True)
-            return False
-        finally:
-            with self._radio_lock:
-                self._listen_process = None
-            time.sleep(1.0)
-
-    def _wait_serial_release(self, timeout: float = 8) -> bool:
-        if not self._port:
-            return True
-
-        start = time.time()
-        while time.time() - start < timeout:
-            try:
-                result = subprocess.run(
-                    ["lsof", "-t", self._port],
-                    capture_output=True,
-                    text=True,
-                    timeout=2,
-                )
-                if not result.stdout.strip():
-                    return True
-            except Exception as e:
-                print(f"[SerialTransport] wait_serial_release error: {e}", flush=True)
-            time.sleep(0.2)
-
-        print(f"[SerialTransport] Serial port still busy after {timeout}s: {self._port}", flush=True)
-        return False
-
-    def _prepare_radio_command(self, timeout: float = 8) -> bool:
-        self._pause_listen.set()
-        self._stop_listener_process()
-        return self._wait_serial_release(timeout=timeout)
-
-    @contextmanager
-    def _claim_radio(self, timeout: float = 8, cooldown: float = 2.0):
-        """Same pause/stop/wait/hold-lock/resume dance as server.py's former
-        radio_session(), scoped to this instance's own lock/event.
-
-        DELIBERATE DIVERGENCE from radio_session(): that function calls
-        prepare_radio_command() (pause+stop+wait) BEFORE acquiring
-        radio_lock, so concurrent callers can all enter the prepare phase
-        in parallel and only serialize once they reach `with radio_lock:`
-        - each individual read/write of the shared process handle is
-        itself lock-protected, so this was never a data race, but with
-        this transport's executor now allowed more than one worker
-        (see the ThreadPoolExecutor comment in __init__), several
-        threads could genuinely run _stop_listener_process()/
-        _wait_serial_release() redundantly at once - wasteful, and not
-        the strictly-sequential behavior that existed when the executor
-        was max_workers=1. Since radio_lock is an RLock, holding it for
-        the ENTIRE prepare+work+cooldown span (not just the yield) is
-        safe from self-deadlock and fully serializes the prepare phase
-        too, at the cost of a caller possibly blocking here for another
-        caller's whole claim (prepare included) instead of only its
-        interface work - judged the safer trade given "serial port
-        contention" is a named, previously-real regression risk for
-        this project. Verified by tests/test_serial_transport_timeout.py::
-        test_concurrent_connect_and_send_do_not_race_prepare_phase.
-        """
-        with self._radio_lock:
-            prepared = self._prepare_radio_command(timeout=timeout)
-            try:
-                if not prepared:
-                    raise TransportError(
-                        TransportErrorCode.BUSY, f"Serial port busy: {self._port or 'auto-detect'}"
-                    )
-                yield
-            finally:
-                if cooldown:
-                    time.sleep(cooldown)
-                self._pause_listen.clear()
-
-    def claim_for_external_command(self, *, timeout: float = 8, cooldown: float = 2.0):
-        """Public alias of _claim_radio(), for Task 48's Core-side IPC-
-        client-proxy: Core keeps its own SerialTransport instance around
-        purely to own radio_lock/pause_listen and run_listener() (see
-        that method and this class's module docstring for why - it never
-        imports meshtastic in this role, only this method and
-        run_listener()/get_listener_pid() are ever called on it). It
-        needs this instance's exclusive claim on the physical serial
-        port - listener stopped, port confirmed free - for the duration
-        of one request/response round-trip to the adapter subprocess,
-        which is the thing that actually opens a SerialInterface, in a
-        different process entirely. Same context manager as
-        _claim_radio(), just exposed under a name a caller outside this
-        class is meant to use."""
-        return self._claim_radio(timeout=timeout, cooldown=cooldown)
 
     def _open_interface(self):
         from meshtastic.serial_interface import SerialInterface
@@ -237,12 +152,12 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
     ) -> ConnectionInfo:
         """Task 48 follow-up (live-caught, two related but distinct bugs
         fixed together): this used to poll is_connected(), which checked
-        self._listen_process - state that was a valid connectivity proxy
-        pre-Task-48 (single process, run_listener() shared this same
-        instance) but is permanently None on THIS instance post-split
-        (Stage A: run_listener() only ever runs on Core's own, separate
-        SerialTransport - see that method's docstring). Two consequences,
-        both fixed here: (1) the poll loop could never succeed, so
+        the listen-process state - a valid connectivity proxy pre-Task-48
+        (single process, one shared object owned both roles) but always
+        empty on THIS instance post-split (Stage A: the listener subprocess
+        only ever runs via Core's own, separate SerialPortSupervisor - see
+        meshsrv/serial_port_supervisor.py's run_listener()). Two
+        consequences, both fixed here: (1) the poll loop could never succeed, so
         connect()/reconnect() always burned their full timeout and raised
         TIMEOUT - confirmed live on TAP2, an 87s failure on a 90s budget,
         not radio-side slowness. (2) even after fixing the probe itself,
@@ -265,9 +180,9 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         open+close is a real protocol-level handshake, not a false
         positive for "something else is plugged into this port". Success/
         failure is recorded in self._last_probe_ok (see __init__), which
-        is_connected()/get_connection_info() now read instead of
-        _listen_process - this instance's role is fully stateless-per-
-        call, so that's the only state left for them to reflect.
+        is_connected()/get_connection_info() now read instead of listener
+        state - this instance's role is fully stateless-per-call, so
+        that's the only state left for them to reflect.
         """
         if descriptor.type != ConnectionType.SERIAL:
             raise TransportError(
@@ -276,16 +191,17 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         self._port = descriptor.address or self._port
 
         if force:
-            # _wait_serial_release() (a real OS-level `lsof` check against
-            # a leftover process still holding the port) stays - genuinely
-            # useful regardless of which process's state is being asked
-            # about. _stop_listener_process() dropped: this instance's
-            # _listen_process is always None (see __init__), so it was
+            # self._supervisor.wait_serial_release() (a real OS-level
+            # `lsof` check against a leftover process still holding the
+            # port) stays - genuinely useful regardless of which process's
+            # state is being asked about. Stopping a listener process is
+            # dropped: this instance's own SerialPortSupervisor never runs
+            # one (Stage A - see run_listener()'s docstring), so that was
             # already a guaranteed no-op here, just one that wasted 1.5s
-            # (self._pause_listen.set(); time.sleep(1.5)) setting a local
-            # Event nothing else in this process reads meaningfully.
+            # (pause_listen.set(); time.sleep(1.5)) setting a local Event
+            # nothing else in this process reads meaningfully.
             with self._radio_lock:
-                self._wait_serial_release(timeout=timeout)
+                self._supervisor.wait_serial_release(timeout=timeout)
 
         def _do_connect():
             interface = self._open_interface()  # blocks on the real handshake, raises on failure
@@ -337,46 +253,12 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         )
 
     def is_connected(self) -> bool:
-        # Task 48 follow-up: NOT self._listen_process (see __init__'s
-        # comment on _last_probe_ok) - this instance never runs
-        # run_listener(), so that state belongs exclusively to Core's own,
-        # separate SerialTransport instance and was never meaningful here.
+        # Task 48 follow-up: NOT listener-process state (see __init__'s
+        # comment on _last_probe_ok) - this instance never runs a
+        # listener subprocess, so that state belongs exclusively to
+        # Core's own, separate SerialPortSupervisor and was never
+        # meaningful here.
         return self._last_probe_ok
-
-    # Task 49 fix: a passive status read (dashboard PID display), not an
-    # action - matches meshsrv/transport_router.py's own
-    # _INFO_LOCK_TIMEOUT_S precedent exactly (same semantics:
-    # get_connection_info()/is_connected() have no timeout parameter of
-    # their own and must not raise per the ABC contract, so they get a
-    # short dedicated constant and a synthetic fallback instead of an
-    # unbounded wait or a new error shape). Reusing the same 3.0s value
-    # rather than inventing a new number.
-    _LISTENER_PID_LOCK_TIMEOUT_S = 3.0
-
-    def get_listener_pid(self) -> Optional[int]:
-        """NOT part of the RadioTransport ABC - Serial-specific status
-        introspection for Core's /api/node-manager/dashboard, replacing
-        its former direct read of the module-level `listen_process`
-        global (which this class's internal _listen_process now
-        supersedes).
-
-        Task 49 fix: radio_lock.acquire() is now bounded
-        (_LISTENER_PID_LOCK_TIMEOUT_S) - once claim_for_external_command()
-        could hold this same lock for a full IPC round-trip (Task 48), an
-        unbounded `with radio_lock:` here could stall the whole dashboard
-        page behind an unrelated long-running radio call. On a busy lock,
-        returns None (fail-safe, matching is_connected()'s same pattern
-        in transport_router.py) rather than raising - this is a passive
-        status field, not an action; a dashboard briefly showing no PID
-        is the right degradation, not a 503 for the whole page.
-        """
-        if not self._radio_lock.acquire(timeout=self._LISTENER_PID_LOCK_TIMEOUT_S):
-            return None
-        try:
-            proc = self._listen_process
-        finally:
-            self._radio_lock.release()
-        return int(proc.pid) if proc is not None and proc.poll() is None else None
 
     def get_connection_info(self) -> ConnectionInfo:
         return ConnectionInfo(
@@ -390,110 +272,6 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
     def close(self) -> None:
         self.disconnect(timeout=15.0)
         self._shutdown_executor()
-
-    # ------------------------------------------------------------------
-    # RadioTransport - listener (Stage A: this class owns the subprocess
-    # and raw-line plumbing; Core still owns the background thread that
-    # calls run_listener(), and all Meshtastic-protocol parsing - see
-    # module docstring's "DESIGN NOTE - listener seam").
-    #
-    # NOT part of the RadioTransport ABC: BLETransport (Task 45) has no
-    # equivalent textual --listen stream, so this is SerialTransport-
-    # specific, not a protocol requirement.
-    # ------------------------------------------------------------------
-    def run_listener(self) -> None:
-        """Blocking retry loop - replaces server.py's former
-        listen_meshtastic() 1:1, minus the Meshtastic-protocol parsing
-        (now delivered line-by-line to on_raw_line instead of parsed
-        inline). Call this from Core's own daemon thread, same as before."""
-        consecutive_errors = 0
-        max_consecutive_errors = 10
-
-        while True:
-            if self._pause_listen.is_set():
-                time.sleep(0.5)
-                continue
-
-            with self._radio_lock:
-                self._listen_process = None
-
-            try:
-                time.sleep(0.5)
-
-                with self._radio_lock:
-                    if self._pause_listen.is_set():
-                        continue
-
-                    listener_cmd = meshtastic_command(self._cli_path, self._port, "--listen")
-                    proc = subprocess.Popen(
-                        listener_cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1,
-                        errors="ignore",
-                    )
-                    self._listen_process = proc
-                    self._connected_since = time.time()
-                    self._on_lifecycle_event("listener_start")
-                    consecutive_errors = 0
-
-                for line in proc.stdout:
-                    if self._pause_listen.is_set():
-                        break
-                    # Every line - including one that strips to empty - is
-                    # handed to on_raw_line, same as the original inline
-                    # loop called radio_event("packet") unconditionally
-                    # before checking for emptiness. Filtering blank lines
-                    # out here instead would silently drop that signal;
-                    # the empty check belongs to the Core-side handler.
-                    line = line.strip()
-                    try:
-                        self._on_raw_line(line)
-                    except Exception as e:
-                        print(f"[SerialTransport] on_raw_line error: {e}", flush=True)
-
-                with self._radio_lock:
-                    current = self._listen_process
-                return_code = current.poll() if current is not None else None
-
-                if self._pause_listen.is_set():
-                    if current is not None:
-                        try:
-                            current.terminate()
-                            current.wait(timeout=3)
-                        except Exception:
-                            try:
-                                current.kill()
-                            except Exception:
-                                pass
-                    self._on_lifecycle_event("listener_stop")
-                    with self._radio_lock:
-                        self._listen_process = None
-                    time.sleep(0.5)
-                    continue
-
-                if return_code is not None and return_code != 0:
-                    print(f"[SerialTransport] Listener process ended with code: {return_code}", flush=True)
-                    consecutive_errors += 1
-                else:
-                    consecutive_errors = 0
-
-                self._on_lifecycle_event("listener_stop")
-                with self._radio_lock:
-                    self._listen_process = None
-
-            except Exception as e:
-                consecutive_errors += 1
-                print(f"[SerialTransport] run_listener (attempt {consecutive_errors}): {e}", flush=True)
-                delay = min(consecutive_errors * 2, 30)
-                time.sleep(delay)
-
-            if consecutive_errors > max_consecutive_errors:
-                consecutive_errors = 0
-                time.sleep(5)
-            else:
-                time.sleep(2)
 
     # ------------------------------------------------------------------
     # RadioTransport - sending
@@ -512,7 +290,7 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         timeout: float = 15.0,
     ) -> SendResult:
         def _do_send():
-            with self._claim_radio(timeout=timeout, cooldown=2.0):
+            with self._supervisor.claim_exclusive_access(timeout=timeout, cooldown=2.0):
                 interface = self._open_interface()
                 try:
                     sent = interface.sendData(
@@ -544,7 +322,7 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
 
         def _do_send_all():
             results: list[SendResult] = []
-            with self._claim_radio(timeout=timeout, cooldown=2.0):
+            with self._supervisor.claim_exclusive_access(timeout=timeout, cooldown=2.0):
                 interface = self._open_interface()
                 try:
                     for message in messages:
@@ -595,7 +373,7 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
             return secrets.randbelow(1_000_000_000 - 1) + 1
 
         def _do_send():
-            with self._claim_radio(timeout=timeout, cooldown=2.0):
+            with self._supervisor.claim_exclusive_access(timeout=timeout, cooldown=2.0):
                 interface = self._open_interface()
                 try:
                     waypoint_id = int(waypoint.waypoint_id or _waypoint_id())
@@ -651,7 +429,7 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
     # ------------------------------------------------------------------
     def get_nodes(self, *, timeout: float = 15.0) -> list[NodeInfo]:
         def _do_get():
-            with self._claim_radio(timeout=timeout, cooldown=2.0):
+            with self._supervisor.claim_exclusive_access(timeout=timeout, cooldown=2.0):
                 interface = self._open_interface()
                 try:
                     self._settle(interface)
@@ -667,7 +445,7 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
 
     def get_local_node(self, *, timeout: float = 15.0) -> NodeInfo:
         def _do_get():
-            with self._claim_radio(timeout=timeout, cooldown=2.0):
+            with self._supervisor.claim_exclusive_access(timeout=timeout, cooldown=2.0):
                 interface = self._open_interface()
                 try:
                     self._settle(interface)
@@ -688,7 +466,7 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
 
     def get_channels(self, *, timeout: float = 15.0) -> list[ChannelInfo]:
         def _do_get():
-            with self._claim_radio(timeout=timeout, cooldown=2.0):
+            with self._supervisor.claim_exclusive_access(timeout=timeout, cooldown=2.0):
                 interface = self._open_interface()
                 try:
                     self._settle(interface)
@@ -786,7 +564,8 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
     # ------------------------------------------------------------------
     def set_device_time(self, epoch_seconds: int, *, timeout: float = 15.0) -> bool:
         """Replaces server.py's former _attempt_node_time_sync() - same
-        radio_session()+SerialInterface dance (now _claim_radio()), same
+        radio_session()+SerialInterface dance (now self._supervisor.
+        claim_exclusive_access()), same
         call into meshsrv/node_time_sync.py's try_sync(), which is
         UNCHANGED (it takes `interface` as a parameter and never imports
         meshtastic itself, so it never needed to move).
@@ -803,7 +582,7 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         a named gap for whoever revisits this signature later."""
 
         def _do_sync():
-            with self._claim_radio(timeout=timeout, cooldown=2.0):
+            with self._supervisor.claim_exclusive_access(timeout=timeout, cooldown=2.0):
                 interface = self._open_interface()
                 try:
                     self._settle(interface)

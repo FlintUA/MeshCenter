@@ -75,10 +75,13 @@ def _adapter_side_timeout(core_timeout) -> float:
 class _AdapterDispatcher:
     """Owns one SerialTransport and one BLETransport instance for the
     lifetime of this subprocess, and dispatches each incoming request to
-    whichever one `transport_type` names. Neither instance's run_listener()
-    is ever called here - Stage A keeps the listener in Core; this process
-    only ever exercises the connect/disconnect/send_*/get_* half of each
-    class's surface."""
+    whichever one `transport_type` names. This process only ever
+    exercises the connect/disconnect/send_*/get_* half of each class's
+    surface - SerialTransport no longer even has a run_listener() method
+    to call (stabilization follow-up, P0 #1 of the independent audit:
+    that logic moved to meshsrv/serial_port_supervisor.py, used directly
+    by Core, never composed here); Stage A keeps the listener in Core
+    either way."""
 
     def __init__(self, *, serial_transport, ble_transport):
         # Takes both transports by DI (matching this project's convention
@@ -86,14 +89,13 @@ class _AdapterDispatcher:
         # tests exercise the real dispatch/serialization logic against
         # fake stand-ins without needing meshtastic/bleak installed. See
         # main() for the production construction (real SerialTransport/
-        # BLETransport, each with their own local-only radio_lock/
-        # pause_listen - Task 48 investigation report: these no longer
-        # coordinate with anything cross-process, Core owns that via
-        # claim_for_external_command() on its OWN SerialTransport
-        # instance before ever sending a request here; they only provide
-        # intra-process safety for this instance's own _call_with_timeout
-        # watchdog threads now). Neither instance's run_listener() is
-        # ever called here - Stage A keeps the listener in Core.
+        # BLETransport, each composing their own local-only
+        # SerialPortSupervisor/radio_lock/pause_listen - Task 48
+        # investigation report: these no longer coordinate with anything
+        # cross-process, Core owns that via claim_exclusive_access() on
+        # its OWN SerialPortSupervisor instance before ever sending a
+        # request here; they only provide intra-process safety for this
+        # instance's own _call_with_timeout watchdog threads now).
         self._serial = serial_transport
         self._ble = ble_transport
 

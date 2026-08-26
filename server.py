@@ -45,7 +45,7 @@ from meshsrv.instance_manager import InstanceManager
 from meshsrv.radio_identity import detect_radio_identity, detect_connected_radio, compare_radio_identity
 from meshsrv.time_service import start_background_thread as start_time_service
 from meshsrv.node_time_sync import STARTUP_SYNC_DELAY_S
-from adapters.meshtastic.serial_transport import SerialTransport
+from meshsrv.serial_port_supervisor import SerialPortSupervisor
 from meshsrv.radio_transport import ConnectionType
 from meshsrv.adapter_ipc_client import AdapterIPCTransport, AdapterSupervisor
 from meshsrv.transport_router import TransportRouter
@@ -766,28 +766,35 @@ radio_connection_manager = None
 # module-level nodeinfo_buffer/collecting_nodeinfo locals the old
 # listen_meshtastic() closed over for the lifetime of its own infinite
 # loop; now module globals since _handle_listener_line() is called once
-# per line from serial_transport.run_listener() instead.
+# per line from listener_supervisor.run_listener() instead.
 _nodeinfo_buffer = []
 _collecting_nodeinfo = False
 
-# Task 48: Core's OWN SerialTransport instance (Task 44) - kept
-# post-venv-split ONLY for its listener-management role (run_listener(),
-# claim_for_external_command(), get_listener_pid()), all of which are
-# pure subprocess/stdlib plumbing with no meshtastic import anywhere in
-# their call path (adapters/meshtastic/serial_transport.py's only
-# `import meshtastic` is lazy, inside _open_interface() - confirmed by
-# reading the file, not assumed, during the Task 48 investigation).
-# connect()/disconnect()/reconnect()/send_*()/get_*() are NEVER called
-# on this instance anymore - that's what serial_ipc_transport below is
-# for. Passed to register_meshtastic_routes() as `core_serial_transport`
-# (get_listener_pid() only, see that function's own docstring for why
-# it's a distinct parameter from the switch-orchestration objects, not
-# the same one doing double duty). radio_lock/pause_listen are passed BY
-# REFERENCE, not copied - api/api_chat.py's radio_session()/prepare_
-# radio_command() (Node Tools' CLI-based operations, a separate,
-# already-license-safe mechanism untouched by Task 48) still use the
-# same lock/event objects directly.
-serial_transport = SerialTransport(
+# Stabilization follow-up (P0 #1, independent audit) - Core's own
+# listener-management object, meshsrv/serial_port_supervisor.py's
+# SerialPortSupervisor. Previously this was a
+# adapters.meshtastic.serial_transport.SerialTransport instance (Task 44),
+# kept post-venv-split (Task 48) only for its listener-management role
+# (run_listener(), claim_for_external_command(), get_listener_pid()) - a
+# real boundary smell even though that role never touched the meshtastic
+# package (adapters/meshtastic/serial_transport.py's only `import
+# meshtastic` was lazy, inside _open_interface(), never reached via this
+# role): server.py importing a class from a GPLv3-labeled directory
+# directly, for methods (two of them via server.py's own thin wrappers
+# stop_listener()/wait_serial_release() reaching into what were then
+# "private" _stop_listener_process()/_wait_serial_release() methods) that
+# never needed anything from that directory in the first place. That
+# logic now lives in meshsrv/ - MIT, stdlib-only - and server.py no
+# longer imports anything from adapters/ at all. Passed to
+# register_meshtastic_routes() as `core_serial_transport` (get_listener_
+# pid() only, see that function's own docstring for why it's a distinct
+# parameter from the switch-orchestration objects, not the same one
+# doing double duty). radio_lock/pause_listen are passed BY REFERENCE,
+# not copied - api/api_chat.py's radio_session()/prepare_radio_command()
+# (Node Tools' CLI-based operations, a separate, already-license-safe
+# mechanism untouched by this move) still use the same lock/event
+# objects directly.
+listener_supervisor = SerialPortSupervisor(
     cli_path=MESHTASTIC_CMD,
     port=MESHTASTIC_PORT,
     radio_lock=radio_lock,
@@ -829,8 +836,8 @@ adapter_supervisor = AdapterSupervisor(
 # isn't populated from disk until load_settings() runs inside
 # start_runtime() (well after this module-level code), but that's fine -
 # this lambda is only ever actually called later, by which point it is.
-# core_serial_transport=serial_transport (Task 48 follow-up, live-caught
-# gap): pauses Core's own listener via claim_for_external_command()
+# core_serial_transport=listener_supervisor (Task 48 follow-up, live-
+# caught gap): pauses Core's own listener via claim_exclusive_access()
 # before delegating a serial-type call to the adapter subprocess -
 # without this, Core's listener and the adapter's own SerialInterface
 # raced for the same physical port with nothing coordinating them. See
@@ -839,7 +846,7 @@ adapter_supervisor = AdapterSupervisor(
 # accepted Node Tools trade-off. BLE gets no such wrapping - it never
 # shares Core's listener/serial port.
 serial_ipc_transport = AdapterIPCTransport(
-    ConnectionType.SERIAL, adapter_supervisor, core_serial_transport=serial_transport
+    ConnectionType.SERIAL, adapter_supervisor, core_serial_transport=listener_supervisor
 )
 ble_ipc_transport = AdapterIPCTransport(
     ConnectionType.BLUETOOTH,
@@ -3315,26 +3322,30 @@ def get_chat_messages(chat_id):
         return [m for m in messages if m.get("chat_id") == chat_id]
 
 def stop_listener():
-    """Delegates to serial_transport's internal listener-stop logic.
+    """Delegates to listener_supervisor's listener-stop logic.
 
-    Task 44: the real --listen subprocess now lives inside
-    serial_transport (its own private _listen_process), not the old
+    Task 44: the real --listen subprocess lives inside listener_supervisor
+    (meshsrv/serial_port_supervisor.py, stabilization follow-up - was
+    SerialTransport before P0 #1 of the independent audit), not the old
     module-level `listen_process` global - that global is gone. This
     function still exists, unchanged in name/signature, because api/
     api_chat.py's radio_session()/prepare_radio_command() call it
-    directly and are not touched until Task 46; it must keep actually
-    stopping the real subprocess, which now means delegating rather than
-    duplicating the logic against a dead global (see serial_transport's
-    module docstring, 'DESIGN NOTE - radio_lock/pause_listen')."""
+    directly; it must keep actually stopping the real subprocess, which
+    now means delegating rather than duplicating the logic against a
+    dead global. stop_listener_process() is a real public method now
+    (not a "private" one reached into from outside its own module) - the
+    encapsulation half of the stabilization fix, not just the import
+    boundary half."""
     print("[DEBUG] Stopping listener...", flush=True)
-    return serial_transport._stop_listener_process()
+    return listener_supervisor.stop_listener_process()
 
 def wait_serial_release(device=None, timeout=8):
-    """Delegates to serial_transport - see stop_listener()'s docstring.
-    `device` is accepted for call-site compatibility with existing
-    api/api_chat.py callers but not forwarded: serial_transport already
-    tracks its own port internally (the same MESHTASTIC_PORT value)."""
-    return serial_transport._wait_serial_release(timeout=timeout)
+    """Delegates to listener_supervisor - see stop_listener()'s
+    docstring. `device` is accepted for call-site compatibility with
+    existing api/api_chat.py callers but not forwarded: listener_
+    supervisor already tracks its own port internally (the same
+    MESHTASTIC_PORT value)."""
+    return listener_supervisor.wait_serial_release(timeout=timeout)
 
 
 def prepare_radio_command(device=None, timeout=8):
@@ -3380,7 +3391,7 @@ def radio_session(device=None, timeout=8, cooldown=2.0, extra_release_wait=None)
     resume-listener dance shared by node tools and the --info-fetch path
     (rescan_nodes) - NOT the send worker/channel discovery, which moved to
     radio_transport.send_messages()/get_channels() in Task 46 and are
-    already covered by AdapterIPCTransport's own claim_for_external_command()
+    already covered by AdapterIPCTransport's own claim_exclusive_access()
     budget-split (Task 48 follow-up) - this docstring used to claim
     otherwise, stale since that migration. ``cooldown`` is the pause before
     the listener resumes (matches the delay send already needed to avoid
@@ -3392,7 +3403,7 @@ def radio_session(device=None, timeout=8, cooldown=2.0, extra_release_wait=None)
 
     Task 49 fix: radio_lock.acquire() used to be an unconditional
     `with radio_lock:` with no timeout of its own - once
-    claim_for_external_command() could hold this same lock for a full
+    claim_exclusive_access() could hold this same lock for a full
     IPC round-trip (Task 48), a caller here could wait unboundedly behind
     it. Now bounded: the remaining slice of `timeout` after
     prepare_radio_command() already ran (dynamic, time.monotonic()-measured,
@@ -3413,10 +3424,11 @@ def radio_session(device=None, timeout=8, cooldown=2.0, extra_release_wait=None)
 
     KNOWN, DEFERRED (Task 49 follow-up, not fixed here): prepare_radio_
     command() above still runs BEFORE radio_lock is acquired, unlike
-    _claim_radio()'s deliberate "hold the lock for the whole prepare+work
-    span" design (Task 44's own DELIBERATE DIVERGENCE fix). Two
-    concurrent radio_session() callers - or a radio_session() caller
-    racing a claim_for_external_command() caller - can still run their
+    claim_exclusive_access()'s deliberate "hold the lock for the whole
+    prepare+work span" design (Task 44's own DELIBERATE DIVERGENCE fix,
+    meshsrv/serial_port_supervisor.py). Two concurrent radio_session()
+    callers - or a radio_session() caller racing a claim_exclusive_
+    access() caller - can still run their
     prepare phases (pause/stop/wait-for-port-release) in parallel today.
     Bounding the lock-acquire above doesn't fix or worsen this - it's a
     separate, previously-unidentified question this task deliberately
@@ -3552,16 +3564,17 @@ def cleanup_seen_ids():
 
 def listen_meshtastic():
     """Thin Core-side wrapper (Task 44). The retry loop, subprocess
-    Popen/read, and pause/lifecycle handling all moved into
-    serial_transport.run_listener() (adapters/meshtastic/serial_transport.py)
-    - only the identity gate stays here, since it is MeshCenter-specific
-    policy (which physical radio is expected), not generic transport
-    behavior. This is the explicit, single entry point that starts the
-    persistent listener thread - see its call site below
-    (`threading.Thread(target=listen_meshtastic, daemon=True).start()`)
-    for the precondition SerialTransport.connect() depends on
-    (documented in that method's docstring): connect() only does
-    something useful once this thread is already running.
+    Popen/read, and pause/lifecycle handling all live in
+    listener_supervisor.run_listener() (meshsrv/serial_port_supervisor.py
+    - stabilization follow-up, was adapters/meshtastic/serial_transport.py
+    before P0 #1 of the independent audit) - only the identity gate stays
+    here, since it is MeshCenter-specific policy (which physical radio is
+    expected), not generic transport behavior. This is the explicit,
+    single entry point that starts the persistent listener thread - see
+    its call site below (`threading.Thread(target=listen_meshtastic,
+    daemon=True).start()`) for the precondition SerialTransport.connect()
+    depends on (documented in that method's docstring): connect() only
+    does something useful once this thread is already running.
 
     Serial-specific, not a BLETransport requirement: BLETransport's
     connect() (Task 45) opens its own BLEInterface directly and does not
@@ -3575,15 +3588,15 @@ def listen_meshtastic():
             flush=True,
         )
         return
-    serial_transport.run_listener()
+    listener_supervisor.run_listener()
 
 
 def _handle_listener_line(line):
     """Meshtastic-protocol parsing for one raw --listen stdout line -
     everything listen_meshtastic() used to do inline, now called from
-    serial_transport.run_listener() via the on_raw_line callback (see
-    adapters/meshtastic/serial_transport.py's 'DESIGN NOTE - listener
-    seam'). Behavior preserved 1:1, including radio_event("packet")
+    listener_supervisor.run_listener() via the on_raw_line callback (see
+    meshsrv/serial_port_supervisor.py's run_listener() docstring).
+    Behavior preserved 1:1, including radio_event("packet")
     firing even for a line that strips to empty - the old loop called it
     unconditionally before the emptiness check, so this does too."""
     global _nodeinfo_buffer, _collecting_nodeinfo
@@ -4517,7 +4530,7 @@ register_meshtastic_routes(
     ble_ipc_transport,
     MESHTASTIC_PORT,
     LOCAL_NODE_ID,
-    serial_transport,
+    listener_supervisor,
 )
 
 @app.route("/")
@@ -4583,12 +4596,12 @@ def api_devices_dashboard():
     )
 
     # Not read inside the state_lock block below: it acquires
-    # serial_transport's own radio_lock internally, and nothing
+    # listener_supervisor's own radio_lock internally, and nothing
     # elsewhere in this codebase acquires radio_lock while already
     # holding state_lock - keeping that ordering absent here too avoids
     # introducing a new deadlock-risk lock nesting that didn't exist
     # before this migration.
-    listener_pid = serial_transport.get_listener_pid()
+    listener_pid = listener_supervisor.get_listener_pid()
 
     with state_lock:
         listener_running = bool(radio_health.get("listener_running", False))
@@ -5841,7 +5854,7 @@ def start_runtime():
     # Start radio workers only for the accepted physical radio.  This prevents
     # another USB node from contaminating the active profile.
     if identity_match:
-        # THE single entry point that starts serial_transport's persistent
+        # THE single entry point that starts listener_supervisor's persistent
         # listener (Task 44) - see listen_meshtastic()'s docstring for why
         # SerialTransport.connect() depends on this thread already running,
         # and why that precondition is Serial-specific rather than part of

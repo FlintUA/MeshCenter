@@ -44,10 +44,10 @@ def register_meshtastic_routes(
     the adapter subprocess - everything below that calls .connect()/
     .disconnect()/.scan() on them is unchanged in structure from Task 46/
     47, just now crossing a process boundary underneath. `core_serial_
-    transport` is a DIFFERENT object - server.py's own listener-
-    management-only SerialTransport instance (see its construction site
-    for why it's kept around at all post-split) - used here for exactly
-    one thing, get_listener_pid(), never for a real send/connect/get
+    transport` is a DIFFERENT object - server.py's own
+    SerialPortSupervisor instance (meshsrv/serial_port_supervisor.py,
+    see its construction site for why it's kept around) - used here for
+    exactly one thing, get_listener_pid(), never for a real send/connect/get
     operation. Keeping these as two distinct parameters, not one object
     doing double duty, is deliberate: it makes "this route never
     accidentally calls a real radio operation on the Core-owned instance"
@@ -73,15 +73,15 @@ def register_meshtastic_routes(
             "connected_since": info.connected_since,
             "last_error": str(info.last_error) if info.last_error else None,
             # Serial-specific, not part of RadioTransport - deliberately
-            # read from core_serial_transport (server.py's Core-owned,
-            # listener-management-only SerialTransport - see this
-            # function's own docstring), never from the IPC-backed
-            # `serial_transport` param above, since only the Core-owned
-            # instance's run_listener() thread actually knows the real
-            # listener subprocess PID (adapters/meshtastic/
-            # serial_transport.py's get_listener_pid() docstring). None
-            # whenever Bluetooth is the active transport, which is the
-            # correct answer, not a missing value.
+            # read from core_serial_transport (server.py's Core-owned
+            # SerialPortSupervisor - see this function's own docstring),
+            # never from the IPC-backed `serial_transport` param above,
+            # since only the Core-owned instance's run_listener() thread
+            # actually knows the real listener subprocess PID
+            # (meshsrv/serial_port_supervisor.py's get_listener_pid()
+            # docstring). None whenever Bluetooth is the active
+            # transport, which is the correct answer, not a missing
+            # value.
             "listener_pid": core_serial_transport.get_listener_pid(),
         }
 

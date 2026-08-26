@@ -8,7 +8,7 @@ import json
 
 from werkzeug.security import generate_password_hash
 
-from api.api_auth import is_protected, load_auth_state
+from api.api_auth import is_protected, load_auth_state, sanitize_next_url
 
 
 def test_load_auth_state_first_run_defaults_to_disabled(tmp_path):
@@ -66,3 +66,22 @@ def test_is_protected_tolerates_missing_keys():
     assert is_protected({}) is False
     assert is_protected({"enabled": True}) is False
     assert is_protected({"password_hash": "somehash"}) is False
+
+
+def test_sanitize_next_url_valid():
+    assert sanitize_next_url("/settings") == "/settings"
+    assert sanitize_next_url("/map?node=1234") == "/map?node=1234"
+    assert sanitize_next_url("/") == "/"
+
+
+def test_sanitize_next_url_open_redirect_payloads():
+    assert sanitize_next_url("https://attacker.com") == "/"
+    assert sanitize_next_url("//attacker.com") == "/"
+    assert sanitize_next_url("/\\attacker.com") == "/"
+    assert sanitize_next_url("/\\/attacker.com") == "/"
+    assert sanitize_next_url("http://attacker.com") == "/"
+    assert sanitize_next_url("javascript:alert(1)") == "/"
+    assert sanitize_next_url("///attacker.com") == "/"
+    assert sanitize_next_url("/path\\with\\backslash") == "/"
+    assert sanitize_next_url(None) == "/"
+    assert sanitize_next_url(123) == "/"

@@ -65,3 +65,32 @@ jobs:
 
       - name: Run pytest
         run: python -m pytest
+
+  release-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Builds both release archives (Core, MIT; Meshtastic adapter,
+      # GPLv3) and smoke-tests each one (extract -> clean venv -> install
+      # -> import -> health-check) - see scripts/build-release.sh's own
+      # docstring for why this runs on every PR/push to main, not just at
+      # release time: a whitelist or dependency-closure regression should
+      # fail CI immediately, not surface the next time someone actually
+      # cuts a release.
+      - name: Build and smoke-test both release archives
+        run: scripts/build-release.sh
+
+      - name: Upload release archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-archives
+          path: dist/*.tar.gz
+          retention-days: 14

@@ -9,7 +9,7 @@ POST /api/settings merge-and-replace in api_settings.py, and the hash is
 never included in a settings.json snapshot handed back to the browser.
 """
 
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from flask import jsonify, redirect, request, render_template, session
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -39,6 +39,38 @@ def load_auth_state(auth_file, bootstrap_enabled=False, bootstrap_password_hash=
         "enabled": bool(bootstrap_enabled) and bool(bootstrap_password_hash.strip()),
         "password_hash": bootstrap_password_hash,
     }
+
+
+def _is_safe_redirect_target(target):
+    """True only for a same-origin relative path/query/fragment - the
+    login route's `next` param must never send a browser off-origin.
+
+    Not just a startswith("/")/startswith("//") check (what this
+    replaced): independently reproduced a live open redirect against
+    that exact old check via `next=/%09/evil.example` - real browser
+    navigation confirmed, not just a suspicious-looking string. Werkzeug
+    silently strips the tab character while building the Location header,
+    turning `/\t/evil.example` into `//evil.example` (a protocol-relative
+    absolute URL) *after* the old prefix check already passed it.
+    urlsplit() resolves scheme/netloc correctly for this case (and
+    similar ones) because it does real URL parsing, not a guess at one
+    specific bypass character.
+
+    Backslash (`/\\evil.example`) is rejected explicitly too, even though
+    it was independently verified NOT to be exploitable against the
+    Werkzeug version this project currently runs (it percent-encodes `\\`
+    to `%5C` before the Location header is ever sent, so a browser never
+    sees a raw backslash to normalize) - relying on that as the only
+    defense would silently break if Werkzeug's encoding behavior ever
+    changes, and urlsplit() alone does not catch it (Python's URL parser
+    doesn't treat backslash as a separator the way browsers do).
+    """
+    if not target or not isinstance(target, str):
+        return False
+    if not target.startswith("/") or target.startswith("//") or "\\" in target:
+        return False
+    parsed = urlsplit(target)
+    return not parsed.scheme and not parsed.netloc
 
 
 def is_protected(auth_state):
@@ -91,7 +123,7 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
             return redirect("/")
 
         next_url = request.values.get("next") or "/"
-        if not next_url.startswith("/") or next_url.startswith("//"):
+        if not _is_safe_redirect_target(next_url):
             next_url = "/"
 
         error = None

@@ -332,6 +332,11 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         password = data.get("password") or ""
         if not ssid:
             return jsonify({"ok": False, "error": "SSID is required"}), 400
+
+        def _sanitize_wifi_error(text):
+            val = str(text or "")
+            return val.replace(password, "******") if password and password in val else val
+
         def run_nmcli(args, timeout=30):
             return subprocess.check_output(["sudo", "-n", "/usr/bin/nmcli"] + args, text=True, stderr=subprocess.STDOUT, timeout=timeout)
         try:
@@ -339,9 +344,9 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
             if password:
                 cmd += ["password", password]
             out = run_nmcli(cmd)
-            return jsonify({"ok": True, "message": out.strip()})
+            return jsonify({"ok": True, "message": _sanitize_wifi_error(out.strip())})
         except subprocess.CalledProcessError as e:
-            err = e.output.strip() if e.output else str(e)
+            err = _sanitize_wifi_error(e.output.strip() if e.output else str(e))
             if "key-mgmt" in err or "property is missing" in err or "secrets were required" in err:
                 try:
                     run_nmcli(["connection", "delete", ssid], timeout=10)
@@ -352,12 +357,13 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
                     if password:
                         cmd += ["password", password]
                     out = run_nmcli(cmd)
-                    return jsonify({"ok": True, "message": out.strip(), "recreated_profile": True})
+                    return jsonify({"ok": True, "message": _sanitize_wifi_error(out.strip()), "recreated_profile": True})
                 except subprocess.CalledProcessError as e2:
-                    return jsonify({"ok": False, "error": e2.output.strip() if e2.output else str(e2)}), 500
+                    err2 = _sanitize_wifi_error(e2.output.strip() if e2.output else str(e2))
+                    return jsonify({"ok": False, "error": err2}), 500
             return jsonify({"ok": False, "error": err}), 500
         except Exception as e:
-            return jsonify({"ok": False, "error": str(e)}), 500
+            return jsonify({"ok": False, "error": _sanitize_wifi_error(str(e))}), 500
 
     @app.route("/api/system/wifi/forget", methods=["POST"])
     def api_system_wifi_forget():

@@ -554,7 +554,7 @@
     "security_password_not_set_note": "Пароль ещё не задан - задайте его перед включением защиты.",
     "security_saved": "Сохранено.",
     "security_password_mismatch": "Пароли не совпадают.",
-    "security_password_too_short": "Пароль должен содержать не менее 4 символов.",
+    "security_password_too_short": "Пароль должен содержать не менее 12 символов.",
     "security_enable_requires_password": "Задайте пароль перед включением защиты.",
     "security_save_failed": "Не удалось сохранить: {reason}",
     "security_logout_btn": "Выйти",
@@ -1135,6 +1135,7 @@
     "login_subtitle": "Этот MeshCenter защищён паролем.",
     "password_label": "Пароль",
     "login_error": "Неверный пароль.",
+    "login_throttled": "Слишком много попыток. Повторите через {seconds} сек.",
     "login_submit": "Войти"
   }
 }

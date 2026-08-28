@@ -18,6 +18,7 @@ open-redirect vulnerability independently reproduced and fixed there.
 
 import os
 import secrets
+import time
 from urllib.parse import quote, urlsplit
 
 from flask import jsonify, redirect, request, render_template, session
@@ -25,12 +26,77 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from storage.json_store import safe_read_json, safe_write_json
 
-MIN_PASSWORD_LENGTH = 4
+# P1 #6 stabilization follow-up: raised from 4 to the top of the 10-12
+# range the original audit recommended - this app has full access to
+# system restart/reboot/Wi-Fi/updates once logged in, so a short password
+# is a disproportionately large blast radius for a single shared secret.
+MIN_PASSWORD_LENGTH = 12
 
 # Paths that must stay reachable without a session so the login page itself
 # (and the assets it needs) can render.
 _EXEMPT_PATH_PREFIXES = ("/static/",)
 _EXEMPT_PATHS = ("/login",)
+
+# Login throttling (P1 #6): the first few wrong-password attempts from one
+# source are free (typos happen), then the lockout window doubles each
+# attempt up to a cap. Keyed by request.remote_addr, not by account - this
+# app has exactly one shared password, no per-user identity to throttle
+# against. In-memory only (no persistence across a process restart) is a
+# deliberate choice, not an oversight: this app already runs as a single
+# gunicorn worker with all runtime state in one process's memory (see
+# CLAUDE.md's "workers = 1" rationale), and restarting the service itself
+# requires access (sudoers-gated) far beyond what this throttle defends
+# against - persisting the counter to disk would add I/O on every login
+# attempt for no realistic security benefit here.
+_LOGIN_THROTTLE_FREE_ATTEMPTS = 5
+_LOGIN_THROTTLE_BASE_SECONDS = 2
+_LOGIN_THROTTLE_MAX_SECONDS = 300
+# Stale throttle entries (nothing failed recently) are swept out on access
+# rather than kept forever, so the dict doesn't grow unboundedly if probed
+# from many different source IPs.
+_LOGIN_THROTTLE_ENTRY_TTL_SECONDS = 86400
+# fail_count itself has no upper bound - an attacker (or just enough real
+# time) can push it arbitrarily high, since a sustained attempt every
+# ~_LOGIN_THROTTLE_MAX_SECONDS keeps refreshing last_seen forever, so the
+# TTL sweep above never reclaims that entry. The exponent handed to `**`
+# must therefore be capped independently of the final delay cap: 8 is the
+# smallest exponent where BASE * 2**8 (512s) already exceeds
+# MAX_SECONDS (300s) for the current constants, so anything past it would
+# get clamped to the same 300s regardless - capping here avoids computing
+# an ever-larger bignum (2 ** over) for every failed attempt an
+# indefinitely-persistent attacker sends. Set to 9 (one extra step of
+# margin over the strict minimum) rather than the exact boundary value, so
+# a future off-by-one in this comment's own arithmetic can't silently
+# undercut the cap.
+_LOGIN_THROTTLE_MAX_EXPONENT = 9
+
+
+def _login_throttle_delay(fail_count):
+    """Seconds to lock out the *next* attempt after `fail_count` consecutive
+    failures have just been recorded. The first _LOGIN_THROTTLE_FREE_ATTEMPTS
+    failures set no lockout at all (attempt number FREE_ATTEMPTS+1 still goes
+    through unthrottled); starting with the FREE_ATTEMPTS-th failure, a
+    lockout is set immediately so attempt FREE_ATTEMPTS+1 onward is blocked,
+    doubling each time past that and capped at _LOGIN_THROTTLE_MAX_SECONDS.
+
+    Concretely, with the default of 5 free attempts: failures 1-4 set no
+    lockout (so attempt 5 is never throttled), failure 5 sets a lockout that
+    blocks attempt 6, failure 6 (once attempt 6 is eventually retried and
+    fails) doubles it, and so on. Off-by-one here is easy to get backwards -
+    see test_login_throttle_delay_boundary_between_5th_and_6th_failure and
+    test_login_5th_wrong_attempt_still_plain_error_6th_is_throttled, which
+    pin the exact attempt-6-not-attempt-7 behavior.
+
+    `fail_count` is unbounded input (see _LOGIN_THROTTLE_MAX_EXPONENT above)
+    - this function stays cheap and correct for any fail_count, not just
+    the small values exercised by the boundary tests; see
+    test_login_throttle_delay_stays_capped_for_very_large_fail_counts.
+    """
+    over = fail_count - _LOGIN_THROTTLE_FREE_ATTEMPTS + 1
+    if over <= 0:
+        return 0
+    exponent = min(over - 1, _LOGIN_THROTTLE_MAX_EXPONENT)
+    return min(_LOGIN_THROTTLE_BASE_SECONDS * (2 ** exponent), _LOGIN_THROTTLE_MAX_SECONDS)
 
 
 def _generate_initial_password():
@@ -149,6 +215,11 @@ def is_protected(auth_state):
 
 
 def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, resolve_ui_language=None):
+    # Closure-local, not module-level: a fresh dict per register_auth_routes()
+    # call means each test (and each real app instance) starts with a clean
+    # slate, same lifetime as auth_state itself.
+    login_throttle = {}
+
     def _save():
         with state_lock:
             safe_write_json(auth_file, auth_state)
@@ -160,6 +231,17 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
             return resolve_ui_language()
         except Exception:
             return "en"
+
+    def _client_key():
+        return request.remote_addr or "unknown"
+
+    def _prune_login_throttle(now):
+        stale = [
+            key for key, entry in login_throttle.items()
+            if now - entry.get("last_seen", 0) > _LOGIN_THROTTLE_ENTRY_TTL_SECONDS
+        ]
+        for key in stale:
+            del login_throttle[key]
 
     @app.before_request
     def _enforce_auth():
@@ -196,18 +278,46 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
             next_url = "/"
 
         error = None
+        retry_after = None
         if request.method == "POST":
+            client_key = _client_key()
+            now = time.monotonic()
+
+            with state_lock:
+                _prune_login_throttle(now)
+                entry = login_throttle.get(client_key)
+                locked_until = entry["locked_until"] if entry else 0
+
+            if now < locked_until:
+                retry_after = int(locked_until - now) + 1
+                return render_template(
+                    "login.html",
+                    error="login_throttled",
+                    retry_after=retry_after,
+                    next=next_url,
+                    ui_language=_ui_language(),
+                ), 429
+
             password = request.form.get("password", "")
             if password and check_password_hash(password_hash, password):
+                with state_lock:
+                    login_throttle.pop(client_key, None)
                 session.clear()
                 session.permanent = True
                 session["authenticated"] = True
                 return redirect(next_url)
+
+            with state_lock:
+                entry = login_throttle.setdefault(client_key, {"fail_count": 0, "locked_until": 0})
+                entry["fail_count"] += 1
+                entry["last_seen"] = now
+                entry["locked_until"] = now + _login_throttle_delay(entry["fail_count"])
             error = "login_error"
 
         return render_template(
             "login.html",
             error=error,
+            retry_after=retry_after,
             next=next_url,
             ui_language=_ui_language(),
         )

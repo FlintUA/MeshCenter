@@ -181,7 +181,7 @@ async function saveSecurityPassword() {
     const newPassword = newPasswordInput?.value || '';
     const confirmPassword = confirmInput?.value || '';
 
-    if (newPassword.length < 4) {
+    if (newPassword.length < 12) {
         renderSecurityResult(window.I18N.t('system.security_password_too_short'), true);
         return;
     }

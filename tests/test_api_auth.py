@@ -13,6 +13,7 @@ has no hardware/CLI dependencies of its own.
 """
 
 import json
+import os
 import stat
 import sys
 import threading
@@ -23,7 +24,26 @@ from flask import Flask
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import api.api_auth as api_auth
-from api.api_auth import _is_safe_redirect_target, is_protected, load_auth_state, register_auth_routes
+from api.api_auth import (
+    _is_safe_redirect_target,
+    _login_throttle_delay,
+    is_protected,
+    load_auth_state,
+    register_auth_routes,
+)
+
+
+_TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
+
+
+def _make_app(tmp_path, password="realpassword123", enabled=True):
+    auth_file = tmp_path / "auth.json"
+    app = Flask(__name__, template_folder=_TEMPLATE_DIR)
+    app.secret_key = "test-secret-key"
+    state_lock = threading.RLock()
+    auth_state = {"enabled": enabled, "password_hash": generate_password_hash(password)}
+    register_auth_routes(app, state_lock, auth_state, str(auth_file), lambda f: f)
+    return app, auth_state
 
 
 def test_load_auth_state_first_run_defaults_to_disabled(tmp_path):
@@ -240,3 +260,193 @@ def test_login_redirect_still_honors_a_legitimate_next_url(tmp_path):
     resp = client.post("/login?next=/map", data={"password": "realpassword123"})
     assert resp.status_code == 302
     assert resp.headers.get("Location") == "/map"
+
+
+# --- P1 #6: MIN_PASSWORD_LENGTH ---------------------------------------------
+
+def test_min_password_length_is_12_not_the_old_4():
+    # Pins the actual constant, not just behavior derived from it - a
+    # regression here (e.g. someone "simplifying" back to 4) must fail
+    # loudly on this line alone.
+    assert api_auth.MIN_PASSWORD_LENGTH == 12
+
+
+def test_generated_initial_password_passes_the_real_min_length_validation(tmp_path):
+    # P1 #6 explicitly asked not to assume the 16-hex-char generated
+    # password (P1 #5) clears the raised MIN_PASSWORD_LENGTH - prove it by
+    # running the actual generator output through the actual validation
+    # route (api_update_security), not a hand-copied len() check.
+    app, _ = _make_app(tmp_path)
+    client = app.test_client()
+
+    generated = api_auth._generate_initial_password()
+    assert len(generated) >= api_auth.MIN_PASSWORD_LENGTH, (
+        f"generated password is {len(generated)} chars, below MIN_PASSWORD_LENGTH="
+        f"{api_auth.MIN_PASSWORD_LENGTH}"
+    )
+
+    with client.session_transaction() as sess:
+        sess["authenticated"] = True  # /api/security itself needs a session
+
+    resp = client.post("/api/security", json={"password": generated})
+    data = resp.get_json()
+    assert data["ok"] is True, data
+    assert data.get("error_code") != "password_too_short"
+
+
+# --- P1 #6: login throttling -------------------------------------------------
+
+def test_login_throttle_delay_boundary_between_5th_and_6th_failure():
+    # The exact off-by-one the task called out: with 5 free attempts, the
+    # 5th failed *attempt* must still render as a plain error (not 429) -
+    # which requires the lockout to already be armed by the time the 5th
+    # failure is *recorded*, so it blocks attempt #6. delay(fail_count) is
+    # "the delay this many recorded failures impose on the NEXT attempt",
+    # not on the attempt that just happened.
+    assert _login_throttle_delay(1) == 0
+    assert _login_throttle_delay(4) == 0  # attempt 5 still goes through unthrottled
+    assert _login_throttle_delay(5) == 2  # ...but now attempt 6 is blocked
+    assert _login_throttle_delay(6) == 4
+    assert _login_throttle_delay(7) == 8
+
+
+def test_login_throttle_delay_caps_at_max_seconds():
+    assert _login_throttle_delay(100) == api_auth._LOGIN_THROTTLE_MAX_SECONDS
+
+
+def test_login_throttle_delay_stays_capped_for_very_large_fail_counts():
+    # fail_count has no upper bound (a sustained attacker keeps refreshing
+    # last_seen, so the TTL sweep never reclaims the entry) - correctness
+    # must hold far past anything the boundary tests exercise.
+    for fail_count in (1_000, 1_000_000, 10 ** 9):
+        assert _login_throttle_delay(fail_count) == api_auth._LOGIN_THROTTLE_MAX_SECONDS
+
+
+def test_login_throttle_max_exponent_constant_is_actually_sufficient():
+    # The invariant _LOGIN_THROTTLE_MAX_EXPONENT relies on: that exponent
+    # alone must already reach _LOGIN_THROTTLE_MAX_SECONDS, so the function
+    # never needs (and the code never computes) a larger one - this is what
+    # makes capping the exponent safe rather than just "usually right". If
+    # someone tightens MAX_SECONDS or loosens BASE_SECONDS without touching
+    # this constant, this test catches the cap becoming insufficient.
+    assert (
+        api_auth._LOGIN_THROTTLE_BASE_SECONDS * (2 ** api_auth._LOGIN_THROTTLE_MAX_EXPONENT)
+        >= api_auth._LOGIN_THROTTLE_MAX_SECONDS
+    )
+
+
+def test_login_5th_wrong_attempt_still_plain_error_6th_is_throttled(tmp_path, monkeypatch):
+    fake_now = [1000.0]
+    monkeypatch.setattr(api_auth.time, "monotonic", lambda: fake_now[0])
+
+    app, _ = _make_app(tmp_path)
+    client = app.test_client()
+    overrides = {"REMOTE_ADDR": "10.0.0.5"}
+
+    for attempt in range(1, 6):  # attempts 1..5 - all free
+        resp = client.post(
+            "/login", data={"password": "wrong"}, environ_overrides=overrides
+        )
+        assert resp.status_code == 200, f"attempt {attempt} should render the plain login form, got {resp.status_code}"
+        assert b"auth.login_error" in resp.data or b"Incorrect password" in resp.data
+        assert resp.status_code != 429
+
+    # 6th failure - now throttled.
+    resp = client.post("/login", data={"password": "wrong"}, environ_overrides=overrides)
+    assert resp.status_code == 429
+    assert b'id="loginError"' in resp.data  # throttled branch, not the plain login_error one
+
+    # Correct password no longer helps while still locked out - proves the
+    # lockout check runs before the password is even checked.
+    resp = client.post("/login", data={"password": "realpassword123"}, environ_overrides=overrides)
+    assert resp.status_code == 429
+
+
+def test_login_throttle_lifts_once_the_backoff_window_elapses(tmp_path, monkeypatch):
+    fake_now = [1000.0]
+    monkeypatch.setattr(api_auth.time, "monotonic", lambda: fake_now[0])
+
+    app, _ = _make_app(tmp_path)
+    client = app.test_client()
+    overrides = {"REMOTE_ADDR": "10.0.0.6"}
+
+    for _ in range(6):  # trip the throttle (6th failure -> 2s lockout)
+        client.post("/login", data={"password": "wrong"}, environ_overrides=overrides)
+
+    resp = client.post("/login", data={"password": "wrong"}, environ_overrides=overrides)
+    assert resp.status_code == 429
+
+    fake_now[0] += 3  # past the 2s lockout window
+    resp = client.post("/login", data={"password": "realpassword123"}, environ_overrides=overrides)
+    assert resp.status_code == 302
+    assert resp.headers.get("Location") == "/"
+
+
+def test_login_throttle_is_scoped_per_source_ip(tmp_path, monkeypatch):
+    fake_now = [1000.0]
+    monkeypatch.setattr(api_auth.time, "monotonic", lambda: fake_now[0])
+
+    app, _ = _make_app(tmp_path)
+    client = app.test_client()
+
+    for _ in range(6):
+        client.post("/login", data={"password": "wrong"}, environ_overrides={"REMOTE_ADDR": "10.0.0.7"})
+    blocked = client.post("/login", data={"password": "wrong"}, environ_overrides={"REMOTE_ADDR": "10.0.0.7"})
+    assert blocked.status_code == 429
+
+    # A different source IP is unaffected by the first one's failures.
+    resp = client.post(
+        "/login", data={"password": "realpassword123"}, environ_overrides={"REMOTE_ADDR": "10.0.0.8"}
+    )
+    assert resp.status_code == 302
+
+
+def test_login_success_resets_the_failure_counter(tmp_path, monkeypatch):
+    fake_now = [1000.0]
+    monkeypatch.setattr(api_auth.time, "monotonic", lambda: fake_now[0])
+
+    app, _ = _make_app(tmp_path)
+    client = app.test_client()
+    overrides = {"REMOTE_ADDR": "10.0.0.9"}
+
+    for _ in range(4):  # under the free-attempt threshold
+        client.post("/login", data={"password": "wrong"}, environ_overrides=overrides)
+
+    resp = client.post("/login", data={"password": "realpassword123"}, environ_overrides=overrides)
+    assert resp.status_code == 302  # logged in - counter should now be cleared
+
+    # A fresh session for the same IP fails again - if the counter had NOT
+    # been reset, this would already be past the free-attempt threshold.
+    client2 = app.test_client()
+    resp = client2.post("/login", data={"password": "wrong"}, environ_overrides=overrides)
+    assert resp.status_code == 200
+    assert b'id="loginError"' not in resp.data
+
+
+def test_login_throttle_never_engages_while_auth_is_disabled(tmp_path, monkeypatch):
+    # Explicit check requested for the interaction with `if not protected`:
+    # while auth is disabled, login() returns its early redirect before the
+    # throttle code ever runs (see api_auth.py's login(), the `if not
+    # protected: return redirect("/")` line precedes the `if request.method
+    # == "POST":` throttle block) - so failed attempts against a disabled
+    # instance must never pre-warm a lockout for when protection is later
+    # turned on from the UI.
+    fake_now = [1000.0]
+    monkeypatch.setattr(api_auth.time, "monotonic", lambda: fake_now[0])
+
+    app, auth_state = _make_app(tmp_path, enabled=False)
+    client = app.test_client()
+    overrides = {"REMOTE_ADDR": "10.0.0.10"}
+
+    for _ in range(10):  # far past the free-attempt threshold, if it counted at all
+        resp = client.post("/login", data={"password": "wrong"}, environ_overrides=overrides)
+        assert resp.status_code == 302
+        assert resp.headers.get("Location") == "/"
+
+    # Now flip protection on, exactly as api_update_security() would via
+    # the Settings UI, and confirm the very first attempt against this same
+    # IP is treated as attempt #1, not #11.
+    auth_state["enabled"] = True
+    resp = client.post("/login", data={"password": "wrong"}, environ_overrides=overrides)
+    assert resp.status_code == 200, "must render the ordinary error form, not be pre-throttled"
+    assert b'id="loginError"' not in resp.data

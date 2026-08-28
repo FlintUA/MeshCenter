@@ -59,12 +59,15 @@ _LOGIN_THROTTLE_ENTRY_TTL_SECONDS = 86400
 # time) can push it arbitrarily high, since a sustained attempt every
 # ~_LOGIN_THROTTLE_MAX_SECONDS keeps refreshing last_seen forever, so the
 # TTL sweep above never reclaims that entry. The exponent handed to `**`
-# must therefore be capped independently of the final delay cap: 9 is the
-# smallest exponent where BASE * 2**9 (1024s) already exceeds
+# must therefore be capped independently of the final delay cap: 8 is the
+# smallest exponent where BASE * 2**8 (512s) already exceeds
 # MAX_SECONDS (300s) for the current constants, so anything past it would
 # get clamped to the same 300s regardless - capping here avoids computing
 # an ever-larger bignum (2 ** over) for every failed attempt an
-# indefinitely-persistent attacker sends.
+# indefinitely-persistent attacker sends. Set to 9 (one extra step of
+# margin over the strict minimum) rather than the exact boundary value, so
+# a future off-by-one in this comment's own arithmetic can't silently
+# undercut the cap.
 _LOGIN_THROTTLE_MAX_EXPONENT = 9
 
 

@@ -2,3 +2,11 @@
 # CLAUDE.md: production installs `pip install -r requirements.txt` only).
 -r requirements.txt
 pytest>=7.4,<9
+# Pure-Python IANA tzdata for zoneinfo.ZoneInfo() - Linux hosts (CI,
+# production Pi) already get this from the OS, but a Windows dev machine
+# has no system tzdata at all, so DST-dependent tests in
+# tests/test_time_service.py would be blind without this. Unlike fcntl
+# (a platform-specific compiled module), this is portable data with no
+# platform restriction, so installing it is strictly better than skipping
+# those tests on non-Linux dev machines.
+tzdata

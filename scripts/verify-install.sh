@@ -20,6 +20,7 @@ WARN=0
 ok()   { printf '  [OK]   %s\n' "$1"; PASS=$((PASS + 1)); }
 bad()  { printf '  [FAIL] %s\n' "$1"; FAIL=$((FAIL + 1)); }
 warn() { printf '  [WARN] %s\n' "$1"; WARN=$((WARN + 1)); }
+info() { printf '  [INFO] %s\n' "$1"; }
 
 echo "MeshCenter install check — $PROJECT_DIR"
 echo
@@ -193,27 +194,95 @@ fi
 echo
 
 # --- 5. radio identity ---------------------------------------------------------
+# Primary source: data/instance.json's runtime.identity_status, written
+# synchronously by verify_radio_identity() at the very start of
+# start_runtime() (server.py) - before the listener starts, before Flask
+# serves a single request. Reading it directly off disk needs no HTTP call
+# and therefore no auth at all, unlike the old curl-only check below, which
+# started reporting a false FAIL on every fresh install once AUTH_ENABLED
+# defaulted to True (see PR #131) - a protected /api/node-manager/dashboard
+# correctly returns 401, but the old code only ever looked for
+# "identity_status":"MATCH"/"NOT_CHECKED" substrings in the body and fell
+# through to "not MATCH" for anything else, including an auth_required 401.
 echo "Radio identity"
 APP_PORT=5000
+DATA_DIR="data"
 if [ -x "venv/bin/python" ] && [ -f "config.py" ]; then
-    DETECTED_PORT=$(venv/bin/python -c "import sys; sys.path.insert(0,'.'); import config; print(getattr(config, 'APP_PORT', 5000))" 2>/dev/null)
+    CONFIG_VALUES=$(venv/bin/python -c "
+import sys
+sys.path.insert(0, '.')
+import config
+print(getattr(config, 'APP_PORT', 5000))
+print(getattr(config, 'DATA_DIR', 'data'))
+" 2>/dev/null)
+    DETECTED_PORT=$(echo "$CONFIG_VALUES" | sed -n '1p')
+    DETECTED_DATA_DIR=$(echo "$CONFIG_VALUES" | sed -n '2p')
     [ -n "$DETECTED_PORT" ] && APP_PORT="$DETECTED_PORT"
+    [ -n "$DETECTED_DATA_DIR" ] && DATA_DIR="$DETECTED_DATA_DIR"
 fi
 
-if command -v curl >/dev/null 2>&1; then
-    DASHBOARD=$(curl -s --max-time 5 "http://127.0.0.1:${APP_PORT}/api/node-manager/dashboard" 2>/dev/null)
-    if [ -z "$DASHBOARD" ]; then
-        warn "could not reach http://127.0.0.1:${APP_PORT}/api/node-manager/dashboard — is the service running?"
-    elif echo "$DASHBOARD" | grep -q '"identity_status":"MATCH"'; then
-        ok "radio identity: MATCH"
-    elif echo "$DASHBOARD" | grep -q '"identity_status":"NOT_CHECKED"'; then
-        warn "radio identity: NOT_CHECKED — radio may still be initializing, re-run in a few seconds"
-    else
-        IDENTITY=$(echo "$DASHBOARD" | grep -o '"identity_status":"[A-Z_]*"')
-        bad "radio identity is not MATCH ($IDENTITY) — check Serial access is enabled on the radio and the correct port is in config.py"
-    fi
+INSTANCE_FILE="${DATA_DIR}/instance.json"
+IDENTITY_STATUS=""
+if [ -x "venv/bin/python" ] && [ -f "$INSTANCE_FILE" ]; then
+    IDENTITY_STATUS=$(venv/bin/python -c "
+import json
+try:
+    with open('${INSTANCE_FILE}', encoding='utf-8') as f:
+        data = json.load(f)
+    runtime = data.get('runtime') if isinstance(data.get('runtime'), dict) else {}
+    print(runtime.get('identity_status') or 'NOT_CHECKED')
+except Exception as e:
+    print('__READ_ERROR__ ' + str(e))
+" 2>/dev/null)
+fi
+
+if [ -n "$IDENTITY_STATUS" ] && [[ "$IDENTITY_STATUS" != __READ_ERROR__* ]]; then
+    case "$IDENTITY_STATUS" in
+        MATCH)
+            ok "radio identity: MATCH (${INSTANCE_FILE})"
+            ;;
+        NOT_CHECKED)
+            warn "radio identity: NOT_CHECKED (${INSTANCE_FILE}) — radio may still be initializing, re-run in a few seconds"
+            ;;
+        *)
+            bad "radio identity is not MATCH (${IDENTITY_STATUS}, ${INSTANCE_FILE}) — check Serial access is enabled on the radio and the correct port is in config.py"
+            ;;
+    esac
 else
-    warn "curl not available — skipping radio identity check"
+    # Fallback only: instance.json missing/unreadable (e.g. first-ever
+    # startup hasn't written it yet, or DATA_DIR resolves unexpectedly).
+    # Never treat a 401 here as a real failure - it just means
+    # AUTH_ENABLED=True (the default since PR #131) is doing its job, and
+    # this script must never try to bypass it to get a definitive answer.
+    if command -v curl >/dev/null 2>&1; then
+        DASHBOARD_TMP=$(mktemp 2>/dev/null || echo "/tmp/mc-verify-dashboard.$$")
+        HTTP_CODE=$(curl -s -o "$DASHBOARD_TMP" -w '%{http_code}' --max-time 5 "http://127.0.0.1:${APP_PORT}/api/node-manager/dashboard" 2>/dev/null)
+        DASHBOARD=$(cat "$DASHBOARD_TMP" 2>/dev/null)
+        rm -f "$DASHBOARD_TMP"
+        case "$HTTP_CODE" in
+            200)
+                if echo "$DASHBOARD" | grep -q '"identity_status":"MATCH"'; then
+                    ok "radio identity: MATCH (HTTP fallback — ${INSTANCE_FILE} was unavailable)"
+                elif echo "$DASHBOARD" | grep -q '"identity_status":"NOT_CHECKED"'; then
+                    warn "radio identity: NOT_CHECKED — radio may still be initializing, re-run in a few seconds"
+                else
+                    IDENTITY=$(echo "$DASHBOARD" | grep -o '"identity_status":"[A-Z_]*"')
+                    bad "radio identity is not MATCH ($IDENTITY) — check Serial access is enabled on the radio and the correct port is in config.py"
+                fi
+                ;;
+            401)
+                info "Authentication enabled - protected API check skipped (${INSTANCE_FILE} was also unavailable; log in via the UI to verify radio identity manually)"
+                ;;
+            "" | 000)
+                warn "could not reach http://127.0.0.1:${APP_PORT}/api/node-manager/dashboard — is the service running?"
+                ;;
+            *)
+                warn "http://127.0.0.1:${APP_PORT}/api/node-manager/dashboard returned HTTP $HTTP_CODE — unexpected, skipping radio identity check"
+                ;;
+        esac
+    else
+        warn "curl not available and ${INSTANCE_FILE} unreadable — skipping radio identity check"
+    fi
 fi
 echo
 

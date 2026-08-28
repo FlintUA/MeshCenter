@@ -554,7 +554,7 @@
     "security_password_not_set_note": "Noch kein Passwort gesetzt - lege eines fest, bevor du den Schutz aktivierst.",
     "security_saved": "Gespeichert.",
     "security_password_mismatch": "Die Passwörter stimmen nicht überein.",
-    "security_password_too_short": "Das Passwort muss mindestens 4 Zeichen lang sein.",
+    "security_password_too_short": "Das Passwort muss mindestens 12 Zeichen lang sein.",
     "security_enable_requires_password": "Lege ein Passwort fest, bevor du den Schutz aktivierst.",
     "security_save_failed": "Konnte nicht gespeichert werden: {reason}",
     "security_logout_btn": "Abmelden",
@@ -1135,6 +1135,7 @@
     "login_subtitle": "Dieses MeshCenter ist passwortgeschützt.",
     "password_label": "Passwort",
     "login_error": "Falsches Passwort.",
+    "login_throttled": "Zu viele Versuche. Versuche es in {seconds} Sekunden erneut.",
     "login_submit": "Anmelden"
   }
 }

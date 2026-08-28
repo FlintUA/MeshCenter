@@ -554,7 +554,7 @@
     "security_password_not_set_note": "No password set yet - set one before enabling protection.",
     "security_saved": "Saved.",
     "security_password_mismatch": "Passwords do not match.",
-    "security_password_too_short": "Password must be at least 4 characters.",
+    "security_password_too_short": "Password must be at least 12 characters.",
     "security_enable_requires_password": "Set a password before enabling protection.",
     "security_save_failed": "Could not save: {reason}",
     "security_logout_btn": "Sign out",
@@ -1135,6 +1135,7 @@
     "login_subtitle": "This MeshCenter is password protected.",
     "password_label": "Password",
     "login_error": "Incorrect password.",
+    "login_throttled": "Too many attempts. Try again in {seconds} seconds.",
     "login_submit": "Sign in"
   }
 }

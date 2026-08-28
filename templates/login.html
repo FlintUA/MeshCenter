@@ -105,7 +105,9 @@
                     <input type="password" id="loginPassword" name="password" autofocus autocomplete="current-password" required>
                 </div>
 
-                {% if error %}
+                {% if error == 'login_throttled' %}
+                <div class="login-error" id="loginError" data-i18n="auth.login_throttled" data-retry-after="{{ retry_after }}">Too many attempts. Try again in {{ retry_after }} seconds.</div>
+                {% elif error %}
                 <div class="login-error" data-i18n="auth.login_error">Incorrect password.</div>
                 {% endif %}
 
@@ -131,7 +133,13 @@
     </script>
     <script src="/static/i18n.js?v=20260806-6"></script>
     <script>
-        window.I18N.init("{{ ui_language }}").then(function () { window.I18N.applyStaticDom(); });
+        window.I18N.init("{{ ui_language }}").then(function () {
+            window.I18N.applyStaticDom();
+            var throttledError = document.getElementById('loginError');
+            if (throttledError && throttledError.dataset.retryAfter) {
+                throttledError.textContent = window.I18N.t('auth.login_throttled', { seconds: throttledError.dataset.retryAfter });
+            }
+        });
     </script>
 </body>
 </html>

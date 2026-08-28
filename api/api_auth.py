@@ -55,6 +55,17 @@ _LOGIN_THROTTLE_MAX_SECONDS = 300
 # rather than kept forever, so the dict doesn't grow unboundedly if probed
 # from many different source IPs.
 _LOGIN_THROTTLE_ENTRY_TTL_SECONDS = 86400
+# fail_count itself has no upper bound - an attacker (or just enough real
+# time) can push it arbitrarily high, since a sustained attempt every
+# ~_LOGIN_THROTTLE_MAX_SECONDS keeps refreshing last_seen forever, so the
+# TTL sweep above never reclaims that entry. The exponent handed to `**`
+# must therefore be capped independently of the final delay cap: 9 is the
+# smallest exponent where BASE * 2**9 (1024s) already exceeds
+# MAX_SECONDS (300s) for the current constants, so anything past it would
+# get clamped to the same 300s regardless - capping here avoids computing
+# an ever-larger bignum (2 ** over) for every failed attempt an
+# indefinitely-persistent attacker sends.
+_LOGIN_THROTTLE_MAX_EXPONENT = 9
 
 
 def _login_throttle_delay(fail_count):
@@ -72,11 +83,17 @@ def _login_throttle_delay(fail_count):
     see test_login_throttle_delay_boundary_between_5th_and_6th_failure and
     test_login_5th_wrong_attempt_still_plain_error_6th_is_throttled, which
     pin the exact attempt-6-not-attempt-7 behavior.
+
+    `fail_count` is unbounded input (see _LOGIN_THROTTLE_MAX_EXPONENT above)
+    - this function stays cheap and correct for any fail_count, not just
+    the small values exercised by the boundary tests; see
+    test_login_throttle_delay_stays_capped_for_very_large_fail_counts.
     """
     over = fail_count - _LOGIN_THROTTLE_FREE_ATTEMPTS + 1
     if over <= 0:
         return 0
-    return min(_LOGIN_THROTTLE_BASE_SECONDS * (2 ** (over - 1)), _LOGIN_THROTTLE_MAX_SECONDS)
+    exponent = min(over - 1, _LOGIN_THROTTLE_MAX_EXPONENT)
+    return min(_LOGIN_THROTTLE_BASE_SECONDS * (2 ** exponent), _LOGIN_THROTTLE_MAX_SECONDS)
 
 
 def _generate_initial_password():

@@ -314,6 +314,27 @@ def test_login_throttle_delay_caps_at_max_seconds():
     assert _login_throttle_delay(100) == api_auth._LOGIN_THROTTLE_MAX_SECONDS
 
 
+def test_login_throttle_delay_stays_capped_for_very_large_fail_counts():
+    # fail_count has no upper bound (a sustained attacker keeps refreshing
+    # last_seen, so the TTL sweep never reclaims the entry) - correctness
+    # must hold far past anything the boundary tests exercise.
+    for fail_count in (1_000, 1_000_000, 10 ** 9):
+        assert _login_throttle_delay(fail_count) == api_auth._LOGIN_THROTTLE_MAX_SECONDS
+
+
+def test_login_throttle_max_exponent_constant_is_actually_sufficient():
+    # The invariant _LOGIN_THROTTLE_MAX_EXPONENT relies on: that exponent
+    # alone must already reach _LOGIN_THROTTLE_MAX_SECONDS, so the function
+    # never needs (and the code never computes) a larger one - this is what
+    # makes capping the exponent safe rather than just "usually right". If
+    # someone tightens MAX_SECONDS or loosens BASE_SECONDS without touching
+    # this constant, this test catches the cap becoming insufficient.
+    assert (
+        api_auth._LOGIN_THROTTLE_BASE_SECONDS * (2 ** api_auth._LOGIN_THROTTLE_MAX_EXPONENT)
+        >= api_auth._LOGIN_THROTTLE_MAX_SECONDS
+    )
+
+
 def test_login_5th_wrong_attempt_still_plain_error_6th_is_throttled(tmp_path, monkeypatch):
     fake_now = [1000.0]
     monkeypatch.setattr(api_auth.time, "monotonic", lambda: fake_now[0])

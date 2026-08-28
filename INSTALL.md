@@ -330,11 +330,18 @@ of this automatically.
    other way also passes.
 
 10. [ ] **Confirm radio identity** — open the UI and check there's no
-    identity-mismatch banner, or:
+    identity-mismatch banner, or read it straight from
+    `data/instance.json` (no login needed — this is the same file
+    `scripts/verify-install.sh` checks, and it works whether or not
+    password protection is enabled):
     ```bash
-    curl -s http://127.0.0.1:5000/api/node-manager/dashboard | grep -o '"identity_status":"[A-Z_]*"'
-    # expect: "identity_status":"MATCH"
+    python3 -c "import json; print(json.load(open('data/instance.json'))['runtime']['identity_status'])"
+    # expect: MATCH
     ```
+    `/api/node-manager/dashboard` shows the same status, but it's a
+    protected endpoint — if AUTH_ENABLED is on (the default since PR #131),
+    an unauthenticated `curl` against it correctly gets a 401, not the
+    identity JSON.
 
 11. [ ] **Run the automated check**
     ```bash

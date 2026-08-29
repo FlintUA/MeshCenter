@@ -1,7 +1,17 @@
-Flask>=3.0.0
-Pillow>=10.0.0
-requests>=2.31.0
-psutil>=5.9.0
+# P1 #14 stabilization follow-up: range-pinned (lower bound = what's
+# actually been live-verified, upper bound = the next untested major),
+# same reasoning as gunicorn's own pin below - not exact `==` pins
+# (this is a small Flask monolith installed directly via
+# `pip install -r requirements.txt` on real Pi nodes with no lock-file
+# build step, not a project with a large transitive dependency graph or
+# multiple deployment targets that would justify a pip-compile-generated
+# lock file), but not left fully unbounded either. Live-verified versions
+# on dev (!756f9960) at the time of this pin: Flask 3.1.3, Pillow 11.1.0,
+# requests 2.32.3, psutil 7.2.2.
+Flask>=3.0.0,<4.0.0
+Pillow>=10.0.0,<12.0.0
+requests>=2.31.0,<3.0.0
+psutil>=5.9.0,<8.0.0
 # Task 48: the meshtastic package (GPLv3) no longer lives in Core's own
 # venv - Core never imports it directly (adapters/meshtastic/*.py are the
 # only modules that do, and they run in a separate process/venv, see
@@ -11,7 +21,7 @@ psutil>=5.9.0
 # --info calls (arm's-length subprocess invocation, not an import) -
 # meshsrv/runtime_identity.py's resolve_meshtastic_cli() finds that
 # binary in the adapter venv created by install.sh's step_adapter_venv().
-v4l2py>=3.0.0
+v4l2py>=3.0.0,<4.0.0
 # Production WSGI server (see gunicorn.conf.py / deploy/meshcenter.service).
 # Pinned to the 23.x line - gunicorn's own worker/arbiter internals (the
 # gthread worker class specifically, which /video_feed's long-lived MJPEG

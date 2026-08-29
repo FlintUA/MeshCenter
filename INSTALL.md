@@ -33,14 +33,14 @@ your situation, they are not interchangeable steps of the same process:
 - Internet connection during installation
 
 **Minimum (Manual install):**
-- Any Linux system with Python 3.9+
-- Debian 11 (Bullseye) or newer / Ubuntu 22.04 LTS or newer
+- Any Linux system with Python 3.11+
+- Debian 12 (Bookworm) or newer / Ubuntu 23.04 or newer
 - 500MB free disk space · 512MB RAM · systemd
 
 **Not supported:**
 - Windows / macOS
 - Raspberry Pi OS 32-bit (lgpio compatibility issues)
-- Debian 10 (Buster) or older (Python 3.7 — too old)
+- Debian 11 (Bullseye) or older (Python 3.9/3.10 — below the 3.11 minimum) / Ubuntu 22.04 LTS or older (same reason)
 - Alpine Linux (musl libc — pip build failures)
 
 ---

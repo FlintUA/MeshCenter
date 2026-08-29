@@ -26,7 +26,7 @@ PROGRESS_PORT=80
 LOG_FILE="/tmp/meshcenter-install.log"
 PROGRESS_FILE="/tmp/meshcenter-progress.txt"
 MIN_PYTHON_MAJOR=3
-MIN_PYTHON_MINOR=9
+MIN_PYTHON_MINOR=11
 MIN_FREE_MB=500
 MIN_RAM_MB=512
 
@@ -118,9 +118,9 @@ step_preflight() {
         *) warn "Unknown architecture: $ARCH. Proceeding anyway." ;;
     esac
 
-    # Python >= 3.9
+    # Python >= 3.11
     command -v python3 &>/dev/null || \
-        fail "python3 not found. Install Python 3.9+ first."
+        fail "python3 not found. Install Python 3.11+ first."
 
     PY_MAJOR=$(python3 -c "import sys; print(sys.version_info.major)")
     PY_MINOR=$(python3 -c "import sys; print(sys.version_info.minor)")

@@ -29,6 +29,38 @@ jobs:
       - name: Byte-compile all Python sources
         run: python -m compileall -q .
 
+      - name: GPLv3 license-boundary check (meshtastic import stays inside adapters/meshtastic/)
+        run: |
+          set -e
+          # git ls-files, not a filesystem walk: scopes this to tracked
+          # sources only, so it can never be polluted by an untracked
+          # local scratch/worktree directory (verified: this repo's own
+          # .claude/worktrees/ holds pre-Task-48 code with real, now-
+          # historical `from meshtastic... import SerialInterface` lines -
+          # gitignored, so git ls-files never sees them, but a raw
+          # `grep -r .` would have and failed this check on files that
+          # were never part of the repo).
+          #
+          # Anchored to actual import statements (optional leading
+          # whitespace, \b word boundary after "meshtastic") - an
+          # unanchored substring grep for "import meshtastic"/"from
+          # meshtastic" also matches "import meshtastic_transport" (a
+          # first-party module name that happens to start with
+          # "meshtastic", see meshsrv/meshtastic_transport.py) and dozens
+          # of comments/docstrings/test mock class names across this
+          # codebase that mention SerialInterface/BLEInterface in prose -
+          # verified against the current tree before writing this step:
+          # an unanchored version produced ~45 false-positive hits here,
+          # none of them a real violation.
+          HITS=$(git ls-files -- '*.py' | grep -v "^adapters/meshtastic/" \
+              | xargs grep -nE "^\s*(import meshtastic\b|from meshtastic\b)" || true)
+          if [ -n "$HITS" ]; then
+            echo "GPLv3 boundary violation: meshtastic imported outside adapters/meshtastic/:"
+            echo "$HITS"
+            exit 1
+          fi
+          echo "OK - no meshtastic import found outside adapters/meshtastic/"
+
       - name: Shell script syntax check (bash -n)
         run: |
           set -e

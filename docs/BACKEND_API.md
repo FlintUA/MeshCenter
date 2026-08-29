@@ -1,12 +1,15 @@
 # Backend Protocol v1
 
-Status: **draft, interface-only** (Task 43.5). No implementation exists yet.
-`SerialTransport` (Task 44) and `BLETransport` (Task 45) will implement this
-contract; the Python interface lives in
-[`meshsrv/radio_transport.py`](../meshsrv/radio_transport.py) as an
-`abc.ABC` — this document also defines the JSON wire shape the same contract
-maps onto once the adapter is moved behind a subprocess boundary (Task 48).
-Until then, Core calls the Python interface directly, in-process.
+Status: **implemented and live** — `SerialTransport` (Task 44) and
+`BLETransport` (Task 45) implement this contract; the Python interface lives
+in [`meshsrv/radio_transport.py`](../meshsrv/radio_transport.py) as an
+`abc.ABC`. Task 48's process-isolation boundary has also landed: Core
+(`server.py`) constructs `AdapterIPCTransport`/`AdapterSupervisor`
+(`meshsrv/adapter_ipc_client.py`) and wires them into `TransportRouter` —
+the concrete transports run in a separate OS process (the "adapter"
+subprocess), not in-process inside Core, and this document's "JSON wire
+shape" section below is the real, in-use serialization for that boundary
+(implemented in `meshsrv/ipc_protocol.py`), not a forward-looking sketch.
 
 `protocol_version` (currently `1`) is present on every JSON message so the
 IPC boundary introduced in Task 48 can detect a Core/adapter version
@@ -15,11 +18,15 @@ mismatch instead of failing opaquely.
 ## Where this comes from
 
 Five call sites in Core (`server.py`, `api/api_chat.py` ×2,
-`meshsrv/schedule_actions.py`, `storage/waypoint_sender.py`) import
-`meshtastic` (GPLv3) directly today — a real copyleft violation, not a
-formality. This protocol is the boundary that isolates all Meshtastic
-specifics (Serial today, BLE from Task 45) behind neutral models, so Core
-(MIT) never imports `meshtastic` once Task 48 lands.
+`meshsrv/schedule_actions.py`, `storage/waypoint_sender.py`) used to import
+`meshtastic` (GPLv3) directly — a real copyleft violation, not a formality.
+This protocol is the boundary that isolates all Meshtastic specifics
+(Serial, BLE) behind neutral models, and Task 48 landing closed that
+violation for real: `import meshtastic`/`from meshtastic ...` no longer
+appears anywhere in Core (verified by grep, not assumed — CI now enforces
+this on every PR/push, see `.github/workflows/ci.yml`'s "GPLv3
+license-boundary check" step). The five call sites above now go through
+`TransportRouter`/`RadioTransport` instead.
 
 ## Operations
 
@@ -44,11 +51,11 @@ specifics (Serial today, BLE from Task 45) behind neutral models, so Core
 `get_channels` was not in the original Task 43.5 operation list handed
 down from the plan document, even though `channel` was already listed
 among the neutral models below. `api/api_chat.py`'s
-`discover_radio_channels()` reads exactly this today — without a
-corresponding method, that functionality has nowhere to go in Task 44. This
-mirrors the gap the plan already caught and fixed once, for `send_waypoint`
-and `set_device_time`. **Flagged for confirmation before Task 44**, not
-assumed.
+`discover_radio_channels()` reads exactly this today. This mirrored the gap
+the plan already caught and fixed once, for `send_waypoint` and
+`set_device_time` — **resolved**: `get_channels` is implemented in both
+`SerialTransport` and `BLETransport` (`adapters/meshtastic/`), not just
+declared on the interface.
 
 ## Timeouts
 
@@ -81,11 +88,22 @@ Only an OS process can be `SIGKILL`ed.
    session from a previous attempt blocking the next `connect()` until an
    out-of-band `bluetoothctl disconnect`.
 
-**Which one is implemented at this stage: tier 1 only.** An implementation
-that wants real resource release before Task 48 has to arrange it itself —
-e.g. run the risky library call in its own short-lived subprocess (which
-*can* be `SIGKILL`ed) rather than a thread. That is an implementation
-decision for Task 44/45, not something this interface guarantees for them.
+**Both tiers are implemented now that Task 48 has landed.** Tier 1
+(non-blocking return) has held since Task 44/45; tier 2 (resource release)
+is real as of Task 48's process boundary — `AdapterSupervisor.call()`
+(`meshsrv/adapter_ipc_client.py`) waits up to the caller's declared budget
+for a response and `SIGKILL`s the adapter subprocess on expiry, so a
+wedged call's orphaned resources (event loop, live bleak/GATT session) go
+away with the process, not just get abandoned in a still-running thread.
+BLE cleanup on a kill is handled explicitly too: a `SIGKILL`'d adapter's
+serial file descriptors are reclaimed by the kernel automatically, but a
+BLE GATT session (brokered through BlueZ over D-Bus) can outlive the
+process that opened it, so Core runs `bluetoothctl disconnect <address>`
+itself when a kill happens mid-BLE-operation (see
+`meshsrv/adapter_ipc_client.py`'s module docstring for the full detail,
+including the two independent layers — `KillMode=control-group` and
+`PR_SET_PDEATHSIG` — that separately cover Core itself dying with the
+adapter still alive).
 
 ## Reconnect / teardown
 
@@ -153,23 +171,42 @@ use today. A normalized event stream (`message_received`, `node_updated`,
 `telemetry`, `connection_state`) is explicitly deferred to Stage B (Task
 49+, "Stage B listener").
 
-## JSON wire shape (for Task 48's subprocess IPC boundary)
+## JSON wire shape (Task 48's subprocess IPC boundary — implemented, in use)
 
-Not used yet — Core calls the Python interface in-process through Task 47.
-Documented now so Task 48 has no interface redesign to do, only a
-serialization layer.
+Implemented in `meshsrv/ipc_protocol.py` (Core side) and
+`adapters/meshtastic/ipc_server.py` (adapter side); this is the real,
+current serialization for every call between Core and the adapter
+subprocess, not a forward-looking sketch.
+
+One deliberate addition beyond what was originally sketched here: every
+request also carries a `transport_type` field (`"serial"` or
+`"bluetooth"`), telling the adapter subprocess which of its two live
+transport instances (`SerialTransport`/`BLETransport`) to route this call
+to. This keeps the adapter subprocess stateless about "which transport is
+active" — `TransportRouter` on Core's side already tracks that, and
+forwarding it on every request means Core and the adapter can never
+disagree about it after a partial failure the way two independently
+tracked "active" flags could (see `adapters/meshtastic/ipc_server.py`'s
+module docstring, "STATELESS ROUTING"). Shown below on the `connect()`
+example.
 
 ```jsonc
-// Request
+// Request - params.message is a full OutgoingMessage dict, nested under
+// a "message" key (matching AdapterIPCTransport.send_text()'s actual
+// {"message": outgoing_message_to_dict(message)} call, not a flat dict
+// of the message's own fields)
 {
   "protocol_version": 1,
   "operation": "send_text",
+  "transport_type": "serial",
   "params": {
-    "text": "hello mesh",
-    "destination_id": "^all",
-    "channel_index": 0,
-    "want_ack": false,
-    "reply_id": null
+    "message": {
+      "text": "hello mesh",
+      "destination_id": "^all",
+      "channel_index": 0,
+      "want_ack": false,
+      "reply_id": null
+    }
   },
   "timeout": 15.0
 }
@@ -201,24 +238,36 @@ serialization layer.
 ```
 
 ```jsonc
-// connect()
+// connect() - transport_type is the stateless-routing addition, see above.
+// `timeout` is top-level only, not duplicated inside `params` - `params`
+// here is exactly {descriptor, force}, matching AdapterIPCTransport.
+// connect()'s actual call site (meshsrv/adapter_ipc_client.py).
 {
   "protocol_version": 1,
   "operation": "connect",
+  "transport_type": "bluetooth",
   "params": {
     "descriptor": {
       "type": "bluetooth",
       "address": "3C:DC:75:6F:99:61",
       "label": "FLT2_9960"
     },
-    "force": true,
-    "timeout": 30.0
-  }
+    "force": true
+  },
+  "timeout": 30.0
 }
 ```
 
 ```jsonc
-// get_connection_info() response
+// connect()'s response - this ConnectionInfo shape is what populates
+// AdapterIPCTransport's local cache, which get_connection_info() then
+// serves from directly (Task 48 design decision: get_connection_info()
+// itself is non-blocking/cache-only and never crosses the IPC boundary at
+// all - see AdapterIPCTransport.get_connection_info() in
+// meshsrv/adapter_ipc_client.py, "never cross the IPC boundary, per the
+// approved investigation report"). Shown here as a response because this
+// exact shape is real wire traffic on every connect()/reconnect() call,
+// just not one this specific method name triggers itself.
 {
   "protocol_version": 1,
   "ok": true,

@@ -29,11 +29,12 @@ completely stateless about "which one is active", so Core and the
 adapter can never disagree about it after a partial failure the way two
 independently-tracked "active" flags could.
 
-Not started from server.py yet - server.py still constructs
-SerialTransport/BLETransport in-process (unchanged). This is a
-free-standing module Core's supervisor spawns; it works today against a
-real venv with meshtastic/bleak installed, wiring it into server.py is
-the next increment.
+Wired into server.py: `AdapterSupervisor` spawns this module as
+`<adapter venv>/bin/python -m adapters.meshtastic.ipc_server`, and
+`AdapterIPCTransport` (both in `meshsrv/adapter_ipc_client.py`) is the
+concrete `RadioTransport` implementation `server.py` actually constructs
+and routes through `TransportRouter` - not an in-process
+SerialTransport/BLETransport construction any more.
 """
 from __future__ import annotations
 

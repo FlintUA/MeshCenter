@@ -585,7 +585,14 @@ class AdapterIPCTransport(RadioTransport):
                 # since freeing the port is a fixed-magnitude operation.
                 # What it actually took IS subtracted from the caller's
                 # budget below - dynamic, not a fixed proportion (see
-                # module docstring).
+                # module docstring). KNOWN TRADE-OFF: the more thorough
+                # (and more correct) the port-busy check inside this
+                # claim is, the slower a worst-case claim can be on slow
+                # hardware, and the less of `remaining` is left for the
+                # actual call() below - see
+                # SerialPortSupervisor.check_port_release_once()'s own
+                # docstring for the specific trade-off this was measured
+                # against (P0 stabilization follow-up).
                 with self._core_serial_transport.claim_exclusive_access():
                     elapsed = time.monotonic() - start
                     remaining = max(1.0, timeout - elapsed)

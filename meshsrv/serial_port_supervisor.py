@@ -417,6 +417,32 @@ class SerialPortSupervisor:
         "confirmed not-X" - that exact collapse (an lsof timeout treated
         as a busy port) was the root cause of the corruption cascade this
         module was rewritten to fix.
+
+        KNOWN TRADE-OFF, explicitly accepted (review follow-up, not a
+        free improvement): falling through past every inconclusive layer
+        means a genuinely stuck check can now try known-PID, /proc scan,
+        `fuser`, AND `lsof` in sequence before giving up, instead of just
+        `lsof` alone - on hardware where BOTH external tools are slow
+        (not just `lsof`, the one originally caught live on Droidian),
+        one call to this method can now take longer in the worst case
+        than the old lsof-only version did. That eats into
+        AdapterIPCTransport._call()'s own
+        `remaining = max(1.0, timeout - elapsed)` budget split
+        (meshsrv/adapter_ipc_client.py) for the actual IPC round-trip
+        that follows the claim - a slower claim phase here can mean less
+        of the caller's declared timeout is left for the adapter call
+        itself, which can surface as more frequent "adapter subprocess
+        did not respond within {remaining}s" kills on such hardware.
+        Live-measured on the Droidian node this was written for: the
+        combined effect (this correctness fix plus the stdout-corruption
+        fix it shipped alongside) still reduced that kill frequency
+        roughly 3.7x (~1/11s before both fixes -> ~1/41s after), so this
+        is a real trade-off being made deliberately, not a regression
+        being introduced - but if a future device turns up where `fuser`
+        is ALSO systematically slow (not just `lsof`), a higher kill
+        frequency for short-timeout callers is the expected, already-
+        accepted consequence of this design choice, not a new bug to
+        rediscover from scratch.
         """
         known_pid = self._check_known_pid()
         if known_pid == PortReleaseOutcome.PORT_BUSY:

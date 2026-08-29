@@ -239,7 +239,9 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         try:
             scan_result = network_config.scan()
             if not scan_result.get("ok"):
-                return jsonify({"ok": False, "error": scan_result.get("reason", "scan failed"), "networks": []}), 500
+                reason = scan_result.get("reason", "scan failed")
+                log_system_event("Wi-Fi scan failed", "ERROR", reason, source="wifi")
+                return jsonify({"ok": False, "error": reason, "networks": []}), 500
             out = scan_result.get("stdout", "")
             networks = []
             current = None
@@ -309,6 +311,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
                 net["saved"] = net.get("ssid") in saved_wifi
             result["networks"].sort(key=lambda n: (not n.get("connected", False), -(n.get("signal") or 0)))
         except Exception as e:
+            log_system_event("Wi-Fi scan failed", "ERROR", str(e), source="wifi")
             return jsonify({"ok": False, "error": str(e), "networks": []}), 500
         return jsonify(result)
 

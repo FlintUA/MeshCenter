@@ -10249,7 +10249,9 @@ async function loadWifiNetworks() {
         const data = await response.json();
 
         if (!data.ok) {
-            list.innerHTML = escapeHtml(window.I18N.t('system.scan_failed'));
+            const reason = data.error || window.I18N.t('errors.unknown_error');
+            list.innerHTML = escapeHtml(window.I18N.t('system.wifi_scan_failed', { reason }));
+            showToast(`❌ ${window.I18N.t('system.wifi_scan_failed', { reason })}`, 'error');
             return;
         }
 

@@ -308,7 +308,25 @@ class SerialPortSupervisor:
         port - pure in-process file I/O, no subprocess spawn, so unlike
         `lsof` it cannot itself hit an external-command timeout. Linux-
         only; returns None (inconclusive, fall through to the next layer)
-        wherever /proc isn't usable rather than guessing."""
+        wherever /proc isn't usable rather than guessing.
+
+        ASYMMETRIC RELIABILITY (review finding, not hypothetical): a
+        PORT_BUSY answer from this scan is trustworthy unconditionally -
+        finding even one fd resolving to the port is proof, regardless of
+        whose process it belongs to. A PORT_FREE answer is NOT
+        equivalent-strength: `except (OSError, PermissionError): continue`
+        below means a PID directory this process lacks permission to read
+        into is silently skipped, not reported as inconclusive - so a
+        holder running as a different user (e.g. someone's root-owned
+        `screen /dev/ttyACM0` debugging session) is invisible to this
+        scan and would make it report PORT_FREE while the port is
+        genuinely busy. This is exactly the class of mistake the whole
+        layered rework exists to stop making (collapsing "couldn't find
+        evidence" into "confirmed absent") - so check_port_release_once()
+        below deliberately does NOT treat this method's PORT_FREE as
+        final; only its PORT_BUSY short-circuits the chain. See that
+        method's own docstring.
+        """
         proc_root = Path("/proc")
         if not proc_root.is_dir():
             return None
@@ -326,8 +344,12 @@ class SerialPortSupervisor:
             try:
                 fd_entries = list((pid_dir / "fd").iterdir())
             except (OSError, PermissionError):
-                # Not our process, or it exited mid-scan - not a scan
-                # failure, just an entry we can't see into.
+                # Not our process, or it exited mid-scan, OR (see the
+                # ASYMMETRIC RELIABILITY note above) a different user's
+                # process we simply can't see into - these three cases
+                # are indistinguishable from here, which is exactly why a
+                # clean scan below only ever produces a provisional
+                # PORT_FREE, never a final one.
                 continue
             for fd_entry in fd_entries:
                 try:
@@ -366,29 +388,47 @@ class SerialPortSupervisor:
 
     def check_port_release_once(self) -> PortReleaseOutcome:
         """One pass through the full layered strategy: known PID -> /proc
-        fd scan -> fuser -> lsof. Returns as soon as a layer gives a
-        definitive PORT_FREE/PORT_BUSY answer; an inconclusive layer
-        (None, or CHECK_FAILED/CHECK_TIMEOUT/UTILITY_MISSING from an
-        external tool) falls through to the next one. The final layer's
-        own outcome (including an inconclusive one) is returned as-is if
-        every layer was inconclusive - the caller (wait_serial_release())
-        decides how to treat that, this method never silently upgrades
-        "couldn't tell" into "busy"."""
-        outcome = self._check_known_pid()
-        if outcome is not None:
-            return outcome
+        fd scan -> fuser -> lsof.
 
-        outcome = self._check_proc_fd_scan()
-        if outcome is not None and outcome != PortReleaseOutcome.CHECK_FAILED:
-            return outcome
+        DELIBERATELY ASYMMETRIC (review finding): PORT_BUSY from ANY
+        layer short-circuits immediately and is trusted unconditionally -
+        a positive finding (something IS holding the port) doesn't
+        depend on having looked everywhere, so it can never be a false
+        positive this way, no matter which layer produced it.
 
-        outcome = self._check_fuser()
-        if outcome not in (
-            PortReleaseOutcome.CHECK_FAILED,
-            PortReleaseOutcome.CHECK_TIMEOUT,
-            PortReleaseOutcome.UTILITY_MISSING,
-        ):
-            return outcome
+        PORT_FREE is different, and is NOT treated the same way. Every
+        layer before the last one can only fail to find evidence of a
+        holder, not prove none exists - _check_known_pid() only ever
+        knows about OUR OWN listener process by design, and
+        _check_proc_fd_scan()/_check_fuser() can each silently miss a
+        holder running as a different user they lack permission to
+        inspect (see _check_proc_fd_scan()'s own ASYMMETRIC RELIABILITY
+        note for the concrete scenario this isn't hypothetical for - a
+        root-owned debugging session on the port, invisible to a
+        non-root scan). So PORT_FREE/None/any inconclusive outcome from
+        every layer up to (not including) the final one falls through to
+        the next layer instead of terminating - only the LAST layer's
+        answer (lsof, the existing, previously-sole check this whole
+        rework is layered in front of) is trusted as a final PORT_FREE.
+
+        This is the exact principle the whole rework exists to enforce,
+        applied to the layers among themselves too, not just to
+        `lsof` alone: never collapse "couldn't find evidence of X" into
+        "confirmed not-X" - that exact collapse (an lsof timeout treated
+        as a busy port) was the root cause of the corruption cascade this
+        module was rewritten to fix.
+        """
+        known_pid = self._check_known_pid()
+        if known_pid == PortReleaseOutcome.PORT_BUSY:
+            return known_pid
+
+        fd_scan = self._check_proc_fd_scan()
+        if fd_scan == PortReleaseOutcome.PORT_BUSY:
+            return fd_scan
+
+        fuser = self._check_fuser()
+        if fuser == PortReleaseOutcome.PORT_BUSY:
+            return fuser
 
         return self._check_lsof()
 

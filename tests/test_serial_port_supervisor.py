@@ -194,3 +194,50 @@ def test_known_pid_free_is_not_treated_as_port_confirmed_free():
 class _AlwaysRunningProcess:
     def poll(self):
         return None  # None = still running, matching subprocess.Popen.poll()'s own contract
+
+
+# --- Review follow-up: asymmetric BUSY/FREE trust between layers -------------
+# A PORT_FREE from an intermediate layer (proc_fd_scan, fuser) is NOT the
+# same strength of evidence as its own PORT_BUSY - a cross-user process
+# holding the port (e.g. a root-owned debugging `screen /dev/ttyACM0`
+# session) is invisible to a scan/tool this process lacks permission to
+# see into, so it would silently report PORT_FREE while the port is
+# genuinely busy. Only PORT_BUSY short-circuits early; PORT_FREE from
+# anything but the LAST layer (lsof) must fall through for confirmation.
+
+def test_intermediate_layer_port_free_is_not_trusted_falls_through_to_next_layer():
+    """proc_fd_scan saying PORT_FREE must not end the check - fuser is
+    still consulted, and its PORT_BUSY answer wins over the earlier
+    PORT_FREE."""
+    supervisor = _make_supervisor()
+    supervisor._port = "/dev/ttyACM0"
+    supervisor._check_known_pid = lambda: None
+    supervisor._check_proc_fd_scan = lambda: PortReleaseOutcome.PORT_FREE
+    supervisor._check_fuser = lambda: PortReleaseOutcome.PORT_BUSY
+
+    def _fail_if_called():
+        raise AssertionError("lsof should never be reached - fuser already answered BUSY")
+
+    supervisor._check_lsof = _fail_if_called
+
+    assert supervisor.check_port_release_once() == PortReleaseOutcome.PORT_BUSY
+
+
+def test_only_the_final_layer_lsof_can_confirm_port_free():
+    """Every intermediate PORT_FREE must fall through all the way to
+    lsof - the last layer in the chain - before the result is trusted as
+    a genuine "confirmed free". If lsof itself can't confirm either
+    (timeout/failed/missing), that inconclusive outcome is the final
+    answer - it must never be silently upgraded to PORT_FREE just
+    because earlier layers guessed free."""
+    supervisor = _make_supervisor()
+    supervisor._port = "/dev/ttyACM0"
+    supervisor._check_known_pid = lambda: None
+    supervisor._check_proc_fd_scan = lambda: PortReleaseOutcome.PORT_FREE
+    supervisor._check_fuser = lambda: PortReleaseOutcome.PORT_FREE
+
+    supervisor._check_lsof = lambda: PortReleaseOutcome.PORT_FREE
+    assert supervisor.check_port_release_once() == PortReleaseOutcome.PORT_FREE
+
+    supervisor._check_lsof = lambda: PortReleaseOutcome.CHECK_TIMEOUT
+    assert supervisor.check_port_release_once() == PortReleaseOutcome.CHECK_TIMEOUT

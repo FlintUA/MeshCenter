@@ -447,3 +447,187 @@ def test_transport_error_raised_inside_claim_propagates_cleanly_not_frozeninstan
     assert excinfo.value.code == TransportErrorCode.TIMEOUT
     assert "did not respond within" in excinfo.value.message
     assert core_serial.claim_calls == 1
+
+
+# --- P0 stabilization follow-up (Droidian-caught stdout-corruption cascade) ---
+# All against the REAL fake_adapter.py subprocess (not mocked-out proc/pipe
+# behavior), matching this file's own established approach.
+
+def test_a_few_stray_non_json_lines_are_tolerated_then_the_real_response_wins():
+    """The actual fix for the corruption mechanism: a handful of stray
+    non-JSON lines (well under MAX_NON_JSON_LINES) on the adapter's
+    stdout - simulating a print() slipping through despite ipc_server.py's
+    own redirect_stdout - must NOT kill the adapter or fail the call, as
+    long as the real JSON response still follows within the same overall
+    timeout. Pre-fix behavior: the very first bad line killed the adapter
+    outright."""
+    supervisor = _make_supervisor()
+
+    response = supervisor.call(
+        {"operation": "get_metadata", "transport_type": "serial", "params": {"_test_behavior": "noisy:3"}, "timeout": 5.0},
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+
+    assert response["ok"] is True
+    # See test_tolerated_noisy_lines_do_not_trigger_a_respawn() below for
+    # the stronger process-identity check (this one just confirms the
+    # call itself succeeds).
+
+
+def test_tolerated_noisy_lines_do_not_trigger_a_respawn():
+    """Same scenario as above, checked more directly: the PID echoed back
+    on the (still-first) successful response must be the SAME process
+    that was already spawned, not a new one - proving the noisy lines
+    were tolerated in-place, not papered over by a kill+respawn cycle
+    that would coincidentally still succeed."""
+    supervisor = _make_supervisor()
+
+    first = supervisor.call(
+        {"operation": "get_metadata", "transport_type": "serial", "params": {}, "timeout": 5.0},
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+    first_pid = first["result"]["_pid"]
+    assert first_pid is not None
+
+    second = supervisor.call(
+        {"operation": "get_metadata", "transport_type": "serial", "params": {"_test_behavior": "noisy:3"}, "timeout": 5.0},
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+    # fake_adapter.py only echoes _pid on its own first request - a
+    # respawn would reset that script-level "first" flag on a new
+    # process, so a non-None _pid here would itself prove a respawn
+    # happened; None confirms this is still the same process's second
+    # request being answered, tolerated line and all.
+    assert second["result"]["_pid"] is None
+
+
+def test_more_non_json_lines_than_the_tolerance_gives_a_distinct_protocol_error():
+    """Exceeding MAX_NON_JSON_LINES must fail fast with a distinct,
+    diagnosable error code (ADAPTER_PROTOCOL_ERROR) - not silently
+    tolerated forever, and not conflated with ADAPTER_UNAVAILABLE/UNKNOWN,
+    the same principle P0.3 applies to the port-release check: don't
+    collapse genuinely different failure modes into one signal."""
+    supervisor = _make_supervisor()
+
+    with pytest.raises(TransportError) as excinfo:
+        supervisor.call(
+            {
+                "operation": "get_metadata",
+                "transport_type": "serial",
+                "params": {"_test_behavior": f"noisy:{adapter_ipc_client.MAX_NON_JSON_LINES + 5}"},
+                "timeout": 5.0,
+            },
+            timeout=5.0,
+            ble_address_for_cleanup=None,
+        )
+
+    assert excinfo.value.code == TransportErrorCode.ADAPTER_PROTOCOL_ERROR
+    assert "malformed line" in excinfo.value.message
+
+
+def test_protocol_error_kills_the_adapter_same_as_any_other_fatal_failure():
+    """A protocol-error response must still trigger the same kill+respawn
+    discipline as every other fatal outcome (timeout, crash, closed pipe)
+    - an adapter whose stdout protocol broke once should not be trusted
+    to keep answering on the same process."""
+    supervisor = _make_supervisor()
+
+    first = supervisor.call(
+        {"operation": "get_metadata", "transport_type": "serial", "params": {}, "timeout": 5.0},
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+    first_pid = first["result"]["_pid"]
+    assert first_pid is not None
+
+    with pytest.raises(TransportError):
+        supervisor.call(
+            {
+                "operation": "get_metadata",
+                "transport_type": "serial",
+                "params": {"_test_behavior": f"noisy:{adapter_ipc_client.MAX_NON_JSON_LINES + 5}"},
+                "timeout": 5.0,
+            },
+            timeout=5.0,
+            ble_address_for_cleanup=None,
+        )
+
+    third = supervisor.call(
+        {"operation": "get_metadata", "transport_type": "serial", "params": {}, "timeout": 5.0},
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+    # A genuinely new process answers this one - fake_adapter.py echoes a
+    # non-None _pid only on ITS OWN first request.
+    assert third["result"]["_pid"] is not None
+    assert third["result"]["_pid"] != first_pid
+
+
+def test_stderr_flood_does_not_wedge_the_adapter():
+    """P0.2: without a drain thread reading the adapter's stderr pipe,
+    enough stderr volume fills the OS pipe buffer (typically 64KB on
+    Linux) and the writing process blocks - which, without a drain
+    thread, would silently wedge the whole call until the caller's own
+    timeout fires, indistinguishable from a genuinely hung adapter. This
+    sends comfortably more than a typical pipe buffer's worth (256KB) to
+    stderr before responding on stdout, and expects the call to complete
+    well within its budget - proving the stderr side is actively drained,
+    not just occasionally read."""
+    import time
+
+    supervisor = _make_supervisor()
+
+    start = time.monotonic()
+    response = supervisor.call(
+        {
+            "operation": "get_metadata",
+            "transport_type": "serial",
+            "params": {"_test_behavior": "stderr_flood:262144"},
+            "timeout": 10.0,
+        },
+        timeout=10.0,
+        ble_address_for_cleanup=None,
+    )
+    elapsed = time.monotonic() - start
+
+    assert response["ok"] is True
+    assert elapsed < 8.0, (
+        f"took {elapsed:.2f}s for a 256KB stderr flood - should complete quickly if stderr is "
+        f"actively drained, not stall until close to the full 10s budget (a wedge, not a fast response)"
+    )
+
+
+def test_stderr_drain_forwards_lines_to_on_log():
+    """The drained stderr content must actually reach on_log() (used to
+    surface it in Core's own system log), not just be discarded to
+    prevent the pipe from filling - discarding real diagnostic output
+    (the exact print()s this whole effort relocated to stderr) would
+    trade one failure mode for a quieter one."""
+    import time
+
+    logged = []
+    supervisor = _make_supervisor(on_log=lambda msg, level="INFO": logged.append((msg, level)))
+
+    supervisor.call(
+        {
+            "operation": "get_metadata",
+            "transport_type": "serial",
+            "params": {"_test_behavior": "stderr_flood:4096"},
+            "timeout": 5.0,
+        },
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+
+    # The drain thread is async relative to call() returning (it keeps
+    # reading until the pipe closes) - give it a moment to have forwarded
+    # at least the lines written before the response was sent.
+    deadline = time.monotonic() + 2.0
+    while not logged and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+    assert logged, "stderr content was drained but never reached on_log()"
+    assert any("adapter stderr" in msg for msg, _level in logged)

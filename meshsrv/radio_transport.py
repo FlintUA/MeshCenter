@@ -56,6 +56,17 @@ class TransportErrorCode(str, Enum):
     # "radio not connected" apart from "the whole adapter is missing" at a
     # glance, not by string-matching last_error.message.
     ADAPTER_UNAVAILABLE = "adapter_unavailable"
+    # P0 stabilization follow-up (Droidian-caught stdout-corruption
+    # cascade): distinct from ADAPTER_UNAVAILABLE (adapter never reached/
+    # crashed/closed its pipe) and UNKNOWN (a genuinely nondescript
+    # failure) - this means the adapter WAS reached and responded, but
+    # what came back on stdout wasn't valid JSON after tolerating a
+    # bounded number of stray lines (AdapterSupervisor.call()'s reader -
+    # see MAX_NON_JSON_LINES/MAX_NON_JSON_BYTES there). A caller/UI can
+    # tell "the wire protocol itself broke" apart from "a radio-level
+    # thing failed" or "the adapter is missing entirely" at a glance, not
+    # by string-matching last_error.message.
+    ADAPTER_PROTOCOL_ERROR = "adapter_protocol_error"
 
 
 # ---------------------------------------------------------------------------

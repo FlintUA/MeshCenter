@@ -10,10 +10,11 @@ why this is a shared primitive, not Core-exclusive logic.
 No server.py import needed - SerialPortSupervisor takes radio_lock/
 pause_listen by DI and never imports server.py or meshtastic itself.
 """
+import subprocess
 import threading
 import time
 
-from meshsrv.serial_port_supervisor import SerialPortSupervisor
+from meshsrv.serial_port_supervisor import PortReleaseOutcome, SerialPortSupervisor
 
 
 def _make_supervisor():
@@ -87,3 +88,109 @@ def test_claim_exclusive_access_raises_busy_when_the_port_never_frees():
         assert error.code == TransportErrorCode.BUSY
     else:
         raise AssertionError("claim_exclusive_access() did not raise on a busy port")
+
+
+# --- P0 stabilization follow-up (Droidian-caught stdout-corruption cascade) ---
+# adapters/meshtastic/ipc_server.py's main() runs a SerialTransport that
+# composes ITS OWN SerialPortSupervisor instance (not Core's separate one) -
+# on that instance, this module's stdout IS the JSON-RPC protocol channel
+# back to Core. wait_serial_release() hitting an `lsof` subprocess timeout
+# used to `print(..., flush=True)` with no `file=` argument, defaulting to
+# stdout - corrupting the response Core was about to parse. This is
+# platform-independent (nothing here depends on real `lsof`/OS timing,
+# unlike the live Droidian report that first caught it) and does not touch
+# any live node.
+
+def test_lsof_timeout_never_reaches_stdout_only_stderr(monkeypatch, capsys):
+    """THE regression test for the reported corruption mechanism: force
+    subprocess.run (used by both the fuser and lsof fallback layers) to
+    raise TimeoutExpired - exactly what was observed, unreliably, on
+    Droidian - and confirm nothing lands on stdout, only stderr. The
+    known-PID and /proc/*/fd layers are forced inconclusive (return None)
+    so this test deterministically reaches the external-tool fallback
+    layers regardless of the platform running it (a real /proc scan on
+    Linux CI could otherwise short-circuit to PORT_FREE before ever
+    calling subprocess.run, silently skipping the actual case under
+    test)."""
+    supervisor = _make_supervisor()
+    supervisor._port = "/dev/ttyACM0"
+    monkeypatch.setattr(supervisor, "_check_known_pid", lambda: None)
+    monkeypatch.setattr(supervisor, "_check_proc_fd_scan", lambda: None)
+
+    def _raise_timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0][0] if args else "lsof", timeout=2)
+
+    monkeypatch.setattr(subprocess, "run", _raise_timeout)
+
+    result = supervisor.wait_serial_release(timeout=0.5)
+
+    assert result is False
+    captured = capsys.readouterr()
+    assert captured.out == "", f"a subprocess timeout must never print to stdout, got: {captured.out!r}"
+    assert "Serial port not confirmed free" in captured.err
+    assert "check_timeout" in captured.err
+
+
+def test_check_port_release_once_distinguishes_timeout_from_busy_from_missing():
+    """P0.3: an lsof/fuser timeout, a genuinely busy port, and a missing
+    utility must be distinguishable outcomes, not all collapsed into the
+    same "busy" signal - the actual root cause of the observed corruption
+    (a timeout was silently treated as proof of a busy port, prolonging
+    the exclusive-access claim window unnecessarily)."""
+    supervisor = _make_supervisor()
+    supervisor._port = "/dev/ttyACM0"
+    supervisor._check_known_pid = lambda: None
+    supervisor._check_proc_fd_scan = lambda: None
+
+    supervisor._check_fuser = lambda: PortReleaseOutcome.CHECK_TIMEOUT
+    supervisor._check_lsof = lambda: PortReleaseOutcome.CHECK_TIMEOUT
+    assert supervisor.check_port_release_once() == PortReleaseOutcome.CHECK_TIMEOUT
+
+    supervisor._check_fuser = lambda: PortReleaseOutcome.UTILITY_MISSING
+    supervisor._check_lsof = lambda: PortReleaseOutcome.UTILITY_MISSING
+    assert supervisor.check_port_release_once() == PortReleaseOutcome.UTILITY_MISSING
+
+    supervisor._check_fuser = lambda: PortReleaseOutcome.CHECK_FAILED
+    supervisor._check_lsof = lambda: PortReleaseOutcome.PORT_BUSY
+    assert supervisor.check_port_release_once() == PortReleaseOutcome.PORT_BUSY
+
+
+def test_known_pid_busy_short_circuits_before_any_external_tool():
+    """The known-PID layer answering PORT_BUSY must skip every layer
+    below it entirely (cheapest check first) - proven by making every
+    other layer raise if reached, not just by checking the return value."""
+    supervisor = _make_supervisor()
+    supervisor._port = "/dev/ttyACM0"
+    with supervisor._radio_lock:
+        supervisor._listen_process = _AlwaysRunningProcess()
+
+    def _fail_if_called(*a, **k):
+        raise AssertionError("should never be reached - known-PID layer already answered BUSY")
+
+    supervisor._check_proc_fd_scan = _fail_if_called
+    supervisor._check_fuser = _fail_if_called
+    supervisor._check_lsof = _fail_if_called
+
+    assert supervisor.check_port_release_once() == PortReleaseOutcome.PORT_BUSY
+
+
+def test_known_pid_free_is_not_treated_as_port_confirmed_free():
+    """Explicit test for the review's own caveat: "our listener isn't
+    holding it" must NOT short-circuit straight to PORT_FREE - only to
+    "inconclusive, ask the next layer" (None). An orphaned process from a
+    previous crash, or an unrelated process on the device, would be
+    invisible to the known-PID check alone."""
+    supervisor = _make_supervisor()
+    # No listener process at all - the known-PID layer's "not held by
+    # OUR process" case.
+    assert supervisor._check_known_pid() is None
+
+    # Confirm check_port_release_once() actually consults the next layer
+    # in this case, rather than treating None as a final PORT_FREE answer.
+    supervisor._check_proc_fd_scan = lambda: PortReleaseOutcome.PORT_BUSY
+    assert supervisor.check_port_release_once() == PortReleaseOutcome.PORT_BUSY
+
+
+class _AlwaysRunningProcess:
+    def poll(self):
+        return None  # None = still running, matching subprocess.Popen.poll()'s own contract

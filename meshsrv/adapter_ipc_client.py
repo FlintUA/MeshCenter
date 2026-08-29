@@ -182,6 +182,25 @@ _KILL_WAIT_TIMEOUT_S = 5.0
 
 _BLUETOOTHCTL_DISCONNECT_TIMEOUT_S = 10.0
 
+# P0 stabilization follow-up (Droidian-caught stdout-corruption cascade):
+# before this, ANY non-JSON line on the adapter's stdout - even one
+# stray print() from a source not yet audited - killed the adapter
+# outright on the very first bad line, no tolerance at all. These bound
+# how many/how much malformed content this reader will skip past before
+# giving up (still within the caller's own overall `timeout` budget -
+# this never extends it). Kept deliberately small (5 lines / 4KB, not
+# tens): tolerating a couple of stray lines absorbs the "one print() slipped
+# through despite ipc_server.py's redirect_stdout + the serial_port_
+# supervisor.py source fix" case this whole effort exists to paper over
+# as a last resort - but a stream producing MORE than a handful of bad
+# lines in a row is not a one-off print(), it's a sign the adapter's
+# stdout protocol is genuinely broken (wrong Python launched, a crash mid-
+# write, something writing a real log stream to stdout) and should fail
+# fast and diagnosably (ADAPTER_PROTOCOL_ERROR) rather than mask a bigger
+# problem behind a long tolerant wait.
+MAX_NON_JSON_LINES = 5
+MAX_NON_JSON_BYTES = 4096
+
 # Task 48 review, unaddressed gap in the original design: KillMode=
 # control-group in deploy/meshcenter.service (confirmed live on TAP2 via
 # `systemctl show -p KillMode` - not assumed from documentation) means a
@@ -337,14 +356,55 @@ class AdapterSupervisor:
             bufsize=1,
             preexec_fn=_set_pdeathsig_to_sigkill if sys.platform == "linux" else None,
         )
+        # P0 stabilization follow-up: stderr=PIPE above gives the adapter
+        # subprocess a real OS pipe with a finite kernel buffer (typically
+        # 64KB on Linux) - before this drain thread, nothing ever read it.
+        # A writer blocks once that buffer fills, so an adapter that logs
+        # enough to stderr (more likely now that ipc_server.py's
+        # redirect_stdout sends stray prints there too - see that
+        # module's serve_forever()) could wedge itself indefinitely on a
+        # stderr write nobody was ever going to drain. One daemon thread
+        # per spawned process (not shared across respawns - proc.stderr
+        # is a fresh pipe each time), forwarding each line to on_log()
+        # rather than discarding it, since it's real diagnostic
+        # information (exactly the print()s this whole effort relocated
+        # there), not noise to throw away.
+        proc = self._proc
+        threading.Thread(
+            target=self._drain_stderr, args=(proc,), daemon=True, name="adapter-stderr-drain"
+        ).start()
+
+    def _drain_stderr(self, proc: subprocess.Popen) -> None:
+        try:
+            for line in proc.stderr:
+                line = line.rstrip("\n")
+                if line:
+                    self._on_log(f"[adapter stderr] {line}", "WARNING")
+        except Exception:
+            # The pipe closing (process exited/killed) or any other read
+            # error ends the drain silently - this thread's only job is
+            # to keep the pipe from filling, not to report its own
+            # lifecycle; a killed/respawned adapter gets a fresh drain
+            # thread from the next _spawn_locked() call regardless.
+            pass
 
     def call(self, request: dict, *, timeout: float, ble_address_for_cleanup: Optional[str]) -> dict:
-        """Send one request, wait up to `timeout` for one response line.
-        On any failure to complete within that window - no response, a
-        write error, a dead process - kills the adapter (+ BLE cleanup
-        if `ble_address_for_cleanup` is set) and raises TransportError,
-        so the caller's thread is always released by `timeout`, never
-        left waiting on the subprocess itself."""
+        """Send one request, wait up to `timeout` for one valid JSON
+        response line - tolerating up to MAX_NON_JSON_LINES/
+        MAX_NON_JSON_BYTES of stray non-JSON output first (P0
+        stabilization follow-up: the adapter's stdout is also its IPC
+        channel, so one stray print() used to be fatal - see
+        adapters/meshtastic/ipc_server.py's serve_forever() and
+        meshsrv/serial_port_supervisor.py for where that could come from
+        and how it's now guarded at the source too). On any failure to
+        complete within the overall `timeout` window - no response, a
+        write error, a dead process, or malformed output past the
+        tolerance bounds (TransportErrorCode.ADAPTER_PROTOCOL_ERROR,
+        distinct from ADAPTER_UNAVAILABLE/UNKNOWN so this failure mode is
+        diagnosable on its own) - kills the adapter (+ BLE cleanup if
+        `ble_address_for_cleanup` is set) and raises TransportError, so
+        the caller's thread is always released by `timeout`, never left
+        waiting on the subprocess itself."""
         with self._proc_lock:
             if self._proc is None or self._proc.poll() is not None:
                 try:
@@ -374,8 +434,47 @@ class AdapterSupervisor:
             result_box: "queue.Queue[tuple[str, object]]" = queue.Queue(maxsize=1)
 
             def _read() -> None:
+                # P0 stabilization follow-up: parsing now happens IN this
+                # thread, not back in call() - lets it tolerate a bounded
+                # number of non-JSON lines (MAX_NON_JSON_LINES/
+                # MAX_NON_JSON_BYTES, see those constants' own comment for
+                # why) before giving up, instead of the previous behavior
+                # of killing the adapter on the very first malformed line
+                # - the actual mechanism of the observed Droidian
+                # corruption cascade (a single stray print() from
+                # wait_serial_release() was enough to kill a healthy
+                # adapter and cascade into serial contention). Still
+                # bounded by call()'s own `result_box.get(timeout=timeout)`
+                # below either way - tolerating bad lines never extends
+                # the caller's overall deadline, it only avoids treating
+                # ONE stray line as fatal within it.
+                bad_lines = 0
+                bad_bytes = 0
                 try:
-                    result_box.put(("ok", proc.stdout.readline()))
+                    while True:
+                        raw = proc.stdout.readline()
+                        if not raw:
+                            result_box.put(("closed", None))
+                            return
+                        stripped = raw.strip()
+                        if not stripped:
+                            continue
+                        try:
+                            parsed = json.loads(stripped)
+                        except json.JSONDecodeError:
+                            bad_lines += 1
+                            bad_bytes += len(raw)
+                            if bad_lines > MAX_NON_JSON_LINES or bad_bytes > MAX_NON_JSON_BYTES:
+                                result_box.put((
+                                    "protocol_error",
+                                    f"{bad_lines} malformed line(s) totaling {bad_bytes} bytes "
+                                    f"before giving up (limits: {MAX_NON_JSON_LINES} lines / "
+                                    f"{MAX_NON_JSON_BYTES} bytes)",
+                                ))
+                                return
+                            continue
+                        result_box.put(("ok", parsed))
+                        return
                 except Exception as exc:  # noqa: BLE001
                     result_box.put(("error", exc))
 
@@ -397,21 +496,18 @@ class AdapterSupervisor:
                     TransportErrorCode.ADAPTER_UNAVAILABLE, f"failed to read from adapter subprocess: {payload}"
                 )
 
-            line = str(payload).strip()
-            if not line:
+            if status == "closed":
                 self._kill_locked(ble_address_for_cleanup)
                 raise TransportError(
                     TransportErrorCode.ADAPTER_UNAVAILABLE,
                     "adapter subprocess closed its output unexpectedly (crashed or exited)",
                 )
 
-            try:
-                return json.loads(line)
-            except json.JSONDecodeError as error:
+            if status == "protocol_error":
                 self._kill_locked(ble_address_for_cleanup)
-                raise TransportError(
-                    TransportErrorCode.UNKNOWN, f"malformed response from adapter subprocess: {error}"
-                ) from error
+                raise TransportError(TransportErrorCode.ADAPTER_PROTOCOL_ERROR, str(payload))
+
+            return payload
 
     def _kill_locked(self, ble_address_for_cleanup: Optional[str]) -> None:
         """Caller must already hold self._proc_lock."""

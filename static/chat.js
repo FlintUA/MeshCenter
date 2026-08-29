@@ -11319,14 +11319,14 @@ async function runSystemAction(action, button) {
             success: window.I18N.t('system.meshcenter_restart_requested')
         },
         reboot: {
-            confirm: window.I18N.t('system.reboot_pi_confirm'),
-            pending: window.I18N.t('system.restarting_pi'),
-            success: window.I18N.t('system.pi_restart_requested')
+            confirm: window.I18N.t('system.reboot_device_confirm'),
+            pending: window.I18N.t('system.restarting_device'),
+            success: window.I18N.t('system.device_restart_requested')
         },
         shutdown: {
-            confirm: window.I18N.t('system.shutdown_pi_confirm'),
-            pending: window.I18N.t('system.shutting_down_pi'),
-            success: window.I18N.t('system.pi_shutdown_requested')
+            confirm: window.I18N.t('system.shutdown_device_confirm'),
+            pending: window.I18N.t('system.shutting_down_device'),
+            success: window.I18N.t('system.device_shutdown_requested')
         }
     };
 

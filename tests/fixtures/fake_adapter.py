@@ -15,6 +15,20 @@ adapter protocol never uses:
   "sleep:<seconds>" - sleeps that long, then responds ok=true - for
     proving a response that lands just inside vs. just outside the
     caller's deadline.
+  "noisy:<n>" - writes `n` non-JSON garbage lines to stdout BEFORE the
+    real JSON response (P0 stabilization follow-up: simulates a stray
+    print() slipping onto the protocol channel despite
+    ipc_server.py's redirect_stdout - proves AdapterSupervisor.call()'s
+    reader tolerates up to MAX_NON_JSON_LINES/MAX_NON_JSON_BYTES of this
+    before giving up, rather than killing the adapter on the very first
+    bad line like the pre-fix code did).
+  "stderr_flood:<bytes>" - writes at least `bytes` bytes to stderr
+    (chunked, flushed) before responding normally on stdout - simulates
+    enough adapter-side log volume to fill an undrained OS pipe buffer
+    (typically 64KB on Linux); if AdapterSupervisor has no stderr-drain
+    thread, the write blocks once the buffer fills and the whole call
+    wedges until the caller's own timeout fires instead of completing
+    normally.
 
 Writes its own PID to stdout on the FIRST request's response
 (`_pid` key) so a test can confirm a kill+respawn actually launched a
@@ -47,6 +61,21 @@ def main() -> None:
 
         if behavior.startswith("sleep:"):
             time.sleep(float(behavior.split(":", 1)[1]))
+
+        if behavior.startswith("noisy:"):
+            count = int(behavior.split(":", 1)[1])
+            for i in range(count):
+                sys.stdout.write(f"not json at all, garbage line {i}\n")
+                sys.stdout.flush()
+
+        if behavior.startswith("stderr_flood:"):
+            target_bytes = int(behavior.split(":", 1)[1])
+            written = 0
+            chunk = ("x" * 4096) + "\n"
+            while written < target_bytes:
+                sys.stderr.write(chunk)
+                sys.stderr.flush()
+                written += len(chunk)
 
         response = {
             "protocol_version": 1,

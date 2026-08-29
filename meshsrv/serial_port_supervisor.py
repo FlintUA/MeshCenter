@@ -41,13 +41,38 @@ from SerialTransport's own internal send/get methods too, not just
 """
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 import threading
 import time
 from contextlib import contextmanager
+from enum import Enum
+from pathlib import Path
 from typing import Callable, Optional
 
 from meshsrv.radio_transport import TransportError, TransportErrorCode
+
+
+class PortReleaseOutcome(str, Enum):
+    """P0 stabilization follow-up (Droidian-caught): wait_serial_release()
+    used to collapse every non-PORT_FREE case - a real busy port, an
+    `lsof` timeout, `lsof` erroring, `lsof` missing entirely - into the
+    same boolean False, indistinguishable from each other in both the
+    return value and the log line. Root cause of the observed corruption
+    cascade: on Droidian, `lsof` itself apparently hits its own 2s
+    subprocess timeout unreliably (slower/different I/O than the
+    Raspberry Pi hardware this was developed and live-verified against),
+    which every prior version of this code treated as "port busy" -
+    which then unnecessarily lengthened the exclusive-access claim,
+    increasing the odds a stray print() (see this module's print() call
+    sites, all now file=sys.stderr) would land on the adapter's stdout
+    protocol channel mid-claim."""
+    PORT_FREE = "port_free"
+    PORT_BUSY = "port_busy"
+    CHECK_TIMEOUT = "check_timeout"
+    CHECK_FAILED = "check_failed"
+    UTILITY_MISSING = "utility_missing"
 
 
 class SerialPortSupervisor:
@@ -134,7 +159,7 @@ class SerialPortSupervisor:
                     try:
                         self._on_raw_line(line)
                     except Exception as e:
-                        print(f"[SerialPortSupervisor] on_raw_line error: {e}", flush=True)
+                        print(f"[SerialPortSupervisor] on_raw_line error: {e}", file=sys.stderr, flush=True)
 
                 with self._radio_lock:
                     current = self._listen_process
@@ -157,7 +182,10 @@ class SerialPortSupervisor:
                     continue
 
                 if return_code is not None and return_code != 0:
-                    print(f"[SerialPortSupervisor] Listener process ended with code: {return_code}", flush=True)
+                    print(
+                        f"[SerialPortSupervisor] Listener process ended with code: {return_code}",
+                        file=sys.stderr, flush=True,
+                    )
                     consecutive_errors += 1
                 else:
                     consecutive_errors = 0
@@ -168,7 +196,10 @@ class SerialPortSupervisor:
 
             except Exception as e:
                 consecutive_errors += 1
-                print(f"[SerialPortSupervisor] run_listener (attempt {consecutive_errors}): {e}", flush=True)
+                print(
+                    f"[SerialPortSupervisor] run_listener (attempt {consecutive_errors}): {e}",
+                    file=sys.stderr, flush=True,
+                )
                 delay = min(consecutive_errors * 2, 30)
                 time.sleep(delay)
 
@@ -239,33 +270,222 @@ class SerialPortSupervisor:
                     proc.wait(timeout=5)
             return True
         except Exception as e:
-            print(f"[SerialPortSupervisor] Error stopping listener: {e}", flush=True)
+            print(f"[SerialPortSupervisor] Error stopping listener: {e}", file=sys.stderr, flush=True)
             return False
         finally:
             with self._radio_lock:
                 self._listen_process = None
             time.sleep(1.0)
 
+    # ------------------------------------------------------------------
+    # Port-release check (P0 stabilization follow-up) - layered, cheapest
+    # and most reliable check first, `lsof` (an external process, subject
+    # to its own timeout/missing-binary/hang risk - the actual root cause
+    # of the Droidian corruption cascade) only as a last resort. Each
+    # layer returns a PortReleaseOutcome or None ("inconclusive, ask the
+    # next layer") rather than collapsing straight to a bool.
+    # ------------------------------------------------------------------
+    def _check_known_pid(self) -> Optional[PortReleaseOutcome]:
+        """Cheapest, most limited check: is OUR OWN listener process still
+        holding the port? This answers "does our own listener still grip
+        me back", NOT "is the port free in general" - an orphaned process
+        left over from a previous adapter crash, or an entirely unrelated
+        process on the device, is invisible to this check by design. It
+        exists to short-circuit the common case (we know for a fact our
+        own listener is still up) cheaply; the layers below exist
+        precisely to catch what this one structurally cannot. Never treat
+        this returning None as "port confirmed free" - it only means "not
+        held by the process we already know about".
+        """
+        with self._radio_lock:
+            proc = self._listen_process
+        if proc is not None and proc.poll() is None:
+            return PortReleaseOutcome.PORT_BUSY
+        return None
+
+    def _check_proc_fd_scan(self) -> Optional[PortReleaseOutcome]:
+        """Scan /proc/*/fd for an open file descriptor resolving to this
+        port - pure in-process file I/O, no subprocess spawn, so unlike
+        `lsof` it cannot itself hit an external-command timeout. Linux-
+        only; returns None (inconclusive, fall through to the next layer)
+        wherever /proc isn't usable rather than guessing.
+
+        ASYMMETRIC RELIABILITY (review finding, not hypothetical): a
+        PORT_BUSY answer from this scan is trustworthy unconditionally -
+        finding even one fd resolving to the port is proof, regardless of
+        whose process it belongs to. A PORT_FREE answer is NOT
+        equivalent-strength: `except (OSError, PermissionError): continue`
+        below means a PID directory this process lacks permission to read
+        into is silently skipped, not reported as inconclusive - so a
+        holder running as a different user (e.g. someone's root-owned
+        `screen /dev/ttyACM0` debugging session) is invisible to this
+        scan and would make it report PORT_FREE while the port is
+        genuinely busy. This is exactly the class of mistake the whole
+        layered rework exists to stop making (collapsing "couldn't find
+        evidence" into "confirmed absent") - so check_port_release_once()
+        below deliberately does NOT treat this method's PORT_FREE as
+        final; only its PORT_BUSY short-circuits the chain. See that
+        method's own docstring.
+        """
+        proc_root = Path("/proc")
+        if not proc_root.is_dir():
+            return None
+        try:
+            target = os.path.realpath(self._port)
+        except OSError:
+            return None
+
+        try:
+            pid_dirs = [entry for entry in proc_root.iterdir() if entry.name.isdigit()]
+        except OSError:
+            return PortReleaseOutcome.CHECK_FAILED
+
+        for pid_dir in pid_dirs:
+            try:
+                fd_entries = list((pid_dir / "fd").iterdir())
+            except (OSError, PermissionError):
+                # Not our process, or it exited mid-scan, OR (see the
+                # ASYMMETRIC RELIABILITY note above) a different user's
+                # process we simply can't see into - these three cases
+                # are indistinguishable from here, which is exactly why a
+                # clean scan below only ever produces a provisional
+                # PORT_FREE, never a final one.
+                continue
+            for fd_entry in fd_entries:
+                try:
+                    if os.path.realpath(fd_entry) == target:
+                        return PortReleaseOutcome.PORT_BUSY
+                except OSError:
+                    continue
+        return PortReleaseOutcome.PORT_FREE
+
+    def _check_external_tool(self, tool: str, args: list[str], *, busy_timeout: float = 2.0) -> PortReleaseOutcome:
+        """Shared shape for the two external-process fallbacks (`fuser`,
+        `lsof`) - both can hang/time out/be missing, which is the actual
+        root cause this whole layered rework exists to stop conflating
+        with a genuinely busy port."""
+        try:
+            result = subprocess.run([tool, *args], capture_output=True, text=True, timeout=busy_timeout)
+        except FileNotFoundError:
+            return PortReleaseOutcome.UTILITY_MISSING
+        except subprocess.TimeoutExpired:
+            return PortReleaseOutcome.CHECK_TIMEOUT
+        except Exception:
+            return PortReleaseOutcome.CHECK_FAILED
+
+        if result.stdout.strip():
+            return PortReleaseOutcome.PORT_BUSY
+        return PortReleaseOutcome.PORT_FREE
+
+    def _check_fuser(self) -> PortReleaseOutcome:
+        # fuser prints the PIDs holding the file to stdout (nothing if
+        # free) - same "non-empty stdout means busy" shape as the lsof
+        # check below, just a lighter external tool tried first.
+        return self._check_external_tool("fuser", [self._port])
+
+    def _check_lsof(self) -> PortReleaseOutcome:
+        return self._check_external_tool("lsof", ["-t", self._port])
+
+    def check_port_release_once(self) -> PortReleaseOutcome:
+        """One pass through the full layered strategy: known PID -> /proc
+        fd scan -> fuser -> lsof.
+
+        DELIBERATELY ASYMMETRIC (review finding): PORT_BUSY from ANY
+        layer short-circuits immediately and is trusted unconditionally -
+        a positive finding (something IS holding the port) doesn't
+        depend on having looked everywhere, so it can never be a false
+        positive this way, no matter which layer produced it.
+
+        PORT_FREE is different, and is NOT treated the same way. Every
+        layer before the last one can only fail to find evidence of a
+        holder, not prove none exists - _check_known_pid() only ever
+        knows about OUR OWN listener process by design, and
+        _check_proc_fd_scan()/_check_fuser() can each silently miss a
+        holder running as a different user they lack permission to
+        inspect (see _check_proc_fd_scan()'s own ASYMMETRIC RELIABILITY
+        note for the concrete scenario this isn't hypothetical for - a
+        root-owned debugging session on the port, invisible to a
+        non-root scan). So PORT_FREE/None/any inconclusive outcome from
+        every layer up to (not including) the final one falls through to
+        the next layer instead of terminating - only the LAST layer's
+        answer (lsof, the existing, previously-sole check this whole
+        rework is layered in front of) is trusted as a final PORT_FREE.
+
+        This is the exact principle the whole rework exists to enforce,
+        applied to the layers among themselves too, not just to
+        `lsof` alone: never collapse "couldn't find evidence of X" into
+        "confirmed not-X" - that exact collapse (an lsof timeout treated
+        as a busy port) was the root cause of the corruption cascade this
+        module was rewritten to fix.
+
+        KNOWN TRADE-OFF, explicitly accepted (review follow-up, not a
+        free improvement): falling through past every inconclusive layer
+        means a genuinely stuck check can now try known-PID, /proc scan,
+        `fuser`, AND `lsof` in sequence before giving up, instead of just
+        `lsof` alone - on hardware where BOTH external tools are slow
+        (not just `lsof`, the one originally caught live on Droidian),
+        one call to this method can now take longer in the worst case
+        than the old lsof-only version did. That eats into
+        AdapterIPCTransport._call()'s own
+        `remaining = max(1.0, timeout - elapsed)` budget split
+        (meshsrv/adapter_ipc_client.py) for the actual IPC round-trip
+        that follows the claim - a slower claim phase here can mean less
+        of the caller's declared timeout is left for the adapter call
+        itself, which can surface as more frequent "adapter subprocess
+        did not respond within {remaining}s" kills on such hardware.
+        Live-measured on the Droidian node this was written for: the
+        combined effect (this correctness fix plus the stdout-corruption
+        fix it shipped alongside) still reduced that kill frequency
+        roughly 3.7x (~1/11s before both fixes -> ~1/41s after), so this
+        is a real trade-off being made deliberately, not a regression
+        being introduced - but if a future device turns up where `fuser`
+        is ALSO systematically slow (not just `lsof`), a higher kill
+        frequency for short-timeout callers is the expected, already-
+        accepted consequence of this design choice, not a new bug to
+        rediscover from scratch.
+        """
+        known_pid = self._check_known_pid()
+        if known_pid == PortReleaseOutcome.PORT_BUSY:
+            return known_pid
+
+        fd_scan = self._check_proc_fd_scan()
+        if fd_scan == PortReleaseOutcome.PORT_BUSY:
+            return fd_scan
+
+        fuser = self._check_fuser()
+        if fuser == PortReleaseOutcome.PORT_BUSY:
+            return fuser
+
+        return self._check_lsof()
+
     def wait_serial_release(self, timeout: float = 8) -> bool:
+        """Public bool contract unchanged (existing callers - server.py's
+        thin wrapper, SerialTransport's connect(force=True) branch,
+        claim_exclusive_access() below - all just need "did it free up in
+        time"). What changed: every retry now goes through the layered
+        check_port_release_once() instead of an unconditional `lsof`
+        call, so a busy port, an inconclusive/timed-out/missing-tool
+        check, and a genuinely free port are distinguished internally
+        (see PortReleaseOutcome) even though only the final True/False
+        crosses this method's own boundary - callers that need the
+        distinction can call check_port_release_once() directly."""
         if not self._port:
             return True
 
         start = time.time()
+        last_outcome: Optional[PortReleaseOutcome] = None
         while time.time() - start < timeout:
-            try:
-                result = subprocess.run(
-                    ["lsof", "-t", self._port],
-                    capture_output=True,
-                    text=True,
-                    timeout=2,
-                )
-                if not result.stdout.strip():
-                    return True
-            except Exception as e:
-                print(f"[SerialPortSupervisor] wait_serial_release error: {e}", flush=True)
+            last_outcome = self.check_port_release_once()
+            if last_outcome == PortReleaseOutcome.PORT_FREE:
+                return True
             time.sleep(0.2)
 
-        print(f"[SerialPortSupervisor] Serial port still busy after {timeout}s: {self._port}", flush=True)
+        detail = last_outcome.value if last_outcome is not None else "no check completed"
+        print(
+            f"[SerialPortSupervisor] Serial port not confirmed free after {timeout}s "
+            f"(last outcome: {detail}): {self._port}",
+            file=sys.stderr, flush=True,
+        )
         return False
 
     def _prepare_command(self, timeout: float = 8) -> bool:

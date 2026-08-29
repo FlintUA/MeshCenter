@@ -38,6 +38,7 @@ SerialTransport/BLETransport construction any more.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import threading
@@ -203,6 +204,81 @@ class _AdapterDispatcher:
         raise TransportError(TransportErrorCode.UNSUPPORTED, f"unknown operation: {operation!r}")
 
 
+def serve_forever(dispatcher: _AdapterDispatcher, *, stdin=None, stdout=None) -> None:
+    """The read-dispatch-write loop. `stdin`/`stdout` are DI seams for
+    tests (defaulting to the real sys.stdin/sys.stdout in production) -
+    matching this project's convention elsewhere for exercising real
+    logic against fakes instead of mocking the loop away.
+
+    STDOUT PROTOCOL ISOLATION (P0 stabilization follow-up - Droidian-
+    caught: a stray print() from meshsrv/serial_port_supervisor.py's
+    wait_serial_release(), triggered by an `lsof` subprocess timeout,
+    corrupted this exact JSON stream, cascading into a killed adapter and
+    a serial-contention "Radio Busy" loop). `protocol_stdout` is captured
+    ONCE, before any request handling, and is the ONLY thing a JSON
+    response is ever written through below. Every `dispatcher.handle(...)`
+    call runs inside `contextlib.redirect_stdout(sys.stderr)`, so ANY
+    stray print() during it - first-party (serial_port_supervisor.py,
+    now fixed at the source too, see that module's own print() call
+    sites - this redirect is belt-and-suspenders, not a replacement for
+    that fix, see the gap explained next) or third-party (the meshtastic
+    library itself, never audited for its own prints) - lands on stderr,
+    never on the real protocol channel.
+
+    THIS REDIRECT ALONE IS NOT SUFFICIENT (investigation finding, not
+    assumed): adapters/meshtastic/_timeout_support.py's
+    _call_with_timeout() runs the actual work on a background daemon
+    thread. If that call hits its OWN internal timeout, the caller gets
+    TransportError(TIMEOUT) back and the `with redirect_stdout(...)`
+    block below exits - but the background thread itself is not killed
+    (the documented tier-1/tier-2 gap, docs/BACKEND_API.md "Timeouts")
+    and may still be running unsupervised, e.g. inside
+    wait_serial_release()'s own retry loop. If THAT orphaned thread calls
+    print() after this block has already exited and restored the real
+    stdout - most likely while this loop is blocked on `for line in
+    stdin:` waiting for Core's next request, i.e. exactly when the
+    protocol channel is live and unguarded again - an unfixed print()
+    call site would still corrupt it, redirect_stdout notwithstanding.
+    Fixing every print() call site in meshsrv/serial_port_supervisor.py
+    directly (file=sys.stderr, unconditional, independent of whatever
+    sys.stdout happens to be at the time) is what actually closes this
+    gap; the redirect here only covers the common/expected case and
+    anything not yet audited for its own stray prints (meshtastic
+    itself). Neither one is optional-if-the-other-exists.
+
+    SINGLE-THREADED LOOP, SAFE TO MUTATE sys.stdout GLOBALLY: this
+    function's own `for line in stdin:` loop is strictly synchronous -
+    one request is read, dispatched, and answered before the next line
+    is ever read (Core's TransportRouter already serializes callers to
+    at most one in-flight IPC call - see this module's own docstring,
+    "STATELESS ROUTING"). redirect_stdout() mutates the process-global
+    sys.stdout for the duration of its `with` block, which would be
+    unsafe if two of THIS loop's own iterations could overlap - they
+    structurally cannot. The background daemon thread described above is
+    a different, already-covered case (the print()-call-site fix), not a
+    second concurrent iteration of this loop.
+    """
+    stdin = stdin if stdin is not None else sys.stdin
+    protocol_stdout = stdout if stdout is not None else sys.stdout
+
+    for line in stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError as error:
+            response = ipc_protocol.make_error_response(
+                TransportError(TransportErrorCode.UNKNOWN, f"malformed request JSON: {error}")
+            )
+        else:
+            with contextlib.redirect_stdout(sys.stderr):
+                response = dispatcher.handle(request)
+
+        protocol_stdout.write(json.dumps(response) + "\n")
+        protocol_stdout.flush()
+
+
 def main() -> None:
     import argparse
 
@@ -221,21 +297,7 @@ def main() -> None:
         ble_transport=BLETransport(address=""),
     )
 
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            request = json.loads(line)
-        except json.JSONDecodeError as error:
-            response = ipc_protocol.make_error_response(
-                TransportError(TransportErrorCode.UNKNOWN, f"malformed request JSON: {error}")
-            )
-        else:
-            response = dispatcher.handle(request)
-
-        sys.stdout.write(json.dumps(response) + "\n")
-        sys.stdout.flush()
+    serve_forever(dispatcher)
 
 
 if __name__ == "__main__":

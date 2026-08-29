@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+#
+# meshcenter-network-helper - narrow, root-only helper for Wi-Fi
+# connection management (P1 #7/#8 stabilization follow-up).
+#
+# This is the ONLY thing allowed to run `nmcli`/`iw` as root on behalf of
+# MeshCenter's web UI: the Flask process runs as an unprivileged user and
+# calls this script through `sudo -n` (see meshsrv/network_config.py, the
+# single Python entry point for this script - nothing else in the
+# codebase should invoke it directly). Replaces the old
+# `NOPASSWD: /usr/bin/nmcli` / `NOPASSWD: /usr/sbin/iw` sudoers rules,
+# which allowed literally any nmcli/iw invocation (nmcli connection edit,
+# radio wifi off, arbitrary profile edits, ...) - this only allows four
+# fixed subcommands.
+#
+# Usage:
+#   meshcenter-network-helper list-connections
+#   meshcenter-network-helper scan
+#   meshcenter-network-helper connect <ssid>   # password read from stdin
+#   meshcenter-network-helper forget <ssid>
+#
+# sudoers grants `connect *` / `forget *` (deploy/meshcenter-wifi.sudoers)
+# since the SSID argument can't be enumerated in advance. That sudoers
+# glob matches the WHOLE command line as a string, not per-argv-position -
+# it would equally match `connect somessid --extra-dangerous-flag` if such
+# a thing were ever passed. sudo itself execs this script directly (no
+# shell involved), so an SSID containing shell metacharacters can never
+# trigger injection - but this script must still not trust "sudoers only
+# let one specific string through" as its own argument-count guard. Every
+# subcommand below explicitly checks $# before doing anything, independent
+# of whatever sudoers happens to allow.
+#
+# The Wi-Fi password for `connect` is read from this script's own stdin,
+# never accepted as an argument - `ps aux` / `/proc/<pid>/cmdline` must
+# never show it, for this process or for the `sudo`/Python processes
+# upstream of it (P1 #8). Stored only in a root:root, mode 600
+# NetworkManager keyfile profile - see cmd_connect() below.
+
+set -euo pipefail
+
+CONNECTIONS_DIR="/etc/NetworkManager/system-connections"
+WIFI_IFACE="wlan0"
+
+fail() {
+    echo "meshcenter-network-helper: error: $1" >&2
+    exit 1
+}
+
+require_argc() {
+    # $1 = expected arg count *after* the subcommand name, $2 = actual
+    # count, $3 = usage string for the error message. Guards against
+    # anything past the SSID the sudoers glob wouldn't itself catch (see
+    # module docstring above).
+    local expected="$1" actual="$2" usage="$3"
+    [[ "$actual" -eq "$expected" ]] || fail "$usage"
+}
+
+# Deletes any existing connection profile whose NAME matches $1, if one
+# exists - idempotent, safe to call whether or not a prior profile is
+# present. Used unconditionally before every connect (not just as an
+# error-retry path): a freshly written profile can never inherit stale or
+# mismatched security settings from an earlier attempt, which is the
+# entire "key-mgmt property is missing" class of error the old Python
+# code used to retry around.
+delete_existing_connection() {
+    local ssid="$1"
+    if nmcli -t -f NAME connection show 2>/dev/null | grep -qxF "$ssid"; then
+        nmcli connection delete "$ssid" >/dev/null 2>&1 || true
+    fi
+}
+
+cmd_list_connections() {
+    require_argc 0 "$#" "list-connections takes no arguments"
+    nmcli -t -f NAME,TYPE connection show
+}
+
+cmd_scan() {
+    require_argc 0 "$#" "scan takes no arguments"
+    iw dev "$WIFI_IFACE" scan
+}
+
+cmd_connect() {
+    require_argc 1 "$#" "connect requires exactly one argument: <ssid>"
+    local ssid="$1"
+    [[ -n "$ssid" ]] || fail "connect requires a non-empty SSID"
+
+    # Password (if any) arrives on stdin - a single value, read to EOF, no
+    # trailing newline expected but stripped if present. Empty means an
+    # open network.
+    local password
+    password="$(cat -)"
+
+    delete_existing_connection "$ssid"
+
+    if [[ -z "$password" ]]; then
+        nmcli device wifi connect "$ssid"
+        return
+    fi
+
+    # Random filename, NOT derived from $ssid: a legal 802.11 SSID may
+    # contain "/" (0-32 arbitrary bytes, nothing in the spec forbids it),
+    # so using it as a path component would be a real path-traversal
+    # vector, not a hypothetical one. NetworkManager identifies profiles
+    # by the id= field inside the file, not by filename, so this loses
+    # nothing - nmcli connection up/delete below still address it by SSID.
+    local profile_path
+    profile_path="$(mktemp -p "$CONNECTIONS_DIR" "meshcenter-XXXXXX.nmconnection")"
+
+    # mktemp already created the file 0600 owned by us (root, since this
+    # script only ever runs via sudo) - written in place, then given its
+    # real .nmconnection content atomically isn't necessary here (unlike
+    # meshcenter-hw-config's shared config.txt) since nothing else reads
+    # this exact path until we explicitly `nmcli connection load` it below.
+    cat > "$profile_path" <<EOF
+[connection]
+id=${ssid}
+type=wifi
+
+[wifi]
+mode=infrastructure
+ssid=${ssid}
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=${password}
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
+EOF
+    chmod 600 "$profile_path"
+
+    nmcli connection load "$profile_path"
+    nmcli connection up "$ssid"
+}
+
+cmd_forget() {
+    require_argc 1 "$#" "forget requires exactly one argument: <ssid>"
+    local ssid="$1"
+    [[ -n "$ssid" ]] || fail "forget requires a non-empty SSID"
+    nmcli connection delete "$ssid"
+}
+
+main() {
+    local subcommand="${1:-}"
+    [[ $# -ge 1 ]] || fail "no subcommand given (expected: list-connections | scan | connect <ssid> | forget <ssid>)"
+    shift
+
+    case "$subcommand" in
+        list-connections)
+            cmd_list_connections "$@"
+            ;;
+        scan)
+            cmd_scan "$@"
+            ;;
+        connect)
+            cmd_connect "$@"
+            ;;
+        forget)
+            cmd_forget "$@"
+            ;;
+        *)
+            fail "unknown subcommand: $subcommand (expected: list-connections | scan | connect <ssid> | forget <ssid>)"
+            ;;
+    esac
+}
+
+main "$@"

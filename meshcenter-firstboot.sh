@@ -716,6 +716,8 @@ MESH_HOME="$TARGET_HOME"
     || fail "Missing deploy/meshcenter-hw.sudoers"
 [[ -f "$INSTALL_DIR/scripts/meshcenter-hw-config" ]] \
     || fail "Missing scripts/meshcenter-hw-config"
+[[ -f "$INSTALL_DIR/scripts/meshcenter-network-helper" ]] \
+    || fail "Missing scripts/meshcenter-network-helper"
 [[ -f "$INSTALL_DIR/deploy/99-meshcenter-rtc.rules" ]] \
     || fail "Missing deploy/99-meshcenter-rtc.rules"
 
@@ -729,6 +731,13 @@ sed -e "s|__MESH_USER__|${MESH_USER}|g" \
 # `sudo -n` - see scripts/meshcenter-hw-config's own docstring).
 install -o root -g root -m 0755 \
     "$INSTALL_DIR/scripts/meshcenter-hw-config" /usr/local/sbin/meshcenter-hw-config
+
+# Same pattern for Wi-Fi management (P1 #7/#8 stabilization follow-up):
+# meshsrv/network_config.py calls this via `sudo -n` instead of the Flask
+# process running nmcli/iw as root directly - see
+# scripts/meshcenter-network-helper's own docstring.
+install -o root -g root -m 0755 \
+    "$INSTALL_DIR/scripts/meshcenter-network-helper" /usr/local/sbin/meshcenter-network-helper
 
 # Grants the `i2c` group (already assigned to $TARGET_USER above) read
 # access to /dev/rtcN - without it, hardware/rtc_service.py's readable-stage

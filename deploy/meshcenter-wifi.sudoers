@@ -1,2 +1,4 @@
-__MESH_USER__ ALL=(root) NOPASSWD: /usr/sbin/iw
-__MESH_USER__ ALL=(root) NOPASSWD: /usr/bin/nmcli
+__MESH_USER__ ALL=(root) NOPASSWD: /usr/local/sbin/meshcenter-network-helper list-connections
+__MESH_USER__ ALL=(root) NOPASSWD: /usr/local/sbin/meshcenter-network-helper scan
+__MESH_USER__ ALL=(root) NOPASSWD: /usr/local/sbin/meshcenter-network-helper connect *
+__MESH_USER__ ALL=(root) NOPASSWD: /usr/local/sbin/meshcenter-network-helper forget *

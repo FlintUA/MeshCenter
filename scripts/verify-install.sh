@@ -168,10 +168,25 @@ elif echo "$SUDO_LIST" | grep -qE "NOPASSWD:\s*ALL|systemctl restart meshcenter\
 else
     bad "systemctl restart meshcenter.service not covered by passwordless sudo — UI restart action will hang waiting for a password (see deploy/meshcenter.sudoers)"
 fi
-if [ -n "$SUDO_LIST" ] && echo "$SUDO_LIST" | grep -qE "NOPASSWD:\s*ALL|nmcli|/usr/sbin/iw"; then
-    ok "NOPASSWD sudo confirmed for Wi-Fi commands (nmcli/iw)"
+# deploy/meshcenter-wifi.sudoers now grants meshcenter-network-helper only
+# (P1 #7/#8 stabilization follow-up), not nmcli/iw directly - an install
+# predating this change that has only ever been updated via `git pull` +
+# service restart will still have the OLD sudoers rule (NOPASSWD on
+# nmcli/iw themselves) until re-provisioned, same class of gap as
+# meshcenter-hw's own check below (task 39: git pull never updates
+# /etc/sudoers.d/* on an existing install - update_service.py deliberately
+# never touches system files).
+if [ -n "$SUDO_LIST" ] && echo "$SUDO_LIST" | grep -qE "NOPASSWD:\s*ALL|meshcenter-network-helper"; then
+    ok "NOPASSWD sudo confirmed for meshcenter-network-helper (Wi-Fi management)"
+elif [ -n "$SUDO_LIST" ] && echo "$SUDO_LIST" | grep -qE "nmcli|/usr/sbin/iw"; then
+    warn "sudo still grants the OLD direct nmcli/iw rule, not meshcenter-network-helper — re-run install.sh/meshcenter-firstboot.sh's relevant step (or manually install the updated deploy/meshcenter-wifi.sudoers) to pick up the narrower helper-based rule; Wi-Fi actions in the UI will fail until then, since api/api_system.py no longer calls nmcli/iw directly"
 else
-    warn "nmcli/iw not covered by passwordless sudo — Wi-Fi actions in the UI will fail (see deploy/meshcenter-wifi.sudoers)"
+    warn "meshcenter-network-helper not covered by passwordless sudo — Wi-Fi actions in the UI will fail (see deploy/meshcenter-wifi.sudoers)"
+fi
+if [ -x "/usr/local/sbin/meshcenter-network-helper" ]; then
+    ok "meshcenter-network-helper installed at /usr/local/sbin/meshcenter-network-helper"
+else
+    warn "/usr/local/sbin/meshcenter-network-helper missing or not executable — Wi-Fi actions in the UI will fail even with correct sudoers (see scripts/meshcenter-network-helper, installed by install.sh/meshcenter-firstboot.sh)"
 fi
 # Not `bad` - this only affects the Devices tab's optional I2C/RTC card, not
 # core MeshCenter functionality. An install predating task 23 (PR #84) that

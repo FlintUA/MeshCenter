@@ -572,6 +572,13 @@ step_systemd() {
     sudo install -o root -g root -m 0755 \
         "${INSTALL_DIR}/scripts/meshcenter-hw-config" /usr/local/sbin/meshcenter-hw-config
 
+    # Same pattern for Wi-Fi management (P1 #7/#8 stabilization follow-up):
+    # meshsrv/network_config.py calls this via `sudo -n` instead of the
+    # Flask process running nmcli/iw as root directly - see
+    # scripts/meshcenter-network-helper's own docstring.
+    sudo install -o root -g root -m 0755 \
+        "${INSTALL_DIR}/scripts/meshcenter-network-helper" /usr/local/sbin/meshcenter-network-helper
+
     # I2C bus access (unprivileged, via stock 60-i2c-aliases.rules) and now
     # RTC hardware-clock access (deploy/99-meshcenter-rtc.rules below) both
     # ride on membership in the `i2c` group - meshcenter-firstboot.sh's

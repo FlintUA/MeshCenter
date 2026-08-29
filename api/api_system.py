@@ -4,6 +4,7 @@ import time
 
 from flask import jsonify, request
 
+from meshsrv import network_config
 from system_log import get_system_events, log_system_event
 
 
@@ -229,31 +230,17 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
             return jsonify({"ok": False, "error": str(exc)}), 500
 
     def get_saved_wifi_names():
-        try:
-            out = subprocess.check_output(
-                ["sudo", "-n", "/usr/bin/nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
-                text=True,
-                stderr=subprocess.STDOUT,
-                timeout=10
-            )
-            saved = set()
-            for line in out.splitlines():
-                parts = line.split(":")
-                if len(parts) >= 2 and parts[1] == "802-11-wireless":
-                    saved.add(parts[0])
-            return saved
-        except Exception:
-            return set()
+        result = network_config.list_wifi_connections()
+        return result.get("ssids", set()) if result.get("ok") else set()
 
     @app.route("/api/system/wifi/scan")
     def api_system_wifi_scan():
         result = {"ok": True, "networks": []}
         try:
-            out = subprocess.check_output(
-                ["sudo", "-n", "/usr/sbin/iw", "dev", "wlan0", "scan"],
-                text=True,
-                stderr=subprocess.DEVNULL
-            )
+            scan_result = network_config.scan()
+            if not scan_result.get("ok"):
+                return jsonify({"ok": False, "error": scan_result.get("reason", "scan failed"), "networks": []}), 500
+            out = scan_result.get("stdout", "")
             networks = []
             current = None
             for raw_line in out.splitlines():
@@ -332,32 +319,17 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         password = data.get("password") or ""
         if not ssid:
             return jsonify({"ok": False, "error": "SSID is required"}), 400
-        def run_nmcli(args, timeout=30):
-            return subprocess.check_output(["sudo", "-n", "/usr/bin/nmcli"] + args, text=True, stderr=subprocess.STDOUT, timeout=timeout)
-        try:
-            cmd = ["dev", "wifi", "connect", ssid]
-            if password:
-                cmd += ["password", password]
-            out = run_nmcli(cmd)
-            return jsonify({"ok": True, "message": out.strip()})
-        except subprocess.CalledProcessError as e:
-            err = e.output.strip() if e.output else str(e)
-            if "key-mgmt" in err or "property is missing" in err or "secrets were required" in err:
-                try:
-                    run_nmcli(["connection", "delete", ssid], timeout=10)
-                except Exception:
-                    pass
-                try:
-                    cmd = ["dev", "wifi", "connect", ssid]
-                    if password:
-                        cmd += ["password", password]
-                    out = run_nmcli(cmd)
-                    return jsonify({"ok": True, "message": out.strip(), "recreated_profile": True})
-                except subprocess.CalledProcessError as e2:
-                    return jsonify({"ok": False, "error": e2.output.strip() if e2.output else str(e2)}), 500
-            return jsonify({"ok": False, "error": err}), 500
-        except Exception as e:
-            return jsonify({"ok": False, "error": str(e)}), 500
+        # meshsrv.network_config.connect() sends `password` to the helper's
+        # stdin, never as an argv element (P1 #8) - and the helper itself
+        # unconditionally replaces any existing profile for this SSID
+        # before writing a fresh one, so the old two-pass
+        # delete-then-retry dance that used to live here (for "key-mgmt
+        # property is missing" errors) is no longer needed: a freshly
+        # written profile can't inherit a stale/mismatched security config.
+        result = network_config.connect(ssid, password)
+        if result.get("ok"):
+            return jsonify({"ok": True, "message": result.get("stdout", "")})
+        return jsonify({"ok": False, "error": result.get("reason", "connect failed")}), 500
 
     @app.route("/api/system/wifi/forget", methods=["POST"])
     def api_system_wifi_forget():
@@ -365,13 +337,10 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         ssid = (data.get("ssid") or "").strip()
         if not ssid:
             return jsonify({"ok": False, "error": "SSID is required"}), 400
-        try:
-            out = subprocess.check_output(["sudo", "-n", "/usr/bin/nmcli", "connection", "delete", ssid], text=True, stderr=subprocess.STDOUT, timeout=15)
-            return jsonify({"ok": True, "message": out.strip()})
-        except subprocess.CalledProcessError as e:
-            return jsonify({"ok": False, "error": e.output.strip() if e.output else str(e)}), 500
-        except Exception as e:
-            return jsonify({"ok": False, "error": str(e)}), 500
+        result = network_config.forget(ssid)
+        if result.get("ok"):
+            return jsonify({"ok": True, "message": result.get("stdout", "")})
+        return jsonify({"ok": False, "error": result.get("reason", "forget failed")}), 500
 
     @app.route("/api/system/network")
     def api_system_network():
@@ -381,6 +350,9 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         except Exception:
             pass
         try:
+            # Unprivileged - iw link status needs no root on the target
+            # systems, so this stays a direct call, not routed through the
+            # sudo-gated helper (see meshsrv/network_config.py's docstring).
             out = subprocess.check_output(["/usr/sbin/iw", "dev", "wlan0", "link"], text=True)
             for line in out.splitlines():
                 line = line.strip()

@@ -51,6 +51,23 @@ log()      { echo -e "${GREEN}[MeshCenter]${NC} $*"; }
 warn()     { echo -e "${YELLOW}[WARNING]${NC} $*" >&2; }
 progress() { echo "$*" > "$PROGRESS_FILE"; log "$*"; }
 
+# Best-effort local IP for the "open in browser" messages. `hostname -I`
+# lists every interface's address in enumeration order, not the one
+# actually carrying outbound traffic - on a device with a dead/unused
+# interface (e.g. a phone's rndis0 USB-tethering link) that can print an
+# unreachable address instead of the real wlan0/eth0 one. `ip route get`
+# asks the kernel which source address it would actually use to reach the
+# internet (a routing-table lookup, no packet sent) - falls back to the
+# old hostname -I behavior if `ip` is missing or there's no default route.
+detect_local_ip() {
+    local ip=""
+    if command -v ip >/dev/null 2>&1; then
+        ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')
+    fi
+    [[ -z "$ip" ]] && ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    printf '%s' "$ip"
+}
+
 fail() {
     echo -e "\n${RED}[ERROR]${NC} $*" | tee -a "$LOG_FILE" >&2
     echo "" | tee -a "$LOG_FILE"
@@ -245,7 +262,7 @@ PYEOF
     # Check it actually started
     if kill -0 "$PROGRESS_PID" 2>/dev/null; then
         log "Progress server started on port $PROGRESS_PORT (PID $PROGRESS_PID)"
-        log "Watch progress at: http://$(hostname).local or http://$(hostname -I | awk '{print $1}')"
+        log "Watch progress at: http://$(hostname).local or http://$(detect_local_ip)"
     else
         PROGRESS_PID=""
         log "Progress server not started (port $PROGRESS_PORT busy or no permission — OK)"
@@ -301,7 +318,10 @@ step_system_packages() {
 
 # ─── Step 3: Swap (for Pi Zero 2W and devices with < 1GB RAM) ────────────────
 step_swap() {
-    [[ "$NEEDS_SWAP" == "true" ]] || return 0
+    if [[ "$NEEDS_SWAP" != "true" ]]; then
+        progress "3/9 Swap not needed for ${DEVICE_NAME} — skipping"
+        return 0
+    fi
 
     progress "3/9 Configuring swap for ${DEVICE_NAME}..."
 
@@ -650,7 +670,7 @@ step_cleanup() {
 }
 
 step_done() {
-    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    LOCAL_IP=$(detect_local_ip)
     VERSION=$(git -C "$INSTALL_DIR" describe --tags 2>/dev/null || echo "unknown")
 
     # Final message in progress file

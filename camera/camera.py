@@ -14,7 +14,23 @@ import threading
 import time
 from datetime import datetime
 from PIL import Image
-from libcamera import Transform, controls as libcamera_controls
+
+# libcamera is only present on real CSI-camera hardware (Picamera2's own
+# dependency) - devices running the USB driver instead (camera/usb_driver.py,
+# no libcamera dependency at all) or with no camera hardware at all must
+# still be able to import this module, since server.py imports it
+# unconditionally at startup (see camera/csi_driver.py's own import of this
+# module too). This is a different failure mode than "camera hardware not
+# detected" (already handled gracefully at runtime by init_camera()'s own
+# try/except around Picamera2() below) - an ImportError here happens before
+# init_camera() ever runs, so it needs its own guard.
+try:
+    from libcamera import Transform, controls as libcamera_controls
+    LIBCAMERA_AVAILABLE = True
+except ImportError:
+    Transform = None
+    libcamera_controls = None
+    LIBCAMERA_AVAILABLE = False
 
 try:
     from config import DATA_DIR
@@ -214,34 +230,41 @@ def save_camera_settings():
 # ============================================================
 # BASIC CAMERA CONTROL
 # ============================================================
-AWB_MODE_MAP = {
-    "auto": libcamera_controls.AwbModeEnum.Auto,
-    "daylight": libcamera_controls.AwbModeEnum.Daylight,
-    "cloudy": libcamera_controls.AwbModeEnum.Cloudy,
-    "indoor": libcamera_controls.AwbModeEnum.Indoor,
-    "tungsten": libcamera_controls.AwbModeEnum.Tungsten,
-    "fluorescent": libcamera_controls.AwbModeEnum.Fluorescent,
-    "incandescent": libcamera_controls.AwbModeEnum.Incandescent,
-}
+if LIBCAMERA_AVAILABLE:
+    AWB_MODE_MAP = {
+        "auto": libcamera_controls.AwbModeEnum.Auto,
+        "daylight": libcamera_controls.AwbModeEnum.Daylight,
+        "cloudy": libcamera_controls.AwbModeEnum.Cloudy,
+        "indoor": libcamera_controls.AwbModeEnum.Indoor,
+        "tungsten": libcamera_controls.AwbModeEnum.Tungsten,
+        "fluorescent": libcamera_controls.AwbModeEnum.Fluorescent,
+        "incandescent": libcamera_controls.AwbModeEnum.Incandescent,
+    }
 
-EXPOSURE_MODE_MAP = {
-    "normal": libcamera_controls.AeExposureModeEnum.Normal,
-    "short": libcamera_controls.AeExposureModeEnum.Short,
-    "long": libcamera_controls.AeExposureModeEnum.Long,
-}
+    EXPOSURE_MODE_MAP = {
+        "normal": libcamera_controls.AeExposureModeEnum.Normal,
+        "short": libcamera_controls.AeExposureModeEnum.Short,
+        "long": libcamera_controls.AeExposureModeEnum.Long,
+    }
 
-NOISE_REDUCTION_MAP = {
-    "off": libcamera_controls.draft.NoiseReductionModeEnum.Off,
-    "minimal": libcamera_controls.draft.NoiseReductionModeEnum.Minimal,
-    "fast": libcamera_controls.draft.NoiseReductionModeEnum.Fast,
-    "high_quality": libcamera_controls.draft.NoiseReductionModeEnum.HighQuality,
-    "zsl": libcamera_controls.draft.NoiseReductionModeEnum.ZSL,
-    "auto": libcamera_controls.draft.NoiseReductionModeEnum.Fast,
-}
+    NOISE_REDUCTION_MAP = {
+        "off": libcamera_controls.draft.NoiseReductionModeEnum.Off,
+        "minimal": libcamera_controls.draft.NoiseReductionModeEnum.Minimal,
+        "fast": libcamera_controls.draft.NoiseReductionModeEnum.Fast,
+        "high_quality": libcamera_controls.draft.NoiseReductionModeEnum.HighQuality,
+        "zsl": libcamera_controls.draft.NoiseReductionModeEnum.ZSL,
+        "auto": libcamera_controls.draft.NoiseReductionModeEnum.Fast,
+    }
+else:
+    AWB_MODE_MAP = {}
+    EXPOSURE_MODE_MAP = {}
+    NOISE_REDUCTION_MAP = {}
 
 
 def get_camera_transform():
     """Build orientation transform used by video and capture configurations."""
+    if not LIBCAMERA_AVAILABLE:
+        return None
     return Transform(
         hflip=bool(CAMERA_CONTROLS.get("hflip", False)),
         vflip=bool(CAMERA_CONTROLS.get("vflip", False)),
@@ -250,6 +273,8 @@ def get_camera_transform():
 
 def build_camera_controls():
     """Convert saved MeshCenter settings to Picamera2/libcamera controls."""
+    if not LIBCAMERA_AVAILABLE:
+        return {}
     awb_mode = str(CAMERA_CONTROLS.get("awb_mode", "auto")).lower()
     exposure_mode = str(
         CAMERA_CONTROLS.get("exposure_mode", "normal")

@@ -67,6 +67,15 @@ class TransportErrorCode(str, Enum):
     # thing failed" or "the adapter is missing entirely" at a glance, not
     # by string-matching last_error.message.
     ADAPTER_PROTOCOL_ERROR = "adapter_protocol_error"
+    # Droidian-caught follow-up to the P0.3 asymmetric-trust work: a
+    # port-release check that couldn't reach a definitive answer (an
+    # external tool like `lsof` timed out/errored/is missing) is NOT the
+    # same thing as a confirmed busy port - claim_exclusive_access() used
+    # to raise BUSY for both, a false "Serial port busy" the user could
+    # not distinguish from a genuinely occupied port. Distinct from BUSY
+    # (a real owner was found) so a caller/UI can tell "we don't know"
+    # apart from "something is actually holding it".
+    PORT_CHECK_INCONCLUSIVE = "port_check_inconclusive"
 
 
 # ---------------------------------------------------------------------------

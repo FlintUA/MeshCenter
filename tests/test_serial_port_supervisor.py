@@ -10,10 +10,14 @@ why this is a shared primitive, not Core-exclusive logic.
 No server.py import needed - SerialPortSupervisor takes radio_lock/
 pause_listen by DI and never imports server.py or meshtastic itself.
 """
+import os
 import subprocess
 import threading
 import time
 
+import pytest
+
+from meshsrv.radio_transport import TransportError, TransportErrorCode
 from meshsrv.serial_port_supervisor import PortReleaseOutcome, SerialPortSupervisor
 
 
@@ -72,14 +76,14 @@ def test_get_listener_pid_still_works_normally_when_the_lock_is_free():
 def test_claim_exclusive_access_raises_busy_when_the_port_never_frees():
     """claim_exclusive_access() (renamed from claim_for_external_command()/
     _claim_radio() during this stabilization follow-up) must still raise
-    TransportError(BUSY) when prepare_command() reports the port never
-    freed up - unchanged behavior from before the move, just relocated.
-    wait_serial_release() is stubbed to always report "still busy" so
-    this doesn't depend on real `lsof`/OS state."""
+    TransportError(BUSY) when the port is confirmed genuinely occupied -
+    unchanged behavior from before the move, just relocated.
+    _wait_for_release_outcome() is stubbed to always report a real
+    PORT_BUSY so this doesn't depend on real `lsof`/OS state."""
     from meshsrv.radio_transport import TransportError, TransportErrorCode
 
     supervisor = _make_supervisor()
-    supervisor.wait_serial_release = lambda timeout=8: False
+    supervisor._wait_for_release_outcome = lambda timeout=8: PortReleaseOutcome.PORT_BUSY
 
     try:
         with supervisor.claim_exclusive_access(timeout=0.2, cooldown=0):
@@ -223,21 +227,248 @@ def test_intermediate_layer_port_free_is_not_trusted_falls_through_to_next_layer
     assert supervisor.check_port_release_once() == PortReleaseOutcome.PORT_BUSY
 
 
-def test_only_the_final_layer_lsof_can_confirm_port_free():
-    """Every intermediate PORT_FREE must fall through all the way to
-    lsof - the last layer in the chain - before the result is trusted as
-    a genuine "confirmed free". If lsof itself can't confirm either
-    (timeout/failed/missing), that inconclusive outcome is the final
-    answer - it must never be silently upgraded to PORT_FREE just
-    because earlier layers guessed free."""
+def test_lsof_confirming_free_is_still_trusted_on_its_own():
+    """The baseline case, unchanged: every intermediate layer saying
+    PORT_FREE and lsof itself also confirming PORT_FREE is a genuine
+    confirmed-free result."""
+    supervisor = _make_supervisor()
+    supervisor._port = "/dev/ttyACM0"
+    supervisor._check_known_pid = lambda: None
+    supervisor._check_proc_fd_scan = lambda: PortReleaseOutcome.PORT_FREE
+    supervisor._check_fuser = lambda: PortReleaseOutcome.PORT_FREE
+    supervisor._check_lsof = lambda: PortReleaseOutcome.PORT_FREE
+
+    assert supervisor.check_port_release_once() == PortReleaseOutcome.PORT_FREE
+
+
+# --- Droidian follow-up: fd_scan + fuser both PORT_FREE outweighs a
+# merely-inconclusive lsof (live-measured on Droidian: lsof's own 2s
+# busy_timeout is regularly too short there, 1.7-2.8s observed, turning a
+# genuinely free port into a false "busy" on every send attempt) - but
+# ONLY when both independent layers actually agree; any layer that
+# didn't cleanly confirm PORT_FREE itself must not be papered over.
+
+
+def test_proc_and_fuser_both_free_outweighs_an_inconclusive_lsof():
+    """Case 4 from the task's required test list: /proc and fuser both
+    confirm no owner, lsof times out - the new safe policy treats this as
+    PORT_FREE rather than leaving it CHECK_TIMEOUT (which used to
+    surface to the user as a false "Serial port busy")."""
     supervisor = _make_supervisor()
     supervisor._port = "/dev/ttyACM0"
     supervisor._check_known_pid = lambda: None
     supervisor._check_proc_fd_scan = lambda: PortReleaseOutcome.PORT_FREE
     supervisor._check_fuser = lambda: PortReleaseOutcome.PORT_FREE
 
-    supervisor._check_lsof = lambda: PortReleaseOutcome.PORT_FREE
-    assert supervisor.check_port_release_once() == PortReleaseOutcome.PORT_FREE
+    for lsof_outcome in (
+        PortReleaseOutcome.CHECK_TIMEOUT,
+        PortReleaseOutcome.CHECK_FAILED,
+        PortReleaseOutcome.UTILITY_MISSING,
+    ):
+        supervisor._check_lsof = lambda outcome=lsof_outcome: outcome
+        assert supervisor.check_port_release_once() == PortReleaseOutcome.PORT_FREE
 
+
+def test_inconclusive_lsof_is_not_upgraded_unless_both_proc_and_fuser_agree():
+    """The narrower guarantee that survives from the old test: an
+    inconclusive lsof is NOT silently upgraded to PORT_FREE unless BOTH
+    fd_scan and fuser affirmatively agree - a single clean layer (or a
+    layer that was itself inconclusive) must not trigger the fallback,
+    since the whole point is trusting two independent confirmations, not
+    just one guess."""
+    supervisor = _make_supervisor()
+    supervisor._port = "/dev/ttyACM0"
+    supervisor._check_known_pid = lambda: None
     supervisor._check_lsof = lambda: PortReleaseOutcome.CHECK_TIMEOUT
+
+    # Only fd_scan clean, fuser itself inconclusive - must not upgrade.
+    supervisor._check_proc_fd_scan = lambda: PortReleaseOutcome.PORT_FREE
+    supervisor._check_fuser = lambda: PortReleaseOutcome.CHECK_TIMEOUT
     assert supervisor.check_port_release_once() == PortReleaseOutcome.CHECK_TIMEOUT
+
+    # Only fuser clean, fd_scan itself inconclusive - must not upgrade.
+    supervisor._check_proc_fd_scan = lambda: PortReleaseOutcome.CHECK_FAILED
+    supervisor._check_fuser = lambda: PortReleaseOutcome.PORT_FREE
+    assert supervisor.check_port_release_once() == PortReleaseOutcome.CHECK_TIMEOUT
+
+
+# --- Real /proc fd scan and real fuser/lsof-shaped subprocess results
+# (not stubbed at the check_port_release_once() layer) - cases 2/3/6/7
+# from the task's required test list.
+
+
+def test_proc_fd_scan_detects_a_real_owner_via_matching_realpath(monkeypatch, tmp_path):
+    """Case 2: /proc detects an owner -> PORT_BUSY. Exercises
+    _check_proc_fd_scan() itself, not a stub of its return value - builds
+    a synthetic /proc/<pid>/fd/<n> entry and makes os.path.realpath()
+    resolve it to the target port, without needing a real symlink (which
+    can fail without extra privilege on Windows) - matching the actual
+    check's own logic (os.path.realpath(fd_entry) == target)."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    proc_dir = tmp_path / "proc"
+    fd_dir = proc_dir / "4242" / "fd"
+    fd_dir.mkdir(parents=True)
+    fake_fd_entry = fd_dir / "3"
+    fake_fd_entry.write_text("")
+
+    target_port = "/dev/ttyACM0"
+    real_realpath = os.path.realpath
+
+    def fake_realpath(path):
+        path_str = str(path)
+        if path_str == target_port:
+            return target_port
+        if path_str == str(fake_fd_entry):
+            return target_port
+        return real_realpath(path)
+
+    real_path_ctor = spv_module.Path
+
+    def fake_path_ctor(path, *args, **kwargs):
+        if str(path) == "/proc":
+            return real_path_ctor(proc_dir)
+        return real_path_ctor(path, *args, **kwargs)
+
+    monkeypatch.setattr(spv_module, "Path", fake_path_ctor)
+    monkeypatch.setattr(spv_module.os.path, "realpath", fake_realpath)
+
+    supervisor = _make_supervisor()
+    supervisor._port = target_port
+
+    assert supervisor._check_proc_fd_scan() == PortReleaseOutcome.PORT_BUSY
+
+
+def test_fuser_detects_a_real_owner(monkeypatch):
+    """Case 3: fuser detects an owner -> PORT_BUSY. Mocks subprocess.run
+    itself (not _check_fuser()'s return value) with the actual shape
+    fuser produces for a held file: returncode 0, the PID on stdout."""
+    supervisor = _make_supervisor()
+    supervisor._port = "/dev/ttyACM0"
+
+    def fake_run(cmd, **kwargs):
+        assert cmd[0] == "fuser"
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout="1234\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert supervisor._check_fuser() == PortReleaseOutcome.PORT_BUSY
+
+
+def test_check_external_tool_reports_utility_missing_for_a_nonexistent_binary():
+    """Case 6: the external tool binary itself is entirely absent -
+    genuinely exercises FileNotFoundError from a real subprocess.run()
+    call (no such binary exists on any platform), not a stubbed
+    shortcut."""
+    supervisor = _make_supervisor()
+
+    outcome = supervisor._check_external_tool(
+        "this-binary-does-not-exist-anywhere-on-any-platform", ["/dev/ttyACM0"]
+    )
+
+    assert outcome == PortReleaseOutcome.UTILITY_MISSING
+
+
+def test_check_external_tool_reports_check_failed_on_permission_error(monkeypatch):
+    """Case 7: the external tool errors out / access is refused ->
+    CHECK_FAILED, distinct from both UTILITY_MISSING (tool absent) and
+    CHECK_TIMEOUT (tool present but too slow)."""
+    supervisor = _make_supervisor()
+
+    def fake_run(cmd, **kwargs):
+        raise PermissionError("Access denied")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    outcome = supervisor._check_external_tool("fuser", ["/dev/ttyACM0"])
+
+    assert outcome == PortReleaseOutcome.CHECK_FAILED
+
+
+# --- Listener-restart guarantees (requirement #4) - cases 8/9/10 -----------
+
+
+def test_pause_listen_is_cleared_after_a_successful_claim():
+    """Case 8: listener resumes after a successful send."""
+    supervisor = _make_supervisor()
+    supervisor._wait_for_release_outcome = lambda timeout=8: PortReleaseOutcome.PORT_FREE
+    supervisor.stop_listener_process = lambda: True
+
+    with supervisor.claim_exclusive_access(timeout=1, cooldown=0):
+        pass
+
+    assert not supervisor._pause_listen.is_set()
+
+
+def test_pause_listen_is_cleared_after_a_send_error_inside_the_claim():
+    """Case 9: listener resumes after a send error - an ordinary
+    exception raised from inside the claimed block."""
+    supervisor = _make_supervisor()
+    supervisor._wait_for_release_outcome = lambda timeout=8: PortReleaseOutcome.PORT_FREE
+    supervisor.stop_listener_process = lambda: True
+
+    with pytest.raises(RuntimeError):
+        with supervisor.claim_exclusive_access(timeout=1, cooldown=0):
+            raise RuntimeError("send failed")
+
+    assert not supervisor._pause_listen.is_set()
+
+
+def test_pause_listen_is_cleared_after_an_adapter_timeout_inside_the_claim():
+    """Case 10: listener resumes after an adapter-side timeout/IPC
+    exception - claim_exclusive_access()'s finally must not care what
+    kind of exception propagated through the yield, a TransportError(
+    TIMEOUT) (the shape AdapterSupervisor.call() actually raises on a
+    wedged adapter) included."""
+    supervisor = _make_supervisor()
+    supervisor._wait_for_release_outcome = lambda timeout=8: PortReleaseOutcome.PORT_FREE
+    supervisor.stop_listener_process = lambda: True
+
+    with pytest.raises(TransportError) as excinfo:
+        with supervisor.claim_exclusive_access(timeout=1, cooldown=0):
+            raise TransportError(TransportErrorCode.TIMEOUT, "adapter subprocess did not respond")
+
+    assert excinfo.value.code == TransportErrorCode.TIMEOUT
+    assert not supervisor._pause_listen.is_set()
+
+
+def test_claim_exclusive_access_raises_port_check_inconclusive_not_busy_when_check_cannot_confirm():
+    """The addendum's central point: a check that couldn't reach a
+    definitive answer must raise a distinct, honest error - not the same
+    BUSY a real owner would produce."""
+    supervisor = _make_supervisor()
+    supervisor._wait_for_release_outcome = lambda timeout=8: PortReleaseOutcome.CHECK_TIMEOUT
+
+    with pytest.raises(TransportError) as excinfo:
+        with supervisor.claim_exclusive_access(timeout=0.2, cooldown=0):
+            raise AssertionError("should never reach the yield - the check never confirmed free")
+
+    assert excinfo.value.code == TransportErrorCode.PORT_CHECK_INCONCLUSIVE
+    assert "check_timeout" in excinfo.value.message
+
+
+# --- Case 13: both Core's and the adapter's own instance are the SAME
+# class, so this single fix covers both layers - proven directly with two
+# independent instances, not asserted from the shared-code claim alone.
+
+
+def test_two_independent_supervisor_instances_both_benefit_from_the_same_fallback():
+    """Mirrors the real architecture: Core's own SerialPortSupervisor and
+    the adapter's own composed instance are two separate instances of the
+    same class, each with its own radio_lock/pause_listen (never shared
+    across the process boundary - see this module's own docstring).
+    Fixing check_port_release_once() once must resolve the false-BUSY
+    for both layers independently, not just whichever one a test happens
+    to construct."""
+    core_side = _make_supervisor()
+    adapter_side = _make_supervisor()
+
+    for supervisor in (core_side, adapter_side):
+        supervisor._port = "/dev/ttyACM0"
+        supervisor._check_known_pid = lambda: None
+        supervisor._check_proc_fd_scan = lambda: PortReleaseOutcome.PORT_FREE
+        supervisor._check_fuser = lambda: PortReleaseOutcome.PORT_FREE
+        supervisor._check_lsof = lambda: PortReleaseOutcome.CHECK_TIMEOUT
+
+    assert core_side.check_port_release_once() == PortReleaseOutcome.PORT_FREE
+    assert adapter_side.check_port_release_once() == PortReleaseOutcome.PORT_FREE

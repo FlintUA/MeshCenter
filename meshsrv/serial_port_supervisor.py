@@ -409,7 +409,14 @@ class SerialPortSupervisor:
         every layer up to (not including) the final one falls through to
         the next layer instead of terminating - only the LAST layer's
         answer (lsof, the existing, previously-sole check this whole
-        rework is layered in front of) is trusted as a final PORT_FREE.
+        rework is layered in front of) is trusted as a final PORT_FREE on
+        its own. Droidian follow-up: if lsof itself can't answer in time
+        (its own timing is unreliable on some hardware - see the
+        CHECK_TIMEOUT/CHECK_FAILED/UTILITY_MISSING fallback below this
+        docstring), a PORT_FREE from BOTH fd_scan AND fuser together is
+        also trusted as final - two independent affirmative confirmations
+        outweighing one slow/flaky last-resort tool failing to finish,
+        without touching busy-detection on any layer.
 
         This is the exact principle the whole rework exists to enforce,
         applied to the layers among themselves too, not just to
@@ -456,28 +463,62 @@ class SerialPortSupervisor:
         if fuser == PortReleaseOutcome.PORT_BUSY:
             return fuser
 
-        return self._check_lsof()
+        lsof = self._check_lsof()
+        if lsof == PortReleaseOutcome.PORT_FREE:
+            return lsof
 
-    def wait_serial_release(self, timeout: float = 8) -> bool:
-        """Public bool contract unchanged (existing callers - server.py's
-        thin wrapper, SerialTransport's connect(force=True) branch,
-        claim_exclusive_access() below - all just need "did it free up in
-        time"). What changed: every retry now goes through the layered
-        check_port_release_once() instead of an unconditional `lsof`
-        call, so a busy port, an inconclusive/timed-out/missing-tool
-        check, and a genuinely free port are distinguished internally
-        (see PortReleaseOutcome) even though only the final True/False
-        crosses this method's own boundary - callers that need the
-        distinction can call check_port_release_once() directly."""
+        # Droidian follow-up: lsof is the slowest, flakiest layer (a
+        # subprocess spawn with no guaranteed latency, unlike the
+        # in-process /proc scan) - live-measured on that device, its own
+        # 2s busy_timeout is regularly too short (lsof itself commonly
+        # takes 1.7-2.8s there), turning a perfectly free port into
+        # CHECK_TIMEOUT on every send attempt. When BOTH independent,
+        # already-completed cheaper layers affirmatively found no owner
+        # (not merely "inconclusive" - an actual PORT_FREE from each),
+        # trust that combination over lsof failing to finish in time,
+        # rather than making every caller wait out the full retry budget
+        # for a check that structurally can't reliably complete on this
+        # hardware. This does NOT weaken busy-detection on any layer -
+        # every PORT_BUSY above still short-circuits immediately,
+        # unchanged; this only strengthens what counts as a confirmed
+        # PORT_FREE in the one case where lsof specifically (not fd_scan,
+        # not fuser) is the layer that couldn't answer.
+        if (
+            fd_scan == PortReleaseOutcome.PORT_FREE
+            and fuser == PortReleaseOutcome.PORT_FREE
+            and lsof in (
+                PortReleaseOutcome.CHECK_TIMEOUT,
+                PortReleaseOutcome.CHECK_FAILED,
+                PortReleaseOutcome.UTILITY_MISSING,
+            )
+        ):
+            self._on_log(
+                f"Serial port release inferred free (proc+fuser clean, "
+                f"lsof {lsof.value}): {self._port}",
+                "WARNING",
+            )
+            return PortReleaseOutcome.PORT_FREE
+
+        return lsof
+
+    def _wait_for_release_outcome(self, timeout: float = 8) -> PortReleaseOutcome:
+        """Retry check_port_release_once() until it reports PORT_FREE or
+        `timeout` elapses, returning the actual final PortReleaseOutcome -
+        the detail wait_serial_release()'s bool contract used to discard
+        (Droidian follow-up: that loss is exactly what let a mere
+        CHECK_TIMEOUT surface to the user as a false "Serial port busy",
+        indistinguishable from a real PORT_BUSY - see
+        claim_exclusive_access() below, the actual consumer that needed
+        this distinction preserved)."""
         if not self._port:
-            return True
+            return PortReleaseOutcome.PORT_FREE
 
         start = time.time()
         last_outcome: Optional[PortReleaseOutcome] = None
         while time.time() - start < timeout:
             last_outcome = self.check_port_release_once()
             if last_outcome == PortReleaseOutcome.PORT_FREE:
-                return True
+                return last_outcome
             time.sleep(0.2)
 
         detail = last_outcome.value if last_outcome is not None else "no check completed"
@@ -486,12 +527,22 @@ class SerialPortSupervisor:
             f"(last outcome: {detail}): {self._port}",
             file=sys.stderr, flush=True,
         )
-        return False
+        return last_outcome if last_outcome is not None else PortReleaseOutcome.CHECK_FAILED
 
-    def _prepare_command(self, timeout: float = 8) -> bool:
+    def wait_serial_release(self, timeout: float = 8) -> bool:
+        """Public bool contract unchanged (existing callers - server.py's
+        thin wrapper, SerialTransport's connect(force=True) branch - all
+        just need "did it free up in time"). claim_exclusive_access()
+        below no longer goes through this method - it calls
+        _wait_for_release_outcome() directly so it can keep the
+        distinction this bool boundary still discards for these other
+        callers, none of which currently need it."""
+        return self._wait_for_release_outcome(timeout=timeout) == PortReleaseOutcome.PORT_FREE
+
+    def _prepare_command(self, timeout: float = 8) -> PortReleaseOutcome:
         self._pause_listen.set()
         self.stop_listener_process()
-        return self.wait_serial_release(timeout=timeout)
+        return self._wait_for_release_outcome(timeout=timeout)
 
     @contextmanager
     def claim_exclusive_access(self, *, timeout: float = 8, cooldown: float = 2.0):
@@ -527,13 +578,30 @@ class SerialPortSupervisor:
         (stayed in that file - it exercises SerialTransport's connect()/
         send_text() through a composed SerialPortSupervisor via the
         supervisor= DI seam, not SerialPortSupervisor in isolation).
+
+        Droidian follow-up: _prepare_command() now returns the actual
+        PortReleaseOutcome instead of a bare bool, so this can raise a
+        TransportError that honestly reflects what happened - BUSY only
+        for a confirmed PORT_BUSY (a real owner was found), and the
+        distinct PORT_CHECK_INCONCLUSIVE for anything else that isn't
+        PORT_FREE (the check itself couldn't reach a definitive answer -
+        an external tool timed out/errored/is missing). Previously both
+        cases raised the identical BUSY error, which is what let a mere
+        checking failure surface to the user as a false "Serial port
+        busy" claim.
         """
         with self._radio_lock:
-            prepared = self._prepare_command(timeout=timeout)
+            outcome = self._prepare_command(timeout=timeout)
             try:
-                if not prepared:
+                if outcome != PortReleaseOutcome.PORT_FREE:
+                    if outcome == PortReleaseOutcome.PORT_BUSY:
+                        raise TransportError(
+                            TransportErrorCode.BUSY, f"Serial port busy: {self._port or 'auto-detect'}"
+                        )
                     raise TransportError(
-                        TransportErrorCode.BUSY, f"Serial port busy: {self._port or 'auto-detect'}"
+                        TransportErrorCode.PORT_CHECK_INCONCLUSIVE,
+                        f"Could not confirm serial port release ({outcome.value}): "
+                        f"{self._port or 'auto-detect'}",
                     )
                 yield
             finally:

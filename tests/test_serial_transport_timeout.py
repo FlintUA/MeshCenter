@@ -12,7 +12,7 @@ from contextlib import contextmanager
 import pytest
 
 from adapters.meshtastic.serial_transport import SerialTransport
-from meshsrv.serial_port_supervisor import SerialPortSupervisor
+from meshsrv.serial_port_supervisor import PortReleaseOutcome, SerialPortSupervisor
 from meshsrv.radio_transport import (
     ConnectionDescriptor,
     ConnectionState,
@@ -214,10 +214,16 @@ def test_concurrent_connect_and_send_do_not_race_prepare_phase():
 
     def tracked_wait(timeout=8):
         with _track_critical_section():
-            return True
+            return PortReleaseOutcome.PORT_FREE
 
     supervisor.stop_listener_process = tracked_stop
-    supervisor.wait_serial_release = tracked_wait
+    # Droidian follow-up: claim_exclusive_access()'s prepare phase now
+    # calls _wait_for_release_outcome() directly (not wait_serial_release(),
+    # which stays a thin bool-returning wrapper around it for other
+    # callers) - mock the method actually on the call path, or this
+    # tracker silently stops being exercised and the test would pass
+    # without proving anything about the wait phase.
+    supervisor._wait_for_release_outcome = tracked_wait
 
     class _FakePacket:
         id = 1
@@ -268,6 +274,56 @@ def test_concurrent_connect_and_send_do_not_race_prepare_phase():
         "overlapped - radio_lock is not fully serializing the prepare "
         "sequence, reintroducing the serial-port-contention risk"
     )
+
+
+# --- Case 12 from the task's required test list: send_messages() end-to-
+# end must not fail on a false BUSY when lsof is slow but the port is
+# actually free (the exact scenario live-measured on Droidian - fd_scan
+# and fuser both clean, lsof timing out around 2-3.8s against the
+# supervisor's own 2s busy_timeout).
+
+
+def test_send_messages_succeeds_when_lsof_is_slow_but_proc_and_fuser_confirm_free():
+    supervisor = SerialPortSupervisor(
+        cli_path="/does/not/matter/for/this/test",
+        port="/dev/ttyFAKE",
+        radio_lock=threading.RLock(),
+        pause_listen=threading.Event(),
+    )
+    supervisor._check_known_pid = lambda: None
+    supervisor._check_proc_fd_scan = lambda: PortReleaseOutcome.PORT_FREE
+    supervisor._check_fuser = lambda: PortReleaseOutcome.PORT_FREE
+    supervisor._check_lsof = lambda: PortReleaseOutcome.CHECK_TIMEOUT
+    supervisor.stop_listener_process = lambda: True
+
+    transport = SerialTransport(
+        cli_path="/does/not/matter/for/this/test",
+        port="/dev/ttyFAKE",
+        radio_lock=supervisor._radio_lock,
+        pause_listen=supervisor._pause_listen,
+        supervisor=supervisor,
+    )
+
+    class _FakePacket:
+        id = 42
+
+    class _FakeInterface:
+        def sendText(self, **kwargs):
+            return _FakePacket()
+
+        def close(self):
+            pass
+
+    transport._open_interface = lambda: _FakeInterface()
+
+    results = transport.send_messages(
+        [OutgoingMessage(text="hi", destination_id="^all")], timeout=5.0
+    )
+
+    assert len(results) == 1
+    assert results[0].accepted is True
+    assert results[0].error is None
+    assert results[0].packet_id == 42
 
 
 # --- Task 48 follow-up: connect()/disconnect() state correctness ----------

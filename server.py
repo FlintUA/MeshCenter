@@ -3837,6 +3837,23 @@ LISTENER_RECOVERY_MAX_ATTEMPTS = 3
 LISTENER_RECOVERY_WINDOW = 30 * 60
 LISTENER_RECOVERY_RESULT_TIMEOUT = 60
 
+# Droidian-caught follow-up: PAUSED is deliberately excluded from
+# auto-recovery below (a radio command legitimately pauses the listener
+# for its own bounded duration) - but a repeating retry loop (each
+# individual claim/adapter call bounded and killed on schedule, the
+# overall cycle itself not) can keep re-pausing it indefinitely, with no
+# upper bound on how long that's allowed to go on. These two thresholds
+# give PAUSED a ceiling: every legitimate single operation observed in
+# this codebase tops out around 30-40s (send_messages()'s own 30s +
+# claim_exclusive_access()'s ~8s prepare + 2s cooldown), so 60s (>1.5x
+# that) can't false-positive on one slow-but-fine command. 180s reuses
+# the same number already meaningful elsewhere in this file (the OK/IDLE
+# packet-age boundary) applied to a strictly stronger signal (nothing can
+# even attempt to run), and is well under the 5-6 minute stalls actually
+# observed live on Droidian before this fix.
+LISTENER_PAUSED_WARNING_THRESHOLD_S = 60
+LISTENER_PAUSED_ESCALATE_THRESHOLD_S = 180
+
 listener_recovery_state = {
     "down_since": None,
     "attempts": [],
@@ -3844,16 +3861,86 @@ listener_recovery_state = {
     "restart_requested_at": None,
     "limit_logged": False,
     "last_enabled": None,
+    "paused_since": None,
+    "paused_warning_logged": False,
 }
 
 
-def process_listener_autorecovery(status, listener_running, now_ts):
+def resolve_paused_recovery_status(status, now_ts):
+    """Droidian-caught follow-up: a repeating retry loop can keep
+    re-pausing the listener indefinitely even though every individual
+    claim/adapter call is itself bounded and killed on schedule (see
+    LISTENER_PAUSED_ESCALATE_THRESHOLD_S's own comment above) - PAUSED
+    itself has no ceiling, so process_listener_autorecovery()'s existing
+    "PAUSED never triggers recovery" rule can leave it stuck forever.
+
+    Tracks how long `status` has been continuously "PAUSED" (using
+    listener_recovery_state's own paused_since/paused_warning_logged
+    fields, reset the moment status is anything else) and returns
+    (recovery_status, escalated_from_paused) for
+    process_listener_autorecovery() to act on - "LISTENER_DOWN"/True once
+    the pause has persisted past LISTENER_PAUSED_ESCALATE_THRESHOLD_S,
+    otherwise `status` unchanged/False. Logs a WARNING once at
+    LISTENER_PAUSED_WARNING_THRESHOLD_S so a stuck pause is visible in
+    System Log well before it's long enough to escalate.
+
+    Extracted out of radio_health_worker() (its only caller) so this can
+    be tested directly against a fake `now_ts` progression, without
+    driving that worker's own 30s sleep loop."""
+    if status != "PAUSED":
+        listener_recovery_state["paused_since"] = None
+        listener_recovery_state["paused_warning_logged"] = False
+        return status, False
+
+    state = listener_recovery_state
+    if state["paused_since"] is None:
+        state["paused_since"] = now_ts
+        state["paused_warning_logged"] = False
+
+    paused_duration = now_ts - state["paused_since"]
+
+    if (
+        paused_duration >= LISTENER_PAUSED_WARNING_THRESHOLD_S
+        and not state["paused_warning_logged"]
+    ):
+        log_system_event(
+            title="Listener PAUSED unusually long",
+            level="WARNING",
+            details=(
+                "pause_listen has been continuously set for "
+                f"{int(paused_duration)}s - a radio command may be stuck "
+                "in a retry loop rather than completing normally"
+            ),
+            source="recovery",
+        )
+        state["paused_warning_logged"] = True
+
+    if paused_duration >= LISTENER_PAUSED_ESCALATE_THRESHOLD_S:
+        return "LISTENER_DOWN", True
+
+    return status, False
+
+
+def process_listener_autorecovery(status, listener_running, now_ts, escalated_from_paused=False):
     """
     Restart the Meshtastic listener after a persistent LISTENER_DOWN state.
 
     Safety limits:
     - maximum 3 attempts in 30 minutes;
-    - PAUSED, STARTING, IDLE and NO_PACKETS never trigger recovery;
+    - PAUSED, STARTING, IDLE and NO_PACKETS never trigger recovery on their
+      own - but radio_health_worker() escalates a PAUSED state that has
+      persisted past LISTENER_PAUSED_ESCALATE_THRESHOLD_S into a synthetic
+      status="LISTENER_DOWN" call here (Droidian-caught: a repeating
+      retry loop can keep the listener paused indefinitely even though
+      every individual claim/adapter call is itself bounded and killed on
+      schedule - see LISTENER_PAUSED_ESCALATE_THRESHOLD_S's own comment).
+      `escalated_from_paused` is True for exactly those calls, so this
+      function's own log messages can say what actually triggered
+      recovery instead of always claiming a literal listener-process
+      crash - this function's attempt-counting/delay/limit logic is
+      otherwise identical and shared for both origins, deliberately: a
+      genuine crash and a stuck-PAUSED thrash draw from the same 3-per-
+      30-minutes budget, not two independent ones.
     - recovery is cancelled if the listener returns before the delay expires.
     """
     state = listener_recovery_state
@@ -3987,8 +4074,13 @@ def process_listener_autorecovery(status, listener_running, now_ts):
         log_system_event(
             title="Listener failure detected",
             level="WARNING",
-            details=f"Waiting {delay} seconds before "
-                "automatic recovery",
+            details=(
+                "Listener has been PAUSED unusually long "
+                f"({LISTENER_PAUSED_ESCALATE_THRESHOLD_S}s+), treating as "
+                f"down. Waiting {delay} seconds before automatic recovery"
+                if escalated_from_paused else
+                f"Waiting {delay} seconds before automatic recovery"
+            ),
             source="recovery",
         )
         return
@@ -4008,8 +4100,14 @@ def process_listener_autorecovery(status, listener_running, now_ts):
             log_system_event(
                 title="Automatic recovery limit reached",
                 level="ERROR",
-                details=f"{LISTENER_RECOVERY_MAX_ATTEMPTS} attempts "
-                    "within 30 minutes. Manual action required.",
+                details=(
+                    f"Auto-recovery exhausted its {LISTENER_RECOVERY_MAX_ATTEMPTS} "
+                    f"attempts in {LISTENER_RECOVERY_WINDOW // 60} minutes, PAUSED "
+                    "persists - manual intervention required."
+                    if escalated_from_paused else
+                    f"{LISTENER_RECOVERY_MAX_ATTEMPTS} attempts "
+                    "within 30 minutes. Manual action required."
+                ),
                 source="recovery",
             )
             state["limit_logged"] = True
@@ -4190,10 +4288,13 @@ def radio_health_worker():
                 flush=True
             )
 
+            recovery_status, escalated_from_paused = resolve_paused_recovery_status(status, now_ts)
+
             process_listener_autorecovery(
-                status=status,
+                status=recovery_status,
                 listener_running=listener_running,
                 now_ts=now_ts,
+                escalated_from_paused=escalated_from_paused,
             )
 
         except Exception as e:

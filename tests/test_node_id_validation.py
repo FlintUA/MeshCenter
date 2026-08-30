@@ -60,3 +60,25 @@ def test_normalize_node_id_passes_through_well_formed_id(server_module):
 def test_normalize_node_id_returns_none_for_empty_input(server_module):
     assert server_module.normalize_node_id("") is None
     assert server_module.normalize_node_id(None) is None
+
+
+def test_node_icon_path_traversal_prevention(tmp_path):
+    from pathlib import Path
+    from flask import Flask
+    import api.api_node_icons as api_node_icons
+
+    app = Flask(__name__)
+    api_node_icons.register_node_icon_routes(app, str(tmp_path), "!12345678", lambda n: True)
+
+    # Invoke view function directly with test_request_context to test icon_path traversal check
+    get_view = app.view_functions["get_node_icon"]
+    delete_view = app.view_functions["delete_node_icon"]
+
+    with app.test_request_context():
+        resp_get, status_get = get_view("!../../etc/passwd")
+        assert status_get == 400
+        assert resp_get.get_json()["error"] == "Invalid node_id"
+
+        resp_del, status_del = delete_view("!../../etc/passwd")
+        assert status_del == 400
+        assert resp_del.get_json()["error"] == "Invalid node_id"

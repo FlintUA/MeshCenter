@@ -4683,6 +4683,7 @@ def api_instance_identity():
         "status": result.get("status") or identity.get("runtime", {}).get("identity_status", "NOT_CHECKED"),
         "checked_at": result.get("checked_at") or identity.get("runtime", {}).get("last_detected_at"),
         "error": result.get("error") or identity.get("runtime", {}).get("last_error"),
+        "installation": dict(identity.get("installation", {})),
     })
 
 @app.route("/api/node-manager/dashboard")

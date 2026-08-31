@@ -42,6 +42,7 @@ from meshsrv.runtime_identity import (
     discover_serial_ports,
 )
 from meshsrv.instance_manager import InstanceManager
+from meshsrv.installation_time_assignment import start_background_assignment as start_installation_time_assignment
 from meshsrv.radio_identity import detect_radio_identity, detect_connected_radio, compare_radio_identity
 from meshsrv.time_service import start_background_thread as start_time_service
 from meshsrv.node_time_sync import STARTUP_SYNC_DELAY_S
@@ -5996,6 +5997,7 @@ def start_runtime():
     ).start()
 
     start_time_service()
+    start_installation_time_assignment(instance_manager)
     start_schedule_engine(
         nodes=nodes,
         state_lock=state_lock,

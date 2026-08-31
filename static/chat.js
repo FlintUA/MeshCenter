@@ -10981,6 +10981,17 @@ async function loadInstanceInfo() {
         };
         setText('instanceName', data.instance_name);
         setText('instanceHostname', data.hostname);
+
+        const installationId = (data.installation && data.installation.id) || '';
+        setText('instanceInstallationId', installationId);
+        const installationIdElement = document.getElementById('instanceInstallationId');
+        if (installationIdElement) {
+            installationIdElement.classList.toggle('copyable-value', Boolean(installationId));
+            installationIdElement.onclick = installationId
+                ? () => copyTextToClipboard(installationId, window.I18N.t('system.installation_id_copied'))
+                : null;
+        }
+
         setText('instanceConfiguredRadio', formatIdentityRadio(data.configured));
         setText('instanceDetectedRadio', formatIdentityRadio(data.detected));
         setText('instanceLastCheck', formatIdentityCheckedAt(data.checked_at));

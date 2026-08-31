@@ -260,3 +260,72 @@ def test_save_with_missing_installation_key_still_preserves_id_via_defaults(inst
     bare_update = {"active_profile_id": "no-installation-key-here"}
     result = manager.save(bare_update)
     assert result["installation"]["id"] == original_id
+
+
+def test_peek_returns_none_for_a_missing_file(instance_path):
+    manager = InstanceManager(instance_path)
+    assert manager.peek() is None
+    assert not instance_path.exists()
+
+
+def test_peek_returns_none_for_a_corrupted_file_without_touching_it(instance_path):
+    corrupted_bytes = b"{not valid json"
+    instance_path.write_bytes(corrupted_bytes)
+    manager = InstanceManager(instance_path)
+
+    assert manager.peek() is None
+    assert instance_path.read_bytes() == corrupted_bytes
+
+
+def test_peek_returns_the_stored_installation_block_verbatim(instance_path):
+    manager = InstanceManager(instance_path)
+    identity = manager.load_or_create({})
+    original_id = identity["installation"]["id"]
+
+    peeked = manager.peek()
+    assert peeked["id"] == original_id
+    assert peeked == identity["installation"]
+
+
+def test_peek_does_not_validate_or_regenerate_a_corrupted_id(instance_path):
+    # peek() must show a format-invalid stored value exactly as-is, not
+    # silently "fix" it - that's the whole point: a genuinely read-only
+    # diagnostic view, not a second normalize() path.
+    raw = {
+        "schema_version": 2, "radio": {}, "runtime": {},
+        "installation": {"id": "GARBAGE", "assigned_at": None, "time_source": "pending", "assignment_reason": "fresh_install"},
+    }
+    instance_path.write_text(json.dumps(raw), encoding="utf-8")
+    manager = InstanceManager(instance_path)
+
+    peeked = manager.peek()
+    assert peeked["id"] == "GARBAGE"
+    # And no write happened - the corrupted id is still exactly what's on disk.
+    on_disk = json.loads(instance_path.read_text(encoding="utf-8"))
+    assert on_disk["installation"]["id"] == "GARBAGE"
+
+
+def test_peek_never_calls_generate_installation_id(instance_path):
+    raw = {
+        "schema_version": 2, "radio": {}, "runtime": {},
+        "installation": {"id": "GARBAGE", "assigned_at": None, "time_source": "pending", "assignment_reason": "fresh_install"},
+    }
+    instance_path.write_text(json.dumps(raw), encoding="utf-8")
+    manager = InstanceManager(instance_path)
+
+    with patch("meshsrv.instance_manager.generate_installation_id") as mock_generate:
+        manager.peek()
+    mock_generate.assert_not_called()
+
+
+def test_peek_does_not_log_a_corrupted_id_warning(instance_path, monkeypatch):
+    mock_log = _stub_system_log(monkeypatch)
+    raw = {
+        "schema_version": 2, "radio": {}, "runtime": {},
+        "installation": {"id": "GARBAGE", "assigned_at": None, "time_source": "pending", "assignment_reason": "fresh_install"},
+    }
+    instance_path.write_text(json.dumps(raw), encoding="utf-8")
+    manager = InstanceManager(instance_path)
+
+    manager.peek()
+    mock_log.assert_not_called()

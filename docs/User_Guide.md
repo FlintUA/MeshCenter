@@ -520,7 +520,7 @@ python3 scripts/manage_installation_id.py regenerate
 sudo systemctl start meshcenter.service
 ```
 
-The service must be stopped first - MeshCenter caches the ID in memory while running, so regenerating it while the service is up would change the file on disk without the running app (or the System card) noticing until restarted. The tool checks this and refuses by default if the service is still active. Run `python3 scripts/manage_installation_id.py show` any time to see the current ID without changing anything.
+The service must be stopped first - MeshCenter caches the ID in memory while running, so regenerating it while the service is up would change the file on disk without the running app (or the System card) noticing until restarted. The tool checks this and refuses to proceed if the service is still active - there's no override, on purpose. Run `python3 scripts/manage_installation_id.py show` any time to see the current ID without changing anything; it's genuinely read-only, safe to run even if `instance.json` is missing or corrupted.
 
 ### Updates
 

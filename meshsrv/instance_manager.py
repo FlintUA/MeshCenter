@@ -230,6 +230,31 @@ class InstanceManager:
         with self._lock:
             return copy.deepcopy(self._data)
 
+    def peek(self) -> dict[str, Any] | None:
+        """Read the file's raw "installation" block, if any, WITHOUT
+        writing, normalizing, or generating anything - safe to call on a
+        missing or corrupted file without destroying it (unlike
+        load_or_create(), which self-heals by writing a freshly-normalized
+        replacement the moment raw data doesn't match its normalized form -
+        exactly what a missing/corrupted file always produces).
+
+        Deliberately does not route through _normalize(): that function
+        calls generate_installation_id() (a different random value on every
+        call) and logs a WARNING via _log_corrupted_id_replaced() whenever
+        it sees an invalid existing id - both are real side effects that a
+        genuinely read-only peek must never trigger. Returns the stored
+        sub-dict verbatim, unvalidated - for a corrupted file, this is the
+        diagnostic value: showing exactly what's actually stored, not a
+        fabricated replacement.
+
+        Returns None if the file doesn't exist, isn't valid JSON, or has no
+        "installation" key yet - callers should treat that as "not yet
+        initialized", not attempt to interpret a placeholder.
+        """
+        raw = self._read_raw()
+        installation = raw.get("installation")
+        return dict(installation) if isinstance(installation, dict) else None
+
     def save(self, data: Mapping[str, Any]) -> dict[str, Any]:
         """Validate and atomically persist supplied identity data."""
         with self._lock:

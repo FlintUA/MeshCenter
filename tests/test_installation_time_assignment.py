@@ -72,26 +72,48 @@ def test_confirmed_on_a_later_poll_sleeps_the_expected_number_of_times(manager):
     assert manager.get()["installation"]["time_source"] == "system_ntp"
 
 
-def test_never_confirmed_gives_up_after_timeout_without_saving(manager):
+def test_unconfirmed_past_fast_phase_transitions_to_slow_polling(manager):
+    # 20 fast-phase misses exhaust the 300s/15s window; 2 more misses happen
+    # during the slow phase; the 23rd call finally confirms. This is the
+    # loop's real termination, not an arbitrary truncation - every one of
+    # the 23 configured responses is consumed exactly once.
     clock = _FakeClock()
-    original_id = manager.get()["installation"]["id"]
+    responses = [None] * 22 + ["2026-09-01T07:00:00+00:00"]
 
     with patch(
         "meshsrv.installation_time_assignment.get_confirmed_utc_time",
-        return_value=None,
+        side_effect=responses,
     ):
         result = assign_installation_time_when_confirmed(
-            manager, poll_interval=15, timeout=300,
+            manager, poll_interval=15, timeout=300, slow_poll_interval=1200,
             sleep_fn=clock.sleep, monotonic_fn=clock.monotonic,
         )
 
-    assert result is False
-    # Loop must actually stop, not poll forever: timeout // poll_interval.
-    assert len(clock.sleep_calls) == 300 // 15
+    assert result is True
+    assert clock.sleep_calls == [15] * 20 + [1200, 1200]
     identity = manager.get()
-    assert identity["installation"]["time_source"] == "pending"
-    assert identity["installation"]["assigned_at"] is None
-    assert identity["installation"]["id"] == original_id
+    assert identity["installation"]["time_source"] == "system_ntp"
+    assert identity["installation"]["assigned_at"] == "2026-09-01T07:00:00+00:00"
+
+
+def test_slow_phase_stops_polling_once_it_resolves(manager):
+    # Regression guard for "resolve once, exit" - if the loop kept running
+    # past confirmation, get_confirmed_utc_time (a Mock with a bounded
+    # side_effect list) would raise StopIteration on the next call. The
+    # test passing at all is the proof the loop stopped exactly on success.
+    clock = _FakeClock()
+    responses = [None] * 21 + ["2026-09-01T07:00:00+00:00"]
+
+    with patch(
+        "meshsrv.installation_time_assignment.get_confirmed_utc_time",
+        side_effect=responses,
+    ) as mock_get:
+        assign_installation_time_when_confirmed(
+            manager, poll_interval=15, timeout=300, slow_poll_interval=1200,
+            sleep_fn=clock.sleep, monotonic_fn=clock.monotonic,
+        )
+
+    assert mock_get.call_count == len(responses)
 
 
 def test_successful_save_preserves_every_other_existing_field(manager):

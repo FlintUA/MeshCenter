@@ -508,6 +508,20 @@ The Wi-Fi Manager can change the Raspberry Pi network connection. Changing to an
 
 The Workspace menu also controls Base and Nodes panel visibility, theme and compact mode. These visual preferences are stored in the current browser, not globally on the Raspberry Pi.
 
+### Installation ID
+
+The System card shows an **Installation ID** (`MC1-XXXX-XXXX-XXXX-XXXX-XXXX`) - click it to copy. It identifies this MeshCenter *installation*, not your radio and not you: it's a random value generated on first run, with no hardware serial number, MAC address, or personal data of any kind in it. See [PRIVACY.md](../PRIVACY.md) for the full detail on what it is and isn't.
+
+You'd want a fresh one mainly when handing the device to someone else - before donating or reselling a Raspberry Pi running MeshCenter, for example, so the new owner's installation starts with its own identifier rather than inheriting yours. Regenerating is a command-line operation, on purpose (it's a rare, deliberate action, not something to expose as a casual button in the UI):
+
+```bash
+sudo systemctl stop meshcenter.service
+python3 scripts/manage_installation_id.py regenerate
+sudo systemctl start meshcenter.service
+```
+
+The service must be stopped first - MeshCenter caches the ID in memory while running, so regenerating it while the service is up would change the file on disk without the running app (or the System card) noticing until restarted. The tool checks this and refuses by default if the service is still active. Run `python3 scripts/manage_installation_id.py show` any time to see the current ID without changing anything.
+
 ### Updates
 
 The **Updates** card checks GitHub for a newer release (once a day by default - togglable, and never more often than the interval you set) and shows the current version, the latest version, and the real release changelog. **Check now** refreshes that check on demand.

@@ -205,6 +205,7 @@ serial-access checklist that trips up most first installs: see
 - [Quick Installation](#installation)
 - [Architecture Overview](#application-architecture)
 - [Development Roadmap](#roadmap)
+- [Privacy: Installation ID](PRIVACY.md)
 
 ## Switching to another Meshtastic radio
 
@@ -1248,6 +1249,16 @@ This improves:
 - Future multi-node support
 
 ---
+
+## 🔑 Installation ID
+
+Each MeshCenter *install* (not the radio) has its own identifier - a random `MC1-XXXX-XXXX-XXXX-XXXX-XXXX` string, visible on the System card as **Installation ID**. It's pure entropy generated on first run, with no hardware serial number, MAC address, or personal data folded into it - it identifies this installation of the software, not you or your device. See [PRIVACY.md](PRIVACY.md) for the full detail.
+
+It's shown for reference and for pairing with future tooling that needs to distinguish one MeshCenter install from another - click it to copy. If you ever want a fresh identifier (for example, before giving away or reselling the device), stop the service and run:
+
+```bash
+python3 scripts/manage_installation_id.py regenerate
+```
 
 ## Camera Notes
 

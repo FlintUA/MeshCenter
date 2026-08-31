@@ -1,0 +1,50 @@
+# [project] describes MIT-licensed Core only (server.py, api/, meshsrv/,
+# storage/, telemetry/, camera/, weather/, utils/) - NOT the whole
+# repository. adapters/meshtastic/ is GPLv3-licensed, isolated into its
+# own subprocess/venv (see THIRD_PARTY_NOTICES.md and
+# adapters/meshtastic/LICENSE) and deliberately excluded from this
+# project's own metadata scope.
+#
+# This scoping is descriptive for humans reading this file, NOT a
+# technical enforcement boundary - setuptools/pip's own package
+# auto-discovery doesn't know or care what this comment says. The
+# actual safety guarantee is structural: this repo has multiple
+# top-level Python packages (api/, meshsrv/, adapters/, camera/, ...)
+# with no packages=[...] configuration, so setuptools' own flat-layout
+# auto-discovery safety check refuses to build a wheel at all rather
+# than guess which ones belong together - verified directly, live,
+# against this exact repository (`pip install .` in a disposable clean
+# checkout: "Multiple top-level packages discovered in a flat-layout...
+# setuptools will not proceed with this build" - exit 1, no wheel
+# produced, nothing named "meshcenter" or "adapters" ever reaches
+# site-packages). No [build-system] table below is what this project
+# actually relies on day to day: MeshCenter is never installed via
+# `pip install .`/built as a wheel anywhere in this repo's own tooling
+# (install.sh/meshcenter-firstboot.sh only ever run
+# `pip install -r requirements.txt`, confirmed unaffected by this
+# file's presence - same installed package set, with or without it).
+# Adding [build-system] machinery here would imply otherwise without a
+# real reason to.
+[project]
+name = "meshcenter"
+version = "1.8.0"
+# Descriptive metadata only. Runtime version remains authoritative and
+# is derived from git describe --tags (see server.py's
+# resolve_app_version()) - update this manually when tagging a new
+# release; IDEs, dependency scanners, and other packaging tools may
+# read this field even though nothing in this codebase's own runtime
+# does.
+description = "MIT-licensed Flask Core of MeshCenter, a web control center for a Meshtastic LoRa radio"
+license = {file = "LICENSE"}
+requires-python = ">=3.11"
+authors = [{name = "Kostiantyn Vynohradov"}]
+
+# No [project.dependencies]: requirements.txt (range-pinned, live-
+# verified) stays the single source of truth - install.sh reads that
+# file directly, not this one. Duplicating it here would create a
+# second list nothing keeps in sync.
+
+[project.urls]
+Homepage = "https://github.com/FlintUA/MeshCenter"
+Repository = "https://github.com/FlintUA/MeshCenter"
+Issues = "https://github.com/FlintUA/MeshCenter/issues"

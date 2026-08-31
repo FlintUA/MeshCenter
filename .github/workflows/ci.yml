@@ -90,10 +90,27 @@ jobs:
       - name: JavaScript syntax check (node --check)
         run: |
           set -e
-          for script in static/chat.js static/i18n.js static/media.js static/weather.js; do
+          # Excludes vendored/minified files, not our code to syntax-check as
+          # a regression gate - currently just static/chart.umd.min.js
+          # (mirrored from jsdelivr, see its own header comment). Explicit
+          # exclude list, not an implicit "skip anything that fails" - if a
+          # future first-party file needs excluding too, add it here
+          # deliberately rather than letting the loop silently swallow it.
+          EXCLUDE="static/chart.umd.min.js"
+          for script in static/*.js; do
+            if [ "$script" = "$EXCLUDE" ]; then
+              echo "skip (vendored) $script"
+              continue
+            fi
             echo "node --check $script"
             node --check "$script"
           done
+
+      - name: i18n catalog consistency check
+        run: python scripts/check-i18n.py
+
+      - name: server.py startup-call regression check
+        run: python scripts/check_startup_calls.py
 
       - name: Run pytest
         run: python -m pytest

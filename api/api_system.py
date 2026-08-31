@@ -226,8 +226,9 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
             results.sort(key=lambda item: item["cpu_percent"], reverse=True)
 
             return jsonify({"ok": True, "processes": results[:5]})
-        except Exception as exc:
-            return jsonify({"ok": False, "error": str(exc)}), 500
+        except Exception:
+            # Security: Don't leak internal stack traces or error details to client
+            return jsonify({"ok": False, "error": "Failed to fetch top processes"}), 500
 
     def get_saved_wifi_names():
         result = network_config.list_wifi_connections()

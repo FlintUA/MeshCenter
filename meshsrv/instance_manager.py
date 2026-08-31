@@ -15,10 +15,11 @@ import threading
 from pathlib import Path
 from typing import Any, Mapping
 
+from meshsrv.installation_identity import generate_installation_id, is_valid_installation_id
 from storage.json_store import safe_write_json
 
 
-INSTANCE_SCHEMA_VERSION = 1
+INSTANCE_SCHEMA_VERSION = 2
 
 
 class InstanceManager:
@@ -59,7 +60,7 @@ class InstanceManager:
             return {}
 
     def _normalize(self, raw: Mapping[str, Any], defaults: Mapping[str, Any]) -> dict[str, Any]:
-        """Return schema-v1 data from either the old flat or current structure."""
+        """Return schema-v2 data from either the old flat/v1 or current structure."""
         raw = dict(raw or {})
         defaults = dict(defaults or {})
 
@@ -128,6 +129,7 @@ class InstanceManager:
         }
 
         active_profile_id = first_text(raw.get("active_profile_id"), defaults.get("active_profile_id"))
+        installation = self._normalize_installation(raw, defaults, had_any_data=bool(raw))
 
         return {
             "schema_version": INSTANCE_SCHEMA_VERSION,
@@ -136,7 +138,66 @@ class InstanceManager:
             "active_profile_id": active_profile_id,
             "radio": radio,
             "runtime": runtime,
+            "installation": installation,
         }
+
+    def _normalize_installation(
+        self, raw: Mapping[str, Any], defaults: Mapping[str, Any], had_any_data: bool
+    ) -> dict[str, Any]:
+        """Return schema-v2 installation identity: an ID generated once, then
+        forward-carried on every later normalize pass (see _normalize()'s
+        callers - load_or_create() runs this once at startup, save() runs it
+        on every profile switch / radio accept, so this must never regenerate
+        an already-valid ID on a routine pass, only on a genuinely missing or
+        invalid one)."""
+        nested = raw.get("installation") if isinstance(raw.get("installation"), dict) else {}
+        default_installation = defaults.get("installation") if isinstance(defaults.get("installation"), dict) else {}
+
+        existing_id = self._text(nested.get("id")) or self._text(default_installation.get("id"))
+
+        if is_valid_installation_id(existing_id):
+            return {
+                "id": existing_id,
+                "assigned_at": self._datetime_text(nested.get("assigned_at", default_installation.get("assigned_at"))),
+                "time_source": self._text(nested.get("time_source")) or self._text(default_installation.get("time_source")) or "pending",
+                "assignment_reason": (
+                    self._text(nested.get("assignment_reason"))
+                    or self._text(default_installation.get("assignment_reason"))
+                    or ("migration" if had_any_data else "fresh_install")
+                ),
+            }
+
+        # No valid ID found - either nothing was there (fresh install / a
+        # genuine v1 file predating this field), or something was there but
+        # failed format validation (corrupted/tampered file). Both mint a new
+        # ID with assignment_reason "migration"/"fresh_install" (spec doesn't
+        # define a distinct enum value for the corrupted case), but the
+        # corrupted case additionally gets a WARNING system-log entry so it's
+        # not fully silent - a replaced ID is more noteworthy than an
+        # ordinary v1-to-v2 migration, even though the reason field can't
+        # distinguish them.
+        if existing_id:
+            self._log_corrupted_id_replaced(existing_id)
+
+        return {
+            "id": generate_installation_id(),
+            "assigned_at": None,
+            "time_source": "pending",
+            "assignment_reason": "migration" if had_any_data else "fresh_install",
+        }
+
+    def _log_corrupted_id_replaced(self, invalid_id: str) -> None:
+        try:
+            from system_log import log_system_event  # noqa: PLC0415 - lazy: keeps this module config.py-free at import time
+
+            log_system_event(
+                "Installation ID replaced",
+                "WARNING",
+                f"Stored installation ID failed format validation and was regenerated: {invalid_id!r}",
+                source="instance",
+            )
+        except Exception as error:
+            print(f"[INSTANCE] Could not log installation ID replacement: {error}", flush=True)
 
     def load_or_create(self, defaults: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Load the file, migrate legacy data and persist the normalized schema."""
@@ -148,7 +209,12 @@ class InstanceManager:
                     raise RuntimeError(f"Could not save MeshCenter instance identity: {self.path}")
                 if not raw:
                     print(f"[INSTANCE] Created instance identity: {self.path}", flush=True)
-                elif raw.get("schema_version") != INSTANCE_SCHEMA_VERSION or "radio" not in raw or "runtime" not in raw:
+                elif (
+                    raw.get("schema_version") != INSTANCE_SCHEMA_VERSION
+                    or "radio" not in raw
+                    or "runtime" not in raw
+                    or "installation" not in raw
+                ):
                     print(
                         f"[INSTANCE] Migrated instance identity to schema {INSTANCE_SCHEMA_VERSION}: {self.path}",
                         flush=True,

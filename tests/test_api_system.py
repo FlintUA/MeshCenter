@@ -103,3 +103,20 @@ def test_wifi_scan_success_path_does_not_log(client, monkeypatch):
     assert data["ok"] is True
     assert data["networks"] == []
     assert logged == []
+
+
+def test_top_processes_exception_does_not_leak_stack_details(client, monkeypatch):
+    import psutil
+
+    def _failing_iter(*args, **kwargs):
+        raise RuntimeError("Internal psutil failure: secret_token_xyz")
+
+    monkeypatch.setattr(psutil, "process_iter", _failing_iter)
+
+    response = client.get("/api/system/top-processes")
+
+    assert response.status_code == 500
+    data = response.get_json()
+    assert data["ok"] is False
+    assert data["error"] == "Failed to fetch top processes"
+    assert "secret_token_xyz" not in data["error"]

@@ -174,6 +174,81 @@ def test_killed_adapter_respawns_as_a_genuinely_different_process():
     assert second_pid != first_pid, "respawn must be a genuinely new OS process, not the killed one still running"
 
 
+def test_adapter_self_reported_timeout_kills_and_respawns_the_subprocess():
+    """Radio-stability review, P0-A regression test: the adapter's own
+    internal TimeoutEnforced watchdog (adapters/meshtastic/
+    _timeout_support.py) can fire first and report the timeout back as
+    a well-formed response - status == "ok" at call()'s own read-result
+    layer (a valid JSON line WAS read), payload carries
+    ok=false/error.code="timeout". Before this fix, that fell straight
+    through to `return payload` with no kill at all, leaving the
+    subprocess - and whatever daemon thread was running the timed-out
+    operation inside it, per TimeoutEnforced's own docstring never
+    stopped, only abandoned - alive and reused for the next call.
+
+    First call gets the real PID (normal behavior). Second call
+    self-reports a timeout - caller-visible behavior must NOT change
+    (still the same TransportError(TIMEOUT) it always raised). Third
+    call (normal behavior again) must get a DIFFERENT PID, proving the
+    adapter was actually killed and respawned, not silently reused -
+    this assertion fails before the fix (same PID), passes after."""
+    supervisor = _make_supervisor()
+    transport = AdapterIPCTransport(ConnectionType.BLUETOOTH, supervisor)
+
+    first = supervisor.call(
+        {"operation": "get_metadata", "transport_type": "serial", "params": {}, "timeout": 5.0},
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+    first_pid = first["result"]["_pid"]
+    assert first_pid is not None
+
+    with pytest.raises(TransportError) as excinfo:
+        transport._call("get_metadata", {"_test_behavior": "adapter_timeout"}, 5.0)
+    assert excinfo.value.code == TransportErrorCode.TIMEOUT
+
+    third = supervisor.call(
+        {"operation": "get_metadata", "transport_type": "serial", "params": {}, "timeout": 5.0},
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+    third_pid = third["result"]["_pid"]
+    assert third_pid is not None
+    assert third_pid != first_pid, (
+        "adapter must be killed+respawned after self-reporting a timeout, not silently reused"
+    )
+
+
+def test_ordinary_adapter_domain_error_does_not_kill_the_subprocess():
+    """Negative test guarding P0-A's narrow scope: an ordinary ok=false
+    domain error (the adapter's own call stack already unwound cleanly)
+    must NOT trigger a kill - only TIMEOUT specifically does. Guards
+    against a future accidental widening back to "kill on any error".
+
+    Checks supervisor._proc.pid directly (Python's own Popen.pid, always
+    available) rather than fake_adapter.py's embedded result._pid -
+    that's only stamped on a process's very first echo-shaped response
+    (see fake_adapter.py's own docstring), so a second, still-alive-
+    process call would read back None there regardless of whether a
+    kill happened - not what this test needs to distinguish."""
+    supervisor = _make_supervisor()
+    transport = AdapterIPCTransport(ConnectionType.BLUETOOTH, supervisor)
+
+    supervisor.call(
+        {"operation": "get_metadata", "transport_type": "serial", "params": {}, "timeout": 5.0},
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+    pid_before = supervisor._proc.pid
+
+    with pytest.raises(TransportError) as excinfo:
+        transport._call("get_metadata", {"_test_behavior": "adapter_error:unsupported"}, 5.0)
+    assert excinfo.value.code == TransportErrorCode.UNSUPPORTED
+
+    assert supervisor._proc is not None, "an ordinary domain error must not kill the subprocess - only TIMEOUT should"
+    assert supervisor._proc.pid == pid_before, "same OS process must still be running, not killed and respawned"
+
+
 def test_crashed_adapter_raises_adapter_unavailable_not_a_raw_exception():
     supervisor = _make_supervisor()
 

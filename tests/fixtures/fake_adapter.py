@@ -29,6 +29,18 @@ adapter protocol never uses:
     thread, the write blocks once the buffer fills and the whole call
     wedges until the caller's own timeout fires instead of completing
     normally.
+  "adapter_timeout" - responds IMMEDIATELY (not a hang) with a
+    well-formed ok=false/error.code="timeout" response, matching the
+    exact shape ipc_protocol.make_error_response() produces on the real
+    adapter side when its own internal TimeoutEnforced watchdog
+    (adapters/meshtastic/_timeout_support.py) fires first and reports
+    the timeout back cleanly instead of the caller-side reader ever
+    hitting queue.Empty - radio-stability review P0-A's exact scenario.
+  "adapter_error:<code>" - responds immediately with a well-formed
+    ok=false response carrying the given TransportErrorCode value (e.g.
+    "adapter_error:unsupported") - an ordinary domain error, NOT a
+    timeout, for proving P0-A's fix stays narrowly scoped to TIMEOUT
+    specifically and doesn't kill the subprocess for these.
 
 Writes its own PID to stdout on the FIRST request's response
 (`_pid` key) so a test can confirm a kill+respawn actually launched a
@@ -57,6 +69,27 @@ def main() -> None:
 
         if behavior == "hang":
             time.sleep(3600)
+            continue
+
+        if behavior == "adapter_timeout":
+            response = {
+                "protocol_version": 1,
+                "ok": False,
+                "error": {"code": "timeout", "message": "simulated adapter-side TimeoutEnforced firing"},
+            }
+            sys.stdout.write(json.dumps(response) + "\n")
+            sys.stdout.flush()
+            continue
+
+        if behavior.startswith("adapter_error:"):
+            code = behavior.split(":", 1)[1]
+            response = {
+                "protocol_version": 1,
+                "ok": False,
+                "error": {"code": code, "message": f"simulated {code} domain error"},
+            }
+            sys.stdout.write(json.dumps(response) + "\n")
+            sys.stdout.flush()
             continue
 
         if behavior.startswith("sleep:"):

@@ -95,6 +95,20 @@ is real as of Task 48's process boundary — `AdapterSupervisor.call()`
 for a response and `SIGKILL`s the adapter subprocess on expiry, so a
 wedged call's orphaned resources (event loop, live bleak/GATT session) go
 away with the process, not just get abandoned in a still-running thread.
+Tier 2 covers a fifth case too (radio-stability review, P0-A): the
+adapter's own internal `TimeoutEnforced` watchdog
+(`adapters/meshtastic/_timeout_support.py`) can fire *first* and report
+the timeout back as a well-formed response instead of the caller-side
+reader ever timing out waiting for one — `AdapterSupervisor.call()`
+recognizes this specific shape (`ok: false`, `error.code == "timeout"`)
+and kills the subprocess before returning, same as the no-response/dead-
+process/malformed-output cases, since the daemon thread that was running
+the timed-out operation is only abandoned inside it, never stopped,
+exactly like the no-response case above. Every other `ok: false` domain
+error (`NOT_CONNECTED`, `UNSUPPORTED`, `IDENTITY_MISMATCH`, ...) means the
+adapter's own call stack already unwound cleanly and does not trigger a
+kill — only `TIMEOUT` specifically indicates an abandoned daemon thread
+with unknown resource-ownership state.
 BLE cleanup on a kill is handled explicitly too: a `SIGKILL`'d adapter's
 serial file descriptors are reclaimed by the kernel automatically, but a
 BLE GATT session (brokered through BlueZ over D-Bus) can outlive the

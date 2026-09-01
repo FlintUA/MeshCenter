@@ -8,9 +8,9 @@
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20260824-ble-receive-warning">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20260821-style-split">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260823-weather-icon-shift">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20260901-identity-error-hint">
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260901-btn-system">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20260901-identity-hint-btn-system">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20260901-btn-system">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
@@ -173,6 +173,8 @@
                         <span class="notifications-badge" id="notificationsBadge" style="display:none">0</span>
                     </span>
                     <div class="notifications-card-actions">
+                        <button class="btn btn-sm btn-icon" onclick="event.stopPropagation(); copyActivityLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
+                        <button class="btn btn-sm btn-icon" onclick="event.stopPropagation(); exportActivityLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
                         <button class="btn btn-sm notifications-clear-btn" id="notificationsClearBtn"
                                 onclick="event.stopPropagation(); clearAllNotifications()"
                                 data-i18n="activity.clear_all" style="display:none">Clear</button>
@@ -915,17 +917,21 @@
 
                             <!-- System Log -->
                             <div class="system-card system-log-card">
-                                <button
-                                    type="button"
+                                <div
+                                    class="radio-history-toggle system-log-card-header"
                                     id="radioHistoryToggle"
-                                    class="radio-history-toggle system-log-toggle"
                                     onclick="toggleRadioHealthHistory()"
+                                    role="button"
                                     aria-expanded="true"
                                     aria-controls="radioHealthHistoryPanel"
                                 >
                                     <span class="system-card-title">📋 System Log</span>
-                                    <span id="radioHistoryArrow">▴</span>
-                                </button>
+                                    <div class="system-log-actions">
+                                        <button type="button" class="btn btn-sm btn-icon" onclick="event.stopPropagation(); copySystemLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
+                                        <button type="button" class="btn btn-sm btn-icon" onclick="event.stopPropagation(); exportSystemLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
+                                        <span id="radioHistoryArrow">▴</span>
+                                    </div>
+                                </div>
 
                                 <div
                                     id="radioHealthHistoryPanel"
@@ -1995,7 +2001,11 @@
                      onclick="event.stopPropagation()">
                 <header class="notification-popover-header">
                     <div><strong data-i18n="notifications.title">Notifications</strong><span data-i18n="notifications.subtitle">System alerts and events</span></div>
-                    <button type="button" class="notification-clear-btn" onclick="clearNotifications()" data-i18n="modals.clear">Clear</button>
+                    <div class="notification-header-actions">
+                        <button type="button" class="btn btn-sm btn-icon notification-clear-btn" onclick="copyNotificationCenterLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
+                        <button type="button" class="btn btn-sm btn-icon notification-clear-btn" onclick="exportNotificationCenterLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
+                        <button type="button" class="btn btn-sm notification-clear-btn" onclick="clearNotifications()" data-i18n="modals.clear">Clear</button>
+                    </div>
                 </header>
                 <div class="notification-list" id="notificationList"></div>
                 <div class="notification-empty" id="notificationEmpty" data-i18n="notifications.empty">No notifications yet</div>
@@ -2213,7 +2223,7 @@
 <script src="{{ url_for('static', filename='chat-camera.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-map.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20260821-domain-split"></script>
-<script src="/static/chat.js?v=20260901-identity-error-hint"></script>
+<script src="/static/chat.js?v=20260901-identity-hint-btn-system"></script>
 <script src="/static/media.js?v=20260818-xss-fix-delete-onclick"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 

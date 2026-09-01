@@ -3746,18 +3746,11 @@ body[data-theme="dark"] .waypoint-action-toast.error {
     flex: 0 0 auto;
 }
 
-.btn.btn-sm {
-    padding: 4px 10px;
-    font-size: 11px;
-    font-weight: 600;
-    border: 1px solid #cbd5e1;
-    border-radius: 7px;
-    background: #f4f7fa;
-    color: #445366;
-    cursor: pointer;
-    transition: background .15s;
-}
-.btn.btn-sm:hover { background: #e6ecf3; }
+/* .btn.btn-sm's own sizing/color moved to static/ui-kit.css's real .btn
+   base + .btn-sm modifier (Task 4) - this compound selector (specificity
+   (0,2,0)) would otherwise silently outrank ui-kit.css's bare .btn-sm
+   (0,1,0) despite loading later, defeating the new system for every
+   element still carrying both classes. Retired here, not duplicated. */
 
 .schedule-modal-content {
     max-width: 420px;
@@ -3983,25 +3976,9 @@ body[data-theme="dark"] .waypoint-action-toast.error {
     flex: 0 0 auto;
 }
 
-.btn.btn-xs {
-    padding: 2px 7px;
-    font-size: 10px;
-    font-weight: 600;
-    border: 1px solid #cbd5e1;
-    border-radius: 6px;
-    background: #f4f7fa;
-    color: #445366;
-    cursor: pointer;
-    transition: background .15s;
-}
-.btn.btn-xs:hover { background: #e6ecf3; }
-
-.btn.btn-xs.btn-danger {
-    border-color: #e3b4b8;
-    color: #a43d45;
-    background: #fdf1f2;
-}
-.btn.btn-xs.btn-danger:hover { background: #fde9eb; }
+/* .btn.btn-xs (+ .btn-danger) retired here too - see the matching note
+   near the old .btn.btn-sm block above. Same specificity trap, same fix:
+   static/ui-kit.css's bare .btn-xs/.btn-danger now own this. */
 
 /* #timeCard dark theme - reference: .node-info-panel's working dark
    override (body/html[data-theme=dark] .node-info-panel, ~line 9501):
@@ -4031,12 +4008,6 @@ html[data-theme="dark"] #timeCard {
 [data-theme="dark"] .schedule-form-row > label {
     color: #9eb3c8;
 }
-[data-theme="dark"] .btn.btn-sm {
-    background: #203449;
-    border-color: #415a72;
-    color: #dbe8f5;
-}
-[data-theme="dark"] .btn.btn-sm:hover { background: #263b50; }
 [data-theme="dark"] .schedule-input,
 [data-theme="dark"] .schedule-select {
     background: #132334;
@@ -4063,19 +4034,6 @@ html[data-theme="dark"] #timeCard {
 [data-theme="dark"] .timer-item-label { color: #e5eff8; }
 [data-theme="dark"] .timer-display { color: #7fb0dc; }
 [data-theme="dark"] .timers-empty { color: #9eb3c8; }
-[data-theme="dark"] .btn.btn-xs {
-    background: #203449;
-    border-color: #415a72;
-    color: #dbe8f5;
-}
-[data-theme="dark"] .btn.btn-xs:hover { background: #263b50; }
-[data-theme="dark"] .btn.btn-xs.btn-danger {
-    background: rgba(207,71,82,.17);
-    border-color: #6b3239;
-    color: #ff9299;
-}
-[data-theme="dark"] .btn.btn-xs.btn-danger:hover { background: rgba(207,71,82,.28); }
-
 /* #notificationsCard (Activity card) dark theme - same pattern as
    #timeCard above: bg #172638, border #263c52, shadow rgba(0,0,0,.24),
    text colors reuse the same #e5eff8 primary / #dbe8f5 secondary /

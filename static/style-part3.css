@@ -1038,7 +1038,12 @@
     display: flex;
     align-items: center;
     color: #2d4057;
-    font-size: 13px;
+    /* Matches --mc-card-title-size (.system-card-title's own font-size,
+       used by System Log/Updates/etc.) - was a hardcoded 13px, one
+       pixel off from every other card-title in the same right column,
+       for no documented reason. Only consumer of this class (checked),
+       so safe to change directly. */
+    font-size: var(--mc-card-title-size, 14px);
     font-weight: 750;
 }
 
@@ -2005,9 +2010,21 @@
    class (see templates/index.html) instead of duplicating it, so title
    stays left and .system-log-actions (copy/export/arrow) stays right,
    matching .notifications-card-header's layout in the Activity card. */
+/* Container-consistency pass (follow-up to Task 4): this header's own
+   padding/margin was already 0/10px, but its ambient spacing from the
+   card edge is NOT zero - .system-card's shared --mc-card-pad token
+   (16px) + its 1px border already put ~17px between the card edge and
+   this header's buttons, measured live via getBoundingClientRect() -
+   noticeably more than the Activity card's ~12px (.notifications-card
+   itself has no padding of its own; .notifications-card-header supplies
+   11px 12px 8px directly). --mc-card-pad is shared by every .system-card
+   on the page (Updates, System Information, Radio Health, ...), so it's
+   deliberately not touched here - a small negative top margin on just
+   this header pulls its buttons back in line with Activity's spacing
+   without touching the shared token or any other card. */
 .system-log-card-header {
     padding: 0;
-    margin: 0 0 10px;
+    margin: -5px 0 10px;
 }
 
 .system-log-card-header .system-card-title {

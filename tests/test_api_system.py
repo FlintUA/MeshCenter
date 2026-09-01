@@ -87,6 +87,67 @@ def test_wifi_scan_unexpected_exception_returns_reason_and_logs_it(client, monke
     assert "iw not found" in logged[0]["details"]
 
 
+@pytest.mark.parametrize("action,expected_title", [
+    ("reboot", "Device reboot requested"),
+    ("shutdown", "Device shutdown requested"),
+])
+def test_system_action_labels_are_generic_not_raspberry_pi(client, monkeypatch, action, expected_title):
+    # These used to hardcode "Raspberry Pi reboot"/"Raspberry Pi shutdown" -
+    # wrong on any non-Pi host (e.g. a Droidian phone) this project also
+    # supports. Also spawns a background thread on success - stub it out so
+    # the test doesn't actually try to sudo systemctl reboot/poweroff.
+    logged = []
+    monkeypatch.setattr(
+        api_system_module, "log_system_event",
+        lambda title, level="INFO", details="", source="system": logged.append(
+            {"title": title, "level": level, "details": details, "source": source}
+        ),
+    )
+    monkeypatch.setattr(api_system_module, "get_device_model", lambda: "")
+    monkeypatch.setattr(api_system_module.threading, "Thread", MagicMock())
+
+    response = client.post("/api/system/action", json={"action": action})
+
+    assert response.status_code == 202
+    assert response.get_json()["message"] == expected_title
+    assert len(logged) == 1
+    assert logged[0]["title"] == expected_title
+    assert "Raspberry Pi" not in logged[0]["title"]
+    assert "Raspberry Pi" not in logged[0]["details"]
+
+
+def test_system_action_log_includes_device_model_when_available(client, monkeypatch):
+    logged = []
+    monkeypatch.setattr(
+        api_system_module, "log_system_event",
+        lambda title, level="INFO", details="", source="system": logged.append(
+            {"title": title, "level": level, "details": details, "source": source}
+        ),
+    )
+    monkeypatch.setattr(api_system_module, "get_device_model", lambda: "Google Inc. MSM sdm670 B4 PVT v1.0")
+    monkeypatch.setattr(api_system_module.threading, "Thread", MagicMock())
+
+    client.post("/api/system/action", json={"action": "reboot"})
+
+    assert logged[0]["details"] == "Requested from MeshCenter web interface (Google Inc. MSM sdm670 B4 PVT v1.0)"
+
+
+def test_system_action_log_omits_model_suffix_when_unavailable(client, monkeypatch):
+    logged = []
+    monkeypatch.setattr(
+        api_system_module, "log_system_event",
+        lambda title, level="INFO", details="", source="system": logged.append(
+            {"title": title, "level": level, "details": details, "source": source}
+        ),
+    )
+    monkeypatch.setattr(api_system_module, "get_device_model", lambda: "")
+    monkeypatch.setattr(api_system_module.threading, "Thread", MagicMock())
+
+    client.post("/api/system/action", json={"action": "reboot"})
+
+    assert logged[0]["details"] == "Requested from MeshCenter web interface"
+
+
 def test_wifi_scan_success_path_does_not_log(client, monkeypatch):
     logged = []
     monkeypatch.setattr(
@@ -103,3 +164,20 @@ def test_wifi_scan_success_path_does_not_log(client, monkeypatch):
     assert data["ok"] is True
     assert data["networks"] == []
     assert logged == []
+
+
+def test_system_info_model_field_uses_get_device_model(client, monkeypatch):
+    monkeypatch.setattr(api_system_module, "get_device_model", lambda: "Google Inc. MSM sdm670 B4 PVT v1.0")
+
+    response = client.get("/api/system/info")
+
+    assert response.status_code == 200
+    assert response.get_json()["model"] == "Google Inc. MSM sdm670 B4 PVT v1.0"
+
+
+def test_system_info_model_field_is_none_when_unavailable(client, monkeypatch):
+    monkeypatch.setattr(api_system_module, "get_device_model", lambda: "")
+
+    response = client.get("/api/system/info")
+
+    assert response.get_json()["model"] is None

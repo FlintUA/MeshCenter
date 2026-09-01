@@ -4,6 +4,34 @@ import re
 import time
 
 
+_device_model_cache = None
+
+
+def get_device_model():
+    """Best-effort short hardware model string. Generic across Raspberry Pi
+    and non-Pi ARM/Linux hosts (e.g. Droidian phones) - reads the same
+    /proc/device-tree/model source api_system_info() already uses for the
+    System Information card, so both surfaces agree. Cached: hardware
+    can't change mid-process."""
+    global _device_model_cache
+    if _device_model_cache is not None:
+        return _device_model_cache
+    model = ""
+    try:
+        with open("/proc/device-tree/model", "r") as f:
+            model = f.read().replace("\x00", "").strip()
+    except OSError:
+        pass
+    if not model:
+        try:
+            import platform
+            model = platform.node() or ""
+        except Exception:
+            model = ""
+    _device_model_cache = model
+    return _device_model_cache
+
+
 def now():
     return time.strftime("%H:%M:%S")
 

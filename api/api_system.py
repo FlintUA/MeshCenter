@@ -6,6 +6,7 @@ from flask import jsonify, request
 
 from meshsrv import network_config
 from system_log import get_system_events, log_system_event
+from utils.helpers import get_device_model
 
 
 MESHCenter_SERVICE = "meshcenter.service"
@@ -32,8 +33,8 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         }
         labels = {
             "restart_meshcenter": "MeshCenter restart",
-            "reboot": "Raspberry Pi reboot",
-            "shutdown": "Raspberry Pi shutdown",
+            "reboot": "Device reboot",
+            "shutdown": "Device shutdown",
         }
 
         command = commands[action]
@@ -57,17 +58,22 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
         allowed = {
             "restart_meshcenter": "MeshCenter restart requested",
-            "reboot": "Raspberry Pi reboot requested",
-            "shutdown": "Raspberry Pi shutdown requested",
+            "reboot": "Device reboot requested",
+            "shutdown": "Device shutdown requested",
         }
 
         if action not in allowed:
             return jsonify({"ok": False, "error": "Unsupported system action"}), 400
 
+        device_model = get_device_model()
+        detail = "Requested from MeshCenter web interface"
+        if device_model:
+            detail += f" ({device_model})"
+
         log_system_event(
             allowed[action],
             "ACTION",
-            "Requested from MeshCenter web interface",
+            detail,
             source="system",
         )
 
@@ -165,11 +171,8 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         except Exception:
             pass
 
-        try:
-            with open("/proc/device-tree/model", "r") as f:
-                result["model"] = f.read().replace("\\x00", "").strip()
-        except Exception:
-            pass
+        model = get_device_model()
+        result["model"] = model or None
 
         try:
             with open("/etc/os-release", "r") as f:

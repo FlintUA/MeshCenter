@@ -15,7 +15,11 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
     @app.route("/api/system/log")
     def api_system_log():
-        limit = request.args.get("limit", 100)
+        try:
+            limit = max(1, min(int(request.args.get("limit", 100)), 500))
+        except (TypeError, ValueError):
+            limit = 100
+
         level = (request.args.get("level") or "").strip() or None
         source = (request.args.get("source") or "").strip() or None
 

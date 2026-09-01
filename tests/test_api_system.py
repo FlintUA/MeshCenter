@@ -103,3 +103,33 @@ def test_wifi_scan_success_path_does_not_log(client, monkeypatch):
     assert data["ok"] is True
     assert data["networks"] == []
     assert logged == []
+
+
+def test_system_log_limit_validation(client, monkeypatch):
+    recorded_limits = []
+
+    def _mock_get_system_events(limit=100, level=None, source=None):
+        recorded_limits.append(limit)
+        return []
+
+    monkeypatch.setattr(api_system_module, "get_system_events", _mock_get_system_events)
+
+    # Invalid non-numeric limit -> defaults to 100
+    res = client.get("/api/system/log?limit=abc")
+    assert res.status_code == 200
+    assert recorded_limits[-1] == 100
+
+    # Negative limit -> clamped to 1
+    res = client.get("/api/system/log?limit=-50")
+    assert res.status_code == 200
+    assert recorded_limits[-1] == 1
+
+    # Overly large limit -> clamped to 500
+    res = client.get("/api/system/log?limit=999999")
+    assert res.status_code == 200
+    assert recorded_limits[-1] == 500
+
+    # Valid limit in range -> preserved
+    res = client.get("/api/system/log?limit=50")
+    assert res.status_code == 200
+    assert recorded_limits[-1] == 50

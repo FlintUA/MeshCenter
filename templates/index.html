@@ -8,7 +8,7 @@
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20260824-ble-receive-warning">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20260821-style-split">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260823-weather-icon-shift">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260901-log-copy-export">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20260822-weather-key-button">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
@@ -917,21 +917,19 @@
 
                             <!-- System Log -->
                             <div class="system-card system-log-card">
-                                <div class="system-log-card-header">
-                                    <button
-                                        type="button"
-                                        id="radioHistoryToggle"
-                                        class="radio-history-toggle system-log-toggle"
-                                        onclick="toggleRadioHealthHistory()"
-                                        aria-expanded="true"
-                                        aria-controls="radioHealthHistoryPanel"
-                                    >
-                                        <span class="system-card-title">📋 System Log</span>
-                                        <span id="radioHistoryArrow">▴</span>
-                                    </button>
+                                <div
+                                    class="radio-history-toggle system-log-card-header"
+                                    id="radioHistoryToggle"
+                                    onclick="toggleRadioHealthHistory()"
+                                    role="button"
+                                    aria-expanded="true"
+                                    aria-controls="radioHealthHistoryPanel"
+                                >
+                                    <span class="system-card-title">📋 System Log</span>
                                     <div class="system-log-actions">
-                                        <button type="button" class="btn btn-xs" onclick="copySystemLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
-                                        <button type="button" class="btn btn-xs" onclick="exportSystemLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
+                                        <button type="button" class="btn btn-xs" onclick="event.stopPropagation(); copySystemLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
+                                        <button type="button" class="btn btn-xs" onclick="event.stopPropagation(); exportSystemLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
+                                        <span id="radioHistoryArrow">▴</span>
                                     </div>
                                 </div>
 

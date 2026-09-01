@@ -2000,21 +2000,17 @@
     min-height: 0;
 }
 
+/* .radio-history-toggle already provides display:flex, justify-content:
+   space-between, cursor:pointer, width:100% - this header reuses that
+   class (see templates/index.html) instead of duplicating it, so title
+   stays left and .system-log-actions (copy/export/arrow) stays right,
+   matching .notifications-card-header's layout in the Activity card. */
 .system-log-card-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    padding: 0;
     margin: 0 0 10px;
 }
 
-.system-log-toggle {
-    width: auto;
-    flex: 1;
-    padding: 0;
-    margin: 0;
-}
-
-.system-log-toggle .system-card-title {
+.system-log-card-header .system-card-title {
     margin: 0;
 }
 

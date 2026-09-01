@@ -3654,8 +3654,16 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 .notification-popover-header strong { font-size: 13px; }
 .notification-popover-header span { color: var(--mc-muted, #7b8796); font-size: 9px; }
 
-.notification-header-actions {
+/* Specificity note: `.notification-popover-header > div` above (meant for
+   the title/subtitle stack) also matches this element - it's a direct
+   <div> child of the same header - and its flex-direction: column wins on
+   specificity ((0,1,1) vs a bare class's (0,1,0)) regardless of source
+   order, which silently stacked these buttons vertically. Matching that
+   selector's specificity here, so source order (this rule comes later)
+   settles it back to a horizontal row. */
+.notification-popover-header > div.notification-header-actions {
     display: flex;
+    flex-direction: row;
     align-items: center;
     gap: 6px;
     flex-shrink: 0;

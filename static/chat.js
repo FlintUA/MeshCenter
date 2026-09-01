@@ -11012,8 +11012,21 @@ async function loadInstanceInfo() {
 
         const errorElement = document.getElementById('instanceIdentityError');
         if (errorElement) {
-            errorElement.textContent = data.error || '';
-            errorElement.hidden = !data.error;
+            if (data.error) {
+                // Raw CLI/exception text (e.g. a subprocess timeout's full
+                // argv) is not useful shown directly on the card - it's
+                // already logged server-side (server.py's
+                // verify_radio_identity()) with source="identity", so this
+                // just points there instead of repeating it verbatim.
+                errorElement.innerHTML =
+                    `${escapeHtml(window.I18N.t('system.identity_error_hint'))} ` +
+                    `<button type="button" class="link-button" onclick="focusSystemLog('identity')">` +
+                    `${escapeHtml(window.I18N.t('system.view_in_system_log'))}</button>`;
+                errorElement.hidden = false;
+            } else {
+                errorElement.textContent = '';
+                errorElement.hidden = true;
+            }
         }
     } catch (error) {
         console.error('Instance identity load error:', error);
@@ -11392,6 +11405,19 @@ function toggleRadioHealthHistory() {
         button.setAttribute('aria-expanded', opening ? 'true' : 'false');
     }
 }
+
+function focusSystemLog(source) {
+    // `source` isn't used to filter yet (System Log has no source filter in
+    // the UI today, though the backend route already supports ?source=) -
+    // reserved for a future filter so callers like the Instance card's
+    // error hint (see loadInstanceInfo()) can already pass it without
+    // needing a second change later.
+    const panel = document.getElementById('radioHealthHistoryPanel');
+    const toggle = document.getElementById('radioHistoryToggle');
+    if (panel && panel.style.display === 'none' && toggle) toggle.click();
+    document.getElementById('radioHealthHistory')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+window.focusSystemLog = focusSystemLog;
 
 // Экспортируем переменные
 window.chatListCache = chatListCache;

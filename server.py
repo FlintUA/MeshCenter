@@ -399,6 +399,41 @@ def verify_radio_identity():
     print(f"[IDENTITY] Status: {result.get('status')}{suffix}", flush=True)
     if result.get("error"):
         print(f"[IDENTITY] Detail: {result.get('error')}", flush=True)
+
+    status = result.get("status")
+    error = result.get("error")
+    if status == "MISMATCH":
+        # A different radio is physically connected than what's configured -
+        # needs attention now, not just a line in the log.
+        log_system_event(
+            "Radio identity mismatch",
+            "ERROR",
+            f"Configured: {configured_label} ({configured_id}); "
+            f"Detected: {detected_label} ({detected_id})",
+            source="identity",
+        )
+        from meshsrv.notification_service import push_notification
+        push_notification(
+            level="warning",
+            source="radio",
+            title="Connected radio does not match configuration",
+            body=f"Expected {configured_label} ({configured_id}), "
+                 f"found {detected_label} ({detected_id}).",
+        )
+    elif error:
+        # DETECTION_ERROR / NOT_FOUND - the technical detail (including raw
+        # CLI/timeout text) goes to the System Log, not the Instance card's
+        # visible surface (see loadInstanceInfo() in static/chat.js). No
+        # Notification here: this is often a transient failure at startup
+        # (radio not ready yet) - flagging it as a popup on every service
+        # start would be noise, unlike a genuine MISMATCH above.
+        log_system_event(
+            "Radio identity check failed",
+            "WARNING",
+            error,
+            source="identity",
+        )
+
     return output
 
 # Папка для скриншотов

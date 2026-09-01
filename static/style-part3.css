@@ -2399,14 +2399,10 @@ html[data-theme="dark"] .node-info-panel .battery-indicator {
 
 .node-uptime-badge {
     flex: 0 0 auto;
-    padding: 3px 7px;
-    border: 1px solid #c7d3df;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, .72);
-    color: #60758a;
-    font-size: 10px;
+    color: var(--mc-text-secondary, #64748b);
+    font-size: 11px;
     font-weight: 700;
-    line-height: 1.2;
+    line-height: 1;
     white-space: nowrap;
 }
 
@@ -2529,13 +2525,6 @@ html[data-theme="dark"] .node-info-panel .battery-indicator {
 .settings-card-note {
     margin-top: 8px;
     font-size: 11px;
-}
-
-body[data-theme="dark"] .node-uptime-badge,
-html[data-theme="dark"] .node-uptime-badge {
-    border-color: #3d5369;
-    background: #22364a;
-    color: #a9bdd0;
 }
 
 body[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-item,

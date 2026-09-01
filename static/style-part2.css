@@ -44,7 +44,8 @@
     height: 36px;
     z-index: 900;
     display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    grid-template-columns: 1fr minmax(92px, max-content) 1fr;
+    column-gap: 12px;
     align-items: center;
     padding: 0 14px;
     background: #f6f8fb;

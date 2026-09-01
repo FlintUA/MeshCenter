@@ -1943,19 +1943,6 @@ body.node-manager-open #messagesView {
     white-space: nowrap;
 }
 
-.base-node-header-actions {
-    flex: 0 0 auto;
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-end;
-    margin-left: auto;
-    padding-left: 8px;
-}
-
-.node-uptime-badge {
-    margin-left: auto;
-}
-
 /* Node Manager occupies the complete central workspace instead of inheriting chat geometry. */
 body.node-manager-open #chatHeader,
 body.node-manager-open #chatListContainer,
@@ -2323,7 +2310,6 @@ body[data-theme="dark"] {
     color: var(--theme-text) !important;
 }
 
-[data-theme="dark"] .node-uptime-badge,
 [data-theme="dark"] .base-status-uptime {
     color: var(--theme-text-secondary) !important;
 }
@@ -2997,8 +2983,9 @@ body[data-theme="dark"] .waypoint-action-toast.error {
 }
 
 .dock-notification-status {
-    width: min(520px, 42vw);
-    min-width: 170px;
+    width: 100%;
+    max-width: min(520px, 42vw);
+    min-width: 0;
     height: 28px;
     display: grid;
     grid-template-columns: 12px minmax(0, 1fr) 18px;

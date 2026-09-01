@@ -7,6 +7,83 @@
    Loaded after style.css and acts as the final visual layer.
    ============================================================ */
 
+/* ---------- Buttons: base + size scale ---------- */
+/* Task 4 (button-size pilot): a real .btn base class plus size modifiers,
+   reconciling what used to be two independent, hardcoded classes
+   (static/style-part4.css's old .btn.btn-sm/.btn.btn-xs, which had no
+   .btn ancestor rule and needed their own separate [data-theme="dark"]
+   overrides). Token-based (--mc-*) instead, so dark mode is automatic -
+   no parallel dark block needed here.
+   .btn: shared base (font, radius, transition, cursor) - carries no size.
+   .btn-md/.btn-sm/.btn-xs: one consistent scale, each with an explicit
+     min-height (not just padding), so a text button and an icon-only
+     button of the same size class end up the same height.
+   .btn-icon: icon-only, square (width = the size's min-height), with a
+     32x32px floor even at .btn-xs - never smaller, regardless of glyph
+     size, per this task's minimum-clickable-area requirement.
+   .btn-danger: a color modifier layered on top, same idea as the old
+     .btn.btn-xs.btn-danger, reusing this file's existing --mc-danger
+     tokens instead of new hardcoded reds.
+   Pilot scope only (this task): System Log's Copy/Export, Activity's
+   Copy/Export/Clear, and the Notifications popover's Clear button - see
+   docs/ui/button_audit.md for the ~40 other button classes still on
+   their own one-off styling, intentionally not touched here. */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid var(--mc-border, #d7e0ea);
+    border-radius: 8px;
+    background: var(--mc-surface-alt, #eef3f8);
+    color: var(--mc-text-secondary, #58708f);
+    font-family: inherit;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+    white-space: nowrap;
+}
+.btn:hover { background: var(--mc-surface-2, #e4ebf3); }
+.btn:focus-visible { outline: 2px solid var(--mc-accent, #214f91); outline-offset: 1px; }
+
+.btn-md { min-height: 36px; padding: 0 14px; font-size: 12px; border-radius: 9px; }
+.btn-sm { min-height: 32px; padding: 0 11px; font-size: 11px; }
+.btn-xs { min-height: 28px; padding: 0 9px; font-size: 10.5px; border-radius: 7px; }
+
+.btn-icon { padding: 0; }
+.btn-md.btn-icon { width: 36px; }
+.btn-sm.btn-icon { width: 32px; }
+.btn-xs.btn-icon { width: 32px; min-height: 32px; } /* bumped from 28 to the 32px floor */
+
+.btn-danger {
+    border-color: var(--mc-danger, #e6505d);
+    color: var(--mc-danger, #e6505d);
+    background: var(--mc-danger-soft, #fdecee);
+}
+.btn-danger:hover { filter: brightness(0.96); }
+
+/* Touch/tablet: bump every size tier's min-height (not just .btn-icon) -
+   an earlier version of this rule only bumped icon buttons, which
+   live-caught the same "mismatched height" bug this whole task exists to
+   fix, just re-appearing at this breakpoint: a text button (e.g. Clear)
+   sitting next to an icon button (Copy/Export) stayed at its desktop
+   height while the icon button grew, so the two were misaligned again on
+   a real mobile viewport. Bumping the base classes keeps text and icon
+   buttons of the same tier level at every width, matching this project's
+   existing 768px tablet/phone breakpoint (used throughout
+   style-part1/2.css). Numbers land close to the ~40-44px target most
+   mobile guidelines recommend. */
+@media (max-width: 768px) {
+    .btn-xs { min-height: 38px; padding: 0 12px; font-size: 12px; }
+    .btn-sm { min-height: 38px; padding: 0 14px; font-size: 13px; }
+    .btn-md { min-height: 40px; padding: 0 16px; font-size: 13px; }
+
+    .btn-xs.btn-icon,
+    .btn-sm.btn-icon { width: 38px; padding: 0; font-size: 15px; }
+    .btn-md.btn-icon { width: 40px; padding: 0; font-size: 16px; }
+}
+
 /* ---------- Global surfaces ---------- */
 body {
     background: var(--mc-bg-app);

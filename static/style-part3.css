@@ -3658,6 +3658,13 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 .notification-popover-header strong { font-size: 13px; }
 .notification-popover-header span { color: var(--mc-muted, #7b8796); font-size: 9px; }
 
+.notification-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
 .notification-clear-btn {
     border: 0;
     border-radius: 6px;

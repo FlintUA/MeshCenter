@@ -2003,7 +2003,11 @@
                      onclick="event.stopPropagation()">
                 <header class="notification-popover-header">
                     <div><strong data-i18n="notifications.title">Notifications</strong><span data-i18n="notifications.subtitle">System alerts and events</span></div>
-                    <button type="button" class="notification-clear-btn" onclick="clearNotifications()" data-i18n="modals.clear">Clear</button>
+                    <div class="notification-header-actions">
+                        <button type="button" class="notification-clear-btn" onclick="copyNotificationCenterLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
+                        <button type="button" class="notification-clear-btn" onclick="exportNotificationCenterLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
+                        <button type="button" class="notification-clear-btn" onclick="clearNotifications()" data-i18n="modals.clear">Clear</button>
+                    </div>
                 </header>
                 <div class="notification-list" id="notificationList"></div>
                 <div class="notification-empty" id="notificationEmpty" data-i18n="notifications.empty">No notifications yet</div>

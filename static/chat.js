@@ -11458,10 +11458,31 @@ function exportActivityLog() {
     downloadTextFile(`meshcenter-activity-${stamp}.txt`, formatActivityAsText(_lastActivityNotifications));
 }
 
+function formatNotificationCenterAsText(items) {
+    return items.map(item => {
+        const type = String(item.type || 'info').toUpperCase();
+        const dt = new Date(item.timestamp);
+        return `[${TimeFormatter.formatDateTime(dt)}] ${type}: ${item.message}`;
+    }).join('\n');
+}
+
+function copyNotificationCenterLog() {
+    if (!notificationItems.length) return;
+    copyTextToClipboard(formatNotificationCenterAsText(notificationItems), window.I18N.t('system.log_copied'));
+}
+
+function exportNotificationCenterLog() {
+    if (!notificationItems.length) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    downloadTextFile(`meshcenter-notifications-${stamp}.txt`, formatNotificationCenterAsText(notificationItems));
+}
+
 window.copySystemLog = copySystemLog;
 window.exportSystemLog = exportSystemLog;
 window.copyActivityLog = copyActivityLog;
 window.exportActivityLog = exportActivityLog;
+window.copyNotificationCenterLog = copyNotificationCenterLog;
+window.exportNotificationCenterLog = exportNotificationCenterLog;
 
 // Экспортируем переменные
 window.chatListCache = chatListCache;

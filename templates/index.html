@@ -8,9 +8,9 @@
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20260824-ble-receive-warning">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20260821-style-split">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260901-notif-btn-uniform">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20260822-weather-key-button">
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=stage2c7-4-unified-popovers-20260725">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260901-btn-system">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20260901-btn-system">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20260901-btn-system">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
@@ -173,8 +173,8 @@
                         <span class="notifications-badge" id="notificationsBadge" style="display:none">0</span>
                     </span>
                     <div class="notifications-card-actions">
-                        <button class="btn btn-sm" onclick="event.stopPropagation(); copyActivityLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
-                        <button class="btn btn-sm" onclick="event.stopPropagation(); exportActivityLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
+                        <button class="btn btn-sm btn-icon" onclick="event.stopPropagation(); copyActivityLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
+                        <button class="btn btn-sm btn-icon" onclick="event.stopPropagation(); exportActivityLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
                         <button class="btn btn-sm notifications-clear-btn" id="notificationsClearBtn"
                                 onclick="event.stopPropagation(); clearAllNotifications()"
                                 data-i18n="activity.clear_all" style="display:none">Clear</button>
@@ -927,8 +927,8 @@
                                 >
                                     <span class="system-card-title">📋 System Log</span>
                                     <div class="system-log-actions">
-                                        <button type="button" class="btn btn-xs" onclick="event.stopPropagation(); copySystemLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
-                                        <button type="button" class="btn btn-xs" onclick="event.stopPropagation(); exportSystemLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
+                                        <button type="button" class="btn btn-xs btn-icon" onclick="event.stopPropagation(); copySystemLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
+                                        <button type="button" class="btn btn-xs btn-icon" onclick="event.stopPropagation(); exportSystemLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
                                         <span id="radioHistoryArrow">▴</span>
                                     </div>
                                 </div>
@@ -2002,9 +2002,9 @@
                 <header class="notification-popover-header">
                     <div><strong data-i18n="notifications.title">Notifications</strong><span data-i18n="notifications.subtitle">System alerts and events</span></div>
                     <div class="notification-header-actions">
-                        <button type="button" class="notification-clear-btn notification-icon-btn" onclick="copyNotificationCenterLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
-                        <button type="button" class="notification-clear-btn notification-icon-btn" onclick="exportNotificationCenterLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
-                        <button type="button" class="notification-clear-btn" onclick="clearNotifications()" data-i18n="modals.clear">Clear</button>
+                        <button type="button" class="btn btn-xs btn-icon notification-clear-btn" onclick="copyNotificationCenterLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
+                        <button type="button" class="btn btn-xs btn-icon notification-clear-btn" onclick="exportNotificationCenterLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
+                        <button type="button" class="btn btn-xs notification-clear-btn" onclick="clearNotifications()" data-i18n="modals.clear">Clear</button>
                     </div>
                 </header>
                 <div class="notification-list" id="notificationList"></div>

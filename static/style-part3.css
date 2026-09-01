@@ -2000,13 +2000,29 @@
     min-height: 0;
 }
 
-.system-log-toggle {
-    padding: 0;
+.system-log-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin: 0 0 10px;
+}
+
+.system-log-toggle {
+    width: auto;
+    flex: 1;
+    padding: 0;
+    margin: 0;
 }
 
 .system-log-toggle .system-card-title {
     margin: 0;
+}
+
+.system-log-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
 }
 
 .system-log-panel {

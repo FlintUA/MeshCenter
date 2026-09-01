@@ -18,6 +18,8 @@ let clearTargetChatId = null;
 let totalUnreadCount = 0;
 let currentMainTab = 'chats';
 let lastOperationalMainTab = 'chats';
+let _lastSystemLogEvents = [];        // last-rendered System Log entries, for Copy/Export
+let _lastActivityNotifications = [];  // last-rendered Activity entries, for Copy/Export
 let mainTabTransitionSequence = 0;
 let cameraActive = false;
 let cameraPowerEnabled = true;
@@ -319,6 +321,7 @@ function showToastsForNew(notifications) {
 }
 
 function renderNotificationsCard(notifications, unreadCount) {
+  _lastActivityNotifications = notifications;
   const badge = document.getElementById('notificationsBadge');
   const clearBtn = document.getElementById('notificationsClearBtn');
   if (badge) {
@@ -11269,6 +11272,7 @@ async function loadRadioHealth() {
 
         if (historyEl) {
             const history = Array.isArray(logData.events) ? logData.events.slice().reverse() : [];
+            _lastSystemLogEvents = history;
 
             if (!history.length) {
                 historyEl.innerHTML = `<div class="radio-history-empty">${escapeHtml(window.I18N.t('system.no_events_yet'))}</div>`;
@@ -11392,6 +11396,72 @@ function toggleRadioHealthHistory() {
         button.setAttribute('aria-expanded', opening ? 'true' : 'false');
     }
 }
+
+// ============================================================
+// Copy/Export for System Log and Activity - operates on whatever was last
+// rendered (_lastSystemLogEvents/_lastActivityNotifications above), not a
+// fresh fetch: exports exactly what's on screen, same limit the backend
+// already applied (no reason to pull more than the card itself shows).
+// ============================================================
+
+function formatSystemLogAsText(events) {
+    return events.map(e => {
+        const dt = e.date && e.time ? `${e.date} ${e.time}` : (e.datetime || '--');
+        const level = String(e.level || 'INFO').toUpperCase();
+        const source = e.source || 'system';
+        const details = e.details ? ` — ${e.details}` : '';
+        return `[${dt}] ${level} (${source}): ${e.event}${details}`;
+    }).join('\n');
+}
+
+function formatActivityAsText(items) {
+    return items.map(n => {
+        const dt = new Date(n.timestamp * 1000);
+        const level = String(n.level || 'info').toUpperCase();
+        const source = n.source || 'system';
+        const body = n.body ? ` — ${n.body}` : '';
+        return `[${TimeFormatter.formatDateTime(dt)}] ${level} (${source}): ${n.title}${body}`;
+    }).join('\n');
+}
+
+function downloadTextFile(filename, text) {
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+function copySystemLog() {
+    if (!_lastSystemLogEvents.length) return;
+    copyTextToClipboard(formatSystemLogAsText(_lastSystemLogEvents), window.I18N.t('system.log_copied'));
+}
+
+function exportSystemLog() {
+    if (!_lastSystemLogEvents.length) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    downloadTextFile(`meshcenter-system-log-${stamp}.txt`, formatSystemLogAsText(_lastSystemLogEvents));
+}
+
+function copyActivityLog() {
+    if (!_lastActivityNotifications.length) return;
+    copyTextToClipboard(formatActivityAsText(_lastActivityNotifications), window.I18N.t('system.log_copied'));
+}
+
+function exportActivityLog() {
+    if (!_lastActivityNotifications.length) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    downloadTextFile(`meshcenter-activity-${stamp}.txt`, formatActivityAsText(_lastActivityNotifications));
+}
+
+window.copySystemLog = copySystemLog;
+window.exportSystemLog = exportSystemLog;
+window.copyActivityLog = copyActivityLog;
+window.exportActivityLog = exportActivityLog;
 
 // Экспортируем переменные
 window.chatListCache = chatListCache;

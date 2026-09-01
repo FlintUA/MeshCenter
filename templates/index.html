@@ -173,6 +173,8 @@
                         <span class="notifications-badge" id="notificationsBadge" style="display:none">0</span>
                     </span>
                     <div class="notifications-card-actions">
+                        <button class="btn btn-sm" onclick="event.stopPropagation(); copyActivityLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
+                        <button class="btn btn-sm" onclick="event.stopPropagation(); exportActivityLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
                         <button class="btn btn-sm notifications-clear-btn" id="notificationsClearBtn"
                                 onclick="event.stopPropagation(); clearAllNotifications()"
                                 data-i18n="activity.clear_all" style="display:none">Clear</button>
@@ -915,17 +917,23 @@
 
                             <!-- System Log -->
                             <div class="system-card system-log-card">
-                                <button
-                                    type="button"
-                                    id="radioHistoryToggle"
-                                    class="radio-history-toggle system-log-toggle"
-                                    onclick="toggleRadioHealthHistory()"
-                                    aria-expanded="true"
-                                    aria-controls="radioHealthHistoryPanel"
-                                >
-                                    <span class="system-card-title">📋 System Log</span>
-                                    <span id="radioHistoryArrow">▴</span>
-                                </button>
+                                <div class="system-log-card-header">
+                                    <button
+                                        type="button"
+                                        id="radioHistoryToggle"
+                                        class="radio-history-toggle system-log-toggle"
+                                        onclick="toggleRadioHealthHistory()"
+                                        aria-expanded="true"
+                                        aria-controls="radioHealthHistoryPanel"
+                                    >
+                                        <span class="system-card-title">📋 System Log</span>
+                                        <span id="radioHistoryArrow">▴</span>
+                                    </button>
+                                    <div class="system-log-actions">
+                                        <button type="button" class="btn btn-xs" onclick="copySystemLog()" title="Copy" data-i18n-title="system.copy_log">📋</button>
+                                        <button type="button" class="btn btn-xs" onclick="exportSystemLog()" title="Export" data-i18n-title="system.export_log">⬇</button>
+                                    </div>
+                                </div>
 
                                 <div
                                     id="radioHealthHistoryPanel"
@@ -2213,7 +2221,7 @@
 <script src="{{ url_for('static', filename='chat-camera.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-map.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20260821-domain-split"></script>
-<script src="/static/chat.js?v=20260831-installation-id-card"></script>
+<script src="/static/chat.js?v=20260901-log-copy-export"></script>
 <script src="/static/media.js?v=20260818-xss-fix-delete-onclick"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 

@@ -404,7 +404,21 @@ class AdapterSupervisor:
         diagnosable on its own) - kills the adapter (+ BLE cleanup if
         `ble_address_for_cleanup` is set) and raises TransportError, so
         the caller's thread is always released by `timeout`, never left
-        waiting on the subprocess itself."""
+        waiting on the subprocess itself.
+
+        Radio-stability review, P0-A: also kills (but does NOT raise a
+        different error - the caller still sees the same TransportError
+        it always would have) when the adapter itself responds cleanly
+        but that response IS a TIMEOUT - the adapter's own internal
+        TimeoutEnforced watchdog fired first and reported it as a
+        well-formed error, but the daemon thread that was running the
+        timed-out operation is only abandoned, never stopped (see
+        adapters/meshtastic/_timeout_support.py), so it can still be
+        holding the serial port. Every OTHER `ok: false` domain error
+        (NOT_CONNECTED, UNSUPPORTED, IDENTITY_MISMATCH, ...) means the
+        adapter's call stack already unwound cleanly and is deliberately
+        NOT killed here - see the check's own comment below for why this
+        stays narrow to TIMEOUT specifically."""
         with self._proc_lock:
             if self._proc is None or self._proc.poll() is not None:
                 try:
@@ -506,6 +520,31 @@ class AdapterSupervisor:
             if status == "protocol_error":
                 self._kill_locked(ble_address_for_cleanup)
                 raise TransportError(TransportErrorCode.ADAPTER_PROTOCOL_ERROR, str(payload))
+
+            # Radio-stability review, P0-A: a fifth case the four branches
+            # above don't cover. The adapter's own internal TimeoutEnforced
+            # watchdog (adapters/meshtastic/_timeout_support.py) can fire
+            # first and report this back as a well-formed JSON response
+            # (ipc_protocol.make_error_response() -> {"ok": false, "error":
+            # {"code": "timeout", ...}}) - status is "ok" here (a valid
+            # response WAS read), so none of the branches above trigger,
+            # and this used to fall straight through to `return payload`
+            # with no kill at all. Unlike the other four branches, the
+            # adapter process itself isn't untrustworthy here - it
+            # responded correctly - but the operation it was running IS
+            # orphaned inside it: TimeoutEnforced's own docstring is
+            # explicit that the daemon thread executing the timed-out call
+            # is never stopped, only abandoned, so it can still be holding
+            # the serial port when the next call is dispatched to this
+            # same "still alive" subprocess. Narrow to TIMEOUT specifically
+            # - an ordinary domain error (NOT_CONNECTED, UNSUPPORTED,
+            # IDENTITY_MISMATCH, ...) means the adapter's call stack
+            # already unwound cleanly, and killing the subprocess for
+            # those would be pure churn with no safety benefit.
+            if isinstance(payload, dict) and payload.get("ok") is False:
+                error_code = (payload.get("error") or {}).get("code")
+                if error_code == TransportErrorCode.TIMEOUT.value:
+                    self._kill_locked(ble_address_for_cleanup)
 
             return payload
 

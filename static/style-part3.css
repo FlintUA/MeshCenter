@@ -3669,14 +3669,48 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
     flex-shrink: 0;
 }
 
+/* Shared base for all three popover header buttons (Copy/Export/Clear) -
+   a fixed height + centered content makes them a matched set regardless of
+   whether they hold a single icon glyph or the word "Clear"; only the
+   width is content-driven. .notification-icon-btn (Copy/Export only) pins
+   width equal to height for an exact square. Sized up under 768px for a
+   touch-friendly target (close to the ~40-44px minimum most mobile design
+   guidelines recommend), matching this project's existing 768px
+   tablet/phone breakpoint used elsewhere in this file. */
 .notification-clear-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border: 0;
     border-radius: 6px;
-    padding: 5px 8px;
+    height: 28px;
+    padding: 0 10px;
     background: var(--mc-surface-alt, #eef2f7);
     color: var(--mc-text-secondary, #526178);
-    font-size: 10px;
+    font-size: 11px;
+    font-weight: 600;
     cursor: pointer;
+}
+
+.notification-icon-btn {
+    width: 28px;
+    padding: 0;
+    font-size: 13px;
+}
+
+@media (max-width: 768px) {
+    .notification-clear-btn {
+        height: 38px;
+        padding: 0 14px;
+        font-size: 13px;
+        border-radius: 8px;
+    }
+
+    .notification-icon-btn {
+        width: 38px;
+        padding: 0;
+        font-size: 16px;
+    }
 }
 
 .notification-list {

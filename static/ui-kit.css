@@ -63,13 +63,25 @@
 }
 .btn-danger:hover { filter: brightness(0.96); }
 
-/* Touch/tablet: bump icon buttons closer to the ~40-44px target most
-   mobile guidelines recommend, matching this project's existing 768px
-   tablet/phone breakpoint (used throughout style-part1/2.css). */
+/* Touch/tablet: bump every size tier's min-height (not just .btn-icon) -
+   an earlier version of this rule only bumped icon buttons, which
+   live-caught the same "mismatched height" bug this whole task exists to
+   fix, just re-appearing at this breakpoint: a text button (e.g. Clear)
+   sitting next to an icon button (Copy/Export) stayed at its desktop
+   height while the icon button grew, so the two were misaligned again on
+   a real mobile viewport. Bumping the base classes keeps text and icon
+   buttons of the same tier level at every width, matching this project's
+   existing 768px tablet/phone breakpoint (used throughout
+   style-part1/2.css). Numbers land close to the ~40-44px target most
+   mobile guidelines recommend. */
 @media (max-width: 768px) {
+    .btn-xs { min-height: 38px; padding: 0 12px; font-size: 12px; }
+    .btn-sm { min-height: 38px; padding: 0 14px; font-size: 13px; }
+    .btn-md { min-height: 40px; padding: 0 16px; font-size: 13px; }
+
     .btn-xs.btn-icon,
-    .btn-sm.btn-icon { width: 38px; min-height: 38px; font-size: 15px; }
-    .btn-md.btn-icon { width: 40px; min-height: 40px; font-size: 16px; }
+    .btn-sm.btn-icon { width: 38px; padding: 0; font-size: 15px; }
+    .btn-md.btn-icon { width: 40px; padding: 0; font-size: 16px; }
 }
 
 /* ---------- Global surfaces ---------- */

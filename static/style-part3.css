@@ -2000,13 +2000,25 @@
     min-height: 0;
 }
 
-.system-log-toggle {
+/* .radio-history-toggle already provides display:flex, justify-content:
+   space-between, cursor:pointer, width:100% - this header reuses that
+   class (see templates/index.html) instead of duplicating it, so title
+   stays left and .system-log-actions (copy/export/arrow) stays right,
+   matching .notifications-card-header's layout in the Activity card. */
+.system-log-card-header {
     padding: 0;
     margin: 0 0 10px;
 }
 
-.system-log-toggle .system-card-title {
+.system-log-card-header .system-card-title {
     margin: 0;
+}
+
+.system-log-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
 }
 
 .system-log-panel {
@@ -3642,15 +3654,33 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 .notification-popover-header strong { font-size: 13px; }
 .notification-popover-header span { color: var(--mc-muted, #7b8796); font-size: 9px; }
 
-.notification-clear-btn {
-    border: 0;
-    border-radius: 6px;
-    padding: 5px 8px;
-    background: var(--mc-surface-alt, #eef2f7);
-    color: var(--mc-text-secondary, #526178);
-    font-size: 10px;
-    cursor: pointer;
+/* Specificity note: `.notification-popover-header > div` above (meant for
+   the title/subtitle stack) also matches this element - it's a direct
+   <div> child of the same header - and its flex-direction: column wins on
+   specificity ((0,1,1) vs a bare class's (0,1,0)) regardless of source
+   order, which silently stacked these buttons vertically. Matching that
+   selector's specificity here, so source order (this rule comes later)
+   settles it back to a horizontal row. */
+.notification-popover-header > div.notification-header-actions {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
 }
+
+/* Sizing for these three buttons (Copy/Export/Clear) now comes from
+   static/ui-kit.css's shared .btn/.btn-xs/.btn-icon system (Task 4) -
+   this file used to define bespoke .notification-clear-btn/
+   .notification-icon-btn rules with the same numbers (28px / 38px under
+   768px), retired here in favor of the shared classes rather than
+   keeping a second, parallel source of the same sizing. The markup
+   keeps the .notification-clear-btn class too (see templates/index.html)
+   purely for its pre-existing popover-token coloring (ui-kit.css's
+   "Shared controls" block, --mc-popover-* tokens) - .btn's own
+   background/color are a different, later-declared, same-specificity
+   rule that source order lets this one still win for color, while .btn
+   still owns sizing (a property .notification-clear-btn never set). */
 
 .notification-list {
     max-height: 335px;

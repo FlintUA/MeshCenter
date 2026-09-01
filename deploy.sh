@@ -14,14 +14,16 @@ if [ "$ENVIRONMENT" = "dev" ]; then
     REMOTE_HOST="192.168.2.104"
 elif [ "$ENVIRONMENT" = "prod" ]; then
     REMOTE_HOST="192.168.2.103"
+elif [ "$ENVIRONMENT" = "camtest" ]; then
+    REMOTE_HOST="192.168.2.107"
 else
-    echo "Usage: $0 <dev|prod> \"commit message\""
+    echo "Usage: $0 <dev|prod|camtest> \"commit message\""
     exit 1
 fi
 
 if [ -z "$COMMIT_MESSAGE" ]; then
     echo "Error: commit message is required."
-    echo "Usage: $0 <dev|prod> \"commit message\""
+    echo "Usage: $0 <dev|prod|camtest> \"commit message\""
     exit 1
 fi
 

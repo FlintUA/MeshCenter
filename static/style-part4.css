@@ -2983,8 +2983,9 @@ body[data-theme="dark"] .waypoint-action-toast.error {
 }
 
 .dock-notification-status {
-    width: min(520px, 42vw);
-    min-width: 170px;
+    width: 100%;
+    max-width: min(520px, 42vw);
+    min-width: 0;
     height: 28px;
     display: grid;
     grid-template-columns: 12px minmax(0, 1fr) 18px;

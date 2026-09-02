@@ -836,7 +836,7 @@ listener_supervisor = SerialPortSupervisor(
     radio_lock=radio_lock,
     pause_listen=pause_listen,
     on_raw_line=lambda line: _handle_listener_line(line),
-    on_lifecycle_event=lambda event: radio_event(event),
+    on_lifecycle_event=lambda event, **kwargs: radio_event(event, **kwargs),
     on_log=lambda msg, level="INFO": log_system_event(
         title="Node Time Sync", details=msg, level=level, source="time_sync"
     ),
@@ -960,7 +960,7 @@ def _radio_history_locked(event, level="INFO", details=""):
         del history[:-50]
 
 
-def radio_event(event, error=""):
+def radio_event(event, error="", intentional=None):
     now_ts = time.time()
 
     with state_lock:
@@ -1017,7 +1017,19 @@ def radio_event(event, error=""):
                 radio_connection_manager.listener_stopped()
 
             if was_running:
-                if pause_listen.is_set():
+                # P1-B stabilization follow-up: `intentional` is the
+                # pause_listen.is_set() value the monitor loop already
+                # captured synchronously at the actual stop, in
+                # meshsrv/serial_port_supervisor.py's run_listener() -
+                # NOT re-read here. A re-read at this point (this
+                # function runs asynchronously relative to that moment)
+                # could observe a different caller's radio_session()/
+                # prepare_radio_command() having already set/cleared the
+                # same shared pause_listen Event in between, misclassifying
+                # a routine, intentional stop as an unexpected one - the
+                # exact bug this fix closes (live-observed on dev: this
+                # ERROR firing on almost every routine radio command).
+                if intentional:
                     _radio_history_locked(
                         "Listener paused",
                         "INFO",

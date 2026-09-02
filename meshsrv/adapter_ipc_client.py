@@ -544,6 +544,10 @@ class AdapterSupervisor:
             if isinstance(payload, dict) and payload.get("ok") is False:
                 error_code = (payload.get("error") or {}).get("code")
                 if error_code == TransportErrorCode.TIMEOUT.value:
+                    self._on_log(
+                        "adapter subprocess invalidated after a self-reported TIMEOUT (killed, will respawn)",
+                        "INFO",
+                    )
                     self._kill_locked(ble_address_for_cleanup)
 
             return payload

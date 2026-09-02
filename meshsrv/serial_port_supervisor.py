@@ -83,7 +83,7 @@ class SerialPortSupervisor:
         radio_lock: threading.RLock,
         pause_listen: threading.Event,
         on_raw_line: Optional[Callable[[str], None]] = None,
-        on_lifecycle_event: Optional[Callable[[str], None]] = None,
+        on_lifecycle_event: Optional[Callable[[str, Optional[bool]], None]] = None,
         on_log: Optional[Callable[[str, str], None]] = None,
     ) -> None:
         self._cli_path = cli_path
@@ -91,7 +91,7 @@ class SerialPortSupervisor:
         self._radio_lock = radio_lock
         self._pause_listen = pause_listen
         self._on_raw_line = on_raw_line or (lambda line: None)
-        self._on_lifecycle_event = on_lifecycle_event or (lambda event: None)
+        self._on_lifecycle_event = on_lifecycle_event or (lambda event, intentional=None: None)
         self._on_log = on_log or (lambda msg, level="INFO": None)
 
         self._listen_process: Optional[subprocess.Popen] = None
@@ -143,7 +143,7 @@ class SerialPortSupervisor:
                     )
                     self._listen_process = proc
                     self._connected_since = time.time()
-                    self._on_lifecycle_event("listener_start")
+                    self._on_lifecycle_event("listener_start", intentional=None)
                     consecutive_errors = 0
 
                 for line in proc.stdout:
@@ -165,7 +165,45 @@ class SerialPortSupervisor:
                     current = self._listen_process
                 return_code = current.poll() if current is not None else None
 
-                if self._pause_listen.is_set():
+                # P1-B stabilization follow-up: this is the ONLY moment
+                # that actually knows whether the stop about to be
+                # reported was intentional (pause_listen already set) or
+                # not - captured once, into a plain bool, and threaded
+                # through to on_lifecycle_event() below instead of being
+                # re-read later by whatever handles the event. Between
+                # this read and that later handling, a DIFFERENT caller
+                # (radio_session()/prepare_radio_command() elsewhere)
+                # can legitimately set/clear this same shared
+                # threading.Event - a re-read at that later, asynchronous
+                # point can observe a value that no longer reflects what
+                # was true at the actual transition, misclassifying a
+                # routine, intentional stop as an unexpected one (or vice
+                # versa). See server.py's radio_event() for the consumer
+                # side of this fix.
+                #
+                # KNOWN, DEFERRED (live-observed on dev during this same
+                # fix's own soak test, not fixed here): this read is
+                # synchronous and correct for the bug above, but it's
+                # still a plain, un-locked read of a shared
+                # threading.Event - a DIFFERENT, concurrent, overlapping
+                # claim_exclusive_access()/radio_session() call can still
+                # toggle pause_listen in the narrow window between "the
+                # listener process actually dies" and "this thread gets
+                # scheduled to reach this line", producing one
+                # occasional, isolated "Listener stopped (unexpected)"
+                # even though the stop really was contention-driven, not
+                # a genuine crash. Live-confirmed: happened once during
+                # dev's own post-deploy soak, self-recovered within
+                # seconds, no sustained outage. A real fix would mean
+                # holding radio_lock across this whole notice-and-report
+                # sequence, claim_exclusive_access()-style (see that
+                # method's own DELIBERATE DIVERGENCE note) - a bigger,
+                # architectural change that overlaps with the P1-A
+                # follow-up, not attempted here. Tracked as backlog, not
+                # scheduled separately (rare, narrow, self-recovering).
+                stop_was_intentional = self._pause_listen.is_set()
+
+                if stop_was_intentional:
                     if current is not None:
                         try:
                             current.terminate()
@@ -175,7 +213,7 @@ class SerialPortSupervisor:
                                 current.kill()
                             except Exception:
                                 pass
-                    self._on_lifecycle_event("listener_stop")
+                    self._on_lifecycle_event("listener_stop", intentional=True)
                     with self._radio_lock:
                         self._listen_process = None
                     time.sleep(0.5)
@@ -190,7 +228,7 @@ class SerialPortSupervisor:
                 else:
                     consecutive_errors = 0
 
-                self._on_lifecycle_event("listener_stop")
+                self._on_lifecycle_event("listener_stop", intentional=stop_was_intentional)
                 with self._radio_lock:
                     self._listen_process = None
 

@@ -472,3 +472,101 @@ def test_two_independent_supervisor_instances_both_benefit_from_the_same_fallbac
 
     assert core_side.check_port_release_once() == PortReleaseOutcome.PORT_FREE
     assert adapter_side.check_port_release_once() == PortReleaseOutcome.PORT_FREE
+
+
+# --- Task 7: log intent at the moment a listener stop is actually
+# requested, instead of reconstructing it later from a racy pause_listen
+# read (the wall Task 6's investigation hit). stop_listener_process() is
+# the single choke point both intentional-stop callers go through
+# (server.py's prepare_radio_command() via stop_listener(), and
+# claim_exclusive_access()'s internal _prepare_command()).
+
+
+def test_stop_listener_process_logs_intent_exactly_once():
+    """The actual fix: a real _on_log call, with the expected message/
+    level/title/source, fired exactly once per stop_listener_process()
+    call - not zero (silently reconstructing intent later, same wall
+    Task 6 hit), not more than once (noise), and routed to title=
+    "Listener Control"/source="radio" - NOT the old hardcoded "Node Time
+    Sync"/"time_sync" this callback used to always log under, which would
+    have buried this new line somewhere confusing to look for it."""
+    logged = []
+    supervisor = SerialPortSupervisor(
+        cli_path="/does/not/matter/for/this/test",
+        port="/dev/ttyFAKE",
+        radio_lock=threading.RLock(),
+        pause_listen=threading.Event(),
+        on_log=lambda msg, level="INFO", **kwargs: logged.append((msg, level, kwargs)),
+    )
+    # No process attached - stop_listener_process() returns True almost
+    # immediately after its own internal sleeps, without needing a real
+    # subprocess to terminate.
+    assert supervisor._listen_process is None
+
+    result = supervisor.stop_listener_process()
+
+    assert result is True
+    assert len(logged) == 1, f"expected exactly one _on_log call, got {len(logged)}: {logged}"
+    msg, level, kwargs = logged[0]
+    assert msg == "Listener stop requested (intentional)"
+    assert level == "INFO"
+    assert kwargs == {"title": "Listener Control", "source": "radio"}
+
+
+def test_stop_listener_process_sets_pause_listen_before_logging():
+    """The task's own ordering requirement: the _on_log call must come
+    right after pause_listen.set() - the very first line - not buried
+    after other prepare-phase work. Proven directly: by the time on_log
+    fires, pause_listen must already read True."""
+    observed_pause_state = []
+    supervisor = SerialPortSupervisor(
+        cli_path="/does/not/matter/for/this/test",
+        port="/dev/ttyFAKE",
+        radio_lock=threading.RLock(),
+        pause_listen=threading.Event(),
+        on_log=lambda msg, level="INFO", **kwargs: observed_pause_state.append(
+            supervisor._pause_listen.is_set()
+        ),
+    )
+
+    supervisor.stop_listener_process()
+
+    assert observed_pause_state == [True]
+
+
+def test_existing_on_log_call_site_keeps_its_original_title_and_source_after_the_signature_change():
+    """Regression guard for the default-argument backward-compat: the
+    port-release-inferred-free call site (check_port_release_once(), the
+    ONE pre-existing _on_log(...) call in this module) never passes
+    title/source itself - it must keep landing wherever it always has
+    once the on_log signature grows those optional kwargs, not silently
+    start passing None or blow up on the new default-carrying lambda
+    server.py actually uses (title="Node Time Sync"/source="time_sync"
+    defaults)."""
+    routed = []
+    supervisor = SerialPortSupervisor(
+        cli_path="/does/not/matter/for/this/test",
+        port="/dev/ttyACM0",
+        radio_lock=threading.RLock(),
+        pause_listen=threading.Event(),
+        # Mirrors server.py's real listener_supervisor on_log lambda
+        # exactly, defaults included - the actual production shape, not a
+        # simplified stand-in.
+        on_log=lambda msg, level="INFO", title="Node Time Sync", source="time_sync": routed.append(
+            (msg, level, title, source)
+        ),
+    )
+    supervisor._check_known_pid = lambda: None
+    supervisor._check_proc_fd_scan = lambda: PortReleaseOutcome.PORT_FREE
+    supervisor._check_fuser = lambda: PortReleaseOutcome.PORT_FREE
+    supervisor._check_lsof = lambda: PortReleaseOutcome.CHECK_TIMEOUT
+
+    outcome = supervisor.check_port_release_once()
+
+    assert outcome == PortReleaseOutcome.PORT_FREE
+    assert len(routed) == 1
+    msg, level, title, source = routed[0]
+    assert "Serial port release inferred free" in msg
+    assert level == "WARNING"
+    assert title == "Node Time Sync"
+    assert source == "time_sync"

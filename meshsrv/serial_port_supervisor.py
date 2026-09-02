@@ -180,6 +180,27 @@ class SerialPortSupervisor:
                 # routine, intentional stop as an unexpected one (or vice
                 # versa). See server.py's radio_event() for the consumer
                 # side of this fix.
+                #
+                # KNOWN, DEFERRED (live-observed on dev during this same
+                # fix's own soak test, not fixed here): this read is
+                # synchronous and correct for the bug above, but it's
+                # still a plain, un-locked read of a shared
+                # threading.Event - a DIFFERENT, concurrent, overlapping
+                # claim_exclusive_access()/radio_session() call can still
+                # toggle pause_listen in the narrow window between "the
+                # listener process actually dies" and "this thread gets
+                # scheduled to reach this line", producing one
+                # occasional, isolated "Listener stopped (unexpected)"
+                # even though the stop really was contention-driven, not
+                # a genuine crash. Live-confirmed: happened once during
+                # dev's own post-deploy soak, self-recovered within
+                # seconds, no sustained outage. A real fix would mean
+                # holding radio_lock across this whole notice-and-report
+                # sequence, claim_exclusive_access()-style (see that
+                # method's own DELIBERATE DIVERGENCE note) - a bigger,
+                # architectural change that overlaps with the P1-A
+                # follow-up, not attempted here. Tracked as backlog, not
+                # scheduled separately (rare, narrow, self-recovering).
                 stop_was_intentional = self._pause_listen.is_set()
 
                 if stop_was_intentional:

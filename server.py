@@ -3453,58 +3453,70 @@ def radio_session(device=None, timeout=8, cooldown=2.0, extra_release_wait=None)
     `with radio_lock:` with no timeout of its own - once
     claim_exclusive_access() could hold this same lock for a full
     IPC round-trip (Task 48), a caller here could wait unboundedly behind
-    it. Now bounded: the remaining slice of `timeout` after
-    prepare_radio_command() already ran (dynamic, time.monotonic()-measured,
-    matching TransportRouter._delegate()'s Task 47.5 mechanic - not a
-    fixed proportion, and not a second independent timeout stacked on
-    top, which would let a caller's declared budget silently double).
-    Raises the SAME RadioBusyError prepare_radio_command()'s own failure
-    already raises - both existing callers (server.py's rescan_nodes,
-    api_node_tools.py) already `except RadioBusyError` and map it to
-    HTTP 503/error_code="radio_busy", so this needs no new error shape.
+    it. Raises the SAME RadioBusyError prepare_radio_command()'s own
+    failure already raises - both existing callers (server.py's
+    rescan_nodes, api_node_tools.py) already `except RadioBusyError` and
+    map it to HTTP 503/error_code="radio_busy", so this needs no new
+    error shape.
 
-    Lock-hold/cooldown ordering is UNCHANGED from before this fix -
-    verified, not assumed: radio_lock was already released before this
-    function's own cooldown/pause_listen.clear() ran even in the
-    original code (`with radio_lock: yield` only ever wrapped the yield
-    itself, never the surrounding prepare/cooldown), so nothing here
-    changes when the listener actually resumes.
-
-    KNOWN, DEFERRED (Task 49 follow-up, not fixed here): prepare_radio_
-    command() above still runs BEFORE radio_lock is acquired, unlike
+    P1-A stabilization follow-up (Task 49 follow-up, now fixed): this
+    function used to run prepare_radio_command() (pause/stop/wait-for-
+    port-release) BEFORE acquiring radio_lock, unlike
     claim_exclusive_access()'s deliberate "hold the lock for the whole
-    prepare+work span" design (Task 44's own DELIBERATE DIVERGENCE fix,
-    meshsrv/serial_port_supervisor.py). Two concurrent radio_session()
-    callers - or a radio_session() caller racing a claim_exclusive_
-    access() caller - can still run their
-    prepare phases (pause/stop/wait-for-port-release) in parallel today.
-    Bounding the lock-acquire above doesn't fix or worsen this - it's a
-    separate, previously-unidentified question this task deliberately
-    does not resolve.
+    prepare+work span" design (Task 44's own DELIBERATE DIVERGENCE
+    choice, meshsrv/serial_port_supervisor.py) - meaning two concurrent
+    radio_session() callers, or a radio_session() caller racing a
+    claim_exclusive_access() caller, could both run their prepare phases
+    in parallel, only serializing once each reached the lock. This now
+    matches claim_exclusive_access()'s shape instead: radio_lock is
+    acquired FIRST (still bounded by `timeout`, preserving Task 49's
+    fail-fast guarantee - not reverted to the old unconditional `with
+    radio_lock:` that caused Task 49's own bug), then prepare/work/
+    cooldown/pause_listen.clear() all run while holding it, released
+    only in the outer `finally`. Verified this is a net improvement for
+    the exact regression risk meshsrv/adapter_ipc_client.py's own
+    SERIAL PORT CLAIM comment already flagged: a Node Tools action
+    landing while a long adapter IPC call holds radio_lock now fails
+    fast on the lock acquire alone, before ever touching the listener/
+    port - strictly less wasted work and port interference than before,
+    not a reopening of that risk.
     """
     start = time.monotonic()
-    prepared = prepare_radio_command(device=device, timeout=timeout)
+    if not radio_lock.acquire(timeout=timeout):
+        raise RadioBusyError(
+            f"radio_lock busy: could not acquire within {timeout}s "
+            "- another long-running radio call is in progress"
+        )
     try:
-        if not prepared:
-            raise RadioBusyError(f"Serial port busy: {device or 'auto-detect'}")
         remaining = max(1.0, timeout - (time.monotonic() - start))
-        if not radio_lock.acquire(timeout=remaining):
-            raise RadioBusyError(
-                f"radio_lock busy: could not acquire within {remaining}s "
-                "- another long-running radio call is in progress"
-            )
+        prepared = prepare_radio_command(device=device, timeout=remaining)
+        # cooldown/extra_release_wait/pause_listen.clear() must run
+        # regardless of whether `prepared` succeeded - prepare_radio_
+        # command() unconditionally calls pause_listen.set() as its very
+        # first action, before it even checks wait_serial_release()'s
+        # result, so pause_listen is left set after calling it either
+        # way and something has to clear it back. This inner try/finally
+        # has to wrap the "not prepared" raise too, not just the yield -
+        # scoping it to only the yield (an earlier draft of this fix did
+        # exactly that) would skip this cleanup entirely on a failed
+        # prepare, leaving the listener paused indefinitely. Matches the
+        # original code's guarantee exactly (there, this cleanup lived in
+        # the outermost finally, covering everything after
+        # prepare_radio_command() returned regardless of outcome).
         try:
+            if not prepared:
+                raise RadioBusyError(f"Serial port busy: {device or 'auto-detect'}")
             yield
         finally:
-            radio_lock.release()
+            if extra_release_wait is not None:
+                wait_serial_release(device=device, timeout=extra_release_wait)
+                time.sleep(0.4)
+            if cooldown:
+                time.sleep(cooldown)
+            if is_radio_available():
+                pause_listen.clear()
     finally:
-        if extra_release_wait is not None:
-            wait_serial_release(device=device, timeout=extra_release_wait)
-            time.sleep(0.4)
-        if cooldown:
-            time.sleep(cooldown)
-        if is_radio_available():
-            pause_listen.clear()
+        radio_lock.release()
 
 
 def _attempt_node_time_sync():

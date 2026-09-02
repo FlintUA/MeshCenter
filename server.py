@@ -837,8 +837,16 @@ listener_supervisor = SerialPortSupervisor(
     pause_listen=pause_listen,
     on_raw_line=lambda line: _handle_listener_line(line),
     on_lifecycle_event=lambda event, **kwargs: radio_event(event, **kwargs),
-    on_log=lambda msg, level="INFO": log_system_event(
-        title="Node Time Sync", details=msg, level=level, source="time_sync"
+    # Task 7 follow-up: title/source used to be hardcoded to "Node Time
+    # Sync"/"time_sync" regardless of what the message was actually about
+    # (a stale/misleading routing artifact flagged during Task 4's review,
+    # never actioned) - now forwarded from the call site, defaulting to
+    # those same values so every EXISTING _on_log(...) call in
+    # serial_port_supervisor.py (none of which pass title/source) keeps
+    # landing exactly where it always has. Only the new "Listener stop
+    # requested" call (stop_listener_process()) passes something accurate.
+    on_log=lambda msg, level="INFO", title="Node Time Sync", source="time_sync": log_system_event(
+        title=title, details=msg, level=level, source=source
     ),
 )
 

@@ -84,7 +84,7 @@ class SerialPortSupervisor:
         pause_listen: threading.Event,
         on_raw_line: Optional[Callable[[str], None]] = None,
         on_lifecycle_event: Optional[Callable[[str, Optional[bool]], None]] = None,
-        on_log: Optional[Callable[[str, str], None]] = None,
+        on_log: Optional[Callable[..., None]] = None,
     ) -> None:
         self._cli_path = cli_path
         self._port = port
@@ -92,7 +92,11 @@ class SerialPortSupervisor:
         self._pause_listen = pause_listen
         self._on_raw_line = on_raw_line or (lambda line: None)
         self._on_lifecycle_event = on_lifecycle_event or (lambda event, intentional=None: None)
-        self._on_log = on_log or (lambda msg, level="INFO": None)
+        # Task 7 (listener-stop-intent logging) follow-up: accepts optional
+        # title/source kwargs now, mirroring how on_lifecycle_event was
+        # extended with **kwargs/intentional in PR #168 - same pattern, same
+        # file. The no-op default below just needs to not blow up on them.
+        self._on_log = on_log or (lambda msg, level="INFO", **kwargs: None)
 
         self._listen_process: Optional[subprocess.Popen] = None
         self._connected_since: Optional[float] = None
@@ -290,6 +294,23 @@ class SerialPortSupervisor:
     # ------------------------------------------------------------------
     def stop_listener_process(self) -> bool:
         self._pause_listen.set()
+        # Task 7 (observability follow-up): log intent at the ONE place
+        # it's actually known for certain - this is the single choke point
+        # both callers that ever intentionally stop the listener go
+        # through (server.py's prepare_radio_command() via stop_listener(),
+        # and claim_exclusive_access()'s internal _prepare_command()).
+        # Task 6's investigation hit a wall reconstructing "was this stop
+        # intentional" after the fact from run_listener()'s own
+        # ended-with-code/stop_was_intentional read - both a genuine crash
+        # and a legitimate stop can print an identical shutdown signature,
+        # making them indistinguishable in hindsight. Logging the request
+        # here, at the moment it's issued, means a future "ERROR: Listener
+        # stopped - exited unexpectedly" with no "Listener stop requested"
+        # in the few seconds before it is real signal, not an inference.
+        self._on_log(
+            "Listener stop requested (intentional)", "INFO",
+            title="Listener Control", source="radio",
+        )
         time.sleep(1.5)
 
         with self._radio_lock:

@@ -2091,12 +2091,18 @@ body[data-theme="dark"] {
 
 [data-theme="dark"] .app-container,
 [data-theme="dark"] .main-layout,
-[data-theme="dark"] .chat-area,
 [data-theme="dark"] .workspace-view,
 [data-theme="dark"] .devices-view,
 [data-theme="dark"] .node-manager-view {
     background: var(--theme-workspace-bg);
     color: var(--theme-text);
+}
+
+/* Chat/messages domain (theme-registry Stage 1.1): canonical --mc-*
+   tokens instead of the legacy --theme-* alias chain used above. */
+[data-theme="dark"] .chat-area {
+    background: var(--mc-chat-bg);
+    color: var(--mc-chat-text);
 }
 
 /* Workspace panels and headers. */

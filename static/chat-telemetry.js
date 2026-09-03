@@ -673,6 +673,22 @@ function renderTelemetryChart(container, records, type) {
     // Dark theme: only axis/grid/legend/tooltip chrome changes here - the
     // per-series line/fill colors (SENSOR_COLORS/SENSOR_BG_COLORS) already
     // work on a dark background and are left untouched.
+    //
+    // theme-registry Stage 1.5b: every dark-mode literal below (tickColor,
+    // the legend label color, and the four tooltip colors further down)
+    // was checked individually against the full --mc-* dark token table in
+    // ui-kit.css's html[data-theme="dark"] block - none of them are an
+    // exact match for any token (closest misses: tickColor #a0aec0 vs
+    // --mc-chat-muted #9fb0c3 off by 1-3 per channel, tooltip background
+    // #0f1923 vs --mc-bg-media-stage #101923 off by 1 on red only), so
+    // they stay hardcoded literals rather than being wired through
+    // getComputedStyle(document.documentElement).getPropertyValue('--mc-*')
+    // - there's no existing token to read. Candidates for a dedicated
+    // chart-chrome token set in Stage 3.1, same category as the raw
+    // telemetry-card/battery colors from Stage 1.5a. (No getComputedStyle
+    // precedent exists anywhere else in this codebase for reading --mc-*
+    // from JS either, for what it's worth - moot here since nothing
+    // matched, but noted in case Stage 3.1 wants to establish one.)
     const isDark = document.documentElement.dataset.theme === 'dark';
     const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
     const tickColor = isDark ? '#a0aec0' : '#666';
@@ -882,9 +898,18 @@ function renderTelemetryChart(container, records, type) {
                 plugins: {
                     legend: {
                         position: 'top',
+                        // raw: no exact --mc-* match, see the Stage 1.5b
+                        // comment near isDark/tickColor above
                         labels: { usePointStyle: true, padding: 15, font: { size: 11 }, color: isDark ? '#cbd5e0' : '#333' }
                     },
                     tooltip: {
+                        // raw: no exact --mc-* match for any of these four
+                        // (bodyColor intentionally reuses the same literal
+                        // as the legend label color above - both were
+                        // '#cbd5e0' already, kept as one shared shade for
+                        // now rather than split into two independent
+                        // copies); see the Stage 1.5b comment near
+                        // isDark/tickColor above
                         backgroundColor: isDark ? '#0f1923' : 'rgba(255,255,255,0.95)',
                         titleColor: isDark ? '#e2e8f0' : '#333',
                         bodyColor: isDark ? '#cbd5e0' : '#666',

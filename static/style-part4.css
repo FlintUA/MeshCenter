@@ -859,6 +859,10 @@
 .map-layout-option { display:flex; align-items:center; gap:8px; padding:8px 9px; border-radius:8px; cursor:pointer; }
 .map-layout-option:hover { background: var(--mc-surface-alt, #eef4fa); }
 .map-layout-option input { margin:0; }
+/* raw: map layout popover surface + hover (theme-registry Stage 1.7) - no
+   exact --mc-* match yet (closest: color #eef6fc vs --mc-chat-text
+   #eef6ff, off by 0,0,3), candidate for a dedicated dialog/popover-token
+   set in Stage 3.1. */
 [data-theme="dark"] .map-layout-popover { background:#142434; border-color:#314a62; color:#eef6fc; }
 [data-theme="dark"] .map-layout-option:hover { background:#20384e; }
 
@@ -2959,6 +2963,12 @@ body[data-theme="dark"] .node-manager-detect-radio-btn:hover {
     color: #fff;
 }
 
+/* theme-registry Stage 1.7: the base rule below is another consumer of
+   the legacy --theme-* token family (same debt already flagged for
+   .camera-panel in Stage 1.4 and .devices-panel/.media-panel in Stage
+   1.6) - not touched here, that's a real family migration for Stage 3.1,
+   not a per-selector swap (none of --theme-elevated-bg/--theme-border/
+   --theme-text's dark values match any current --mc-* token exactly). */
 [data-theme="dark"] .waypoint-action-toast,
 body[data-theme="dark"] .waypoint-action-toast {
     background: var(--theme-elevated-bg) !important;
@@ -2966,6 +2976,10 @@ body[data-theme="dark"] .waypoint-action-toast {
     color: var(--theme-text) !important;
 }
 
+/* raw: error-state border, not part of the legacy bundle above (theme-registry
+   Stage 1.7) - #e05d68 checked against every dark --mc-* token, no exact
+   match (closest: --mc-danger #ff7b85, off by 31,30,29 - not close),
+   candidate for Stage 3.1. */
 [data-theme="dark"] .waypoint-action-toast.error,
 body[data-theme="dark"] .waypoint-action-toast.error {
     border-color: #e05d68 !important;
@@ -3178,6 +3192,16 @@ body[data-theme="dark"] .waypoint-action-toast.error {
     background: #344b61;
 }
 
+/* Generic modal chrome (theme-registry Stage 1.7). Checked every value
+   below against the current dark --mc-* tokens: only .modal-header span's
+   #f4f8fc is an exact match (--mc-tab-text-active - a semantically odd
+   name for modal-header text, but the value is byte-identical, so
+   tokenized anyway per the reuse-if-exact rule). Everything else has no
+   exact match, left raw - candidates for a dedicated dialog-token set in
+   Stage 3.1. (.modal-content's #1b2d40 is the same near-miss already
+   noted at the telemetry-modal override further down this file - since
+   it's not being tokenized here either, that override does not become
+   redundant.) */
 [data-theme="dark"] .modal-overlay {
     background: rgba(3, 10, 18, .72);
     backdrop-filter: blur(3px);
@@ -3195,7 +3219,7 @@ body[data-theme="dark"] .waypoint-action-toast.error {
 }
 
 [data-theme="dark"] .modal-header span {
-    color: #f4f8fc;
+    color: var(--mc-tab-text-active);
 }
 
 [data-theme="dark"] .modal-close {

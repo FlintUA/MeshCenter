@@ -3749,12 +3749,31 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 .notification-item-copy small { color: var(--mc-muted, #7b8796); font-size: 9px; }
 .notification-empty { padding: 30px 16px; color: var(--mc-muted, #7b8796); font-size: 11px; text-align: center; }
 
+/* Dead code (theme-registry Stage 1.7, confirmed via computed styles).
+   These four rules use `[data-theme="dark"] .selector` (specificity
+   0,2,0 / 0,3,0 for the :hover ones) - static/ui-kit.css has an
+   equal-or-higher-specificity `html[data-theme="dark"] .selector` rule
+   for each of these same four selectors (~line 3100-3141, already
+   tokenized via var(--mc-popover-*)), which always wins regardless of
+   file load order since it's strictly more specific (one extra `html`
+   type selector). Not deleted, out of scope to clean up dead CSS here. */
 [data-theme="dark"] .dock-notification-btn { background: #17283a; border-color: #344a60; color: #bdd0e4; }
 [data-theme="dark"] .dock-notification-btn:hover { background: #21364b; }
 [data-theme="dark"] .notification-popover { background: #172638; border-color: #34485e; }
 [data-theme="dark"] .notification-item:hover { background: #203449; }
-[data-theme="dark"] .notification-success .notification-item-icon { color: #72d69a; background: rgba(57,164,100,.16); }
-[data-theme="dark"] .notification-warning .notification-item-icon { color: #f0c86a; background: rgba(196,143,31,.17); }
+/* raw: notification status icons (theme-registry Stage 1.7) - live, not
+   shadowed (no ui-kit.css override exists for any of these four).
+   #72d69a and #f0c86a are exact matches for --mc-success/--mc-warning,
+   tokenized. #ff9299 and #8fc7f0 checked against every dark --mc-* token,
+   no exact match for either (closest: --mc-danger #ff7b85 for the error
+   icon, off by 31,30,29 - not close; --mc-info #78b6ff for the info icon,
+   off by 23,17,15), left raw, candidates for Stage 3.1. The rgba(...)
+   background halos next to each are a separate, non-hex question (not in
+   check_new_hex.py's scope either) - each halo's RGB triplet doesn't
+   match its own icon's token color or any other token, so there's no
+   direct var() substitution available for them regardless. */
+[data-theme="dark"] .notification-success .notification-item-icon { color: var(--mc-success); background: rgba(57,164,100,.16); }
+[data-theme="dark"] .notification-warning .notification-item-icon { color: var(--mc-warning); background: rgba(196,143,31,.17); }
 [data-theme="dark"] .notification-error .notification-item-icon { color: #ff9299; background: rgba(207,71,82,.17); }
 [data-theme="dark"] .notification-info .notification-item-icon { color: #8fc7f0; background: rgba(48,126,184,.18); }
 

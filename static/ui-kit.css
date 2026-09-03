@@ -3330,6 +3330,37 @@ body[data-theme="dark"] .workspace-popover::after {
     --mc-scrollbar-thumb: #9fb3c8;
     --mc-scrollbar-thumb-hover: #829bb5;
 
+    /* Legacy --theme-* family (theme-registry Stage 3.1): backs the
+       ~190 var(--theme-*) call sites in style-part4.css's "UNIFIED LIGHT
+       / DARK THEME LAYER" (Node Manager, Waypoints, Devices/Peripherals,
+       Tools, workspace-panel chrome, local-node header) plus the
+       ~64-site --card-bg/--surface-secondary/--border-color/etc
+       compatibility-alias layer. Deliberately NOT merged into the
+       generic --mc-bg-panel/--mc-border/--mc-text-primary/etc family
+       above even where a value happens to coincide in one theme mode
+       (checked all 14 individually - see the Stage 3.1 report for the
+       full near-miss table; none match an existing token consistently
+       across *both* light and dark, so reusing one would silently drift
+       one of the two modes). --mc-legacy-* is a separate, self-contained
+       set purely so style-part4.css's --theme-* declarations can point
+       at a real token instead of a hardcoded hex - do not add new
+       hardcoded colors here, and do not use these tokens for anything
+       outside that migration. */
+    --mc-legacy-app-bg: #eef3f8;
+    --mc-legacy-workspace-bg: #f7f9fc;
+    --mc-legacy-panel-bg: #ffffff;
+    --mc-legacy-card-bg: #ffffff;
+    --mc-legacy-card-hover: #f4f8fd;
+    --mc-legacy-elevated-bg: #edf4fb;
+    --mc-legacy-border: #d5dfeb;
+    --mc-legacy-border-soft: #e7edf4;
+    --mc-legacy-text: #14243a;
+    --mc-legacy-text-secondary: #506983;
+    --mc-legacy-text-muted: #7d91a7;
+    --mc-legacy-accent: #1769e0;
+    --mc-legacy-focus: #4f8cff;
+    --mc-legacy-shadow: 0 8px 24px rgba(29, 53, 87, .08);
+
     /* Shadows */
     --mc-shadow-panel: 0 2px 8px rgba(15, 35, 63, .045);
     --mc-shadow-hover: 0 6px 16px rgba(15, 35, 63, .09);
@@ -3460,6 +3491,23 @@ html[data-theme="dark"] {
     --mc-scrollbar-track: #202936;
     --mc-scrollbar-thumb: #526174;
     --mc-scrollbar-thumb-hover: #67788d;
+
+    /* Legacy --theme-* family (theme-registry Stage 3.1) - see the :root
+       block above for the full explanation of why this is a separate set. */
+    --mc-legacy-app-bg: #09111a;
+    --mc-legacy-workspace-bg: #0f1a26;
+    --mc-legacy-panel-bg: #162433;
+    --mc-legacy-card-bg: #1c2c3d;
+    --mc-legacy-card-hover: #24374b;
+    --mc-legacy-elevated-bg: #25394d;
+    --mc-legacy-border: #344a61;
+    --mc-legacy-border-soft: #2a3e53;
+    --mc-legacy-text: #f3f7fb;
+    --mc-legacy-text-secondary: #c3d3e3;
+    --mc-legacy-text-muted: #91a7bc;
+    --mc-legacy-accent: #65a3ff;
+    --mc-legacy-focus: #73adff;
+    --mc-legacy-shadow: 0 12px 30px rgba(0, 0, 0, .24);
 
     /* Shadows */
     --mc-shadow-panel: 0 3px 10px rgba(0, 0, 0, .24);

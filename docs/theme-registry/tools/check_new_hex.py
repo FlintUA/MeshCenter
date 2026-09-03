@@ -83,7 +83,10 @@ def check_files(paths: list[Path], known: set[str]) -> list[tuple[str, int, str]
 
 def check_diff(diff_args: list[str], known: set[str]) -> list[tuple[str, str, str]]:
     cmd = ["git", "diff", "--unified=0"] + diff_args
-    result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=True)
+    result = subprocess.run(
+        cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+        encoding="utf-8", errors="replace",
+    )
     findings = []
     current_file = None
     for line in result.stdout.splitlines():

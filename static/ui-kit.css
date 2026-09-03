@@ -1055,10 +1055,28 @@ html[data-theme="dark"] .app-container,
 html[data-theme="dark"] .main-layout,
 html[data-theme="dark"] .video-panel,
 html[data-theme="dark"] .media-panel,
-html[data-theme="dark"] .system-panel,
-html[data-theme="dark"] .settings-panel,
 html[data-theme="dark"] .base-sidebar,
 html[data-theme="dark"] .sidebar {
+    background-color: #18212c;
+    color: #dbe5f1;
+}
+
+/* Dead code (theme-registry Stage 1.8, confirmed via computed styles on a
+   real page). .settings-panel/.system-panel's background+color are always
+   shadowed by the legacy style-part4.css rule
+   ([data-theme="dark"] .settings-panel, [data-theme="dark"] .system-panel
+   { background: var(--theme-panel-bg) !important; color: var(--theme-text)
+   !important; ... }, ~line 2127) - !important beats this non-important
+   rule regardless of specificity. Not deleted, out of scope to clean up.
+   (Their border-color is governed by a third, still-different rule - the
+   "Stronger darker outline" bundle a bit further down this file,
+   border-color: #0a121c !important, which beats the legacy rule on
+   specificity since both are !important - already documented as a
+   no-match raw value in Stage 1.6's report for .devices-panel; same
+   rule, same conclusion, applies to .settings-panel/.system-panel too,
+   no new action needed here.) */
+html[data-theme="dark"] .settings-panel,
+html[data-theme="dark"] .system-panel {
     background-color: #18212c;
     color: #dbe5f1;
 }
@@ -1076,7 +1094,25 @@ html[data-theme="dark"] .messages-view {
 
 html[data-theme="dark"] .base-card,
 html[data-theme="dark"] .weather-card,
-html[data-theme="dark"] .base-reference-location,
+html[data-theme="dark"] .base-reference-location {
+    background-color: #202a36;
+    border-color: #364253;
+    color: #dbe5f1;
+}
+
+/* Dead code (theme-registry Stage 1.8, confirmed via computed styles).
+   Shadowed by the equal-specificity, later, already-tokenized
+   html[data-theme="dark"] :is(.chat-item, .node-card, .system-card,
+   .settings-card, ...) rule further down this file (background:
+   var(--mc-bg-panel), border-color: var(--mc-border), both !important -
+   later wins the tie). Not tokenized to match that winner here (unlike
+   the .chat-item/.node-card hygiene pattern from 1.1/1.2): .settings-card
+   and .system-card actually resolve to *different* live text colors
+   elsewhere (--mc-text-primary vs --mc-text-secondary, from a separate,
+   still-different color-only rule that also applies to .system-card), so
+   there's no single token that would accurately describe this shared
+   dead declaration's "real" color - documenting as dead is more honest
+   than picking one. */
 html[data-theme="dark"] .settings-card,
 html[data-theme="dark"] .system-card {
     background-color: #202a36;
@@ -1220,10 +1256,14 @@ html[data-theme="dark"] .workspace-menu-title {
     color: #91a2b6;
 }
 
+/* Workspace popover Panels section (theme-registry Stage 1.8). Confirmed
+   live (not shadowed) via computed styles. */
 html[data-theme="dark"] .workspace-menu-section {
-    border-bottom-color: #364253;
+    border-bottom-color: var(--mc-workspace-header-border);
 }
 
+/* raw: no exact --mc-* match yet (closest: --mc-button-secondary-text
+   #eef6ff, off by 19,17,14), candidate for Stage 3.1. */
 html[data-theme="dark"] .workspace-setting-row {
     color: #dbe5f1;
 }
@@ -1791,6 +1831,9 @@ html[data-theme="dark"] a {
 }
 
 /* System chart and log */
+/* raw: System Log / chart well background (theme-registry Stage 1.8) - no
+   exact --mc-* match yet (closest: --mc-bg-subtle #162231, off by 0,1,0),
+   candidate for Stage 3.1. border-color/color here are already tokenized. */
 html[data-theme="dark"] :is(.chart-container, .system-chart, .system-log-body, .log-container) {
     background: #162331 !important;
     border-color: var(--mc-border) !important;
@@ -2692,6 +2735,13 @@ html[data-theme="dark"] .chat-item .chat-time {
     font-weight: 700;
 }
 
+/* raw: Workspace popover Application nav row (System/Settings/About)
+   (theme-registry Stage 1.8) - confirmed live via computed styles, no
+   exact --mc-* match for any value below (closest: hover background
+   #22364a vs --mc-button-secondary-bg #223349, off by 0,3,1; hover
+   border #36516c vs --mc-button-secondary-border #3a526d, off by 4,1,1;
+   :hover/.active color #fff, no token is pure white), candidates for
+   Stage 3.1. */
 html[data-theme="dark"] .workspace-nav-btn {
     color: #dce8f6;
 }
@@ -3030,6 +3080,15 @@ body[data-theme="light"] .mc-workspace-panel {
 html[data-theme="dark"] .weather-location-name { color: #f4f8ff; }
 html[data-theme="dark"] .weather-location-coordinates { color: #8fa7c2; }
 html[data-theme="dark"] .weather-location-block:hover .weather-location-name { color: #66b2ff; }
+/* Dead code (theme-registry Stage 1.8, confirmed via computed styles).
+   None of these three declarations render: this rule has no !important,
+   and the generic html[data-theme="dark"] :is(input, select, textarea,
+   .message-input) rule (background: #0f1a26 !important; color:
+   var(--mc-text-primary) !important; border-color: var(--mc-border)
+   !important;) matches every <select>, including .settings-select, at
+   equal-or-higher specificity - its !important always wins. Not deleted,
+   out of scope to clean up (that generic rule is app-wide and untouched,
+   same as Stage 1.1 left it). */
 html[data-theme="dark"] .settings-select {
     border-color: #34475d;
     background: #0f1d2b;

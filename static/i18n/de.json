@@ -1145,5 +1145,14 @@
     "login_error": "Falsches Passwort.",
     "login_throttled": "Zu viele Versuche. Versuche es in {seconds} Sekunden erneut.",
     "login_submit": "Anmelden"
+  },
+  "workspace": {
+    "theme_family_group_label": "Themenfamilie",
+    "theme_family_original": "MeshCenter Original",
+    "theme_mode_auto": "Auto",
+    "theme_mode_light": "Hell",
+    "theme_mode_dark": "Dunkel",
+    "theme_mode_fixed_light": "Immer hell",
+    "theme_mode_fixed_dark": "Immer dunkel"
   }
 }

@@ -1145,5 +1145,14 @@
     "login_error": "Невірний пароль.",
     "login_throttled": "Забагато спроб. Спробуйте ще раз через {seconds} с.",
     "login_submit": "Увійти"
+  },
+  "workspace": {
+    "theme_family_group_label": "Сімейство тем",
+    "theme_family_original": "MeshCenter Original",
+    "theme_mode_auto": "Авто",
+    "theme_mode_light": "Світла",
+    "theme_mode_dark": "Темна",
+    "theme_mode_fixed_light": "Завжди світла",
+    "theme_mode_fixed_dark": "Завжди темна"
   }
 }

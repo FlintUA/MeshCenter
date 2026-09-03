@@ -8004,10 +8004,70 @@ function formatUptime(seconds) {
 // EVENT LISTENERS
 // ============================================================
 const WORKSPACE_STORAGE_KEY = 'meshcenter.workspace';
+
+// theme-registry Stage 3.2: two-level Appearance model. Level 1 picks a
+// theme *family* (only 'original' exists today - Stages 4-8 add
+// Sharp/Gunmetal/Alpine/Teal here, one entry each, no rewrite needed).
+// Level 2 is Auto/Light/Dark for a 'paired' family (a family that ships
+// both a light and dark rendering), or a single fixed-mode label with no
+// picker for a 'fixed' family (a family that only ever renders one mode).
+// 'original' is paired, so its level 2 behaves exactly like the old
+// System/Light/Dark row - just relabeled ("Auto", not "System") and
+// nested under the family card instead of being the whole Appearance
+// section by itself.
+const WORKSPACE_THEME_FAMILIES = Object.freeze([
+    Object.freeze({ id: 'original', kind: 'paired' })
+    // A future fixed family would look like:
+    // Object.freeze({ id: 'sharp-dark', kind: 'fixed', mode: 'dark' })
+]);
+const WORKSPACE_THEME_FAMILY_IDS = WORKSPACE_THEME_FAMILIES.map(family => family.id);
+
+function getWorkspaceThemeFamily(id) {
+    return WORKSPACE_THEME_FAMILIES.find(family => family.id === id) || WORKSPACE_THEME_FAMILIES[0];
+}
+
+// theme-registry Stage 3.2: renders the Appearance section's level-2
+// control - an Auto/Light/Dark radiogroup for a 'paired' family, or a
+// single non-interactive label for a 'fixed' one. Called from
+// Workspace.syncControls() (idempotent - safe to call on every apply(),
+// not just when the family actually changes) so #workspaceThemeModeRow
+// always reflects whichever family is currently selected. Listens via
+// delegation on the container (wired once in initializeWorkspace()), not
+// per-input, since this rebuilds the row's DOM on every call.
+function renderWorkspaceThemeModeRow() {
+    const container = document.getElementById('workspaceThemeModeRow');
+    if (!container) return;
+    const family = getWorkspaceThemeFamily(Workspace.state.themeFamily);
+
+    if (family.kind === 'fixed') {
+        const key = family.mode === 'dark' ? 'workspace.theme_mode_fixed_dark' : 'workspace.theme_mode_fixed_light';
+        container.innerHTML = `<div class="workspace-theme-fixed-label">${escapeHtml(window.I18N.t(key))}</div>`;
+        return;
+    }
+
+    const mode = Workspace.state.themeMode;
+    const options = [
+        { value: 'auto', icon: '◉', key: 'workspace.theme_mode_auto' },
+        { value: 'light', icon: '☀', key: 'workspace.theme_mode_light' },
+        { value: 'dark', icon: '◐', key: 'workspace.theme_mode_dark' }
+    ];
+    container.innerHTML = `
+        <div class="workspace-theme-options" role="radiogroup" aria-label="${escapeHtml(window.I18N.t('common.mode'))}">
+            ${options.map(opt => `
+                <label class="workspace-theme-option">
+                    <input type="radio" name="workspaceThemeMode" value="${opt.value}" ${mode === opt.value ? 'checked' : ''}>
+                    <span>${opt.icon} ${escapeHtml(window.I18N.t(opt.key))}</span>
+                </label>
+            `).join('')}
+        </div>
+    `;
+}
+
 const WORKSPACE_DEFAULTS = Object.freeze({
     leftPanel: true,
     rightPanel: true,
-    theme: 'system',
+    themeFamily: 'original',
+    themeMode: 'auto',
     compactMode: false
 });
 
@@ -8191,6 +8251,7 @@ const Workspace = {
             const stored = JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY) || '{}');
             this.state = this.sanitize(stored);
             this.migrateLegacyPanelSettings();
+            this.migrateLegacyThemeField(stored);
         } catch (error) {
             console.warn('[WORKSPACE] Unable to load preferences:', error);
             this.state = { ...WORKSPACE_DEFAULTS };
@@ -8203,7 +8264,8 @@ const Workspace = {
         return {
             leftPanel: source.leftPanel !== false,
             rightPanel: source.rightPanel !== false,
-            theme: ['system', 'light', 'dark'].includes(source.theme) ? source.theme : 'system',
+            themeFamily: WORKSPACE_THEME_FAMILY_IDS.includes(source.themeFamily) ? source.themeFamily : 'original',
+            themeMode: ['auto', 'light', 'dark'].includes(source.themeMode) ? source.themeMode : 'auto',
             compactMode: source.compactMode === true
         };
     },
@@ -8222,6 +8284,28 @@ const Workspace = {
         }
     },
 
+    // theme-registry Stage 3.2: non-destructive migration from the old
+    // single `theme: 'system'|'light'|'dark'` field to `themeFamily`/
+    // `themeMode`, same pattern as migrateLegacyPanelSettings() above -
+    // only touches storage when the old shape is present and the new one
+    // isn't, so it runs exactly once per browser and never re-applies
+    // once migrated. A user's existing choice survives exactly: old
+    // 'system' -> themeMode 'auto' (still follows the OS), old 'light'/
+    // 'dark' -> the same themeMode (still pinned).
+    migrateLegacyThemeField(stored) {
+        try {
+            const hasOldTheme = stored && typeof stored === 'object' && typeof stored.theme === 'string';
+            const hasNewFields = stored && typeof stored === 'object'
+                && (('themeFamily' in stored) || ('themeMode' in stored));
+            if (!hasOldTheme || hasNewFields) return;
+            this.state.themeFamily = 'original';
+            this.state.themeMode = (stored.theme === 'light' || stored.theme === 'dark') ? stored.theme : 'auto';
+            this.save();
+        } catch (error) {
+            console.warn('[WORKSPACE] Theme field migration failed:', error);
+        }
+    },
+
     save() {
         try {
             localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(this.state));
@@ -8237,7 +8321,12 @@ const Workspace = {
     },
 
     resolveTheme() {
-        if (this.state.theme !== 'system') return this.state.theme;
+        // A 'fixed' family always resolves to its own mode regardless of
+        // themeMode - 'original' is 'paired', so this behaves exactly
+        // like the old system/light/dark logic for it today.
+        const family = getWorkspaceThemeFamily(this.state.themeFamily);
+        if (family.kind === 'fixed') return family.mode;
+        if (this.state.themeMode !== 'auto') return this.state.themeMode;
         return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     },
 
@@ -8245,7 +8334,8 @@ const Workspace = {
         const resolvedTheme = this.resolveTheme();
         const themeChanged = document.documentElement.dataset.theme !== resolvedTheme;
         document.documentElement.dataset.theme = resolvedTheme;
-        document.documentElement.dataset.themePreference = this.state.theme;
+        document.documentElement.dataset.themeFamily = this.state.themeFamily;
+        document.documentElement.dataset.themePreference = this.state.themeMode;
         document.documentElement.style.colorScheme = resolvedTheme;
         // Chart.js bakes axis/grid/legend/tooltip colors in at creation
         // time, so a live theme switch needs an explicit rebuild of any
@@ -8268,9 +8358,10 @@ const Workspace = {
         if (left) left.checked = this.state.leftPanel;
         if (right) right.checked = this.state.rightPanel;
         if (compact) compact.checked = this.state.compactMode;
-        document.querySelectorAll('input[name="workspaceTheme"]').forEach(input => {
-            input.checked = input.value === this.state.theme;
+        document.querySelectorAll('input[name="workspaceThemeFamily"]').forEach(input => {
+            input.checked = input.value === this.state.themeFamily;
         });
+        renderWorkspaceThemeModeRow();
     }
 };
 
@@ -8375,16 +8466,24 @@ function initializeWorkspace() {
     document.getElementById('workspaceCompactMode')?.addEventListener('change', event => {
         Workspace.update({ compactMode: event.target.checked });
     });
-    document.querySelectorAll('input[name="workspaceTheme"]').forEach(input => {
+    document.querySelectorAll('input[name="workspaceThemeFamily"]').forEach(input => {
         input.addEventListener('change', event => {
-            if (event.target.checked) Workspace.update({ theme: event.target.value });
+            if (event.target.checked) Workspace.update({ themeFamily: event.target.value });
         });
     });
+    // #workspaceThemeModeRow's radio inputs are rebuilt on every render
+    // (renderWorkspaceThemeModeRow()), so this listens via delegation on
+    // the container instead of on the individual inputs.
+    document.getElementById('workspaceThemeModeRow')?.addEventListener('change', event => {
+        if (event.target.name === 'workspaceThemeMode' && event.target.checked) {
+            Workspace.update({ themeMode: event.target.value });
+        }
+    });
 
-    // When Theme is set to System, follow Windows/browser changes live.
+    // When Mode is set to Auto, follow Windows/browser changes live.
     const systemThemeQuery = window.matchMedia?.('(prefers-color-scheme: dark)');
     const handleSystemThemeChange = () => {
-        if (Workspace.state.theme === 'system') Workspace.applyTheme();
+        if (Workspace.state.themeMode === 'auto') Workspace.applyTheme();
     };
     if (systemThemeQuery?.addEventListener) {
         systemThemeQuery.addEventListener('change', handleSystemThemeChange);

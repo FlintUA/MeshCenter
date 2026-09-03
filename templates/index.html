@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20260901-dock-uptime">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260903-theme-stage1-7">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20260903-theme-stage3-1">
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20260903-theme-stage3-1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20260903-theme-stage3-2">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
@@ -1917,20 +1917,31 @@
 
                 <div class="workspace-menu-section">
                     <div class="workspace-menu-title">Appearance</div>
-                    <div class="workspace-theme-options" role="radiogroup" aria-label="Theme">
-                        <label class="workspace-theme-option">
-                            <input type="radio" name="workspaceTheme" value="system" checked>
-                            <span>◉ System</span>
-                        </label>
-                        <label class="workspace-theme-option">
-                            <input type="radio" name="workspaceTheme" value="light">
-                            <span>☀ Light</span>
-                        </label>
-                        <label class="workspace-theme-option">
-                            <input type="radio" name="workspaceTheme" value="dark">
-                            <span>◐ Dark</span>
+                    <!-- Level 1: theme family. Only "MeshCenter Original" exists
+                         today (theme-registry Stage 3.2) - Stages 4-8 add
+                         Sharp/Gunmetal/Alpine/Teal as more <label> entries here,
+                         each with its own data-family value; no JS rewrite
+                         needed, see WORKSPACE_THEME_FAMILIES in chat.js. -->
+                    <div class="workspace-theme-families" id="workspaceThemeFamilies" role="radiogroup" aria-label="Theme family" data-i18n-aria-label="workspace.theme_family_group_label">
+                        <label class="workspace-theme-family-option" data-family="original">
+                            <input type="radio" name="workspaceThemeFamily" value="original" checked>
+                            <span class="workspace-theme-family-card">
+                                <span class="workspace-theme-swatches" aria-hidden="true">
+                                    <span class="workspace-theme-swatch workspace-theme-swatch--bg"></span>
+                                    <span class="workspace-theme-swatch workspace-theme-swatch--panel"></span>
+                                    <span class="workspace-theme-swatch workspace-theme-swatch--primary"></span>
+                                    <span class="workspace-theme-swatch workspace-theme-swatch--warning"></span>
+                                </span>
+                                <span class="workspace-theme-family-label" data-i18n="workspace.theme_family_original">MeshCenter Original</span>
+                            </span>
                         </label>
                     </div>
+                    <!-- Level 2: Auto/Light/Dark for a paired family, or a single
+                         fixed-mode label for a fixed one - rendered by
+                         renderWorkspaceThemeModeRow() in chat.js, not static
+                         markup, since its content depends on which family is
+                         selected. -->
+                    <div class="workspace-theme-mode-row" id="workspaceThemeModeRow"></div>
                 </div>
 
                 <div class="workspace-menu-section">
@@ -2207,7 +2218,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20260806-6"></script>
+<script src="/static/i18n.js?v=20260903-theme-stage3-2"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above —
@@ -2223,7 +2234,7 @@
 <script src="{{ url_for('static', filename='chat-camera.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-map.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20260821-domain-split"></script>
-<script src="/static/chat.js?v=20260901-identity-hint-btn-system"></script>
+<script src="/static/chat.js?v=20260903-theme-stage3-2"></script>
 <script src="/static/media.js?v=20260818-xss-fix-delete-onclick"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 

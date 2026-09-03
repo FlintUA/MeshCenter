@@ -1178,6 +1178,17 @@ html[data-theme="dark"] .dock-right {
     color: #91a2b6;
 }
 
+/* Dead code (theme-registry Stage 1.7, confirmed via computed styles on a
+   real page, not just specificity reasoning - not deleted, out of scope
+   to clean up dead CSS here). All three rules below are shadowed by the
+   equal-specificity, later, already-tokenized
+   html[data-theme="dark"] .workspace-popover / .workspace-popover-header
+   / .workspace-popover::after rules further down this file
+   (~line 3100: var(--mc-popover-bg)/var(--mc-popover-border)/
+   var(--mc-popover-text)/var(--mc-popover-shadow), ~3110:
+   var(--mc-popover-header-bg)/var(--mc-popover-divider)) - later wins the
+   tie, no legacy !important complication this time (unlike the
+   .devices-panel case from Stage 1.6). */
 html[data-theme="dark"] .workspace-popover {
     background: #202a36;
     border-color: #445164;
@@ -1195,6 +1206,14 @@ html[data-theme="dark"] .workspace-popover-header {
     border-bottom-color: #364253;
 }
 
+/* This one IS live (confirmed via computed styles) - no later rule
+   re-declares .workspace-popover-header span's color specifically, only
+   the background/border-bottom-color above are shadowed. #91a2b6 checked
+   against every dark --mc-* token, no exact match (closest:
+   --mc-text-muted #90a5ba, off by 1,3,4), left raw. Not split out of this
+   bundle since nothing is being tokenized either way, and
+   .workspace-setting-row/.workspace-menu-title are outside this stage's
+   popover/toast scope. */
 html[data-theme="dark"] .workspace-popover-header span,
 html[data-theme="dark"] .workspace-setting-row small,
 html[data-theme="dark"] .workspace-menu-title {

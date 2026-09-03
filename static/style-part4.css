@@ -2045,23 +2045,33 @@ body.node-manager-open #messagesView[hidden] {
    UNIFIED LIGHT / DARK THEME LAYER
    Final cascade for workspace cards, Node Manager, Devices,
    Tools and local-node header.
+
+   theme-registry Stage 3.1: the 14 --theme-* custom properties below are
+   now aliases onto the --mc-legacy-* tokens defined in ui-kit.css's
+   canonical token block, not first-class hardcoded values - do not put
+   raw hex back here. This keeps every var(--theme-*) consumer in this
+   file (and the --card-bg/--surface-secondary/--border-color/etc
+   compatibility layer just below, which already chains through
+   --theme-*) working exactly as before while giving the underlying
+   colors one real source of truth. See ui-kit.css's --mc-legacy-*
+   comment for why these aren't merged into the generic --mc-* family.
    ============================================================ */
 
 :root {
-    --theme-app-bg: #eef3f8;
-    --theme-workspace-bg: #f7f9fc;
-    --theme-panel-bg: #ffffff;
-    --theme-card-bg: #ffffff;
-    --theme-card-hover: #f4f8fd;
-    --theme-elevated-bg: #edf4fb;
-    --theme-border: #d5dfeb;
-    --theme-border-soft: #e7edf4;
-    --theme-text: #14243a;
-    --theme-text-secondary: #506983;
-    --theme-text-muted: #7d91a7;
-    --theme-accent: #1769e0;
-    --theme-focus: #4f8cff;
-    --theme-shadow: 0 8px 24px rgba(29, 53, 87, .08);
+    --theme-app-bg: var(--mc-legacy-app-bg);
+    --theme-workspace-bg: var(--mc-legacy-workspace-bg);
+    --theme-panel-bg: var(--mc-legacy-panel-bg);
+    --theme-card-bg: var(--mc-legacy-card-bg);
+    --theme-card-hover: var(--mc-legacy-card-hover);
+    --theme-elevated-bg: var(--mc-legacy-elevated-bg);
+    --theme-border: var(--mc-legacy-border);
+    --theme-border-soft: var(--mc-legacy-border-soft);
+    --theme-text: var(--mc-legacy-text);
+    --theme-text-secondary: var(--mc-legacy-text-secondary);
+    --theme-text-muted: var(--mc-legacy-text-muted);
+    --theme-accent: var(--mc-legacy-accent);
+    --theme-focus: var(--mc-legacy-focus);
+    --theme-shadow: var(--mc-legacy-shadow);
 
     /* Compatibility tokens used by existing components. */
     --card-bg: var(--theme-card-bg);
@@ -2078,20 +2088,20 @@ body.node-manager-open #messagesView[hidden] {
 [data-theme="dark"] {
     color-scheme: dark;
 
-    --theme-app-bg: #09111a;
-    --theme-workspace-bg: #0f1a26;
-    --theme-panel-bg: #162433;
-    --theme-card-bg: #1c2c3d;
-    --theme-card-hover: #24374b;
-    --theme-elevated-bg: #25394d;
-    --theme-border: #344a61;
-    --theme-border-soft: #2a3e53;
-    --theme-text: #f3f7fb;
-    --theme-text-secondary: #c3d3e3;
-    --theme-text-muted: #91a7bc;
-    --theme-accent: #65a3ff;
-    --theme-focus: #73adff;
-    --theme-shadow: 0 12px 30px rgba(0, 0, 0, .24);
+    --theme-app-bg: var(--mc-legacy-app-bg);
+    --theme-workspace-bg: var(--mc-legacy-workspace-bg);
+    --theme-panel-bg: var(--mc-legacy-panel-bg);
+    --theme-card-bg: var(--mc-legacy-card-bg);
+    --theme-card-hover: var(--mc-legacy-card-hover);
+    --theme-elevated-bg: var(--mc-legacy-elevated-bg);
+    --theme-border: var(--mc-legacy-border);
+    --theme-border-soft: var(--mc-legacy-border-soft);
+    --theme-text: var(--mc-legacy-text);
+    --theme-text-secondary: var(--mc-legacy-text-secondary);
+    --theme-text-muted: var(--mc-legacy-text-muted);
+    --theme-accent: var(--mc-legacy-accent);
+    --theme-focus: var(--mc-legacy-focus);
+    --theme-shadow: var(--mc-legacy-shadow);
 
     --card-bg: var(--theme-card-bg);
     --surface-secondary: var(--theme-elevated-bg);

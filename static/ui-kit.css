@@ -1893,6 +1893,10 @@ html[data-theme="dark"] .about-project-card {
 /* ============================================================
    DARK THEME — camera workspace and Management Tools contrast
    ============================================================ */
+/* raw: media-stage surface (frame + stream canvas) - no exact --mc-* match
+   yet (checked against every dark-mode token, incl. --mc-bg-media-stage
+   #101923 which is the closest, still not equal), candidate for a
+   dedicated media-token set in Stage 3.1. */
 html[data-theme="dark"] .video-frame-wrap,
 html[data-theme="dark"] .video-view .video-frame-wrap {
     background: #111b27 !important;
@@ -2003,25 +2007,29 @@ html[data-theme="dark"] .message-input:focus {
 
 
 html[data-theme="dark"] .camera-white-balance-group select {
+    /* raw: no exact --mc-* match yet, candidate for Stage 3.1 */
     background-color: #101d2b !important;
-    color: #eef6ff !important;
-    border-color: #3a526d !important;
+    color: var(--mc-dark-control-text) !important;
+    border-color: var(--mc-dark-control-border) !important;
 }
 
+/* raw: no exact --mc-* match yet, candidate for Stage 3.1 */
 html[data-theme="dark"] .camera-white-balance-group label {
     color: #9fb4cc !important;
 }
 
 /* Camera defaults button should belong to the dark control surface. */
 html[data-theme="dark"] .camera-defaults-btn {
-    background: #223349 !important;
-    color: #eef6ff !important;
-    border-color: #3a526d !important;
+    background: var(--mc-button-secondary-bg) !important;
+    color: var(--mc-button-secondary-text) !important;
+    border-color: var(--mc-button-secondary-border) !important;
     box-shadow: none !important;
 }
 
 html[data-theme="dark"] .camera-defaults-btn:hover {
-    background: #2b4059 !important;
+    background: var(--mc-button-secondary-bg-hover) !important;
+    /* raw: no exact --mc-* match yet (--mc-button-secondary-border-hover
+       is #4b6685, not equal), candidate for Stage 3.1 */
     border-color: #5b82aa !important;
 }
 
@@ -2460,6 +2468,10 @@ html[data-theme="dark"] #nodeDetails .node-detail-radio .radio-param {
     font-size: 11px;
 }
 
+/* raw: camera-loading placeholder surface + title - no exact --mc-* match
+   yet (all four values are within a few points of an existing token but
+   none are byte-equal, e.g. background #101c29 vs --mc-bg-workspace
+   #111c29), candidate for a dedicated media-token set in Stage 3.1. */
 html[data-theme="dark"] .camera-loading-placeholder {
     border-color: #2f4053;
     background: #101c29;

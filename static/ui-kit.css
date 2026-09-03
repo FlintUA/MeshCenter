@@ -2693,16 +2693,35 @@ html[data-theme="dark"] .workspace-nav-arrow {
     color: #90a6bc;
 }
 
+/* Dead code (theme-registry Stage 1.6, confirmed via computed styles, not
+   deleted - out of scope to clean up dead CSS here). Neither declaration
+   below actually renders: the legacy style-part4.css rule
+   `[data-theme="dark"] .devices-panel { background: var(--theme-panel-bg)
+   !important; border-color: var(--theme-border) !important; ... }` beats
+   this one on !important alone, regardless of specificity or file order -
+   so it's shadowed one level deeper than a same-specificity/later-wins
+   case would be (the equal-specificity, later, already-tokenized
+   `html[data-theme="dark"] .devices-panel` rule further down this file,
+   ~line 2898, is *also* shadowed by that same legacy !important rule, for
+   the same reason - not just this raw-hex one). */
 html[data-theme="dark"] .devices-panel {
     border-color: #2f4357;
     background: #172432;
 }
 
+/* Dead code (theme-registry Stage 1.6, confirmed via computed styles, not
+   deleted). Shadowed by the equal-specificity, later, already-tokenized
+   `html[data-theme="dark"] .devices-empty-state` rule further down this
+   file (~line 2912: border-color: var(--mc-border-soft); background:
+   var(--mc-bg-subtle);) - no legacy --theme-* override exists for this
+   selector, unlike .devices-panel above. */
 html[data-theme="dark"] .devices-empty-state {
     border-color: #3a5269;
     background: #1d2d3d;
 }
 
+/* raw: devices-empty-state heading/body text + tag chips (theme-registry
+   Stage 1.6) - no exact --mc-* match yet, candidate for Stage 3.1. */
 html[data-theme="dark"] .devices-empty-state h3 {
     color: #f3f8ff;
 }
@@ -2955,7 +2974,15 @@ body[data-theme="dark"] .mc-workspace-panel {
         0 8px 24px rgba(0, 0, 0, .16) !important;
 }
 
-/* Devices previously had a lighter outline; the shared shell owns it now. */
+/* Devices previously had a lighter outline; the shared shell owns it now.
+   theme-registry Stage 1.6: this rule IS live (confirmed via computed
+   styles) - its higher specificity (one extra class) than the legacy
+   `[data-theme="dark"] .devices-panel { border-color: var(--theme-border)
+   !important; ... }` rule in style-part4.css is what lets it win despite
+   both being !important; without it, .devices-panel would fall back to
+   that legacy border instead of the shared workspace-shell one. #0a121c
+   checked against every current dark --mc-* token, no exact match,
+   candidate for Stage 3.1. */
 html[data-theme="dark"] .devices-panel.mc-workspace-panel,
 body[data-theme="dark"] .devices-panel.mc-workspace-panel {
     border-color: #0a121c !important;

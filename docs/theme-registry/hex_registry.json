@@ -1,0 +1,8797 @@
+[
+  {
+    "value": "000000",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2739"
+    ]
+  },
+  {
+    "value": "0369A1",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:656"
+    ]
+  },
+  {
+    "value": "080D13",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1869"
+    ]
+  },
+  {
+    "value": "09111A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2060"
+    ]
+  },
+  {
+    "value": "0A1119",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1764"
+    ]
+  },
+  {
+    "value": "0A121C",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/ui-kit.css:1801",
+      "static/ui-kit.css:2895",
+      "static/ui-kit.css:2904"
+    ]
+  },
+  {
+    "value": "0B1520",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3219"
+    ]
+  },
+  {
+    "value": "0D1723",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3200"
+    ]
+  },
+  {
+    "value": "0E1B28",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:615"
+    ]
+  },
+  {
+    "value": "0E1C2A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2555"
+    ]
+  },
+  {
+    "value": "0F172A",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part2.css:423",
+      "static/style-part2.css:474",
+      "static/style-part2.css:532",
+      "static/style-part2.css:604"
+    ]
+  },
+  {
+    "value": "0F1823",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1763"
+    ]
+  },
+  {
+    "value": "0F1A26",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:2061",
+      "static/style-part4.css:2476",
+      "static/ui-kit.css:1677"
+    ]
+  },
+  {
+    "value": "0F1C2A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3424"
+    ]
+  },
+  {
+    "value": "0F1D2B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2932"
+    ]
+  },
+  {
+    "value": "101820",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:2166"
+    ]
+  },
+  {
+    "value": "101923",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3205"
+    ]
+  },
+  {
+    "value": "101B27",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:694"
+    ]
+  },
+  {
+    "value": "101C29",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2431"
+    ]
+  },
+  {
+    "value": "101D2B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1972"
+    ]
+  },
+  {
+    "value": "10233C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2232"
+    ]
+  },
+  {
+    "value": "10233F",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:985",
+      "static/ui-kit.css:3086"
+    ]
+  },
+  {
+    "value": "102F5C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3129"
+    ]
+  },
+  {
+    "value": "111821",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1050"
+    ]
+  },
+  {
+    "value": "111A24",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1105"
+    ]
+  },
+  {
+    "value": "111B27",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1864"
+    ]
+  },
+  {
+    "value": "111C29",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:3201",
+      "static/ui-kit.css:3275"
+    ]
+  },
+  {
+    "value": "112F4D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2982"
+    ]
+  },
+  {
+    "value": "121C28",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3255"
+    ]
+  },
+  {
+    "value": "122F4A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3060"
+    ]
+  },
+  {
+    "value": "1265D6",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:2290",
+      "static/style-part1.css:2305",
+      "static/style-part2.css:1063"
+    ]
+  },
+  {
+    "value": "132334",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:3220",
+      "static/style-part4.css:3399",
+      "static/style-part4.css:4000"
+    ]
+  },
+  {
+    "value": "142130",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1946"
+    ]
+  },
+  {
+    "value": "142434",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:595",
+      "static/style-part4.css:851"
+    ]
+  },
+  {
+    "value": "14243A",
+    "verdict": "ui-normalization-candidate",
+    "count": 10,
+    "locations": [
+      "static/style-part4.css:2038",
+      "static/style-part4.css:2347",
+      "static/style-part4.css:2358",
+      "static/style-part4.css:2372",
+      "static/style-part4.css:2380",
+      "static/style-part4.css:2410",
+      "static/style-part4.css:2753",
+      "static/style-part4.css:2832",
+      "static/style-part4.css:2884",
+      "static/style-part4.css:2933"
+    ]
+  },
+  {
+    "value": "145FC6",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:823",
+      "static/style-part2.css:2736",
+      "static/style-part2.css:2810"
+    ]
+  },
+  {
+    "value": "151E29",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1111"
+    ]
+  },
+  {
+    "value": "15314F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2879"
+    ]
+  },
+  {
+    "value": "1557B0",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part1.css:350",
+      "static/style-part1.css:423",
+      "static/style-part1.css:2330",
+      "static/style-part4.css:103",
+      "static/style-part4.css:263"
+    ]
+  },
+  {
+    "value": "155FAE",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3486"
+    ]
+  },
+  {
+    "value": "162231",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:3203",
+      "static/ui-kit.css:3264"
+    ]
+  },
+  {
+    "value": "162331",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:1731",
+      "static/ui-kit.css:2727"
+    ]
+  },
+  {
+    "value": "162433",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:2062",
+      "static/style-part4.css:3334 [comment]",
+      "static/ui-kit.css:3213"
+    ]
+  },
+  {
+    "value": "16243A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2685"
+    ]
+  },
+  {
+    "value": "162534",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2659"
+    ]
+  },
+  {
+    "value": "16283A",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:3421",
+      "static/style-part4.css:3428",
+      "static/style-part4.css:4009"
+    ]
+  },
+  {
+    "value": "16324C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2520"
+    ]
+  },
+  {
+    "value": "163E72",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:423"
+    ]
+  },
+  {
+    "value": "165CBA",
+    "verdict": "ui-normalization-candidate",
+    "count": 6,
+    "locations": [
+      "static/style-part2.css:2936",
+      "static/style-part2.css:2946",
+      "static/style-part2.css:3368",
+      "static/style-part3.css:30",
+      "static/style-part3.css:311",
+      "static/ui-kit.css:2714"
+    ]
+  },
+  {
+    "value": "166534",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1624"
+    ]
+  },
+  {
+    "value": "16803C",
+    "verdict": "semantic-status-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:1766",
+      "static/style-part4.css:1767"
+    ]
+  },
+  {
+    "value": "168447",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1300"
+    ]
+  },
+  {
+    "value": "168846",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1231"
+    ]
+  },
+  {
+    "value": "16A34A",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part1.css:3468",
+      "static/style-part2.css:554",
+      "static/style-part2.css:1467",
+      "static/style-part2.css:1506"
+    ]
+  },
+  {
+    "value": "172033",
+    "verdict": "ui-normalization-candidate",
+    "count": 7,
+    "locations": [
+      "static/style-part4.css:1263",
+      "static/style-part4.css:1329",
+      "static/style-part4.css:1358",
+      "static/style-part4.css:1398",
+      "static/style-part4.css:1493",
+      "static/style-part4.css:1671",
+      "static/style-part4.css:1937"
+    ]
+  },
+  {
+    "value": "172432",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:1685",
+      "static/ui-kit.css:2641"
+    ]
+  },
+  {
+    "value": "17243A",
+    "verdict": "ui-normalization-candidate",
+    "count": 8,
+    "locations": [
+      "static/ui-kit.css:1220",
+      "static/ui-kit.css:1224",
+      "static/ui-kit.css:1226",
+      "static/ui-kit.css:1227",
+      "static/ui-kit.css:1228",
+      "static/ui-kit.css:1230",
+      "static/ui-kit.css:1231",
+      "static/ui-kit.css:1232"
+    ]
+  },
+  {
+    "value": "172535",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3212"
+    ]
+  },
+  {
+    "value": "172638",
+    "verdict": "ui-normalization-candidate",
+    "count": 9,
+    "locations": [
+      "static/style-part3.css:2353",
+      "static/style-part3.css:3734",
+      "static/style-part4.css:3251 [comment]",
+      "static/style-part4.css:3254",
+      "static/style-part4.css:3269 [comment]",
+      "static/style-part4.css:3972 [comment]",
+      "static/style-part4.css:3978",
+      "static/style-part4.css:4025 [comment]",
+      "static/style-part4.css:4031"
+    ]
+  },
+  {
+    "value": "17283A",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part3.css:3460",
+      "static/style-part3.css:3551",
+      "static/style-part3.css:3732",
+      "static/style-part4.css:841"
+    ]
+  },
+  {
+    "value": "17293A",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:577",
+      "static/style-part4.css:631"
+    ]
+  },
+  {
+    "value": "172A3D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:616"
+    ]
+  },
+  {
+    "value": "17344F",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part3.css:2457",
+      "static/style-part3.css:2489",
+      "static/style-part3.css:2688"
+    ]
+  },
+  {
+    "value": "17365F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2589"
+    ]
+  },
+  {
+    "value": "17392D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2215"
+    ]
+  },
+  {
+    "value": "173A5E",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:80"
+    ]
+  },
+  {
+    "value": "173C2A",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3239"
+    ]
+  },
+  {
+    "value": "173F73",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2507"
+    ]
+  },
+  {
+    "value": "175FC0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3101"
+    ]
+  },
+  {
+    "value": "1769C2",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part3.css:2128",
+      "static/style-part4.css:3435",
+      "static/style-part4.css:3436"
+    ]
+  },
+  {
+    "value": "1769D2",
+    "verdict": "ui-normalization-candidate",
+    "count": 10,
+    "locations": [
+      "static/style-part4.css:3109",
+      "static/ui-kit.css:1213",
+      "static/ui-kit.css:1214",
+      "static/ui-kit.css:1214",
+      "static/ui-kit.css:1226",
+      "static/ui-kit.css:1227",
+      "static/ui-kit.css:1229",
+      "static/ui-kit.css:1230",
+      "static/ui-kit.css:1230",
+      "static/ui-kit.css:1231"
+    ]
+  },
+  {
+    "value": "1769E0",
+    "verdict": "ui-normalization-candidate",
+    "count": 13,
+    "locations": [
+      "static/style-part4.css:1392",
+      "static/style-part4.css:1393",
+      "static/style-part4.css:1713",
+      "static/style-part4.css:1803",
+      "static/style-part4.css:1804",
+      "static/style-part4.css:1821",
+      "static/style-part4.css:1833",
+      "static/style-part4.css:1874",
+      "static/style-part4.css:1875",
+      "static/style-part4.css:2041",
+      "static/style-part4.css:2414",
+      "static/style-part4.css:2415",
+      "static/style-part4.css:2540"
+    ]
+  },
+  {
+    "value": "176B3A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1165"
+    ]
+  },
+  {
+    "value": "18212C",
+    "verdict": "ui-normalization-candidate",
+    "count": 8,
+    "locations": [
+      "static/ui-kit.css:1066",
+      "static/ui-kit.css:1156",
+      "static/ui-kit.css:1175",
+      "static/ui-kit.css:1492",
+      "static/ui-kit.css:1497",
+      "static/ui-kit.css:2894",
+      "static/ui-kit.css:3005",
+      "static/ui-kit.css:3011"
+    ]
+  },
+  {
+    "value": "182533",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2181"
+    ]
+  },
+  {
+    "value": "182535",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3256"
+    ]
+  },
+  {
+    "value": "182636",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3276"
+    ]
+  },
+  {
+    "value": "183048",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:643",
+      "static/style-part4.css:644"
+    ]
+  },
+  {
+    "value": "1A2535",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3272"
+    ]
+  },
+  {
+    "value": "1A2736",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:2070",
+      "static/ui-kit.css:3294"
+    ]
+  },
+  {
+    "value": "1A2A4A",
+    "verdict": "ui-normalization-candidate",
+    "count": 24,
+    "locations": [
+      "static/style-part1.css:36",
+      "static/style-part1.css:126",
+      "static/style-part1.css:176",
+      "static/style-part1.css:238",
+      "static/style-part1.css:357",
+      "static/style-part1.css:493",
+      "static/style-part1.css:1722",
+      "static/style-part1.css:1866",
+      "static/style-part1.css:2135",
+      "static/style-part1.css:2643",
+      "static/style-part2.css:3423",
+      "static/style-part2.css:3538",
+      "static/style-part2.css:3589",
+      "static/style-part2.css:3609",
+      "static/style-part2.css:3674",
+      "static/style-part2.css:3750",
+      "static/style-part2.css:3809",
+      "static/style-part2.css:3834",
+      "static/style-part2.css:3903",
+      "static/style-part2.css:3915",
+      "static/style-part2.css:3933",
+      "static/style-part2.css:3980",
+      "static/style-part3.css:353",
+      "static/style-part3.css:1905"
+    ]
+  },
+  {
+    "value": "1A2C3F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3024"
+    ]
+  },
+  {
+    "value": "1A3A2A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:625"
+    ]
+  },
+  {
+    "value": "1A3A5A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:580"
+    ]
+  },
+  {
+    "value": "1A5A7A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1743"
+    ]
+  },
+  {
+    "value": "1A5FA8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3391"
+    ]
+  },
+  {
+    "value": "1A73E8",
+    "verdict": "ui-normalization-candidate",
+    "count": 24,
+    "locations": [
+      "static/style-part1.css:350",
+      "static/style-part1.css:412",
+      "static/style-part1.css:423",
+      "static/style-part1.css:1956",
+      "static/style-part1.css:1958",
+      "static/style-part1.css:1988",
+      "static/style-part1.css:2249",
+      "static/style-part1.css:2272",
+      "static/style-part1.css:2280",
+      "static/style-part1.css:2325",
+      "static/style-part1.css:3291",
+      "static/style-part1.css:3292",
+      "static/style-part1.css:3496",
+      "static/style-part2.css:3543",
+      "static/style-part2.css:3544",
+      "static/style-part2.css:3597",
+      "static/style-part2.css:3787",
+      "static/style-part2.css:3789",
+      "static/style-part2.css:3846",
+      "static/style-part2.css:3848",
+      "static/style-part3.css:360",
+      "static/style-part3.css:363",
+      "static/style-part4.css:255",
+      "static/style-part4.css:302"
+    ]
+  },
+  {
+    "value": "1A7F4B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1924"
+    ]
+  },
+  {
+    "value": "1B2837",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/ui-kit.css:1851",
+      "static/ui-kit.css:3202",
+      "static/ui-kit.css:3263"
+    ]
+  },
+  {
+    "value": "1B2938",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2136"
+    ]
+  },
+  {
+    "value": "1B2B3D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3279"
+    ]
+  },
+  {
+    "value": "1B2D40",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part4.css:3170",
+      "static/style-part4.css:3292",
+      "static/style-part4.css:3361",
+      "static/style-part4.css:3368",
+      "static/style-part4.css:3432"
+    ]
+  },
+  {
+    "value": "1C2C3D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2063"
+    ]
+  },
+  {
+    "value": "1C2E41",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:2533",
+      "static/style-part3.css:2771"
+    ]
+  },
+  {
+    "value": "1D2B3A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1879"
+    ]
+  },
+  {
+    "value": "1D2B3B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3257"
+    ]
+  },
+  {
+    "value": "1D2D3D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2646"
+    ]
+  },
+  {
+    "value": "1D3043",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3117"
+    ]
+  },
+  {
+    "value": "1D344B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1704"
+    ]
+  },
+  {
+    "value": "1D3557",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1771",
+      "static/style-part2.css:1821"
+    ]
+  },
+  {
+    "value": "1D4ED8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:437"
+    ]
+  },
+  {
+    "value": "1D5DA8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:909"
+    ]
+  },
+  {
+    "value": "1E293B",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part2.css:452",
+      "static/style-part2.css:1532",
+      "static/style-part3.css:1500",
+      "static/style-part3.css:3640",
+      "static/ui-kit.css:2420"
+    ]
+  },
+  {
+    "value": "1E3145",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:932"
+    ]
+  },
+  {
+    "value": "1E3A8A",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:512",
+      "static/style-part2.css:584",
+      "static/style-part2.css:634"
+    ]
+  },
+  {
+    "value": "1E3C72",
+    "verdict": "ui-normalization-candidate",
+    "count": 8,
+    "locations": [
+      "static/style-part1.css:256",
+      "static/style-part1.css:674",
+      "static/style-part1.css:675",
+      "static/style-part1.css:1152",
+      "static/style-part1.css:1189",
+      "static/style-part1.css:2096",
+      "static/style-part1.css:2097",
+      "static/style-part3.css:209"
+    ]
+  },
+  {
+    "value": "1E4F8F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:425"
+    ]
+  },
+  {
+    "value": "1F2937",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part1.css:2844",
+      "static/style-part1.css:2880",
+      "static/style-part1.css:3116",
+      "static/style-part1.css:3160",
+      "static/style-part2.css:2786"
+    ]
+  },
+  {
+    "value": "1F2D3D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:163"
+    ]
+  },
+  {
+    "value": "1F3347",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3520"
+    ]
+  },
+  {
+    "value": "1F6FD1",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:1048",
+      "static/style-part4.css:1048"
+    ]
+  },
+  {
+    "value": "1F6FDB",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part3.css:1815",
+      "static/style-part3.css:1869",
+      "static/style-part4.css:837",
+      "static/ui-kit.css:3100"
+    ]
+  },
+  {
+    "value": "1F6FE5",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part1.css:2956",
+      "static/style-part1.css:2958",
+      "static/style-part1.css:2997",
+      "static/style-part1.css:2999"
+    ]
+  },
+  {
+    "value": "1F6FEB",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3097"
+    ]
+  },
+  {
+    "value": "202936",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3298"
+    ]
+  },
+  {
+    "value": "202A36",
+    "verdict": "ui-normalization-candidate",
+    "count": 6,
+    "locations": [
+      "static/ui-kit.css:1079",
+      "static/ui-kit.css:1144",
+      "static/ui-kit.css:1151",
+      "static/ui-kit.css:1504",
+      "static/ui-kit.css:1510",
+      "static/ui-kit.css:3004"
+    ]
+  },
+  {
+    "value": "202E3E",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3294"
+    ]
+  },
+  {
+    "value": "202F40",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:2168",
+      "static/ui-kit.css:3204"
+    ]
+  },
+  {
+    "value": "203044",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3277"
+    ]
+  },
+  {
+    "value": "203247",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1965"
+    ]
+  },
+  {
+    "value": "203449",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:3735",
+      "static/style-part4.css:3122"
+    ]
+  },
+  {
+    "value": "20354A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2734"
+    ]
+  },
+  {
+    "value": "20364B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3126"
+    ]
+  },
+  {
+    "value": "20384E",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:586",
+      "static/style-part4.css:852",
+      "static/style-part4.css:943"
+    ]
+  },
+  {
+    "value": "203A52",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:617"
+    ]
+  },
+  {
+    "value": "203B53",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:638",
+      "static/style-part4.css:889"
+    ]
+  },
+  {
+    "value": "203D5D",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:3232",
+      "static/ui-kit.css:3245"
+    ]
+  },
+  {
+    "value": "205B9E",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1717"
+    ]
+  },
+  {
+    "value": "21364B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3733"
+    ]
+  },
+  {
+    "value": "21364D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1510"
+    ]
+  },
+  {
+    "value": "213B57",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1704"
+    ]
+  },
+  {
+    "value": "214469",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3510"
+    ]
+  },
+  {
+    "value": "214D35",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2348"
+    ]
+  },
+  {
+    "value": "214F91",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/ui-kit.css:48",
+      "static/ui-kit.css:3104",
+      "static/ui-kit.css:3130"
+    ]
+  },
+  {
+    "value": "2168D7",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:2249",
+      "static/style-part4.css:2510"
+    ]
+  },
+  {
+    "value": "216B36",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2286"
+    ]
+  },
+  {
+    "value": "216B3A",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:2513",
+      "static/style-part4.css:3341 [comment]"
+    ]
+  },
+  {
+    "value": "217648",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3723"
+    ]
+  },
+  {
+    "value": "218653",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:1296",
+      "static/style-part4.css:949"
+    ]
+  },
+  {
+    "value": "222D3A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1119"
+    ]
+  },
+  {
+    "value": "223245",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2190"
+    ]
+  },
+  {
+    "value": "22324A",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:93",
+      "static/style-part4.css:152",
+      "static/style-part4.css:293"
+    ]
+  },
+  {
+    "value": "223349",
+    "verdict": "ui-normalization-candidate",
+    "count": 7,
+    "locations": [
+      "static/ui-kit.css:1983",
+      "static/ui-kit.css:2202",
+      "static/ui-kit.css:2221",
+      "static/ui-kit.css:3248",
+      "static/ui-kit.css:3265",
+      "static/ui-kit.css:3270",
+      "static/ui-kit.css:3284"
+    ]
+  },
+  {
+    "value": "22364A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2626"
+    ]
+  },
+  {
+    "value": "22364B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2932"
+    ]
+  },
+  {
+    "value": "22A447",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1381"
+    ]
+  },
+  {
+    "value": "22A559",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:19"
+    ]
+  },
+  {
+    "value": "22C55E",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part1.css:1330",
+      "static/style-part1.css:3459",
+      "static/style-part2.css:1507",
+      "static/style-part4.css:3038"
+    ]
+  },
+  {
+    "value": "233346",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1664"
+    ]
+  },
+  {
+    "value": "23415F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1712"
+    ]
+  },
+  {
+    "value": "236337",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1732",
+      "static/style-part2.css:1895"
+    ]
+  },
+  {
+    "value": "23663A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2583"
+    ]
+  },
+  {
+    "value": "23699F",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3726"
+    ]
+  },
+  {
+    "value": "239B62",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:2838",
+      "static/style-part2.css:2891"
+    ]
+  },
+  {
+    "value": "243243",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3225"
+    ]
+  },
+  {
+    "value": "243247",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:649"
+    ]
+  },
+  {
+    "value": "243447",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:1802",
+      "static/style-part2.css:1871",
+      "static/style-part3.css:1599"
+    ]
+  },
+  {
+    "value": "24374B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2064"
+    ]
+  },
+  {
+    "value": "243A2B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1714"
+    ]
+  },
+  {
+    "value": "243B5A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:517"
+    ]
+  },
+  {
+    "value": "243C54",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3146"
+    ]
+  },
+  {
+    "value": "24415F",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:3492",
+      "static/style-part2.css:163"
+    ]
+  },
+  {
+    "value": "24425E",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:892",
+      "static/style-part4.css:1047"
+    ]
+  },
+  {
+    "value": "24456F",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:230",
+      "static/style-part3.css:418"
+    ]
+  },
+  {
+    "value": "24457B",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:1966",
+      "static/ui-kit.css:803"
+    ]
+  },
+  {
+    "value": "244D82",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1007"
+    ]
+  },
+  {
+    "value": "2470D8",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:2662",
+      "static/style-part2.css:2684",
+      "static/style-part2.css:2685"
+    ]
+  },
+  {
+    "value": "25394D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2065"
+    ]
+  },
+  {
+    "value": "255984",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3918"
+    ]
+  },
+  {
+    "value": "2563EB",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1471"
+    ]
+  },
+  {
+    "value": "25C66B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1222"
+    ]
+  },
+  {
+    "value": "263547",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:1771",
+      "static/ui-kit.css:1865"
+    ]
+  },
+  {
+    "value": "26364B",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:839",
+      "static/ui-kit.css:3138"
+    ]
+  },
+  {
+    "value": "26394D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3455"
+    ]
+  },
+  {
+    "value": "263B50",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part4.css:3227",
+      "static/style-part4.css:3310 [comment]",
+      "static/style-part4.css:3315",
+      "static/style-part4.css:3361"
+    ]
+  },
+  {
+    "value": "263B52",
+    "verdict": "ui-normalization-candidate",
+    "count": 6,
+    "locations": [
+      "static/style-part3.css:958",
+      "static/style-part3.css:1100",
+      "static/style-part3.css:1201",
+      "static/style-part4.css:3769",
+      "static/style-part4.css:3803",
+      "static/style-part4.css:3889"
+    ]
+  },
+  {
+    "value": "263C52",
+    "verdict": "ui-normalization-candidate",
+    "count": 8,
+    "locations": [
+      "static/style-part3.css:2352",
+      "static/style-part4.css:3251 [comment]",
+      "static/style-part4.css:3255",
+      "static/style-part4.css:3273",
+      "static/style-part4.css:3972 [comment]",
+      "static/style-part4.css:3977",
+      "static/style-part4.css:4025 [comment]",
+      "static/style-part4.css:4030"
+    ]
+  },
+  {
+    "value": "263D52",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3024"
+    ]
+  },
+  {
+    "value": "263E58",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1671"
+    ]
+  },
+  {
+    "value": "263F5A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1704"
+    ]
+  },
+  {
+    "value": "267340",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:2453",
+      "static/style-part4.css:3342 [comment]"
+    ]
+  },
+  {
+    "value": "273140",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1934"
+    ]
+  },
+  {
+    "value": "273D53",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2631"
+    ]
+  },
+  {
+    "value": "27435C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:641"
+    ]
+  },
+  {
+    "value": "274766",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part3.css:665",
+      "static/ui-kit.css:395",
+      "static/ui-kit.css:3122"
+    ]
+  },
+  {
+    "value": "275F8D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2589"
+    ]
+  },
+  {
+    "value": "277B4B",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3600"
+    ]
+  },
+  {
+    "value": "27B96F",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3108"
+    ]
+  },
+  {
+    "value": "285071",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:639",
+      "static/style-part4.css:890"
+    ]
+  },
+  {
+    "value": "28663A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1669"
+    ]
+  },
+  {
+    "value": "286DA8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3603"
+    ]
+  },
+  {
+    "value": "294766",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2576"
+    ]
+  },
+  {
+    "value": "29485D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2300"
+    ]
+  },
+  {
+    "value": "294967",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3233"
+    ]
+  },
+  {
+    "value": "2A3A6A",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:36",
+      "static/style-part3.css:1905"
+    ]
+  },
+  {
+    "value": "2A3E53",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2067"
+    ]
+  },
+  {
+    "value": "2A3F54",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part4.css:3987",
+      "static/style-part4.css:4010",
+      "static/style-part4.css:4012",
+      "static/style-part4.css:4020"
+    ]
+  },
+  {
+    "value": "2A4A6A",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:587",
+      "static/style-part3.css:103"
+    ]
+  },
+  {
+    "value": "2A4A7A",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1178"
+    ]
+  },
+  {
+    "value": "2A5684",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3515"
+    ]
+  },
+  {
+    "value": "2A5A3A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:605"
+    ]
+  },
+  {
+    "value": "2A5A8A",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part1.css:764",
+      "static/style-part1.css:1789",
+      "static/style-part1.css:2149",
+      "static/style-part1.css:2737"
+    ]
+  },
+  {
+    "value": "2A6A3A",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1176"
+    ]
+  },
+  {
+    "value": "2A9A60",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2901"
+    ]
+  },
+  {
+    "value": "2B3949",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/ui-kit.css:1127",
+      "static/ui-kit.css:3006",
+      "static/ui-kit.css:3012"
+    ]
+  },
+  {
+    "value": "2B3A4C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1870"
+    ]
+  },
+  {
+    "value": "2B3B50",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:701"
+    ]
+  },
+  {
+    "value": "2B4059",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/ui-kit.css:1990",
+      "static/ui-kit.css:2209",
+      "static/ui-kit.css:3249",
+      "static/ui-kit.css:3271",
+      "static/ui-kit.css:3285"
+    ]
+  },
+  {
+    "value": "2B405B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1181"
+    ]
+  },
+  {
+    "value": "2B72DC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2941"
+    ]
+  },
+  {
+    "value": "2C3E50",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:14"
+    ]
+  },
+  {
+    "value": "2C6B52",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2216"
+    ]
+  },
+  {
+    "value": "2CA56C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1136"
+    ]
+  },
+  {
+    "value": "2D3D50",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2072"
+    ]
+  },
+  {
+    "value": "2D4057",
+    "verdict": "ui-normalization-candidate",
+    "count": 7,
+    "locations": [
+      "static/style-part3.css:934",
+      "static/style-part3.css:966",
+      "static/style-part3.css:1040",
+      "static/style-part3.css:1167",
+      "static/style-part3.css:2113",
+      "static/style-part4.css:3721",
+      "static/style-part4.css:3946"
+    ]
+  },
+  {
+    "value": "2D6CA3",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:3917",
+      "static/style-part4.css:3956"
+    ]
+  },
+  {
+    "value": "2E4258",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3278"
+    ]
+  },
+  {
+    "value": "2ECC71",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1897"
+    ]
+  },
+  {
+    "value": "2F3B4D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:214"
+    ]
+  },
+  {
+    "value": "2F3E50",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:3224",
+      "static/ui-kit.css:3266"
+    ]
+  },
+  {
+    "value": "2F4053",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2430"
+    ]
+  },
+  {
+    "value": "2F4357",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2640"
+    ]
+  },
+  {
+    "value": "2F73D9",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3096"
+    ]
+  },
+  {
+    "value": "2F7DF6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1385"
+    ]
+  },
+  {
+    "value": "2F80ED",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3114"
+    ]
+  },
+  {
+    "value": "304A62",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:3234",
+      "static/style-part4.css:3310 [comment]",
+      "static/style-part4.css:3320"
+    ]
+  },
+  {
+    "value": "304A63",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:616"
+    ]
+  },
+  {
+    "value": "31465C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2361"
+    ]
+  },
+  {
+    "value": "31475F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1856"
+    ]
+  },
+  {
+    "value": "31485E",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3212"
+    ]
+  },
+  {
+    "value": "314A62",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part4.css:576",
+      "static/style-part4.css:594",
+      "static/style-part4.css:851",
+      "static/style-part4.css:856",
+      "static/style-part4.css:856"
+    ]
+  },
+  {
+    "value": "315B3D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2280"
+    ]
+  },
+  {
+    "value": "32445B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2111"
+    ]
+  },
+  {
+    "value": "33404F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2414"
+    ]
+  },
+  {
+    "value": "334155",
+    "verdict": "ui-normalization-candidate",
+    "count": 9,
+    "locations": [
+      "static/style-part1.css:2943",
+      "static/style-part2.css:53",
+      "static/style-part2.css:1016",
+      "static/style-part2.css:1643",
+      "static/style-part2.css:2497",
+      "static/ui-kit.css:897",
+      "static/ui-kit.css:924",
+      "static/ui-kit.css:2398",
+      "static/ui-kit.css:2498"
+    ]
+  },
+  {
+    "value": "334456",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1874"
+    ]
+  },
+  {
+    "value": "33465C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1785"
+    ]
+  },
+  {
+    "value": "33475B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2958"
+    ]
+  },
+  {
+    "value": "334A61",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part3.css:2532",
+      "static/style-part3.css:2554",
+      "static/style-part3.css:2770",
+      "static/style-part3.css:2778"
+    ]
+  },
+  {
+    "value": "334B68",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3128"
+    ]
+  },
+  {
+    "value": "344050",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1112"
+    ]
+  },
+  {
+    "value": "344359",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:810",
+      "static/style-part3.css:870"
+    ]
+  },
+  {
+    "value": "34445F",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part2.css:815",
+      "static/style-part2.css:892",
+      "static/style-part2.css:2729",
+      "static/style-part2.css:2791",
+      "static/style-part2.css:2803"
+    ]
+  },
+  {
+    "value": "34475B",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/ui-kit.css:2137",
+      "static/ui-kit.css:2162",
+      "static/ui-kit.css:2163",
+      "static/ui-kit.css:2164",
+      "static/ui-kit.css:2182"
+    ]
+  },
+  {
+    "value": "34475D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2931"
+    ]
+  },
+  {
+    "value": "34485A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2783"
+    ]
+  },
+  {
+    "value": "34485E",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3734"
+    ]
+  },
+  {
+    "value": "34495E",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1784",
+      "static/style-part2.css:1856"
+    ]
+  },
+  {
+    "value": "344A60",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:3550",
+      "static/style-part3.css:3732"
+    ]
+  },
+  {
+    "value": "344A61",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2066"
+    ]
+  },
+  {
+    "value": "344A62",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1379"
+    ]
+  },
+  {
+    "value": "344B61",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part4.css:3161",
+      "static/style-part4.css:3177",
+      "static/style-part4.css:3373",
+      "static/style-part4.css:3429",
+      "static/style-part4.css:4019"
+    ]
+  },
+  {
+    "value": "35475A",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:1845",
+      "static/ui-kit.css:1852"
+    ]
+  },
+  {
+    "value": "364253",
+    "verdict": "ui-normalization-candidate",
+    "count": 8,
+    "locations": [
+      "static/ui-kit.css:1080",
+      "static/ui-kit.css:1157",
+      "static/ui-kit.css:1167",
+      "static/ui-kit.css:1493",
+      "static/ui-kit.css:1505",
+      "static/ui-kit.css:1511",
+      "static/ui-kit.css:3008",
+      "static/ui-kit.css:3295"
+    ]
+  },
+  {
+    "value": "36506A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1954"
+    ]
+  },
+  {
+    "value": "36516B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:632"
+    ]
+  },
+  {
+    "value": "36516C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2625"
+    ]
+  },
+  {
+    "value": "365A7A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2576"
+    ]
+  },
+  {
+    "value": "374151",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part1.css:2931",
+      "static/style-part1.css:3149",
+      "static/style-part1.css:3248",
+      "static/style-part1.css:3287",
+      "static/style-part2.css:1954"
+    ]
+  },
+  {
+    "value": "385068",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part4.css:3208",
+      "static/style-part4.css:3221",
+      "static/style-part4.css:3400",
+      "static/style-part4.css:4001"
+    ]
+  },
+  {
+    "value": "385069",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3118"
+    ]
+  },
+  {
+    "value": "38516A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:944"
+    ]
+  },
+  {
+    "value": "386445",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1276"
+    ]
+  },
+  {
+    "value": "38D68A",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:612",
+      "static/style-part4.css:629"
+    ]
+  },
+  {
+    "value": "3A4A5A",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part1.css:1029",
+      "static/style-part1.css:1051",
+      "static/style-part1.css:1415",
+      "static/style-part2.css:3480",
+      "static/style-part2.css:3634"
+    ]
+  },
+  {
+    "value": "3A4A6A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:794"
+    ]
+  },
+  {
+    "value": "3A4E64",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2191"
+    ]
+  },
+  {
+    "value": "3A5269",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:2645",
+      "static/ui-kit.css:2658"
+    ]
+  },
+  {
+    "value": "3A526A",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part4.css:3136",
+      "static/style-part4.css:3171",
+      "static/style-part4.css:3361",
+      "static/style-part4.css:3369"
+    ]
+  },
+  {
+    "value": "3A526D",
+    "verdict": "ui-normalization-candidate",
+    "count": 7,
+    "locations": [
+      "static/ui-kit.css:1974",
+      "static/ui-kit.css:1985",
+      "static/ui-kit.css:2203",
+      "static/ui-kit.css:2222",
+      "static/ui-kit.css:3250",
+      "static/ui-kit.css:3267",
+      "static/ui-kit.css:3286"
+    ]
+  },
+  {
+    "value": "3A5973",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:638",
+      "static/style-part4.css:889"
+    ]
+  },
+  {
+    "value": "3A5A7A",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:86",
+      "static/style-part1.css:1642"
+    ]
+  },
+  {
+    "value": "3A6A3A",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1089"
+    ]
+  },
+  {
+    "value": "3B4858",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1936"
+    ]
+  },
+  {
+    "value": "3B4859",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/ui-kit.css:1106",
+      "static/ui-kit.css:1120",
+      "static/ui-kit.css:1176"
+    ]
+  },
+  {
+    "value": "3B526A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3519"
+    ]
+  },
+  {
+    "value": "3B5670",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3127"
+    ]
+  },
+  {
+    "value": "3B82F6",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:3043",
+      "static/style-part4.css:3049",
+      "static/ui-kit.css:2414"
+    ]
+  },
+  {
+    "value": "3D242B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:823"
+    ]
+  },
+  {
+    "value": "3DDC84",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:3377"
+    ]
+  },
+  {
+    "value": "3F5065",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1226"
+    ]
+  },
+  {
+    "value": "3F6FAE",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:968"
+    ]
+  },
+  {
+    "value": "405067",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2726"
+    ]
+  },
+  {
+    "value": "405268",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1337"
+    ]
+  },
+  {
+    "value": "405369",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1896"
+    ]
+  },
+  {
+    "value": "40556B",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:2366",
+      "static/style-part3.css:2931"
+    ]
+  },
+  {
+    "value": "405875",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1183"
+    ]
+  },
+  {
+    "value": "41536A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1240"
+    ]
+  },
+  {
+    "value": "41576D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2577"
+    ]
+  },
+  {
+    "value": "415A72",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part4.css:3229",
+      "static/style-part4.css:3310 [comment]",
+      "static/style-part4.css:3317",
+      "static/style-part4.css:3322",
+      "static/style-part4.css:4005"
+    ]
+  },
+  {
+    "value": "415D78",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:126"
+    ]
+  },
+  {
+    "value": "433719",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3241"
+    ]
+  },
+  {
+    "value": "43566B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2077"
+    ]
+  },
+  {
+    "value": "43566D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:837"
+    ]
+  },
+  {
+    "value": "43A047",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:2764"
+    ]
+  },
+  {
+    "value": "445164",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/ui-kit.css:1145",
+      "static/ui-kit.css:1152",
+      "static/ui-kit.css:3007"
+    ]
+  },
+  {
+    "value": "445366",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:3778",
+      "static/style-part4.css:3836",
+      "static/style-part4.css:3861"
+    ]
+  },
+  {
+    "value": "45272B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2227"
+    ]
+  },
+  {
+    "value": "46617C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1705"
+    ]
+  },
+  {
+    "value": "475569",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:628",
+      "static/style-part2.css:1029"
+    ]
+  },
+  {
+    "value": "48617E",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2614"
+    ]
+  },
+  {
+    "value": "486B54",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2002"
+    ]
+  },
+  {
+    "value": "49252B",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3243"
+    ]
+  },
+  {
+    "value": "493B20",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2233"
+    ]
+  },
+  {
+    "value": "496274",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1988"
+    ]
+  },
+  {
+    "value": "49689F",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:1978",
+      "static/style-part3.css:1979"
+    ]
+  },
+  {
+    "value": "4A5A6A",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part1.css:877",
+      "static/style-part2.css:3472",
+      "static/style-part2.css:3688",
+      "static/style-part2.css:3945"
+    ]
+  },
+  {
+    "value": "4A5A7A",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:173",
+      "static/style-part1.css:794"
+    ]
+  },
+  {
+    "value": "4A7AAA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:375"
+    ]
+  },
+  {
+    "value": "4A9EFF",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:1881",
+      "static/style-part1.css:1896"
+    ]
+  },
+  {
+    "value": "4AA3FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:613",
+      "static/style-part4.css:625"
+    ]
+  },
+  {
+    "value": "4B5563",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2820"
+    ]
+  },
+  {
+    "value": "4B6685",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3251"
+    ]
+  },
+  {
+    "value": "4C647B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3025"
+    ]
+  },
+  {
+    "value": "4CAF50",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part1.css:644",
+      "static/style-part1.css:2364",
+      "static/style-part1.css:2754",
+      "static/style-part4.css:335"
+    ]
+  },
+  {
+    "value": "4D6F9F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1133"
+    ]
+  },
+  {
+    "value": "4D7FB5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3509"
+    ]
+  },
+  {
+    "value": "4EA1FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1966"
+    ]
+  },
+  {
+    "value": "4F5F73",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:271"
+    ]
+  },
+  {
+    "value": "4F8CFF",
+    "verdict": "ui-normalization-candidate",
+    "count": 8,
+    "locations": [
+      "static/style-part4.css:2042",
+      "static/style-part4.css:2391",
+      "static/style-part4.css:2392",
+      "static/style-part4.css:2409",
+      "static/style-part4.css:2793",
+      "static/style-part4.css:2840",
+      "static/style-part4.css:2897",
+      "static/style-part4.css:2940"
+    ]
+  },
+  {
+    "value": "4F8FFF",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:2250",
+      "static/style-part4.css:2511"
+    ]
+  },
+  {
+    "value": "4F9CFF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3260"
+    ]
+  },
+  {
+    "value": "4FD18B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:957"
+    ]
+  },
+  {
+    "value": "506983",
+    "verdict": "ui-normalization-candidate",
+    "count": 6,
+    "locations": [
+      "static/style-part4.css:2039",
+      "static/style-part4.css:2364",
+      "static/style-part4.css:2368",
+      "static/style-part4.css:2398",
+      "static/style-part4.css:2404",
+      "static/style-part4.css:2804"
+    ]
+  },
+  {
+    "value": "51627B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2113"
+    ]
+  },
+  {
+    "value": "526174",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3299"
+    ]
+  },
+  {
+    "value": "526177",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:1221",
+      "static/ui-kit.css:1222"
+    ]
+  },
+  {
+    "value": "526178",
+    "verdict": "ui-normalization-candidate",
+    "count": 6,
+    "locations": [
+      "static/style-part2.css:1056",
+      "static/style-part2.css:2486",
+      "static/style-part3.css:502",
+      "static/style-part3.css:1640",
+      "static/style-part3.css:1641",
+      "static/style-part3.css:3620"
+    ]
+  },
+  {
+    "value": "52627A",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:1959",
+      "static/ui-kit.css:793"
+    ]
+  },
+  {
+    "value": "52657A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2280"
+    ]
+  },
+  {
+    "value": "52657C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1128"
+    ]
+  },
+  {
+    "value": "53657B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2675"
+    ]
+  },
+  {
+    "value": "536A83",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1900"
+    ]
+  },
+  {
+    "value": "53A66E",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2388"
+    ]
+  },
+  {
+    "value": "55A9F5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:586"
+    ]
+  },
+  {
+    "value": "55B870",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3283"
+    ]
+  },
+  {
+    "value": "58677B",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/ui-kit.css:1226",
+      "static/ui-kit.css:1230",
+      "static/ui-kit.css:1231"
+    ]
+  },
+  {
+    "value": "58708F",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:39",
+      "static/ui-kit.css:3087"
+    ]
+  },
+  {
+    "value": "58B76C",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part2.css:3320",
+      "static/style-part2.css:3350",
+      "static/style-part4.css:3582 [comment]",
+      "static/style-part4.css:3591"
+    ]
+  },
+  {
+    "value": "596675",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2357"
+    ]
+  },
+  {
+    "value": "5A6A7A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3458"
+    ]
+  },
+  {
+    "value": "5AA7FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2733"
+    ]
+  },
+  {
+    "value": "5B82AA",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/ui-kit.css:1991",
+      "static/ui-kit.css:2066",
+      "static/ui-kit.css:2101",
+      "static/ui-kit.css:2210"
+    ]
+  },
+  {
+    "value": "5C6B7E",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:998"
+    ]
+  },
+  {
+    "value": "5C7082",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:640"
+    ]
+  },
+  {
+    "value": "5D7286",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:977"
+    ]
+  },
+  {
+    "value": "5D9B72",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2522"
+    ]
+  },
+  {
+    "value": "5DA4EF",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:2915",
+      "static/style-part3.css:2920"
+    ]
+  },
+  {
+    "value": "5E7388",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2415"
+    ]
+  },
+  {
+    "value": "60748B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3249"
+    ]
+  },
+  {
+    "value": "60758A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2496"
+    ]
+  },
+  {
+    "value": "607A92",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3042"
+    ]
+  },
+  {
+    "value": "617184",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2338"
+    ]
+  },
+  {
+    "value": "617386",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3106"
+    ]
+  },
+  {
+    "value": "64748B",
+    "verdict": "ui-normalization-candidate",
+    "count": 26,
+    "locations": [
+      "static/style-part1.css:3452",
+      "static/style-part1.css:3474",
+      "static/style-part2.css:429",
+      "static/style-part2.css:470",
+      "static/style-part2.css:542",
+      "static/style-part2.css:571",
+      "static/style-part2.css:610",
+      "static/style-part2.css:1476",
+      "static/style-part2.css:1631",
+      "static/style-part3.css:406",
+      "static/style-part3.css:1988",
+      "static/style-part3.css:2402",
+      "static/style-part3.css:3185",
+      "static/style-part3.css:3527",
+      "static/style-part4.css:1215",
+      "static/style-part4.css:1251",
+      "static/style-part4.css:1277",
+      "static/style-part4.css:1349",
+      "static/style-part4.css:1538",
+      "static/style-part4.css:1677",
+      "static/style-part4.css:1688",
+      "static/style-part4.css:1748",
+      "static/style-part4.css:1761",
+      "static/style-part4.css:1797",
+      "static/style-part4.css:1815",
+      "static/ui-kit.css:2401"
+    ]
+  },
+  {
+    "value": "64798D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2484"
+    ]
+  },
+  {
+    "value": "647B91",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2672"
+    ]
+  },
+  {
+    "value": "654B18",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:3502"
+    ]
+  },
+  {
+    "value": "65A3FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2071"
+    ]
+  },
+  {
+    "value": "667085",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part3.css:39",
+      "static/style-part3.css:281",
+      "static/style-part3.css:348",
+      "static/style-part4.css:439"
+    ]
+  },
+  {
+    "value": "667487",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:721"
+    ]
+  },
+  {
+    "value": "66756B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1918"
+    ]
+  },
+  {
+    "value": "66758A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1357"
+    ]
+  },
+  {
+    "value": "66788A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2989"
+    ]
+  },
+  {
+    "value": "66788F",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:1045",
+      "static/style-part4.css:1096"
+    ]
+  },
+  {
+    "value": "6688B7",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:1134",
+      "static/ui-kit.css:1182"
+    ]
+  },
+  {
+    "value": "66A8FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:1672",
+      "static/ui-kit.css:3230"
+    ]
+  },
+  {
+    "value": "66B2FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2929"
+    ]
+  },
+  {
+    "value": "67788D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3300"
+    ]
+  },
+  {
+    "value": "687585",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2319"
+    ]
+  },
+  {
+    "value": "68758A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1212"
+    ]
+  },
+  {
+    "value": "68788B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3494"
+    ]
+  },
+  {
+    "value": "68A77A",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1743",
+      "static/style-part2.css:1904"
+    ]
+  },
+  {
+    "value": "69A87F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2458"
+    ]
+  },
+  {
+    "value": "6A5A3A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:2341"
+    ]
+  },
+  {
+    "value": "6A7A8A",
+    "verdict": "ui-normalization-candidate",
+    "count": 9,
+    "locations": [
+      "static/style-part1.css:1073",
+      "static/style-part2.css:3444",
+      "static/style-part2.css:3497",
+      "static/style-part2.css:3603",
+      "static/style-part2.css:3668",
+      "static/style-part2.css:3744",
+      "static/style-part2.css:3775",
+      "static/style-part2.css:3828",
+      "static/style-part2.css:3897"
+    ]
+  },
+  {
+    "value": "6A97A6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3254"
+    ]
+  },
+  {
+    "value": "6A9AB8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1739"
+    ]
+  },
+  {
+    "value": "6AA7FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3226"
+    ]
+  },
+  {
+    "value": "6B5200",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:255"
+    ]
+  },
+  {
+    "value": "6B7280",
+    "verdict": "ui-normalization-candidate",
+    "count": 11,
+    "locations": [
+      "static/style-part1.css:2850",
+      "static/style-part1.css:2886",
+      "static/style-part1.css:3122",
+      "static/style-part1.css:3178",
+      "static/style-part1.css:3225",
+      "static/style-part2.css:143",
+      "static/style-part2.css:1968",
+      "static/style-part2.css:2780",
+      "static/style-part2.css:2840",
+      "static/style-part2.css:2841",
+      "static/style-part4.css:1169"
+    ]
+  },
+  {
+    "value": "6B778C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:147"
+    ]
+  },
+  {
+    "value": "6B7A8D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1107"
+    ]
+  },
+  {
+    "value": "6B8976",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2372"
+    ]
+  },
+  {
+    "value": "6C8195",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2448"
+    ]
+  },
+  {
+    "value": "6D7C8F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1300"
+    ]
+  },
+  {
+    "value": "6E9FE8",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:1972",
+      "static/ui-kit.css:811"
+    ]
+  },
+  {
+    "value": "6F7D73",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1704"
+    ]
+  },
+  {
+    "value": "6F7E90",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1333"
+    ]
+  },
+  {
+    "value": "6F94C6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1005"
+    ]
+  },
+  {
+    "value": "6FA67C",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:3067",
+      "static/style-part2.css:3068"
+    ]
+  },
+  {
+    "value": "6FAC88",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2313"
+    ]
+  },
+  {
+    "value": "6FDC8C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2125"
+    ]
+  },
+  {
+    "value": "708399",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:882"
+    ]
+  },
+  {
+    "value": "718095",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1182"
+    ]
+  },
+  {
+    "value": "718096",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:889"
+    ]
+  },
+  {
+    "value": "718198",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part2.css:2210",
+      "static/style-part2.css:2362",
+      "static/style-part3.css:131",
+      "static/ui-kit.css:2596"
+    ]
+  },
+  {
+    "value": "718399",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2071"
+    ]
+  },
+  {
+    "value": "71879B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2788"
+    ]
+  },
+  {
+    "value": "72B8FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:619"
+    ]
+  },
+  {
+    "value": "72D69A",
+    "verdict": "semantic-status-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:3736",
+      "static/ui-kit.css:3238"
+    ]
+  },
+  {
+    "value": "738096",
+    "verdict": "ui-normalization-candidate",
+    "count": 6,
+    "locations": [
+      "static/ui-kit.css:1226",
+      "static/ui-kit.css:1227",
+      "static/ui-kit.css:1228",
+      "static/ui-kit.css:1228",
+      "static/ui-kit.css:1230",
+      "static/ui-kit.css:1232"
+    ]
+  },
+  {
+    "value": "738191",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:3018",
+      "static/style-part2.css:3084"
+    ]
+  },
+  {
+    "value": "73ADFF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2072"
+    ]
+  },
+  {
+    "value": "73B2FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3227"
+    ]
+  },
+  {
+    "value": "744047",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2228"
+    ]
+  },
+  {
+    "value": "748278",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1675"
+    ]
+  },
+  {
+    "value": "75869C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1041"
+    ]
+  },
+  {
+    "value": "76602F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2234"
+    ]
+  },
+  {
+    "value": "77869A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3020"
+    ]
+  },
+  {
+    "value": "788596",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1328"
+    ]
+  },
+  {
+    "value": "78899E",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1048"
+    ]
+  },
+  {
+    "value": "7890AA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3515"
+    ]
+  },
+  {
+    "value": "78B6FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3244"
+    ]
+  },
+  {
+    "value": "79879A",
+    "verdict": "ui-normalization-candidate",
+    "count": 12,
+    "locations": [
+      "static/style-part3.css:972",
+      "static/style-part3.css:995",
+      "static/style-part3.css:1094",
+      "static/style-part3.css:1125",
+      "static/style-part3.css:1135",
+      "static/style-part3.css:1142",
+      "static/style-part3.css:1174",
+      "static/style-part3.css:2122",
+      "static/style-part4.css:3727",
+      "static/style-part4.css:3755",
+      "static/style-part4.css:3878",
+      "static/style-part4.css:3896"
+    ]
+  },
+  {
+    "value": "7A6A2A",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:925",
+      "static/style-part1.css:1090",
+      "static/style-part1.css:1757"
+    ]
+  },
+  {
+    "value": "7A6A5A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:364"
+    ]
+  },
+  {
+    "value": "7A6B5A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:739"
+    ]
+  },
+  {
+    "value": "7A8391",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:865"
+    ]
+  },
+  {
+    "value": "7A8595",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:172"
+    ]
+  },
+  {
+    "value": "7A8794",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:1791",
+      "static/style-part2.css:1829",
+      "static/style-part2.css:1911"
+    ]
+  },
+  {
+    "value": "7A8798",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:286",
+      "static/ui-kit.css:878",
+      "static/ui-kit.css:3139"
+    ]
+  },
+  {
+    "value": "7A8AA0",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part2.css:3431",
+      "static/style-part2.css:3488",
+      "static/style-part2.css:3531",
+      "static/style-part2.css:3927",
+      "static/style-part3.css:3377"
+    ]
+  },
+  {
+    "value": "7A8AAA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:987"
+    ]
+  },
+  {
+    "value": "7A8BA0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1048"
+    ]
+  },
+  {
+    "value": "7A8CA5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:992"
+    ]
+  },
+  {
+    "value": "7B5D16",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2595"
+    ]
+  },
+  {
+    "value": "7B8492",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:949"
+    ]
+  },
+  {
+    "value": "7B8796",
+    "verdict": "ui-normalization-candidate",
+    "count": 7,
+    "locations": [
+      "static/style-part2.css:220",
+      "static/style-part3.css:656",
+      "static/style-part3.css:706",
+      "static/style-part3.css:859",
+      "static/style-part3.css:3661",
+      "static/style-part3.css:3729",
+      "static/style-part3.css:3730"
+    ]
+  },
+  {
+    "value": "7C641D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:925"
+    ]
+  },
+  {
+    "value": "7C8999",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1209"
+    ]
+  },
+  {
+    "value": "7D8FA1",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2732"
+    ]
+  },
+  {
+    "value": "7D91A7",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:2040",
+      "static/style-part4.css:2385"
+    ]
+  },
+  {
+    "value": "7E2530",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:808"
+    ]
+  },
+  {
+    "value": "7EB28D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1880"
+    ]
+  },
+  {
+    "value": "7EB391",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2510"
+    ]
+  },
+  {
+    "value": "7F8D9D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3603"
+    ]
+  },
+  {
+    "value": "7F8FA2",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:527",
+      "static/ui-kit.css:611"
+    ]
+  },
+  {
+    "value": "7FB0DC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:4022"
+    ]
+  },
+  {
+    "value": "806A25",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1270"
+    ]
+  },
+  {
+    "value": "813842",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3239"
+    ]
+  },
+  {
+    "value": "8293A5",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:2423",
+      "static/style-part3.css:2503"
+    ]
+  },
+  {
+    "value": "8297AB",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1682"
+    ]
+  },
+  {
+    "value": "829BB5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3169"
+    ]
+  },
+  {
+    "value": "8390A0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1234"
+    ]
+  },
+  {
+    "value": "8492A6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1042"
+    ]
+  },
+  {
+    "value": "8592A3",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:2710",
+      "static/style-part2.css:2750",
+      "static/style-part2.css:2771"
+    ]
+  },
+  {
+    "value": "86EFAC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1181"
+    ]
+  },
+  {
+    "value": "8793A2",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1249"
+    ]
+  },
+  {
+    "value": "8794A4",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1366"
+    ]
+  },
+  {
+    "value": "8795A8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2532"
+    ]
+  },
+  {
+    "value": "8798AD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3088"
+    ]
+  },
+  {
+    "value": "87BCE7",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:265"
+    ]
+  },
+  {
+    "value": "8995A2",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3043"
+    ]
+  },
+  {
+    "value": "8995A5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:911"
+    ]
+  },
+  {
+    "value": "8A3A2A",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:942",
+      "static/style-part1.css:1457"
+    ]
+  },
+  {
+    "value": "8A3A3A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:2515"
+    ]
+  },
+  {
+    "value": "8A5A00",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1589"
+    ]
+  },
+  {
+    "value": "8A6A5A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1121"
+    ]
+  },
+  {
+    "value": "8A7A4A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:915"
+    ]
+  },
+  {
+    "value": "8A94A3",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:153",
+      "static/style-part3.css:785"
+    ]
+  },
+  {
+    "value": "8A95A4",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:817"
+    ]
+  },
+  {
+    "value": "8A96A5",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part3.css:1388",
+      "static/style-part3.css:1397",
+      "static/style-part3.css:2130"
+    ]
+  },
+  {
+    "value": "8A96A6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:933"
+    ]
+  },
+  {
+    "value": "8A9AA8",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part2.css:3581",
+      "static/style-part2.css:3615",
+      "static/style-part2.css:3694",
+      "static/style-part2.css:3781",
+      "static/style-part2.css:3838"
+    ]
+  },
+  {
+    "value": "8A9BB5",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:728",
+      "static/style-part1.css:1781"
+    ]
+  },
+  {
+    "value": "8AB4D8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1733"
+    ]
+  },
+  {
+    "value": "8ABEFF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3231"
+    ]
+  },
+  {
+    "value": "8ABF99",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1729",
+      "static/style-part2.css:1892"
+    ]
+  },
+  {
+    "value": "8AC39A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2581"
+    ]
+  },
+  {
+    "value": "8B3D34",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2601"
+    ]
+  },
+  {
+    "value": "8B94A3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:854"
+    ]
+  },
+  {
+    "value": "8BA0B7",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2538"
+    ]
+  },
+  {
+    "value": "8BB7EB",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3484"
+    ]
+  },
+  {
+    "value": "8BC0FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:3984",
+      "static/ui-kit.css:1723",
+      "static/ui-kit.css:1726"
+    ]
+  },
+  {
+    "value": "8BC34A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:644"
+    ]
+  },
+  {
+    "value": "8CE2B5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2217"
+    ]
+  },
+  {
+    "value": "8D4650",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3526"
+    ]
+  },
+  {
+    "value": "8EA6BC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2540"
+    ]
+  },
+  {
+    "value": "8EB8DD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2587"
+    ]
+  },
+  {
+    "value": "8F1D14",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:113"
+    ]
+  },
+  {
+    "value": "8FA3B8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1960"
+    ]
+  },
+  {
+    "value": "8FA7C2",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2928"
+    ]
+  },
+  {
+    "value": "8FB8FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:3397"
+    ]
+  },
+  {
+    "value": "8FC4FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3456"
+    ]
+  },
+  {
+    "value": "8FC5FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1930"
+    ]
+  },
+  {
+    "value": "8FC7F0",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3739"
+    ]
+  },
+  {
+    "value": "90A5BA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3218"
+    ]
+  },
+  {
+    "value": "90A6BC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2636"
+    ]
+  },
+  {
+    "value": "90B080",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:1013",
+      "static/style-part1.css:1138"
+    ]
+  },
+  {
+    "value": "914343",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:729"
+    ]
+  },
+  {
+    "value": "91A2B6",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/ui-kit.css:1140",
+      "static/ui-kit.css:1163",
+      "static/ui-kit.css:3010"
+    ]
+  },
+  {
+    "value": "91A4B8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2172"
+    ]
+  },
+  {
+    "value": "91A6BC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1838"
+    ]
+  },
+  {
+    "value": "91A7BC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2070"
+    ]
+  },
+  {
+    "value": "91A8BC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:636"
+    ]
+  },
+  {
+    "value": "927FB2",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3640"
+    ]
+  },
+  {
+    "value": "93463C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1282"
+    ]
+  },
+  {
+    "value": "93A2B3",
+    "verdict": "ui-normalization-candidate",
+    "count": 6,
+    "locations": [
+      "static/style-part4.css:3693",
+      "static/style-part4.css:3779",
+      "static/style-part4.css:3794",
+      "static/style-part4.css:3810",
+      "static/style-part4.css:3817",
+      "static/style-part4.css:3927"
+    ]
+  },
+  {
+    "value": "946316",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:3013",
+      "static/style-part3.css:3724"
+    ]
+  },
+  {
+    "value": "94A3B8",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part2.css:1499",
+      "static/style-part2.css:1525",
+      "static/style-part2.css:1541",
+      "static/style-part2.css:1573",
+      "static/style-part2.css:1600"
+    ]
+  },
+  {
+    "value": "94A8BD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2432"
+    ]
+  },
+  {
+    "value": "94C7A5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2451"
+    ]
+  },
+  {
+    "value": "96A6B8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1098"
+    ]
+  },
+  {
+    "value": "986500",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1768"
+    ]
+  },
+  {
+    "value": "99434E",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3246"
+    ]
+  },
+  {
+    "value": "9A3434",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:931",
+      "static/style-part3.css:1121"
+    ]
+  },
+  {
+    "value": "9A5A4A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:932"
+    ]
+  },
+  {
+    "value": "9A5B00",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1166"
+    ]
+  },
+  {
+    "value": "9AA0A6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:331"
+    ]
+  },
+  {
+    "value": "9AA4B2",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:17",
+      "static/style-part3.css:22"
+    ]
+  },
+  {
+    "value": "9AA4B7",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:3393"
+    ]
+  },
+  {
+    "value": "9AA5B4",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part2.css:2887",
+      "static/style-part3.css:3218",
+      "static/style-part3.css:3320",
+      "static/style-part3.css:3326",
+      "static/style-part3.css:3819"
+    ]
+  },
+  {
+    "value": "9AA5B5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1058"
+    ]
+  },
+  {
+    "value": "9AA7B5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3261"
+    ]
+  },
+  {
+    "value": "9AA8B8",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/ui-kit.css:477",
+      "static/ui-kit.css:522",
+      "static/ui-kit.css:606"
+    ]
+  },
+  {
+    "value": "9AA8BA",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:439",
+      "static/style-part3.css:1117"
+    ]
+  },
+  {
+    "value": "9B6B18",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3601"
+    ]
+  },
+  {
+    "value": "9B7421",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:1312",
+      "static/style-part4.css:953"
+    ]
+  },
+  {
+    "value": "9B78C4",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1137"
+    ]
+  },
+  {
+    "value": "9BC7FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3128"
+    ]
+  },
+  {
+    "value": "9DB0C1",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:596"
+    ]
+  },
+  {
+    "value": "9E7BC7",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:1996",
+      "static/style-part4.css:1998"
+    ]
+  },
+  {
+    "value": "9EB1C6",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:2034",
+      "static/ui-kit.css:2083"
+    ]
+  },
+  {
+    "value": "9EB3C8",
+    "verdict": "ui-normalization-candidate",
+    "count": 16,
+    "locations": [
+      "static/style-part4.css:3198",
+      "static/style-part4.css:3252 [comment]",
+      "static/style-part4.css:3259",
+      "static/style-part4.css:3325",
+      "static/style-part4.css:3380",
+      "static/style-part4.css:3404",
+      "static/style-part4.css:3407",
+      "static/style-part4.css:3974 [comment]",
+      "static/style-part4.css:3983",
+      "static/style-part4.css:3985",
+      "static/style-part4.css:3996",
+      "static/style-part4.css:4023",
+      "static/style-part4.css:4027 [comment]",
+      "static/style-part4.css:4036",
+      "static/style-part4.css:4038",
+      "static/style-part4.css:4039"
+    ]
+  },
+  {
+    "value": "9EB5C9",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3068"
+    ]
+  },
+  {
+    "value": "9ECBB0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2301"
+    ]
+  },
+  {
+    "value": "9FB0C2",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:2157",
+      "static/ui-kit.css:2475"
+    ]
+  },
+  {
+    "value": "9FB0C3",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/ui-kit.css:2276",
+      "static/ui-kit.css:3269",
+      "static/ui-kit.css:3281"
+    ]
+  },
+  {
+    "value": "9FB0C5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1198"
+    ]
+  },
+  {
+    "value": "9FB1C4",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1887"
+    ]
+  },
+  {
+    "value": "9FB1C5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2654"
+    ]
+  },
+  {
+    "value": "9FB3C8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3168"
+    ]
+  },
+  {
+    "value": "9FB4CC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1978"
+    ]
+  },
+  {
+    "value": "A12B2B",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:1168",
+      "static/style-part4.css:1175"
+    ]
+  },
+  {
+    "value": "A16207",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1305"
+    ]
+  },
+  {
+    "value": "A23E48",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:322"
+    ]
+  },
+  {
+    "value": "A32929",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:2433",
+      "static/style-part4.css:3341 [comment]"
+    ]
+  },
+  {
+    "value": "A33F3F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:848"
+    ]
+  },
+  {
+    "value": "A43D45",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part3.css:317",
+      "static/style-part3.css:3725",
+      "static/style-part4.css:3906"
+    ]
+  },
+  {
+    "value": "A5AFBA",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:3007",
+      "static/style-part2.css:3013",
+      "static/style-part2.css:3240"
+    ]
+  },
+  {
+    "value": "A784CE",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1146"
+    ]
+  },
+  {
+    "value": "A8B0BA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1242"
+    ]
+  },
+  {
+    "value": "A93E46",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3602"
+    ]
+  },
+  {
+    "value": "A985D3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2297"
+    ]
+  },
+  {
+    "value": "A9BAC9",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:618"
+    ]
+  },
+  {
+    "value": "A9BED1",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:3185",
+      "static/style-part4.css:3383"
+    ]
+  },
+  {
+    "value": "A9CBB3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1274"
+    ]
+  },
+  {
+    "value": "AAB5C0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3699"
+    ]
+  },
+  {
+    "value": "AD5360",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3241"
+    ]
+  },
+  {
+    "value": "AEB7C1",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:3297",
+      "static/style-part2.css:3362",
+      "static/style-part4.css:3585 [comment]"
+    ]
+  },
+  {
+    "value": "AEB9C8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1036"
+    ]
+  },
+  {
+    "value": "AEBDCD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1177"
+    ]
+  },
+  {
+    "value": "AEBDCE",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1653"
+    ]
+  },
+  {
+    "value": "AEBED0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2464"
+    ]
+  },
+  {
+    "value": "AFC2D5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3521"
+    ]
+  },
+  {
+    "value": "B04A4A",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1472"
+    ]
+  },
+  {
+    "value": "B0A090",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1376"
+    ]
+  },
+  {
+    "value": "B0B0B0",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:969",
+      "static/style-part1.css:1271"
+    ]
+  },
+  {
+    "value": "B0B8C5",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:984",
+      "static/style-part1.css:1952",
+      "static/style-part2.css:3639"
+    ]
+  },
+  {
+    "value": "B0C8A0",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:1000",
+      "static/style-part1.css:1126"
+    ]
+  },
+  {
+    "value": "B0C8F0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1987"
+    ]
+  },
+  {
+    "value": "B0D0B0",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1089"
+    ]
+  },
+  {
+    "value": "B14B4B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1306"
+    ]
+  },
+  {
+    "value": "B17A00",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3538"
+    ]
+  },
+  {
+    "value": "B42318",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:107",
+      "static/style-part4.css:1310",
+      "static/style-part4.css:3503"
+    ]
+  },
+  {
+    "value": "B43842",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3544"
+    ]
+  },
+  {
+    "value": "B79AD9",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:1129",
+      "static/style-part4.css:1150",
+      "static/style-part4.css:1997"
+    ]
+  },
+  {
+    "value": "B7C1D6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:3342"
+    ]
+  },
+  {
+    "value": "B7C6D6",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:2186",
+      "static/ui-kit.css:3258"
+    ]
+  },
+  {
+    "value": "B7D8C0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1658"
+    ]
+  },
+  {
+    "value": "B82736",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:978"
+    ]
+  },
+  {
+    "value": "B83B47",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:1045",
+      "static/style-part4.css:1125"
+    ]
+  },
+  {
+    "value": "B8C6D6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1121"
+    ]
+  },
+  {
+    "value": "B8C9D8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:976"
+    ]
+  },
+  {
+    "value": "B8CBE0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2660"
+    ]
+  },
+  {
+    "value": "B8CCE2",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:403"
+    ]
+  },
+  {
+    "value": "B91C1C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:664"
+    ]
+  },
+  {
+    "value": "B97870",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:3077",
+      "static/style-part2.css:3078"
+    ]
+  },
+  {
+    "value": "B9C6D6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1180"
+    ]
+  },
+  {
+    "value": "B9C7D6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2575"
+    ]
+  },
+  {
+    "value": "B9C7DB",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:1967",
+      "static/ui-kit.css:804"
+    ]
+  },
+  {
+    "value": "B9C8D8",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:259",
+      "static/ui-kit.css:308"
+    ]
+  },
+  {
+    "value": "B9C9DA",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:1290",
+      "static/ui-kit.css:2223"
+    ]
+  },
+  {
+    "value": "B9DFC9",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1294"
+    ]
+  },
+  {
+    "value": "BDCADA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1831"
+    ]
+  },
+  {
+    "value": "BDCCDC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3121"
+    ]
+  },
+  {
+    "value": "BDD0E4",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3732"
+    ]
+  },
+  {
+    "value": "BFD0DF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:892"
+    ]
+  },
+  {
+    "value": "BFD0E8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:906"
+    ]
+  },
+  {
+    "value": "C0392B",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1928",
+      "static/style-part3.css:1058"
+    ]
+  },
+  {
+    "value": "C08880",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1381"
+    ]
+  },
+  {
+    "value": "C0A040",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:1382",
+      "static/style-part1.css:1753"
+    ]
+  },
+  {
+    "value": "C0A84A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:997"
+    ]
+  },
+  {
+    "value": "C0C8D0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3468"
+    ]
+  },
+  {
+    "value": "C0D4E8",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part1.css:767",
+      "static/style-part1.css:1799",
+      "static/style-part1.css:2156",
+      "static/style-part1.css:2746"
+    ]
+  },
+  {
+    "value": "C2CEDA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2325"
+    ]
+  },
+  {
+    "value": "C3D1DF",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:3336 [comment]",
+      "static/ui-kit.css:3217"
+    ]
+  },
+  {
+    "value": "C3D3E2",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3418"
+    ]
+  },
+  {
+    "value": "C3D3E3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2069"
+    ]
+  },
+  {
+    "value": "C4D3DF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:641"
+    ]
+  },
+  {
+    "value": "C5D2DF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1892"
+    ]
+  },
+  {
+    "value": "C62828",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part1.css:2583",
+      "static/style-part2.css:3513",
+      "static/style-part2.css:3988",
+      "static/style-part4.css:183"
+    ]
+  },
+  {
+    "value": "C6D7E8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3193"
+    ]
+  },
+  {
+    "value": "C78616",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2893"
+    ]
+  },
+  {
+    "value": "C7A84D",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:3072",
+      "static/style-part2.css:3073"
+    ]
+  },
+  {
+    "value": "C7CED6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3060"
+    ]
+  },
+  {
+    "value": "C7D0DC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:950"
+    ]
+  },
+  {
+    "value": "C7D4E1",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2899"
+    ]
+  },
+  {
+    "value": "C87D7D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2447"
+    ]
+  },
+  {
+    "value": "C8D3DE",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:929"
+    ]
+  },
+  {
+    "value": "C8D3DF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1048"
+    ]
+  },
+  {
+    "value": "C8D5E5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2576"
+    ]
+  },
+  {
+    "value": "C9D5E1",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2517"
+    ]
+  },
+  {
+    "value": "C9D7E6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2471"
+    ]
+  },
+  {
+    "value": "C9D8EA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2505"
+    ]
+  },
+  {
+    "value": "C9E3FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3511"
+    ]
+  },
+  {
+    "value": "CAD4E0",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:1799",
+      "static/style-part2.css:1868",
+      "static/style-part3.css:1596"
+    ]
+  },
+  {
+    "value": "CAD5E2",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1048"
+    ]
+  },
+  {
+    "value": "CBD4DF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1213"
+    ]
+  },
+  {
+    "value": "CBD5DF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:61"
+    ]
+  },
+  {
+    "value": "CBD5E1",
+    "verdict": "ui-normalization-candidate",
+    "count": 8,
+    "locations": [
+      "static/style-part2.css:617",
+      "static/style-part2.css:632",
+      "static/style-part2.css:1026",
+      "static/style-part2.css:1565",
+      "static/style-part3.css:2229",
+      "static/style-part4.css:3766",
+      "static/style-part4.css:3800",
+      "static/style-part4.css:3833"
+    ]
+  },
+  {
+    "value": "CBD6E1",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2643"
+    ]
+  },
+  {
+    "value": "CBD7E4",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:758",
+      "static/ui-kit.css:1113"
+    ]
+  },
+  {
+    "value": "CBD7E6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1011"
+    ]
+  },
+  {
+    "value": "CBD7E7",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:231"
+    ]
+  },
+  {
+    "value": "CBD8CF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2265"
+    ]
+  },
+  {
+    "value": "CBD8E6",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part3.css:662",
+      "static/style-part4.css:2881",
+      "static/style-part4.css:2930",
+      "static/ui-kit.css:2040",
+      "static/ui-kit.css:3120"
+    ]
+  },
+  {
+    "value": "CBDFF7",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:918"
+    ]
+  },
+  {
+    "value": "CCD3DC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2320"
+    ]
+  },
+  {
+    "value": "CCD5DF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1261"
+    ]
+  },
+  {
+    "value": "CCD6E2",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2250"
+    ]
+  },
+  {
+    "value": "CFD8E5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:514"
+    ]
+  },
+  {
+    "value": "CFDAE8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2611"
+    ]
+  },
+  {
+    "value": "D0D0D0",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:964",
+      "static/style-part1.css:1266",
+      "static/style-part1.css:1357"
+    ]
+  },
+  {
+    "value": "D0D8EC",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1179"
+    ]
+  },
+  {
+    "value": "D0E8D0",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1177"
+    ]
+  },
+  {
+    "value": "D2DEEA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1179"
+    ]
+  },
+  {
+    "value": "D34F5D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2905"
+    ]
+  },
+  {
+    "value": "D3D3D3",
+    "verdict": "ui-normalization-candidate",
+    "count": 8,
+    "locations": [
+      "static/style-part4.css:3659",
+      "static/style-part4.css:3660",
+      "static/style-part4.css:3661",
+      "static/style-part4.css:3662",
+      "static/style-part4.css:3668",
+      "static/style-part4.css:3669",
+      "static/style-part4.css:3670",
+      "static/style-part4.css:3671"
+    ]
+  },
+  {
+    "value": "D3DCE8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:424"
+    ]
+  },
+  {
+    "value": "D3EBDA",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1744",
+      "static/style-part2.css:1905"
+    ]
+  },
+  {
+    "value": "D4A31F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3558"
+    ]
+  },
+  {
+    "value": "D4B85A",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:926",
+      "static/style-part1.css:1747"
+    ]
+  },
+  {
+    "value": "D4C06A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:993"
+    ]
+  },
+  {
+    "value": "D4DBE5",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:201",
+      "static/style-part3.css:355"
+    ]
+  },
+  {
+    "value": "D4DDE8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2285"
+    ]
+  },
+  {
+    "value": "D4E0F0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:227"
+    ]
+  },
+  {
+    "value": "D5A4A4",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2430"
+    ]
+  },
+  {
+    "value": "D5C8A8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:916"
+    ]
+  },
+  {
+    "value": "D5CBB8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:746"
+    ]
+  },
+  {
+    "value": "D5D0C0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:2345"
+    ]
+  },
+  {
+    "value": "D5D0C8",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:779",
+      "static/style-part1.css:1195",
+      "static/style-part1.css:1667"
+    ]
+  },
+  {
+    "value": "D5D5D5",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:1091",
+      "static/style-part1.css:1456",
+      "static/style-part1.css:1475"
+    ]
+  },
+  {
+    "value": "D5D8DD",
+    "verdict": "ui-normalization-candidate",
+    "count": 20,
+    "locations": [
+      "static/style-part1.css:81",
+      "static/style-part1.css:402",
+      "static/style-part1.css:447",
+      "static/style-part1.css:573",
+      "static/style-part1.css:598",
+      "static/style-part1.css:631",
+      "static/style-part1.css:637",
+      "static/style-part1.css:720",
+      "static/style-part1.css:1631",
+      "static/style-part1.css:1772",
+      "static/style-part1.css:1940",
+      "static/style-part1.css:1975",
+      "static/style-part1.css:2239",
+      "static/style-part1.css:2262",
+      "static/style-part2.css:2256",
+      "static/style-part2.css:3627",
+      "static/style-part2.css:3711",
+      "static/style-part2.css:3761",
+      "static/style-part2.css:3861",
+      "static/style-part2.css:3958"
+    ]
+  },
+  {
+    "value": "D5DBE3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2411"
+    ]
+  },
+  {
+    "value": "D5DCE6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2673"
+    ]
+  },
+  {
+    "value": "D5DCE7",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:1956",
+      "static/ui-kit.css:790"
+    ]
+  },
+  {
+    "value": "D5DDE5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1909"
+    ]
+  },
+  {
+    "value": "D5DEE8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2440"
+    ]
+  },
+  {
+    "value": "D5DFEB",
+    "verdict": "ui-normalization-candidate",
+    "count": 6,
+    "locations": [
+      "static/style-part4.css:2036",
+      "static/style-part4.css:2346",
+      "static/style-part4.css:2379",
+      "static/style-part4.css:2403",
+      "static/style-part4.css:2752",
+      "static/style-part4.css:2829"
+    ]
+  },
+  {
+    "value": "D5E0EC",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:571",
+      "static/style-part3.css:60"
+    ]
+  },
+  {
+    "value": "D5E2EF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1713"
+    ]
+  },
+  {
+    "value": "D5E9FC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3499"
+    ]
+  },
+  {
+    "value": "D6E0EB",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1117"
+    ]
+  },
+  {
+    "value": "D74343",
+    "verdict": "semantic-status-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:2839",
+      "static/style-part2.css:2895"
+    ]
+  },
+  {
+    "value": "D74755",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:994"
+    ]
+  },
+  {
+    "value": "D7DCE5",
+    "verdict": "ui-normalization-candidate",
+    "count": 6,
+    "locations": [
+      "static/style-part1.css:2941",
+      "static/style-part1.css:3185",
+      "static/style-part1.css:3219",
+      "static/style-part1.css:3232",
+      "static/style-part1.css:3260",
+      "static/style-part1.css:3285"
+    ]
+  },
+  {
+    "value": "D7DEE8",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part3.css:402",
+      "static/ui-kit.css:836",
+      "static/ui-kit.css:851",
+      "static/ui-kit.css:852",
+      "static/ui-kit.css:3137"
+    ]
+  },
+  {
+    "value": "D7E0E9",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:3008",
+      "static/style-part4.css:3492"
+    ]
+  },
+  {
+    "value": "D7E0EA",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/ui-kit.css:36",
+      "static/ui-kit.css:2682",
+      "static/ui-kit.css:3094",
+      "static/ui-kit.css:3164"
+    ]
+  },
+  {
+    "value": "D7E2EC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1844"
+    ]
+  },
+  {
+    "value": "D7E4F1",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2093"
+    ]
+  },
+  {
+    "value": "D8A51D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3540"
+    ]
+  },
+  {
+    "value": "D8C788",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1268"
+    ]
+  },
+  {
+    "value": "D8DEE6",
+    "verdict": "ui-normalization-candidate",
+    "count": 7,
+    "locations": [
+      "static/style-part3.css:42",
+      "static/style-part3.css:294",
+      "static/style-part3.css:3425",
+      "static/style-part3.css:3437",
+      "static/style-part3.css:3515",
+      "static/style-part3.css:3617",
+      "static/style-part3.css:3637"
+    ]
+  },
+  {
+    "value": "D8DEE7",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:208",
+      "static/style-part3.css:362"
+    ]
+  },
+  {
+    "value": "D8DEE8",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1007",
+      "static/style-part2.css:1103"
+    ]
+  },
+  {
+    "value": "D8E0E8",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:840",
+      "static/style-part4.css:846",
+      "static/style-part4.css:3106"
+    ]
+  },
+  {
+    "value": "D8E0EA",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:431",
+      "static/style-part4.css:999"
+    ]
+  },
+  {
+    "value": "D8E1EA",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:2663",
+      "static/style-part3.css:2667"
+    ]
+  },
+  {
+    "value": "D8E1EC",
+    "verdict": "ui-normalization-candidate",
+    "count": 11,
+    "locations": [
+      "static/style-part4.css:1221",
+      "static/style-part4.css:1381",
+      "static/style-part4.css:1459",
+      "static/style-part4.css:1595",
+      "static/style-part4.css:1610",
+      "static/style-part4.css:1656",
+      "static/style-part4.css:1705",
+      "static/style-part4.css:1713",
+      "static/style-part4.css:1794",
+      "static/style-part4.css:1874",
+      "static/ui-kit.css:2556"
+    ]
+  },
+  {
+    "value": "D8E2ED",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1935"
+    ]
+  },
+  {
+    "value": "D8E4F0",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part1.css:763",
+      "static/style-part1.css:1788",
+      "static/style-part1.css:2148",
+      "static/style-part1.css:2736",
+      "static/style-part2.css:172"
+    ]
+  },
+  {
+    "value": "D94B57",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:885"
+    ]
+  },
+  {
+    "value": "D9545F",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:3546",
+      "static/style-part3.css:3564"
+    ]
+  },
+  {
+    "value": "D9606B",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:805",
+      "static/style-part4.css:818"
+    ]
+  },
+  {
+    "value": "D9988A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:943"
+    ]
+  },
+  {
+    "value": "D99B91",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2599"
+    ]
+  },
+  {
+    "value": "D9B437",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3324"
+    ]
+  },
+  {
+    "value": "D9BD72",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2593"
+    ]
+  },
+  {
+    "value": "D9E0E7",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2718"
+    ]
+  },
+  {
+    "value": "D9E1EC",
+    "verdict": "ui-normalization-candidate",
+    "count": 8,
+    "locations": [
+      "static/ui-kit.css:1211",
+      "static/ui-kit.css:1218",
+      "static/ui-kit.css:1222",
+      "static/ui-kit.css:1224",
+      "static/ui-kit.css:1228",
+      "static/ui-kit.css:1230",
+      "static/ui-kit.css:1231",
+      "static/ui-kit.css:1232"
+    ]
+  },
+  {
+    "value": "D9E3EF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:248"
+    ]
+  },
+  {
+    "value": "D9E7F5",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part4.css:3141",
+      "static/style-part4.css:3172",
+      "static/style-part4.css:3361",
+      "static/style-part4.css:3392",
+      "static/style-part4.css:3414"
+    ]
+  },
+  {
+    "value": "DB5A63",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:21"
+    ]
+  },
+  {
+    "value": "DBE2EB",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:995"
+    ]
+  },
+  {
+    "value": "DBE3EE",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:510",
+      "static/style-part2.css:582"
+    ]
+  },
+  {
+    "value": "DBE4EF",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1618",
+      "static/style-part4.css:1031"
+    ]
+  },
+  {
+    "value": "DBE5F0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1197"
+    ]
+  },
+  {
+    "value": "DBE5F1",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/ui-kit.css:1051",
+      "static/ui-kit.css:1067",
+      "static/ui-kit.css:1081",
+      "static/ui-kit.css:1171",
+      "static/ui-kit.css:1506"
+    ]
+  },
+  {
+    "value": "DBE7F4",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3517"
+    ]
+  },
+  {
+    "value": "DBE8F5",
+    "verdict": "ui-normalization-candidate",
+    "count": 9,
+    "locations": [
+      "static/style-part4.css:3228",
+      "static/style-part4.css:3310 [comment]",
+      "static/style-part4.css:3316",
+      "static/style-part4.css:3321",
+      "static/style-part4.css:3982",
+      "static/style-part4.css:4006",
+      "static/style-part4.css:4014",
+      "static/style-part4.css:4026 [comment]",
+      "static/style-part4.css:4037"
+    ]
+  },
+  {
+    "value": "DBE8F7",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2725"
+    ]
+  },
+  {
+    "value": "DBEAFD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3103"
+    ]
+  },
+  {
+    "value": "DBEAFE",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:436",
+      "static/style-part2.css:593",
+      "static/style-part2.css:642"
+    ]
+  },
+  {
+    "value": "DC2626",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1512"
+    ]
+  },
+  {
+    "value": "DCCFAD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:922"
+    ]
+  },
+  {
+    "value": "DCE3EC",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1764",
+      "static/style-part2.css:1814"
+    ]
+  },
+  {
+    "value": "DCE4ED",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part3.css:915",
+      "static/style-part3.css:1021",
+      "static/style-part3.css:1152"
+    ]
+  },
+  {
+    "value": "DCE6F0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1875"
+    ]
+  },
+  {
+    "value": "DCE7F1",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1046"
+    ]
+  },
+  {
+    "value": "DCE8F5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2204"
+    ]
+  },
+  {
+    "value": "DCE8F6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2620"
+    ]
+  },
+  {
+    "value": "DCEAFB",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:908"
+    ]
+  },
+  {
+    "value": "DDE6EF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1219"
+    ]
+  },
+  {
+    "value": "DDE8F0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1738"
+    ]
+  },
+  {
+    "value": "DF4B5A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3292"
+    ]
+  },
+  {
+    "value": "DF5B64",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part2.css:3328",
+      "static/style-part2.css:3358",
+      "static/style-part4.css:3584 [comment]",
+      "static/style-part4.css:3599"
+    ]
+  },
+  {
+    "value": "DF5D68",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:614",
+      "static/style-part4.css:628",
+      "static/style-part4.css:763"
+    ]
+  },
+  {
+    "value": "DF6B76",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:822",
+      "static/style-part4.css:829"
+    ]
+  },
+  {
+    "value": "DFB3B3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:929"
+    ]
+  },
+  {
+    "value": "DFB5AF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1280"
+    ]
+  },
+  {
+    "value": "DFE3EA",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:3027",
+      "static/style-part2.css:52",
+      "static/style-part2.css:145"
+    ]
+  },
+  {
+    "value": "DFE4EB",
+    "verdict": "ui-normalization-candidate",
+    "count": 6,
+    "locations": [
+      "static/style-part2.css:2642",
+      "static/style-part2.css:2718",
+      "static/style-part2.css:2753",
+      "static/style-part3.css:191",
+      "static/style-part3.css:337",
+      "static/style-part3.css:344"
+    ]
+  },
+  {
+    "value": "DFE5EC",
+    "verdict": "ui-normalization-candidate",
+    "count": 8,
+    "locations": [
+      "static/style-part3.css:632",
+      "static/style-part3.css:718",
+      "static/style-part3.css:749",
+      "static/style-part3.css:1799",
+      "static/style-part3.css:1827",
+      "static/style-part3.css:1853",
+      "static/style-part3.css:1881",
+      "static/style-part4.css:67"
+    ]
+  },
+  {
+    "value": "DFE5EE",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:408",
+      "static/style-part2.css:736"
+    ]
+  },
+  {
+    "value": "DFE7F2",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:229"
+    ]
+  },
+  {
+    "value": "DFE8F1",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:843"
+    ]
+  },
+  {
+    "value": "DFE9F4",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3626"
+    ]
+  },
+  {
+    "value": "DFF2E5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2521"
+    ]
+  },
+  {
+    "value": "E05D68",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2954"
+    ]
+  },
+  {
+    "value": "E0B667",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:961"
+    ]
+  },
+  {
+    "value": "E0C8B8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1096"
+    ]
+  },
+  {
+    "value": "E0C8C0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:933"
+    ]
+  },
+  {
+    "value": "E0C98B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:923"
+    ]
+  },
+  {
+    "value": "E0E0E0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1502"
+    ]
+  },
+  {
+    "value": "E0E6EE",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3949"
+    ]
+  },
+  {
+    "value": "E0E7EF",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part3.css:1217",
+      "static/style-part3.css:1218",
+      "static/style-part3.css:1326"
+    ]
+  },
+  {
+    "value": "E0F2FE",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:655"
+    ]
+  },
+  {
+    "value": "E0F3E5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2457"
+    ]
+  },
+  {
+    "value": "E14D68",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part4.css:1990",
+      "static/style-part4.css:1991",
+      "static/style-part4.css:1992",
+      "static/style-part4.css:2293"
+    ]
+  },
+  {
+    "value": "E1E6ED",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:3651",
+      "static/style-part3.css:3704"
+    ]
+  },
+  {
+    "value": "E1E9F2",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3141"
+    ]
+  },
+  {
+    "value": "E2BD45",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:271"
+    ]
+  },
+  {
+    "value": "E2E8F0",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:444",
+      "static/style-part2.css:524"
+    ]
+  },
+  {
+    "value": "E2EBF5",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:674",
+      "static/ui-kit.css:3119"
+    ]
+  },
+  {
+    "value": "E2F3E7",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:1731",
+      "static/style-part2.css:1894",
+      "static/style-part2.css:2314"
+    ]
+  },
+  {
+    "value": "E3E8EE",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:129",
+      "static/style-part4.css:160"
+    ]
+  },
+  {
+    "value": "E4EAF1",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3095"
+    ]
+  },
+  {
+    "value": "E4EBF3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:47"
+    ]
+  },
+  {
+    "value": "E4EDF7",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:1146",
+      "static/ui-kit.css:3009"
+    ]
+  },
+  {
+    "value": "E5E5E5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:975"
+    ]
+  },
+  {
+    "value": "E5E7EB",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:461",
+      "static/style-part2.css:1440"
+    ]
+  },
+  {
+    "value": "E5E8EC",
+    "verdict": "ui-normalization-candidate",
+    "count": 32,
+    "locations": [
+      "static/style-part1.css:112",
+      "static/style-part1.css:358",
+      "static/style-part1.css:388",
+      "static/style-part1.css:477",
+      "static/style-part1.css:562",
+      "static/style-part1.css:654",
+      "static/style-part1.css:1907",
+      "static/style-part1.css:2071",
+      "static/style-part1.css:2116",
+      "static/style-part1.css:2128",
+      "static/style-part1.css:2188",
+      "static/style-part1.css:2213",
+      "static/style-part1.css:2387",
+      "static/style-part1.css:2472",
+      "static/style-part1.css:2534",
+      "static/style-part1.css:2624",
+      "static/style-part1.css:2636",
+      "static/style-part1.css:2703",
+      "static/style-part1.css:2722",
+      "static/style-part1.css:3102",
+      "static/style-part2.css:2055",
+      "static/style-part2.css:2069",
+      "static/style-part2.css:2135",
+      "static/style-part2.css:2143",
+      "static/style-part2.css:3520",
+      "static/style-part2.css:3575",
+      "static/style-part2.css:3664",
+      "static/style-part2.css:3740",
+      "static/style-part2.css:3824",
+      "static/style-part2.css:3893",
+      "static/style-part2.css:3989",
+      "static/style-part3.css:643"
+    ]
+  },
+  {
+    "value": "E5EAF0",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:863",
+      "static/ui-kit.css:3136"
+    ]
+  },
+  {
+    "value": "E5EFF8",
+    "verdict": "ui-normalization-candidate",
+    "count": 16,
+    "locations": [
+      "static/style-part4.css:3216",
+      "static/style-part4.css:3222",
+      "static/style-part4.css:3252 [comment]",
+      "static/style-part4.css:3262",
+      "static/style-part4.css:3401",
+      "static/style-part4.css:3410",
+      "static/style-part4.css:3425",
+      "static/style-part4.css:3974 [comment]",
+      "static/style-part4.css:3981",
+      "static/style-part4.css:3988",
+      "static/style-part4.css:4002",
+      "static/style-part4.css:4013",
+      "static/style-part4.css:4021",
+      "static/style-part4.css:4026 [comment]",
+      "static/style-part4.css:4034",
+      "static/style-part4.css:4035"
+    ]
+  },
+  {
+    "value": "E6505D",
+    "verdict": "semantic-status-candidate",
+    "count": 3,
+    "locations": [
+      "static/ui-kit.css:60",
+      "static/ui-kit.css:61",
+      "static/ui-kit.css:3112"
+    ]
+  },
+  {
+    "value": "E6AD22",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3110"
+    ]
+  },
+  {
+    "value": "E6C765",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:256"
+    ]
+  },
+  {
+    "value": "E6E9EF",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:2837",
+      "static/style-part1.css:2873",
+      "static/style-part2.css:1946"
+    ]
+  },
+  {
+    "value": "E6ECF3",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part3.css:1078",
+      "static/style-part4.css:3704",
+      "static/style-part4.css:3844",
+      "static/style-part4.css:3873",
+      "static/style-part4.css:3938"
+    ]
+  },
+  {
+    "value": "E6EEF8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2517"
+    ]
+  },
+  {
+    "value": "E6F1FA",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3726"
+    ]
+  },
+  {
+    "value": "E6F7EC",
+    "verdict": "semantic-status-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:1766",
+      "static/style-part4.css:1767"
+    ]
+  },
+  {
+    "value": "E7AF27",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:20"
+    ]
+  },
+  {
+    "value": "E7E7E7",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:482"
+    ]
+  },
+  {
+    "value": "E7EBEF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1250"
+    ]
+  },
+  {
+    "value": "E7EBF0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:119"
+    ]
+  },
+  {
+    "value": "E7EDF4",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:2037",
+      "static/style-part4.css:2353"
+    ]
+  },
+  {
+    "value": "E7EDF5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3390"
+    ]
+  },
+  {
+    "value": "E7EEF7",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1107"
+    ]
+  },
+  {
+    "value": "E7EEF8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:292"
+    ]
+  },
+  {
+    "value": "E7F1FD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3485"
+    ]
+  },
+  {
+    "value": "E7F5EC",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3723"
+    ]
+  },
+  {
+    "value": "E8A89E",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:945",
+      "static/style-part1.css:1458"
+    ]
+  },
+  {
+    "value": "E8B437",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:3354",
+      "static/style-part4.css:3583 [comment]",
+      "static/style-part4.css:3595"
+    ]
+  },
+  {
+    "value": "E8B9BD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:319"
+    ]
+  },
+  {
+    "value": "E8C86A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1378"
+    ]
+  },
+  {
+    "value": "E8D0CC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:939"
+    ]
+  },
+  {
+    "value": "E8D5D5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:990"
+    ]
+  },
+  {
+    "value": "E8D8A0",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1090"
+    ]
+  },
+  {
+    "value": "E8DCC8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:738"
+    ]
+  },
+  {
+    "value": "E8DDC0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:914"
+    ]
+  },
+  {
+    "value": "E8DDC8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:3501"
+    ]
+  },
+  {
+    "value": "E8E0D0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:2340"
+    ]
+  },
+  {
+    "value": "E8E0D5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:365"
+    ]
+  },
+  {
+    "value": "E8E0F0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:228"
+    ]
+  },
+  {
+    "value": "E8E5E0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:986"
+    ]
+  },
+  {
+    "value": "E8E8E8",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part1.css:1409",
+      "static/style-part1.css:1455",
+      "static/style-part1.css:1474",
+      "static/style-part4.css:3914"
+    ]
+  },
+  {
+    "value": "E8EAED",
+    "verdict": "ui-normalization-candidate",
+    "count": 8,
+    "locations": [
+      "static/style-part1.css:77",
+      "static/style-part1.css:672",
+      "static/style-part1.css:1846",
+      "static/style-part1.css:2090",
+      "static/style-part1.css:2495",
+      "static/style-part1.css:2506",
+      "static/style-part1.css:2658",
+      "static/style-part2.css:3391"
+    ]
+  },
+  {
+    "value": "E8ECF0",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:224",
+      "static/style-part1.css:463",
+      "static/style-part1.css:529"
+    ]
+  },
+  {
+    "value": "E8ECF5",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1178"
+    ]
+  },
+  {
+    "value": "E8EDF3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:691"
+    ]
+  },
+  {
+    "value": "E8EDF4",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:896"
+    ]
+  },
+  {
+    "value": "E8EEF5",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1182",
+      "static/ui-kit.css:1883"
+    ]
+  },
+  {
+    "value": "E8EEF7",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:3491",
+      "static/style-part2.css:162",
+      "static/ui-kit.css:2124"
+    ]
+  },
+  {
+    "value": "E8F0E8",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1176"
+    ]
+  },
+  {
+    "value": "E8F0F8",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:571",
+      "static/style-part3.css:60"
+    ]
+  },
+  {
+    "value": "E8F0FE",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:3788",
+      "static/style-part2.css:3847"
+    ]
+  },
+  {
+    "value": "E8F2FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:893"
+    ]
+  },
+  {
+    "value": "E8F6EC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2582"
+    ]
+  },
+  {
+    "value": "E9B53C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3287"
+    ]
+  },
+  {
+    "value": "E9EDF2",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:769",
+      "static/ui-kit.css:3075"
+    ]
+  },
+  {
+    "value": "E9EDF3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:948"
+    ]
+  },
+  {
+    "value": "E9F7ED",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:2512",
+      "static/style-part4.css:3341 [comment]"
+    ]
+  },
+  {
+    "value": "E9F8F0",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3109"
+    ]
+  },
+  {
+    "value": "EAD0D0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:726"
+    ]
+  },
+  {
+    "value": "EAD8AE",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1310"
+    ]
+  },
+  {
+    "value": "EAF1F7",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2901"
+    ]
+  },
+  {
+    "value": "EAF2FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/ui-kit.css:2138",
+      "static/ui-kit.css:2269",
+      "static/ui-kit.css:2270"
+    ]
+  },
+  {
+    "value": "EAF2FC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1006"
+    ]
+  },
+  {
+    "value": "EAF2FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2112"
+    ]
+  },
+  {
+    "value": "EAF3FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:2588",
+      "static/style-part4.css:578",
+      "static/style-part4.css:616"
+    ]
+  },
+  {
+    "value": "EAF3FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part3.css:1814",
+      "static/style-part3.css:1868",
+      "static/ui-kit.css:3102",
+      "static/ui-kit.css:3115"
+    ]
+  },
+  {
+    "value": "EAF4FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:624",
+      "static/style-part4.css:753"
+    ]
+  },
+  {
+    "value": "EBC5C9",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:276"
+    ]
+  },
+  {
+    "value": "ECD0D0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:2523"
+    ]
+  },
+  {
+    "value": "ECD5D5",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1473"
+    ]
+  },
+  {
+    "value": "ECEFF3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:203"
+    ]
+  },
+  {
+    "value": "EDC5C5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1304"
+    ]
+  },
+  {
+    "value": "EDCC6A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:928"
+    ]
+  },
+  {
+    "value": "EDEBE7",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:778"
+    ]
+  },
+  {
+    "value": "EDF0F3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:139"
+    ]
+  },
+  {
+    "value": "EDF0F4",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part1.css:3110",
+      "static/style-part1.css:3272",
+      "static/style-part2.css:2758",
+      "static/ui-kit.css:902"
+    ]
+  },
+  {
+    "value": "EDF1F6",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:1341",
+      "static/ui-kit.css:1227"
+    ]
+  },
+  {
+    "value": "EDF2F7",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:836",
+      "static/style-part4.css:3007"
+    ]
+  },
+  {
+    "value": "EDF3F8",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1238",
+      "static/style-part4.css:931"
+    ]
+  },
+  {
+    "value": "EDF3F9",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:664",
+      "static/ui-kit.css:3118"
+    ]
+  },
+  {
+    "value": "EDF3FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part1.css:2952",
+      "static/style-part2.css:2682",
+      "static/style-part3.css:1968",
+      "static/ui-kit.css:805"
+    ]
+  },
+  {
+    "value": "EDF4FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 8,
+    "locations": [
+      "static/style-part4.css:2035",
+      "static/style-part4.css:2397",
+      "static/style-part4.css:2803",
+      "static/style-part4.css:2831",
+      "static/ui-kit.css:1090",
+      "static/ui-kit.css:1129",
+      "static/ui-kit.css:2176",
+      "static/ui-kit.css:2197"
+    ]
+  },
+  {
+    "value": "EDF4FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:102"
+    ]
+  },
+  {
+    "value": "EDF5FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 6,
+    "locations": [
+      "static/ui-kit.css:1213",
+      "static/ui-kit.css:1225",
+      "static/ui-kit.css:1226",
+      "static/ui-kit.css:1230",
+      "static/ui-kit.css:2029",
+      "static/ui-kit.css:2087"
+    ]
+  },
+  {
+    "value": "EEF0F4",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:3040",
+      "static/style-part1.css:3060"
+    ]
+  },
+  {
+    "value": "EEF1F6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2855"
+    ]
+  },
+  {
+    "value": "EEF2F5",
+    "verdict": "ui-normalization-candidate",
+    "count": 7,
+    "locations": [
+      "static/style-part2.css:3449",
+      "static/style-part2.css:3638",
+      "static/style-part2.css:3720",
+      "static/style-part2.css:3770",
+      "static/style-part2.css:3870",
+      "static/style-part2.css:3923",
+      "static/style-part2.css:3941"
+    ]
+  },
+  {
+    "value": "EEF2F7",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:144",
+      "static/style-part3.css:3619",
+      "static/ui-kit.css:3070"
+    ]
+  },
+  {
+    "value": "EEF3F8",
+    "verdict": "ui-normalization-candidate",
+    "count": 10,
+    "locations": [
+      "static/style-part2.css:1035",
+      "static/style-part2.css:1642",
+      "static/style-part2.css:2576",
+      "static/style-part4.css:2030",
+      "static/style-part4.css:3108",
+      "static/style-part4.css:3493",
+      "static/ui-kit.css:38",
+      "static/ui-kit.css:3074",
+      "static/ui-kit.css:3135",
+      "static/ui-kit.css:3140"
+    ]
+  },
+  {
+    "value": "EEF4F8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1734"
+    ]
+  },
+  {
+    "value": "EEF4FA",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part3.css:917",
+      "static/style-part3.css:1023",
+      "static/style-part3.css:1154",
+      "static/style-part4.css:849"
+    ]
+  },
+  {
+    "value": "EEF4FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 9,
+    "locations": [
+      "static/style-part4.css:1242",
+      "static/style-part4.css:1276",
+      "static/style-part4.css:1539",
+      "static/style-part4.css:1553",
+      "static/style-part4.css:1658",
+      "static/style-part4.css:1687",
+      "static/style-part4.css:1729",
+      "static/style-part4.css:1760",
+      "static/style-part4.css:1789"
+    ]
+  },
+  {
+    "value": "EEF4FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1986"
+    ]
+  },
+  {
+    "value": "EEF5FC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1183"
+    ]
+  },
+  {
+    "value": "EEF5FD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2506"
+    ]
+  },
+  {
+    "value": "EEF5FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:511",
+      "static/style-part2.css:583",
+      "static/ui-kit.css:2436"
+    ]
+  },
+  {
+    "value": "EEF6FC",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part4.css:631",
+      "static/style-part4.css:851",
+      "static/style-part4.css:945"
+    ]
+  },
+  {
+    "value": "EEF6FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 7,
+    "locations": [
+      "static/ui-kit.css:1218",
+      "static/ui-kit.css:1973",
+      "static/ui-kit.css:1984",
+      "static/ui-kit.css:3252",
+      "static/ui-kit.css:3268",
+      "static/ui-kit.css:3280",
+      "static/ui-kit.css:3287"
+    ]
+  },
+  {
+    "value": "EEF8F1",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2302"
+    ]
+  },
+  {
+    "value": "EEF9F1",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:2452",
+      "static/style-part4.css:3342 [comment]"
+    ]
+  },
+  {
+    "value": "EEFAF3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1295"
+    ]
+  },
+  {
+    "value": "EF4444",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:1329",
+      "static/style-part2.css:1513",
+      "static/style-part4.css:3060"
+    ]
+  },
+  {
+    "value": "EF4F5F",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part4.css:966",
+      "static/style-part4.css:967",
+      "static/style-part4.css:972",
+      "static/style-part4.css:1037"
+    ]
+  },
+  {
+    "value": "EFB6B1",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3505"
+    ]
+  },
+  {
+    "value": "EFC8CC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:321"
+    ]
+  },
+  {
+    "value": "F0B8B0",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:941",
+      "static/style-part1.css:1457"
+    ]
+  },
+  {
+    "value": "F0C75E",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2126"
+    ]
+  },
+  {
+    "value": "F0C86A",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:3018",
+      "static/style-part3.css:3737",
+      "static/ui-kit.css:3240"
+    ]
+  },
+  {
+    "value": "F0DDDA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:931"
+    ]
+  },
+  {
+    "value": "F0E8D0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1752"
+    ]
+  },
+  {
+    "value": "F0EEEA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:986"
+    ]
+  },
+  {
+    "value": "F0F0F0",
+    "verdict": "ui-normalization-candidate",
+    "count": 13,
+    "locations": [
+      "static/style-part1.css:161",
+      "static/style-part1.css:296",
+      "static/style-part1.css:489",
+      "static/style-part1.css:510",
+      "static/style-part1.css:528",
+      "static/style-part1.css:554",
+      "static/style-part1.css:1144",
+      "static/style-part1.css:1186",
+      "static/style-part1.css:1217",
+      "static/style-part1.css:1231",
+      "static/style-part1.css:1234",
+      "static/style-part1.css:1927",
+      "static/style-part1.css:2550"
+    ]
+  },
+  {
+    "value": "F0F2F5",
+    "verdict": "ui-normalization-candidate",
+    "count": 10,
+    "locations": [
+      "static/style-part1.css:13",
+      "static/style-part1.css:655",
+      "static/style-part1.css:1842",
+      "static/style-part1.css:1904",
+      "static/style-part1.css:1951",
+      "static/style-part1.css:2070",
+      "static/style-part1.css:2469",
+      "static/style-part1.css:2700",
+      "static/style-part2.css:3432",
+      "static/style-part4.css:3268 [comment]"
+    ]
+  },
+  {
+    "value": "F0F4F0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:596"
+    ]
+  },
+  {
+    "value": "F0F4F8",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:204",
+      "static/style-part2.css:3984"
+    ]
+  },
+  {
+    "value": "F1F3F6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:3077"
+    ]
+  },
+  {
+    "value": "F1F8F3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1275"
+    ]
+  },
+  {
+    "value": "F2385A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3629"
+    ]
+  },
+  {
+    "value": "F2D17A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2235"
+    ]
+  },
+  {
+    "value": "F2D38C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1586"
+    ]
+  },
+  {
+    "value": "F2DDDD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:737"
+    ]
+  },
+  {
+    "value": "F2F4F7",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1910",
+      "static/style-part2.css:2321"
+    ]
+  },
+  {
+    "value": "F2F7FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:2549",
+      "static/style-part3.css:2556"
+    ]
+  },
+  {
+    "value": "F2F7FC",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:3335 [comment]",
+      "static/ui-kit.css:3216"
+    ]
+  },
+  {
+    "value": "F2F7FD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2148"
+    ]
+  },
+  {
+    "value": "F3B63F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:3381"
+    ]
+  },
+  {
+    "value": "F3F6F9",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:720"
+    ]
+  },
+  {
+    "value": "F3F6FA",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:402",
+      "static/style-part2.css:726"
+    ]
+  },
+  {
+    "value": "F3F6FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:3055"
+    ]
+  },
+  {
+    "value": "F3F7FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:2926",
+      "static/style-part4.css:2068"
+    ]
+  },
+  {
+    "value": "F3F8FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2650"
+    ]
+  },
+  {
+    "value": "F4F7FA",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:3712",
+      "static/style-part4.css:3099"
+    ]
+  },
+  {
+    "value": "F4F7FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:1399",
+      "static/ui-kit.css:3163"
+    ]
+  },
+  {
+    "value": "F4F8FC",
+    "verdict": "ui-normalization-candidate",
+    "count": 7,
+    "locations": [
+      "static/style-part4.css:640",
+      "static/style-part4.css:3181",
+      "static/style-part4.css:3376",
+      "static/ui-kit.css:1708",
+      "static/ui-kit.css:1716",
+      "static/ui-kit.css:1822",
+      "static/ui-kit.css:3259"
+    ]
+  },
+  {
+    "value": "F4F8FD",
+    "verdict": "ui-normalization-candidate",
+    "count": 4,
+    "locations": [
+      "static/style-part4.css:2034",
+      "static/style-part4.css:2408",
+      "static/style-part4.css:2794",
+      "static/style-part4.css:2841"
+    ]
+  },
+  {
+    "value": "F4F8FF",
+    "verdict": "ui-normalization-candidate",
+    "count": 7,
+    "locations": [
+      "static/ui-kit.css:2244",
+      "static/ui-kit.css:2252",
+      "static/ui-kit.css:2262",
+      "static/ui-kit.css:2263",
+      "static/ui-kit.css:2457",
+      "static/ui-kit.css:2927",
+      "static/ui-kit.css:2933"
+    ]
+  },
+  {
+    "value": "F4FBF6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1660"
+    ]
+  },
+  {
+    "value": "F59B2F",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:1221"
+    ]
+  },
+  {
+    "value": "F59E0B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3055"
+    ]
+  },
+  {
+    "value": "F5A623",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:341"
+    ]
+  },
+  {
+    "value": "F5C542",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part2.css:2930",
+      "static/style-part2.css:2941",
+      "static/style-part2.css:3413",
+      "static/style-part3.css:34",
+      "static/style-part3.css:304"
+    ]
+  },
+  {
+    "value": "F5D980",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:924"
+    ]
+  },
+  {
+    "value": "F5DDDD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:930"
+    ]
+  },
+  {
+    "value": "F5E8E8",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:1472",
+      "static/style-part1.css:2514",
+      "static/style-part1.css:2582"
+    ]
+  },
+  {
+    "value": "F5EDCF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:924"
+    ]
+  },
+  {
+    "value": "F5EDE8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1095"
+    ]
+  },
+  {
+    "value": "F5F0E8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:363"
+    ]
+  },
+  {
+    "value": "F5F3EF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:778"
+    ]
+  },
+  {
+    "value": "F5F5F5",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part1.css:974",
+      "static/style-part1.css:1240",
+      "static/style-part1.css:1276"
+    ]
+  },
+  {
+    "value": "F5F7FA",
+    "verdict": "ui-normalization-candidate",
+    "count": 16,
+    "locations": [
+      "static/style-part1.css:406",
+      "static/style-part1.css:449",
+      "static/style-part1.css:1633",
+      "static/style-part1.css:2127",
+      "static/style-part1.css:2187",
+      "static/style-part1.css:2212",
+      "static/style-part1.css:2635",
+      "static/style-part1.css:2721",
+      "static/style-part2.css:3477",
+      "static/style-part2.css:3539",
+      "static/style-part3.css:293",
+      "static/style-part3.css:621",
+      "static/style-part3.css:3427",
+      "static/style-part3.css:3517",
+      "static/style-part4.css:1585",
+      "static/ui-kit.css:3071"
+    ]
+  },
+  {
+    "value": "F5F7FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:2822",
+      "static/style-part2.css:2834"
+    ]
+  },
+  {
+    "value": "F5F8FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:2252"
+    ]
+  },
+  {
+    "value": "F5F8FC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:3594"
+    ]
+  },
+  {
+    "value": "F5F9FD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:892"
+    ]
+  },
+  {
+    "value": "F5FFE8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:213"
+    ]
+  },
+  {
+    "value": "F6F8FA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1263"
+    ]
+  },
+  {
+    "value": "F6F8FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:51",
+      "static/style-part2.css:2674",
+      "static/ui-kit.css:1207"
+    ]
+  },
+  {
+    "value": "F6F9FC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:2932"
+    ]
+  },
+  {
+    "value": "F7E5E5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:847"
+    ]
+  },
+  {
+    "value": "F7F9FB",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:41",
+      "static/style-part3.css:347"
+    ]
+  },
+  {
+    "value": "F7F9FC",
+    "verdict": "ui-normalization-candidate",
+    "count": 10,
+    "locations": [
+      "static/style-part3.css:405",
+      "static/style-part3.css:1801",
+      "static/style-part3.css:1855",
+      "static/style-part4.css:2031",
+      "static/style-part4.css:2378",
+      "static/ui-kit.css:864",
+      "static/ui-kit.css:2558",
+      "static/ui-kit.css:3073",
+      "static/ui-kit.css:3125",
+      "static/ui-kit.css:3134"
+    ]
+  },
+  {
+    "value": "F7FAFF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:250"
+    ]
+  },
+  {
+    "value": "F7FBFF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3075"
+    ]
+  },
+  {
+    "value": "F8EDED",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:728"
+    ]
+  },
+  {
+    "value": "F8F0D8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:995"
+    ]
+  },
+  {
+    "value": "F8F4E8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1748"
+    ]
+  },
+  {
+    "value": "F8F5F5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:990"
+    ]
+  },
+  {
+    "value": "F8F6F2",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1669"
+    ]
+  },
+  {
+    "value": "F8F8F8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:723"
+    ]
+  },
+  {
+    "value": "F8F9FA",
+    "verdict": "ui-normalization-candidate",
+    "count": 9,
+    "locations": [
+      "static/style-part1.css:27",
+      "static/style-part1.css:561",
+      "static/style-part1.css:1503",
+      "static/style-part1.css:2412",
+      "static/style-part1.css:2561",
+      "static/style-part2.css:2054",
+      "static/style-part2.css:2068",
+      "static/style-part2.css:2134",
+      "static/style-part2.css:2142"
+    ]
+  },
+  {
+    "value": "F8F9FC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:1842"
+    ]
+  },
+  {
+    "value": "F8FAFC",
+    "verdict": "ui-normalization-candidate",
+    "count": 17,
+    "locations": [
+      "static/style-part1.css:2942",
+      "static/style-part2.css:443",
+      "static/style-part2.css:633",
+      "static/style-part2.css:1028",
+      "static/style-part2.css:1364",
+      "static/style-part2.css:1599",
+      "static/style-part2.css:1801",
+      "static/style-part2.css:1870",
+      "static/style-part2.css:3571",
+      "static/style-part2.css:3678",
+      "static/style-part2.css:3802",
+      "static/style-part2.css:3884",
+      "static/style-part2.css:3907",
+      "static/style-part3.css:200",
+      "static/style-part3.css:1598",
+      "static/style-part4.css:162",
+      "static/ui-kit.css:2400"
+    ]
+  },
+  {
+    "value": "F8FBFF",
+    "verdict": "ui-normalization-candidate",
+    "count": 6,
+    "locations": [
+      "static/style-part2.css:1620",
+      "static/style-part3.css:917",
+      "static/style-part3.css:1023",
+      "static/style-part3.css:1154",
+      "static/style-part4.css:3846",
+      "static/ui-kit.css:1711"
+    ]
+  },
+  {
+    "value": "FAFBFC",
+    "verdict": "ui-normalization-candidate",
+    "count": 5,
+    "locations": [
+      "static/style-part1.css:315",
+      "static/style-part1.css:2104",
+      "static/style-part1.css:2612",
+      "static/style-part1.css:3273",
+      "static/style-part2.css:95"
+    ]
+  },
+  {
+    "value": "FAFBFD",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:997"
+    ]
+  },
+  {
+    "value": "FAFFF5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:209"
+    ]
+  },
+  {
+    "value": "FBE8A6",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:254"
+    ]
+  },
+  {
+    "value": "FBF5DF",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2594"
+    ]
+  },
+  {
+    "value": "FBFCFE",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part3.css:644",
+      "static/style-part3.css:1460",
+      "static/style-part4.css:1611"
+    ]
+  },
+  {
+    "value": "FCA5A5",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1189"
+    ]
+  },
+  {
+    "value": "FCD34D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1183"
+    ]
+  },
+  {
+    "value": "FCECEA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:2600"
+    ]
+  },
+  {
+    "value": "FDE9EB",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:3725",
+      "static/style-part4.css:3905"
+    ]
+  },
+  {
+    "value": "FDECEE",
+    "verdict": "semantic-status-candidate",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:62",
+      "static/ui-kit.css:3113"
+    ]
+  },
+  {
+    "value": "FDF8E8",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:995"
+    ]
+  },
+  {
+    "value": "FECACA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:662"
+    ]
+  },
+  {
+    "value": "FEE2E2",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:672"
+    ]
+  },
+  {
+    "value": "FF5722",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:210",
+      "static/style-part1.css:275"
+    ]
+  },
+  {
+    "value": "FF6262",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part1.css:3389"
+    ]
+  },
+  {
+    "value": "FF6B35",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part1.css:1886",
+      "static/style-part1.css:1895"
+    ]
+  },
+  {
+    "value": "FF6B6B",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:345"
+    ]
+  },
+  {
+    "value": "FF7B85",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3242"
+    ]
+  },
+  {
+    "value": "FF7D7D",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2127"
+    ]
+  },
+  {
+    "value": "FF858C",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3562"
+    ]
+  },
+  {
+    "value": "FF8A80",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3204"
+    ]
+  },
+  {
+    "value": "FF9299",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part3.css:3738",
+      "static/style-part4.css:4017"
+    ]
+  },
+  {
+    "value": "FF9DA4",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3151"
+    ]
+  },
+  {
+    "value": "FFB3BA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:2229"
+    ]
+  },
+  {
+    "value": "FFB4BA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3527"
+    ]
+  },
+  {
+    "value": "FFB5BC",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:975"
+    ]
+  },
+  {
+    "value": "FFBBC0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3157"
+    ]
+  },
+  {
+    "value": "FFD35A",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3556"
+    ]
+  },
+  {
+    "value": "FFE7E9",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3545"
+    ]
+  },
+  {
+    "value": "FFE8E8",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:2446",
+      "static/style-part2.css:3994"
+    ]
+  },
+  {
+    "value": "FFE8EB",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:824"
+    ]
+  },
+  {
+    "value": "FFF0EF",
+    "verdict": "ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part4.css:112",
+      "static/style-part4.css:3504"
+    ]
+  },
+  {
+    "value": "FFF0F1",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:318"
+    ]
+  },
+  {
+    "value": "FFF2C7",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3539"
+    ]
+  },
+  {
+    "value": "FFF2F3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:3240"
+    ]
+  },
+  {
+    "value": "FFF3D8",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:3724"
+    ]
+  },
+  {
+    "value": "FFF3F3",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1305"
+    ]
+  },
+  {
+    "value": "FFF4D8",
+    "verdict": "semantic-status-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:1768"
+    ]
+  },
+  {
+    "value": "FFF4F2",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1281"
+    ]
+  },
+  {
+    "value": "FFF4F5",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part4.css:807"
+    ]
+  },
+  {
+    "value": "FFF5F5",
+    "verdict": "ui-normalization-candidate",
+    "count": 3,
+    "locations": [
+      "static/style-part2.css:663",
+      "static/style-part2.css:2432",
+      "static/style-part4.css:3341 [comment]"
+    ]
+  },
+  {
+    "value": "FFF7DF",
+    "verdict": "mixed:semantic-status-candidate+ui-normalization-candidate",
+    "count": 2,
+    "locations": [
+      "static/style-part2.css:1588",
+      "static/ui-kit.css:3111"
+    ]
+  },
+  {
+    "value": "FFF9EA",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part3.css:1311"
+    ]
+  },
+  {
+    "value": "FFFAF0",
+    "verdict": "ui-normalization-candidate",
+    "count": 1,
+    "locations": [
+      "static/style-part2.css:1269"
+    ]
+  },
+  {
+    "value": "FFFFFF",
+    "verdict": "ui-normalization-candidate",
+    "count": 46,
+    "locations": [
+      "static/style-part1.css:1824",
+      "static/style-part1.css:2833",
+      "static/style-part1.css:2957",
+      "static/style-part1.css:3026",
+      "static/style-part1.css:3098",
+      "static/style-part2.css:407",
+      "static/style-part2.css:526",
+      "static/style-part2.css:735",
+      "static/style-part2.css:1215",
+      "static/style-part2.css:1766",
+      "static/style-part2.css:1816",
+      "static/style-part2.css:3387",
+      "static/style-part3.css:207",
+      "static/style-part3.css:354",
+      "static/style-part3.css:361",
+      "static/style-part3.css:417",
+      "static/style-part3.css:422",
+      "static/style-part3.css:516",
+      "static/style-part3.css:1289",
+      "static/style-part3.css:1460",
+      "static/style-part3.css:1958",
+      "static/style-part3.css:1977",
+      "static/style-part3.css:3018",
+      "static/style-part4.css:1222",
+      "static/style-part4.css:2032",
+      "static/style-part4.css:2033",
+      "static/style-part4.css:2251",
+      "static/style-part4.css:2345",
+      "static/style-part4.css:2352",
+      "static/style-part4.css:2416",
+      "static/style-part4.css:2512",
+      "static/style-part4.css:2751",
+      "static/style-part4.css:2883",
+      "static/style-part4.css:3147",
+      "static/style-part4.css:3189",
+      "static/style-part4.css:3277 [comment]",
+      "static/style-part4.css:3386",
+      "static/ui-kit.css:2065",
+      "static/ui-kit.css:2100",
+      "static/ui-kit.css:2211",
+      "static/ui-kit.css:2732",
+      "static/ui-kit.css:3072",
+      "static/ui-kit.css:3089",
+      "static/ui-kit.css:3126",
+      "static/ui-kit.css:3127",
+      "static/ui-kit.css:3133"
+    ]
+  }
+]

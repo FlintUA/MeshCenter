@@ -3266,7 +3266,13 @@ body[data-theme="dark"] .waypoint-action-toast.error {
 /* Telemetry stat cards (#telemetryCards inside #telemetryModal) - no
    existing dark coverage for .telemetry-card, so this follows the
    #timeCard pattern (~line 14683: bg #172638, border #263c52, text
-   #e5eff8 primary / #9eb3c8 muted). */
+   #e5eff8 primary / #9eb3c8 muted).
+   theme-registry Stage 1.5a: all four values re-checked against every
+   current dark --mc-* token, none are an exact match, so left raw -
+   candidates for a dedicated telemetry-token set in Stage 3.1. Note for
+   Stage 1.5b: this border-color (#263c52) is the same literal
+   chat-telemetry.js uses for the chart tooltip's dark borderColor - not
+   tokenized here (no exact match), so nothing for 1.5b to align to yet. */
 [data-theme="dark"] .telemetry-card {
     background: #172638;
     border-color: #263c52;
@@ -3284,7 +3290,10 @@ body[data-theme="dark"] .waypoint-action-toast.error {
    so the surrounding well needs its own dark background instead of the
    light-mode #f0f2f5. Slightly darker than the .telemetry-card bg
    (#172638) so the cards and chart don't visually merge into one flat
-   surface, but still clearly not black. */
+   surface, but still clearly not black.
+   theme-registry Stage 1.5a: both values re-checked against every current
+   dark --mc-* token, no exact match (background #1a2535 is closest to
+   --mc-bg-panel #1b2837, off by 1-3 per channel, not equal), left raw. */
 [data-theme="dark"] .telemetry-chart-container {
     background: #1a2535;
     border-color: #263c52;
@@ -3304,7 +3313,10 @@ body[data-theme="dark"] .waypoint-action-toast.error {
    Verified live via DevTools computed styles on the dev node before and
    after: modal bg was rgb(255,255,255) unconditionally, is now
    rgb(27,45,64) in dark theme, and header/close text (already
-   rgb(244,248,252)/rgb(169,190,209)) reads correctly against it. */
+   rgb(244,248,252)/rgb(169,190,209)) reads correctly against it.
+   theme-registry Stage 1.5a: #1b2d40 re-checked against every current
+   dark --mc-* token, no exact match (--mc-bg-panel #1b2837 is closest,
+   R matches but G/B are off by 5/9), left raw. */
 [data-theme="dark"] .modal-overlay.telemetry-modal .modal-content {
     background: #1b2d40;
 }
@@ -3327,7 +3339,11 @@ body[data-theme="dark"] .waypoint-action-toast.error {
    dark" colors (#263b50/#dbe8f5/#415a72, #304a62 hover - see
    [data-theme="dark"] .modal-action-btn:not(.danger) a few lines up)
    instead of inventing new ones, for consistency with every other
-   secondary button already dark-themed in this file. */
+   secondary button already dark-themed in this file.
+   theme-registry Stage 1.5a: every value here re-checked against the
+   current dark --mc-* tokens (including --mc-button-secondary-bg/-text/
+   -border, the family this comment's own "secondary button on dark"
+   colors predate), no exact match for any of them, left raw. */
 [data-theme="dark"] .telemetry-export-btn {
     background: #263b50;
     color: #dbe8f5;

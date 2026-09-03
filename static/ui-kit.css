@@ -1053,10 +1053,6 @@ html[data-theme="dark"] body {
 
 html[data-theme="dark"] .app-container,
 html[data-theme="dark"] .main-layout,
-html[data-theme="dark"] .chat-area,
-html[data-theme="dark"] .chat-header,
-html[data-theme="dark"] .chat-list-container,
-html[data-theme="dark"] .messages-view,
 html[data-theme="dark"] .video-panel,
 html[data-theme="dark"] .media-panel,
 html[data-theme="dark"] .system-panel,
@@ -1067,13 +1063,23 @@ html[data-theme="dark"] .sidebar {
     color: #dbe5f1;
 }
 
+/* Chat/messages domain (theme-registry Stage 1.1): tokenized instead of
+   the raw hex above so the chat workspace shares the --mc-chat-* surface
+   family with the rest of the chat rules further down this file. */
+html[data-theme="dark"] .chat-area,
+html[data-theme="dark"] .chat-header,
+html[data-theme="dark"] .chat-list-container,
+html[data-theme="dark"] .messages-view {
+    background-color: var(--mc-chat-bg);
+    color: var(--mc-chat-text);
+}
+
 html[data-theme="dark"] .base-card,
 html[data-theme="dark"] .sensors-card,
 html[data-theme="dark"] .telemetry-section,
 html[data-theme="dark"] .weather-card,
 html[data-theme="dark"] .base-reference-location,
 html[data-theme="dark"] .node-card,
-html[data-theme="dark"] .chat-item,
 html[data-theme="dark"] .settings-card,
 html[data-theme="dark"] .system-card {
     background-color: #202a36;
@@ -1081,7 +1087,14 @@ html[data-theme="dark"] .system-card {
     color: #dbe5f1;
 }
 
-html[data-theme="dark"] .chat-title,
+/* Chat list row (theme-registry Stage 1.1) - matches the tokens the later,
+   higher-specificity !important rule for .chat-item already uses. */
+html[data-theme="dark"] .chat-item {
+    background-color: var(--mc-bg-panel);
+    border-color: var(--mc-border);
+    color: var(--mc-text-primary);
+}
+
 html[data-theme="dark"] .workspace-page-title,
 html[data-theme="dark"] .base-card-title,
 html[data-theme="dark"] .sensors-title,
@@ -1090,12 +1103,19 @@ html[data-theme="dark"] .weather-card-title {
     color: #edf4fb;
 }
 
-html[data-theme="dark"] .chat-subtitle,
+html[data-theme="dark"] .chat-title {
+    color: var(--mc-chat-text);
+}
+
 html[data-theme="dark"] .workspace-page-subtitle,
 html[data-theme="dark"] .sensor-label,
-html[data-theme="dark"] .node-meta,
-html[data-theme="dark"] .message-time {
+html[data-theme="dark"] .node-meta {
     color: #96a6b8;
+}
+
+html[data-theme="dark"] .chat-subtitle,
+html[data-theme="dark"] .message-time {
+    color: var(--mc-chat-muted);
 }
 
 html[data-theme="dark"] input,
@@ -1658,18 +1678,26 @@ html[data-theme="dark"] :is(
 }
 
 html[data-theme="dark"] :is(
-    .chat-item:hover, .node-card:hover,
+    .node-card:hover,
     .about-resource-card:hover
 ) {
     background: #233346 !important;
 }
 
+html[data-theme="dark"] .chat-item:hover {
+    background: var(--mc-chat-surface-raised) !important;
+}
+
 html[data-theme="dark"] :is(
-    .chat-item.active, .chat-item.selected,
     .node-card.active, .node-card.selected
 ) {
     background: #263e58 !important;
     border-color: #66a8ff !important;
+}
+
+html[data-theme="dark"] :is(.chat-item.active, .chat-item.selected) {
+    background: var(--mc-primary-soft) !important;
+    border-color: var(--mc-border-active) !important;
 }
 
 /* Inputs, selectors and table-like rows */
@@ -1927,13 +1955,13 @@ html[data-theme="dark"] .message.rx .bubble {
 }
 
 html[data-theme="dark"] .message.rx .bubble .sender {
-    color: #8fc5ff !important;
+    color: var(--mc-primary-hover) !important;
 }
 
 html[data-theme="dark"] .message.system .bubble {
-    background: #273140 !important;
-    color: #d8e2ed !important;
-    border-color: #3b4858 !important;
+    background: var(--mc-surface-2) !important;
+    color: var(--mc-text-secondary) !important;
+    border-color: var(--mc-chat-border) !important;
 }
 
 html[data-theme="dark"] .bubble .time,
@@ -1943,7 +1971,7 @@ html[data-theme="dark"] .message-time {
 
 /* Composer: slightly lighter than the chat canvas, with a subdued frame. */
 html[data-theme="dark"] .input-area {
-    background: #142130 !important;
+    background: var(--mc-chat-surface) !important;
     border-top-color: var(--mc-chat-border) !important;
 }
 
@@ -1951,19 +1979,19 @@ html[data-theme="dark"] .input-form input[type="text"],
 html[data-theme="dark"] .message-input {
     background: var(--mc-chat-input) !important;
     color: var(--mc-chat-text) !important;
-    border-color: #36506a !important;
+    border-color: var(--mc-dark-control-border) !important;
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
 }
 
 html[data-theme="dark"] .input-form input[type="text"]::placeholder,
 html[data-theme="dark"] .message-input::placeholder {
-    color: #8fa3b8 !important;
+    color: var(--mc-text-muted) !important;
 }
 
 html[data-theme="dark"] .input-form input[type="text"]:focus,
 html[data-theme="dark"] .message-input:focus {
-    background: #203247 !important;
-    border-color: #4ea1ff !important;
+    background: var(--mc-chat-surface-raised) !important;
+    border-color: var(--mc-border-focus) !important;
     box-shadow: 0 0 0 2px rgba(78, 161, 255, 0.16) !important;
 }
 
@@ -2454,25 +2482,25 @@ html[data-theme="dark"] .camera-loading-title {
    Exact classes used by renderChatItem() in static/chat.js.
    ========================================================== */
 html[data-theme="dark"] .chat-item .chat-name {
-    color: #f4f8ff !important;
+    color: var(--mc-chat-text) !important;
     font-weight: 700 !important;
 }
 
 html[data-theme="dark"] .chat-item .chat-last-msg,
 html[data-theme="dark"] .chat-item .chat-last-sender,
 html[data-theme="dark"] .chat-item .chat-last-text {
-    color: #aebed0 !important;
+    color: var(--mc-chat-muted) !important;
 }
 
 html[data-theme="dark"] .chat-item.selected .chat-last-sender,
 html[data-theme="dark"] .chat-item.selected .chat-last-text,
 html[data-theme="dark"] .chat-item.active .chat-last-sender,
 html[data-theme="dark"] .chat-item.active .chat-last-text {
-    color: #c9d7e6 !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 html[data-theme="dark"] .chat-item .chat-time {
-    color: #9fb0c2 !important;
+    color: var(--mc-chat-muted) !important;
 }
 
 

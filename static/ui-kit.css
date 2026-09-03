@@ -1079,12 +1079,19 @@ html[data-theme="dark"] .sensors-card,
 html[data-theme="dark"] .telemetry-section,
 html[data-theme="dark"] .weather-card,
 html[data-theme="dark"] .base-reference-location,
-html[data-theme="dark"] .node-card,
 html[data-theme="dark"] .settings-card,
 html[data-theme="dark"] .system-card {
     background-color: #202a36;
     border-color: #364253;
     color: #dbe5f1;
+}
+
+/* Node card (theme-registry Stage 1.2) - matches the tokens the later,
+   higher-specificity !important rule for .node-card already uses. */
+html[data-theme="dark"] .node-card {
+    background-color: var(--mc-bg-panel);
+    border-color: var(--mc-border);
+    color: var(--mc-text-primary);
 }
 
 /* Chat list row (theme-registry Stage 1.1) - matches the tokens the later,
@@ -1677,22 +1684,21 @@ html[data-theme="dark"] :is(
     color: var(--mc-text-primary) !important;
 }
 
-html[data-theme="dark"] :is(
-    .node-card:hover,
-    .about-resource-card:hover
-) {
+html[data-theme="dark"] .about-resource-card:hover {
     background: #233346 !important;
+}
+
+html[data-theme="dark"] .node-card:hover {
+    background: var(--mc-surface-2) !important;
 }
 
 html[data-theme="dark"] .chat-item:hover {
     background: var(--mc-chat-surface-raised) !important;
 }
 
-html[data-theme="dark"] :is(
-    .node-card.active, .node-card.selected
-) {
-    background: #263e58 !important;
-    border-color: #66a8ff !important;
+html[data-theme="dark"] :is(.node-card.active, .node-card.selected) {
+    background: var(--mc-primary-soft) !important;
+    border-color: var(--mc-border-active) !important;
 }
 
 html[data-theme="dark"] :is(.chat-item.active, .chat-item.selected) {
@@ -2277,7 +2283,7 @@ html[data-theme="dark"] .node-details-panel .node-title{
 /* Dark theme - node card titles (right panel and selected node header) */
 html[data-theme="dark"] .node-card-topline .node-card-title,
 html[data-theme="dark"] .node-card .node-card-title {
-    color: #f4f8ff !important;
+    color: var(--mc-text-primary) !important;
     font-weight: 700 !important;
     text-shadow: none !important;
 }

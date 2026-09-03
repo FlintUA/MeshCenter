@@ -2354,6 +2354,9 @@ html[data-theme="dark"] .node-info-panel {
     box-shadow: 0 3px 10px rgba(0, 0, 0, .24);
 }
 
+/* raw: sensors/telemetry card accent stripe + battery indicator frame
+   (theme-registry Stage 1.5a) - no exact --mc-* match yet, candidate for
+   a dedicated telemetry-token set in Stage 3.1. */
 body[data-theme="dark"] .node-info-panel > .sensors-card::before,
 body[data-theme="dark"] .node-info-panel > .telemetry-section::before,
 html[data-theme="dark"] .node-info-panel > .sensors-card::before,
@@ -2527,6 +2530,13 @@ html[data-theme="dark"] .node-info-panel .battery-indicator {
     font-size: 11px;
 }
 
+/* raw: sensor-grid item chrome + battery runtime text (theme-registry
+   Stage 1.5a) - no exact --mc-* match yet, candidate for a dedicated
+   telemetry-token set in Stage 3.1. (.sensor-label/.sensor-value/
+   .sensor-unit's color contribution here is shadowed by a later,
+   equal-specificity rule further down this file - also checked, also no
+   exact match - .battery-runtime-row/.battery-runtime-value are not
+   repeated there and stay live from here.) */
 body[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-item,
 html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-item {
     border-color: #334a61;
@@ -2765,6 +2775,8 @@ html[data-theme="dark"] .settings-number-input {
     display: none !important;
 }
 
+/* raw: same #334a61/#1c2e41 pair as .sensor-item above - no exact --mc-*
+   match, see that comment. */
 body[data-theme="dark"] .node-telemetry-surface,
 html[data-theme="dark"] .node-telemetry-surface {
     border-color: #334a61;
@@ -2778,6 +2790,9 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-item:nth-chi
     border-color: #334a61;
 }
 
+/* raw: battery bar track + scale labels (theme-registry Stage 1.5a) - no
+   exact --mc-* match yet, candidate for a dedicated telemetry-token set
+   in Stage 3.1. */
 body[data-theme="dark"] .battery-bar,
 html[data-theme="dark"] .battery-bar {
     background: #34485a;
@@ -3063,6 +3078,11 @@ html[data-theme="dark"] .base-node-avatar {
     line-height: 1.15;
 }
 
+/* raw: this is the winning declaration for .sensor-label/-value/-unit
+   text color (equal specificity, later in cascade than the earlier block
+   near line 2539 - that one is shadowed for these three selectors).
+   Checked against every dark --mc-* token, no exact match, candidate for
+   Stage 3.1. */
 body[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-label,
 html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-label {
     color: #9eb5c9;

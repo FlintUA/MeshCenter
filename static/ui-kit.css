@@ -1075,14 +1075,25 @@ html[data-theme="dark"] .messages-view {
 }
 
 html[data-theme="dark"] .base-card,
-html[data-theme="dark"] .sensors-card,
-html[data-theme="dark"] .telemetry-section,
 html[data-theme="dark"] .weather-card,
 html[data-theme="dark"] .base-reference-location,
 html[data-theme="dark"] .settings-card,
 html[data-theme="dark"] .system-card {
     background-color: #202a36;
     border-color: #364253;
+    color: #dbe5f1;
+}
+
+/* Sensors/telemetry card (theme-registry Stage 1.5a). Background and text
+   were checked against every dark --mc-* token, no exact match - left raw.
+   Border-color IS an exact match for --mc-workspace-header-border, so
+   that one's tokenized even though the token's own name suggests a
+   different original use case (a workspace header, not a sensor card);
+   flagged in the Stage 1.5a report rather than left uncommented. */
+html[data-theme="dark"] .sensors-card,
+html[data-theme="dark"] .telemetry-section {
+    background-color: #202a36;
+    border-color: var(--mc-workspace-header-border);
     color: #dbe5f1;
 }
 

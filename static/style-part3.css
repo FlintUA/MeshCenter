@@ -2559,6 +2559,12 @@ html[data-theme="dark"] .battery-runtime-value {
     color: #f2f7fb;
 }
 
+/* Dead code (theme-registry Stage 1.8, confirmed via computed styles).
+   Same mechanism as .settings-select in ui-kit.css: no !important here,
+   and ui-kit.css's generic html[data-theme="dark"] :is(input, select,
+   textarea, .message-input) rule (!important) matches this <input> too,
+   at equal-or-higher specificity, and always wins. Not deleted, out of
+   scope to clean up. */
 body[data-theme="dark"] .settings-number-input,
 html[data-theme="dark"] .settings-number-input {
     border-color: #334a61;

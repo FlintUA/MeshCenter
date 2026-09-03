@@ -3015,7 +3015,7 @@ body {
 }
 
 html[data-theme="dark"] .settings-card-note--warning {
-    color: #f0c86a;
+    color: var(--mc-warning);
 }
 
 .telemetry-export-menu {

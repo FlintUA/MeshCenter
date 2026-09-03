@@ -1192,6 +1192,12 @@
     line-height: 1.4;
     overflow-wrap: anywhere;
 }
+/* raw: MeshCenter Instance card radio-identity status colors
+   (theme-registry Stage 1.8) - no exact --mc-* match for any of the
+   three (closest: match #86efac vs --mc-success #72d69a, off by 63 sum;
+   mismatch #fcd34d vs --mc-warning #f0c86a, off by 52 sum; error #fca5a5
+   vs --mc-danger #ff7b85, off by 77 sum - none close), candidates for
+   Stage 3.1. */
 body[data-theme="dark"] .identity-match,
 html[data-theme="dark"] .identity-match { color: #86efac; }
 body[data-theme="dark"] .identity-mismatch,
@@ -3460,6 +3466,14 @@ body[data-theme="dark"] .waypoint-action-toast.error {
 [data-theme="dark"] .export-time-sep {
     color: #9eb3c8;
 }
+/* raw: Updates card (theme-registry Stage 1.8) - checked every value
+   below against the current dark --mc-* tokens, no exact match for any
+   (nearest misses, sum of per-channel diffs: #9eb3c8 vs --mc-popover-muted
+   #9fb0c3 = 9; #e5eff8 vs --mc-button-secondary-text #eef6ff = 23;
+   #d9e7f5 vs same = 46; #c3d3e2 vs --mc-text-secondary #c3d1df = 5;
+   #16283a vs --mc-bg-panel #1b2837 = 8; #0f1c2a vs --mc-bg-workspace
+   #111c29 = 3), candidates for a dedicated Settings/System-token set in
+   Stage 3.1. */
 [data-theme="dark"] .updates-version-row {
     color: #9eb3c8;
 }
@@ -4028,7 +4042,24 @@ body[data-theme="dark"] .waypoint-action-toast.error {
    override (body/html[data-theme=dark] .node-info-panel, ~line 9501):
    bg #172638, border #263c52, shadow rgba(0,0,0,.24). Text colors reuse
    this same section's existing schedule/timer dark convention
-   (#e5eff8 primary, #9eb3c8 muted) rather than inventing new ones. */
+   (#e5eff8 primary, #9eb3c8 muted) rather than inventing new ones.
+   theme-registry Stage 1.8: #172638/#263c52 are the same literals already
+   checked (no exact --mc-* match) for .telemetry-card in Stage 1.5a - not
+   re-derived here, same conclusion applies. Every other raw value in this
+   Time/Schedules/Timer block below was checked individually against the
+   current dark --mc-* tokens - no exact match for any of them (they all
+   reuse this section's own two established shades, per the comment
+   above, rather than drifting into new one-off colors, which is at least
+   internally consistent even without a shared token yet). Candidates for
+   a dedicated Settings/System-token set in Stage 3.1.
+   .schedule-form-error's #ff9299 is the same non-matching value already
+   checked for the notification-error icon in Stage 1.7 (still not an
+   exact match for --mc-danger #ff7b85). .schedule-modal-footer's
+   border-top-color #344b61 is the same value already checked for
+   .modal-header's border-bottom-color in Stage 1.7 (also no match) -
+   consistent reuse of Stage 1.7's modal chrome color, as expected for a
+   modal built on the same .modal-overlay/.modal-content base; nothing
+   schedule/timer-specific to newly document there. */
 body[data-theme="dark"] #timeCard,
 html[data-theme="dark"] #timeCard {
     border-color: #263c52;

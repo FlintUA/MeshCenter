@@ -1,24 +1,44 @@
 #!/usr/bin/env python3
-"""Theme-registry contract validator (theme-registry tooling PR 1).
+"""Theme-registry contract validator (theme-registry tooling PR 1; group
+membership made mode-aware and alias-exclusion-aware in PR 2/Stage 9.1 -
+see the note at the bottom of this docstring).
 
 Checks a structural invariant of MeshCenter's family theme layer
-(`html[data-theme-family="..."]` blocks in static/ui-kit.css): the
---mc-chat-*, --mc-tab-* and --mc-popover-* token groups are each meant to
-be an all-or-nothing unit per family variant. This is exactly the bug
-pattern found in Stage 1.1 - a family block redeclared some tokens in a
-group but not others, so the family ended up with a mismatched mix of its
-own leaf colors and the *other* mode's canonical value for the tokens it
-forgot, because the missing tokens still cascade in from :root / the
-canonical html[data-theme="dark"] block.
+(`html[data-theme-family="..."]` blocks in static/ui-kit.css): for each of
+the --mc-chat-*, --mc-tab-* and --mc-popover-* token groups, a family
+should never redeclare *some* of a group's still-literal (non-aliased)
+tokens while leaving others of them on the canonical literal - that
+mismatch is the real bug shape (a family's own leaf color sitting next to
+whatever the *other* mode's canonical value happened to be, because the
+forgotten token was never migrated to a var() alias and never got its own
+family override either).
+
+A token that the canonical block already resolves via `var(--mc-<base>)`
+doesn't belong in that completeness check at all: it automatically follows
+whichever base token the family overrides (or doesn't), with no risk of
+the mismatch above - a family is free to add its own override for an
+already-aliased token (to deliberately diverge from the alias) without
+that counting toward "did you cover the whole group."
 
 Three outcomes per (family variant, group):
-  - family overrides ZERO tokens in the group -> informational only. This
-    is the normal, expected shape for most families (they rely on the
-    alias chain instead, e.g. --mc-chat-bg: var(--mc-bg-workspace)) - not
-    a violation.
-  - family overrides SOME but not ALL tokens in the group -> hard
-    violation (exit 1). This is the Stage 1.1 pattern.
-  - family overrides ALL tokens in the group -> clean, no flag.
+  - family overrides ZERO of the group's still-literal tokens ->
+    informational only. Normal/expected when a family relies entirely on
+    the alias chain for that group (e.g. --mc-chat-bg: var(--mc-bg-
+    workspace)) - not a violation.
+  - family overrides SOME but not ALL of the group's still-literal tokens
+    -> hard violation (exit 1). This is the bug pattern.
+  - family overrides ALL of the group's still-literal tokens (or the group
+    has zero still-literal tokens for that family's mode) -> clean, no flag.
+
+Mode-aware: --mc-tab-line-active, for example, is a var() alias in the
+canonical *light* block but a literal in the canonical *dark* block (an
+intentional asymmetry - see static/ui-kit.css's own Stage 9.1 comments).
+So the "must be all-or-nothing" token set for a light-mode family (Sharp,
+Teal Light) is computed against :root; for a dark-mode family (Gunmetal,
+Alpine, Teal Dark), against html[data-theme="dark"]. Family-to-mode
+mapping mirrors static/chat.js's WORKSPACE_THEME_FAMILIES (Sharp: light,
+Gunmetal/Alpine: dark, Teal: whichever half its own selector already
+names).
 
 Usage:
     python contract_validator.py [<path-to-ui-kit.css>]
@@ -34,15 +54,27 @@ DEFAULT_CSS = REPO_ROOT / "static" / "ui-kit.css"
 
 GROUP_PREFIXES = ("--mc-chat-", "--mc-tab-", "--mc-popover-")
 
-# Matches the family variant selector blocks. Each is a plain, flat
-# custom-property declaration block (no nested rules), so a simple
-# brace-balanced regex is sufficient - these files don't nest rules
-# inside data-theme-family blocks.
+# Tokens deliberately excluded from the "must be all-or-nothing" contract
+# even though their name matches a group prefix and they're still a
+# canonical literal. --mc-popover-shadow (theme-registry Stage 9.1): a
+# shadow's blur/spread/alpha reads as elevation, not family hue - decided
+# to stay a shared literal in both canonical blocks with no family needing
+# its own value, the same kind of documented, deliberate exception as
+# --mc-chat-unread-* (which doesn't need listing here - it's simply absent
+# from the dark canonical block entirely, and no family currently
+# overrides any of it in light, so it never triggers a violation).
+EXCLUDED_FROM_GROUP_CONTRACT = {"--mc-popover-shadow"}
+
+# Fixed-mode families that don't carry [data-theme="..."] in their own
+# selector (see static/ui-kit.css's own family-block comments for why:
+# WORKSPACE_THEME_FAMILIES gives each a fixed mode instead).
+FIXED_FAMILY_MODE = {"sharp": "light", "gunmetal": "dark", "alpine": "dark"}
+
 FAMILY_SELECTOR_RE = re.compile(
     r'html\[data-theme-family="([a-z0-9_-]+)"\]'
     r'(\[data-theme="(dark|light)"\])?'
 )
-CUSTOM_PROP_RE = re.compile(r'(--[\w-]+)\s*:')
+DECL_RE = re.compile(r'(--[\w-]+)\s*:\s*([^;]+);')
 
 
 def strip_comment_spans(text: str) -> str:
@@ -97,21 +129,27 @@ def find_top_level_blocks(text: str):
         i += 1
 
 
-def canonical_group_tokens(root_body: str) -> dict:
-    """token-name -> group-prefix for every --mc-chat-*/--mc-tab-*/
-    --mc-popover-* token declared in the canonical :root block."""
+def canonical_literal_group_tokens(canonical_body: str) -> dict:
+    """token-name -> group-prefix, for every --mc-chat-*/--mc-tab-*/
+    --mc-popover-* token declared in a canonical block (:root or
+    html[data-theme="dark"]) whose OWN value is not itself a var() alias -
+    i.e. the tokens that still carry their own literal and therefore still
+    need every family (of the matching mode) to either fully cover the
+    group or rely on the alias chain, group by group."""
     tokens = {}
-    for m in CUSTOM_PROP_RE.finditer(root_body):
-        name = m.group(1)
+    for m in DECL_RE.finditer(canonical_body):
+        name, value = m.group(1), m.group(2).strip()
+        if name in EXCLUDED_FROM_GROUP_CONTRACT:
+            continue
         for prefix in GROUP_PREFIXES:
-            if name.startswith(prefix):
+            if name.startswith(prefix) and not value.startswith("var("):
                 tokens[name] = prefix
                 break
     return tokens
 
 
 def family_declared_tokens(body: str) -> set:
-    return {m.group(1) for m in CUSTOM_PROP_RE.finditer(body)}
+    return {m.group(1) for m in DECL_RE.finditer(body)}
 
 
 def main(argv: list[str]) -> int:
@@ -119,38 +157,52 @@ def main(argv: list[str]) -> int:
     text = css_path.read_text(encoding="utf-8")
     clean = strip_comment_spans(text)
 
-    root_body = None
-    family_blocks = []  # (variant_label, body, line)
+    light_body = None
+    dark_body = None
+    family_blocks = []  # (variant_label, mode, body, line)
     for selector, body, line in find_top_level_blocks(clean):
         if selector == ":root":
-            # First :root block is the canonical light block; later
-            # ones (if any) are not - ui-kit.css only has one.
-            if root_body is None:
-                root_body = body
+            if light_body is None:
+                light_body = body
+            continue
+        if selector == 'html[data-theme="dark"]':
+            if dark_body is None:
+                dark_body = body
             continue
         m = FAMILY_SELECTOR_RE.fullmatch(selector)
         if m:
             family_id = m.group(1)
-            mode = m.group(3)
-            label = f'{family_id}[{mode}]' if mode else family_id
-            family_blocks.append((label, body, line))
+            mode = m.group(3) or FIXED_FAMILY_MODE.get(family_id)
+            label = f'{family_id}[{mode}]' if m.group(3) else family_id
+            family_blocks.append((label, mode, body, line))
 
-    if root_body is None:
+    if light_body is None:
         print(f"error: no :root block found in {css_path}", file=sys.stderr)
+        return 2
+    if dark_body is None:
+        print(f'error: no html[data-theme="dark"] block found in {css_path}', file=sys.stderr)
         return 2
     if not family_blocks:
         print(f"error: no html[data-theme-family=...] blocks found in {css_path}", file=sys.stderr)
         return 2
 
-    group_tokens = canonical_group_tokens(root_body)
-    groups = {}
-    for name, prefix in group_tokens.items():
-        groups.setdefault(prefix, set()).add(name)
+    light_group_tokens = canonical_literal_group_tokens(light_body)
+    dark_group_tokens = canonical_literal_group_tokens(dark_body)
+
+    def groups_for(mode):
+        source = light_group_tokens if mode == "light" else dark_group_tokens
+        groups = {}
+        for name, prefix in source.items():
+            groups.setdefault(prefix, set()).add(name)
+        return groups
 
     violations = []
     informational = []
+    all_prefixes_seen = set()
 
-    for label, body, line in family_blocks:
+    for label, mode, body, line in family_blocks:
+        groups = groups_for(mode)
+        all_prefixes_seen.update(groups.keys())
         declared = family_declared_tokens(body)
         for prefix, all_tokens in groups.items():
             overridden = declared & all_tokens
@@ -160,27 +212,30 @@ def main(argv: list[str]) -> int:
                 missing = sorted(all_tokens - overridden)
                 violations.append((label, prefix, line, sorted(overridden), missing))
 
-    print(f"Checked {len(family_blocks)} family variant(s) against {len(groups)} "
-          f"token group(s) ({', '.join(sorted(p.strip('-') for p in groups))}) "
-          f"from {css_path}.\n")
+    print(f"Checked {len(family_blocks)} family variant(s) against "
+          f"{', '.join(sorted(p.strip('-') for p in all_prefixes_seen)) or '(no still-literal groups)'} "
+          f"token group(s) (mode-aware, alias-excluded) from {css_path}.\n")
 
     if informational:
-        print(f"Informational - zero overrides in group (expected/normal, relies on alias chain):")
+        print("Informational - zero overrides of the group's still-literal tokens "
+              "(expected/normal, relies on the alias chain and/or the group has no "
+              "still-literal tokens left for this family's mode):")
         for label, prefix, line in informational:
             print(f"  {label} (line {line}): no {prefix}* overrides")
         print()
 
     if violations:
-        print(f"VIOLATIONS - partial group override ({len(violations)}):\n")
+        print(f"VIOLATIONS - partial override of a group's still-literal tokens ({len(violations)}):\n")
         for label, prefix, line, overridden, missing in violations:
-            print(f"  {label} (line {line}): partially overrides {prefix}*")
+            print(f"  {label} (line {line}): partially overrides {prefix}* (still-literal tokens only)")
             print(f"    overridden ({len(overridden)}): {', '.join(overridden)}")
             print(f"    missing    ({len(missing)}): {', '.join(missing)}")
-            print(f"    -> either override the rest of the group, or remove these overrides "
-                  f"and rely on the alias chain like the family's other groups.")
+            print(f"    -> either override the rest of the group's still-literal tokens, or "
+                  f"remove these overrides and rely on the alias chain like the family's other groups.")
         return 1
 
-    print("OK: no family partially overrides a --mc-chat-*/--mc-tab-*/--mc-popover-* group.")
+    print("OK: no family partially overrides a --mc-chat-*/--mc-tab-*/--mc-popover-* "
+          "group's still-literal tokens.")
     return 0
 
 

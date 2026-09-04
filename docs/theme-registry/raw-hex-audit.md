@@ -28,6 +28,7 @@ So every live declaration found in the 5 files is a **product UI color** — eit
 | `semantic-status-candidate` | 41 | Semantic status color (success/warning/danger/info) — normalization candidate, maps to a semantic token |
 | `mixed:semantic-status-candidate+ui-normalization-candidate` | 16 | Mixed — same HEX reused as both a semantic-status color and a general surface color at different sites |
 | `ui-normalization-candidate` | 911 | General product UI color (surface/text/border/shadow/gradient) — normalization candidate |
+| `theme-family-token-value` | 14 | *(added Stage 4.1, not part of the Stage 0 baseline — see the addendum section at the end of this doc)* Canonical `--mc-*` token value for a non-Original theme family — this HEX **is** the token's declared value, not raw color leaking into component CSS |
 
 ## Full registry (grouped by HEX value)
 
@@ -1021,3 +1022,34 @@ _911 unique values_
 | `#FFF9EA` | 1 | static/style-part3.css:1311 |
 | `#FFFAF0` | 1 | static/style-part2.css:1269 |
 | `#FFFFFF` | 46 | static/style-part1.css:1824, static/style-part1.css:2833, static/style-part1.css:2957, static/style-part1.css:3026, static/style-part1.css:3098, static/style-part2.css:407, static/style-part2.css:526, static/style-part2.css:735, static/style-part2.css:1215, static/style-part2.css:1766, static/style-part2.css:1816, static/style-part2.css:3387, static/style-part3.css:207, static/style-part3.css:354, static/style-part3.css:361, static/style-part3.css:417, static/style-part3.css:422, static/style-part3.css:516, static/style-part3.css:1289, static/style-part3.css:1460, static/style-part3.css:1958, static/style-part3.css:1977, static/style-part3.css:3018, static/style-part4.css:1222, static/style-part4.css:2032, static/style-part4.css:2033, static/style-part4.css:2251, static/style-part4.css:2345, static/style-part4.css:2352, static/style-part4.css:2416, static/style-part4.css:2512, static/style-part4.css:2751, static/style-part4.css:2883, static/style-part4.css:3147, static/style-part4.css:3189, static/style-part4.css:3277 [comment], static/style-part4.css:3386, static/ui-kit.css:2065, static/ui-kit.css:2100, static/ui-kit.css:2211, static/ui-kit.css:2732, static/ui-kit.css:3072, static/ui-kit.css:3089, static/ui-kit.css:3126, static/ui-kit.css:3127, static/ui-kit.css:3133 |
+
+## Addendum (Stage 4.1) — theme-family token values
+
+_Added by the theme-registry Stage 4.1 PR (MeshCenter Sharp), not part of the original 2026-09-03 Stage 0 baseline snapshot above — this is a separately-dated, ongoing addendum, not a regeneration of that baseline._
+
+The Stage 0 taxonomy (`semantic-status-candidate` / `ui-normalization-candidate` / the `mixed:` variant) predates any `--mc-*` tokens existing at all - it classifies *raw* HEX still leaking into component CSS that a later stage should migrate to a token. Starting with Stage 4 (new theme families - Sharp, Gunmetal, Alpine, Teal Dark, Teal Light), each stage's own PR introduces brand-new HEX values that are the opposite case: they *are* the canonical token declarations themselves (`html[data-theme-family="..."] { --mc-*: #... }`), plus their swatch-preview mirrors in the family picker CSS. Neither existing category fits, so this addendum uses a new `theme-family-token-value` verdict for them instead of force-fitting into `ui-normalization-candidate`.
+
+Stage 5-8 should follow the same pattern: add their own family's new leaf-token HEX values here under this same verdict (extending the table below, or adding a dated sub-section if the distinction between stages matters later) rather than re-litigating whether a new category is warranted.
+
+### Theme-family token value (Stage 4.1 - MeshCenter Sharp)
+
+_14 unique values_
+
+| HEX | Occurrences | Locations |
+|---|---|---|
+| `#087A57` | 2 | static/ui-kit.css:3395, static/ui-kit.css:3400 |
+| `#1E1E1E` | 1 | static/ui-kit.css:3399 |
+| `#2E2E2E` | 3 | static/ui-kit.css:992, static/ui-kit.css:3386, static/ui-kit.css:3398 |
+| `#4C4C4C` | 1 | static/ui-kit.css:3387 |
+| `#6B6B6B` | 1 | static/ui-kit.css:3388 |
+| `#777E82` | 1 | static/ui-kit.css:3394 |
+| `#B8B8B8` | 1 | static/ui-kit.css:3393 |
+| `#D9D9D9` | 1 | static/ui-kit.css:3392 |
+| `#D9FFF1` | 1 | static/ui-kit.css:3383 |
+| `#E0E2E3` | 1 | static/ui-kit.css:3380 |
+| `#E6E8E9` | 1 | static/ui-kit.css:3382 |
+| `#ECEEEF` | 2 | static/ui-kit.css:990, static/ui-kit.css:3377 |
+| `#F0F1F2` | 1 | static/ui-kit.css:3381 |
+| `#F5F6F7` | 1 | static/ui-kit.css:3378 |
+
+Not registered: `#4DFFBC` (Sharp's `accent-reference` role). It appears only inside the Stage 4.1 PR-description comment in `ui-kit.css` explaining why that role was left unmapped (no existing token reads a "large-fill-with-dark-content" role, and the source doc's design intent says mint must not become the primary button color) - it is not a declared value anywhere, so it does not belong in this registry. `check_new_hex.py --diff` will keep flagging it as a false positive on this branch specifically: its `--diff` mode strips single-line `/* */` comments only, and this explanatory comment spans multiple lines, so the mention isn't recognized as being inside a comment the way the whole-file mode (`check_new_hex.py static/ui-kit.css`, which handles multi-line comments correctly) does. Confirmed clean otherwise: whole-file mode reports 0 unregistered literals in `static/ui-kit.css` after this addendum.

@@ -3631,10 +3631,12 @@ html[data-theme="dark"] {
    same Stage 3.3 finding.
 
    Palette source: MeshCenterthemeregistryplanv0.1.md section 5/6/7/8.1/8.3
-   (owner-approved, hex values copied verbatim - do not adjust). Only the 21
-   surface/text/border/accent roles from that section are covered; state
-   colors (success/warning/danger/info) are Stage 4.2, deliberately left
-   unset here so they inherit the :root light values by cascade.
+   (owner-approved, hex values copied verbatim - do not adjust).
+
+   Stage 4.2 addendum: adds Sharp's two state-color exceptions (success,
+   danger - section 8.3). Warning and info get no Sharp exception and stay
+   unset, inheriting :root's light values by cascade, same as all four did
+   in 4.1.
 
    Source role -> --mc-* token mapping (source hex in comment where the
    role name doesn't make the value obvious):
@@ -3692,7 +3694,49 @@ html[data-theme="dark"] {
           is aliased into --mc-dark-control-border (ui-kit.css:3407) - i.e.
           the codebase already has a "control border" concept under that
           name, and it drives a real control (the secondary-button border,
-          style-part3.css:1745). Mapped border-control there. */
+          style-part3.css:1745). Mapped border-control there.
+
+   Stage 4.2 - state-color exceptions (success/danger). The source doc gives
+   4 values per state (foreground/base/surface/border); the actual tokens
+   are only 2 per state (--mc-success/-soft, --mc-danger/-soft). Grepped
+   every real consumer before deciding which source value lands where:
+
+   4) --mc-success/--mc-danger are read as TWO different visual roles at
+      different call sites, and only one leaf token exists to serve both:
+        - foreground/text: .status-online/-ready/-running/-ok/.text-success,
+          .status-offline/-error/.text-danger (ui-kit.css ~423-439),
+          .btn-danger's text + border-color (ui-kit.css:59-62), and the
+          dark-mode notification icon color (style-part3.css:3781/3783).
+          This is the majority of consumers, and it is a hard legibility
+          requirement, not a preference.
+        - base/fill: .node-detail-activity.activity-online/-offline
+          (style-part3.css:19-21) - a small 7x18px solid-color indicator
+          bar with no text on it, so any distinguishable hue works there.
+      Verified with contrast_check.py rather than assuming: the source
+      doc's Base value fails text contrast outright (success base #4dffbc
+      vs white = 1.28:1; danger base #ff4d4d vs white = 3.27:1, both below
+      the 4.5:1 AA text threshold), while Foreground passes comfortably on
+      both white and each state's own -soft surface (success fg #087a57 =
+      5.34:1 white / 4.97:1 on surface; danger fg #b42332 = 6.51:1 white /
+      5.60:1 on surface). Foreground is the only one of the two that works
+      for every consumer, so --mc-success/--mc-danger map to Foreground -
+      the one activity-bar consumer renders a darker, text-safe green/red
+      here instead of the source doc's literal vivid mint/red, a known,
+      deliberate miss rather than an oversight. --mc-success-soft/
+      --mc-danger-soft map cleanly to Surface (only ever used as a soft
+      background wash - .btn-danger's fill, .node-card.ignored,
+      .media-delete-all-btn).
+
+   5) Base (#4dffbc success / #ff4d4d danger) and Border (#16c98d success /
+      #e03a43 danger) have no existing token to land on, same category as
+      accent-reference in 4.1: --mc-danger already double-serves as both
+      text color AND .btn-danger's border-color (literally the same
+      declared value at that one call site, not a real per-role split in
+      current code), so there is no separate border token to override, and
+      Base's only real consumer needs text-safe contrast that Base itself
+      doesn't have (see above). Left both unmapped rather than inventing
+      unused tokens or forcing Base onto --mc-success/--mc-danger and
+      breaking every text-color consumer's legibility. */
 html[data-theme-family="sharp"] {
     /* Application surfaces */
     --mc-bg-app: #eceeef;
@@ -3719,5 +3763,12 @@ html[data-theme-family="sharp"] {
     --mc-primary: #2e2e2e;
     --mc-primary-hover: #1e1e1e;
     --mc-accent: #087a57;
+
+    /* Semantic states (Stage 4.2) - success/danger exceptions only; no
+       Sharp exception for warning/info, they inherit :root's light values. */
+    --mc-success: #087a57;
+    --mc-success-soft: #d9fff1;
+    --mc-danger: #b42332;
+    --mc-danger-soft: #ffe9e9;
 }
 

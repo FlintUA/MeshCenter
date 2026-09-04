@@ -95,12 +95,15 @@ body {
 }
 
 /* ===== CHAT AREA ===== */
+/* theme-registry Stage 2.1: chat/messages domain tokenized to --mc-*
+   (see the block-level notes below for the full mapping table and
+   judgment calls - documented once here, not repeated per rule). */
 .chat-area {
     display: flex;
     flex-direction: column;
     flex: 1;
     min-width: 0;
-    background: white;
+    background: var(--mc-chat-surface-raised);
 }
 
 /* ===== CHAT HEADER ===== */
@@ -108,8 +111,8 @@ body {
     display: flex;
     align-items: center;
     padding: 8px 12px;
-    background: white;
-    border-bottom: 1px solid #e5e8ec;
+    background: var(--mc-chat-surface-raised);
+    border-bottom: 1px solid var(--mc-border-soft);
     flex-shrink: 0;
     min-height: 48px;
     gap: 8px;
@@ -123,16 +126,23 @@ body {
 .chat-title {
     font-size: 16px;
     font-weight: 600;
-    color: #1a2a4a;
+    color: var(--mc-chat-text);
     display: block;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
+/* theme-registry Stage 2.1: #888 failed AA on white (3.54:1) - darkened
+   to --mc-chat-muted (5.09:1), which every other muted-text role in this
+   block already shares (chat-last-msg/-text, chat-section-title,
+   chat-time - all previously #888/#aaa, all previously failing or
+   borderline). --mc-text-muted (#8798ad) was checked and rejected: it
+   fails even worse (2.95:1) - a pre-existing issue in that token itself,
+   out of scope to fix here, just not used as the target. */
 .chat-subtitle {
     font-size: 11px;
-    color: #888;
+    color: var(--mc-chat-muted);
     display: block;
     white-space: nowrap;
     overflow: hidden;
@@ -146,6 +156,13 @@ body {
     flex-shrink: 0;
 }
 
+/* theme-registry Stage 2.1: #666 passes AA on white (5.74:1) already and
+   has no existing token within a safe distance (nearest is --mc-chat-muted
+   at RGB delta ~44, a real hue shift, not a near-duplicate) - left as-is
+   rather than forced. Same for the #f0f0f0 hover fill: no generic
+   "surface-hover" token exists anywhere in this codebase (confirmed
+   absent across every theme-family stage that checked), so per-component
+   hover colors like this one stay raw, consistent with that precedent. */
 .chat-actions-btn {
     background: none;
     border: none;
@@ -164,6 +181,8 @@ body {
 
 .chat-actions-btn:active { transform: scale(0.95); }
 
+/* theme-registry Stage 2.1: #4a5a7a passes AA on white (6.92:1), no close
+   existing token (nearest delta ~34, a real hue shift) - left as-is. */
 .back-btn {
     background: none;
     border: none;
@@ -173,7 +192,7 @@ body {
     color: #4a5a7a;
 }
 
-.back-btn:hover { color: #1a2a4a; }
+.back-btn:hover { color: var(--mc-chat-text); }
 
 /* ===== CHAT LIST ===== */
 .chat-list-container {
@@ -196,22 +215,40 @@ body {
     border-radius: 10px;
     cursor: pointer;
     transition: all 0.15s;
-    background: white;
+    background: var(--mc-chat-surface-raised);
     border: 1px solid transparent;
 }
 
+/* theme-registry Stage 2.1: #f0f4f8 was a 2/255-per-channel-average
+   near-duplicate of --mc-bg-muted (#eef3f8, already reused elsewhere for
+   icon/control chip backgrounds) - consolidated, imperceptible change.
+   Note (per the acceptance-criteria question): .chat-item:hover's own
+   translateX(2px) is a pre-existing geometry shift, same category as the
+   analogous node-card/favorite-card hover-shift findings already treated
+   as pre-existing/out-of-scope in every prior live-verification stage -
+   not touched here either, flagged rather than silently dropped. */
 .chat-item:hover {
-    background: #f0f4f8;
+    background: var(--mc-bg-muted);
     transform: translateX(2px);
 }
 
+/* theme-registry Stage 2.1: genuinely distinct "unread" role (new
+   --mc-chat-unread-* tokens, ui-kit.css :root - see that comment for why
+   no existing token fits). */
 .chat-item.has-unread {
-    background: #fafff5;
-    border-left: 3px solid #ff5722;
+    background: var(--mc-chat-unread-bg);
+    border-left: 3px solid var(--mc-chat-unread-accent);
 }
 
-.chat-item.has-unread:hover { background: #f5ffe8; }
+.chat-item.has-unread:hover { background: var(--mc-chat-unread-bg-hover); }
 
+/* theme-registry Stage 2.1: #e8ecf0 consolidated onto --mc-bg-muted
+   (same "icon/control chip background" role already established for
+   .media-sort-label/.media-icon-btn elsewhere), not --mc-bg-media-stage
+   despite an even closer numeric coincidence (delta ~2) - that token's
+   established role is the camera/video staging background, an unrelated
+   domain; reusing it here on name-coincidence alone would be the exact
+   "forced onto an unrelated token" mistake this stage was told to avoid. */
 .chat-icon {
     width: 36px;
     height: 36px;
@@ -221,9 +258,15 @@ body {
     justify-content: center;
     font-size: 18px;
     flex-shrink: 0;
-    background: #e8ecf0;
+    background: var(--mc-bg-muted);
 }
 
+/* theme-registry Stage 2.1: decorative per-type tints (channel vs. DM
+   avatar background) - checked against the token set, nearest matches
+   are border-role tokens that coincide numerically but not semantically
+   (reusing a border color as an icon fill would be a real, if subtle,
+   misuse), and no surface/accent token is both a close numeric AND
+   semantic fit for either. Left as raw hex rather than forced. */
 .chat-icon.channel { background: #d4e0f0; }
 .chat-icon.dm { background: #e8e0f0; }
 
@@ -235,7 +278,7 @@ body {
 .chat-name {
     font-weight: 500;
     font-size: 14px;
-    color: #1a2a4a;
+    color: var(--mc-chat-text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -243,7 +286,7 @@ body {
 
 .chat-last-msg {
     font-size: 12px;
-    color: #888;
+    color: var(--mc-chat-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -252,6 +295,8 @@ body {
     gap: 4px;
 }
 
+/* theme-registry Stage 2.1: #1e3c72 passes AA on white (10.80:1), no
+   close existing token (nearest delta ~36) - left as-is. */
 .chat-last-sender {
     color: #1e3c72;
     font-weight: 500;
@@ -259,7 +304,7 @@ body {
     font-size: 11px;
 }
 
-.chat-last-text { color: #888; overflow: hidden; text-overflow: ellipsis; }
+.chat-last-text { color: var(--mc-chat-muted); overflow: hidden; text-overflow: ellipsis; }
 
 .chat-meta {
     display: flex;
@@ -269,11 +314,14 @@ body {
     gap: 2px;
 }
 
-.chat-time { font-size: 10px; color: #aaa; }
+/* theme-registry Stage 2.1: #aaa failed AA on white (2.32:1) - darkened
+   to --mc-chat-muted (5.09:1), same fix and same reasoning as
+   .chat-subtitle above. */
+.chat-time { font-size: 10px; color: var(--mc-chat-muted); }
 
 .chat-unread-badge {
-    background: #ff5722;
-    color: white;
+    background: var(--mc-chat-unread-accent);
+    color: var(--mc-text-inverse);
     font-size: 11px;
     font-weight: 700;
     padding: 2px 8px;
@@ -288,10 +336,19 @@ body {
     50% { transform: scale(1.1); }
 }
 
+/* theme-registry Stage 2.1: color #888 -> --mc-chat-muted, same contrast
+   fix as .chat-subtitle/.chat-time above. The #f0f0f0 divider is left
+   as-is - close to several surface tokens numerically but this is a
+   1px hairline rule, not a fill, and none of those tokens' established
+   roles (app/panel/muted backgrounds) semantically fit a divider line;
+   --mc-border-soft (the actual divider-role token) is #e4eaf1, itself
+   ~13.5 RGB delta from #f0f0f0 - close but a real, if faint, shift on a
+   line that's visible along its whole length, so left undisturbed
+   rather than forced. */
 .chat-section-title {
     font-size: 12px;
     font-weight: 600;
-    color: #888;
+    color: var(--mc-chat-muted);
     padding: 8px 8px 4px;
     border-bottom: 1px solid #f0f0f0;
     margin-bottom: 4px;
@@ -305,6 +362,13 @@ body {
     min-height: 0;
 }
 
+/* theme-registry Stage 2.1: #fafbfc was a near-exact match (RGB delta
+   ~3.6) to --mc-chat-surface (=--mc-bg-subtle) - the same "content
+   canvas, distinct from panel chrome" role that token already exists
+   for; .chat-area/.chat-header/.chat-item above correctly stay on
+   --mc-chat-surface-raised (panel white) instead, so this now
+   reproduces the same subtle canvas/panel distinction the raw hex
+   already had by coincidence, just through the token system. */
 .messages-container {
     flex: 1;
     overflow-y: auto;
@@ -312,7 +376,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    background: #fafbfc;
+    background: var(--mc-chat-surface);
 }
 
 .loading {
@@ -346,19 +410,34 @@ body {
     position: relative;
 }
 
+/* theme-registry Stage 2.1: #1a73e8/#1557b0 consolidated onto
+   --mc-primary/--mc-primary-hover (RGB delta ~14.5/~18) - this exact
+   gradient pair is already the app's own "primary action blue" used
+   consistently within this same block (the send button below, the
+   focused-input border) and matches --mc-primary's established role
+   elsewhere (send/primary buttons already use var(--mc-primary)).
+   White text contrast checked and unaffected: 4.51:1 with the old
+   value, 4.82:1 with the token (both pass AA, the token is marginally
+   better). */
 .message.me .bubble {
-    background: linear-gradient(135deg, #1a73e8, #1557b0);
-    color: white;
+    background: linear-gradient(135deg, var(--mc-primary), var(--mc-primary-hover));
+    color: var(--mc-text-inverse);
     border-bottom-right-radius: 4px;
 }
 
 .message.rx .bubble {
-    background: white;
-    color: #1a2a4a;
-    border: 1px solid #e5e8ec;
+    background: var(--mc-chat-surface-raised);
+    color: var(--mc-chat-text);
+    border: 1px solid var(--mc-border-soft);
     border-bottom-left-radius: 4px;
 }
 
+/* theme-registry Stage 2.1: deliberately distinct "system message" sepia
+   palette (#f5f0e8/#7a6a5a/#e8e0d5) - checked against the token set,
+   nearest surface/text tokens are 60+ RGB delta away, not a
+   near-duplicate of anything. Text passes AA on its own background
+   (4.59:1). Left as raw hex - a real, intentional design choice, not an
+   accidental near-duplicate to consolidate. */
 .message.system .bubble {
     background: #f5f0e8;
     color: #7a6a5a;
@@ -369,6 +448,10 @@ body {
     padding: 6px 14px;
 }
 
+/* theme-registry Stage 2.1: #4a7aaa passes AA on white (4.51:1,
+   right at the threshold - not rounded up, verified with
+   contrast_check.py rather than eyeballed), no close existing token
+   (nearest delta ~32) - left as-is. */
 .bubble .sender {
     font-size: 11px;
     font-weight: 600;
@@ -384,8 +467,8 @@ body {
 /* ===== INPUT AREA ===== */
 .input-area {
     padding: 4px 12px 6px;
-    background: white;
-    border-top: 1px solid #e5e8ec;
+    background: var(--mc-chat-surface-raised);
+    border-top: 1px solid var(--mc-border-soft);
     flex: 0 0 auto;
     position: relative;
 }
@@ -396,21 +479,37 @@ body {
     gap: 6px;
 }
 
+/* theme-registry Stage 2.1: #f5f7fa was an exact match to --mc-bg-workspace
+   (RGB delta 0) - --mc-chat-input now points there too (see the ui-kit.css
+   :root comment on --mc-chat-input for why it was safe to repoint that
+   alias rather than introduce a second, redundant token). Border #d5d8dd
+   mapped to --mc-chat-border (=--mc-border, delta ~15) over the closer
+   --mc-button-secondary-border (delta ~13.5) - a form-field border is a
+   closer semantic fit to the generic border role than to a button's,
+   despite the smaller numeric distance. */
 .input-form input[type="text"] {
     flex: 1;
     padding: 8px 12px;
-    border: 1px solid #d5d8dd;
+    border: 1px solid var(--mc-chat-border);
     border-radius: 20px;
     font-size: 14px;
     outline: none;
-    background: #f5f7fa;
+    background: var(--mc-chat-input);
     transition: border-color 0.2s;
     min-height: 38px;
 }
 
+/* theme-registry Stage 2.1: focus border/background -> --mc-primary /
+   --mc-chat-surface-raised, same primary-blue consolidation as the
+   message bubble above. The rgba(26,115,232,...) focus-ring glow is left
+   as a literal rgba() - this project doesn't use relative-color syntax
+   (rgb(from var(...) ...)) anywhere else, and duplicating --mc-primary's
+   RGB numerically here would silently drift out of sync with the token
+   if it's ever changed elsewhere; flagged rather than silently left,
+   same treatment prior stages gave other CSS-limitation cases. */
 .input-form input[type="text"]:focus {
-    border-color: #1a73e8;
-    background: white;
+    border-color: var(--mc-primary);
+    background: var(--mc-chat-surface-raised);
     box-shadow: 0 0 0 3px rgba(26,115,232,0.1);
 }
 
@@ -420,8 +519,8 @@ body {
     min-height: 38px;
     border: none;
     border-radius: 20px;
-    background: linear-gradient(135deg, #1a73e8, #1557b0);
-    color: white;
+    background: linear-gradient(135deg, var(--mc-primary), var(--mc-primary-hover));
+    color: var(--mc-text-inverse);
     font-weight: 600;
     font-size: 14px;
     cursor: pointer;

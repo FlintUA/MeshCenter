@@ -583,7 +583,16 @@
     font-size: 12px;
     font-weight: 700;
 }
+/* theme-registry Stage 2.3: unscoped, no [data-theme="light"] hover override
+   exists (confirmed via grep across this file) - .map-fit-btn's own base is
+   fully light-themed (below) but its hover state falls through to this dark
+   pair regardless of theme, an inconsistency within the same component, not
+   the deliberate canvas/marker invariance documented below. Genuine gap,
+   fixed with a light hover pair using tokens already established by this
+   file's own other light button-hover states (.map-popup-actions
+   button:hover below uses --mc-primary-soft the same way). */
 .map-fit-btn:hover { border-color:#55a9f5; background:#20384e; }
+[data-theme="light"] .map-fit-btn:hover { border-color: var(--mc-primary); background: var(--mc-primary-soft); }
 .map-toolbar {
     flex: 0 0 auto;
     display:flex;
@@ -609,24 +618,37 @@
 }
 .map-legend span { display:inline-flex; align-items:center; gap:6px; }
 .map-legend-dot { width:10px; height:10px; border-radius:50%; display:inline-block; box-shadow:0 0 0 2px rgba(255,255,255,.12); }
-/* raw: map legend accent dots (reference/node/selected) - no exact --mc-* match
-   yet (checked against every dark-mode token in ui-kit.css), candidate for a
-   dedicated map-token set in Stage 3.1. Same three colors reused by
-   .meshcenter-map-marker-dot below. */
+/* theme-registry Stage 2.3: map legend accent dots, canvas background, Leaflet
+   zoom/attribution controls, and marker dots below are DELIBERATELY
+   theme-invariant, not a light-mode gap - confirmed live on dev in both
+   themes. Reference/node/selected/waypoint use fixed brand-accent colors so
+   users can rely on the same color meaning regardless of app theme (the
+   existing [data-theme="dark"] .leaflet-tile-pane filter rule already shows
+   tile *rendering* is treated per-theme in a limited way, while marker/legend
+   *color coding* deliberately is not). --mc-* tokens are theme-aware (a
+   different literal value per theme, e.g. --mc-success is #27b96f in light
+   and #72d69a in dark) - mapping an invariant brand color onto one would
+   silently make it vary by theme, which is exactly what these are not meant
+   to do, so they stay raw hex even where RGB distance is small (checked:
+   .map-legend-selected/.marker.selected #df5d68 sits d=18.4 from --mc-danger,
+   .legend-waypoint/.waypoint-pin #ef4f5f sits d=9.3 - both close, neither
+   consolidated for this reason). Two properties are dead code rather than
+   invariant: .mesh-map's own background and
+   .mesh-map .leaflet-control-attribution's background are shadowed by
+   Leaflet's own external stylesheet (leaflet.css, loaded after
+   style-part4.css in index.html - confirmed via getComputedStyle on dev:
+   .mesh-map renders #dddddd, the attribution bar renders
+   rgba(255,255,255,.8), neither matches our declared values in either
+   theme). Left as-is since they never paint. */
 .map-legend-reference { background:#38d68a; }
 .map-legend-node { background:#4aa3ff; }
 .map-legend-selected { background:#df5d68; }
-/* raw: map canvas plus Leaflet's own built-in zoom/attribution controls - no
-   exact --mc-* match yet, candidate for a dedicated map-token set in Stage 3.1. */
 .mesh-map { flex:1 1 auto; min-height:280px; width:100%; background:#0e1b28; }
 .mesh-map .leaflet-control-zoom a { background:#172a3d; color:#eaf3fb; border-color:#304a63; }
 .mesh-map .leaflet-control-zoom a:hover { background:#203a52; }
 .mesh-map .leaflet-control-attribution { background:rgba(10,21,32,.78); color:#a9bac9; }
 .mesh-map .leaflet-control-attribution a { color:#72b8ff; }
 [data-theme="dark"] .mesh-map .leaflet-tile-pane { filter: brightness(.72) saturate(.72) contrast(1.12); }
-/* raw: marker accent dots (node/selected/reference) - no exact --mc-* match
-   yet, candidate for a dedicated map-token set in Stage 3.1. Same three colors
-   as the legend above. */
 .meshcenter-map-marker { background:transparent; border:0; }
 .meshcenter-map-marker-dot {
     width:18px; height:18px; border-radius:50%;
@@ -636,8 +658,19 @@
 }
 .meshcenter-map-marker.selected .meshcenter-map-marker-dot { background:#df5d68; box-shadow:0 3px 12px rgba(0,0,0,.42),0 0 0 7px rgba(223,93,104,.20); transform:scale(1.12); }
 .meshcenter-map-marker.reference .meshcenter-map-marker-dot { background:#38d68a; box-shadow:0 3px 12px rgba(0,0,0,.42),0 0 0 6px rgba(56,214,138,.22); }
-/* raw: popup surface, text and action button - no exact --mc-* match yet,
-   candidate for a dedicated map-token set in Stage 3.1. */
+/* theme-registry Stage 2.3: this popup's surface/text/action-button DO get
+   full light overrides below (unlike the canvas/marker chrome above) -
+   confirmed live: background/color/name/actions-button/border-radius/
+   box-shadow all render correctly in light mode. Two properties were
+   genuinely missed siblings within this same already-light-themed component
+   (found live on dev, not assumed): the wrapper's own border stayed at the
+   dark value #36516b (8.25:1 against white - not a contrast failure, just a
+   leftover dark-navy border on an otherwise white card) and the grid label
+   column's color stayed at #91a8bc (2.46:1 against white - a real AA
+   failure, below even the 3:1 large-text/UI floor). Both fixed below using
+   --mc-border and --mc-text-secondary respectively - the same tokens this
+   popup's own sibling light rules already establish as this component's
+   light palette, not new colors. */
 .meshcenter-map-popup .leaflet-popup-content-wrapper,
 .meshcenter-map-popup .leaflet-popup-tip { background:#17293a; color:#eef6fc; }
 .meshcenter-map-popup .leaflet-popup-content-wrapper { border:1px solid #36516b; border-radius:12px; box-shadow:0 12px 34px rgba(0,0,0,.38); }
@@ -646,13 +679,20 @@
 .map-popup-grid { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:12px; }
 .map-popup-grid span:nth-child(odd) { color:#91a8bc; }
 .map-popup-grid strong { text-align:right; font-weight:700; }
+/* theme-registry Stage 2.3: .map-popup-details-btn (+hover) is dead code -
+   grepped every static/*.js template, this class is never rendered; the
+   real popup action button is .map-popup-actions button (below), used by
+   both buildNodePopup and buildWaypointPopup in chat-map.js. Left as raw
+   hex, not tokenized, since it never paints. */
 .map-popup-details-btn { width:100%; margin-top:10px; border:1px solid #3a5973; background:#203b53; color:white; border-radius:7px; padding:7px 9px; cursor:pointer; font-weight:700; }
 .map-popup-details-btn:hover { background:#285071; }
-[data-theme="light"] .map-toolbar { background:#f4f8fc; color:#5c7082; }
-[data-theme="light"] .map-fit-btn { background:#fff; color:#27435c; border-color:#c4d3df; }
+[data-theme="light"] .map-toolbar { background: var(--mc-bg-workspace); color: var(--mc-text-secondary); }
+[data-theme="light"] .map-fit-btn { background: var(--mc-bg-panel); color: var(--mc-text-primary); border-color: var(--mc-border); }
 [data-theme="light"] .meshcenter-map-popup .leaflet-popup-content-wrapper,
-[data-theme="light"] .meshcenter-map-popup .leaflet-popup-tip { background:#fff; color:#183048; }
-[data-theme="light"] .map-popup-name { color:#183048; }
+[data-theme="light"] .meshcenter-map-popup .leaflet-popup-tip { background: var(--mc-bg-panel); color: var(--mc-text-primary); }
+[data-theme="light"] .meshcenter-map-popup .leaflet-popup-content-wrapper { border-color: var(--mc-border); }
+[data-theme="light"] .map-popup-name { color: var(--mc-text-primary); }
+[data-theme="light"] .map-popup-grid span:nth-child(odd) { color: var(--mc-text-secondary); }
 @media (max-width: 720px) {
     .map-toolbar { align-items:flex-start; flex-direction:column; }
     .map-toolbar-right {
@@ -702,7 +742,7 @@
     padding: var(--mc-page-pad, 14px);
     overflow: hidden;
     box-sizing: border-box;
-    background: var(--mc-bg-workspace, #101b27);
+    background: var(--mc-bg-workspace, #111c29);
 }
 
 .map-panel.mc-workspace-panel {
@@ -810,12 +850,23 @@
     transform: scale(1.12);
 }
 
+/* theme-registry Stage 2.3: unlike the marker/legend dots above, this rule
+   already has its own real [data-theme="dark"] pair below (base = light,
+   the way this rule is structured, not the file's more common
+   base-is-dark convention) - it's a proper themed pair, not an invariant
+   brand accent, so the light (base) values here ARE safe to consolidate.
+   #fff4f5 -> --mc-danger-soft (d=10.8, close). #d9606b -> --mc-danger
+   (d=24.9, same red-selection-accent family as the "selected" marker/
+   legend dot this label pairs with). #7e2530 (text) stays raw - d=111.0
+   from --mc-text-primary, the closest token, too far for a real match; a
+   distinct dark maroon needed to read against the danger-soft pink
+   background, not a generic text color. */
 .meshcenter-map-selected-label.leaflet-tooltip {
     margin: 0;
     padding: 5px 9px;
-    border: 1px solid #d9606b;
+    border: 1px solid var(--mc-danger);
     border-radius: 7px;
-    background: #fff4f5;
+    background: var(--mc-danger-soft);
     color: #7e2530;
     box-shadow: 0 3px 10px rgba(57, 24, 29, .18);
     font-size: 12px;
@@ -826,7 +877,7 @@
 }
 
 .meshcenter-map-selected-label.leaflet-tooltip-bottom::before {
-    border-bottom-color: #d9606b;
+    border-bottom-color: var(--mc-danger);
 }
 
 [data-theme="dark"] .meshcenter-map-selected-label.leaflet-tooltip {
@@ -868,7 +919,7 @@
 
 .chat-area.map-layout-split > .map-view {
     display:flex !important; flex: 0 0 50%; height:auto; min-height:240px; max-height:60%;
-    border-top: 1px solid var(--mc-border, #314a62); border-bottom: 1px solid var(--mc-border, #314a62);
+    border-top: 1px solid var(--mc-border, #2f3e50); border-bottom: 1px solid var(--mc-border, #2f3e50);
 }
 .chat-area.map-layout-split.map-on-top > .map-view { order:1; }
 .chat-area.map-layout-split.map-on-top > .chat-header,
@@ -904,8 +955,13 @@
 .map-popup-actions button { border:1px solid #3a5973; background:#203b53; color:white; border-radius:7px; padding:7px 8px; cursor:pointer; font-weight:700; font-size:11px; }
 .map-popup-actions button:hover { background:#285071; }
 .map-popup-primary-btn { grid-column:1 / -1; }
-[data-theme="light"] .map-popup-actions button { background:#f5f9fd; color:#24425e; border-color:#bfd0df; }
-[data-theme="light"] .map-popup-actions button:hover { background:#e8f2fb; }
+/* theme-registry Stage 2.3: #f5f9fd/#24425e/#bfd0df/#e8f2fb -> --mc-bg-subtle
+   (d=2.2), --mc-text-primary (d=48.2, same generic button-label role as
+   .map-fit-btn's light color above), --mc-border (d=30.9), --mc-primary-soft
+   (d=4.6) respectively - all close consolidations onto the same tokens
+   already used for this popup's other light rules above. */
+[data-theme="light"] .map-popup-actions button { background: var(--mc-bg-subtle); color: var(--mc-text-primary); border-color: var(--mc-border); }
+[data-theme="light"] .map-popup-actions button:hover { background: var(--mc-primary-soft); }
 
 @media (max-height:700px) {
     .chat-area.map-layout-split > .map-view { flex-basis:45%; min-height:190px; }
@@ -977,6 +1033,15 @@
 }
 
 /* Waypoints map layer */
+/* theme-registry Stage 2.3: .map-layer-toggle/.map-legend-waypoint/
+   .meshcenter-waypoint-marker/-pin's #ef4f5f is the same theme-invariant
+   waypoint brand-red used on the map canvas above (d=9.3 from --mc-danger,
+   not consolidated for the same invariance reason). .waypoint-popup-name's
+   base color #ffb5bc (a light pink, for the dark popup surface) has a light
+   override below at #b82736 - checked against --mc-danger (light #e6505d,
+   d=72.9): not consolidated, since #b82736 reads as a darkened variant of
+   this same invariant waypoint-red family for readability on the now-white
+   popup, not the generic semantic danger/alert role. */
 .map-layer-toggle { display:inline-flex; align-items:center; gap:6px; cursor:pointer; user-select:none; }
 .map-layer-toggle input { accent-color:#ef4f5f; margin:0 1px 0 0; }
 .map-legend-waypoint { background:#ef4f5f; }
@@ -988,8 +1053,11 @@
 }
 .meshcenter-waypoint-pin span { transform:rotate(45deg); font-size:15px; line-height:1; }
 .waypoint-popup-name { color:#ffb5bc; }
+/* theme-registry Stage 2.3: #b8c9d8 -> --mc-text-secondary (d=10.5, close,
+   same "muted description text on a light card" role .map-popup-grid's
+   label column below now also uses). */
 .map-popup-subtitle { margin:4px 0 10px; color:#b8c9d8; white-space:pre-wrap; overflow-wrap:anywhere; }
-[data-theme="light"] .map-popup-subtitle { color:#5d7286; }
+[data-theme="light"] .map-popup-subtitle { color: var(--mc-text-secondary); }
 [data-theme="light"] .waypoint-popup-name { color:#b82736; }
 
 /* Waypoints v1.2 */
@@ -1000,6 +1068,18 @@
     line-height:1.15;
     white-space:nowrap;
 }
+/* theme-registry Stage 2.3: .waypoint-expire-absolute and
+   .waypoint-expire-value.is-expired .waypoint-expire-relative (both inside
+   the map popup) are unscoped with no [data-theme="light"] override, so
+   they render identically in both themes - unlike the popup-grid label gap
+   fixed above, these can't be silently "fixed" the same way: adding a
+   light-only override would leave dark rendering (currently the same raw
+   value) untouched, which is fine, but the underlying values ALSO fail AA
+   on white (#7a8ca5 3.43:1, #d74755 4.27:1, both below 4.5:1) - flagged,
+   not fixed here, since it needs a genuine light-readable replacement
+   color decision, not just a token substitution. Candidate for the same
+   future dedicated pass as the status/signal-color system noted in
+   Stage 2.2. */
 .waypoint-expire-absolute {
     margin-top:2px;
     font-size:10px;
@@ -1057,9 +1137,21 @@
 .waypoint-tools-empty { padding:12px 6px; text-align:center; color:#8492a6; font-size:12px; }
 
 /* Waypoints v1.3 - archive, local visibility and creation */
-.waypoint-tools-actions{display:flex;align-items:center;gap:8px}.waypoint-archive-toggle{font-size:11px;color:#66788f;display:flex;align-items:center;gap:4px}.waypoint-tools-item{display:flex;align-items:stretch;padding:0;overflow:hidden}.waypoint-tools-main{flex:1;display:flex;align-items:center;gap:8px;border:0;background:transparent;text-align:left;padding:9px;min-width:0;color:inherit}.waypoint-tools-main:disabled{cursor:default}.waypoint-tools-visibility{width:36px;border:0;border-left:1px solid rgba(127,145,166,.22);background:transparent;cursor:pointer}.waypoint-tools-item.is-expired{opacity:.68}.waypoint-tools-item.is-hidden{opacity:.58}.map-popup-action-btn.danger{color:#b83b47}
-.map-popup-close-btn{color:var(--mc-text,#dce7f1)}
-[data-theme="light"] .map-popup-close-btn{color:#24425e}
+.waypoint-tools-actions{display:flex;align-items:center;gap:8px}.waypoint-archive-toggle{font-size:11px;color:#66788f;display:flex;align-items:center;gap:4px}.waypoint-tools-item{display:flex;align-items:stretch;padding:0;overflow:hidden}.waypoint-tools-main{flex:1;display:flex;align-items:center;gap:8px;border:0;background:transparent;text-align:left;padding:9px;min-width:0;color:inherit}.waypoint-tools-main:disabled{cursor:default}.waypoint-tools-visibility{width:36px;border:0;border-left:1px solid rgba(127,145,166,.22);background:transparent;cursor:pointer}.waypoint-tools-item.is-expired{opacity:.68}.waypoint-tools-item.is-hidden{opacity:.58}
+/* theme-registry Stage 2.3: .map-popup-action-btn.danger is unscoped (no
+   [data-theme="light"] override) but not a gap - #b83b47 already passes AA
+   on both white (5.59:1) and this popup's light button background #f5f9fd/
+   --mc-bg-subtle (5.29:1), so it reads correctly in light mode as-is.
+   d=55.1 from --mc-danger (light #e6505d) - not consolidated since this is
+   unscoped/theme-invariant like the map-legend/marker colors above; --mc-danger
+   is theme-aware (different value in dark), so tokenizing an invariant color
+   would make it vary by theme instead. */
+.map-popup-action-btn.danger{color:#b83b47}
+.map-popup-close-btn{color:var(--mc-text,#f2f7fc)}
+/* theme-registry Stage 2.3: #24425e -> --mc-text-primary (d=48.2, same
+   generic button-label role as the other light button colors in this
+   popup, see .map-popup-actions button above). */
+[data-theme="light"] .map-popup-close-btn{color: var(--mc-text-primary)}
 .waypoint-create-modal{position:fixed;inset:0;z-index:12000;background:rgba(12,20,31,.58);backdrop-filter:blur(3px);align-items:center;justify-content:center;padding:20px}.waypoint-create-dialog{width:min(460px,96vw);background:var(--panel-bg,#fff);border:1px solid rgba(120,140,165,.3);border-radius:16px;box-shadow:0 22px 60px rgba(0,0,0,.35);overflow:hidden}.waypoint-create-header{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 18px;border-bottom:1px solid rgba(120,140,165,.22)}.waypoint-create-header>div{display:flex;flex-direction:column;gap:3px}.waypoint-create-header small{color:#78899e;font-size:11px}.waypoint-create-header button{border:0;background:transparent;font-size:18px;cursor:pointer;color:inherit}.waypoint-create-body{display:flex;flex-direction:column;gap:12px;padding:16px 18px}.waypoint-create-body label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600}.waypoint-create-body input,.waypoint-create-body textarea,.waypoint-create-body select{width:100%;box-sizing:border-box;border:1px solid #cad5e2;border-radius:9px;padding:9px 10px;background:var(--input-bg,#fff);color:inherit;font:inherit}.waypoint-create-body textarea{resize:vertical}.waypoint-create-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.waypoint-create-coordinates{display:flex;justify-content:space-between;gap:12px;padding:10px;border-radius:9px;background:rgba(100,130,165,.08);font-size:12px}.waypoint-create-note{font-size:11px;color:#7a8ba0}.waypoint-create-footer{display:flex;justify-content:flex-end;gap:10px;padding:13px 18px;border-top:1px solid rgba(120,140,165,.22)}.waypoint-create-footer button{border-radius:9px;padding:9px 18px;cursor:pointer;font-weight:600}.waypoint-create-footer .secondary{border:1px solid #c8d3df;background:transparent;color:inherit}.waypoint-create-footer .primary{border:1px solid #1f6fd1;background:#1f6fd1;color:#fff}.waypoint-create-footer button:disabled{opacity:.6;cursor:wait}@media(max-width:560px){.waypoint-create-grid{grid-template-columns:1fr}}
 
 /* Waypoints v1.3.1 */
@@ -1140,6 +1232,19 @@
 .waypoint-tools-bulk-actions .danger{color:#b83b47;background:rgba(205,54,68,.07);}
 
 /* Waypoints v1.3.3 - expired waypoint visualization */
+/* theme-registry Stage 2.3: #b79ad9 is the theme-invariant "expired" marker
+   color, same category as the map canvas/marker colors documented above
+   (also reused unchanged by .map-legend-waypoint-expired below). Not
+   consolidated for the same invariance reason. .waypoint-status-active/
+   -expired (below, rendered inside the map popup) are ALSO unscoped with no
+   dark override, but unlike the marker/legend dots these are plain text
+   colors, not deliberately-chosen brand accents documented anywhere else -
+   #2ca56c is d=20.8 from --mc-success and #9b78c4 is d=44.2 from
+   --mc-text-muted, both plausible consolidations, but --mc-success/
+   --mc-text-muted are theme-aware (different value in dark) and these two
+   rules have no dark counterpart to add one for, so tokenizing either would
+   silently change how they render in dark mode - out of this stage's scope
+   (no touching dark-mode rules). Left as raw hex. */
 .meshcenter-waypoint-marker.is-expired .meshcenter-waypoint-pin {
     background:#b79ad9;
     border-color:rgba(255,255,255,.88);

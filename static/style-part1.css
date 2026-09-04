@@ -1069,6 +1069,15 @@ body {
 }
 
 /* ===== NODE CARD ===== */
+/* theme-registry Stage 2.2: base/.selected/.ignored/.favorite background and
+   border-color below are shadowed by ui-kit.css's later, already-tokenized
+   .node-card rules (ui-kit.css ~L251-277 - same selector specificity, and
+   ui-kit.css loads after style-part1.css in index.html, so it wins ties).
+   Confirmed live on dev via CSSOM rule matching + specificity analysis, not
+   just source order. Left un-normalized here since tokenizing dead
+   declarations adds no real value - documented so it isn't re-investigated
+   as a live bug. border-width/opacity aren't touched by ui-kit.css's rules,
+   so those declarations stay genuinely live. */
 .node-card {
     background: #f5f5f5;
     border: 1px solid #e5e5e5;
@@ -1080,8 +1089,13 @@ body {
     transition: all 0.2s;
 }
 
+/* border-color/box-shadow shadowed by ui-kit.css's .node-card:hover (see
+   comment above); transform is NOT declared there, so translateX(3px) is
+   genuinely live - pre-existing hover-geometry, left untouched (same
+   out-of-scope category flagged in every prior stage). */
 .node-card:hover { transform: translateX(3px); border-color: #b0b8c5; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
 .node-card.selected {
+    /* background/border-color shadowed by ui-kit.css; border-width is live */
     background: linear-gradient(135deg, #f0eeea, #e8e5e0);
     border-color: #7a8aaa;
     border-width: 2px;
@@ -1089,13 +1103,28 @@ body {
 .node-card.ignored { opacity: 0.5; background: #f8f5f5; border-color: #e8d5d5; }
 .node-card.ignored:hover { opacity: 0.7; }
 .node-card.favorite {
+    /* border-color/background shadowed by ui-kit.css; border-width is live */
     border-color: #d4c06a;
     border-width: 2px;
     background: linear-gradient(135deg, #fdf8e8, #f8f0d8);
 }
+/* .node-card.favorite:hover (specificity 0,3,0) has no ui-kit.css counterpart
+   at that specificity, so it's genuinely live regardless of source order.
+   #c0a84a sits d=55.4 from --mc-warning (#e6ad22) in RGB space - not
+   consolidated: it's a hover-darkened variant of ui-kit.css's own
+   .favorite border-color (#e2bd45), which itself is an un-tokenized bespoke
+   card-state accent, not --mc-warning (d=38.7, also not consolidated there).
+   This file treats favorite/selected/ignored border accents as their own
+   color family, distinct from the semantic --mc-warning/success/danger
+   roles used for alerts and buttons; the box-shadow tint follows the same
+   reasoning. */
 .node-card.favorite:hover { border-color: #c0a84a; box-shadow: 0 2px 10px rgba(200,180,60,0.2); }
 
 .node-card .unignore-btn-mini {
+    /* #b0c8a0 checked against --mc-success (#27b96f, d=146.3) and
+       --mc-success-soft - not a match, this is a distinct muted sage-green,
+       not the semantic "success" green. No ui-kit.css counterpart exists for
+       this class, genuinely live. */
     background: #b0c8a0;
     color: white;
     border: none;
@@ -1122,10 +1151,14 @@ body {
     min-width: 0;
 }
 
+/* theme-registry Stage 2.2: #3a4a5a -> --mc-text-primary (d=63.4). Already
+   passes AA on white (9.10:1), consolidated for the same reason .chat-name
+   (Stage 2.1) uses the primary-text token for name/title roles rather than
+   its own shade. */
 .node-card-title {
     flex: 1 1 auto;
     min-width: 0;
-    color: #3a4a5a;
+    color: var(--mc-text-primary);
     font-size: 13px;
     font-weight: 600;
     line-height: 1.25;
@@ -1147,29 +1180,46 @@ body {
     display: flex;
     align-items: center;
     gap: 4px;
-    color: #3a4a5a;
+    color: var(--mc-text-primary);
 }
 
+/* theme-registry Stage 2.2: #9aa5b5 failed AA on white (2.49:1) - worse than
+   the nearest token, --mc-text-muted (#8798ad, d=24.4), which ALSO fails
+   (2.95:1). No existing token both passes AA and stays visually close, so
+   this is darkened (not just consolidated) to --mc-text-secondary (5.09:1,
+   PASS) - the same token .node-meta/.node-last-text below resolve to, which
+   flattens what was a 3-tier muted-text hierarchy (id lightest, meta/last
+   mid) into one shade. Flagged as the largest visual shift of this stage's
+   contrast fixes; accepted because no intermediate passing shade exists in
+   the palette and Stage 2.1 set the precedent of darkening real AA failures
+   over preserving the exact original shade. */
 .node-inline-id {
     min-width: 0;
     font-size: 10px;
     font-weight: 400;
-    color: #9aa5b5;
+    color: var(--mc-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
+/* theme-registry Stage 2.2: #777 failed AA on white (4.48:1) - darkened to
+   --mc-text-secondary (5.09:1, PASS, d=39.8, the closest token and the
+   semantically correct "secondary/meta text" role), mirroring Stage 2.1's
+   #888 fix in the chat domain. */
 .node-meta {
     font-size: 10px;
-    color: #777;
+    color: var(--mc-text-secondary);
     line-height: 1.4;
     margin-top: 4px;
 }
 
+/* theme-registry Stage 2.2: #6a7a8a failed AA on white (4.41:1) - darkened
+   to --mc-text-secondary (5.09:1, PASS, d=21.2, the closest token of any
+   value in this stage). */
 .node-last-text {
     font-size: 10px;
-    color: #6a7a8a;
+    color: var(--mc-text-secondary);
     margin-top: 4px;
     font-style: italic;
     overflow: hidden;
@@ -1177,6 +1227,13 @@ body {
     white-space: nowrap;
 }
 
+/* theme-registry Stage 2.2 scope decision: .badge-online/.badge-medium/
+   .badge-offline are deliberately NOT normalized in this stage. They're a
+   semantic status-color system (online/medium/offline) that likely has
+   counterparts elsewhere in the app (node detail panel, connection
+   indicators) not yet touched by the theme-registry work - normalizing just
+   the node-list badges in isolation risks inconsistency with those other,
+   still-raw-hex usages. Deferred to a future dedicated status-color pass. */
 .badge {
     display: inline-block;
     padding: 1px 5px;

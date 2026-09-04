@@ -1151,14 +1151,25 @@ body {
     min-width: 0;
 }
 
-/* theme-registry Stage 2.2: #3a4a5a -> --mc-text-primary (d=63.4). Already
-   passes AA on white (9.10:1), consolidated for the same reason .chat-name
-   (Stage 2.1) uses the primary-text token for name/title roles rather than
-   its own shade. */
+/* theme-registry Stage 2.2: this whole block (.node-card-title through
+   .node-last-text below) is legacy - a newer "Node Card V2"/"V1.2" layout
+   in style-part2.css (~L2905-3330) has since replaced the node-card markup
+   with a different DOM structure (.node-card-topline, .node-card-identity-row,
+   .node-last-seen, etc.), rendered by chat.js. The genuinely live text-color
+   normalization for the current card lives there, not here - see
+   style-part2.css's comments for the actual RGB-distance/contrast analysis.
+   .node-card-title is DEAD (shadowed: the real markup nests it under
+   .node-card-topline, giving style-part2.css's same-name rule higher
+   specificity). .node-name and .node-meta are DEAD by absence - grepped
+   across every static/*.js and templates/index.html, neither class is ever
+   rendered anywhere in the current app. .node-inline-id and .node-last-text
+   are DEAD (shadowed by style-part2.css's .node-card-identity-row/
+   .node-card-scoped versions, same reasoning). Left as raw hex, not
+   tokenized, since none of it renders. */
 .node-card-title {
     flex: 1 1 auto;
     min-width: 0;
-    color: var(--mc-text-primary);
+    color: #3a4a5a;
     font-size: 13px;
     font-weight: 600;
     line-height: 1.25;
@@ -1180,46 +1191,29 @@ body {
     display: flex;
     align-items: center;
     gap: 4px;
-    color: var(--mc-text-primary);
+    color: #3a4a5a;
 }
 
-/* theme-registry Stage 2.2: #9aa5b5 failed AA on white (2.49:1) - worse than
-   the nearest token, --mc-text-muted (#8798ad, d=24.4), which ALSO fails
-   (2.95:1). No existing token both passes AA and stays visually close, so
-   this is darkened (not just consolidated) to --mc-text-secondary (5.09:1,
-   PASS) - the same token .node-meta/.node-last-text below resolve to, which
-   flattens what was a 3-tier muted-text hierarchy (id lightest, meta/last
-   mid) into one shade. Flagged as the largest visual shift of this stage's
-   contrast fixes; accepted because no intermediate passing shade exists in
-   the palette and Stage 2.1 set the precedent of darkening real AA failures
-   over preserving the exact original shade. */
 .node-inline-id {
     min-width: 0;
     font-size: 10px;
     font-weight: 400;
-    color: var(--mc-text-secondary);
+    color: #9aa5b5;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-/* theme-registry Stage 2.2: #777 failed AA on white (4.48:1) - darkened to
-   --mc-text-secondary (5.09:1, PASS, d=39.8, the closest token and the
-   semantically correct "secondary/meta text" role), mirroring Stage 2.1's
-   #888 fix in the chat domain. */
 .node-meta {
     font-size: 10px;
-    color: var(--mc-text-secondary);
+    color: #777;
     line-height: 1.4;
     margin-top: 4px;
 }
 
-/* theme-registry Stage 2.2: #6a7a8a failed AA on white (4.41:1) - darkened
-   to --mc-text-secondary (5.09:1, PASS, d=21.2, the closest token of any
-   value in this stage). */
 .node-last-text {
     font-size: 10px;
-    color: var(--mc-text-secondary);
+    color: #6a7a8a;
     margin-top: 4px;
     font-style: italic;
     overflow: hidden;

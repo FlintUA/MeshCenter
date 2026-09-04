@@ -1053,3 +1053,16 @@ _14 unique values_
 | `#F5F6F7` | 1 | static/ui-kit.css:3378 |
 
 Not registered: `#4DFFBC` (Sharp's `accent-reference` role). It appears only inside the Stage 4.1 PR-description comment in `ui-kit.css` explaining why that role was left unmapped (no existing token reads a "large-fill-with-dark-content" role, and the source doc's design intent says mint must not become the primary button color) - it is not a declared value anywhere, so it does not belong in this registry. `check_new_hex.py --diff` will keep flagging it as a false positive on this branch specifically: its `--diff` mode strips single-line `/* */` comments only, and this explanatory comment spans multiple lines, so the mention isn't recognized as being inside a comment the way the whole-file mode (`check_new_hex.py static/ui-kit.css`, which handles multi-line comments correctly) does. Confirmed clean otherwise: whole-file mode reports 0 unregistered literals in `static/ui-kit.css` after this addendum.
+
+_Line numbers above are a snapshot as of the Stage 4.1 merge; Stage 4.2 inserted comment lines above the Sharp block, shifting them - see the Stage 4.2 sub-section below for current line numbers of its own additions. Not re-verifying/updating the 4.1 rows here since the HEX values and their identity are what this registry tracks, not exact line numbers._
+
+### Theme-family token value (Stage 4.2 - MeshCenter Sharp, state-color exceptions)
+
+_2 new unique values (success/danger foreground+surface reuse 4.1's already-registered `#087A57`/`#D9FFF1` - see the Stage 4.2 PR for why: success's Foreground role is the same literal value as 4.1's `accent-graphic`, and its Surface role the same as `surface-selected`/`accent-soft`, both intentional per the source doc, not a new value)_
+
+| HEX | Occurrences | Locations |
+|---|---|---|
+| `#B42332` | 1 | static/ui-kit.css:3773 |
+| `#FFE9E9` | 1 | static/ui-kit.css:3774 |
+
+Not registered (same reasoning as 4.1's `#4DFFBC`): source doc's success/danger `Base` (`#4DFFBC`, `#FF4D4D`) and `Border` (`#16C98D`, `#E03A43`) values. Neither has a real consumer to land on - `--mc-success`/`--mc-danger` are already fully committed to the `Foreground` role (the only one that keeps every consumer's text legible; see the Stage 4.2 PR/`ui-kit.css` comment for the contrast numbers), and there is no separate border token. Mentioned only in the Stage 4.2 PR-description comment, not declared anywhere.

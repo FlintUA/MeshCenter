@@ -674,24 +674,21 @@ function renderTelemetryChart(container, records, type) {
     // per-series line/fill colors (SENSOR_COLORS/SENSOR_BG_COLORS) already
     // work on a dark background and are left untouched.
     //
-    // theme-registry Stage 1.5b: every dark-mode literal below (tickColor,
-    // the legend label color, and the four tooltip colors further down)
-    // was checked individually against the full --mc-* dark token table in
-    // ui-kit.css's html[data-theme="dark"] block - none of them are an
-    // exact match for any token (closest misses: tickColor #a0aec0 vs
-    // --mc-chat-muted #9fb0c3 off by 1-3 per channel, tooltip background
-    // #0f1923 vs --mc-bg-media-stage #101923 off by 1 on red only), so
-    // they stay hardcoded literals rather than being wired through
-    // getComputedStyle(document.documentElement).getPropertyValue('--mc-*')
-    // - there's no existing token to read. Candidates for a dedicated
-    // chart-chrome token set in Stage 3.1, same category as the raw
-    // telemetry-card/battery colors from Stage 1.5a. (No getComputedStyle
-    // precedent exists anywhere else in this codebase for reading --mc-*
-    // from JS either, for what it's worth - moot here since nothing
-    // matched, but noted in case Stage 3.1 wants to establish one.)
+    // theme-registry Stage 1.5b checked every dark-mode literal below
+    // against the dark --mc-* table (no exact match, left raw). Stage 2.5
+    // now checks the LIGHT literals (tickColor, legend label color, and
+    // the four tooltip colors further down) against the light --mc-* table
+    // for the first time - same RGB-distance/contrast rigor as the CSS
+    // side of this stage. No getComputedStyle(--mc-*) precedent exists
+    // anywhere in this codebase (confirmed again), so matches are
+    // hardcoded as the token's plain literal value rather than read at
+    // runtime, same style every other chart-chrome literal here already
+    // uses. tickColor #666 -> --mc-text-secondary (d=44.5) - same literal
+    // Stage 2.4 already consolidated for .control-group label, hardcoded
+    // here as its resolved hex (#58708f) since JS can't read the token.
     const isDark = document.documentElement.dataset.theme === 'dark';
     const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
-    const tickColor = isDark ? '#a0aec0' : '#666';
+    const tickColor = isDark ? '#a0aec0' : '#58708f';
 
     const labels = records.map(r => {
         const t = new Date(r.timestamp * 1000);
@@ -900,19 +897,28 @@ function renderTelemetryChart(container, records, type) {
                         position: 'top',
                         // raw: no exact --mc-* match, see the Stage 1.5b
                         // comment near isDark/tickColor above
-                        labels: { usePointStyle: true, padding: 15, font: { size: 11 }, color: isDark ? '#cbd5e0' : '#333' }
+                        // theme-registry Stage 2.5: light #333 -> --mc-text-primary
+                        // (d=40.3), same literal Stage 2.4 already consolidated
+                        // for .video-info-bar's color, hardcoded here as its
+                        // resolved hex (#10233f) since JS can't read the token.
+                        labels: { usePointStyle: true, padding: 15, font: { size: 11 }, color: isDark ? '#cbd5e0' : '#10233f' }
                     },
                     tooltip: {
-                        // raw: no exact --mc-* match for any of these four
-                        // (bodyColor intentionally reuses the same literal
-                        // as the legend label color above - both were
-                        // '#cbd5e0' already, kept as one shared shade for
-                        // now rather than split into two independent
-                        // copies); see the Stage 1.5b comment near
-                        // isDark/tickColor above
+                        // theme-registry Stage 2.5: light backgroundColor/borderColor
+                        // stay raw - both are semi-transparent rgba() (a floating
+                        // tooltip deliberately lets a hint of the chart show
+                        // through), and --mc-* tokens are opaque hex, no direct
+                        // equivalent to hardcode. titleColor light #333 ->
+                        // --mc-text-primary (same as the legend color above,
+                        // #10233f). bodyColor light #666 -> --mc-text-secondary
+                        // (same as tickColor above, #58708f) - intentionally kept
+                        // as the same shared shade as before (bodyColor reused
+                        // tickColor/legend's un-tokenized literal already), not
+                        // split into independent copies now that they resolve to
+                        // two different tokens rather than one shared literal.
                         backgroundColor: isDark ? '#0f1923' : 'rgba(255,255,255,0.95)',
-                        titleColor: isDark ? '#e2e8f0' : '#333',
-                        bodyColor: isDark ? '#cbd5e0' : '#666',
+                        titleColor: isDark ? '#e2e8f0' : '#10233f',
+                        bodyColor: isDark ? '#cbd5e0' : '#58708f',
                         borderColor: isDark ? '#263c52' : 'rgba(0,0,0,0.1)',
                         borderWidth: 1,
                         callbacks: {

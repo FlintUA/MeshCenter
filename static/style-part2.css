@@ -2214,6 +2214,10 @@ body.context-chat-mode .settings-view {
     gap: 8px;
 }
 
+/* theme-registry Stage 2.5: .base-card-name/.base-card-caption are
+   orphaned - never rendered by any current template (the live .base-card
+   only renders a node-manager-entry button, see style-part1.css's
+   comment). */
 .base-card-name {
     min-width: 0;
     overflow: hidden;
@@ -2272,6 +2276,13 @@ body.context-chat-mode .settings-view {
     border-top: 1px solid #d5d8dd;
 }
 
+/* theme-registry Stage 2.5: dead for both consumers - .battery-indicator's
+   border/background are shadowed by style-part3.css's higher-specificity
+   .node-info-panel .battery-indicator (normalized in that file), and
+   .base-reference-location's are overridden by its own more specific
+   rule further down THIS file (same specificity, later in cascade - see
+   .base-reference-location below). Left raw since neither consumer
+   renders this. */
 .battery-indicator,
 .base-reference-location {
     min-width: 0;
@@ -2287,6 +2298,12 @@ body.context-chat-mode .settings-view {
     align-self: stretch;
 }
 
+/* theme-registry Stage 2.5: genuinely live (single, unshadowed
+   declaration), checked, left raw - #315b3d/#216b36 are a distinct
+   "location green" brand accent, the same family as
+   .base-reference-location/.reference-card-name below (d=65.0/74.5 from
+   --mc-text-primary, too far and the wrong hue to force onto a generic
+   text token). */
 .base-mini-card-heading {
     display: flex;
     align-items: center;
@@ -2308,14 +2325,25 @@ body.context-chat-mode .settings-view {
     height: 7px;
 }
 
+/* theme-registry Stage 2.5: this is the live winning declaration for
+   .base-reference-location (later in this file than the shared rule
+   above, same specificity). color #29485d -> --mc-text-primary (d=53.8,
+   same dark-navy family, already passes AA 8.87:1) - consolidated, same
+   category as other stages' d~50-65 body-text consolidations. background
+   #eef8f1 -> --mc-success-soft (d=5.1, near-exact) - consolidated, this
+   card represents an active/set reference location, a positive state
+   --mc-success-soft already models. border-color #9ecbb0 is left raw -
+   d=56.0 from the nearest token (--mc-text-muted, a text role, not a
+   border role) - a distinct "location green" border accent, same family
+   as .reference-card-name/.base-mini-card-heading. */
 .base-reference-location {
     display: flex;
     align-items: center;
     gap: 7px;
     width: 100%;
-    color: #29485d;
+    color: var(--mc-text-primary);
     border-color: #9ecbb0;
-    background: #eef8f1;
+    background: var(--mc-success-soft);
     font-family: inherit;
     text-align: left;
     cursor: pointer;
@@ -2325,16 +2353,27 @@ body.context-chat-mode .settings-view {
         transform 150ms ease;
 }
 
+/* theme-registry Stage 2.5: background #e2f3e7 -> --mc-success-soft
+   (d=12.4) - consolidated, same reasoning as the base state above.
+   border-color #6fac88 left raw - same "location green" border family as
+   the base state's #9ecbb0 (a darkened hover variant of it), not a
+   generic token role. */
 .base-reference-location:hover {
     border-color: #6fac88;
-    background: #e2f3e7;
+    background: var(--mc-success-soft);
     transform: translateY(-1px);
 }
 
+/* theme-registry Stage 2.5: this is the disabled state - deliberately
+   neutral/gray, not part of the "location green" family above. color
+   #687585 failed AA on the live background (4.26:1) - darkened to
+   --mc-text-secondary (4.62:1, PASS, d=19.5). border-color #ccd3dc ->
+   --mc-border (d=22.0). background #f2f4f7 -> --mc-bg-muted (d=4.2,
+   near-exact). */
 .base-reference-location.reference-is-disabled {
-    color: #687585;
-    border-color: #ccd3dc;
-    background: #f2f4f7;
+    color: var(--mc-text-secondary);
+    border-color: var(--mc-border);
+    background: var(--mc-bg-muted);
 }
 
 .reference-card-icon {
@@ -2350,8 +2389,10 @@ body.context-chat-mode .settings-view {
     gap: 1px;
 }
 
+/* theme-registry Stage 2.5: #617184 -> --mc-text-secondary (d=14.2),
+   already passes AA (4.60:1 on the live #eef8f1 background). */
 .reference-card-title {
-    color: #617184;
+    color: var(--mc-text-secondary);
     font-size: 8px;
     font-weight: 700;
     line-height: 1.15;
@@ -2359,6 +2400,10 @@ body.context-chat-mode .settings-view {
     letter-spacing: .04em;
 }
 
+/* theme-registry Stage 2.5: checked, left raw - #214d35 is the same
+   "location green" brand family as .base-mini-card-heading/
+   .base-reference-location's border above (d=46.4 from --mc-text-primary,
+   the wrong hue to force onto a generic text token). */
 .reference-card-name {
     overflow: hidden;
     color: #214d35;
@@ -2369,13 +2414,18 @@ body.context-chat-mode .settings-view {
     white-space: nowrap;
 }
 
+/* theme-registry Stage 2.5: this is the disabled-state name color,
+   deliberately neutral (not green) like .reference-is-disabled above.
+   #596675 -> --mc-text-secondary (d=27.9), already passes AA (5.32:1). */
 .reference-is-disabled .reference-card-name {
-    color: #596675;
+    color: var(--mc-text-secondary);
 }
 
+/* theme-registry Stage 2.5: #718198 failed AA on the live background
+   (3.65:1) - darkened to --mc-text-secondary (4.68:1, PASS, d=31.5). */
 .reference-card-coordinates {
     overflow: hidden;
-    color: #718198;
+    color: var(--mc-text-secondary);
     font-size: 8px;
     line-height: 1.2;
     text-overflow: ellipsis;
@@ -2383,6 +2433,11 @@ body.context-chat-mode .settings-view {
     font-variant-numeric: tabular-nums;
 }
 
+/* theme-registry Stage 2.5: a decorative arrow glyph, not a text label -
+   judged against the 3:1 large-scale/UI-component floor rather than 4.5:1,
+   which #6b8976 already clears (3.54:1) - not a contrast failure, so not
+   darkened. d=40.1 from --mc-text-secondary (the closest token) - left
+   raw, distinct enough not to force. */
 .reference-card-arrow {
     flex-shrink: 0;
     color: #6b8976;

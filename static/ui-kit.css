@@ -1078,24 +1078,33 @@ a:focus-visible,
 .workspace-theme-family-option[data-family="alpine"] .workspace-theme-swatch--primary { background: #426077; }
 .workspace-theme-family-option[data-family="alpine"] .workspace-theme-swatch--warning { background: #ff9a3d; }
 
-/* theme-registry Stage 7.1: same reasoning as the prior fixed families'
-   swatch overrides above. Warning uses dark's current inherited value
-   (#f0c86a) PERMANENTLY, not a placeholder - Teal has no warning
-   exception at all (section 8.3), unlike Gunmetal/Alpine's swatches
-   which were provisional pending their own 6.2/6.2-shaped stage.
+/* theme-registry Stage 7.1/8.1: Teal had its own hardcoded swatch
+   override here (always showing Teal Dark's 4 colors, #021818/#043030/
+   #10c2c2/#f0c86a), needed while Teal was 'fixed'/'dark' since nothing
+   else would show it correctly.
 
-   Stage 8.1 note: left as-is, still shows only Teal Dark's 4 colors -
-   Teal is still 'fixed'/'dark' until Stage 8.2, so this is still the
-   only Teal state a user can actually pick. Flagging for Stage 8.2: once
-   Teal becomes 'paired', this swatch will need to become mode-aware
-   (reading whichever of dark/light is actually resolved, the way the
-   generic .workspace-theme-swatch--* rules already do for 'original' -
-   or possibly switching to always show one fixed representative mode,
-   your call for that stage) - not built here. */
-.workspace-theme-family-option[data-family="teal"] .workspace-theme-swatch--bg { background: #021818; }
-.workspace-theme-family-option[data-family="teal"] .workspace-theme-swatch--panel { background: #043030; }
-.workspace-theme-family-option[data-family="teal"] .workspace-theme-swatch--primary { background: #10c2c2; }
-.workspace-theme-family-option[data-family="teal"] .workspace-theme-swatch--warning { background: #f0c86a; }
+   Stage 8.2: removed. Now that Teal is kind: 'paired' (chat.js), it
+   needs a mode-aware swatch - reading whichever of light/dark is
+   actually resolved, not frozen to one. Decided to let it fall through
+   to the generic .workspace-theme-swatch--* rules above (same as
+   'original', which never had a family-specific override at all) rather
+   than write a new mode-aware ruleset from scratch: those generic rules
+   already read the live --mc-* custom properties, so while Teal is the
+   active family they correctly reflect whichever mode Teal has actually
+   resolved to (Light or Dark), for free.
+
+   Trade-off, accepted deliberately: this also makes Teal's card join
+   'original's existing, already-documented swatch-preview gap (Stage
+   4.1's PR, re-confirmed in every live-verification stage since) - while
+   a DIFFERENT family is active, Teal's card will show that other
+   family's colors instead of its own, same as 'original's card already
+   does. Sharp/Gunmetal/Alpine keep their own dedicated overrides and
+   don't have this gap, because they're still 'fixed' - only the 2
+   'paired' families (original, now teal) share this trade-off. Judged
+   correct-while-active to be more valuable than always-correct-when-
+   inactive for a family whose whole point is having two live-switchable
+   modes; not extending the existing gap to Sharp/Gunmetal/Alpine, which
+   don't have this problem and don't need this trade-off. */
 
 .workspace-theme-family-label {
     font-size: 12px;

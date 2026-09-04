@@ -348,6 +348,27 @@ body {
     background: var(--mc-bg-workspace);
 }
 
+/* theme-registry Stage 2.8: this is the confirmed-live winning declaration
+   for .settings-card/.system-card's background (and, together with
+   .settings-panel/.system-panel above, for the whole Settings/System
+   panel shell) - already fully tokenized, no raw hex, nothing to fix.
+   This is a real light/dark asymmetry: Stage 1.8 found the dark
+   equivalents of .settings-panel/.system-panel dead, shadowed by a
+   legacy style-part4.css !important rule, and .settings-card/.system-card
+   dead too (shadowed by a later dark-scoped bundle, with no honest single
+   token to describe the shared dead declaration since the two selectors
+   resolve to different live text colors there). For light, no such
+   legacy !important rule exists (grepped, dark-scoped only) and this
+   rule - not any dark-adjacent bundle - is simply the last equal-
+   specificity declaration in file order, confirmed via CSSOM matching
+   and live computed styles on dev. .settings-select (style-part3.css)
+   is the same story: its own var(--mc-border, #cbd5e1)/var(--mc-input-bg,
+   #fff)/var(--mc-text, #10233c) rule is genuinely live for light (the
+   generic html[data-theme="dark"] :is(input, select, textarea,
+   .message-input) !important rule that shadows dark's .settings-select
+   is dark-scoped only) - confirmed live, computed color #10233f proves
+   the real --mc-text-primary value is being read, not the stale #10233c
+   fallback (fixed in style-part3.css). */
 .system-card,
 .settings-card {
     background: var(--mc-bg-subtle);
@@ -920,6 +941,16 @@ a:focus-visible,
     color: #334155;
 }
 
+/* theme-registry Stage 2.8: border-bottom-color is dead - the "UNIFIED
+   POPOVER SURFACES" shared shell (Stage 2.7's ".workspace-menu-section,
+   .notification-item { border-color: var(--mc-popover-divider); }",
+   ~L3364) is equal specificity (0,1,0) and later in file order, and wins:
+   confirmed live, computed border-bottom-color is #e5eaf0
+   (--mc-popover-divider's real light value), not this rule's own raw
+   #edf0f4. Unlike dark (where Stage 1.8 found the equivalent selector
+   genuinely live and tokenized it), light's border color is shadowed -
+   another light/dark asymmetry from the same shared-shell mechanism
+   Stage 2.7 already documented extensively. */
 .workspace-menu-section {
     padding: 10px 13px;
     border-bottom: 1px solid #edf0f4;
@@ -2812,6 +2843,9 @@ html[data-theme="dark"] .chat-item .chat-time {
     gap: 6px;
 }
 
+/* theme-registry Stage 2.8: confirmed genuinely live (no shadowing found -
+   grepped and confirmed via computed styles on dev). #334155 ->
+   --mc-text-primary (d=51.1), already passes AA (10.35:1 on white). */
 .workspace-nav-btn {
     width: 100%;
     min-height: 46px;
@@ -2823,18 +2857,24 @@ html[data-theme="dark"] .chat-item .chat-time {
     border: 1px solid transparent;
     border-radius: 9px;
     background: transparent;
-    color: #334155;
+    color: var(--mc-text-primary);
     text-align: left;
     cursor: pointer;
 }
 
+/* theme-registry Stage 2.8: #c9d8ea -> --mc-border (d=16.1). #eef5fd ->
+   --mc-bg-muted (d=5.4, close). #173f73 -> --mc-text-primary (d=59.5),
+   already passes AA (9.58:1 on the live hover background). */
 .workspace-nav-btn:hover,
 .workspace-nav-btn.active {
-    border-color: #c9d8ea;
-    background: #eef5fd;
-    color: #173f73;
+    border-color: var(--mc-border);
+    background: var(--mc-bg-muted);
+    color: var(--mc-text-primary);
 }
 
+/* theme-registry Stage 2.8: #e6eef8 -> --mc-bg-muted (d=9.4, semantically
+   the right role for an icon-swatch fill; --mc-border-soft is marginally
+   closer numerically, d=8.3, but is a border token, not a fill token). */
 .workspace-nav-icon {
     width: 26px;
     height: 26px;
@@ -2842,7 +2882,7 @@ html[data-theme="dark"] .chat-item .chat-time {
     align-items: center;
     justify-content: center;
     border-radius: 7px;
-    background: #e6eef8;
+    background: var(--mc-bg-muted);
 }
 
 .workspace-nav-btn strong,
@@ -2855,9 +2895,16 @@ html[data-theme="dark"] .chat-item .chat-time {
     line-height: 1.2;
 }
 
+/* theme-registry Stage 2.8: #8795a8 failed AA (3.05:1) - the nearest
+   token, --mc-text-muted, is a near-exact color match (d=5.8) but ALSO
+   fails (2.95:1, established repeatedly this session). Darkened instead
+   to --mc-text-secondary (d=64.8, the largest distance in this stage, but
+   the closest token that actually passes, 5.09:1 PASS) - same "no closer
+   passing option exists" reasoning as every other large-distance fix this
+   session (Stage 2.5's .sensor-update, Stage 2.2's .node-inline-id). */
 .workspace-nav-btn small {
     margin-top: 2px;
-    color: #8795a8;
+    color: var(--mc-text-secondary);
     font-size: 9px;
     font-weight: 500;
 }

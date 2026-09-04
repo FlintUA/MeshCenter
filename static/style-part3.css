@@ -958,6 +958,11 @@
     border: 0;
 }
 
+/* theme-registry Stage 2.8: confirmed genuinely live, no shadowing found.
+   Same raw values (border/gradient stops) already normalized for
+   .weather-card in Stage 2.5 - same consolidation reused here rather than
+   re-derived: #dce4ed -> --mc-border (d=7.1); gradient stops #f8fbff/
+   #eef4fa -> --mc-bg-subtle (d=3.7) / --mc-bg-muted (d=2.2). */
 .time-card {
     flex: 0 0 auto;
     /* Left-column module cards use a margin-bottom-only spacing mechanism
@@ -966,9 +971,9 @@
        column's #nodesList exactly (individual margin-bottom, no margin-top). */
     margin: 0 10px 6px;
     overflow: hidden;
-    border: 1px solid #dce4ed;
+    border: 1px solid var(--mc-border);
     border-radius: 11px;
-    background: linear-gradient(160deg, #f8fbff 0%, #eef4fa 100%);
+    background: linear-gradient(160deg, var(--mc-bg-subtle) 0%, var(--mc-bg-muted) 100%);
     box-shadow: 0 3px 10px rgba(37, 56, 78, 0.06);
 }
 
@@ -2095,6 +2100,17 @@
     flex-shrink: 0;
 }
 
+/* theme-registry Stage 2.8: investigated the "System Log/chart well"
+   selectors the task brief pointed at (.chart-container/.system-chart/
+   .system-log-body/.log-container, only ever styled by a dark-scoped
+   rule in ui-kit.css) - all four are orphaned, in BOTH themes, not just
+   unchecked for light. The real live System Log body is this element
+   (.radio-history-panel.system-log-panel - confirmed via live DOM
+   inspection on dev), and its background/border here (this rule wins
+   over style-part2.css's earlier, lower-specificity-losing
+   .radio-history-panel base background) are both semi-transparent
+   rgba() washes over the inherited .system-card background, not solid
+   hex - nothing to tokenize, no hex value to check. */
 .system-log-panel {
     margin-top: 0;
     max-height: 260px;
@@ -2280,13 +2296,19 @@ html[data-theme="dark"] .system-log-panel {
     gap: 12px;
     margin-top: 16px;
 }
+/* theme-registry Stage 2.8: confirmed genuinely live for light (see
+   ui-kit.css's comment near .settings-card for the full asymmetry
+   explanation). Stale var() fallback fixed - --mc-border, #cbd5e1 ->
+   #d7e0ea (current real value); --mc-text, #10233c -> #10233f (current
+   --mc-text-primary value, off by 0,0,3). Zero visual effect, var()
+   always resolves to the live property. */
 .settings-select {
     min-width: 132px;
     padding: 8px 10px;
-    border: 1px solid var(--mc-border, #cbd5e1);
+    border: 1px solid var(--mc-border, #d7e0ea);
     border-radius: 8px;
     background: var(--mc-input-bg, #fff);
-    color: var(--mc-text, #10233c);
+    color: var(--mc-text, #10233f);
     font: inherit;
 }
 

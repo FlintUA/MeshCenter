@@ -3328,6 +3328,14 @@ body {
     background: rgba(31, 111, 229, 0.12);
 }
 
+/* theme-registry Stage 2.8: checked independently against this rule's own
+   real background (.settings-card's confirmed-live --mc-bg-subtle,
+   #f7f9fc) rather than assuming Stage 2.7's identical-literal conclusion
+   transfers - it does: #946316 passes AA here too (4.91:1) while
+   --mc-warning itself fails (1.92:1 on this same background). Same
+   deliberately-darkened-variant reasoning as Stage 2.7's
+   .notification-warning icon and this stage's .identity-mismatch, left
+   raw. */
 .settings-card-note--warning {
     color: #946316;
     font-weight: 600;
@@ -3540,8 +3548,11 @@ html[data-theme="dark"] .settings-card-note--warning {
     font-size: 13px;
 }
 
+/* theme-registry Stage 2.8: same value/fix as .updates-version-row
+   (style-part2.css) - #6b7280 -> --mc-text-secondary (d=24.3), already
+   passes AA (4.83:1 on white). */
 .export-time-sep {
-    color: #6b7280;
+    color: var(--mc-text-secondary);
     font-weight: 600;
 }
 

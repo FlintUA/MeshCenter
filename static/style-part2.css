@@ -2843,23 +2843,31 @@ body.context-chat-mode .settings-view {
     font-size: 10px;
 }
 
+/* theme-registry Stage 2.8: confirmed genuinely live (Stage 1.8 only
+   checked the dark-scoped versions of these; no unscoped/light override
+   was ever added for either). #6b7280 -> --mc-text-secondary (d=24.3),
+   already passes AA (4.83:1 on white). */
 .updates-version-row {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
     font-size: 12px;
-    color: #6b7280;
+    color: var(--mc-text-secondary);
     margin-bottom: 6px;
 }
 
+/* theme-registry Stage 2.8: #1f2937 -> --mc-text-primary (d=18.0),
+   already passes AA (14.68:1). */
 .updates-version-row strong {
     margin-left: 6px;
-    color: #1f2937;
+    color: var(--mc-text-primary);
 }
 
+/* theme-registry Stage 2.8: #34445f -> --mc-text-primary (d=58.4),
+   already passes AA (9.82:1). */
 .updates-status-text {
     font-size: 12px;
-    color: #34445f;
+    color: var(--mc-text-primary);
     margin-bottom: 8px;
 }
 

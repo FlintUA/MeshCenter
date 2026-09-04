@@ -1129,3 +1129,16 @@ _16 new unique values (registered in the same commit as the CSS change, location
 | `#F4F7F9` | 1 | static/ui-kit.css:3998 |
 
 Not registered: `accent-reference` (`#557C99`) - same category as Sharp's `#4DFFBC` and Gunmetal-vs-Sharp's accent-split gaps - no existing token reads a role distinct from `action-fill`/`accent-graphic`, both already mapped. Mentioned only in the Stage 6.1 PR-comment explaining why it's unmapped, not declared anywhere. `#4C6E88` (`action-hover`/`border-default`) is intentionally the same hex for two roles per the source doc's own allowance (section 4.1) - registered once, both consumers checked for visual collision (none found, documented in the `ui-kit.css` comment).
+
+_Note (added Stage 6.2): the line numbers in the table above are now stale - Stage 6.2 inserted new comment/declaration lines above and within this region of `ui-kit.css`. This is the same known, pre-existing, non-blocking drift called out in Stage 4.1/5.1's own follow-ups (the HEX values and their identity are what this registry actually tracks; exact line numbers are a best-effort pointer, not re-verified retroactively every time a later stage shifts them). Not fixed here - out of scope for a Stage 6.2 PR._
+
+### Theme-family token value (Stage 6.2 - MeshCenter Alpine, warning exception)
+
+_2 new unique values - warning's foreground/surface. Fill (`#A84300`) and border (`#F08A24`) have no consumer to land on, same category as Sharp's success/danger Base/Border gap (Stage 4.2) - re-checked specifically for warning rather than assumed, confirmed no separate border-role consumer exists_
+
+| HEX | Occurrences | Locations |
+|---|---|---|
+| `#3A281A` | 1 | static/ui-kit.css:4059 |
+| `#FF9A3D` | 2 | static/ui-kit.css:1079, static/ui-kit.css:4058 |
+
+Not registered: `#A84300` (fill/base - fails AA text contrast at 2.03:1 on Alpine's own panel, confirmed via `contrast_check.py`, so it can't safely share `--mc-warning` with the 3 text-role consumers that need it) and `#F08A24` (border - no existing border-role token for warning, grepped and confirmed empty). `#CC5500` (the source doc's palette-anchor "reference" color, fails 3:1 on Alpine's panel per section 8.4, confirmed: 2.84:1) and `#997255` (favorite/secondary-warm-accent role, out of scope same as Gunmetal's `#C2A669`) are both mentioned only in the Stage 6.2 PR-comment explaining why they're unmapped, not declared anywhere.

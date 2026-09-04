@@ -1069,12 +1069,14 @@ a:focus-visible,
 .workspace-theme-family-option[data-family="gunmetal"] .workspace-theme-swatch--warning { background: #f0c86a; }
 
 /* theme-registry Stage 6.1: same reasoning as Sharp's/Gunmetal's swatch
-   overrides above. Warning uses dark's current inherited value (#f0c86a)
-   since Alpine's own warning exception isn't live until Stage 6.2. */
+   overrides above. Warning updated in Stage 6.2 to Alpine's own
+   --mc-warning value (#ff9a3d, the foreground role - see the Stage 6.2
+   comment above html[data-theme-family="alpine"]) once that exception
+   landed; was dark's inherited #f0c86a before that. */
 .workspace-theme-family-option[data-family="alpine"] .workspace-theme-swatch--bg { background: #131c22; }
 .workspace-theme-family-option[data-family="alpine"] .workspace-theme-swatch--panel { background: #263744; }
 .workspace-theme-family-option[data-family="alpine"] .workspace-theme-swatch--primary { background: #426077; }
-.workspace-theme-family-option[data-family="alpine"] .workspace-theme-swatch--warning { background: #f0c86a; }
+.workspace-theme-family-option[data-family="alpine"] .workspace-theme-swatch--warning { background: #ff9a3d; }
 
 .workspace-theme-family-label {
     font-size: 12px;
@@ -3933,11 +3935,11 @@ html[data-theme-family="gunmetal"] {
    specificity, same as Gunmetal.
 
    Palette source: MeshCenterthemeregistryplanv0.1.md section 5/6/7/8.1/9
-   (owner-approved, hex values copied verbatim - do not adjust). Only the
-   21 surface/text/border/accent roles are covered; Alpine's warning
-   exception (a full 4-value one, unlike Gunmetal's surface-only tweak) is
-   Stage 6.2 - left unset here so success/warning/danger/info all inherit
-   html[data-theme="dark"]'s existing values by cascade.
+   (owner-approved, hex values copied verbatim - do not adjust).
+
+   Stage 6.2 addendum: Alpine's one state-color exception - warning
+   (section 8.3). Success/danger/info get no Alpine exception and stay
+   unset.
 
    Token mapping: re-verified against dark-mode consumers, not carried
    over blind from Gunmetal (which happened to collapse the 3 accent roles
@@ -3983,7 +3985,47 @@ html[data-theme-family="gunmetal"] {
    same result, hover backgrounds are still per-component
    (--mc-button-secondary-bg-hover, --mc-dark-control-bg-hover,
    --mc-popover-item-hover, --mc-tab-bg-hover), no single shared token.
-   Left unmapped. */
+   Left unmapped.
+
+   Stage 6.2 - warning exception. Unlike Gunmetal's single-value surface
+   tweak (5.2), Alpine's source values are a genuine 4-way split
+   (foreground #ff9a3d, fill #a84300, surface #3a281a, border #f08a24) and
+   foreground != fill this time - so the fg/fill conflation Stage 5.2 could
+   ignore (Gunmetal's fg and fill were identical) becomes a real judgment
+   call here, same shape as Stage 4.2's success/danger split for Sharp.
+
+   Grepped every real --mc-warning consumer under the dark cascade:
+     - foreground/text role (3 of 4 consumers): .text-warning/
+       .status-warning (ui-kit.css ~431), html[data-theme="dark"]
+       .settings-card-note--warning (style-part1.css:3017-3019), the dark
+       notification-warning icon color (style-part3.css:3782)
+     - fill role (1 of 4): .node-detail-activity.activity-away
+       (style-part3.css:20) - a small solid-color indicator bar, no text
+   Verified with contrast_check.py rather than trusting the source doc's
+   own section 8.4 numbers blindly (they matched exactly once recomputed
+   against Alpine's actual panel #263744): fill/base #a84300 fails badly
+   as text (2.03:1, both AA thresholds), while foreground #ff9a3d passes
+   comfortably everywhere it's used (5.81:1 on panel, 6.64:1 on the
+   warning surface itself). Same reasoning as Stage 4.2: --mc-warning maps
+   to Foreground since it's the only one that keeps every text-role
+   consumer legible; the one fill-role consumer (a decorative indicator
+   bar, no legibility requirement) renders a slightly-off-source orange
+   instead of the literal fill color - a known, deliberate miss, not an
+   oversight. --mc-warning-soft maps cleanly to Surface (only ever used as
+   a soft background wash - ui-kit.css:270 .node-card.favorite,
+   ui-kit.css:1896 the dark-mode !important restore from Stage 5.3).
+
+   Border (#f08a24) and fill/base (#a84300, the value --mc-warning did NOT
+   take) have no existing token to land on - re-checked specifically for
+   warning (grepped for any warning-adjacent border-color consumer; found
+   none) rather than assuming Stage 4.2's success/danger conclusion
+   carries over unchecked. Left both unmapped.
+
+   #cc5500 ("reference") and #997255 (favorite/secondary-warm-accent role)
+   are deliberately not used anywhere in this block - #cc5500 is the
+   palette's background-only anchor color (fails 3:1 on Alpine's own panel
+   per the source doc's own section 8.4, confirmed: 2.84:1), and #997255
+   is out of scope the same way Gunmetal's #c2a669 was in Stage 5.2. */
 html[data-theme-family="alpine"] {
     /* Application surfaces */
     --mc-bg-app: #131c22;
@@ -4010,5 +4052,10 @@ html[data-theme-family="alpine"] {
     --mc-primary: #426077;
     --mc-primary-hover: #4c6e88;
     --mc-accent: #85a4bb;
+
+    /* Semantic states (Stage 6.2) - warning exception only; no
+       success/danger/info exception for Alpine. */
+    --mc-warning: #ff9a3d;
+    --mc-warning-soft: #3a281a;
 }
 

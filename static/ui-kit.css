@@ -3481,9 +3481,27 @@ body[data-theme="dark"] .workspace-popover::after {
     --mc-chat-surface: var(--mc-bg-subtle);
     --mc-chat-surface-raised: var(--mc-bg-panel);
     --mc-chat-border: var(--mc-border);
-    --mc-chat-input: var(--mc-input-bg);
+    /* theme-registry Stage 2.1: was var(--mc-input-bg) (=--mc-bg-panel=
+       white) - had zero light-mode consumers before this stage (the only
+       real consumer, .input-form input[type="text"]/.message-input, was
+       dark-only via an !important override; light's own input field was
+       raw #f5f7fa in style-part1.css, untouched by any token). Repointed
+       to the token that actually matches that real color exactly, so
+       this stage's new light consumer renders pixel-identical to before -
+       safe since nothing else read the old alias. */
+    --mc-chat-input: var(--mc-bg-workspace);
     --mc-chat-text: var(--mc-text-primary);
     --mc-chat-muted: var(--mc-text-secondary);
+    /* theme-registry Stage 2.1: genuinely distinct role, no existing
+       token matches (checked: nearest surface tokens are 60-90+ RGB
+       distance away, not a near-duplicate by any reasonable threshold).
+       .chat-item.has-unread's background/hover and .chat-unread-badge/
+       has-unread's left-border share this pair - dark mode currently has
+       no equivalent rule for either class at all (a pre-existing gap,
+       not introduced or fixed here), so these are light-only for now. */
+    --mc-chat-unread-bg: #fafff5;
+    --mc-chat-unread-bg-hover: #f5ffe8;
+    --mc-chat-unread-accent: #ff5722;
 
     /* Dark-control aliases also receive safe light values */
     --mc-dark-control-bg: var(--mc-button-secondary-bg);

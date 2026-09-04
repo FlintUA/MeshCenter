@@ -897,18 +897,26 @@
    ============================================================ */
 .dock-map-wrap { position: relative; flex: 0 0 auto; }
 .dock-map-btn.map-active { color: var(--mc-primary, #1f6fdb); background: rgba(31,111,219,.12); }
+/* theme-registry Stage 2.7: stale var() fallback literals, fixed for
+   documentation accuracy (zero visual effect, var() always resolves to
+   the live property) - --mc-border, #d8e0e8 -> #d7e0ea (current real
+   value); --mc-text, #17283a -> #10233f (current --mc-text-primary
+   value, off by 7,5,5 from the stale literal). Same cleanup on
+   .map-split-position's border-top below. */
 .map-layout-popover {
     position: absolute; left: 0; bottom: 34px; width: 250px; z-index: 1000;
-    border: 1px solid var(--mc-border, #d8e0e8); border-radius: 12px;
-    background: var(--mc-surface, #fff); color: var(--mc-text, #17283a);
+    border: 1px solid var(--mc-border, #d7e0ea); border-radius: 12px;
+    background: var(--mc-surface, #fff); color: var(--mc-text, #10233f);
     box-shadow: 0 12px 32px rgba(0,0,0,.22); overflow: hidden;
 }
 .map-layout-popover[hidden] { display:none !important; }
 .map-layout-options, .map-split-position { padding: 8px; }
-.map-split-position { border-top: 1px solid var(--mc-border, #d8e0e8); }
+.map-split-position { border-top: 1px solid var(--mc-border, #d7e0ea); }
 .map-split-position.disabled { opacity:.48; pointer-events:none; }
 .map-layout-option { display:flex; align-items:center; gap:8px; padding:8px 9px; border-radius:8px; cursor:pointer; }
-.map-layout-option:hover { background: var(--mc-surface-alt, #eef4fa); }
+/* theme-registry Stage 2.7: stale fallback, --mc-surface-alt, #eef4fa ->
+   #f7f9fc (current real value, off by 9,5,2). */
+.map-layout-option:hover { background: var(--mc-surface-alt, #f7f9fc); }
 .map-layout-option input { margin:0; }
 /* raw: map layout popover surface + hover (theme-registry Stage 1.7) - no
    exact --mc-* match yet (closest: color #eef6fc vs --mc-chat-text
@@ -3035,16 +3043,22 @@ body[data-theme="dark"] .node-manager-detect-radio-btn:hover {
     transform: translate(-50%, 0);
 }
 
+/* theme-registry Stage 2.7: .sending uses the legacy --theme-* family
+   (same debt as the base .waypoint-action-toast rule above), out of
+   scope, not touched. .success/.error are separate, non-legacy rules -
+   in scope. #2a9a60 -> --mc-success (d=34.6, correct semantic role).
+   #d34f5d -> --mc-danger (d=19.0, correct semantic role). Both are
+   border-colors (a UI-component role, not text), consolidated. */
 .waypoint-action-toast.sending {
     border-color: var(--theme-focus, #4f8cff);
 }
 
 .waypoint-action-toast.success {
-    border-color: #2a9a60;
+    border-color: var(--mc-success);
 }
 
 .waypoint-action-toast.error {
-    border-color: #d34f5d;
+    border-color: var(--mc-danger);
 }
 
 .waypoint-action-toast-icon {

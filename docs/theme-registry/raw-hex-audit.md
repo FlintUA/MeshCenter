@@ -1073,22 +1073,22 @@ _17 new unique values (registered in the same commit as the CSS change this time
 
 | HEX | Occurrences | Locations |
 |---|---|---|
-| `#0C0E0F` | 2 | static/ui-kit.css:996, static/ui-kit.css:3418 |
-| `#090B0C` | 1 | static/ui-kit.css:3421 |
-| `#101417` | 1 | static/ui-kit.css:3430 |
-| `#121516` | 1 | static/ui-kit.css:3419 |
-| `#181C1E` | 2 | static/ui-kit.css:997, static/ui-kit.css:3420 |
-| `#1D2225` | 1 | static/ui-kit.css:3422 |
-| `#23292D` | 1 | static/ui-kit.css:3423 |
-| `#2F373C` | 1 | static/ui-kit.css:3433 |
-| `#353E43` | 1 | static/ui-kit.css:3424 |
-| `#47535A` | 1 | static/ui-kit.css:3434 |
-| `#63A1C2` | 3 | static/ui-kit.css:998, static/ui-kit.css:3439, static/ui-kit.css:3441 |
-| `#687780` | 1 | static/ui-kit.css:3435 |
-| `#7CB4D0` | 1 | static/ui-kit.css:3440 |
-| `#96A4AC` | 1 | static/ui-kit.css:3429 |
-| `#9CCDE5` | 1 | static/ui-kit.css:3436 |
-| `#C4CCD0` | 1 | static/ui-kit.css:3428 |
-| `#F2F5F6` | 1 | static/ui-kit.css:3427 |
+| `#0C0E0F` | 2 | static/ui-kit.css:1066, static/ui-kit.css:3855 |
+| `#090B0C` | 1 | static/ui-kit.css:3858 |
+| `#101417` | 1 | static/ui-kit.css:3867 |
+| `#121516` | 1 | static/ui-kit.css:3856 |
+| `#181C1E` | 2 | static/ui-kit.css:1067, static/ui-kit.css:3857 |
+| `#1D2225` | 1 | static/ui-kit.css:3859 |
+| `#23292D` | 1 | static/ui-kit.css:3860 |
+| `#2F373C` | 1 | static/ui-kit.css:3870 |
+| `#353E43` | 1 | static/ui-kit.css:3861 |
+| `#47535A` | 1 | static/ui-kit.css:3871 |
+| `#63A1C2` | 3 | static/ui-kit.css:1068, static/ui-kit.css:3876, static/ui-kit.css:3878 |
+| `#687780` | 1 | static/ui-kit.css:3872 |
+| `#7CB4D0` | 1 | static/ui-kit.css:3877 |
+| `#96A4AC` | 1 | static/ui-kit.css:3866 |
+| `#9CCDE5` | 1 | static/ui-kit.css:3873 |
+| `#C4CCD0` | 1 | static/ui-kit.css:3865 |
+| `#F2F5F6` | 1 | static/ui-kit.css:3864 |
 
 Not registered: none new this time - unlike Sharp, all three of Gunmetal's accent roles (`accent-reference`/`action-fill`/`accent-graphic`) share one value (`#63A1C2`), so there was no unmapped role to document as a gap. The swatch preview's warning slot reuses `#F0C86A` (dark's current `--mc-warning`, already registered from the Stage 0 baseline) - not a new value, since Gunmetal has no warning override yet (that's Stage 5.2).

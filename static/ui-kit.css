@@ -1068,6 +1068,14 @@ a:focus-visible,
 .workspace-theme-family-option[data-family="gunmetal"] .workspace-theme-swatch--primary { background: #63a1c2; }
 .workspace-theme-family-option[data-family="gunmetal"] .workspace-theme-swatch--warning { background: #f0c86a; }
 
+/* theme-registry Stage 6.1: same reasoning as Sharp's/Gunmetal's swatch
+   overrides above. Warning uses dark's current inherited value (#f0c86a)
+   since Alpine's own warning exception isn't live until Stage 6.2. */
+.workspace-theme-family-option[data-family="alpine"] .workspace-theme-swatch--bg { background: #131c22; }
+.workspace-theme-family-option[data-family="alpine"] .workspace-theme-swatch--panel { background: #263744; }
+.workspace-theme-family-option[data-family="alpine"] .workspace-theme-swatch--primary { background: #426077; }
+.workspace-theme-family-option[data-family="alpine"] .workspace-theme-swatch--warning { background: #f0c86a; }
+
 .workspace-theme-family-label {
     font-size: 12px;
     font-weight: 700;
@@ -3915,5 +3923,92 @@ html[data-theme-family="gunmetal"] {
        are identical to the inherited dark value and need no override.
        No success/danger/info exception for Gunmetal. */
     --mc-warning-soft: #473529;
+}
+
+/* theme-registry Stage 6.1: MeshCenter Alpine - a 'fixed', DARK-only
+   family (WORKSPACE_THEME_FAMILIES in chat.js: { id: 'alpine', kind:
+   'fixed', mode: 'dark' }). Second dark fixed family after Gunmetal - same
+   same-element cascade mechanism, needs to win over both :root and the
+   canonical html[data-theme="dark"] block by source order at equal
+   specificity, same as Gunmetal.
+
+   Palette source: MeshCenterthemeregistryplanv0.1.md section 5/6/7/8.1/9
+   (owner-approved, hex values copied verbatim - do not adjust). Only the
+   21 surface/text/border/accent roles are covered; Alpine's warning
+   exception (a full 4-value one, unlike Gunmetal's surface-only tweak) is
+   Stage 6.2 - left unset here so success/warning/danger/info all inherit
+   html[data-theme="dark"]'s existing values by cascade.
+
+   Token mapping: re-verified against dark-mode consumers, not carried
+   over blind from Gunmetal (which happened to collapse the 3 accent roles
+   into one - Alpine doesn't, it's a 3-way split like Sharp):
+     surface-app/-workspace/-panel  -> --mc-bg-app/-workspace/-panel
+     surface-card                   -> --mc-card-bg (explicit leaf
+                                        override, same as Gunmetal - dark's
+                                        --mc-card-bg is its own literal,
+                                        not an alias, so this isn't
+                                        "breaking" anything)
+     surface-control                -> --mc-button-secondary-bg
+     surface-media                  -> --mc-bg-media-stage
+     surface-selected               -> --mc-primary-soft (--mc-accent-soft
+                                        follows via the same alias)
+     text-primary/-secondary/-muted/-inverse -> the matching --mc-text-*
+     border-soft/-default           -> --mc-border-soft/--mc-border
+     border-control                 -> --mc-button-secondary-border
+     focus-ring                     -> --mc-border-focus
+     action-fill/-hover             -> --mc-primary/--mc-primary-hover
+                                        (grepped: drives the primary button
+                                        fill + active tab underline, same
+                                        consumers Sharp/Gunmetal found)
+     accent-graphic                 -> --mc-accent (grepped: .btn:focus-
+                                        visible outline + About-page
+                                        accent card/link)
+
+   accent-reference (#557c99) has no existing token to land on, same
+   category as Sharp's mint - nothing reads a role that isn't already
+   claimed by action-fill or accent-graphic. Left unmapped.
+
+   action-hover (#4c6e88) and border-default (#4c6e88) are the identical
+   hex - checked whether any component uses both close enough together to
+   look wrong (the specific risk: a hover state reading the same as a
+   resting border). --mc-primary-hover has only 4 consumers, all narrow
+   button/chat-sender-text roles (ui-kit.css ~404/418-419/2176); --mc-border
+   is used in 40+ generic panel/divider borders across the whole file.
+   None of --mc-primary-hover's 4 sites sit adjacent to a --mc-border
+   consumer in the same component - no visual collision found. Treating
+   this as intentional per the source doc's own "one hex, multiple roles"
+   allowance (section 4.1), not a copy-paste error.
+
+   surface-hover: re-checked a third time (Sharp, Gunmetal, now Alpine) -
+   same result, hover backgrounds are still per-component
+   (--mc-button-secondary-bg-hover, --mc-dark-control-bg-hover,
+   --mc-popover-item-hover, --mc-tab-bg-hover), no single shared token.
+   Left unmapped. */
+html[data-theme-family="alpine"] {
+    /* Application surfaces */
+    --mc-bg-app: #131c22;
+    --mc-bg-workspace: #1c2933;
+    --mc-bg-panel: #263744;
+    --mc-bg-media-stage: #2f2f2f;
+    --mc-card-bg: #2f4555;
+    --mc-button-secondary-bg: #354d5e;
+    --mc-primary-soft: #314f64;
+
+    /* Text */
+    --mc-text-primary: #f4f7f9;
+    --mc-text-secondary: #cbd9e2;
+    --mc-text-muted: #a8becf;
+    --mc-text-inverse: #ffffff;
+
+    /* Borders */
+    --mc-border-soft: #395366;
+    --mc-border: #4c6e88;
+    --mc-button-secondary-border: #7397b1;
+    --mc-border-focus: #bacbd9;
+
+    /* Primary accent */
+    --mc-primary: #426077;
+    --mc-primary-hover: #4c6e88;
+    --mc-accent: #85a4bb;
 }
 

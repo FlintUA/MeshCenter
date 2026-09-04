@@ -2589,6 +2589,14 @@
     ]
   },
   {
+    "value": "3A281A",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:4059"
+    ]
+  },
+  {
     "value": "3A4A5A",
     "verdict": "ui-normalization-candidate",
     "count": 5,
@@ -8962,6 +8970,15 @@
     "locations": [
       "static/style-part3.css:3738",
       "static/style-part4.css:4017"
+    ]
+  },
+  {
+    "value": "FF9A3D",
+    "verdict": "theme-family-token-value",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:1079",
+      "static/ui-kit.css:4058"
     ]
   },
   {

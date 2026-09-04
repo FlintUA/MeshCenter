@@ -3751,6 +3751,12 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
     flex: 0 0 auto;
 }
 
+/* theme-registry Stage 2.7: .dock-notification-btn(:hover) is orphaned -
+   grepped every static/*.js template and templates/index.html, this
+   class is never rendered by the current dock UI (a different
+   .dock-notification-wrap/.dock-notification-status/-text/-chevron row
+   is what actually renders). Left as documented raw var()-with-fallback
+   since it never paints either way. */
 .dock-notification-btn {
     position: relative;
     width: 27px;
@@ -3771,6 +3777,15 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 }
 
 
+/* theme-registry Stage 2.7: border-color/background/color/box-shadow
+   below are dead - confirmed live on dev via CSSOM matching: computed
+   border-color is #d7dee8 (--mc-popover-border's real value), not #d8dee6
+   (this rule's own var(--mc-border, ...) fallback, and not #d7e0ea,
+   --mc-border's real value either) - proof the "UNIFIED POPOVER SURFACES"
+   shared shell in ui-kit.css (~L3316, same reasoning as
+   .workspace-popover there) is the actual winner, at equal (0,1,0)
+   specificity, later-loaded file. Layout-only properties (position/
+   width/max-height/z-index) are untouched and stay live. */
 .notification-popover {
     position: absolute;
     left: 0;
@@ -3786,6 +3801,11 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
     z-index: 1600;
 }
 
+/* theme-registry Stage 2.7: background/border-bottom-color dead, same
+   shared-shell reasoning (ui-kit.css's ".workspace-popover-header,
+   .notification-popover-header { background: var(--mc-popover-header-bg);
+   border-bottom-color: var(--mc-popover-divider); }", same specificity,
+   later file). Layout-only properties stay live. */
 .notification-popover-header {
     display: flex;
     align-items: center;
@@ -3802,6 +3822,14 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 }
 
 .notification-popover-header strong { font-size: 13px; }
+/* theme-registry Stage 2.7: dead - confirmed live via CSSOM matching,
+   computed color is #7a8798 (--mc-popover-muted), not #58708f (this
+   rule's own var(--mc-muted, ...) real value if it were winning) - the
+   shared shell's ".workspace-popover-header span, .notification-popover-header
+   span, .notification-item-copy small, .notification-empty { color:
+   var(--mc-popover-muted); }" wins instead, same reasoning as
+   .notification-popover above. Same fate for .notification-item-copy
+   small and .notification-empty further down this block. */
 .notification-popover-header span { color: var(--mc-muted, #7b8796); font-size: 9px; }
 
 /* Specificity note: `.notification-popover-header > div` above (meant for
@@ -3853,6 +3881,9 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
     cursor: pointer;
 }
 .notification-item:last-child { border-bottom: 0; }
+/* theme-registry Stage 2.7: dead - ui-kit.css's shared-shell
+   ".notification-item:hover { background: var(--mc-popover-item-hover);
+   }" is the exact same selector, later file, wins the tie. */
 .notification-item:hover { background: var(--mc-surface-alt, #f4f7fa); }
 .notification-item.is-read { opacity: .72; }
 .notification-item-icon {
@@ -3864,12 +3895,28 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
     border-radius: 6px;
     font-weight: 800;
 }
-.notification-success .notification-item-icon { color: #217648; background: #e7f5ec; }
-.notification-warning .notification-item-icon { color: #946316; background: #fff3d8; }
-.notification-error .notification-item-icon { color: #a43d45; background: #fde9eb; }
-.notification-info .notification-item-icon { color: #23699f; background: #e6f1fa; }
+/* theme-registry Stage 2.7: genuinely live (no override exists anywhere
+   for any of these four selectors). The background halves are real
+   near-duplicates of the light -soft tokens: #e7f5ec -> --mc-success-soft
+   (d=5.4), #fff3d8 -> --mc-warning-soft (d=8.1), #fde9eb -> --mc-danger-soft
+   (d=4.2), #e6f1fa -> --mc-info-soft (d=6.7) - all consolidated. The
+   foreground icon colors are NOT consolidated to the obvious semantic
+   token (--mc-success/-warning/-danger/-info) despite matching hue,
+   because those tokens all FAIL AA against these exact soft backgrounds
+   (e.g. --mc-success #27b96f on #e7f5ec: 2.26:1; --mc-danger #e6505d on
+   #fde9eb: 3.18:1) while the current raw values all PASS (#217648 on
+   #e7f5ec: 4.98:1; #946316 on #fff3d8: 4.70:1; #a43d45 on #fde9eb: 5.41:1;
+   #23699f on #e6f1fa: 5.10:1) - these are deliberately darkened,
+   AA-driven variants of the semantic colors, not an oversight, left raw
+   with this reasoning documented. */
+.notification-success .notification-item-icon { color: #217648; background: var(--mc-success-soft); }
+.notification-warning .notification-item-icon { color: #946316; background: var(--mc-warning-soft); }
+.notification-error .notification-item-icon { color: #a43d45; background: var(--mc-danger-soft); }
+.notification-info .notification-item-icon { color: #23699f; background: var(--mc-info-soft); }
 .notification-item-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .notification-item-copy strong { overflow-wrap: anywhere; font-size: 11px; font-weight: 650; line-height: 1.3; }
+/* theme-registry Stage 2.7: dead, same reasoning as
+   .notification-popover-header span above (shared shell wins). */
 .notification-item-copy small { color: var(--mc-muted, #7b8796); font-size: 9px; }
 .notification-empty { padding: 30px 16px; color: var(--mc-muted, #7b8796); font-size: 11px; text-align: center; }
 

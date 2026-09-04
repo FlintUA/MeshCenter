@@ -1578,8 +1578,13 @@ body {
     z-index: 1000;
 }
 
+/* theme-registry Stage 2.7: confirmed genuinely live - no override exists
+   anywhere for .modal-content/.modal-header/.modal-close/.confirm-text
+   (grepped ui-kit.css, style-part2/3/4.css for unscoped or light-scoped
+   rules; only style-part4.css's already-handled [data-theme="dark"]
+   versions exist). background: white -> --mc-bg-panel (d=0, exact). */
 .modal-content {
-    background: white;
+    background: var(--mc-bg-panel);
     border-radius: 14px;
     min-width: 280px;
     max-width: 380px;
@@ -1587,30 +1592,48 @@ body {
     overflow: hidden;
 }
 
+/* theme-registry Stage 2.7: #e8e8e8 -> --mc-border-soft (d=10.0, close). */
 .modal-header {
     padding: 14px 18px;
-    border-bottom: 1px solid #e8e8e8;
+    border-bottom: 1px solid var(--mc-border-soft);
     display: flex;
     justify-content: space-between;
     align-items: center;
 }
 
-.modal-header span { font-size: 15px; font-weight: 600; color: #3a4a5a; }
+/* theme-registry Stage 2.7: dark's counterpart matched --mc-tab-text-active
+   exactly (Stage 1.7); light's does NOT (--mc-tab-text-active is #102f5c,
+   d=50.0 - not exact, so that precedent doesn't transfer). Consolidated
+   instead to --mc-text-primary (d=63.4, already passes AA 9.10:1) as the
+   semantically correct "modal title text" role, matching every other
+   title-text consolidation this session (.video-title, .node-card-title,
+   .map-popup-name, etc.). */
+.modal-header span { font-size: 15px; font-weight: 600; color: var(--mc-text-primary); }
 
+/* theme-registry Stage 2.7: #999 failed AA (2.85:1) - the nearest token,
+   --mc-text-muted, also fails (2.95:1) on white. Darkened instead to
+   --mc-text-secondary (5.09:1, PASS) - a real, meaningfully large visual
+   shift (this glyph was a plain neutral gray, --mc-text-secondary has a
+   blue tint), but no closer passing option exists and a modal close
+   button needs to clear AA like any other interactive control, same
+   precedent as Stage 2.3's .map-popup-close-btn fix. */
 .modal-close {
     background: none;
     border: none;
     font-size: 20px;
     cursor: pointer;
-    color: #999;
+    color: var(--mc-text-secondary);
     padding: 0 4px;
 }
 
 .modal-body { padding: 14px 18px; }
 
+/* theme-registry Stage 2.7: #444 -> --mc-text-primary (d=61.8), already
+   passes AA (9.74:1). Semantically this is dialog body text, the same
+   "primary text" role as .modal-header span above. */
 .confirm-text {
     font-size: 15px;
-    color: #444;
+    color: var(--mc-text-primary);
     text-align: center;
     margin-bottom: 20px;
     line-height: 1.5;

@@ -826,6 +826,22 @@ a:focus-visible,
     display: none;
 }
 
+/* theme-registry Stage 2.7: dead code, confirmed via computed styles on
+   dev - not deleted, out of scope to clean up dead CSS here. The "UNIFIED
+   POPOVER SURFACES" shared shell further down this file (~L3316,
+   ".workspace-popover, .notification-popover { border-color:
+   var(--mc-popover-border); background: var(--mc-popover-bg); color:
+   var(--mc-popover-text); box-shadow: var(--mc-popover-shadow); }") is
+   unscoped (not theme-gated) and equal specificity (0,1,0) to every rule
+   below, later in file order, so it wins for border-color/background/
+   color/box-shadow on all of them. Unlike Stage 1.7's dark-mode finding,
+   this isn't just "the numbers happen to match" - the raw fallback
+   literals in nearby rules (e.g. .notification-popover's
+   var(--mc-border, #d8dee6)) provably differ from what actually renders
+   (--mc-popover-border's real value, #d7dee8), confirming the shell rule
+   is the true winner, not a coincidental tie. Layout-only properties
+   (position/width/border-right-width/etc.) are untouched by the shell and
+   stay live. */
 .workspace-popover {
     position: absolute;
     left: 70px;
@@ -873,6 +889,13 @@ a:focus-visible,
     font-size: 14px;
 }
 
+/* theme-registry Stage 2.7: also dead, same shared-shell reasoning as
+   above (".workspace-popover-header span, .notification-popover-header
+   span, ... { color: var(--mc-popover-muted); }", ~L3331, same 0,2,0
+   specificity, later in file). Unlike Stage 1.7's dark finding (where a
+   higher-specificity html[data-theme="dark"] override made this
+   selector's dark counterpart genuinely live), no such override exists
+   for light - the asymmetry the task brief flagged as worth checking. */
 .workspace-popover-header span {
     margin-top: 2px;
     color: #7a8798;

@@ -1082,7 +1082,16 @@ a:focus-visible,
    swatch overrides above. Warning uses dark's current inherited value
    (#f0c86a) PERMANENTLY, not a placeholder - Teal has no warning
    exception at all (section 8.3), unlike Gunmetal/Alpine's swatches
-   which were provisional pending their own 6.2/6.2-shaped stage. */
+   which were provisional pending their own 6.2/6.2-shaped stage.
+
+   Stage 8.1 note: left as-is, still shows only Teal Dark's 4 colors -
+   Teal is still 'fixed'/'dark' until Stage 8.2, so this is still the
+   only Teal state a user can actually pick. Flagging for Stage 8.2: once
+   Teal becomes 'paired', this swatch will need to become mode-aware
+   (reading whichever of dark/light is actually resolved, the way the
+   generic .workspace-theme-swatch--* rules already do for 'original' -
+   or possibly switching to always show one fixed representative mode,
+   your call for that stage) - not built here. */
 .workspace-theme-family-option[data-family="teal"] .workspace-theme-swatch--bg { background: #021818; }
 .workspace-theme-family-option[data-family="teal"] .workspace-theme-swatch--panel { background: #043030; }
 .workspace-theme-family-option[data-family="teal"] .workspace-theme-swatch--primary { background: #10c2c2; }
@@ -4134,8 +4143,20 @@ html[data-theme-family="alpine"] {
 
    surface-hover: re-checked a fourth time (Sharp, Gunmetal, Alpine, now
    Teal Dark) - same result, hover backgrounds are still per-component,
-   no single shared token. Left unmapped. */
-html[data-theme-family="teal"] {
+   no single shared token. Left unmapped.
+
+   Stage 8.1 addendum: adding Teal Light means Teal now needs different
+   tokens depending on MODE, not just family, so this block gained
+   [data-theme="dark"] to scope it - selector changed from
+   html[data-theme-family="teal"] to
+   html[data-theme-family="teal"][data-theme="dark"]. Every declaration
+   below is byte-identical to what shipped in Stage 7.1/7.2/7.3 - this is
+   a pure selector-scoping change, not a value change. kind stays 'fixed'/
+   'dark' in chat.js until Stage 8.2, so data-theme is never actually
+   "light" while data-theme-family is "teal" yet - the new light block
+   below is real CSS that exists but is currently unreachable in the live
+   app, activating for free once Stage 8.2 flips kind to 'paired'. */
+html[data-theme-family="teal"][data-theme="dark"] {
     /* Application surfaces */
     --mc-bg-app: #021818;
     --mc-bg-workspace: #032424;
@@ -4161,5 +4182,90 @@ html[data-theme-family="teal"] {
     --mc-primary: #10c2c2;
     --mc-primary-hover: #13ebeb;
     --mc-accent: #10c2c2;
+}
+
+/* theme-registry Stage 8.1: MeshCenter Teal Light - the second half of
+   Teal, currently inert (see the addendum above the dark block: kind
+   stays 'fixed'/'dark' until Stage 8.2, so data-theme="light" never
+   coexists with data-theme-family="teal" in the live app yet). Scoped
+   the same way as the dark half, against :root instead of
+   html[data-theme="dark"] - needs to win over :root by source order at
+   equal specificity, same reasoning Stage 3.3 established, and will need
+   to win over html[data-theme="dark"] too once reachable (it does, same
+   specificity, later in source order).
+
+   Palette source: MeshCenterthemeregistryplanv0.1.md section 5/6/7/8.1/9
+   (owner-approved, hex values copied verbatim - do not adjust).
+
+   State colors: re-confirmed no Teal exception exists in section 8.3 for
+   Light either - section 8.3 lists exceptions by family name, not by
+   mode, so Teal's single "no exception" absence (already confirmed twice
+   for the family as a whole, Stages 7.1/7.2) necessarily covers both
+   halves, not just Dark. All four stay unset, inheriting :root's base
+   light values by cascade.
+
+   Token mapping: re-verified against :root's (base light) consumers, not
+   assumed to mirror the dark block:
+     surface-app/-workspace/-panel  -> --mc-bg-app/-workspace/-panel
+     surface-card                   -> --mc-card-bg. Unlike the dark
+                                        block (where --mc-card-bg is
+                                        already its own literal), :root
+                                        aliases it to var(--mc-bg-panel) -
+                                        confirmed still true (ui-kit.css
+                                        :root block). This override
+                                        genuinely breaks that alias for
+                                        Teal Light, same framing Sharp
+                                        used on the light side, not
+                                        Gunmetal/Alpine's "plain leaf
+                                        override" framing (that framing
+                                        was dark-specific).
+     surface-control                -> --mc-button-secondary-bg
+     surface-media                  -> --mc-bg-media-stage
+     surface-selected               -> --mc-primary-soft (--mc-accent-soft
+                                        follows via the same alias)
+     text-primary/-secondary/-muted/-inverse -> the matching --mc-text-*
+     border-soft/-default           -> --mc-border-soft/--mc-border
+     border-control                 -> --mc-button-secondary-border
+     focus-ring                     -> --mc-border-focus
+     action-fill/-hover             -> --mc-primary/--mc-primary-hover
+     accent-graphic                 -> --mc-accent
+
+   Unlike Teal Dark's partial split, Teal Light is a full collapse - all
+   three non-hover accent roles (accent-reference/action-fill/
+   accent-graphic) share one value (#096c6c), same shape as Gunmetal.
+   accent-reference lands on the same tokens as action-fill/accent-graphic
+   by value coincidence, not a separate mapping decision - no unmapped
+   role this time, unlike Teal Dark's distinct accent-reference.
+
+   surface-hover: checked a fifth time (Sharp, Gunmetal, Alpine, Teal
+   Dark, now Teal Light) - same result on the light cascade too, hover
+   backgrounds are still per-component, no single shared token. Left
+   unmapped. */
+html[data-theme-family="teal"][data-theme="light"] {
+    /* Application surfaces */
+    --mc-bg-app: #eef8f8;
+    --mc-bg-workspace: #f5fafa;
+    --mc-bg-panel: #ffffff;
+    --mc-bg-media-stage: #e1eeee;
+    --mc-card-bg: #f0f7f7;
+    --mc-button-secondary-bg: #e4f1f1;
+    --mc-primary-soft: #d9f5f5;
+
+    /* Text */
+    --mc-text-primary: #123536;
+    --mc-text-secondary: #365e60;
+    --mc-text-muted: #527476;
+    --mc-text-inverse: #ffffff;
+
+    /* Borders */
+    --mc-border-soft: #d0e4e4;
+    --mc-border: #a8caca;
+    --mc-button-secondary-border: #628e8e;
+    --mc-border-focus: #096c6c;
+
+    /* Primary accent */
+    --mc-primary: #096c6c;
+    --mc-primary-hover: #075656;
+    --mc-accent: #096c6c;
 }
 

@@ -1167,3 +1167,25 @@ _16 new unique values (registered in the same commit as the CSS change, location
 | `#F0FAFA` | 1 | static/ui-kit.css:4149 |
 
 Not registered: `accent-reference` (`#096C6C`) has no consumer distinct from `action-fill`/`accent-graphic` (both `--mc-primary`/`--mc-accent`, already mapped) - same category as Sharp's/Alpine's unmapped reference colors. Note this stage is architecturally different from Sharp/Gunmetal/Alpine: Teal has **no state-color exception at all** (confirmed against section 8.3 - no Teal-specific line exists, unlike the other three fixed families which each had one), and is wired provisionally as `kind: 'fixed'` pending Stage 8's Teal Light + Stage 8.2's conversion to `kind: 'paired'` - see the `ui-kit.css`/`chat.js` comments for the full reasoning. No hex was left unregistered due to a fg/fill split judgment call this time (there's no state exception to split).
+
+### Theme-family token value (Stage 8.1 - MeshCenter Teal Light, base tokens)
+
+_13 new unique values (registered in the same commit as the CSS change, locations taken from `check_new_hex.py`'s own output and cross-verified with a fresh `grep` as the last step before committing). This stage also restructured Teal Dark's existing block into `[data-theme-family="teal"][data-theme="dark"]` - a pure selector-scoping change, no value changes, confirmed via `git diff` that every dark-block declaration line was recognized as unchanged, not deleted+re-added - so none of Stage 7.1's already-registered 16 values needed re-registering._
+
+| HEX | Occurrences | Locations |
+|---|---|---|
+| `#123536` | 1 | static/ui-kit.css:4255 |
+| `#365E60` | 1 | static/ui-kit.css:4256 |
+| `#527476` | 1 | static/ui-kit.css:4257 |
+| `#075656` | 1 | static/ui-kit.css:4268 |
+| `#628E8E` | 1 | static/ui-kit.css:4263 |
+| `#A8CACA` | 1 | static/ui-kit.css:4262 |
+| `#D0E4E4` | 1 | static/ui-kit.css:4261 |
+| `#D9F5F5` | 1 | static/ui-kit.css:4252 |
+| `#E1EEEE` | 1 | static/ui-kit.css:4249 |
+| `#E4F1F1` | 1 | static/ui-kit.css:4251 |
+| `#EEF8F8` | 1 | static/ui-kit.css:4246 |
+| `#F0F7F7` | 1 | static/ui-kit.css:4250 |
+| `#F5FAFA` | 1 | static/ui-kit.css:4247 |
+
+Not registered: none new this time - Teal Light is a full accent collapse (`accent-reference`/`action-fill`/`accent-graphic` all share `#096C6C`, same shape as Gunmetal), and `#096C6C`/`#FFFFFF` were already registered (from Teal Dark's `--mc-primary-soft` in Stage 7.1, and the Stage 0 baseline, respectively) - so no unmapped-role hex this stage. No state-color exception either (re-confirmed for Light specifically, not just assumed from Dark - section 8.3 lists exceptions by family, not mode, so Teal's single "no exception" absence covers both halves).

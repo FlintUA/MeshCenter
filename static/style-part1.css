@@ -666,6 +666,22 @@ body {
 .sidebar.hidden { display: none; }
 
 /* ===== BASE CARD ===== */
+/* theme-registry Stage 2.5: this whole block's background/text colors are
+   dead - confirmed live on dev. .base-card/.sensors-card's own background
+   is reset to transparent by style-part3.css's higher-specificity
+   ".node-info-panel > .base-card, .node-info-panel > .sensors-card,
+   .node-info-panel > .telemetry-section { background: transparent; ... }"
+   (0,2,0 vs this rule's 0,1,0) - the real card chrome now comes from the
+   shared .node-info-panel wrapper itself (see style-part3.css). Sensor
+   text colors (.sensors-title/.sensor-label/.sensor-value/.sensor-unit/
+   .sensor-update) are separately shadowed by style-part3.css's
+   .node-info-panel-scoped versions (same specificity, later file/later in
+   cascade - the live winners, normalized in this stage, are documented
+   there). .base-card-title/.base-status-line are orphaned entirely -
+   grepped every static/*.js template, the live .base-card only ever
+   renders a node-manager-entry button (.base-node-avatar/
+   .base-node-name-stack/#baseNodeName), never these classes. Left as raw
+   hex since none of it renders. */
 .base-card {
     background: linear-gradient(135deg, #e8f0f8, #d5e0ec);
     padding: 8px 14px;
@@ -724,12 +740,23 @@ body {
 .sensor-value { font-weight: 600; color: #1a3a2a; }
 .sensor-unit { color: #aaa; font-size: 9px; }
 
+/* theme-registry Stage 2.5: border-top-color is dead - style-part2.css's
+   ".battery-indicator, .base-reference-location" rule sets the full
+   border shorthand (all four sides) at equal specificity, later file,
+   overriding this top-only declaration for the top side too - and that
+   rule is itself dead for .battery-indicator (shadowed again by
+   style-part3.css's .node-info-panel .battery-indicator, higher
+   specificity - see that comment). margin-top/padding-top are untouched
+   by either and stay live. */
 .battery-indicator {
     margin-top: 6px;
     padding-top: 6px;
     border-top: 1px solid #d5d8dd;
 }
 
+/* theme-registry Stage 2.5: dead - style-part3.css's later, equal-
+   specificity .battery-bar wins (normalized in this stage, see that
+   comment). */
 .battery-bar {
     width: 100%;
     height: 6px;
@@ -738,6 +765,9 @@ body {
     overflow: hidden;
 }
 
+/* theme-registry Stage 2.5: genuinely live (no shadowing rule found) but
+   out of scope - a battery charge-level status color, see the comment on
+   style-part3.css's .battery-fill rule for the full reasoning. */
 .battery-fill {
     height: 100%;
     background: linear-gradient(90deg, #4caf50, #8bc34a);
@@ -745,6 +775,9 @@ body {
     border-radius: 4px;
 }
 
+/* theme-registry Stage 2.5: dead - shadowed by style-part3.css's
+   .node-info-panel .sensors-title .sensor-update (normalized in this
+   stage, see that comment). */
 .sensor-update { font-size: 9px; color: #aaa; margin-top: 4px; }
 
 /* ===== SIDEBAR TABS ===== */
@@ -1776,6 +1809,9 @@ body {
 /* ============================================================
    ТЕЛЕМЕТРИЯ
    ============================================================ */
+/* theme-registry Stage 2.5: background/border-top-color are dead, same
+   .node-info-panel > .telemetry-section reset as .base-card/.sensors-card
+   above. */
 .telemetry-section {
     padding: 4px 10px;
     border-top: 1px solid #d5d8dd;
@@ -1783,6 +1819,11 @@ body {
     background: #f5f7fa;
 }
 
+/* theme-registry Stage 2.5: #3a5a7a is genuinely not overridden by any
+   later rule, but it never actually paints - the live .telemetry-header
+   only ever wraps .telemetry-title/.telemetry-status (both fully covered
+   by their own, more specific colors, normalized in style-part3.css),
+   with no other direct text content of its own. Left raw. */
 .telemetry-header {
     display: flex;
     justify-content: space-between;
@@ -1799,6 +1840,8 @@ body {
     gap: 4px;
 }
 
+/* theme-registry Stage 2.5: dead - shadowed by style-part3.css's
+   .node-info-panel .telemetry-status (normalized in this stage). */
 .telemetry-header .telemetry-status {
     font-size: 9px;
     font-weight: 400;
@@ -1811,6 +1854,13 @@ body {
     padding: 2px 0;
 }
 
+/* theme-registry Stage 2.5: .telemetry-btn's base border/background are
+   live but out of scope - per-category modifier classes further down
+   this file (.telemetry-btn.environment, etc., one per telemetry chart
+   category) recolor each button to match its chart's own data-series
+   color, the same categorical/theme-independent system as
+   SENSOR_COLORS/SENSOR_BG_COLORS in chat.js, explicitly excluded from
+   this stage. */
 .telemetry-btn {
     flex: 1;
     padding: 4px 10px 5px 10px;

@@ -1198,14 +1198,17 @@
     transition: transform 0.15s;
 }
 
+/* theme-registry Stage 2.5: single, unshadowed declaration, genuinely
+   live. #dce4ed -> --mc-border (d=7.1). Gradient stops #f8fbff/#eef4fa ->
+   --mc-bg-subtle (d=3.7) / --mc-bg-muted (d=2.2), both near-exact. */
 .weather-card {
     flex: 0 0 auto;
     /* margin-bottom-only, see .time-card comment above. */
     margin: 0 10px 6px;
     overflow: hidden;
-    border: 1px solid #dce4ed;
+    border: 1px solid var(--mc-border);
     border-radius: 11px;
-    background: linear-gradient(160deg, #f8fbff 0%, #eef4fa 100%);
+    background: linear-gradient(160deg, var(--mc-bg-subtle) 0%, var(--mc-bg-muted) 100%);
     box-shadow: 0 3px 10px rgba(37, 56, 78, 0.06);
 }
 
@@ -2297,16 +2300,28 @@ html[data-theme="dark"] .system-log-panel {
    Base status, live sensors, battery and telemetry history share
    one visual container while preserving their existing IDs/API.
    ============================================================ */
+/* theme-registry Stage 2.5: this is the LIVE card chrome for the whole
+   base/sensors/telemetry stack - confirmed on dev via computed style and
+   CSSOM rule matching. #ccd6e2 -> --mc-border (d=16.9). #f5f8fb ->
+   --mc-bg-workspace (d=1.4, near-exact). */
 .node-info-panel {
     margin: 0 10px 6px;
     overflow: hidden;
     flex: 0 0 auto;
-    border: 1px solid #ccd6e2;
+    border: 1px solid var(--mc-border);
     border-radius: 11px;
-    background: #f5f8fb;
+    background: var(--mc-bg-workspace);
     box-shadow: 0 2px 7px rgba(15, 23, 42, .08);
 }
 
+/* theme-registry Stage 2.5: this rule is why .base-card/.sensors-card/
+   .telemetry-section's own background/border (style-part1.css and this
+   file's earlier duplicate block below) are dead when nested directly
+   under .node-info-panel (the only way they're ever rendered) - reset to
+   transparent/borderless here at higher specificity (0,2,0 vs their
+   0,1,0), so the single .node-info-panel surface above shows through
+   instead of three separately-tinted stacked cards. See the dead-code
+   comments on those original rules for the confirmed-live evidence. */
 .node-info-panel > .base-card,
 .node-info-panel > .sensors-card,
 .node-info-panel > .telemetry-section {
@@ -2374,9 +2389,16 @@ html[data-theme="dark"] .system-log-panel {
     padding-top: 8px;
 }
 
+/* theme-registry Stage 2.5: this is the live winning declaration for
+   .battery-indicator's border/background (confirmed via CSSOM matching -
+   it beats both the style-part1.css border-top-only rule and
+   style-part2.css's shared ".battery-indicator, .base-reference-location"
+   rule, which are both dead here, see their comments). #c2ceda ->
+   --mc-border (d=32.0). background stays raw - a semi-transparent white
+   wash (rgba, not an opaque color) has no direct --mc-* token equivalent. */
 .node-info-panel .battery-indicator {
     min-height: 50px;
-    border-color: #c2ceda;
+    border-color: var(--mc-border);
     background: rgba(255, 255, 255, .72);
 }
 
@@ -2463,21 +2485,31 @@ html[data-theme="dark"] .node-info-panel .battery-indicator {
     white-space: nowrap;
 }
 
+/* theme-registry Stage 2.5: live winner for .sensors-title's color
+   (confirmed via CSSOM matching - style-part1.css's .sensors-title is
+   dead here, see its comment). #5e7388 -> --mc-text-secondary (d=9.7),
+   already passes AA (4.60:1 on the live #f5f8fb panel background). */
 .node-info-panel .sensors-title {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
     margin-bottom: 8px;
-    color: #5e7388;
+    color: var(--mc-text-secondary);
     font-size: 11px;
     letter-spacing: .045em;
     text-transform: uppercase;
 }
 
+/* theme-registry Stage 2.5: #8293a5 failed AA on the live background
+   (2.96:1) - darkened to --mc-text-secondary (4.77:1, PASS, d=58.9, the
+   largest distance consolidated in this stage but the closest available
+   token, mirroring Stage 2.4's #videoLiveInfo fix). Same value/fix
+   applies to .telemetry-status below - both are "last updated" style
+   meta text in this same panel. */
 .node-info-panel .sensors-title .sensor-update {
     margin: 0;
-    color: #8293a5;
+    color: var(--mc-text-secondary);
     font-size: 10px;
     font-weight: 500;
     letter-spacing: 0;
@@ -2500,6 +2532,10 @@ html[data-theme="dark"] .node-info-panel .battery-indicator {
     text-align: center;
 }
 
+/* theme-registry Stage 2.5: dead - this is one of three same-specificity
+   redesign layers for .sensor-label/.sensor-value/.sensor-unit in this
+   file; the last one (further down, already flagged by Stage 1.5a's own
+   dark-mode comment) wins and is the one normalized in this stage. */
 .node-info-panel .node-metrics-grid .sensor-label {
     margin-bottom: 3px;
     color: #6c8195;
@@ -2549,15 +2585,20 @@ html[data-theme="dark"] .node-info-panel .battery-indicator {
     white-space: nowrap;
 }
 
+/* theme-registry Stage 2.5: #60758a failed AA on the live background
+   (4.47:1, just under the 4.5:1 floor) - darkened to --mc-text-secondary
+   (4.77:1, PASS, d=10.7). */
 .node-info-panel .telemetry-title {
-    color: #60758a;
+    color: var(--mc-text-secondary);
     font-size: 11px;
     letter-spacing: .045em;
     text-transform: uppercase;
 }
 
+/* theme-registry Stage 2.5: same #8293a5 AA failure and fix as
+   .sensors-title .sensor-update above - see that comment. */
 .node-info-panel .telemetry-status {
-    color: #8293a5;
+    color: var(--mc-text-secondary);
     font-size: 10px;
 }
 
@@ -2737,6 +2778,8 @@ html[data-theme="dark"] .settings-number-input {
     border-top: 1px solid #d8e1ea;
 }
 
+/* theme-registry Stage 2.5: dead, same reason as the previous
+   .sensor-label layer above - the final declaration further down wins. */
 .node-info-panel .node-metrics-grid .sensor-label {
     margin-bottom: 3px;
     color: #647b91;
@@ -2781,13 +2824,25 @@ html[data-theme="dark"] .settings-number-input {
     border: 0 !important;
 }
 
+/* theme-registry Stage 2.5: this is the live winning declaration for
+   .battery-bar's background (same specificity as style-part1.css's
+   original, later file wins). #d9e0e7 -> --mc-border (d=3.6, near-exact). */
 .battery-bar {
     height: 8px;
     overflow: hidden;
     border-radius: 999px;
-    background: #d9e0e7;
+    background: var(--mc-border);
 }
 
+/* theme-registry Stage 2.5: .battery-fill's own CSS background (only
+   declared in style-part1.css, a linear-gradient(#4caf50, #8bc34a)) is
+   just the pre-JS fallback - chat.js sets battery-fill's inline
+   background to a dynamic hsl() charge-level color once real data
+   arrives (green-to-red scale), so this CSS value barely renders at all
+   in practice. Either way it's a charge-level status color, the same
+   semantic-status category deferred in Stage 2.2/2.3 (badges, map
+   markers), not plain UI chrome - out of scope for a token-consolidation
+   pass. */
 .battery-fill {
     height: 100%;
     border-radius: inherit;
@@ -3112,9 +3167,15 @@ html[data-theme="dark"] .base-node-avatar {
     text-align: center;
 }
 
+/* theme-registry Stage 2.5: this is the winning declaration for
+   .sensor-label's text color (confirmed via CSSOM matching - the two
+   earlier same-specificity layers above are dead, and this is the exact
+   rule Stage 1.5a's own dark-mode comment already points to as "the
+   winning declaration"). #607a92 failed AA on the live background
+   (4.20:1) - darkened to --mc-text-secondary (4.77:1, PASS, d=13.2). */
 .node-info-panel .node-metrics-grid .sensor-label {
     margin: 0;
-    color: #607a92;
+    color: var(--mc-text-secondary);
     font-size: 11px;
     font-weight: 500;
     line-height: 1.1;
@@ -3130,9 +3191,12 @@ html[data-theme="dark"] .base-node-avatar {
     width: 100%;
 }
 
+/* theme-registry Stage 2.5: winning declaration for .sensor-value/
+   .sensor-unit (same reasoning as .sensor-label above). #122f4a ->
+   --mc-text-primary (d=16.4), already passes AA (12.87:1). */
 .node-info-panel .node-metrics-grid .sensor-value,
 .node-info-panel .node-metrics-grid .sensor-unit {
-    color: #122f4a;
+    color: var(--mc-text-primary);
     font-size: 14px;
     font-weight: 700;
     line-height: 1.15;

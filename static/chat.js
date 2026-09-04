@@ -8333,7 +8333,15 @@ const Workspace = {
 
     applyTheme() {
         const resolvedTheme = this.resolveTheme();
-        const themeChanged = document.documentElement.dataset.theme !== resolvedTheme;
+        // theme-registry Stage 4.3 fix: this used to compare only the
+        // light/dark mode string, so switching between two families that
+        // resolve to the SAME mode (e.g. Original/Light -> Sharp, both
+        // "light") never counted as a change and silently skipped the
+        // telemetry chart rebuild below, even though the actual --mc-*
+        // colors did change. Also compare themeFamily so a family-only
+        // switch (mode string unchanged) still counts.
+        const themeChanged = document.documentElement.dataset.theme !== resolvedTheme
+            || document.documentElement.dataset.themeFamily !== this.state.themeFamily;
         document.documentElement.dataset.theme = resolvedTheme;
         document.documentElement.dataset.themeFamily = this.state.themeFamily;
         document.documentElement.dataset.themePreference = this.state.themeMode;

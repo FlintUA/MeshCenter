@@ -1104,3 +1104,28 @@ _1 new unique value - Gunmetal's warning exception only changes the surface; for
 Not registered: `#C2A669` - the source doc's "favorite/calm accent" role, explicitly *not* part of Gunmetal's warning exception (section 8.3 quote: reserved for favorite/calm accent, not the warning error surface). Not declared anywhere in this stage; flagged in the Stage 5.2 PR as a possible future backlog item if a real favorite-state consumer is ever found, not invented here.
 
 **Tooling fix, same commit:** `check_new_hex.py`'s `strip_comment_spans()` had a real bug (not a workflow-timing issue like the prior two follow-ups were assumed to be) - it blanked out `/* ... */` comment spans by replacing every character, *including embedded newlines*, with a single space. In whole-file mode (`check_files()`, which operates on the full file text before splitting into lines), this silently collapsed a multi-line comment's line count to effectively zero once `.splitlines()` ran, undercounting every line number reported after it by roughly that comment's own line count. This is very likely the real root cause of both Stage 4.2's (`#188`) and Stage 5.1's (`#190`) stale line-number follow-ups - not the "grepped mid-draft" explanation given at the time. Confirmed live in this stage: the tool reported `#473529` at line 3444 (a blank line, nowhere near the actual declaration) before the fix, and the correct 3899 after. Fixed by preserving embedded newlines as newlines instead of collapsing them to spaces. Diff mode (`check_diff()`) is unaffected - it already applies `strip_comment_spans()` per individual added line, never across a multi-line span.
+
+### Theme-family token value (Stage 6.1 - MeshCenter Alpine, base tokens)
+
+_16 new unique values (registered in the same commit as the CSS change, locations taken directly from `check_new_hex.py`'s own output and cross-verified with a fresh `grep` - the tool's line-numbering bug is fixed as of Stage 5.2, confirmed still accurate here)_
+
+| HEX | Occurrences | Locations |
+|---|---|---|
+| `#131C22` | 2 | static/ui-kit.css:1074, static/ui-kit.css:3989 |
+| `#1C2933` | 1 | static/ui-kit.css:3990 |
+| `#263744` | 2 | static/ui-kit.css:1075, static/ui-kit.css:3991 |
+| `#2F2F2F` | 1 | static/ui-kit.css:3992 |
+| `#2F4555` | 1 | static/ui-kit.css:3993 |
+| `#314F64` | 1 | static/ui-kit.css:3995 |
+| `#354D5E` | 1 | static/ui-kit.css:3994 |
+| `#395366` | 1 | static/ui-kit.css:4004 |
+| `#426077` | 2 | static/ui-kit.css:1076, static/ui-kit.css:4010 |
+| `#4C6E88` | 2 | static/ui-kit.css:4005, static/ui-kit.css:4011 |
+| `#7397B1` | 1 | static/ui-kit.css:4006 |
+| `#85A4BB` | 1 | static/ui-kit.css:4012 |
+| `#A8BECF` | 1 | static/ui-kit.css:4000 |
+| `#BACBD9` | 1 | static/ui-kit.css:4007 |
+| `#CBD9E2` | 1 | static/ui-kit.css:3999 |
+| `#F4F7F9` | 1 | static/ui-kit.css:3998 |
+
+Not registered: `accent-reference` (`#557C99`) - same category as Sharp's `#4DFFBC` and Gunmetal-vs-Sharp's accent-split gaps - no existing token reads a role distinct from `action-fill`/`accent-graphic`, both already mapped. Mentioned only in the Stage 6.1 PR-comment explaining why it's unmapped, not declared anywhere. `#4C6E88` (`action-hover`/`border-default`) is intentionally the same hex for two roles per the source doc's own allowance (section 4.1) - registered once, both consumers checked for visual collision (none found, documented in the `ui-kit.css` comment).

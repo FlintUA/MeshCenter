@@ -2832,6 +2832,14 @@
     ]
   },
   {
+    "value": "473529",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3899"
+    ]
+  },
+  {
     "value": "47535A",
     "verdict": "theme-family-token-value",
     "count": 1,

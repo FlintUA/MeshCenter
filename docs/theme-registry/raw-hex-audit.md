@@ -1062,7 +1062,7 @@ _2 new unique values (success/danger foreground+surface reuse 4.1's already-regi
 
 | HEX | Occurrences | Locations |
 |---|---|---|
-| `#B42332` | 1 | static/ui-kit.css:3405 |
-| `#FFE9E9` | 1 | static/ui-kit.css:3406 |
+| `#B42332` | 1 | static/ui-kit.css:3773 |
+| `#FFE9E9` | 1 | static/ui-kit.css:3774 |
 
 Not registered (same reasoning as 4.1's `#4DFFBC`): source doc's success/danger `Base` (`#4DFFBC`, `#FF4D4D`) and `Border` (`#16C98D`, `#E03A43`) values. Neither has a real consumer to land on - `--mc-success`/`--mc-danger` are already fully committed to the `Foreground` role (the only one that keeps every consumer's text legible; see the Stage 4.2 PR/`ui-kit.css` comment for the contrast numbers), and there is no separate border token. Mentioned only in the Stage 4.2 PR-description comment, not declared anywhere.

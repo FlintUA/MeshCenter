@@ -1066,3 +1066,29 @@ _2 new unique values (success/danger foreground+surface reuse 4.1's already-regi
 | `#FFE9E9` | 1 | static/ui-kit.css:3774 |
 
 Not registered (same reasoning as 4.1's `#4DFFBC`): source doc's success/danger `Base` (`#4DFFBC`, `#FF4D4D`) and `Border` (`#16C98D`, `#E03A43`) values. Neither has a real consumer to land on - `--mc-success`/`--mc-danger` are already fully committed to the `Foreground` role (the only one that keeps every consumer's text legible; see the Stage 4.2 PR/`ui-kit.css` comment for the contrast numbers), and there is no separate border token. Mentioned only in the Stage 4.2 PR-description comment, not declared anywhere.
+
+### Theme-family token value (Stage 5.1 - MeshCenter Gunmetal, base tokens)
+
+_17 new unique values (registered in the same commit as the CSS change this time, not a follow-up - see Stage 4.1's own follow-up PR for why that matters)_
+
+| HEX | Occurrences | Locations |
+|---|---|---|
+| `#0C0E0F` | 2 | static/ui-kit.css:996, static/ui-kit.css:3418 |
+| `#090B0C` | 1 | static/ui-kit.css:3421 |
+| `#101417` | 1 | static/ui-kit.css:3430 |
+| `#121516` | 1 | static/ui-kit.css:3419 |
+| `#181C1E` | 2 | static/ui-kit.css:997, static/ui-kit.css:3420 |
+| `#1D2225` | 1 | static/ui-kit.css:3422 |
+| `#23292D` | 1 | static/ui-kit.css:3423 |
+| `#2F373C` | 1 | static/ui-kit.css:3433 |
+| `#353E43` | 1 | static/ui-kit.css:3424 |
+| `#47535A` | 1 | static/ui-kit.css:3434 |
+| `#63A1C2` | 3 | static/ui-kit.css:998, static/ui-kit.css:3439, static/ui-kit.css:3441 |
+| `#687780` | 1 | static/ui-kit.css:3435 |
+| `#7CB4D0` | 1 | static/ui-kit.css:3440 |
+| `#96A4AC` | 1 | static/ui-kit.css:3429 |
+| `#9CCDE5` | 1 | static/ui-kit.css:3436 |
+| `#C4CCD0` | 1 | static/ui-kit.css:3428 |
+| `#F2F5F6` | 1 | static/ui-kit.css:3427 |
+
+Not registered: none new this time - unlike Sharp, all three of Gunmetal's accent roles (`accent-reference`/`action-fill`/`accent-graphic`) share one value (`#63A1C2`), so there was no unmapped role to document as a gap. The swatch preview's warning slot reuses `#F0C86A` (dark's current `--mc-warning`, already registered from the Stage 0 baseline) - not a new value, since Gunmetal has no warning override yet (that's Stage 5.2).

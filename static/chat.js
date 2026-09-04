@@ -8025,7 +8025,16 @@ const WORKSPACE_THEME_FAMILIES = Object.freeze([
     Object.freeze({ id: 'gunmetal', kind: 'fixed', mode: 'dark' }),
     // theme-registry Stage 6.1: Alpine is a 'fixed', dark-only family - its
     // token overrides live in ui-kit.css under html[data-theme-family="alpine"].
-    Object.freeze({ id: 'alpine', kind: 'fixed', mode: 'dark' })
+    Object.freeze({ id: 'alpine', kind: 'fixed', mode: 'dark' }),
+    // theme-registry Stage 7.1: Teal Dark, wired provisionally as 'fixed'/
+    // 'dark' - NOT the final shape. Once Teal Light exists (Stage 8), this
+    // becomes a genuine kind: 'paired' entry like 'original' (Stage 8.2).
+    // Every place that assumes a 'fixed' family's kind never changes later
+    // needs to account for this id flipping kind in place - see the
+    // ui-kit.css comment above html[data-theme-family="teal"] for the full
+    // note. Token overrides live in ui-kit.css under
+    // html[data-theme-family="teal"].
+    Object.freeze({ id: 'teal', kind: 'fixed', mode: 'dark' })
 ]);
 const WORKSPACE_THEME_FAMILY_IDS = WORKSPACE_THEME_FAMILIES.map(family => family.id);
 

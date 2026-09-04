@@ -1142,3 +1142,28 @@ _2 new unique values - warning's foreground/surface. Fill (`#A84300`) and border
 | `#FF9A3D` | 2 | static/ui-kit.css:1079, static/ui-kit.css:4058 |
 
 Not registered: `#A84300` (fill/base - fails AA text contrast at 2.03:1 on Alpine's own panel, confirmed via `contrast_check.py`, so it can't safely share `--mc-warning` with the 3 text-role consumers that need it) and `#F08A24` (border - no existing border-role token for warning, grepped and confirmed empty). `#CC5500` (the source doc's palette-anchor "reference" color, fails 3:1 on Alpine's panel per section 8.4, confirmed: 2.84:1) and `#997255` (favorite/secondary-warm-accent role, out of scope same as Gunmetal's `#C2A669`) are both mentioned only in the Stage 6.2 PR-comment explaining why they're unmapped, not declared anywhere.
+
+### Theme-family token value (Stage 7.1 - MeshCenter Teal Dark, base tokens)
+
+_16 new unique values (registered in the same commit as the CSS change, locations taken from `check_new_hex.py`'s own output and cross-verified with a fresh `grep` as the last step before committing)_
+
+| HEX | Occurrences | Locations |
+|---|---|---|
+| `#011112` | 1 | static/ui-kit.css:4143 |
+| `#021818` | 3 | static/ui-kit.css:1086, static/ui-kit.css:4140, static/ui-kit.css:4152 |
+| `#032424` | 1 | static/ui-kit.css:4141 |
+| `#043030` | 2 | static/ui-kit.css:1087, static/ui-kit.css:4142 |
+| `#053C3C` | 1 | static/ui-kit.css:4144 |
+| `#064747` | 1 | static/ui-kit.css:4145 |
+| `#075454` | 1 | static/ui-kit.css:4155 |
+| `#086060` | 1 | static/ui-kit.css:4156 |
+| `#096C6C` | 1 | static/ui-kit.css:4146 |
+| `#0C9292` | 1 | static/ui-kit.css:4157 |
+| `#10C2C2` | 3 | static/ui-kit.css:1088, static/ui-kit.css:4161, static/ui-kit.css:4163 |
+| `#13EBEB` | 1 | static/ui-kit.css:4162 |
+| `#51F0F0` | 1 | static/ui-kit.css:4158 |
+| `#8FC2C2` | 1 | static/ui-kit.css:4151 |
+| `#C9EEEE` | 1 | static/ui-kit.css:4150 |
+| `#F0FAFA` | 1 | static/ui-kit.css:4149 |
+
+Not registered: `accent-reference` (`#096C6C`) has no consumer distinct from `action-fill`/`accent-graphic` (both `--mc-primary`/`--mc-accent`, already mapped) - same category as Sharp's/Alpine's unmapped reference colors. Note this stage is architecturally different from Sharp/Gunmetal/Alpine: Teal has **no state-color exception at all** (confirmed against section 8.3 - no Teal-specific line exists, unlike the other three fixed families which each had one), and is wired provisionally as `kind: 'fixed'` pending Stage 8's Teal Light + Stage 8.2's conversion to `kind: 'paired'` - see the `ui-kit.css`/`chat.js` comments for the full reasoning. No hex was left unregistered due to a fg/fill split judgment call this time (there's no state exception to split).

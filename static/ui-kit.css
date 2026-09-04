@@ -1078,6 +1078,16 @@ a:focus-visible,
 .workspace-theme-family-option[data-family="alpine"] .workspace-theme-swatch--primary { background: #426077; }
 .workspace-theme-family-option[data-family="alpine"] .workspace-theme-swatch--warning { background: #ff9a3d; }
 
+/* theme-registry Stage 7.1: same reasoning as the prior fixed families'
+   swatch overrides above. Warning uses dark's current inherited value
+   (#f0c86a) PERMANENTLY, not a placeholder - Teal has no warning
+   exception at all (section 8.3), unlike Gunmetal/Alpine's swatches
+   which were provisional pending their own 6.2/6.2-shaped stage. */
+.workspace-theme-family-option[data-family="teal"] .workspace-theme-swatch--bg { background: #021818; }
+.workspace-theme-family-option[data-family="teal"] .workspace-theme-swatch--panel { background: #043030; }
+.workspace-theme-family-option[data-family="teal"] .workspace-theme-swatch--primary { background: #10c2c2; }
+.workspace-theme-family-option[data-family="teal"] .workspace-theme-swatch--warning { background: #f0c86a; }
+
 .workspace-theme-family-label {
     font-size: 12px;
     font-weight: 700;
@@ -4057,5 +4067,99 @@ html[data-theme-family="alpine"] {
        success/danger/info exception for Alpine. */
     --mc-warning: #ff9a3d;
     --mc-warning-soft: #3a281a;
+}
+
+/* theme-registry Stage 7.1: MeshCenter Teal Dark - wired provisionally as
+   a 'fixed', DARK-only family (WORKSPACE_THEME_FAMILIES in chat.js:
+   { id: 'teal', kind: 'fixed', mode: 'dark' }), same as Sharp/Gunmetal/
+   Alpine were during their own single-mode stages. This is NOT the final
+   shape: per the source doc (section 11.1) and stage plan (section 12,
+   Stage 8), Teal is meant to become a genuine kind: 'paired' family once
+   Teal Light exists too (Stage 8), matching 'original'. Converting kind
+   from 'fixed' to 'paired' - and whatever downstream logic keys off
+   kind/mode for the family picker's Auto/Light/Dark second-level UI - is
+   Stage 8.2's job, not this one. Flagging here for that stage: every
+   place that currently assumes a 'fixed' family's kind never changes
+   later (resolveTheme(), renderWorkspaceThemeModeRow(), the
+   WORKSPACE_THEME_FAMILIES entry shape itself) will need to handle an
+   existing family id switching from 'fixed' to 'paired' in place, not
+   just a new family being added.
+
+   Third dark fixed family after Gunmetal/Alpine - same same-element
+   cascade mechanism, needs to win over both :root and the canonical
+   html[data-theme="dark"] block by source order at equal specificity.
+
+   Palette source: MeshCenterthemeregistryplanv0.1.md section 5/6/7/8.1/9
+   (owner-approved, hex values copied verbatim - do not adjust).
+
+   State colors: confirmed no Teal exception exists in section 8.3 at all
+   (unlike Sharp/Gunmetal/Alpine, which each had one) - all four
+   (success/warning/danger/info) stay fully unset, inheriting
+   html[data-theme="dark"]'s existing values by cascade. Worth calling
+   out explicitly: this means Teal's own bright cyan primary
+   (--mc-primary/--mc-accent: #10c2c2) and the base dark scheme's
+   success green (--mc-success: #72d69a) have no state-specific
+   differentiation to lean on - both read as "bright, saturated, cool"
+   at a glance. Stage 7.2's actual job (source doc section 12, Stage 7:
+   verify distinguishability by shape/label, not just color) - not
+   solved here, deliberately not touching --mc-success for anything
+   outside its own role in this stage so 7.2 starts from a clean baseline.
+
+   Token mapping: re-verified against consumers, not carried over blind:
+     surface-app/-workspace/-panel  -> --mc-bg-app/-workspace/-panel
+     surface-card                   -> --mc-card-bg (explicit leaf
+                                        override, same reasoning as
+                                        Gunmetal/Alpine)
+     surface-control                -> --mc-button-secondary-bg
+     surface-media                  -> --mc-bg-media-stage
+     surface-selected               -> --mc-primary-soft (--mc-accent-soft
+                                        follows via the same alias)
+     text-primary/-secondary/-muted/-inverse -> the matching --mc-text-*
+     border-soft/-default           -> --mc-border-soft/--mc-border
+     border-control                 -> --mc-button-secondary-border
+     focus-ring                     -> --mc-border-focus
+     action-fill/-hover             -> --mc-primary/--mc-primary-hover
+     accent-graphic                 -> --mc-accent
+
+   Unlike Sharp/Alpine's full 3-way accent split or Gunmetal's full
+   collapse, Teal's shape is in between: action-fill and accent-graphic
+   share one value (#10c2c2) but accent-reference (#096c6c) is a third,
+   distinct value. Re-grepped --mc-primary/--mc-primary-hover/--mc-accent's
+   consumers rather than assuming from the value pattern alone - same
+   consumer set every prior stage found (primary button fill/active tab
+   underline for --mc-primary; .btn:focus-visible outline + About-page
+   accent for --mc-accent). accent-reference has no consumer distinct
+   from those two - same category as Sharp's/Alpine's unmapped reference
+   color. Left unmapped.
+
+   surface-hover: re-checked a fourth time (Sharp, Gunmetal, Alpine, now
+   Teal Dark) - same result, hover backgrounds are still per-component,
+   no single shared token. Left unmapped. */
+html[data-theme-family="teal"] {
+    /* Application surfaces */
+    --mc-bg-app: #021818;
+    --mc-bg-workspace: #032424;
+    --mc-bg-panel: #043030;
+    --mc-bg-media-stage: #011112;
+    --mc-card-bg: #053c3c;
+    --mc-button-secondary-bg: #064747;
+    --mc-primary-soft: #096c6c;
+
+    /* Text */
+    --mc-text-primary: #f0fafa;
+    --mc-text-secondary: #c9eeee;
+    --mc-text-muted: #8fc2c2;
+    --mc-text-inverse: #021818;
+
+    /* Borders */
+    --mc-border-soft: #075454;
+    --mc-border: #086060;
+    --mc-button-secondary-border: #0c9292;
+    --mc-border-focus: #51f0f0;
+
+    /* Primary accent */
+    --mc-primary: #10c2c2;
+    --mc-primary-hover: #13ebeb;
+    --mc-accent: #10c2c2;
 }
 

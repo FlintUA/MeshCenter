@@ -8026,15 +8026,17 @@ const WORKSPACE_THEME_FAMILIES = Object.freeze([
     // theme-registry Stage 6.1: Alpine is a 'fixed', dark-only family - its
     // token overrides live in ui-kit.css under html[data-theme-family="alpine"].
     Object.freeze({ id: 'alpine', kind: 'fixed', mode: 'dark' }),
-    // theme-registry Stage 7.1: Teal Dark, wired provisionally as 'fixed'/
-    // 'dark' - NOT the final shape. Once Teal Light exists (Stage 8), this
-    // becomes a genuine kind: 'paired' entry like 'original' (Stage 8.2).
-    // Every place that assumes a 'fixed' family's kind never changes later
-    // needs to account for this id flipping kind in place - see the
-    // ui-kit.css comment above html[data-theme-family="teal"] for the full
-    // note. Token overrides live in ui-kit.css under
-    // html[data-theme-family="teal"].
-    Object.freeze({ id: 'teal', kind: 'fixed', mode: 'dark' })
+    // theme-registry Stage 7.1/8.1: Teal shipped 'fixed'/'dark', then grew
+    // a Light half (Stage 8.1, html[data-theme-family="teal"][data-theme=
+    // "light"/"dark"]). Stage 8.2 flips this to a genuine 'paired' entry,
+    // same shape as 'original' - no mode field. Verified (not just
+    // trusted from the Stage 7.1 comment) that resolveTheme() and
+    // renderWorkspaceThemeModeRow() both branch on family.kind fresh on
+    // every call and needed zero code changes for this flip; grepped the
+    // whole codebase for any other kind/'teal'-assuming code and found
+    // none. See Workspace.migrateTealFixedToPaired() below for the
+    // one real behavior-change risk this flip has for existing users.
+    Object.freeze({ id: 'teal', kind: 'paired' })
 ]);
 const WORKSPACE_THEME_FAMILY_IDS = WORKSPACE_THEME_FAMILIES.map(family => family.id);
 
@@ -8268,6 +8270,7 @@ const Workspace = {
             this.state = this.sanitize(stored);
             this.migrateLegacyPanelSettings();
             this.migrateLegacyThemeField(stored);
+            this.migrateTealFixedToPaired();
         } catch (error) {
             console.warn('[WORKSPACE] Unable to load preferences:', error);
             this.state = { ...WORKSPACE_DEFAULTS };
@@ -8319,6 +8322,43 @@ const Workspace = {
             this.save();
         } catch (error) {
             console.warn('[WORKSPACE] Theme field migration failed:', error);
+        }
+    },
+
+    // theme-registry Stage 8.2: real behavior-change risk, not incidental.
+    // Before this stage, 'teal' was kind: 'fixed'/'dark', so themeMode was
+    // stored but functionally inert for it - every existing Teal user was
+    // always seeing Teal Dark regardless of whatever themeMode happened to
+    // be sitting in storage (most likely 'auto', the default, since
+    // nothing before this stage ever surfaced a Light/Dark/Auto picker for
+    // Teal to deliberately set it away from that). Now that 'teal' is
+    // kind: 'paired', resolveTheme() actually reads themeMode for it -
+    // an existing user with themeFamily: 'teal' and themeMode: 'auto'
+    // stored would, without this migration, have their theme silently
+    // flip from Teal Dark to Teal Light the moment this deploys, purely
+    // because their OS happens to be in light mode - no click, no
+    // notification. Runs exactly once per browser (guarded by a dedicated
+    // one-time flag, not by presence/absence of a field, since the stored
+    // shape doesn't otherwise distinguish "themeMode never mattered yet"
+    // from "themeMode was a deliberate choice made after Teal went
+    // paired"): if themeFamily is 'teal' at that one moment, pins
+    // themeMode to 'dark' - exactly what every existing Teal user was
+    // already seeing - regardless of whatever themeMode value happened to
+    // be stored, not just when it's 'auto' (a stored 'light'/'dark' was
+    // equally inert and equally wrong to trust). Any later, real switch to
+    // Teal (by this user or a new one) goes through normal resolution,
+    // unaffected - this only ever fires once, ever, per browser.
+    migrateTealFixedToPaired() {
+        try {
+            const MIGRATION_KEY = 'meshcenter.tealPairedMigrationDone';
+            if (localStorage.getItem(MIGRATION_KEY) !== null) return;
+            localStorage.setItem(MIGRATION_KEY, '1');
+            if (this.state.themeFamily === 'teal') {
+                this.state.themeMode = 'dark';
+                this.save();
+            }
+        } catch (error) {
+            console.warn('[WORKSPACE] Teal paired migration failed:', error);
         }
     },
 

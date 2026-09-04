@@ -8019,7 +8019,10 @@ const WORKSPACE_THEME_FAMILIES = Object.freeze([
     Object.freeze({ id: 'original', kind: 'paired' }),
     // theme-registry Stage 4.1: Sharp is a 'fixed', light-only family - its
     // token overrides live in ui-kit.css under html[data-theme-family="sharp"].
-    Object.freeze({ id: 'sharp', kind: 'fixed', mode: 'light' })
+    Object.freeze({ id: 'sharp', kind: 'fixed', mode: 'light' }),
+    // theme-registry Stage 5.1: Gunmetal is a 'fixed', dark-only family - its
+    // token overrides live in ui-kit.css under html[data-theme-family="gunmetal"].
+    Object.freeze({ id: 'gunmetal', kind: 'fixed', mode: 'dark' })
 ]);
 const WORKSPACE_THEME_FAMILY_IDS = WORKSPACE_THEME_FAMILIES.map(family => family.id);
 

@@ -33,6 +33,14 @@
     ]
   },
   {
+    "value": "090B0C",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3858"
+    ]
+  },
+  {
     "value": "09111A",
     "verdict": "ui-normalization-candidate",
     "count": 1,
@@ -64,6 +72,15 @@
     "count": 1,
     "locations": [
       "static/ui-kit.css:3219"
+    ]
+  },
+  {
+    "value": "0C0E0F",
+    "verdict": "theme-family-token-value",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:1066",
+      "static/ui-kit.css:3855"
     ]
   },
   {
@@ -133,6 +150,14 @@
     "count": 1,
     "locations": [
       "static/ui-kit.css:2932"
+    ]
+  },
+  {
+    "value": "101417",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3867"
     ]
   },
   {
@@ -239,6 +264,14 @@
     "count": 1,
     "locations": [
       "static/style-part3.css:2982"
+    ]
+  },
+  {
+    "value": "121516",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3856"
     ]
   },
   {
@@ -688,6 +721,15 @@
     ]
   },
   {
+    "value": "181C1E",
+    "verdict": "theme-family-token-value",
+    "count": 2,
+    "locations": [
+      "static/ui-kit.css:1067",
+      "static/ui-kit.css:3857"
+    ]
+  },
+  {
     "value": "18212C",
     "verdict": "ui-normalization-candidate",
     "count": 8,
@@ -915,6 +957,14 @@
     "locations": [
       "static/style-part3.css:2533",
       "static/style-part3.css:2771"
+    ]
+  },
+  {
+    "value": "1D2225",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3859"
     ]
   },
   {
@@ -1407,6 +1457,14 @@
       "static/style-part1.css:3459",
       "static/style-part2.css:1507",
       "static/style-part4.css:3038"
+    ]
+  },
+  {
+    "value": "23292D",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3860"
     ]
   },
   {
@@ -2032,6 +2090,14 @@
     ]
   },
   {
+    "value": "2F373C",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3870"
+    ]
+  },
+  {
     "value": "2F3B4D",
     "verdict": "ui-normalization-candidate",
     "count": 1,
@@ -2334,6 +2400,14 @@
       "static/style-part4.css:3373",
       "static/style-part4.css:3429",
       "static/style-part4.css:4019"
+    ]
+  },
+  {
+    "value": "353E43",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3861"
     ]
   },
   {
@@ -2758,6 +2832,14 @@
     ]
   },
   {
+    "value": "47535A",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3871"
+    ]
+  },
+  {
     "value": "475569",
     "verdict": "ui-normalization-candidate",
     "count": 2,
@@ -3162,7 +3244,7 @@
     "verdict": "ui-normalization-candidate",
     "count": 1,
     "locations": [
-      "static/ui-kit.css:998"
+      "static/ui-kit.css:1068"
     ]
   },
   {
@@ -3244,6 +3326,16 @@
     "count": 1,
     "locations": [
       "static/style-part2.css:3106"
+    ]
+  },
+  {
+    "value": "63A1C2",
+    "verdict": "theme-family-token-value",
+    "count": 3,
+    "locations": [
+      "static/ui-kit.css:1068",
+      "static/ui-kit.css:3876",
+      "static/ui-kit.css:3878"
     ]
   },
   {
@@ -3411,6 +3503,14 @@
     "count": 1,
     "locations": [
       "static/ui-kit.css:1212"
+    ]
+  },
+  {
+    "value": "687780",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3872"
     ]
   },
   {
@@ -3965,6 +4065,14 @@
     "count": 1,
     "locations": [
       "static/style-part3.css:1209"
+    ]
+  },
+  {
+    "value": "7CB4D0",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3877"
     ]
   },
   {
@@ -4574,6 +4682,14 @@
     ]
   },
   {
+    "value": "96A4AC",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3866"
+    ]
+  },
+  {
     "value": "96A6B8",
     "verdict": "ui-normalization-candidate",
     "count": 1,
@@ -4725,6 +4841,14 @@
     "count": 1,
     "locations": [
       "static/style-part4.css:3128"
+    ]
+  },
+  {
+    "value": "9CCDE5",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3873"
     ]
   },
   {
@@ -5422,6 +5546,14 @@
     "count": 1,
     "locations": [
       "static/style-part4.css:2069"
+    ]
+  },
+  {
+    "value": "C4CCD0",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3865"
     ]
   },
   {
@@ -7988,6 +8120,14 @@
     ]
   },
   {
+    "value": "F2F5F6",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3864"
+    ]
+  },
+  {
     "value": "F2F7FB",
     "verdict": "ui-normalization-candidate",
     "count": 2,
@@ -8506,7 +8646,7 @@
     "verdict": "ui-normalization-candidate",
     "count": 1,
     "locations": [
-      "static/ui-kit.css:997"
+      "static/ui-kit.css:1067"
     ]
   },
   {

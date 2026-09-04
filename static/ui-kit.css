@@ -1056,6 +1056,18 @@ a:focus-visible,
 .workspace-theme-family-option[data-family="sharp"] .workspace-theme-swatch--primary { background: #2e2e2e; }
 .workspace-theme-family-option[data-family="sharp"] .workspace-theme-swatch--warning { background: #e6ad22; }
 
+/* theme-registry Stage 5.1: same reasoning as Sharp's swatch override
+   above - Gunmetal's card needs its own literal-hex swatch since the
+   generic .workspace-theme-swatch--* rules track whatever family is
+   currently active, not each card's own family. Warning uses dark's
+   current inherited value (#f0c86a, html[data-theme="dark"]'s --mc-warning)
+   since Gunmetal has no warning override yet - that lands in Stage 5.2;
+   the swatch reflects what's actually rendered today, not a future value. */
+.workspace-theme-family-option[data-family="gunmetal"] .workspace-theme-swatch--bg { background: #0c0e0f; }
+.workspace-theme-family-option[data-family="gunmetal"] .workspace-theme-swatch--panel { background: #181c1e; }
+.workspace-theme-family-option[data-family="gunmetal"] .workspace-theme-swatch--primary { background: #63a1c2; }
+.workspace-theme-family-option[data-family="gunmetal"] .workspace-theme-swatch--warning { background: #f0c86a; }
+
 .workspace-theme-family-label {
     font-size: 12px;
     font-weight: 700;
@@ -3772,5 +3784,97 @@ html[data-theme-family="sharp"] {
     --mc-success-soft: #d9fff1;
     --mc-danger: #b42332;
     --mc-danger-soft: #ffe9e9;
+}
+
+/* theme-registry Stage 5.1: MeshCenter Gunmetal - a 'fixed', DARK-only
+   family (WORKSPACE_THEME_FAMILIES in chat.js: { id: 'gunmetal', kind:
+   'fixed', mode: 'dark' }). Same same-element cascade mechanism as Sharp
+   (Stage 4.1), just layered on the dark side: applyTheme() sets
+   data-theme="dark" (family.mode) AND data-theme-family="gunmetal"
+   together on <html>, so this block needs to win over BOTH :root's light
+   values and the canonical html[data-theme="dark"] block above (~line
+   3496) - it does, by source order (this block comes later) with equal
+   selector specificity to html[data-theme="dark"], the same rule Stage
+   3.3 verified for Sharp. Only LEAF tokens are redeclared; aliases
+   (--mc-surface, --mc-accent-soft, --mc-chat-bg, etc.) resolve through
+   whichever leaf they reference and don't need repeating - reconfirmed
+   here for the dark cascade specifically, not just assumed from Sharp's
+   light-side result.
+
+   Palette source: MeshCenterthemeregistryplanv0.1.md section 5/6/7/8.1/9
+   (owner-approved, hex values copied verbatim - do not adjust). Only the
+   21 surface/text/border/accent roles are covered; state colors (Gunmetal
+   has one exception, warning, section 8.3) are Stage 5.2 - left unset here
+   so they inherit html[data-theme="dark"]'s existing values by cascade.
+
+   Token mapping: identical role -> token assignments as Sharp (Stage 4.1's
+   big comment above, ~line 3600) - re-verified against dark-mode consumers
+   specifically, not just carried over blind:
+     surface-app/-workspace/-panel  -> --mc-bg-app/-workspace/-panel
+     surface-card                   -> --mc-card-bg (explicit override -
+                                        NOT "breaking an alias" here like
+                                        Sharp's light-side case: dark
+                                        already gives --mc-card-bg its own
+                                        literal, #162433, distinct from
+                                        --mc-bg-panel's #1b2837 - this is a
+                                        plain leaf override to Gunmetal's
+                                        own #1d2225, not an alias fix)
+     surface-control                -> --mc-button-secondary-bg
+     surface-media                  -> --mc-bg-media-stage
+     surface-selected               -> --mc-primary-soft (--mc-accent-soft
+                                        follows via the SAME alias
+                                        confirmed still present in the dark
+                                        block: --mc-accent-soft:
+                                        var(--mc-primary-soft))
+     text-primary/-secondary/-muted/-inverse -> the matching --mc-text-*
+     border-soft/-default           -> --mc-border-soft/--mc-border
+     border-control                 -> --mc-button-secondary-border
+                                        (same --mc-dark-control-border
+                                        alias reasoning as Sharp)
+     focus-ring                     -> --mc-border-focus
+     action-fill/-hover             -> --mc-primary/--mc-primary-hover
+     accent-graphic                 -> --mc-accent
+
+   Unlike Sharp, accent-reference/action-fill/accent-graphic are all the
+   SAME value here (#63a1c2) - no 3-way split judgment call needed; all
+   land on the one --mc-primary value action-fill already claims, and
+   --mc-accent gets the identical literal for accent-graphic's own
+   consumers (.btn:focus-visible outline, About-page accent). No unmapped
+   role this stage - Gunmetal's palette doesn't have a Sharp-style
+   accent-reference/mint situation.
+
+   surface-hover: re-checked against actual consumers for the dark cascade
+   specifically (not assumed from Sharp's light-side conclusion) - same
+   result: hover backgrounds are still per-component in the rules that
+   apply under dark (--mc-button-secondary-bg-hover, --mc-dark-control-bg-hover,
+   --mc-popover-item-hover, --mc-tab-bg-hover, all declared separately in
+   the dark block, ~line 3496+), no single shared token exists for either
+   cascade. Left unmapped, same as Sharp. */
+html[data-theme-family="gunmetal"] {
+    /* Application surfaces */
+    --mc-bg-app: #0c0e0f;
+    --mc-bg-workspace: #121516;
+    --mc-bg-panel: #181c1e;
+    --mc-bg-media-stage: #090b0c;
+    --mc-card-bg: #1d2225;
+    --mc-button-secondary-bg: #23292d;
+    --mc-primary-soft: #353e43;
+
+    /* Text */
+    --mc-text-primary: #f2f5f6;
+    --mc-text-secondary: #c4ccd0;
+    --mc-text-muted: #96a4ac;
+    --mc-text-inverse: #101417;
+
+    /* Borders */
+    --mc-border-soft: #2f373c;
+    --mc-border: #47535a;
+    --mc-button-secondary-border: #687780;
+    --mc-border-focus: #9ccde5;
+
+    /* Primary accent */
+    --mc-primary: #63a1c2;
+    --mc-primary-hover: #7cb4d0;
+    --mc-accent: #63a1c2;
 }
 

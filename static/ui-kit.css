@@ -1871,6 +1871,24 @@ html[data-theme="dark"] :is(
     color: var(--mc-text-primary) !important;
 }
 
+/* theme-registry Stage 5.3 fix: the blanket dark-mode sweep above blindly
+   included .node-card, which has its own semantic-state background
+   variants (.favorite/.selected/.ignored, ~line 263-277) that it wasn't
+   written with in mind - !important there forced every one of them to
+   plain --mc-bg-panel in ANY dark mode, silently discarding the favorite/
+   selected/ignored surface colors entirely. Pre-existing (predates Sharp/
+   Gunmetal, confirmed happening under plain Original/Dark too, live-
+   caught during Stage 5.3's Gunmetal verification while checking whether
+   the warning-surface exception from Stage 5.2 was actually visible - it
+   wasn't, for this reason, not because of anything Gunmetal itself did).
+   These need equal-or-higher specificity AND !important to win back over
+   the blanket rule above (it's !important too, so cascade only compares
+   specificity among important declarations - a 2-class compound selector
+   beats the :is() list's single-class members here). */
+html[data-theme="dark"] .node-card.favorite { background: var(--mc-warning-soft) !important; }
+html[data-theme="dark"] .node-card.selected { background: var(--mc-primary-soft) !important; }
+html[data-theme="dark"] .node-card.ignored { background: var(--mc-danger-soft) !important; }
+
 html[data-theme="dark"] .about-resource-card:hover {
     background: #233346 !important;
 }

@@ -1069,6 +1069,15 @@ body {
 }
 
 /* ===== NODE CARD ===== */
+/* theme-registry Stage 2.2: base/.selected/.ignored/.favorite background and
+   border-color below are shadowed by ui-kit.css's later, already-tokenized
+   .node-card rules (ui-kit.css ~L251-277 - same selector specificity, and
+   ui-kit.css loads after style-part1.css in index.html, so it wins ties).
+   Confirmed live on dev via CSSOM rule matching + specificity analysis, not
+   just source order. Left un-normalized here since tokenizing dead
+   declarations adds no real value - documented so it isn't re-investigated
+   as a live bug. border-width/opacity aren't touched by ui-kit.css's rules,
+   so those declarations stay genuinely live. */
 .node-card {
     background: #f5f5f5;
     border: 1px solid #e5e5e5;
@@ -1080,8 +1089,13 @@ body {
     transition: all 0.2s;
 }
 
+/* border-color/box-shadow shadowed by ui-kit.css's .node-card:hover (see
+   comment above); transform is NOT declared there, so translateX(3px) is
+   genuinely live - pre-existing hover-geometry, left untouched (same
+   out-of-scope category flagged in every prior stage). */
 .node-card:hover { transform: translateX(3px); border-color: #b0b8c5; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
 .node-card.selected {
+    /* background/border-color shadowed by ui-kit.css; border-width is live */
     background: linear-gradient(135deg, #f0eeea, #e8e5e0);
     border-color: #7a8aaa;
     border-width: 2px;
@@ -1089,13 +1103,28 @@ body {
 .node-card.ignored { opacity: 0.5; background: #f8f5f5; border-color: #e8d5d5; }
 .node-card.ignored:hover { opacity: 0.7; }
 .node-card.favorite {
+    /* border-color/background shadowed by ui-kit.css; border-width is live */
     border-color: #d4c06a;
     border-width: 2px;
     background: linear-gradient(135deg, #fdf8e8, #f8f0d8);
 }
+/* .node-card.favorite:hover (specificity 0,3,0) has no ui-kit.css counterpart
+   at that specificity, so it's genuinely live regardless of source order.
+   #c0a84a sits d=55.4 from --mc-warning (#e6ad22) in RGB space - not
+   consolidated: it's a hover-darkened variant of ui-kit.css's own
+   .favorite border-color (#e2bd45), which itself is an un-tokenized bespoke
+   card-state accent, not --mc-warning (d=38.7, also not consolidated there).
+   This file treats favorite/selected/ignored border accents as their own
+   color family, distinct from the semantic --mc-warning/success/danger
+   roles used for alerts and buttons; the box-shadow tint follows the same
+   reasoning. */
 .node-card.favorite:hover { border-color: #c0a84a; box-shadow: 0 2px 10px rgba(200,180,60,0.2); }
 
 .node-card .unignore-btn-mini {
+    /* #b0c8a0 checked against --mc-success (#27b96f, d=146.3) and
+       --mc-success-soft - not a match, this is a distinct muted sage-green,
+       not the semantic "success" green. No ui-kit.css counterpart exists for
+       this class, genuinely live. */
     background: #b0c8a0;
     color: white;
     border: none;
@@ -1122,6 +1151,21 @@ body {
     min-width: 0;
 }
 
+/* theme-registry Stage 2.2: this whole block (.node-card-title through
+   .node-last-text below) is legacy - a newer "Node Card V2"/"V1.2" layout
+   in style-part2.css (~L2905-3330) has since replaced the node-card markup
+   with a different DOM structure (.node-card-topline, .node-card-identity-row,
+   .node-last-seen, etc.), rendered by chat.js. The genuinely live text-color
+   normalization for the current card lives there, not here - see
+   style-part2.css's comments for the actual RGB-distance/contrast analysis.
+   .node-card-title is DEAD (shadowed: the real markup nests it under
+   .node-card-topline, giving style-part2.css's same-name rule higher
+   specificity). .node-name and .node-meta are DEAD by absence - grepped
+   across every static/*.js and templates/index.html, neither class is ever
+   rendered anywhere in the current app. .node-inline-id and .node-last-text
+   are DEAD (shadowed by style-part2.css's .node-card-identity-row/
+   .node-card-scoped versions, same reasoning). Left as raw hex, not
+   tokenized, since none of it renders. */
 .node-card-title {
     flex: 1 1 auto;
     min-width: 0;
@@ -1177,6 +1221,13 @@ body {
     white-space: nowrap;
 }
 
+/* theme-registry Stage 2.2 scope decision: .badge-online/.badge-medium/
+   .badge-offline are deliberately NOT normalized in this stage. They're a
+   semantic status-color system (online/medium/offline) that likely has
+   counterparts elsewhere in the app (node detail panel, connection
+   indicators) not yet touched by the theme-registry work - normalizing just
+   the node-list badges in isolation risks inconsistency with those other,
+   still-raw-hex usages. Deferred to a future dedicated status-color pass. */
 .badge {
     display: inline-block;
     padding: 1px 5px;

@@ -2852,6 +2852,17 @@ html[data-theme="dark"] .chat-item .chat-time {
     overflow: hidden;
 }
 
+/* theme-registry Stage 2.6: dead code, confirmed via computed styles on
+   dev (not deleted - out of scope to clean up dead CSS here). The later,
+   already-tokenized .devices-panel rule further down this file (~line
+   3082, under "align with standard MeshCenter pages") wins at equal
+   (0,1,0) specificity - the real live .devices-panel border/background
+   come from there (and from .devices-panel.mc-workspace-panel's shared
+   shell rule), confirmed live: white background/`--mc-border` outline.
+   No legacy style-part4.css !important interaction exists for light
+   (unlike dark's Stage 1.6 finding) - grepped, style-part4.css's
+   .devices-panel rule there is unscoped and only sets min-height, and its
+   !important panel-shell override is [data-theme="dark"]-scoped only. */
 .devices-panel {
     width: 100%;
     min-height: 100%;
@@ -2875,6 +2886,11 @@ html[data-theme="dark"] .chat-item .chat-time {
     padding: 28px;
 }
 
+/* theme-registry Stage 2.6: dead code, same reasoning as .devices-panel
+   above - shadowed by the later, already-tokenized .devices-empty-state
+   rule further down this file (~line 3149: border-color:
+   var(--mc-border-soft); background: var(--mc-bg-subtle);). No legacy
+   override exists for this selector either. */
 .devices-empty-state {
     width: min(520px, 100%);
     padding: 36px 28px;
@@ -2889,16 +2905,23 @@ html[data-theme="dark"] .chat-item .chat-time {
     font-size: 40px;
 }
 
+/* theme-registry Stage 2.6: genuinely live - no second, tokenized
+   override exists for h3/p/.devices-empty-tags span anywhere in this
+   file, unlike .devices-panel/.devices-empty-state above. #17365f ->
+   --mc-text-primary (d=37.9), already passes AA (11.51:1 on the live
+   --mc-bg-subtle background). */
 .devices-empty-state h3 {
     margin: 0 0 7px;
-    color: #17365f;
+    color: var(--mc-text-primary);
     font-size: 20px;
 }
 
+/* theme-registry Stage 2.6: #718198 failed AA on the live background
+   (3.76:1) - darkened to --mc-text-secondary (4.82:1, PASS, d=31.5). */
 .devices-empty-state p {
     margin: 0 auto;
     max-width: 430px;
-    color: #718198;
+    color: var(--mc-text-secondary);
     font-size: 12px;
     line-height: 1.55;
 }
@@ -2911,12 +2934,15 @@ html[data-theme="dark"] .chat-item .chat-time {
     gap: 7px;
 }
 
+/* theme-registry Stage 2.6: border #cfdae8 -> --mc-border (d=10.2).
+   background #fff -> --mc-bg-panel (d=0, exact). color #48617e ->
+   --mc-text-secondary (d=27.7), already passes AA (6.39:1 on white). */
 .devices-empty-tags span {
     padding: 4px 9px;
-    border: 1px solid #cfdae8;
+    border: 1px solid var(--mc-border);
     border-radius: 999px;
-    background: #fff;
-    color: #48617e;
+    background: var(--mc-bg-panel);
+    color: var(--mc-text-secondary);
     font-size: 10px;
     font-weight: 700;
 }

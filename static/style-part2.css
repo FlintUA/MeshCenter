@@ -1020,19 +1020,30 @@ body.context-chat-mode .settings-view {
     letter-spacing: .03em;
 }
 
+/* theme-registry Stage 2.4: this is the live light .camera-defaults-btn
+   (the html[data-theme="dark"] .camera-defaults-btn pair in ui-kit.css,
+   tokenized in Stage 1.4, only applies in dark and doesn't shadow this).
+   border #cbd5e1 -> --mc-border (d=18.6). background #f8fafc ->
+   --mc-bg-subtle (d=1.4, near-exact). color #475569 ->
+   --mc-text-secondary (d=49.6, the closest token, already passes AA
+   7.24:1 on the live background). :hover background #eef3f8 ->
+   --mc-bg-muted (d=0.0, exact). :hover border-color #aeb9c8 is left raw -
+   nearest token (--mc-text-muted, d=57.8) is a text role, not a border
+   role, the same "don't force onto an unrelated token" case Stage 2.1
+   flagged for --mc-bg-media-stage. */
 .camera-defaults-btn {
     height: 25px;
     padding: 0 9px;
-    border: 1px solid #cbd5e1;
+    border: 1px solid var(--mc-border);
     border-radius: 6px;
-    background: #f8fafc;
-    color: #475569;
+    background: var(--mc-bg-subtle);
+    color: var(--mc-text-secondary);
     font-size: 11px;
     cursor: pointer;
 }
 
 .camera-defaults-btn:hover {
-    background: #eef3f8;
+    background: var(--mc-bg-muted);
     border-color: #aeb9c8;
 }
 
@@ -1047,20 +1058,25 @@ body.context-chat-mode .settings-view {
     min-width: 0;
 }
 
+/* theme-registry Stage 2.4: #526178 -> --mc-text-secondary (d=28.1, close),
+   same value/role as .camera-white-balance-group label and
+   .camera-preset-group label in style-part3.css. */
 .camera-control-slider label {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
     margin-bottom: 1px;
-    color: #526178;
+    color: var(--mc-text-secondary);
     font-size: 10px;
     line-height: 1.2;
     text-transform: uppercase;
 }
 
+/* theme-registry Stage 2.4: #1265d6 -> --mc-primary (d=17.1, close), same
+   value as #videoQualityLabel/#photoQualityLabel in style-part1.css. */
 .camera-control-slider label span {
-    color: #1265d6;
+    color: var(--mc-primary);
     font-variant-numeric: tabular-nums;
     font-weight: 600;
 }

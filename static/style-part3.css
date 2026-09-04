@@ -395,6 +395,14 @@
     padding-top: 5px;
 }
 
+/* theme-registry Stage 2.4: .camera-control-tab(:hover/.active)'s colors
+   are DEAD - ui-kit.css already carries a fully tokenized, unscoped
+   ".camera-control-tab, .node-detail-tab { background: var(--mc-tab-bg);
+   color: var(--mc-tab-text); ... }" rule set (~L189-218) at the same
+   specificity, in a later-loaded file - confirmed live on dev (active tab
+   renders var(--mc-primary) text, inactive renders var(--mc-tab-bg)/
+   var(--mc-tab-text), neither matches the raw values below). Left
+   un-normalized since none of it renders. */
 .camera-control-tab {
     min-width: 92px;
     height: 37px;
@@ -435,8 +443,14 @@
     white-space: nowrap;
 }
 
+/* theme-registry Stage 2.4: #9aa8ba -> --mc-text-muted (d=28.0, closest
+   token), but both the original and --mc-text-muted itself fail AA on
+   white (2.42:1 / 2.95:1) - consolidated anyway as the closest semantic
+   match (a subtle separator glyph, not a full text label), not darkened
+   further to fix the pre-existing failure, same scope boundary as the
+   node-card identity-row labels flagged in Stage 2.2. */
 .camera-status-divider {
-    color: #9aa8ba;
+    color: var(--mc-text-muted);
 }
 
 #videoStatus {
@@ -497,24 +511,38 @@
     width: min(220px, 100%);
 }
 
+/* theme-registry Stage 2.4: #526178 -> --mc-text-secondary (d=28.1),
+   already passes AA (6.29:1 on white). */
 .camera-preset-group label,
 .camera-white-balance-group label {
-    color: #526178;
+    color: var(--mc-text-secondary);
     font-size: 10px;
     font-weight: 600;
     letter-spacing: .05em;
     text-transform: uppercase;
 }
 
+/* theme-registry Stage 2.4: .camera-preset-group select's own
+   background/border/color here are dead - a later, unrelated shared
+   selector list further down this file (".map-provider-select,
+   .reference-location-card select, .reference-location-card input,
+   .camera-preset-group select, .control-group select { background-color:
+   #f8fafc; color: #243447; ... }") wins for that class specifically,
+   spanning map/settings domains not yet normalized - left untouched, same
+   reasoning as .control-group select in style-part1.css. This rule IS
+   still live for .camera-white-balance-group select (not listed in that
+   other selector) - #ffffff -> --mc-bg-panel (d=0, exact), #243b5a ->
+   --mc-text-primary (d=41.3, already passes AA 11.36:1), #cfd8e5 ->
+   --mc-border (d=12.4). */
 .camera-preset-group select,
 .camera-white-balance-group select {
     width: 100%;
     height: 34px;
     padding: 5px 9px;
-    border: 1px solid #cfd8e5;
+    border: 1px solid var(--mc-border);
     border-radius: 7px;
-    background: #ffffff;
-    color: #243b5a;
+    background: var(--mc-bg-panel);
+    color: var(--mc-text-primary);
     font-size: 12px;
 }
 
@@ -622,6 +650,24 @@
     flex-direction: column;
 }
 
+/* theme-registry Stage 2.4: every var(--color-*, fallback) in this block
+   (.media-panel/.media-header/.media-title/.media-subtitle, and
+   .media-view above at ~L649) references a custom property that is never
+   defined anywhere in this codebase (grepped every static/*.css) - the
+   fallback literal is unconditionally what would render IF nothing else
+   won, a different, worse situation than the --theme-*/--mc-legacy-*
+   chain waypoint-tools uses (that one is real and out of scope; this one
+   was always broken). It's moot either way here: all four rules are
+   additionally shadowed by real, working --mc-* rules -
+   .media-panel/.media-header by ui-kit.css's tokenized
+   .mc-workspace-panel/.mc-workspace-header shell (same mechanism as
+   .video-panel/.video-header above, confirmed live: the real DOM elements
+   carry .mc-workspace-panel/.mc-workspace-header), .media-title/
+   .media-subtitle by this same file's own later ".workspace-page-title,
+   .video-title, .media-title, ... { color: var(--mc-text); }" /
+   ".workspace-page-subtitle, .video-subtitle, .media-subtitle, ... {
+   color: var(--mc-muted); }" rules ("UI/UX POLISH" section below). Left
+   as-is since none of it renders either way. */
 .media-panel {
     display: flex;
     flex-direction: column;
@@ -657,6 +703,14 @@
     font-size: 12px;
 }
 
+/* theme-registry Stage 2.4: dead - a higher-specificity ".mc-refresh-btn,
+   .media-refresh-btn.mc-refresh-btn, .system-refresh-btn.mc-refresh-btn"
+   rule further down this file (0,2,0, the real DOM element also carries
+   .mc-refresh-btn) wins over this plain 0,1,0 rule for every property,
+   AND is already fully tokenized (var(--mc-button-secondary-bg/-border/
+   -text)) - confirmed live on dev. Left un-normalized since it never
+   renders; :hover follows the same pattern via ui-kit.css's own
+   .media-refresh-btn:hover rule. */
 .media-refresh-btn,
 .media-primary-btn {
     border: 1px solid #cbd8e6;

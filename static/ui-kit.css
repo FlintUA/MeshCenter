@@ -2674,6 +2674,15 @@ html[data-theme="dark"] #nodeDetails .node-detail-radio .radio-param {
     visibility: hidden !important;
 }
 
+/* theme-registry Stage 2.4: already tokenized - these were generic
+   placeholder fallback literals (Tailwind slate-palette values, never
+   calibrated to either MeshCenter theme) that var() never actually
+   reaches since --mc-border/--mc-surface/--mc-text-secondary/
+   --mc-text-primary are always defined at :root. Updated to the real
+   current light values (this rule is unscoped, effectively serving light
+   - dark gets its own values via the html[data-theme="dark"] override
+   below) for documentation accuracy, same as Stage 1.3/2.3's fallback
+   cleanups. Zero visual effect. */
 .camera-loading-placeholder {
     position: absolute;
     inset: 12px;
@@ -2683,10 +2692,10 @@ html[data-theme="dark"] #nodeDetails .node-detail-radio .radio-param {
     align-content: center;
     justify-content: center;
     gap: 9px;
-    border: 1px solid var(--mc-border, #334155);
+    border: 1px solid var(--mc-border, #d7e0ea);
     border-radius: 8px;
-    background: var(--mc-surface, #f8fafc);
-    color: var(--mc-text-secondary, #64748b);
+    background: var(--mc-surface, #ffffff);
+    color: var(--mc-text-secondary, #58708f);
     text-align: center;
     pointer-events: none;
 }
@@ -2695,6 +2704,10 @@ html[data-theme="dark"] #nodeDetails .node-detail-radio .radio-param {
     display: grid;
 }
 
+/* theme-registry Stage 2.4: checked, left raw - #3b82f6 (a blue not equal
+   to --mc-primary, d=43.3) has no [data-theme="dark"] override anywhere,
+   so it's a theme-invariant spinner accent (same category as the map's
+   marker/legend colors in Stage 2.3), not a --mc-* semantic role. */
 .camera-loading-spinner {
     width: 28px;
     height: 28px;
@@ -2705,7 +2718,7 @@ html[data-theme="dark"] #nodeDetails .node-detail-radio .radio-param {
 }
 
 .camera-loading-title {
-    color: var(--mc-text-primary, #1e293b);
+    color: var(--mc-text-primary, #10233f);
     font-size: 13px;
     font-weight: 700;
 }

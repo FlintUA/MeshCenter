@@ -2257,6 +2257,31 @@ body {
     flex-direction: column;
 }
 
+/* theme-registry Stage 2.4: this section's background/border/text colors are
+   DEAD, shadowed by a later, already-tokenized "shared workspace shell"
+   system spanning Camera/Media/Devices/System/Settings - confirmed live on
+   dev, not assumed:
+   - .video-panel: the real DOM element also carries .mc-workspace-panel,
+     matched by ui-kit.css's .video-panel.mc-workspace-panel /
+     .mc-workspace-panel rules (background: var(--mc-workspace-panel-bg,
+     var(--mc-bg-panel)); border-color: var(--mc-workspace-border,
+     var(--mc-border));) - same 0,2,0 specificity, later file, wins.
+   - .video-header: the real element also carries .mc-workspace-header,
+     matched by ui-kit.css's .video-header.mc-workspace-header rule
+     (background: var(--mc-workspace-header-bg); border-color:
+     var(--mc-workspace-header-border);) for the same reason.
+   - .video-title: the real element also carries .workspace-page-title;
+     style-part3.css's later ".workspace-page-title, .video-title, ..."
+     rule (color: var(--mc-text);) wins by source order at equal (0,1,0)
+     specificity.
+   - .video-subtitle: also hidden entirely by a later
+     ".video-subtitle { display: none; }" override further down this file
+     (VIDEO COMPACT HEADER OVERRIDES) - its color is doubly moot.
+   - .video-refresh-btn(:hover): orphaned markup - grepped every
+     static/*.js template and templates/index.html, this class is never
+     rendered by the current camera UI.
+   None of these are tokenized here since none of it renders; left as raw
+   hex so this isn't re-investigated as a live bug. */
 .video-panel {
     display: flex;
     flex-direction: column;
@@ -2307,6 +2332,11 @@ body {
     transform: translateY(-1px);
 }
 
+/* theme-registry Stage 2.4: dead - this declaration always loses to the
+   later ".video-frame-wrap { background: #e8eaed !important; }" override
+   in this same file (see "СВЕТЛЫЙ ФОН ПОД ВИДЕО" below), which itself is
+   the one normalized in this stage. #important always beats a
+   non-important declaration regardless of specificity or source order. */
 .video-frame-wrap {
     flex: 1;
     min-height: 0;
@@ -2317,6 +2347,12 @@ body {
     padding: 12px;
 }
 
+/* theme-registry Stage 2.4: #000 checked - no shadowing rule found (unlike
+   .video-frame-wrap above), genuinely live. Left raw: a pure-black stream
+   backdrop is a deliberate, theme-invariant convention (confirmed no
+   [data-theme="dark"] override exists for it either - it's simply always
+   black, the same way a <video>/<img> letterbox area commonly is on the
+   web), not a --mc-* semantic role. */
 .camera-stream {
     max-width: 100%;
     max-height: 100%;
@@ -2327,6 +2363,9 @@ body {
     object-fit: contain;
 }
 
+/* theme-registry Stage 2.4: .video-footer is orphaned markup - never
+   rendered by any current template (grepped every static/*.js and
+   templates/index.html), same as .video-refresh-btn above. */
 .video-footer {
     display: flex;
     justify-content: space-between;
@@ -2357,6 +2396,10 @@ body {
 }
 
 /* ===== VIDEO CONTROLS ===== */
+/* theme-registry Stage 2.4: background/border-top-color are dead, shadowed
+   by ui-kit.css's ".video-controls, .video-info-bar, .camera-image-controls,
+   .media-content { background: var(--mc-bg-subtle); border-color:
+   var(--mc-border-soft); }" (same 0,1,0 specificity, later file). */
 .video-controls {
     padding: 10px 14px;
     background: #f5f7fa;
@@ -2376,14 +2419,26 @@ body {
     gap: 4px;
 }
 
+/* theme-registry Stage 2.4: #666 -> --mc-text-secondary (d=44.5), already
+   passes AA (5.44:1 on the live --mc-bg-subtle background above). */
 .control-group label {
     font-size: 11px;
     font-weight: 600;
-    color: #666;
+    color: var(--mc-text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
 
+/* theme-registry Stage 2.4: background/color are dead - shadowed by a later
+   shared selector list in style-part3.css (".map-provider-select,
+   .reference-location-card select, .reference-location-card input,
+   .camera-preset-group select, .control-group select { background-color:
+   #f8fafc; color: #243447; ... }") that spans other, not-yet-normalized
+   domains (map, reference-location settings) - left untouched here since
+   fixing it would reach outside this stage's camera/video/media scope.
+   border-color (unaffected by that rule) is genuinely live but not
+   consolidated: #d5d8dd sits far from every light token (closest
+   --mc-border-soft, d~60+), a distinct value, left raw. */
 .control-group select {
     padding: 6px 8px;
     border: 1px solid #d5d8dd;
@@ -2405,6 +2460,11 @@ body {
     gap: 8px;
 }
 
+/* theme-registry Stage 2.4: checked, left raw - the range track/thumb's
+   #d5d8dd/#1a73e8 aren't close to any light token (track fails even 3:1
+   UI-component contrast pre-existing, same category as the map's signal
+   indicators deferred in Stage 2.3) and this minor slider chrome wasn't
+   named in this stage's scope; not touched. */
 .quality-control input[type="range"] {
     flex: 1;
     height: 4px;
@@ -2432,6 +2492,11 @@ body {
     border: none;
 }
 
+/* theme-registry Stage 2.4: .camera-quality-value is orphaned markup -
+   never rendered by any current template (the live quality-value labels
+   are #videoQualityLabel/#photoQualityLabel below, a different pair of
+   selectors sharing this same declaration block by coincidence). Not
+   tokenized since it never renders. */
 .camera-quality-value{
     display:inline-block;
     min-width:42px;
@@ -2445,6 +2510,8 @@ body {
     font-variant-numeric:tabular-nums;
 }
 
+/* theme-registry Stage 2.4: #1265d6 -> --mc-primary (d=17.1, close),
+   already passes AA (5.44:1 on white). */
 #videoQualityLabel,
 #photoQualityLabel {
     display: inline-block;
@@ -2452,7 +2519,7 @@ body {
 
     text-align: right;
 
-    color: #1265d6;
+    color: var(--mc-primary);
     font-size: 12px;
     font-weight: 600;
     line-height: 1;
@@ -2460,6 +2527,14 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
+/* theme-registry Stage 2.4: .screenshot-btn's background/color are dead,
+   shadowed by ui-kit.css's shared ".screenshot-btn, .primary-btn,
+   .send-btn { background: var(--mc-primary); color: var(--mc-text-inverse);
+   border-color: var(--mc-primary); }" (already tokenized); :hover's
+   background is likewise shadowed by ui-kit's ".screenshot-btn:hover,
+   .primary-btn:hover, .send-btn:hover { background:
+   var(--mc-primary-hover); ... }". .screenshots-btn(:hover) is orphaned -
+   never rendered by any current template. */
 .screenshot-btn, .screenshots-btn {
     padding: 6px 12px;
     border: none;
@@ -2495,6 +2570,8 @@ body {
     background: #d5d0c0;
 }
 
+/* theme-registry Stage 2.4: .camera-info(+span) is orphaned markup - never
+   rendered by any current template, same as .camera-quality-value above. */
 .camera-info {
     display: flex;
     gap: 16px;
@@ -2510,6 +2587,9 @@ body {
     gap: 4px;
 }
 
+/* theme-registry Stage 2.4: orphaned markup - never rendered by any
+   current template (live camera status uses different elements, e.g. the
+   "Camera Online"/"Camera Ready" dock indicator). */
 #cameraStatus {
     color: #4caf50;
     font-weight: 600;
@@ -2611,6 +2691,11 @@ body {
 }
 
 /* ===== ВИДЕО ИНФОРМАЦИОННАЯ СТРОКА ===== */
+/* theme-registry Stage 2.4: background/border-bottom-color are dead, same
+   ui-kit.css shared ".video-controls, .video-info-bar, ..." rule as
+   .video-controls above. color (#333) is NOT touched by that rule and is
+   genuinely live -> --mc-text-primary (d=40.3), already passes AA on the
+   live background (11.98:1). */
 .video-info-bar {
     display: flex;
     justify-content: space-between;
@@ -2618,7 +2703,7 @@ body {
     padding: 6px 14px;
     background: #f0f2f5;
     font-size: 13px;
-    color: #333;
+    color: var(--mc-text-primary);
     border-bottom: 1px solid #e5e8ec;
     flex-shrink: 0;
 }
@@ -2630,19 +2715,30 @@ body {
     font-weight: 600;
 }
 
+/* theme-registry Stage 2.4: #555 -> --mc-text-secondary (d=64.0 - the
+   largest distance consolidated in this stage, but still the closest token
+   and already passes AA, 7.07:1 on the live background). */
 #videoLiveInfo {
-    color: #555;
+    color: var(--mc-text-secondary);
     font-weight: 500;
 }
 
 /* ===== СВЕТЛЫЙ ФОН ПОД ВИДЕО ===== */
+/* theme-registry Stage 2.4: this is the LIVE .video-frame-wrap background -
+   !important always wins over the non-important #101820 declaration
+   earlier in this file (see comment there) and over ui-kit.css's own two
+   (also non-important) attempts to tokenize this exact property with
+   var(--mc-bg-media-stage) (ui-kit.css ~L148 and ~L677) - both lost to
+   this raw-hex !important hack despite being semantically the intended
+   token. #e8eaed -> --mc-bg-media-stage (d=5.9, near-exact) - the fix
+   below finally connects this rule to the token already meant for it. */
 .video-frame-wrap {
     flex: 1;
     min-height: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #e8eaed !important;
+    background: var(--mc-bg-media-stage) !important;
     padding: 12px;
 }
 

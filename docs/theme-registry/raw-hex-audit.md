@@ -1092,3 +1092,15 @@ _17 new unique values (registered in the same commit as the CSS change this time
 | `#F2F5F6` | 1 | static/ui-kit.css:3864 |
 
 Not registered: none new this time - unlike Sharp, all three of Gunmetal's accent roles (`accent-reference`/`action-fill`/`accent-graphic`) share one value (`#63A1C2`), so there was no unmapped role to document as a gap. The swatch preview's warning slot reuses `#F0C86A` (dark's current `--mc-warning`, already registered from the Stage 0 baseline) - not a new value, since Gunmetal has no warning override yet (that's Stage 5.2).
+
+### Theme-family token value (Stage 5.2 - MeshCenter Gunmetal, warning exception)
+
+_1 new unique value - Gunmetal's warning exception only changes the surface; foreground/base stay `#F0C86A`, identical to the inherited dark value, so no override needed there_
+
+| HEX | Occurrences | Locations |
+|---|---|---|
+| `#473529` | 1 | static/ui-kit.css:3899 |
+
+Not registered: `#C2A669` - the source doc's "favorite/calm accent" role, explicitly *not* part of Gunmetal's warning exception (section 8.3 quote: reserved for favorite/calm accent, not the warning error surface). Not declared anywhere in this stage; flagged in the Stage 5.2 PR as a possible future backlog item if a real favorite-state consumer is ever found, not invented here.
+
+**Tooling fix, same commit:** `check_new_hex.py`'s `strip_comment_spans()` had a real bug (not a workflow-timing issue like the prior two follow-ups were assumed to be) - it blanked out `/* ... */` comment spans by replacing every character, *including embedded newlines*, with a single space. In whole-file mode (`check_files()`, which operates on the full file text before splitting into lines), this silently collapsed a multi-line comment's line count to effectively zero once `.splitlines()` ran, undercounting every line number reported after it by roughly that comment's own line count. This is very likely the real root cause of both Stage 4.2's (`#188`) and Stage 5.1's (`#190`) stale line-number follow-ups - not the "grepped mid-draft" explanation given at the time. Confirmed live in this stage: the tool reported `#473529` at line 3444 (a blank line, nowhere near the actual declaration) before the fix, and the correct 3899 after. Fixed by preserving embedded newlines as newlines instead of collapsing them to spaces. Diff mode (`check_diff()`) is unaffected - it already applies `strip_comment_spans()` per individual added line, never across a multi-line span.

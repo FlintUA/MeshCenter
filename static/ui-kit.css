@@ -3802,10 +3802,26 @@ html[data-theme-family="sharp"] {
    light-side result.
 
    Palette source: MeshCenterthemeregistryplanv0.1.md section 5/6/7/8.1/9
-   (owner-approved, hex values copied verbatim - do not adjust). Only the
-   21 surface/text/border/accent roles are covered; state colors (Gunmetal
-   has one exception, warning, section 8.3) are Stage 5.2 - left unset here
-   so they inherit html[data-theme="dark"]'s existing values by cascade.
+   (owner-approved, hex values copied verbatim - do not adjust).
+
+   Stage 5.2 addendum: Gunmetal's one state-color exception - warning's
+   surface only (section 8.3). Narrower than Sharp's two-state exception
+   (4.2): foreground and base both stay #f0c86a, identical to the
+   inherited html[data-theme="dark"] value, so only --mc-warning-soft
+   needs overriding, not --mc-warning itself. Grepped --mc-warning's real
+   consumers to confirm there's no separate foreground/fg token to worry
+   about - there isn't, same as Stage 4.2 found for success/danger:
+   --mc-warning alone drives both the foreground role (ui-kit.css:433
+   .text-warning, style-part1.css:3018, the dark-mode notification-warning
+   icon color at style-part3.css:3782) and a small solid-fill role
+   (.node-detail-activity.activity-away, style-part3.css:20) - and it's
+   already correct for both since fg/base don't change here. --mc-warning-
+   soft is the actual surface token (ui-kit.css:270, .node-card.favorite's
+   background - the only consumer). #c2a669 (the source doc's "favorite/
+   calm accent" color) is explicitly NOT part of this exception - not
+   used anywhere in this block; flagged in the PR as a possible future
+   backlog item for a real favorite-role token, not invented here.
+   Success/danger/info get no Gunmetal exception at all and stay unset.
 
    Token mapping: identical role -> token assignments as Sharp (Stage 4.1's
    big comment above, ~line 3600) - re-verified against dark-mode consumers
@@ -3876,5 +3892,10 @@ html[data-theme-family="gunmetal"] {
     --mc-primary: #63a1c2;
     --mc-primary-hover: #7cb4d0;
     --mc-accent: #63a1c2;
+
+    /* Semantic states (Stage 5.2) - warning surface only; foreground/base
+       are identical to the inherited dark value and need no override.
+       No success/danger/info exception for Gunmetal. */
+    --mc-warning-soft: #473529;
 }
 

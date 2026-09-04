@@ -52,7 +52,17 @@ def load_known_hex() -> set[str]:
 
 def strip_comment_spans(text: str) -> str:
     """Blank out /* ... */ comment contents so HEX inside design-note comments
-    doesn't get flagged as a new live declaration."""
+    doesn't get flagged as a new live declaration.
+
+    Preserves embedded newlines as newlines (not spaces) so line numbers
+    for anything after a multi-line comment stay accurate in whole-file
+    mode's check_files() - blanking them out entirely used to collapse a
+    multi-line comment into effectively zero newlines once the caller
+    splitlines()'d the result, silently shifting every reported line
+    number after it by the comment's own line count. Confirmed live on
+    two real PRs (theme-registry Stage 4.2/#188, Stage 5.1/#190) before
+    being traced to this function specifically in Stage 5.2.
+    """
     out = []
     i = 0
     n = len(text)
@@ -60,7 +70,8 @@ def strip_comment_spans(text: str) -> str:
         if text[i:i + 2] == "/*":
             j = text.find("*/", i + 2)
             end = j + 2 if j != -1 else n
-            out.append(" " * (end - i))
+            span = text[i:end]
+            out.append("".join("\n" if ch == "\n" else " " for ch in span))
             i = end
         else:
             out.append(text[i])

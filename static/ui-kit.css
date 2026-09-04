@@ -1040,6 +1040,22 @@ a:focus-visible,
 .workspace-theme-swatch--primary { background: var(--mc-primary); }
 .workspace-theme-swatch--warning { background: var(--mc-warning); }
 
+/* theme-registry Stage 4.1: the generic swatch rules above intentionally
+   track the *currently active* --mc-* values (see the comment on
+   .workspace-theme-swatches above) - correct when only one family existed,
+   but now that a second family exists it means every card's swatches show
+   whichever family is actually active, not that card's own family. Sharp's
+   card gets its own literal-hex override here so its preview is always
+   correct regardless of what's currently active; the pre-existing
+   "original" card does NOT get an equivalent fix in this stage (out of
+   scope for a Sharp-only stage) - flagged in the PR as a known gap: right
+   now, viewing the popover while Sharp is active will show the wrong
+   swatch colors on the "original" card. */
+.workspace-theme-family-option[data-family="sharp"] .workspace-theme-swatch--bg { background: #eceeef; }
+.workspace-theme-family-option[data-family="sharp"] .workspace-theme-swatch--panel { background: #ffffff; }
+.workspace-theme-family-option[data-family="sharp"] .workspace-theme-swatch--primary { background: #2e2e2e; }
+.workspace-theme-family-option[data-family="sharp"] .workspace-theme-swatch--warning { background: #e6ad22; }
+
 .workspace-theme-family-label {
     font-size: 12px;
     font-weight: 700;
@@ -3601,5 +3617,107 @@ html[data-theme="dark"] {
     /* Shadows */
     --mc-shadow-panel: 0 3px 10px rgba(0, 0, 0, .24);
     --mc-shadow-hover: 0 8px 20px rgba(0, 0, 0, .32);
+}
+
+/* theme-registry Stage 4.1: MeshCenter Sharp - a 'fixed', light-only family
+   (WORKSPACE_THEME_FAMILIES in chat.js: { id: 'sharp', kind: 'fixed', mode:
+   'light' }). applyTheme() sets data-theme="light" (family.mode) AND
+   data-theme-family="sharp" together on <html>, so this block layers on top
+   of :root exactly like html[data-theme="dark"] does today (same element,
+   higher specificity than :root alone) - confirmed empirically in the Stage
+   3.3 report before Stages 4-8 started. Only LEAF tokens are redeclared
+   here; aliases (--mc-surface, --mc-accent-soft, --mc-chat-bg, etc.) are
+   left alone and resolve through whichever leaf they reference, per that
+   same Stage 3.3 finding.
+
+   Palette source: MeshCenterthemeregistryplanv0.1.md section 5/6/7/8.1/8.3
+   (owner-approved, hex values copied verbatim - do not adjust). Only the 21
+   surface/text/border/accent roles from that section are covered; state
+   colors (success/warning/danger/info) are Stage 4.2, deliberately left
+   unset here so they inherit the :root light values by cascade.
+
+   Source role -> --mc-* token mapping (source hex in comment where the
+   role name doesn't make the value obvious):
+     surface-app        -> --mc-bg-app
+     surface-workspace  -> --mc-bg-workspace (also feeds --mc-chat-bg, alias)
+     surface-panel      -> --mc-bg-panel
+     surface-card       -> --mc-card-bg (explicit override - see note below)
+     surface-control    -> --mc-button-secondary-bg
+     surface-media      -> --mc-bg-media-stage
+     surface-selected   -> --mc-primary-soft (also feeds --mc-accent-soft,
+                            alias; same hex as accent-soft below)
+     text-primary/-secondary/-muted/-inverse -> the matching --mc-text-*
+     border-soft         -> --mc-border-soft
+     border-default      -> --mc-border
+     border-control       -> --mc-button-secondary-border (aliased into
+                            --mc-dark-control-border under the same name)
+     focus-ring           -> --mc-border-focus (drives real focus outlines,
+                            ui-kit.css:455/1013/2166)
+     action-fill/-hover   -> --mc-primary/--mc-primary-hover (drives the
+                            primary button fill + active tab underline -
+                            see ui-kit.css ~379-419/214-241)
+     accent-graphic       -> --mc-accent (drives .btn:focus-visible outline
+                            + the About-page accent card/link, ui-kit.css
+                            ~48/1399-1417 - same hex as focus-ring above)
+
+   Judgment calls (documented per the Stage 4.1 brief, not silently decided):
+
+   1) accent-reference / action-fill / accent-graphic all read as one
+      --mc-primary value in Original (#1f6fdb) but Sharp needs 3 distinct
+      colors. action-fill and accent-graphic both land on real, distinctly-
+      consumed tokens (--mc-primary and --mc-accent respectively - grepped
+      their actual call sites above, not just their names). accent-reference
+      (#4dffbc, the bright mint) has no existing token to land on: nothing
+      in the current CSS reads a "large-fill-with-dark-content" role, and
+      per the source doc's own design intent mint must NOT become the
+      primary button color, so it is intentionally left unmapped rather
+      than forced onto --mc-primary or invented as a new unused token.
+
+   2) --mc-card-bg is aliased to --mc-bg-panel in Light/Dark (both resolve
+      to the same white/near-black), but Sharp's source doc wants a visible
+      surface-panel (#ffffff) vs surface-card (#f0f1f2) distinction. Decision:
+      override --mc-card-bg explicitly here (breaking the alias for Sharp
+      only, the same way the dark block already does with its own literal
+      #162433) so the two roles actually render differently. Not changing
+      the Light/Dark alias itself - out of scope for this stage.
+
+   3) surface-hover and border-control, re-checked against actual consumers
+      (not assumed from the names):
+        - surface-hover: confirmed gap. Grepped every *-hover token in this
+          file (--mc-button-secondary-bg-hover, --mc-popover-item-hover,
+          --mc-tab-bg-hover, --mc-dark-control-bg-hover, ...) - hover
+          backgrounds are genuinely per-component, no single shared token
+          exists. Left unmapped rather than inventing one nothing reads yet.
+        - border-control: NOT actually a gap. --mc-button-secondary-border
+          is aliased into --mc-dark-control-border (ui-kit.css:3407) - i.e.
+          the codebase already has a "control border" concept under that
+          name, and it drives a real control (the secondary-button border,
+          style-part3.css:1745). Mapped border-control there. */
+html[data-theme-family="sharp"] {
+    /* Application surfaces */
+    --mc-bg-app: #eceeef;
+    --mc-bg-workspace: #f5f6f7;
+    --mc-bg-panel: #ffffff;
+    --mc-bg-media-stage: #e0e2e3;
+    --mc-card-bg: #f0f1f2;
+    --mc-button-secondary-bg: #e6e8e9;
+    --mc-primary-soft: #d9fff1;
+
+    /* Text */
+    --mc-text-primary: #2e2e2e;
+    --mc-text-secondary: #4c4c4c;
+    --mc-text-muted: #6b6b6b;
+    --mc-text-inverse: #ffffff;
+
+    /* Borders */
+    --mc-border-soft: #d9d9d9;
+    --mc-border: #b8b8b8;
+    --mc-button-secondary-border: #777e82;
+    --mc-border-focus: #087a57;
+
+    /* Primary accent */
+    --mc-primary: #2e2e2e;
+    --mc-primary-hover: #1e1e1e;
+    --mc-accent: #087a57;
 }
 

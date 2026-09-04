@@ -8016,9 +8016,10 @@ const WORKSPACE_STORAGE_KEY = 'meshcenter.workspace';
 // nested under the family card instead of being the whole Appearance
 // section by itself.
 const WORKSPACE_THEME_FAMILIES = Object.freeze([
-    Object.freeze({ id: 'original', kind: 'paired' })
-    // A future fixed family would look like:
-    // Object.freeze({ id: 'sharp-dark', kind: 'fixed', mode: 'dark' })
+    Object.freeze({ id: 'original', kind: 'paired' }),
+    // theme-registry Stage 4.1: Sharp is a 'fixed', light-only family - its
+    // token overrides live in ui-kit.css under html[data-theme-family="sharp"].
+    Object.freeze({ id: 'sharp', kind: 'fixed', mode: 'light' })
 ]);
 const WORKSPACE_THEME_FAMILY_IDS = WORKSPACE_THEME_FAMILIES.map(family => family.id);
 

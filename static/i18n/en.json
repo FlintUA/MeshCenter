@@ -1149,6 +1149,7 @@
   "workspace": {
     "theme_family_group_label": "Theme family",
     "theme_family_original": "MeshCenter Original",
+    "theme_family_sharp": "MeshCenter Sharp",
     "theme_mode_auto": "Auto",
     "theme_mode_light": "Light",
     "theme_mode_dark": "Dark",

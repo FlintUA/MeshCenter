@@ -663,9 +663,10 @@
    .media-view above at ~L649) references a custom property that is never
    defined anywhere in this codebase (grepped every static/*.css) - the
    fallback literal is unconditionally what would render IF nothing else
-   won, a different, worse situation than the --theme-*/--mc-legacy-*
-   chain waypoint-tools uses (that one is real and out of scope; this one
-   was always broken). It's moot either way here: all four rules are
+   won, a different, worse situation than the direct --mc-* references
+   waypoint-tools uses since theme-registry PR 6 (that one is real and
+   out of scope; this one was always broken). It's moot either way here:
+   all four rules are
    additionally shadowed by real, working --mc-* rules -
    .media-panel/.media-header by ui-kit.css's tokenized
    .mc-workspace-panel/.mc-workspace-header shell (same mechanism as

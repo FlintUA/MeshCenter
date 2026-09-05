@@ -93,25 +93,41 @@ def _free_port() -> int:
 
 
 # 2026-01-01T12:00:00Z - shared with visual_regression.py's frozen
-# client-side Date, so any "N seconds/minutes ago" text the app computes
-# from (frozen-now - last_seen) is deterministic across every run and
-# every machine, not just "close enough."
+# client-side Date, for whatever genuinely reads the client clock (the
+# "System clock" widget, sourced from the mocked /api/time response).
+# NOT used for node last_seen/age below - see that function's own
+# comment for why an absolute epoch is the wrong tool for that one.
 FROZEN_EPOCH_SECONDS = 1767268800
+
+# server.py's age_text() (~line 3248) computes `int(time.time() -
+# last_seen)` - a real server-side wall-clock read with no client-side
+# equivalent at all, confirmed by reading it directly: freezing the
+# client's Date (FROZEN_EPOCH_SECONDS above) has zero effect on it. An
+# absolute, fixed last_seen (e.g. FROZEN_EPOCH_SECONDS itself) would
+# still leak real time indirectly: age_text()'s result would grow by
+# exactly one calendar day every real day that passes between the
+# baseline's capture date and whenever the suite is next run - caught
+# live during this round's independent re-verification ("246 d" in the
+# committed baseline vs "247 d" one real day later, despite identical
+# code and identical seed data). Anchoring last_seen to time.time() minus
+# a fixed offset, computed fresh at every boot, makes age_text()'s
+# subtraction always land on the same fixed number of days regardless of
+# which real calendar date the harness happens to run on.
+NODE_AGE_SECONDS = 200 * 86400  # 200 days - arbitrary but fixed and round
 
 
 def _seed_nodes(server_module) -> None:
     """One plain node and one favorited node, so .node-card.favorite has a
     real element to render (PR 3's bug 1.2 fix needs this to be
-    screenshotted/inspected meaningfully, not just an empty node list).
-    Fixed last_seen (not time.time()) - real-time timestamps would make
-    every "last seen Ns ago" render differently run to run."""
+    screenshotted/inspected meaningfully, not just an empty node list)."""
+    last_seen = time.time() - NODE_AGE_SECONDS
     server_module.nodes["!aabbccdd"] = {
         "node_id": "!aabbccdd", "name": "Visual Regression Base", "short_name": "VRB",
-        "last_seen": FROZEN_EPOCH_SECONDS, "favorite": False, "ignored": False,
+        "last_seen": last_seen, "favorite": False, "ignored": False,
     }
     server_module.nodes["!11223344"] = {
         "node_id": "!11223344", "name": "Favorited Test Node", "short_name": "FAV",
-        "last_seen": FROZEN_EPOCH_SECONDS, "favorite": True, "ignored": False,
+        "last_seen": last_seen, "favorite": True, "ignored": False,
     }
 
 

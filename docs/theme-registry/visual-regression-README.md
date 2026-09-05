@@ -132,10 +132,33 @@ screenshots every time (see "Proof" below for the actual commands).
   rendering-engine limitation, not app or harness state. Flattened
   (`border-radius: 0`) for the waypoint modal's own inputs/textarea/select
   only (not globally) - again, not something this suite tests.
+- **A server-side real-wall-clock leak in the node-list "N d" age badge**
+  (found during independent re-verification, after the round above): the
+  badge isn't computed client-side at all - `chat.js` renders `node.age`,
+  a string the server already built. `server.py`'s `age_text()` (~line
+  3248) computes it as `int(time.time() - last_seen)` - a real,
+  server-side wall-clock read with **no client-side equivalent**, so
+  freezing the client's `Date` (above) has zero effect on it. The
+  original fix pinned `last_seen` to the *same absolute epoch* as the
+  frozen client `Date` - which still leaked real time indirectly: the
+  server's `time.time()` keeps advancing with the real calendar, so
+  `age_text()`'s result grows by exactly one calendar day every real day
+  that passes between capturing the baseline and re-running the suite
+  (confirmed live: baseline showed "246 d," a re-run one real day later
+  showed "247 d," from byte-identical code and seed data). Fixed by
+  anchoring `last_seen` to `time.time() - NODE_AGE_SECONDS` computed
+  fresh at every boot (`_visual_server.py`'s `_seed_nodes()`), rather than
+  to any absolute timestamp - `age_text()`'s subtraction then always
+  lands on the same fixed `NODE_AGE_SECONDS` (200 days) regardless of
+  which real calendar date the harness happens to run on. Verified with
+  a standalone simulation (not just "ran it twice quickly"): computed the
+  badge with `time.time()` mocked 60 real days apart, both landing on
+  "200 d ago" - see this repo's own PR history for the exact snippet used.
 
 All of the above are harness-only overrides, injected into the page after
 navigation via `page.add_style_tag()`/`page.route()`/Chromium launch
-args - none of them touch `static/*.css`, `chat.js`, or `server.py`.
+args, or (for the age badge) a change to how test data is seeded - none
+of them touch `static/*.css`, `chat.js`, or `server.py` itself.
 
 ### Font pinning
 
@@ -164,6 +187,35 @@ harness's own page context, never touches `static/*.css`) and the most
 robust across machines (no network dependency, no host-font dependency -
 just the exact bytes committed to the repo).
 
+### Pin the exact Chromium build, not just "chromium"
+
+Font-bundling closed the vast majority of a residual layout gap on the
+waypoint modal (26px down to 2px) during independent re-verification, but
+didn't close it entirely. Root-caused, not left as "close enough": the
+two environments were running genuinely different Chromium *builds* -
+141.0.7390.37 vs 151.0.7922.34, ten major versions apart - despite both
+having installed "chromium" via `python -m playwright install chromium`.
+The reason is `requirements-dev.txt`'s own version range for the
+`playwright` package: `playwright>=1.40,<2` lets `pip install` resolve to
+whichever release happens to be newest at install time, and **each
+playwright release bundles one specific, fixed Chromium build** - there
+was no version-control record of which Chromium build a given screenshot
+baseline was actually captured against, so two honestly-run installs,
+months apart, legitimately got different renderers.
+
+Fixed by pinning `playwright` to an **exact** version
+(`playwright==1.62.0`) in `requirements-dev.txt`, rather than trying to
+pin a Chromium revision directly (Playwright doesn't offer a clean,
+supported way to do that independent of the wrapper package version - the
+package version *is* the practical unit of pinning). This is a real fix,
+not a documented limitation: it makes "which Chromium build" a tracked,
+reviewable part of this repo's own version-controlled dependencies, the
+same way any other pinned dependency is. The one thing it can't do
+retroactively is update an *already-cached* browser binary from before
+the pin - anyone hitting this needs to re-run both `pip install -r
+requirements-dev.txt` and `python -m playwright install chromium` after
+pulling the pin, not just the first one.
+
 ### Proof (byte-identical, not just within tolerance)
 
 ```bash
@@ -186,6 +238,29 @@ runs. `tokens.json` was not regenerated or touched by any of this work -
 the token-snapshot mechanism was already fully deterministic before the
 addendum (it reads computed-style strings, not rendered pixels) and
 needed no changes.
+
+The 5-consecutive-runs proof above ran within a few minutes of real time,
+which wouldn't have caught the age-badge leak described above (it only
+manifests across real calendar days). Verified that fix separately with a
+standalone simulation rather than waiting a day or touching the system
+clock:
+
+```python
+NODE_AGE_SECONDS = 200 * 86400
+real_now_today = time.time()
+real_now_60_days_later = real_now_today + 60 * 86400
+last_seen_today = real_now_today - NODE_AGE_SECONDS
+last_seen_later = real_now_60_days_later - NODE_AGE_SECONDS
+# age_text(last_seen, now) == "seen 200 d ago" for BOTH pairs below,
+# despite "now" being 60 real days apart:
+age_text(last_seen_today, real_now_today + 2)          # -> "seen 200 d ago"
+age_text(last_seen_later, real_now_60_days_later + 2)   # -> "seen 200 d ago"
+```
+
+confirming the fix holds by construction (last_seen is always
+`boot-time - NODE_AGE_SECONDS`, so the subtraction always lands on the
+same fixed value) rather than by coincidence of when the proof happened
+to run.
 
 ## Why this architecture
 

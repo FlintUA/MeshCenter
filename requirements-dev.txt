@@ -17,4 +17,21 @@ tzdata
 # `python -m playwright install chromium` once (or `--with-deps chromium`
 # on a fresh Linux box) to download the browser binary - pip alone does
 # not fetch it. Never installed on a production Pi.
-playwright>=1.40,<2
+#
+# Pinned to an EXACT version, not a range: each playwright release bundles
+# one specific, fixed Chromium build - `pip install playwright>=1.40,<2`
+# (the old range here) can resolve to a different playwright release (and
+# therefore a different Chromium build) depending purely on *when* it's
+# installed, with no version-control record of which one a given
+# screenshot baseline was captured against. Confirmed as a real source of
+# the suite's own residual non-determinism during independent
+# re-verification: two environments both nominally running "chromium" via
+# `playwright install` landed on Chromium 141.0.7390.37 vs 151.0.7922.34
+# (10 major versions apart) purely from this range, and produced a small
+# but real layout difference on the waypoint-create modal that no
+# CSS/font/clock fix could close, because the two sides genuinely weren't
+# running the same renderer. After bumping this pin, existing
+# environments need to re-run `pip install -r requirements-dev.txt`
+# followed by `python -m playwright install chromium` - an already-cached
+# browser binary from an older pin does not update itself.
+playwright==1.62.0

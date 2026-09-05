@@ -3093,12 +3093,6 @@ body[data-theme="dark"] .node-manager-detect-radio-btn:hover {
     color: #fff;
 }
 
-/* theme-registry Stage 1.7: the base rule below is another consumer of
-   the legacy --theme-* token family (same debt already flagged for
-   .camera-panel in Stage 1.4 and .devices-panel/.media-panel in Stage
-   1.6) - not touched here, that's a real family migration for Stage 3.1,
-   not a per-selector swap (none of --theme-elevated-bg/--theme-border/
-   --theme-text's dark values match any current --mc-* token exactly). */
 [data-theme="dark"] .waypoint-action-toast,
 body[data-theme="dark"] .waypoint-action-toast {
     background: var(--mc-button-secondary-bg) !important;

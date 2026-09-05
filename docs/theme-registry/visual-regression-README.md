@@ -35,6 +35,158 @@ rendering changed and confirm it matches what the PR intended, the same
 way `check_new_hex.py`'s registry updates are reviewed. This is the
 explicit mechanism PR 6 is expected to use once its migration is ready.
 
+## Determinism: byte-identical screenshots, not just "within tolerance"
+
+The first version of this suite compared screenshots with a pixel-diff
+tolerance (still true - see "Screenshots" below), but the *baseline
+images themselves* weren't reproducible: they captured real wall-clock
+time, real host CPU/RAM/hostname/uptime, and briefly-mid-fetch "Loading"
+placeholder states, and rendering itself had a few genuine (if tiny)
+non-deterministic sources. Following an explicit merge-readiness bar, the
+harness was hardened so that **running it twice, back to back, produces
+byte-identical screenshot files** - not just close enough to pass the
+tolerance. Verified: 5 consecutive independent `--update-baseline` runs,
+compared pairwise via `sha256sum`, produced identical hashes for all 15
+screenshots every time (see "Proof" below for the actual commands).
+
+### What was non-deterministic, and the fix for each
+
+- **Real wall-clock time** (`meshsrv/time_service.py`'s `get_status()`
+  reads `time.time()` directly - this is the "12:34, System clock" widget
+  and drives every "N seconds/minutes/days ago" relative-time string).
+  Fixed two ways together: the client's `Date`/`Date.now()` is frozen to
+  a fixed instant (2026-01-01T12:00:00Z) via a Playwright
+  `add_init_script` (must run before the app's own `DOMContentLoaded`
+  handler reads the real clock - a plain `page.evaluate()` after
+  navigation would be too late), and `_visual_server.py`'s seeded nodes
+  use that same fixed epoch for `last_seen` instead of `time.time()`, so
+  "246 d" ago is always exactly 246 days from the frozen instant, not
+  whatever the real gap happens to be when the harness runs.
+- **Real host CPU/RAM/hostname/uptime** (`api/api_system.py`'s
+  `/api/system/info` reads `platform.node()` and `/proc/uptime` directly;
+  `system/cpu_history.py`'s `/api/system/cpu-history` reads real CPU%/RAM%
+  even though the history-sampling worker thread itself is never started
+  in this harness). Both intercepted via Playwright `page.route()` and
+  served fixed, hardcoded JSON instead of ever reaching the real handler
+  - see `MOCKED_API_RESPONSES` in `visual_regression.py` for the exact
+  payloads and the reasoning per endpoint.
+- **A real, hardware-adjacent radio-port probe on first load**
+  (`static/chat.js`'s `loadChatList()` calls `/api/chats?refresh_channels=1`
+  on its first invocation, which server-side drives
+  `meshsrv/serial_port_supervisor.py`'s real port-in-use check against
+  the synthetic serial-port path - observed taking ~23s on this dev
+  machine, mostly an 8s x2 "utility missing" timeout, since Windows has no
+  `fuser`/`lsof`-equivalent; a Linux box **would** have one, and could
+  take a materially different code path/timing - exactly the kind of
+  environment-dependent behavior the "no radio required, at all" bar
+  rules out). Also mocked via `page.route()` (`**/api/chats*`), so this
+  request never reaches the real handler, `SerialPortSupervisor`, or
+  anything hardware-adjacent at all - confirmed by removing the mock
+  temporarily and observing the real code path/timing described above,
+  then re-adding it.
+- **Mid-fetch "Loading..." placeholders.** No unified "app ready"
+  signal (event, promise, or DOM attribute/class) exists anywhere in
+  `chat.js` or `server.py` today - checked before adding anything, per
+  the addendum's own instruction not to assume one already existed. Added
+  a harness-only `_wait_until_settled()`: polls until no *visible* text
+  node anywhere contains "Loading" (this app's own convention for every
+  in-flight async widget), with a real timeout that **raises** rather
+  than silently proceeding - a screenshot taken after giving up on this
+  wait would just reintroduce the nondeterminism it exists to remove.
+  Deliberately does not use Playwright's `networkidle` load-state: the
+  app polls several endpoints (e.g. `/api/base_status`) on an ongoing
+  ~1s timer by design, so the network is never idle and that signal would
+  simply time out every run.
+- **CSS transitions mid-flight** (already fixed before the addendum, kept
+  here for completeness) - `*, *::before, *::after { transition: none;
+  animation: none }`.
+- **A blinking text-input caret** - the waypoint-create modal
+  auto-focuses its Name field on open (`chat-map.js`); an OS-level caret
+  blink cycle landing on/off at the exact capture instant produced a
+  small (1-2 RGB unit), input-shaped diff region between runs. Fixed with
+  `caret-color: transparent` plus explicitly blurring
+  `document.activeElement` before every screenshot.
+- **GPU rasterization jitter.** Even with every source above eliminated,
+  a ~170-pixel region kept differing by exactly 1 RGB unit on an
+  otherwise-random subset of runs. Chromium is launched with
+  `--disable-gpu` (forces pure software rasterization, which is
+  bit-reproducible; GPU-accelerated rendering has genuine driver/timing
+  jitter) and `--force-color-profile=srgb` (removes any host-display
+  color-management step).
+- **Chromium's spell-checker** can asynchronously underline
+  placeholder/typed text once its dictionary finishes loading, on its own
+  timeline. Launched with `--disable-spell-checking`.
+- **A native `<textarea>` resize-grip** (the modal's Description field is
+  `resize: vertical` by default) and **`backdrop-filter: blur()`**
+  (`.waypoint-create-modal`'s own backdrop, a compositor-level
+  convolution whose output can vary slightly by internal accumulation
+  order) were both identified as remaining sources by elimination and
+  disabled for the capture only (`resize: none`, `backdrop-filter: none`)
+  - neither one is part of what this suite tests (color/token wiring),
+  so losing them costs nothing real.
+- **Rounded-corner anti-aliasing on the modal's own form fields**, the
+  very last source (intermittent, roughly 1 run in 3): Skia's software
+  rasterizer compositing a `border-radius` corner together with a
+  semi-transparent border color can still accumulate a sub-pixel rounding
+  difference in rare cases, even with the GPU disabled - a genuine
+  rendering-engine limitation, not app or harness state. Flattened
+  (`border-radius: 0`) for the waypoint modal's own inputs/textarea/select
+  only (not globally) - again, not something this suite tests.
+
+All of the above are harness-only overrides, injected into the page after
+navigation via `page.add_style_tag()`/`page.route()`/Chromium launch
+args - none of them touch `static/*.css`, `chat.js`, or `server.py`.
+
+### Font pinning
+
+Two machines with "the same" font *name* installed (e.g. both claiming
+"Arial") can still rasterize it to different pixels - different font
+file, different version, different hinting tables. The only way to get
+byte-identical text across machines is to make every machine render with
+the *same font file*, not just the same font-family string. Chose to
+**bundle one small, permissively-licensed font** (Roboto Regular, Apache
+2.0, `docs/theme-registry/tools/fonts/Roboto-Regular.ttf` -
+`LICENSE-Roboto.txt` alongside it) and embed it as a base64 `data:` URI
+in a harness-injected `@font-face` + `* { font-family: ... !important }`
+rule, over the alternatives:
+
+- *Forcing a system font by name* (e.g. `font-family: Arial !important`)
+  doesn't solve the problem at all, per the paragraph above.
+- *Fixing the screenshot target to an explicit size* doesn't help either
+  - it constrains layout, not glyph rasterization.
+- *A CDN-hosted webfont* would need network access at capture time
+  (fragile in a "fresh worktree, no cached artifacts" scenario) and
+  wouldn't be reproducible if the CDN ever changed the file.
+
+Bundling the actual font bytes in the repo is the least invasive option
+relative to the real app (this override only ever runs inside this
+harness's own page context, never touches `static/*.css`) and the most
+robust across machines (no network dependency, no host-font dependency -
+just the exact bytes committed to the repo).
+
+### Proof (byte-identical, not just within tolerance)
+
+```bash
+for i in 1 2 3 4 5; do
+  python docs/theme-registry/tools/visual_regression.py --update-baseline --skip-contract
+  cp -r docs/theme-registry/visual-baseline/screenshots /tmp/vr_check$i
+done
+cd /tmp/vr_check1 && for f in *.png; do
+  ok=true
+  h1=$(sha256sum "$f" | cut -d' ' -f1)
+  for i in 2 3 4 5; do
+    [ "$(sha256sum "../vr_check$i/$f" | cut -d' ' -f1)" != "$h1" ] && ok=false
+  done
+  $ok && echo "IDENTICAL x5: $f" || echo "DIFFERS: $f"
+done
+```
+
+Result after the fixes above: all 15 screenshots identical across all 5
+runs. `tokens.json` was not regenerated or touched by any of this work -
+the token-snapshot mechanism was already fully deterministic before the
+addendum (it reads computed-style strings, not rendered pixels) and
+needed no changes.
+
 ## Why this architecture
 
 **Capture tool: Playwright (headless Chromium).** No visual-regression

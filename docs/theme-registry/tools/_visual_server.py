@@ -92,18 +92,26 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+# 2026-01-01T12:00:00Z - shared with visual_regression.py's frozen
+# client-side Date, so any "N seconds/minutes ago" text the app computes
+# from (frozen-now - last_seen) is deterministic across every run and
+# every machine, not just "close enough."
+FROZEN_EPOCH_SECONDS = 1767268800
+
+
 def _seed_nodes(server_module) -> None:
     """One plain node and one favorited node, so .node-card.favorite has a
     real element to render (PR 3's bug 1.2 fix needs this to be
-    screenshotted/inspected meaningfully, not just an empty node list)."""
-    now = time.time()
+    screenshotted/inspected meaningfully, not just an empty node list).
+    Fixed last_seen (not time.time()) - real-time timestamps would make
+    every "last seen Ns ago" render differently run to run."""
     server_module.nodes["!aabbccdd"] = {
         "node_id": "!aabbccdd", "name": "Visual Regression Base", "short_name": "VRB",
-        "last_seen": now, "favorite": False, "ignored": False,
+        "last_seen": FROZEN_EPOCH_SECONDS, "favorite": False, "ignored": False,
     }
     server_module.nodes["!11223344"] = {
         "node_id": "!11223344", "name": "Favorited Test Node", "short_name": "FAV",
-        "last_seen": now, "favorite": True, "ignored": False,
+        "last_seen": FROZEN_EPOCH_SECONDS, "favorite": True, "ignored": False,
     }
 
 

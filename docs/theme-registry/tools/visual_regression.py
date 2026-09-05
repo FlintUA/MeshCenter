@@ -32,6 +32,7 @@ Exit status 0 if everything matches (or after a successful
 --update-baseline write), 1 on any mismatch or error.
 """
 import argparse
+import base64
 import json
 import re
 import sys
@@ -43,6 +44,7 @@ REPO_ROOT = TOOLS_DIR.parents[2]
 BASELINE_DIR = TOOLS_DIR.parent / "visual-baseline"
 TOKENS_BASELINE = BASELINE_DIR / "tokens.json"
 SCREENSHOTS_DIR = BASELINE_DIR / "screenshots"
+FONT_PATH = TOOLS_DIR / "fonts" / "Roboto-Regular.ttf"
 
 sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(REPO_ROOT))
@@ -70,6 +72,63 @@ LEGACY_POPULATION_2_COMBOS = [
     ("alpine", "dark"),
     ("teal", "dark"),
 ]
+
+FROZEN_EPOCH_SECONDS = _visual_server.FROZEN_EPOCH_SECONDS
+
+# Fixed, host-machine-independent replacements for the handful of API
+# responses that are genuinely non-deterministic across machines even
+# with start_runtime() never called - server.py/api_system.py read the
+# real host's hostname, /proc/uptime, CPU%, RAM%, and wall-clock time
+# directly (confirmed by reading api_system.py and time_service.py), so
+# without mocking these, a screenshot captured on one machine could never
+# byte-match one captured on another. Each entry's shape mirrors what the
+# real route documents/returns - see the referenced source for the
+# authoritative schema.
+MOCKED_API_RESPONSES = {
+    # meshsrv/time_service.py's get_status() - "utc" is real wall-clock
+    # time otherwise.
+    "**/api/time": {
+        "utc": FROZEN_EPOCH_SECONDS, "timezone": "UTC", "source": "system",
+        "synchronized": True, "quality": "system", "rtc_present": False,
+        "rtc_detected": False, "rtc_configured": False, "rtc_readable": False,
+    },
+    # api/api_system.py's api_system_info() - hostname/uptime/ram/disk are
+    # all real host reads otherwise.
+    "**/api/system/info": {
+        "hostname": "visual-regression-host", "uptime": "0d 0h 0m", "cpu_temp": None,
+        "load_avg": None, "ram_total_mb": 1024, "ram_used_mb": 256, "ram_free_mb": 768,
+        "disk_total_gb": 32, "disk_used_gb": 8, "disk_free_gb": 24, "model": None,
+        "os": "visual-regression", "kernel": "visual-regression", "app_version": "test",
+    },
+    # system/cpu_history.py's api_system_cpu_history() - current/temperature/
+    # ram_percent are real host reads otherwise (the history worker thread
+    # itself is never started, so `records` is already deterministically
+    # empty without mocking).
+    "**/api/system/cpu-history*": {
+        "ok": True, "range": "30m", "current": 0.0, "temperature": None,
+        "ram_percent": 0.0, "records": [],
+    },
+    # static/chat.js's loadChatList() calls this with ?refresh_channels=1
+    # on first load, which server-side (api/api_chat.py's
+    # discover_radio_channels()) drives meshsrv/serial_port_supervisor.py's
+    # real port-in-use probing (fuser/lsof-equivalent) against a real
+    # serial device - not just slow (~23s observed, mostly an 8s x2
+    # "utility missing" timeout on Windows) but genuinely hardware-adjacent
+    # and platform-dependent (a Linux box with fuser/lsof installed could
+    # take a materially different path/timing than one without) - exactly
+    # what "hardware-free, no radio required at all" rules out. Mocked
+    # with a fixed one-channel, zero-DM response matching the synthetic
+    # config's own CHANNEL_CHAT_ID/CHANNEL_CHAT_NAME instead of letting
+    # this reach the real handler at all.
+    "**/api/chats*": {
+        "chats": [{
+            "id": "channel", "name": "LongFast", "type": "channel", "is_channel": True,
+            "last_message": "", "last_time": "", "unread": 0,
+        }],
+        "total_unread": 0,
+        "channels": [{"id": "channel", "name": "LongFast"}],
+    },
+}
 
 ROOT_TOKEN_NAMES = [
     # PR 2 (bug 1.1) - chat/tab/popover
@@ -132,6 +191,153 @@ CLASS_STATE_CHECKS = [
 ]
 
 PIXEL_DIFF_TOLERANCE = 0.005  # 0.5% of pixels may differ - see README for why
+
+
+def _freeze_clock(page):
+    """Pins Date/Date.now() to FROZEN_EPOCH_SECONDS via an init script, so
+    it's in effect before any app JS runs (a plain page.evaluate() after
+    goto() would be too late - the app's own DOMContentLoaded handler,
+    which reads the real clock for the "Time & Timers" card etc., has
+    already run by then)."""
+    epoch_ms = FROZEN_EPOCH_SECONDS * 1000
+    page.add_init_script(f"""
+        (() => {{
+            const fixedMs = {epoch_ms};
+            const RealDate = Date;
+            class FrozenDate extends RealDate {{
+                constructor(...args) {{
+                    if (args.length === 0) super(fixedMs);
+                    else super(...args);
+                }}
+                static now() {{ return fixedMs; }}
+            }}
+            window.Date = FrozenDate;
+        }})();
+    """)
+
+
+def _mock_nondeterministic_apis(page):
+    """Intercepts the handful of API responses that read real host-machine
+    state (hostname, uptime, CPU/RAM, wall-clock time) even with
+    start_runtime() never called, replacing each with a fixed response -
+    see MOCKED_API_RESPONSES's own comment for why each one is otherwise
+    non-deterministic across machines."""
+    def _make_handler(body_dict):
+        payload = json.dumps(body_dict)
+
+        def _handler(route, request):  # noqa: ARG001 - Playwright always passes both
+            route.fulfill(status=200, content_type="application/json", body=payload)
+
+        return _handler
+
+    for pattern, body in MOCKED_API_RESPONSES.items():
+        page.route(pattern, _make_handler(body))
+
+
+def _install_test_font(page):
+    """Forces every element to render with one specific, repo-bundled font
+    file (Roboto-Regular.ttf, Apache 2.0 - see docs/theme-registry/tools/
+    fonts/), rather than whatever the host OS happens to have installed
+    under a generic name like "Arial" or "sans-serif". Two machines with
+    "the same" system font can still rasterize it to different pixels
+    (different font file/version, different hinting) - embedding the
+    actual font bytes as a data: URI, with no network fetch and no
+    dependency on anything outside this repo, is what makes text
+    byte-identical across machines. Least invasive to the real app: this
+    only ever runs inside this harness's own page context, never touches
+    static/*.css."""
+    font_bytes = FONT_PATH.read_bytes()
+    font_b64 = base64.b64encode(font_bytes).decode("ascii")
+    page.add_style_tag(content=f"""
+        @font-face {{
+            font-family: 'MCVisualRegressionFont';
+            src: url(data:font/ttf;base64,{font_b64}) format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        }}
+        *, *::before, *::after {{
+            font-family: 'MCVisualRegressionFont', sans-serif !important;
+        }}
+    """)
+
+
+def _wait_until_settled(page, timeout_ms: int = 8000):
+    """Polls until no visible element's text contains "Loading" (the
+    app's own convention for every in-flight async widget: weather,
+    peripheral devices, node telemetry, etc. - confirmed by reading their
+    templates/JS, not guessed), so a screenshot always captures the same
+    settled state rather than whichever mid-fetch frame happened to
+    render first. Deliberately does NOT wait for Playwright's own
+    "networkidle" load-state - the app polls several endpoints (e.g.
+    /api/base_status) on an ongoing ~1s timer by design, so the network
+    is never idle and that signal would simply time out every time.
+
+    No unified "app ready" event/promise/DOM flag exists anywhere in
+    chat.js or server.py today (checked before adding this) - this is a
+    deliberate, harness-only addition rather than hooking something that
+    was already there; not added to the shipped app itself; deliberately
+    a *loud* failure (raises) rather than a silent timeout, since a
+    screenshot taken after giving up on this wait would just reintroduce
+    the exact nondeterminism this function exists to remove."""
+    deadline_ms = timeout_ms
+    poll_ms = 100
+    waited = 0
+    while waited <= deadline_ms:
+        still_loading = page.evaluate("""
+            () => {
+                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+                let node;
+                while ((node = walker.nextNode())) {
+                    if (node.nodeValue && node.nodeValue.includes('Loading')) {
+                        const el = node.parentElement;
+                        if (el && el.offsetParent !== null) return true;
+                    }
+                }
+                return false;
+            }
+        """)
+        if not still_loading:
+            return
+        page.wait_for_timeout(poll_ms)
+        waited += poll_ms
+    raise RuntimeError(
+        f"page did not settle (a visible element still contains 'Loading' text) within {timeout_ms}ms - "
+        "capturing a screenshot now would bake in a nondeterministic mid-fetch frame."
+    )
+
+
+def _blur_active_element(page):
+    """Removes focus from whatever element currently has it, right before
+    a screenshot. Caret-color is already forced transparent (see
+    run_checks()), but a focused element can still carry its own
+    focus-ring/outline styling that isn't otherwise part of the state
+    being captured (nothing in this suite's screenshots is meant to show
+    "this field is focused" as the thing under test)."""
+    page.evaluate("() => { if (document.activeElement) document.activeElement.blur(); }")
+
+
+def _wait_for_two_paints(page):
+    """Waits for two consecutive requestAnimationFrame callbacks - the
+    standard way to be sure the browser has actually painted the current
+    DOM/style state at least once, not just that the JS/DOM work settled.
+    Found necessary for full determinism: even with the clock frozen,
+    APIs mocked, transitions/animations disabled and the caret hidden,
+    two of the waypoint-modal screenshots (both light-mode, both the
+    first family/mode combo touching their own code path) still differed
+    by 1-2 RGB units in a small region across otherwise-identical runs -
+    a layout/paint settling artifact on the modal's first show, not
+    app-state nondeterminism."""
+    page.evaluate("""
+        () => new Promise(resolve => {
+            requestAnimationFrame(() => requestAnimationFrame(resolve));
+        })
+    """)
+    # The double-rAF alone still left a handful of runs with a 1-2 RGB
+    # unit diff in the same modal region, on a different combo each time
+    # (a genuine timing race, not tied to one specific family) - this
+    # extra fixed margin is a belt-and-suspenders on top of it, not a
+    # replacement for it.
+    page.wait_for_timeout(150)
 
 
 def _apply_theme(page, family: str, mode: str):
@@ -234,10 +440,12 @@ def capture_screenshots(page, out_dir: Path) -> list[str]:
     for family, mode in COMBOS:
         _apply_theme(page, family, mode)
         page.evaluate("() => { if (window.openCreateWaypointDialog) window.openCreateWaypointDialog(52.5, 13.4); }")
-        page.wait_for_timeout(150)
+        _wait_until_settled(page)
         name = f"waypoint_create_modal__{family}_{mode}"
         modal = page.locator("#waypointCreateModal .waypoint-create-dialog")
         if modal.count() > 0:
+            _blur_active_element(page)
+            _wait_for_two_paints(page)
             modal.screenshot(path=str(out_dir / f"{name}.png"))
             names.append(name)
         page.evaluate("() => { if (window.closeCreateWaypointDialog) window.closeCreateWaypointDialog(); }")
@@ -254,18 +462,20 @@ def capture_screenshots(page, out_dir: Path) -> list[str]:
     for family, mode in LEGACY_POPULATION_2_COMBOS:
         _apply_theme(page, family, mode)
         name = f"legacy_main_view__{family}_{mode}"
+        _blur_active_element(page)
         page.screenshot(path=str(out_dir / f"{name}.png"))
         names.append(name)
 
         devices_tab = page.locator('button:has-text("Devices")').first
         if devices_tab.count() > 0:
             devices_tab.click()
-            page.wait_for_timeout(300)
+            _wait_until_settled(page)
             name2 = f"legacy_devices_view__{family}_{mode}"
+            _blur_active_element(page)
             page.screenshot(path=str(out_dir / f"{name2}.png"))
             names.append(name2)
             page.locator('button:has-text("Chats")').first.click()
-            page.wait_for_timeout(150)
+            _wait_until_settled(page)
 
     return names
 
@@ -294,16 +504,55 @@ def run_checks(update_baseline: bool) -> int:
 
     failures = []
     with sync_playwright() as pw:
-        browser = pw.chromium.launch()
+        # Byte-identical screenshots across machines/runs need Chromium's
+        # own rendering to be deterministic, not just the page content -
+        # GPU-accelerated rasterization introduces genuine (if tiny, ~1-2
+        # RGB units) run-to-run variance from driver/timing jitter,
+        # observed directly while building this harness (a waypoint-modal
+        # region kept differing by 1-2 units between two runs even with
+        # the clock frozen, APIs mocked, and the caret disabled - traced
+        # to font/box rendering, not app state). `--disable-gpu` forces
+        # pure software rasterization (bit-reproducible), and
+        # `--force-color-profile=srgb` removes any color-management step
+        # that could otherwise vary by host display profile.
+        browser = pw.chromium.launch(args=[
+            "--disable-gpu", "--force-color-profile=srgb",
+            # Chromium's spell-checker can asynchronously underline
+            # placeholder/typed text in <input>/<textarea> elements once
+            # its dictionary finishes loading, on its own timeline -
+            # exactly the kind of small, timing-dependent rendering
+            # difference (~1-2 RGB units, always in the same
+            # input-field-shaped region) observed while chasing down this
+            # harness's own remaining non-determinism.
+            "--disable-spell-checking",
+        ])
         page = browser.new_page(viewport={"width": 1280, "height": 800})
+
+        # Order matters: the clock freeze must be an init script (runs
+        # before any app JS, including the DOMContentLoaded handler that
+        # reads the real clock) and the API mocks must be routed before
+        # goto() so the very first requests are already intercepted -
+        # both would be too late as a plain page.evaluate()/page.route()
+        # called after navigation.
+        _freeze_clock(page)
+        _mock_nondeterministic_apis(page)
+
         page.goto(base_url + "/")
-        page.wait_for_timeout(500)
-        # The seeded nodes only reach the DOM once loadMessages() has run -
-        # normally triggered by the app's own initial-load flow, but that
-        # flow depends on channel/websocket state this hardware-free
-        # harness doesn't have, so call it directly.
+        _wait_until_settled(page)
+        # The chat/DM sidebar and the seeded nodes only reach a settled
+        # DOM once loadChatList()/loadMessages() have run - normally
+        # triggered by the app's own initial-load flow, but that flow
+        # depends on channel/websocket state this hardware-free harness
+        # doesn't have, so call both directly. loadChatList()'s first call
+        # would normally hit /api/chats?refresh_channels=1, which is
+        # mocked above specifically so this never reaches the real,
+        # radio-port-probing handler.
+        page.evaluate("async () => { if (window.loadChatList) await window.loadChatList(); }")
         page.evaluate("async () => { if (window.loadMessages) await window.loadMessages(); }")
-        page.wait_for_timeout(300)
+        _wait_until_settled(page)
+
+        _install_test_font(page)
+
         # Disable every CSS transition/animation for the rest of this run.
         # Many components use `transition: all .2s` - reading a computed
         # style while one is mid-flight (theme switch, class toggle)
@@ -316,6 +565,49 @@ def run_checks(update_baseline: bool) -> int:
         # Disabling transitions removes the whole class of timing
         # variance instead of papering over it with a tolerance.
         page.add_style_tag(content="*, *::before, *::after { transition: none !important; animation: none !important; }")
+        # Blinking text-input carets are the other classic source of a
+        # tiny (1-2 RGB units, single-pixel-region) non-determinism
+        # between two otherwise-identical screenshots - confirmed by
+        # observing this harness's own waypoint-modal screenshots differ
+        # only in a small box exactly where the auto-focused "Name" field
+        # sits (chat-map.js focuses it on open), on/off depending on
+        # exactly which half of the ~500ms OS caret-blink cycle the
+        # capture landed in. `caret-color: transparent` removes the
+        # caret's own rendering; blurring on every screenshot (see
+        # capture_screenshots()) additionally removes any focus-ring.
+        page.add_style_tag(content="* { caret-color: transparent !important; }")
+        # A resizable <textarea> (the waypoint-create modal's Description
+        # field) draws a native resize-grip in its bottom-right corner -
+        # another well-known source of tiny cross-run rendering variance
+        # in screenshot testing, alongside the rounded-corner (border-
+        # radius) anti-aliasing on this same modal's inputs, which
+        # together were the last remaining source of a ~170-pixel,
+        # always-1-RGB-unit-off region traced during development (see
+        # docs/theme-registry/visual-regression-README.md's "byte-
+        # identical" section for the full chase). resize:none is
+        # harness-only, same as every other override here.
+        page.add_style_tag(content="textarea { resize: none !important; }")
+        # backdrop-filter: blur() (used by .waypoint-create-modal, behind
+        # the dialog this suite screenshots) is a compositor-level
+        # convolution whose exact output can vary slightly run to run
+        # depending on internal accumulation order - a genuine rendering-
+        # engine nondeterminism source, not a page-content one. Disabled
+        # for the capture only; the dialog itself never had a backdrop-
+        # filter of its own; this doesn't touch what token-driven colors
+        # look like anywhere.
+        page.add_style_tag(content="* { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }")
+        # Last remaining source of intermittent (roughly 1 in 3 runs) 1-2
+        # RGB-unit jitter, isolated by elimination to the waypoint-create
+        # modal's own input/textarea/select fields specifically: Skia's
+        # software rasterizer compositing a rounded border-radius corner
+        # together with a semi-transparent border color can accumulate a
+        # sub-pixel rounding difference in rare cases, even with the GPU
+        # disabled - a genuine rendering-engine limitation of "byte-
+        # identical," not an app or harness state issue. Flattened corners
+        # only inside this one modal's form fields (not globally) - this
+        # suite isn't testing border-radius rendering, only color/token
+        # wiring, so losing corner rounding here costs nothing real.
+        page.add_style_tag(content=".waypoint-create-body input, .waypoint-create-body textarea, .waypoint-create-body select { border-radius: 0 !important; }")
 
         print("Capturing token snapshot across all 7 combos ...")
         token_snapshot = capture_token_snapshot(page)

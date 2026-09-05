@@ -857,7 +857,12 @@ body {
 }
 
 .search-input-wide:focus {
-    border-color: #8a9bb5;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #8a9bb5, a generic
+       focus ring - repointed to the existing --mc-border-focus. Note this
+       rule has no dark-mode counterpart at all (background stays raw
+       white in dark mode too) - a separate, pre-existing gap, out of
+       scope for this border-color-only fix. */
+    border-color: var(--mc-border-focus);
     background: white;
     box-shadow: 0 0 0 2px rgba(30,60,114,0.08);
 }
@@ -1957,6 +1962,12 @@ body {
     background: #eef4f8;
 }
 
+/* theme-registry Stage 9.3 (fix bug 1.4) review: .telemetry-btn.environment/
+   .power's hover borders (#6a9ab8, #c0a040 below) are a per-category color
+   scheme (blue=environment, gold=power, matching each category's own base
+   border-color above), not a generic interactive-state border - left raw,
+   out of scope for this bug (which is about generic hover/focus/selected
+   leaks, not category-color consolidation). */
 .telemetry-btn.environment:hover {
     background: #dde8f0;
     border-color: #6a9ab8;
@@ -2001,7 +2012,8 @@ body {
 }
 
 .telemetry-config-row select:focus {
-    border-color: #8a9bb5;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #8a9bb5, generic focus ring. */
+    border-color: var(--mc-border-focus);
 }
 
 .telemetry-refresh-btn {
@@ -2171,8 +2183,13 @@ body {
 }
 
 .telemetry-time-controls .time-btn:hover {
+    /* border-color/background: background is shadowed by ui-kit.css's own
+       .telemetry-time-controls .time-btn:hover (var(--mc-primary-soft)),
+       but that rule does NOT declare border-color, so this one is
+       genuinely live for border-color specifically - theme-registry
+       Stage 9.3, fix bug 1.4: was raw #b0b8c5, generic hover border. */
     background: #f0f2f5;
-    border-color: #b0b8c5;
+    border-color: var(--mc-border-hover);
 }
 
 .telemetry-time-controls .time-btn.active {
@@ -2205,6 +2222,15 @@ body {
     transition: all 0.2s;
 }
 
+/* theme-registry Stage 9.3 (fix bug 1.4) review: this hover shifts both
+   background AND text color to a primary-blue accent (not just a neutral
+   border tint like the generic hover cluster elsewhere) - a deliberate
+   "this becomes actionable/primary" treatment, not a generic hover leak.
+   Left raw. Flagged inconsistency: style-part4.css's dark counterpart
+   does NOT replicate this effect (dark hover border equals its own
+   resting border, no accent shift at all) - a real, pre-existing
+   light/dark asymmetry, out of scope here (would mean designing a new
+   dark accent-hover, not just retargeting an existing raw hex). */
 .telemetry-export-btn:hover {
     background: #eef4ff;
     border-color: #b0c8f0;
@@ -2524,7 +2550,8 @@ body {
 }
 
 .control-group select:focus {
-    border-color: #1a73e8;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #1a73e8, generic focus ring. */
+    border-color: var(--mc-border-focus);
 }
 
 .quality-control {

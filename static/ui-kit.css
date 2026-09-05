@@ -256,13 +256,24 @@ body {
 
 .node-card:hover {
     background: var(--mc-bg-panel);
-    border-color: #b9c8d8;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #b9c8d8, one of
+       ~9 near-duplicate copy-pasted hover-border grays across the 5
+       theming files, none tracking theme/family. Shadows style-part1.css
+       :1129's own .node-card:hover border-color (equal specificity, this
+       file loads later) - that one is genuinely dead, left untouched. */
+    border-color: var(--mc-border-hover);
     box-shadow: var(--mc-shadow-hover);
 }
 
 .node-card.selected {
     background: var(--mc-primary-soft);
-    border-color: #87bce7;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #87bce7, light-only
+       (dark already uses var(--mc-border-active) via the
+       :is(.node-card.active, .node-card.selected) rule further down) -
+       repointed to the same existing token for light/dark consistency,
+       not a new one. Shadows style-part1.css:1133's own dead declaration,
+       left untouched (same reasoning as .node-card:hover above). */
+    border-color: var(--mc-border-active);
     box-shadow: 0 0 0 1px rgba(47, 115, 217, 0.12);
 }
 
@@ -308,7 +319,10 @@ body {
 }
 
 .media-item:hover {
-    border-color: #b9c8d8;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #b9c8d8, same
+       generic hover-border consolidation as .node-card:hover above.
+       Shadows style-part3.css:812's own dead declaration, untouched. */
+    border-color: var(--mc-border-hover);
     box-shadow: var(--mc-shadow-hover);
 }
 
@@ -424,7 +438,9 @@ body {
 .system-refresh-btn:hover,
 .media-primary-btn:hover {
     background: var(--mc-primary-soft);
-    border-color: #b8cce2;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #b8cce2, same
+       generic hover-border consolidation as .node-card:hover above. */
+    border-color: var(--mc-border-hover);
     color: var(--mc-primary-hover);
 }
 
@@ -822,17 +838,32 @@ a:focus-visible,
     transition: background-color .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease;
 }
 
-.dock-workspace-btn:hover,
+/* theme-registry Stage 9.3 - fix bug 1.4: split out of a single
+   `.dock-workspace-btn:hover, .dock-workspace-btn.active { border-color:
+   #b9c7db; ... }` rule that gave the transient hover state and the
+   persistent "this is the active workspace" state the same border color
+   only by coincidence - hover and active/selected are meant to be
+   independently themeable (that's the point of this bug fix), so each
+   now gets its own token; color/background are unchanged, still shared
+   with the same values as before, not part of this bug. */
+.dock-workspace-btn:hover {
+    color: #24457b;
+    border-color: var(--mc-border-hover);
+    background: #edf3fb;
+}
+
 .dock-workspace-btn.active {
     color: #24457b;
-    border-color: #b9c7db;
+    border-color: var(--mc-border-active);
     background: #edf3fb;
 }
 
 .dock-workspace-btn:focus-visible,
 .workspace-popover button:focus-visible,
 .workspace-popover input:focus-visible + span {
-    outline: 2px solid #6e9fe8;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #6e9fe8, a generic
+       focus ring - --mc-border-focus already exists, repointed to it. */
+    outline: 2px solid var(--mc-border-focus);
     outline-offset: 1px;
 }
 
@@ -1407,11 +1438,19 @@ html[data-theme="dark"] .dock-workspace-btn {
     color: #b8c6d6;
 }
 
+/* theme-registry Stage 9.3 - fix bug 1.4: split for the same reason as
+   the light-mode .dock-workspace-btn rule above - hover and active are
+   independently themeable states, not one coincidentally-shared color. */
 html[data-theme="dark"] .dock-panel-btn:hover,
-html[data-theme="dark"] .dock-workspace-btn:hover,
+html[data-theme="dark"] .dock-workspace-btn:hover {
+    background: #2b3949;
+    border-color: var(--mc-border-hover);
+    color: #edf4fb;
+}
+
 html[data-theme="dark"] .dock-workspace-btn.active {
     background: #2b3949;
-    border-color: #52657c;
+    border-color: var(--mc-border-active);
     color: #edf4fb;
 }
 
@@ -2331,9 +2370,14 @@ html[data-theme="dark"] .camera-defaults-btn {
 
 html[data-theme="dark"] .camera-defaults-btn:hover {
     background: var(--mc-button-secondary-bg-hover) !important;
-    /* raw: no exact --mc-* match yet (--mc-button-secondary-border-hover
-       is #4b6685, not equal), candidate for Stage 3.1 */
-    border-color: #5b82aa !important;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #5b82aa (previously
+       flagged here as "no exact match yet, candidate for Stage 3.1") -
+       this exact value is reused verbatim across 4 unrelated dark-mode
+       hover rules in this file (also .clear-search-btn:hover,
+       .weather-state-badge:hover, and the position/quick-action group
+       below), strong evidence it's the generic dark hover accent, not
+       --mc-button-secondary-border-hover specifically. */
+    border-color: var(--mc-border-hover) !important;
 }
 
 /* Residual navy text inherited from the light theme. */
@@ -2402,13 +2446,19 @@ html[data-theme="dark"] .node-detail-quick-actions .quick-action {
     box-shadow: none !important;
 }
 
+/* theme-registry Stage 9.3 - fix bug 1.4: was raw #5b82aa, same generic
+   dark hover accent as .camera-defaults-btn:hover above (reused verbatim
+   across 4 unrelated dark-mode hover rules). Note .node-position-map-btn
+   is deliberately NOT this generic gray in LIGHT mode (its own "location
+   confirmed" green family, style-part2.css - a real, pre-existing
+   light/dark asymmetry, unrelated to this token). */
 html[data-theme="dark"] .position-actions button:hover,
 html[data-theme="dark"] .position-no-data button:hover,
 html[data-theme="dark"] .node-position-map-btn:hover,
 html[data-theme="dark"] .node-detail-quick-actions .quick-action:hover:not(:disabled) {
     background: var(--mc-dark-control-bg-hover) !important;
     color: #ffffff !important;
-    border-color: #5b82aa !important;
+    border-color: var(--mc-border-hover) !important;
 }
 
 html[data-theme="dark"] .node-detail-quick-actions .quick-action:disabled {
@@ -2443,11 +2493,17 @@ html[data-theme="dark"] .clear-search-btn {
 html[data-theme="dark"] .clear-search-btn:hover {
     background: var(--mc-dark-control-bg-hover) !important;
     color: #ffffff !important;
-    border-color: #5b82aa !important;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #5b82aa, same
+       generic dark hover accent as .camera-defaults-btn:hover above. */
+    border-color: var(--mc-border-hover) !important;
 }
 
 html[data-theme="dark"] .clear-search-btn:focus-visible {
-    outline: 2px solid rgba(78, 161, 255, .45) !important;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw rgba(78,161,255,.45)
+       - a generic focus ring, repointed to --mc-border-focus. color-mix()
+       preserves the translucency (established precedent, e.g.
+       style-part4.css:2568), rather than flattening it to opaque. */
+    outline: 2px solid color-mix(in srgb, var(--mc-border-focus) 45%, transparent) !important;
     outline-offset: 1px;
 }
 
@@ -2552,7 +2608,9 @@ html[data-theme="dark"] .weather-state-badge {
 
 html[data-theme="dark"] .weather-state-badge:hover {
     background: #2b4059 !important;
-    border-color: #5b82aa !important;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #5b82aa, same
+       generic dark hover accent as .camera-defaults-btn:hover above. */
+    border-color: var(--mc-border-hover) !important;
     color: #ffffff !important;
 }
 
@@ -2868,9 +2926,19 @@ html[data-theme="dark"] .chat-item .chat-time {
 /* theme-registry Stage 2.8: #c9d8ea -> --mc-border (d=16.1). #eef5fd ->
    --mc-bg-muted (d=5.4, close). #173f73 -> --mc-text-primary (d=59.5),
    already passes AA (9.58:1 on the live hover background). */
-.workspace-nav-btn:hover,
+/* theme-registry Stage 9.3 - fix bug 1.4: split - this one wasn't a raw
+   hex leak (already used var(--mc-border) for both), but it's the same
+   underlying conflation the dark counterpart below had as raw hex: hover
+   and active/selected sharing one border color isn't independently
+   themeable. Minor, directly-related scope extension, not a new bug. */
+.workspace-nav-btn:hover {
+    border-color: var(--mc-border-hover);
+    background: var(--mc-bg-muted);
+    color: var(--mc-text-primary);
+}
+
 .workspace-nav-btn.active {
-    border-color: var(--mc-border);
+    border-color: var(--mc-border-active);
     background: var(--mc-bg-muted);
     color: var(--mc-text-primary);
 }
@@ -3031,9 +3099,16 @@ html[data-theme="dark"] .workspace-nav-btn {
     color: #dce8f6;
 }
 
-html[data-theme="dark"] .workspace-nav-btn:hover,
+/* theme-registry Stage 9.3 - fix bug 1.4: split, same reasoning as the
+   light-mode .workspace-nav-btn rule above. */
+html[data-theme="dark"] .workspace-nav-btn:hover {
+    border-color: var(--mc-border-hover);
+    background: #22364a;
+    color: #fff;
+}
+
 html[data-theme="dark"] .workspace-nav-btn.active {
-    border-color: #36516c;
+    border-color: var(--mc-border-active);
     background: #22364a;
     color: #fff;
 }
@@ -3140,13 +3215,19 @@ html[data-theme="dark"] .devices-empty-tags span {
 
 .workspace-page-close-btn:hover {
     background: rgba(47, 123, 216, .10);
-    border-color: rgba(47, 123, 216, .45);
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw rgba(47,123,216,.45)
+       - same value this component's own :focus-visible below happened to
+       share, but hover and focus are independently themeable states;
+       color-mix() preserves the translucency. */
+    border-color: color-mix(in srgb, var(--mc-border-hover) 45%, transparent);
     color: #165cba;
     transform: translateY(-1px);
 }
 
 .workspace-page-close-btn:focus-visible {
-    outline: 2px solid rgba(47, 123, 216, .45);
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw rgba(47,123,216,.45)
+       - a generic focus ring, repointed to --mc-border-focus. */
+    outline: 2px solid color-mix(in srgb, var(--mc-border-focus) 45%, transparent);
     outline-offset: 2px;
 }
 
@@ -3157,10 +3238,11 @@ body[data-theme="dark"] .workspace-page-close-btn {
     background: #162331;
 }
 
+/* theme-registry Stage 9.3 - fix bug 1.4: was raw #5aa7ff. */
 html[data-theme="dark"] .workspace-page-close-btn:hover,
 body[data-theme="dark"] .workspace-page-close-btn:hover {
     color: #ffffff;
-    border-color: #5aa7ff;
+    border-color: var(--mc-border-hover);
     background: #20354a;
     transform: translateY(-1px);
 }
@@ -3542,6 +3624,17 @@ body[data-theme="dark"] .workspace-popover::after {
     --mc-border-soft: #e4eaf1;
     --mc-border-active: #2f73d9;
     --mc-border-focus: #1f6feb;
+    /* theme-registry Stage 9.3 - fix bug 1.4: dozens of hover-state border
+       colors across the 5 theming CSS files were raw, near-duplicate
+       blue-grays (copy-paste drift, never a single shared token) -
+       consolidated into one canonical value. No existing base token is a
+       near-zero-distance match (checked --mc-border/-soft/-active,
+       --mc-text-secondary/-muted, --mc-primary, --mc-button-secondary-
+       border: closest is --mc-button-secondary-border at 34.7 RGB
+       distance, not near-exact by this project's own established
+       threshold) - value is the RGB-average of the ~9 distinct hover hex
+       values found live across the 5 files, not invented. */
+    --mc-border-hover: #b6c3d4;
 
     /* Primary accent */
     --mc-primary: #1f6fdb;
@@ -3762,6 +3855,11 @@ html[data-theme="dark"] {
     --mc-border-soft: #243243;
     --mc-border-active: #6aa7ff;
     --mc-border-focus: #73b2ff;
+    /* theme-registry Stage 9.3 (fix bug 1.4, dark half) - same reasoning
+       as :root's own comment above: RGB-average of the ~5 distinct
+       dark-mode hover hex values found live, no existing base token is a
+       near-zero match. */
+    --mc-border-hover: #4b7098;
 
     /* Primary accent */
     --mc-primary: #66a8ff;
@@ -4049,6 +4147,18 @@ html[data-theme-family="sharp"] {
     --mc-border: #b8b8b8;
     --mc-button-secondary-border: #777e82;
     --mc-border-focus: #087a57;
+    /* theme-registry Stage 9.3 (fix bug 1.4) - --mc-border-hover has no
+       near-zero base-token match in canonical either (see :root's own
+       comment), so aliasing to Sharp's own already-declared
+       --mc-button-secondary-border is the closest reasonable existing
+       token rather than inventing a new hue, matching this project's
+       "reuse over invent" default. --mc-border-active aliases to
+       --mc-accent (not --mc-primary, which is Sharp's near-black neutral)
+       since Sharp already uses --mc-accent's green for both
+       --mc-border-focus and the tab-active indicator - keeps "this is the
+       highlighted/active thing" consistently green across Sharp. */
+    --mc-border-hover: var(--mc-button-secondary-border);
+    --mc-border-active: var(--mc-accent);
 
     /* Primary accent */
     --mc-primary: #2e2e2e;
@@ -4202,6 +4312,14 @@ html[data-theme-family="gunmetal"] {
     --mc-border: #47535a;
     --mc-button-secondary-border: #687780;
     --mc-border-focus: #9ccde5;
+    /* theme-registry Stage 9.3 (fix bug 1.4) - same reasoning as Sharp's
+       own Stage 9.3 addendum above: --mc-border-hover aliases to
+       Gunmetal's own --mc-button-secondary-border (closest existing
+       token, no near-zero match anywhere). --mc-border-active aliases to
+       --mc-primary (Gunmetal's primary and accent are the same value, so
+       either works). */
+    --mc-border-hover: var(--mc-button-secondary-border);
+    --mc-border-active: var(--mc-primary);
 
     /* Primary accent */
     --mc-primary: #63a1c2;
@@ -4371,6 +4489,15 @@ html[data-theme-family="alpine"] {
     --mc-border: #4c6e88;
     --mc-button-secondary-border: #7397b1;
     --mc-border-focus: #bacbd9;
+    /* theme-registry Stage 9.3 (fix bug 1.4) - same reasoning as Sharp/
+       Gunmetal's own Stage 9.3 addenda above: --mc-border-hover aliases
+       to Alpine's own --mc-button-secondary-border. --mc-border-active
+       aliases to --mc-primary (the action-fill role, per this block's own
+       established action-fill/-hover -> primary/primary-hover mapping) -
+       not --mc-accent, which Alpine reserves for the separate
+       accent-graphic role. */
+    --mc-border-hover: var(--mc-button-secondary-border);
+    --mc-border-active: var(--mc-primary);
 
     /* Primary accent */
     --mc-primary: #426077;
@@ -4503,6 +4630,13 @@ html[data-theme-family="teal"][data-theme="dark"] {
     --mc-border: #086060;
     --mc-button-secondary-border: #0c9292;
     --mc-border-focus: #51f0f0;
+    /* theme-registry Stage 9.3 (fix bug 1.4) - same reasoning as the other
+       families' own Stage 9.3 addenda above: --mc-border-hover aliases to
+       Teal Dark's own --mc-button-secondary-border. --mc-border-active
+       aliases to --mc-primary (Teal's primary and accent are the same
+       value). */
+    --mc-border-hover: var(--mc-button-secondary-border);
+    --mc-border-active: var(--mc-primary);
 
     /* Primary accent */
     --mc-primary: #10c2c2;
@@ -4606,6 +4740,13 @@ html[data-theme-family="teal"][data-theme="light"] {
     --mc-border: #a8caca;
     --mc-button-secondary-border: #628e8e;
     --mc-border-focus: #096c6c;
+    /* theme-registry Stage 9.3 (fix bug 1.4) - same reasoning as the other
+       families' own Stage 9.3 addenda above: --mc-border-hover aliases to
+       Teal Light's own --mc-button-secondary-border. --mc-border-active
+       aliases to --mc-primary (Teal's primary and accent are the same
+       value). */
+    --mc-border-hover: var(--mc-button-secondary-border);
+    --mc-border-active: var(--mc-primary);
 
     /* Primary accent */
     --mc-primary: #096c6c;

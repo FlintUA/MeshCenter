@@ -3176,6 +3176,14 @@
     ]
   },
   {
+    "value": "4B7098",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3862"
+    ]
+  },
+  {
     "value": "4C4C4C",
     "verdict": "theme-family-token-value",
     "count": 1,
@@ -5589,6 +5597,14 @@
     "count": 1,
     "locations": [
       "static/style-part3.css:3544"
+    ]
+  },
+  {
+    "value": "B6C3D4",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3637"
     ]
   },
   {

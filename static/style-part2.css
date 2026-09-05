@@ -1044,7 +1044,8 @@ body.context-chat-mode .settings-view {
 
 .camera-defaults-btn:hover {
     background: var(--mc-bg-muted);
-    border-color: #aeb9c8;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #aeb9c8, generic hover border. */
+    border-color: var(--mc-border-hover);
 }
 
 .camera-image-controls-grid {
@@ -1211,7 +1212,8 @@ body.context-chat-mode .settings-view {
 
 .node-tools-btn:hover {
     background: #dbe5f0;
-    border-color: #9fb0c5;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #9fb0c5, generic hover border. */
+    border-color: var(--mc-border-hover);
     transform: translateY(-1px);
 }
 
@@ -1755,6 +1757,14 @@ body.context-chat-mode .settings-view {
         transform 0.18s ease;
 }
 
+/* theme-registry Stage 9.3 (fix bug 1.4) review: #68a77a is the same
+   "location confirmed" green family as .base-reference-location:hover
+   (Stage 2.5's own documented border color family, ~line 2362) and
+   .reference-location-save-btn:hover below - not a generic hover leak,
+   left raw. Note: this component's DARK counterpart (ui-kit.css, grouped
+   with .quick-action/.position-actions) uses the generic dark hover gray
+   instead of a green - a real, pre-existing light/dark asymmetry in this
+   component's own category-color scheme, out of scope here. */
 .node-position-map-btn:hover {
     border-color: #68a77a;
     background: #d3ebda;
@@ -1890,6 +1900,11 @@ body.context-chat-mode .settings-view {
     box-sizing: border-box;
 }
 
+/* theme-registry Stage 9.3 (fix bug 1.4) review: #7eb28d is deliberately
+   green (not the generic blue --mc-border-focus) - part of this feature
+   area's own "location confirmed" color family (same as
+   .base-reference-location:hover, Stage 2.5), not a generic focus-ring
+   leak despite being a :focus selector. Left raw. */
 .reference-location-card select:focus,
 .reference-location-card input:focus {
     outline: none;
@@ -1916,6 +1931,9 @@ body.context-chat-mode .settings-view {
     box-sizing: border-box;
 }
 
+/* theme-registry Stage 9.3 (fix bug 1.4) review: same "location confirmed"
+   green family as .node-position-map-btn:hover/.base-reference-location:
+   hover above - not a generic hover leak, left raw. */
 .reference-location-save-btn:hover:not(:disabled) {
     border-color: #68a77a;
     background: #d3ebda;
@@ -2513,6 +2531,12 @@ body.context-chat-mode .settings-view {
         opacity 150ms ease;
 }
 
+/* theme-registry Stage 9.3 (fix bug 1.4) review: .camera-power-btn's
+   hover states are a deliberate power-toggle red/green affordance (red =
+   "click to turn off", green on .camera-power-off below = "click to turn
+   on"), matching the base .camera-power-off state's own green - not a
+   generic hover leak, left raw for both. Same reasoning covers
+   .camera-off-start-btn:hover further down (green "start" action). */
 .camera-power-btn:hover:not(:disabled) {
     background: #ffe8e8;
     border-color: #c87d7d;
@@ -3760,7 +3784,8 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
 
 .quick-action:hover {
     background: #eef2f5;
-    border-color: #b0b8c5;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #b0b8c5, generic hover border. */
+    border-color: var(--mc-border-hover);
 }
 
 .quick-action:disabled {

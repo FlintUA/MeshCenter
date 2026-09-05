@@ -10,3 +10,11 @@ pytest>=7.4,<9
 # platform restriction, so installing it is strictly better than skipping
 # those tests on non-Linux dev machines.
 tzdata
+# theme-registry visual regression harness (docs/theme-registry/tools/
+# visual_regression.py) - drives a real headless Chromium instance against
+# a locally-booted, hardware-free server.py (same fixture approach as
+# tests/conftest.py's server_module). After installing this package, run
+# `python -m playwright install chromium` once (or `--with-deps chromium`
+# on a fresh Linux box) to download the browser binary - pip alone does
+# not fetch it. Never installed on a production Pi.
+playwright>=1.40,<2

@@ -197,8 +197,13 @@
 
 .main-content-tab:hover,
 .sidebar-tab:hover {
+    /* background is shadowed by ui-kit.css's own .main-content-tab:hover
+       (var(--mc-tab-bg-hover)) for that selector specifically, but that
+       rule doesn't declare border-color, so this one is genuinely live
+       for border-color - theme-registry Stage 9.3, fix bug 1.4: was raw
+       #d4dbe5, generic hover border. */
     background: #f8fafc;
-    border-color: #d4dbe5;
+    border-color: var(--mc-border-hover);
     border-bottom-color: transparent;
 }
 
@@ -350,9 +355,12 @@
 }
 
 .node-detail-tab:hover {
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #d4dbe5, generic
+       hover border (background shadowed by ui-kit.css's own rule, same
+       as .main-content-tab:hover above, but not border-color). */
     color: var(--mc-text-primary, #1a2a4a);
     background: #ffffff;
-    border-color: #d4dbe5;
+    border-color: var(--mc-border-hover);
     border-bottom-color: transparent;
 }
 
@@ -808,6 +816,12 @@
 }
 
 .media-item:hover {
+    /* theme-registry Stage 9.3 (fix bug 1.4) review: border-color is dead
+       - shadowed by ui-kit.css's own .media-item:hover (equal
+       specificity, that file loads later, now var(--mc-border-hover));
+       transform/box-shadow have no ui-kit.css counterpart, genuinely
+       live. Left the raw value untouched, same "document dead code,
+       don't delete it" convention as every prior stage. */
     transform: translateY(-2px);
     border-color: #cbd7e4;
     box-shadow: 0 7px 18px rgba(34, 50, 71, 0.10);
@@ -1349,7 +1363,8 @@
 
 .weather-state-badge:hover {
     background: #ffffff;
-    border-color: #b9c9da;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #b9c9da, generic hover border. */
+    border-color: var(--mc-border-hover);
 }
 
 .weather-online .weather-state-badge {
@@ -1710,9 +1725,13 @@
     text-overflow: ellipsis;
 }
 
+/* theme-registry Stage 9.3 (fix bug 1.4) review: unlike this same card's
+   own :focus variant (style-part2.css, deliberately green - "location
+   confirmed" family), :hover here is the generic neutral blue-gray -
+   repointed to --mc-border-hover. */
 .reference-location-card select:hover,
 .reference-location-card input:hover {
-    border-color: #aebdce;
+    border-color: var(--mc-border-hover);
 }
 
 .reference-location-save-btn {
@@ -2025,13 +2044,15 @@
 }
 
 .dock-panel-btn:hover {
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #b9c7db, generic hover border. */
     color: #24457b;
-    border-color: #b9c7db;
+    border-color: var(--mc-border-hover);
     background: #edf3fb;
 }
 
 .dock-panel-btn:focus-visible {
-    outline: 2px solid #6e9fe8;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #6e9fe8, generic focus ring. */
+    outline: 2px solid var(--mc-border-focus);
     outline-offset: 1px;
 }
 
@@ -3064,12 +3085,19 @@ html[data-theme="dark"] .battery-scale {
 }
 
 .base-node-avatar:hover {
-    border-color: #5da4ef;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #5da4ef (the same
+       value this component's own :focus-visible below happened to
+       share) - classified strictly by state, not by the shared hex:
+       hover -> --mc-border-hover, focus -> --mc-border-focus. They'll no
+       longer be visually identical after this fix; that's intentional,
+       not a regression - see this bug's whole point. */
+    border-color: var(--mc-border-hover);
     box-shadow: 0 0 0 2px rgba(93, 164, 239, .15);
 }
 
 .base-node-avatar:focus-visible {
-    outline: 2px solid #5da4ef;
+    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #5da4ef, generic focus ring. */
+    outline: 2px solid var(--mc-border-focus);
     outline-offset: 2px;
 }
 

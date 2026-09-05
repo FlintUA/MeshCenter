@@ -591,7 +591,15 @@
    fixed with a light hover pair using tokens already established by this
    file's own other light button-hover states (.map-popup-actions
    button:hover below uses --mc-primary-soft the same way). */
-.map-fit-btn:hover { border-color:#55a9f5; background:#20384e; }
+/* theme-registry Stage 9.3 (fix bug 1.4) review: was raw #55a9f5. Not a
+   generic hover border - the light-mode rule right below already uses
+   var(--mc-primary) for this exact selector, meaning this button's hover
+   is meant as a "primary action" indicator, not a neutral hover tint.
+   Repointed to var(--mc-primary) (dark) to match the light-mode pattern
+   already established here, fixing the light/dark asymmetry the
+   Stage 2.3 comment below already flagged, rather than retargeting to
+   --mc-border-hover. */
+.map-fit-btn:hover { border-color: var(--mc-primary); background:#20384e; }
 [data-theme="light"] .map-fit-btn:hover { border-color: var(--mc-primary); background: var(--mc-primary-soft); }
 .map-toolbar {
     flex: 0 0 auto;
@@ -1137,6 +1145,13 @@
     text-align:left;
     cursor:pointer;
 }
+/* theme-registry Stage 9.3 (fix bug 1.4) review: waypoint-tools-item's
+   hover/selected border colors differ by waypoint TYPE (default red-pink
+   here, purple for .is-expired below, both with their own .is-selected
+   variant too) - this is a deliberate category color-coding scheme, not
+   generic hover/selected states, despite the ".is-selected" class name.
+   Left raw throughout this whole cluster (also covers the dark-mode
+   counterparts further down). */
 .waypoint-tools-item:hover { border-color:#ef4f5f; background:rgba(239,79,95,.1); }
 .waypoint-tools-icon { font-size:18px; }
 .waypoint-tools-copy { min-width:0; display:flex; flex-direction:column; gap:2px; }
@@ -3194,10 +3209,19 @@ body[data-theme="dark"] .waypoint-action-toast.error {
     transition: background .16s ease, border-color .16s ease;
 }
 
-.dock-notification-status:hover,
+/* theme-registry Stage 9.3 - fix bug 1.4: split - not a raw hex leak
+   (already used var(--mc-border)), but the same conflation the dark
+   counterpart below had as raw hex: hover and "currently expanded" (an
+   active/selected-like toggle state) sharing one border color isn't
+   independently themeable. Minor, directly-related scope extension. */
+.dock-notification-status:hover {
+    background: var(--mc-surface-alt, #edf2f7);
+    border-color: var(--mc-border-hover);
+}
+
 .dock-notification-status[aria-expanded="true"] {
     background: var(--mc-surface-alt, #edf2f7);
-    border-color: var(--mc-border, #d7e0e9);
+    border-color: var(--mc-border-active);
 }
 
 .dock-notification-text {
@@ -3304,10 +3328,16 @@ body[data-theme="dark"] .waypoint-action-toast.error {
     cursor: pointer;
 }
 
-[data-theme="dark"] .dock-notification-status:hover,
+/* theme-registry Stage 9.3 - fix bug 1.4: split, same reasoning as the
+   light-mode .dock-notification-status rule above; was raw #385069. */
+[data-theme="dark"] .dock-notification-status:hover {
+    background: #1d3043;
+    border-color: var(--mc-border-hover);
+}
+
 [data-theme="dark"] .dock-notification-status[aria-expanded="true"] {
     background: #1d3043;
-    border-color: #385069;
+    border-color: var(--mc-border-active);
 }
 
 [data-theme="dark"] .notification-item-main:hover {
@@ -3534,6 +3564,17 @@ body[data-theme="dark"] .waypoint-action-toast.error {
     color: #dbe8f5;
     border-color: #415a72;
 }
+/* theme-registry Stage 9.3 (fix bug 1.4) review: border-color (#415a72)
+   is identical to this same selector's own resting-state border two
+   rules up - dark mode's hover doesn't actually change the border at
+   all, unlike light mode's own :hover (style-part1.css, which shifts to
+   a distinct primary-tinted accent). Retargeting just this hover
+   instance to --mc-border-hover would make it diverge from its own
+   resting border for the first time - a real visible change beyond this
+   bug's scope (which is retargeting existing state-differentiated
+   colors, not introducing a new one where none exists today). Left raw;
+   flagged as the same light/dark asymmetry already noted at the
+   light-mode rule. */
 [data-theme="dark"] .telemetry-export-btn:hover {
     background: #304a62;
     color: #dbe8f5;
@@ -3725,6 +3766,10 @@ body[data-theme="dark"] .waypoint-action-toast.error {
     background: #d5e9fc;
 }
 
+/* theme-registry Stage 9.3 (fix bug 1.4) review: red/pink hover (text,
+   background, AND border all shift toward danger-red) - a deliberate
+   "dismiss = danger-tinted" affordance, not a generic hover leak. Left
+   raw for both this light rule and its dark counterpart below. */
 .dock-notification-inline-dismiss:hover {
     color: #b42318;
     background: #fff0ef;

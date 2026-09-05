@@ -64,6 +64,17 @@ of truth.
 | `--mc-bg-subtle` | `#f7f9fc` | A slightly recessed surface inside a panel (e.g. an empty-state well, a secondary card nested in a primary one) |
 | `--mc-bg-muted` | `#eef3f8` | An even more recessed / muted fill (icon swatches, hover fills, disabled surfaces) |
 | `--mc-bg-media-stage` | `#e9edf2` | Backdrop specifically behind media/video content |
+| `--mc-surface-sunken` | `#f7f9fc` | An empty-state/placeholder well — reads as recessed, no elevation, paired with `--mc-text-muted` |
+| `--mc-surface-control` | `#f7f9fc` | The rest state of an interactive control cluster with a real hover/active state machine (rest = this token, hover = `--mc-primary-soft`, active = `--mc-primary`) |
+
+`--mc-surface-sunken` and `--mc-surface-control` share `--mc-bg-subtle`'s
+value today but are structurally distinct roles, split out so either can
+diverge independently later without dragging every other `--mc-bg-subtle`
+consumer (card surfaces, nav chrome, scrollbar chrome, chat) along with it.
+**If what you're building is a plain card/static surface, keep using
+`--mc-bg-subtle` directly** — reach for `-sunken` only for an empty-state
+well, `-control` only for a control that has the rest/hover/active pattern
+described above.
 
 Aliases you'll see used interchangeably in older code: `--mc-surface`
 (= `--mc-bg-panel`), `--mc-surface-soft` / `--mc-panel` (= `--mc-bg-subtle`),
@@ -81,6 +92,10 @@ mode than their name implies.
 | `--mc-text-secondary` | `#58708f` | Supporting text, captions, secondary labels, muted-but-legible metadata |
 | `--mc-text-muted` | `#8798ad` | The most de-emphasized text role |
 | `--mc-text-inverse` | `#ffffff` | Text on top of a solid accent/dark fill (e.g. a primary button) |
+
+Aliases: `--mc-text` (= `--mc-text-primary`), `--mc-muted`
+(= `--mc-text-secondary`) — a handful of older rules in `style-part1/3/4.css`
+still use these short names. Prefer the full `--mc-text-*` names for new code.
 
 **Important accessibility note:** `--mc-text-muted` fails WCAG AA
 (4.5:1) against `--mc-bg-panel`/`--mc-bg-subtle` in light mode (it computes
@@ -101,6 +116,7 @@ failing AA is an accepted, deliberate tradeoff.
 | `--mc-border-soft` | `#e4eaf1` | A lighter divider — internal separators, less prominent than a card edge |
 | `--mc-border-active` | `#2f73d9` | An active/selected border state |
 | `--mc-border-focus` | `#1f6feb` | Keyboard focus ring |
+| `--mc-border-hover` | `#b6c3d4` | Hover-state border — the single canonical replacement for the dozens of near-duplicate blue-gray hover borders found live across the theming CSS files before consolidation |
 
 ### Primary accent
 
@@ -111,6 +127,7 @@ failing AA is an accepted, deliberate tradeoff.
 | `--mc-primary-soft` | `#eaf3ff` | A tinted background behind primary-colored content (e.g. an active filter chip) |
 | `--mc-primary-muted` | `#dbeafd` | A slightly stronger tint than `-soft` |
 | `--mc-accent` | `#214f91` | A secondary, deeper accent (e.g. active tab underline) |
+| `--mc-accent-soft` | `#eaf3ff` | A tinted background paired with `--mc-accent` (e.g. the About panel's tab/card treatments) — aliases to `--mc-primary-soft` |
 
 ### Semantic states (success / warning / danger / info)
 
@@ -135,6 +152,21 @@ fails, use a manually darkened variant of the same hue instead (see
 pattern — each icon color is a deliberately darkened, AA-passing sibling of
 its semantic token, not the token itself).
 
+### Favorite
+
+| Token | Light value | Use for |
+|---|---|---|
+| `--mc-favorite` | `#8f763d` | A favorited/starred item's accent (e.g. `.node-card.favorite`) |
+| `--mc-favorite-soft` | `#eadbb8` | Its paired tinted background |
+
+A dedicated pair so a favorited item is visually distinguishable from a
+warning state — `--mc-favorite-soft` is **not** derived the same way as the
+other semantic `-soft` tokens (reusing `--mc-warning`'s soft-background
+transform here would land too close to `--mc-warning-soft` itself); it's
+an independently chosen warm tan/beige instead. Don't reuse `--mc-warning`
+for a favorite/starred visual, even where a warm-yellow tone feels close —
+that's the exact ambiguity this pair exists to remove.
+
 ### Secondary controls
 
 | Token | Light value |
@@ -147,6 +179,11 @@ its semantic token, not the token itself).
 
 Use this family for a non-primary button (cancel, secondary action) rather
 than composing one from surface + border + text tokens by hand.
+
+Alias family: `--mc-dark-control-bg` / `-bg-hover` / `-border` / `-text` —
+same values as the four `--mc-button-secondary-*` tokens above in both
+themes, an older name for the same role. Prefer `--mc-button-secondary-*`
+for new code.
 
 ### Tabs
 
@@ -191,20 +228,29 @@ shared layout constants: `--mc-card-radius` (`12px`), `--mc-card-pad`
 Use these instead of hardcoding `12px`/`16px`/etc. so a future global
 spacing/radius change is a one-line edit.
 
-### Do not touch: the legacy `--theme-*` family
+### History: the legacy `--theme-*` family (removed)
 
-You'll see `var(--theme-panel-bg)`, `var(--theme-text)`,
-`var(--theme-border)` etc. in older sections of `style-part4.css` (Node
-Manager, Waypoints, Devices/Peripherals, the Tools panel). These resolve
-through a separate `--mc-legacy-*` alias layer, kept intentionally
-**isolated** from the main `--mc-*` family — none of the 14 legacy values
-match a current `--mc-*` token consistently across both themes, so merging
-them would silently shift one theme or the other. **Don't extend this
-family and don't use it in new code** — if you're building something new in
-one of these legacy-heavy areas, use the standard `--mc-*` tokens above;
-only migrate an *existing* legacy consumer to `--mc-*` as its own,
-deliberate, reviewed change (this is tracked as an open backlog item, not
-something to do incidentally while working on something else).
+Older sections of `style-part4.css` (Node Manager, Waypoints,
+Devices/Peripherals, the Tools panel) used to read through a separate
+14-token `var(--theme-panel-bg)` / `var(--theme-text)` / `var(--theme-border)`
+alias family, pointed at its own `--mc-legacy-*` canonical block — kept
+deliberately isolated from the main `--mc-*` family because these areas
+predated the family-theme system and none of the 14 legacy values matched
+a current `--mc-*` token consistently across both light and dark. That
+meant Node Manager, Waypoints, Devices, Tools, and the workspace-panel
+chrome stayed pinned to Original's colors regardless of which family a
+user had selected.
+
+**This layer no longer exists.** Theme registry PR 6 migrated every
+consumer to a direct `--mc-*` reference and deleted both the `--theme-*`
+alias block and the `--mc-legacy-*` canonical block — those surfaces now
+follow family colors like everything else. If you see `var(--theme-*)` or
+`var(--mc-legacy-*)` anywhere in the codebase after this, it's a leftover
+that should be migrated, not a still-supported pattern. The full
+per-token mapping and the reasoning behind each judgment call (a couple of
+these weren't a straightforward name-to-name swap) is recorded in
+`docs/theme-registry/pr6-legacy-token-mapping.md`; the PR-by-PR history is
+findable with `git log --grep="^Theme registry"` (see section 8).
 
 ## 3. Building a new card or panel — worked patterns
 
@@ -357,6 +403,18 @@ token often isn't AA-safe as foreground text on its own soft background.
 6. **Never invent a new `--mc-*` custom property outside the canonical
    block** in `ui-kit.css`, and never duplicate the token system into a
    separate file.
+7. **If you're overriding a `--mc-chat-*`, `--mc-tab-*`, or `--mc-popover-*`
+   token inside a `html[data-theme-family="..."]` block, cover the whole
+   group or none of it.** These three groups each have a handful of
+   tokens that are still their own literal in the canonical block (not a
+   `var()` alias) — a family is free to leave the whole group on the
+   alias chain, but overriding *some* of a group's still-literal tokens
+   while leaving others on the canonical block's literal is the actual bug
+   shape a past regression took (a family's own color sitting next to
+   whatever the *other* mode's canonical value happened to be, because one
+   token in the group was forgotten). `contract_validator.py` (see
+   Tooling below) enforces this automatically — run it before opening a
+   PR that touches a family block.
 
 ## 6. Tooling
 
@@ -375,6 +433,30 @@ token often isn't AA-safe as foreground text on its own soft background.
   between two hex colors (`python3 contrast_check.py <fg-hex> <bg-hex>`),
   reporting pass/fail against both the 4.5:1 normal-text and 3:1
   large-text/UI-component thresholds.
+- `docs/theme-registry/tools/contract_validator.py` — checks that every
+  `html[data-theme-family="..."]` block either overrides all of a
+  `--mc-chat-*`/`--mc-tab-*`/`--mc-popover-*` group's still-literal tokens
+  or none of them (rule 7 above). `python3 contract_validator.py` checks
+  `static/ui-kit.css`; exits non-zero on a partial-override violation.
+- `docs/theme-registry/tools/visual_regression.py` — a Playwright-driven
+  visual + token regression suite: captures computed `--mc-*` values across
+  every family/mode combo plus a set of full-page/component screenshots,
+  and diffs both against a committed baseline
+  (`docs/theme-registry/visual-baseline/`). `python3 visual_regression.py`
+  checks against the baseline; `--update-baseline` regenerates it (review
+  the resulting diff like any other change — see
+  `docs/theme-registry/visual-regression-README.md` for what's covered and
+  the reasoning behind the tolerance). Run this before and after any change
+  that touches token wiring or a themed surface's CSS, not just a docs-only
+  change like this one.
+- `docs/theme-registry/tools/token_inventory.py` — a full (not sampled)
+  inventory of every selector that consumes each `--mc-*` token via
+  `var(--mc-*)` across the five theming CSS files. Useful for answering
+  "what are all the roles this token plays?" or "does this token get
+  consumed inside a family block?" without trusting a hand grep.
+  `python3 token_inventory.py --token mc-bg-subtle` prints just one
+  token's consumers; with no arguments it writes the full inventory to
+  `docs/theme-registry/token-inventory.md`.
 - `docs/theme-registry/hex_registry.json` — the registry itself
   (machine-readable; `raw-hex-audit.md` is the human-readable companion).
 

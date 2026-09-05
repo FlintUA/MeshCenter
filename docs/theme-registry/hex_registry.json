@@ -3645,6 +3645,14 @@
     ]
   },
   {
+    "value": "655B34",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3796"
+    ]
+  },
+  {
     "value": "65A3FF",
     "verdict": "ui-normalization-candidate",
     "count": 1,
@@ -3894,6 +3902,14 @@
     ]
   },
   {
+    "value": "6C5E37",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:4218"
+    ]
+  },
+  {
     "value": "6C8195",
     "verdict": "ui-normalization-candidate",
     "count": 1,
@@ -3907,6 +3923,14 @@
     "count": 1,
     "locations": [
       "static/style-part3.css:1300"
+    ]
+  },
+  {
+    "value": "6E5035",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:4381"
     ]
   },
   {
@@ -4758,6 +4782,14 @@
     ]
   },
   {
+    "value": "8F763D",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3584"
+    ]
+  },
+  {
     "value": "8FA3B8",
     "verdict": "ui-normalization-candidate",
     "count": 1,
@@ -4984,6 +5016,14 @@
     "count": 1,
     "locations": [
       "static/style-part4.css:3246"
+    ]
+  },
+  {
+    "value": "997255",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:4380"
     ]
   },
   {
@@ -5744,6 +5784,14 @@
     ]
   },
   {
+    "value": "BEA260",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3795"
+    ]
+  },
+  {
     "value": "BFD0DF",
     "verdict": "ui-normalization-candidate",
     "count": 1,
@@ -5810,6 +5858,14 @@
       "static/style-part1.css:1799",
       "static/style-part1.css:2156",
       "static/style-part1.css:2746"
+    ]
+  },
+  {
+    "value": "C2A669",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:4217"
     ]
   },
   {
@@ -7848,6 +7904,14 @@
     "count": 1,
     "locations": [
       "static/style-part3.css:1310"
+    ]
+  },
+  {
+    "value": "EADBB8",
+    "verdict": "theme-family-token-value",
+    "count": 1,
+    "locations": [
+      "static/ui-kit.css:3585"
     ]
   },
   {

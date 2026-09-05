@@ -267,7 +267,10 @@ body {
 }
 
 .node-card.favorite {
-    background: var(--mc-warning-soft);
+    /* theme-registry Stage 9.2 - fix bug 1.2: was var(--mc-warning-soft),
+       conflating favorite with the warning state and coupling a
+       favorited card's color to any future warning-palette change. */
+    background: var(--mc-favorite-soft);
     border-color: #e2bd45;
 }
 
@@ -1977,7 +1980,7 @@ html[data-theme="dark"] :is(
    the blanket rule above (it's !important too, so cascade only compares
    specificity among important declarations - a 2-class compound selector
    beats the :is() list's single-class members here). */
-html[data-theme="dark"] .node-card.favorite { background: var(--mc-warning-soft) !important; }
+html[data-theme="dark"] .node-card.favorite { background: var(--mc-favorite-soft) !important; } /* theme-registry Stage 9.2 - fix bug 1.2, dark half; see the light rule's own comment. */
 html[data-theme="dark"] .node-card.selected { background: var(--mc-primary-soft) !important; }
 html[data-theme="dark"] .node-card.ignored { background: var(--mc-danger-soft) !important; }
 
@@ -3558,6 +3561,29 @@ body[data-theme="dark"] .workspace-popover::after {
     --mc-info: #2f80ed;
     --mc-info-soft: #eaf3ff;
 
+    /* Favorite (theme-registry Stage 9.2 - fix bug 1.2: .node-card.favorite
+       was reusing --mc-warning-soft directly, with no dedicated token, so
+       a favorited card was indistinguishable from a warning state and any
+       future warning-palette change would silently reshape every
+       favorited card too. No source-plan color exists for Original (only
+       Gunmetal/Alpine have an owner-approved favorite hex) - picked by
+       applying the same hue-preserving, saturation/lightness-reduced
+       transform Gunmetal and Alpine's own source-plan favorite colors
+       already show relative to their warning (recomputed: Gunmetal cuts
+       warning's saturation to ~52% and lightness by ~0.09; Alpine cuts
+       saturation to ~29% and lightness by ~0.15 - applied a ~40%/-0.12
+       version of the same transform here). RGB-distance verified against
+       --mc-warning: 106.4 (well past every "genuinely distinct" example
+       elsewhere in this project). --mc-favorite-soft is NOT derived via
+       the same transform as --mc-warning-soft (that pale-pastel treatment
+       would converge back toward warning-soft's own near-white wash,
+       recomputed distance ~10 - too close for the two soft backgrounds a
+       user actually sees side by side); instead it's an independently
+       chosen warm tan/beige, verified 52.4 RGB-distance from
+       --mc-warning-soft. */
+    --mc-favorite: #8f763d;
+    --mc-favorite-soft: #eadbb8;
+
     /* Secondary controls */
     --mc-button-secondary-bg: #edf3f9;
     --mc-button-secondary-bg-hover: #e2ebf5;
@@ -3754,6 +3780,20 @@ html[data-theme="dark"] {
     --mc-danger-soft: #49252b;
     --mc-info: #78b6ff;
     --mc-info-soft: #203d5d;
+
+    /* Favorite (theme-registry Stage 9.2 - fix bug 1.2; dark half, see the
+       :root block above for the full rationale). Same hue-preserving,
+       saturation/lightness-reduced transform applied to dark's own
+       --mc-warning; RGB-distance verified: 63.6 from --mc-warning.
+       --mc-favorite-soft again independently chosen (not warning-soft's
+       own transform, for the same reason as light) - a medium olive-tan
+       rather than warning-soft's near-black brown, deliberately lighter
+       so a favorited card reads as a highlight against the surrounding
+       dark cards rather than blending in; verified 56.4 RGB-distance from
+       --mc-warning-soft, live-checked for legibility against the dark
+       panel/card surfaces. */
+    --mc-favorite: #bea260;
+    --mc-favorite-soft: #655b34;
 
     /* Secondary controls */
     --mc-button-secondary-bg: #223349;
@@ -4034,6 +4074,14 @@ html[data-theme-family="sharp"] {
     --mc-tab-text-active: var(--mc-text-primary);
     --mc-popover-text: var(--mc-text-primary);
     --mc-popover-muted: var(--mc-text-secondary);
+
+    /* Favorite (Stage 9.2, fix bug 1.2) - no source-plan color for Sharp
+       (only Gunmetal/Alpine have an owner-approved favorite hex) and no
+       override added here: Sharp doesn't override --mc-warning/-soft
+       either, so it already inherits :root's own new --mc-favorite/-soft
+       pair, which was itself verified distinct from :root's --mc-warning/
+       -soft (see :root's own Stage 9.2 comment) - live-checked against
+       Sharp's grayscale+green palette, reads fine, no override needed. */
 }
 
 /* theme-registry Stage 5.1: MeshCenter Gunmetal - a 'fixed', DARK-only
@@ -4066,12 +4114,29 @@ html[data-theme-family="sharp"] {
    icon color at style-part3.css:3782) and a small solid-fill role
    (.node-detail-activity.activity-away, style-part3.css:20) - and it's
    already correct for both since fg/base don't change here. --mc-warning-
-   soft is the actual surface token (ui-kit.css:270, .node-card.favorite's
-   background - the only consumer). #c2a669 (the source doc's "favorite/
-   calm accent" color) is explicitly NOT part of this exception - not
-   used anywhere in this block; flagged in the PR as a possible future
-   backlog item for a real favorite-role token, not invented here.
+   soft is the surface token - re-grepped for Stage 9.2 and found this
+   comment's own earlier "the only consumer" claim (.node-card.favorite,
+   ui-kit.css:270) was incomplete: style-part3.css:3935's unqualified
+   .notification-warning .notification-item-icon background also consumes
+   it - but only in LIGHT mode. Under dark specifically, the more specific
+   style-part3.css:3969 [data-theme="dark"] .notification-warning
+   .notification-item-icon rule wins and uses a raw rgba(196,143,31,.17)
+   value instead of this token - re-checked directly against that
+   selector, not assumed from the light-mode rule. So Gunmetal's dark
+   --mc-warning-soft override above is currently unused dead code, not
+   load-bearing for anything. Left unchanged in this PR anyway (removing
+   it, or reconnecting the dark notification rule to the token, is
+   unrelated cleanup, not this bug fix).
    Success/danger/info get no Gunmetal exception at all and stay unset.
+
+   Stage 9.2 (fix bug 1.2) update: #c2a669 (the source doc's "favorite/
+   calm accent" color, section 8.3) is no longer an unused flag - a real
+   --mc-favorite/--mc-favorite-soft token pair now exists (see the :root/
+   dark canonical blocks' own Stage 9.2 comments) and Gunmetal wires its
+   source-plan value into --mc-favorite below, with an independently
+   chosen --mc-favorite-soft (not derived from #c2a669 by the same
+   transform --mc-warning-soft uses, for the same "would converge back
+   toward warning-soft" reason documented at the canonical dark block).
 
    Token mapping: identical role -> token assignments as Sharp (Stage 4.1's
    big comment above, ~line 3600) - re-verified against dark-mode consumers
@@ -4147,6 +4212,16 @@ html[data-theme-family="gunmetal"] {
        are identical to the inherited dark value and need no override.
        No success/danger/info exception for Gunmetal. */
     --mc-warning-soft: #473529;
+
+    /* Favorite (Stage 9.2, fix bug 1.2) - #c2a669 is the source plan's own
+       owner-approved value (section 8.3), wired up here for the first
+       time. --mc-favorite-soft is independently chosen (not a transform
+       of #c2a669), verified 56.97 RGB-distance from this block's own
+       --mc-warning-soft (#473529) and 122.8 from --mc-favorite itself -
+       deliberately lighter than warning-soft so a favorited card reads as
+       a highlight, not a dark warning-adjacent smudge. */
+    --mc-favorite: #c2a669;
+    --mc-favorite-soft: #6c5e37;
 
     /* theme-registry Stage 9.1 (fix bug 1.1) - tab-text/tab-line-active/
        popover-muted/chat-muted are genuinely distinct roles in the
@@ -4246,9 +4321,20 @@ html[data-theme-family="gunmetal"] {
    consumer legible; the one fill-role consumer (a decorative indicator
    bar, no legibility requirement) renders a slightly-off-source orange
    instead of the literal fill color - a known, deliberate miss, not an
-   oversight. --mc-warning-soft maps cleanly to Surface (only ever used as
-   a soft background wash - ui-kit.css:270 .node-card.favorite,
-   ui-kit.css:1896 the dark-mode !important restore from Stage 5.3).
+   oversight. --mc-warning-soft maps cleanly to Surface - re-grepped for
+   Stage 9.2 and found this comment's own earlier "only ever used as a
+   soft background wash" list was incomplete: besides .node-card.favorite
+   (ui-kit.css:270) and the dark-mode !important restore, style-
+   part3.css:3935's unqualified .notification-warning .notification-item-
+   icon background also consumes it - but only in LIGHT mode. Under dark
+   specifically, the more specific style-part3.css:3969 [data-theme="dark"]
+   .notification-warning .notification-item-icon rule wins and uses a raw
+   rgba(196,143,31,.17) value instead of this token - re-checked directly
+   against that selector, not assumed from the light-mode rule. So
+   Alpine's dark --mc-warning-soft override above is currently unused dead
+   code, not load-bearing for anything. Left unchanged in this PR anyway
+   (removing it, or reconnecting the dark notification rule to the token,
+   is unrelated cleanup, not this bug fix).
 
    Border (#f08a24) and fill/base (#a84300, the value --mc-warning did NOT
    take) have no existing token to land on - re-checked specifically for
@@ -4256,11 +4342,14 @@ html[data-theme-family="gunmetal"] {
    none) rather than assuming Stage 4.2's success/danger conclusion
    carries over unchecked. Left both unmapped.
 
-   #cc5500 ("reference") and #997255 (favorite/secondary-warm-accent role)
-   are deliberately not used anywhere in this block - #cc5500 is the
-   palette's background-only anchor color (fails 3:1 on Alpine's own panel
-   per the source doc's own section 8.4, confirmed: 2.84:1), and #997255
-   is out of scope the same way Gunmetal's #c2a669 was in Stage 5.2. */
+   #cc5500 ("reference") remains deliberately unused - the palette's
+   background-only anchor color (fails 3:1 on Alpine's own panel per the
+   source doc's own section 8.4, confirmed: 2.84:1). #997255
+   (favorite/secondary-warm-accent role) is no longer out of scope as of
+   Stage 9.2 (fix bug 1.2): a real --mc-favorite/--mc-favorite-soft token
+   pair now exists (see the :root/dark canonical blocks' own Stage 9.2
+   comments) and Alpine wires its source-plan value into --mc-favorite
+   below, with an independently chosen --mc-favorite-soft. */
 html[data-theme-family="alpine"] {
     /* Application surfaces */
     --mc-bg-app: #131c22;
@@ -4292,6 +4381,16 @@ html[data-theme-family="alpine"] {
        success/danger/info exception for Alpine. */
     --mc-warning: #ff9a3d;
     --mc-warning-soft: #3a281a;
+
+    /* Favorite (Stage 9.2, fix bug 1.2) - #997255 is the source plan's own
+       owner-approved value (section 8.3), wired up here for the first
+       time. --mc-favorite-soft is independently chosen, verified 70.94
+       RGB-distance from this block's own --mc-warning-soft (#3a281a) and
+       63.47 from --mc-favorite itself - deliberately lighter than
+       warning-soft so a favorited card reads as a highlight, not a dark
+       warning-adjacent smudge. */
+    --mc-favorite: #997255;
+    --mc-favorite-soft: #6e5035;
 
     /* theme-registry Stage 9.1 (fix bug 1.1) - same reasoning as
        Gunmetal's own Stage 9.1 addendum above: tab-text/tab-line-active/
@@ -4420,6 +4519,13 @@ html[data-theme-family="teal"][data-theme="dark"] {
     --mc-tab-line-active: var(--mc-primary-hover);
     --mc-popover-muted: var(--mc-text-secondary);
     --mc-chat-muted: var(--mc-text-secondary);
+
+    /* Favorite (Stage 9.2, fix bug 1.2) - no source-plan color for Teal
+       and no override added: Teal Dark doesn't override --mc-warning/-soft
+       either, so it already inherits the dark canonical block's own new
+       --mc-favorite/-soft pair, verified distinct there. Live-checked
+       against Teal's saturated cyan palette, reads fine, no override
+       needed. */
 }
 
 /* theme-registry Stage 8.1: MeshCenter Teal Light - the second half of
@@ -4516,5 +4622,12 @@ html[data-theme-family="teal"][data-theme="light"] {
     --mc-tab-text-active: var(--mc-text-primary);
     --mc-popover-text: var(--mc-text-primary);
     --mc-popover-muted: var(--mc-text-secondary);
+
+    /* Favorite (Stage 9.2, fix bug 1.2) - no source-plan color for Teal
+       and no override added: Teal Light doesn't override --mc-warning/
+       -soft either, so it already inherits :root's own new
+       --mc-favorite/-soft pair, verified distinct there. Live-checked
+       against Teal's saturated cyan palette, reads fine, no override
+       needed. */
 }
 

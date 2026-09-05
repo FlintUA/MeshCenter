@@ -428,7 +428,7 @@
 }
 .dm-section {
     min-height: 0;
-    border-top: 1px solid var(--border-color, #d8e0ea);
+    border-top: 1px solid var(--mc-border, #d8e0ea);
     padding-top: 6px;
 }
 .chat-section-heading {
@@ -436,7 +436,7 @@
     padding: 4px 8px 6px;
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-secondary, #667085);
+    color: var(--mc-text-secondary, #667085);
 }
 .channels-list {
     flex: 0 1 auto;
@@ -1111,9 +1111,9 @@
 .waypoint-tools-panel {
     margin:0 0 10px;
     padding:10px;
-    border:1px solid var(--border-color, #d8e0ea);
+    border:1px solid var(--mc-border, #d8e0ea);
     border-radius:10px;
-    background:var(--card-bg, #fff);
+    background:var(--mc-bg-panel, #fff);
 }
 .waypoint-tools-header {
     display:flex;
@@ -1391,14 +1391,14 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     align-items: center;
     justify-content: center;
     gap: 12px;
-    color: var(--text-secondary, #64748b);
+    color: var(--mc-text-secondary, #64748b);
     text-align: center;
 }
 
 .device-hero-card,
 .device-info-card {
-    border: 1px solid var(--border-color, #d8e1ec);
-    background: var(--card-bg, #ffffff);
+    border: 1px solid var(--mc-border, #d8e1ec);
+    background: var(--mc-bg-panel, #ffffff);
     border-radius: 14px;
 }
 
@@ -1418,7 +1418,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     place-items: center;
     border-radius: 14px;
     font-size: 25px;
-    background: var(--surface-secondary, #eef4fb);
+    background: var(--mc-button-secondary-bg, #eef4fb);
 }
 
 .device-hero-main {
@@ -1427,7 +1427,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
 }
 
 .device-card-eyebrow {
-    color: var(--text-secondary, #64748b);
+    color: var(--mc-text-secondary, #64748b);
     font-size: 12px;
     font-weight: 700;
     text-transform: uppercase;
@@ -1439,7 +1439,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
 .device-hero-main h3 {
     margin: 0;
     font-size: 21px;
-    color: var(--text-primary, #172033);
+    color: var(--mc-text-primary, #172033);
 }
 
 .device-hero-meta {
@@ -1452,8 +1452,8 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
 .device-hero-meta span {
     border-radius: 999px;
     padding: 3px 8px;
-    background: var(--surface-secondary, #eef4fb);
-    color: var(--text-secondary, #64748b);
+    background: var(--mc-button-secondary-bg, #eef4fb);
+    color: var(--mc-text-secondary, #64748b);
     font-size: 12px;
 }
 
@@ -1505,7 +1505,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     font-size: 15px;
     font-weight: 800;
     margin-bottom: 12px;
-    color: var(--text-primary, #172033);
+    color: var(--mc-text-primary, #172033);
 }
 
 .device-detail-list {
@@ -1517,7 +1517,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     grid-template-columns: minmax(110px, .8fr) minmax(0, 1.2fr);
     gap: 12px;
     padding: 8px 0;
-    border-bottom: 1px solid var(--border-light, #edf1f6);
+    border-bottom: 1px solid var(--mc-border-soft, #edf1f6);
 }
 
 .device-detail-list > div:last-child {
@@ -1525,7 +1525,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
 }
 
 .device-detail-list dt {
-    color: var(--text-secondary, #64748b);
+    color: var(--mc-text-secondary, #64748b);
     font-size: 12px;
 }
 
@@ -1534,7 +1534,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     text-align: right;
     font-size: 12px;
     font-weight: 650;
-    color: var(--text-primary, #172033);
+    color: var(--mc-text-primary, #172033);
     overflow-wrap: anywhere;
 }
 
@@ -1557,7 +1557,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
 .device-action-btn {
     min-height: 38px;
     border-radius: 9px;
-    border: 1px solid var(--border-color, #d8e1ec);
+    border: 1px solid var(--mc-border, #d8e1ec);
     font-weight: 700;
     cursor: pointer;
 }
@@ -1568,14 +1568,14 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
 }
 
 .device-action-primary {
-    background: var(--primary-color, #1769e0);
-    border-color: var(--primary-color, #1769e0);
+    background: var(--mc-primary, #1769e0);
+    border-color: var(--mc-primary, #1769e0);
     color: #fff;
 }
 
 .device-action-secondary {
-    color: var(--text-primary, #172033);
-    background: var(--surface-secondary, #f4f7fb);
+    color: var(--mc-text-primary, #172033);
+    background: var(--mc-button-secondary-bg, #f4f7fb);
 }
 
 @media (max-width: 820px) {
@@ -1635,8 +1635,8 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
 .peripheral-card {
     min-width: 0;
     padding: 16px;
-    border: 1px solid var(--border-color, #d8e1ec);
-    background: var(--card-bg, #fff);
+    border: 1px solid var(--mc-border, #d8e1ec);
+    background: var(--mc-bg-panel, #fff);
     border-radius: 14px;
 }
 
@@ -1669,7 +1669,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
 .peripheral-card-header h3,
 .peripheral-add-card h3 {
     margin: 0;
-    color: var(--text-primary, #172033);
+    color: var(--mc-text-primary, #172033);
     font-size: 17px;
     overflow-wrap: anywhere;
 }
@@ -1714,8 +1714,8 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     justify-content: center;
     text-align: center;
     border-style: dashed;
-    color: var(--text-secondary, #64748b);
-    background: color-mix(in srgb, var(--card-bg, #fff) 95%, var(--surface-secondary, #eef4fb));
+    color: var(--mc-text-secondary, #64748b);
+    background: color-mix(in srgb, var(--mc-bg-panel, #fff) 95%, var(--mc-button-secondary-bg, #eef4fb));
 }
 
 .peripheral-add-card[aria-disabled="true"] {
@@ -1729,7 +1729,7 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     place-items: center;
     margin-bottom: 8px;
     border-radius: 12px;
-    background: var(--surface-secondary, #eef4fb);
+    background: var(--mc-button-secondary-bg, #eef4fb);
     font-size: 24px;
 }
 
@@ -1832,9 +1832,9 @@ body.node-manager-open #messagesView {
 .node-profile-selector-section {
     margin-bottom: 14px;
     padding: 14px;
-    border: 1px solid var(--border-color, #d8e1ec);
+    border: 1px solid var(--mc-border, #d8e1ec);
     border-radius: 14px;
-    background: color-mix(in srgb, var(--card-bg, #fff) 96%, var(--surface-secondary, #eef4fb));
+    background: color-mix(in srgb, var(--mc-bg-panel, #fff) 96%, var(--mc-button-secondary-bg, #eef4fb));
 }
 
 .node-manager-section-heading {
@@ -1847,13 +1847,13 @@ body.node-manager-open #messagesView {
 
 .node-manager-section-heading h3 {
     margin: 0;
-    color: var(--text-primary, #172033);
+    color: var(--mc-text-primary, #172033);
     font-size: 14px;
 }
 
 .node-manager-section-heading p {
     margin: 3px 0 0;
-    color: var(--text-secondary, #64748b);
+    color: var(--mc-text-secondary, #64748b);
     font-size: 11px;
 }
 
@@ -1863,8 +1863,8 @@ body.node-manager-open #messagesView {
     display: grid;
     place-items: center;
     border-radius: 999px;
-    background: var(--surface-secondary, #eef4fb);
-    color: var(--text-secondary, #64748b);
+    background: var(--mc-button-secondary-bg, #eef4fb);
+    color: var(--mc-text-secondary, #64748b);
     font-size: 11px;
     font-weight: 700;
 }
@@ -1881,15 +1881,15 @@ body.node-manager-open #messagesView {
     align-items: center;
     gap: 11px;
     padding: 11px 12px;
-    border: 1px solid var(--border-color, #d8e1ec);
+    border: 1px solid var(--mc-border, #d8e1ec);
     border-radius: 11px;
-    background: var(--card-bg, #fff);
+    background: var(--mc-bg-panel, #fff);
     color: inherit;
     text-align: left;
 }
 
 .node-profile-card.is-active {
-    border-color: color-mix(in srgb, var(--primary-color, #1769e0) 55%, var(--border-color, #d8e1ec));
+    border-color: color-mix(in srgb, var(--mc-primary, #1769e0) 55%, var(--mc-border, #d8e1ec));
     box-shadow: 0 3px 12px rgba(23, 105, 224, .08);
 }
 
@@ -1905,7 +1905,7 @@ body.node-manager-open #messagesView {
     place-items: center;
     flex: 0 0 auto;
     border-radius: 10px;
-    background: var(--surface-secondary, #eef4fb);
+    background: var(--mc-button-secondary-bg, #eef4fb);
 }
 
 .node-profile-main {
@@ -1924,7 +1924,7 @@ body.node-manager-open #messagesView {
 }
 
 .node-profile-main strong { font-size: 13px; }
-.node-profile-main small { color: var(--text-secondary, #64748b); font-size: 10px; }
+.node-profile-main small { color: var(--mc-text-secondary, #64748b); font-size: 10px; }
 
 .node-profile-badges {
     display: flex;
@@ -1936,8 +1936,8 @@ body.node-manager-open #messagesView {
 .node-profile-badge {
     padding: 3px 6px;
     border-radius: 999px;
-    background: var(--surface-secondary, #eef4fb);
-    color: var(--text-secondary, #64748b);
+    background: var(--mc-button-secondary-bg, #eef4fb);
+    color: var(--mc-text-secondary, #64748b);
     font-size: 8px;
     font-weight: 700;
     white-space: nowrap;
@@ -1965,22 +1965,22 @@ body.node-manager-open #messagesView {
     display: block;
     object-fit: contain;
     border-radius: 13px;
-    background: var(--surface-secondary, #eef4fb);
+    background: var(--mc-button-secondary-bg, #eef4fb);
 }
 
 .node-manager-change-image-btn {
     padding: 3px 6px;
-    border: 1px solid var(--border-color, #d8e1ec);
+    border: 1px solid var(--mc-border, #d8e1ec);
     border-radius: 7px;
-    background: var(--card-bg, #fff);
-    color: var(--text-secondary, #64748b);
+    background: var(--mc-bg-panel, #fff);
+    color: var(--mc-text-secondary, #64748b);
     font-size: 8px;
     cursor: pointer;
 }
 
 .node-manager-change-image-btn:hover {
-    border-color: var(--primary-color, #1769e0);
-    color: var(--primary-color, #1769e0);
+    border-color: var(--mc-primary, #1769e0);
+    color: var(--mc-primary, #1769e0);
 }
 
 .node-manager-status-stack {
@@ -1991,13 +1991,13 @@ body.node-manager-open #messagesView {
 }
 
 .node-manager-active-label {
-    color: var(--text-secondary, #64748b);
+    color: var(--mc-text-secondary, #64748b);
     font-size: 9px;
     font-weight: 650;
 }
 
 .copyable-value { cursor: copy; }
-.copyable-value:hover { color: var(--primary-color, #1769e0); }
+.copyable-value:hover { color: var(--mc-primary, #1769e0); }
 
 .link-button {
     background: none;
@@ -2009,7 +2009,7 @@ body.node-manager-open #messagesView {
     text-decoration: underline;
     cursor: pointer;
 }
-.link-button:hover { color: var(--primary-color, #1769e0); }
+.link-button:hover { color: var(--mc-primary, #1769e0); }
 
 .device-path-value {
     max-width: 260px;
@@ -2050,8 +2050,8 @@ body.node-manager-open #messagesView {
 
 .base-card-node-manager:hover,
 .base-card-node-manager:focus-within {
-    border-color: color-mix(in srgb, var(--primary-color, #1769e0) 36%, var(--border-color, #d8e1ec));
-    background: color-mix(in srgb, var(--card-bg, #fff) 96%, var(--primary-color, #1769e0));
+    border-color: color-mix(in srgb, var(--mc-primary, #1769e0) 36%, var(--mc-border, #d8e1ec));
+    background: color-mix(in srgb, var(--mc-bg-panel, #fff) 96%, var(--mc-primary, #1769e0));
     box-shadow: 0 5px 14px rgba(15, 23, 42, .07);
 }
 
@@ -2113,7 +2113,7 @@ body.node-manager-open #messagesView {
     margin: 0;
     padding: 0;
     overflow: hidden;
-    color: var(--text-primary, #172033);
+    color: var(--mc-text-primary, #172033);
     font-size: 1.45em;
     font-weight: 750;
     line-height: 1;
@@ -2167,13 +2167,13 @@ body.node-manager-open #messagesView[hidden] {
 /* Persistent selection shared by the map and the Tools list. */
 .waypoint-tools-item.is-selected {
     border-color: #e14d68 !important;
-    background: color-mix(in srgb, #e14d68 8%, var(--card-bg, #fff)) !important;
+    background: color-mix(in srgb, #e14d68 8%, var(--mc-bg-panel, #fff)) !important;
     box-shadow: inset 3px 0 0 #e14d68, 0 0 0 1px rgba(225, 77, 104, .08);
 }
 
 .waypoint-tools-item.is-selected.is-expired {
     border-color: #9e7bc7 !important;
-    background: color-mix(in srgb, #b79ad9 18%, var(--card-bg, #fff)) !important;
+    background: color-mix(in srgb, #b79ad9 18%, var(--mc-bg-panel, #fff)) !important;
     box-shadow: inset 3px 0 0 #9e7bc7, 0 0 0 1px rgba(158, 123, 199, .12);
 }
 
@@ -2200,82 +2200,32 @@ body.node-manager-open #messagesView[hidden] {
     }
 }
 /* ============================================================
-   UNIFIED LIGHT / DARK THEME LAYER
-   Final cascade for workspace cards, Node Manager, Devices,
-   Tools and local-node header.
-
-   theme-registry Stage 3.1: the 14 --theme-* custom properties below are
-   now aliases onto the --mc-legacy-* tokens defined in ui-kit.css's
-   canonical token block, not first-class hardcoded values - do not put
-   raw hex back here. This keeps every var(--theme-*) consumer in this
-   file (and the --card-bg/--surface-secondary/--border-color/etc
-   compatibility layer just below, which already chains through
-   --theme-*) working exactly as before while giving the underlying
-   colors one real source of truth. See ui-kit.css's --mc-legacy-*
-   comment for why these aren't merged into the generic --mc-* family.
+   THEME-REGISTRY PR 6: legacy alias layer removed.
+   Every consumer below now references canonical --mc-* tokens
+   directly (per docs/theme-registry/pr6-legacy-token-mapping.md),
+   so these surfaces (workspace cards, Node Manager, Devices,
+   Tools, local-node header) participate in family switching
+   instead of being pinned to Original's colors. One exception
+   survives as a narrow, purpose-built alias: --mc-border-focus
+   has no clean canonical match in light mode (RGB distance 55.6,
+   see the mapping doc's note 5), so light mode keeps the legacy
+   literal while dark aliases onto the canonical family token.
    ============================================================ */
 
 :root {
-    --theme-app-bg: var(--mc-legacy-app-bg);
-    --theme-workspace-bg: var(--mc-legacy-workspace-bg);
-    --theme-panel-bg: var(--mc-legacy-panel-bg);
-    --theme-card-bg: var(--mc-legacy-card-bg);
-    --theme-card-hover: var(--mc-legacy-card-hover);
-    --theme-elevated-bg: var(--mc-legacy-elevated-bg);
-    --theme-border: var(--mc-legacy-border);
-    --theme-border-soft: var(--mc-legacy-border-soft);
-    --theme-text: var(--mc-legacy-text);
-    --theme-text-secondary: var(--mc-legacy-text-secondary);
-    --theme-text-muted: var(--mc-legacy-text-muted);
-    --theme-accent: var(--mc-legacy-accent);
-    --theme-focus: var(--mc-legacy-focus);
-    --theme-shadow: var(--mc-legacy-shadow);
-
-    /* Compatibility tokens used by existing components. */
-    --card-bg: var(--theme-card-bg);
-    --surface-secondary: var(--theme-elevated-bg);
-    --border-color: var(--theme-border);
-    --border-light: var(--theme-border-soft);
-    --text-primary: var(--theme-text);
-    --text-secondary: var(--theme-text-secondary);
-    --primary-color: var(--theme-accent);
-
-    /* Feature-level aliases used in this stylesheet. */
+    --focus-ring-color: #4f8cff;
 }
 
 [data-theme="dark"] {
     color-scheme: dark;
-
-    --theme-app-bg: var(--mc-legacy-app-bg);
-    --theme-workspace-bg: var(--mc-legacy-workspace-bg);
-    --theme-panel-bg: var(--mc-legacy-panel-bg);
-    --theme-card-bg: var(--mc-legacy-card-bg);
-    --theme-card-hover: var(--mc-legacy-card-hover);
-    --theme-elevated-bg: var(--mc-legacy-elevated-bg);
-    --theme-border: var(--mc-legacy-border);
-    --theme-border-soft: var(--mc-legacy-border-soft);
-    --theme-text: var(--mc-legacy-text);
-    --theme-text-secondary: var(--mc-legacy-text-secondary);
-    --theme-text-muted: var(--mc-legacy-text-muted);
-    --theme-accent: var(--mc-legacy-accent);
-    --theme-focus: var(--mc-legacy-focus);
-    --theme-shadow: var(--mc-legacy-shadow);
-
-    --card-bg: var(--theme-card-bg);
-    --surface-secondary: var(--theme-elevated-bg);
-    --border-color: var(--theme-border);
-    --border-light: var(--theme-border-soft);
-    --text-primary: var(--theme-text);
-    --text-secondary: var(--theme-text-secondary);
-    --primary-color: var(--theme-accent);
-
+    --focus-ring-color: var(--mc-border-focus);
 }
 
 /* Main application surfaces. */
 [data-theme="dark"] body,
 body[data-theme="dark"] {
-    background: var(--theme-app-bg);
-    color: var(--theme-text);
+    background: var(--mc-bg-app);
+    color: var(--mc-text-primary);
 }
 
 [data-theme="dark"] .app-container,
@@ -2283,8 +2233,8 @@ body[data-theme="dark"] {
 [data-theme="dark"] .workspace-view,
 [data-theme="dark"] .devices-view,
 [data-theme="dark"] .node-manager-view {
-    background: var(--theme-workspace-bg);
-    color: var(--theme-text);
+    background: var(--mc-bg-workspace);
+    color: var(--mc-text-primary);
 }
 
 /* Chat/messages domain (theme-registry Stage 1.1): canonical --mc-*
@@ -2302,28 +2252,28 @@ body[data-theme="dark"] {
 [data-theme="dark"] .system-panel,
 [data-theme="dark"] .media-panel,
 [data-theme="dark"] .camera-panel {
-    background: var(--theme-panel-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
-    box-shadow: var(--theme-shadow);
+    background: var(--mc-card-bg) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, .24);
 }
 
 [data-theme="dark"] .mc-workspace-header,
 [data-theme="dark"] .node-manager-header,
 [data-theme="dark"] .workspace-page-header {
-    background: var(--theme-panel-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-card-bg) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .workspace-page-title,
 [data-theme="dark"] .workspace-page-heading h2,
 [data-theme="dark"] .workspace-page-heading h3 {
-    color: var(--theme-text) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .workspace-page-subtitle {
-    color: var(--theme-text-secondary) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 /* Node Manager cards. */
@@ -2332,9 +2282,9 @@ body[data-theme="dark"] {
 [data-theme="dark"] .device-hero-card,
 [data-theme="dark"] .device-info-card,
 [data-theme="dark"] .node-manager-hero-card {
-    background: var(--theme-card-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-bg-panel) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .node-profile-selector-section,
@@ -2346,11 +2296,11 @@ body[data-theme="dark"] {
 
 [data-theme="dark"] .node-profile-card:hover,
 [data-theme="dark"] .device-info-card:hover {
-    background: var(--theme-card-hover) !important;
+    background: var(--mc-button-secondary-bg) !important;
 }
 
 [data-theme="dark"] .node-profile-card.is-active {
-    border-color: var(--theme-focus) !important;
+    border-color: var(--focus-ring-color) !important;
     box-shadow: 0 0 0 1px rgba(101, 163, 255, .22);
 }
 
@@ -2362,14 +2312,14 @@ body[data-theme="dark"] {
 [data-theme="dark"] .node-profile-main strong,
 [data-theme="dark"] .node-manager-hero-card h2,
 [data-theme="dark"] .node-manager-hero-card h3 {
-    color: var(--theme-text) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .node-manager-section-heading p,
 [data-theme="dark"] .node-profile-main small,
 [data-theme="dark"] .device-card-eyebrow,
 [data-theme="dark"] .node-manager-active-label {
-    color: var(--theme-text-secondary) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 [data-theme="dark"] .node-manager-profile-count,
@@ -2378,46 +2328,46 @@ body[data-theme="dark"] {
 [data-theme="dark"] .device-hero-icon,
 [data-theme="dark"] .device-hero-meta span,
 [data-theme="dark"] .node-profile-badge {
-    background: var(--theme-elevated-bg) !important;
-    color: var(--theme-text-secondary) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 /* Detail rows in Node Manager and Devices. */
 [data-theme="dark"] .device-detail-list > div {
-    border-color: var(--theme-border-soft) !important;
+    border-color: var(--mc-border-soft) !important;
 }
 
 [data-theme="dark"] .device-detail-list dt {
-    color: var(--theme-text-secondary) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 [data-theme="dark"] .device-detail-list dd,
 [data-theme="dark"] .device-detail-list .copyable-value,
 [data-theme="dark"] .device-path-value {
-    color: var(--theme-text) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .copyable-value:hover {
-    color: var(--theme-accent) !important;
+    color: var(--mc-primary) !important;
 }
 
 /* Peripheral Devices page. */
 [data-theme="dark"] .peripheral-card {
-    background: var(--theme-card-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-bg-panel) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
     box-shadow: 0 6px 18px rgba(0, 0, 0, .12);
 }
 
 [data-theme="dark"] .peripheral-add-card {
-    background: color-mix(in srgb, var(--theme-card-bg) 84%, var(--theme-elevated-bg)) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text-secondary) !important;
+    background: color-mix(in srgb, var(--mc-bg-panel) 84%, var(--mc-button-secondary-bg)) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 [data-theme="dark"] .peripheral-add-icon {
-    background: var(--theme-elevated-bg) !important;
-    color: var(--theme-text-secondary) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 /* Buttons. */
@@ -2425,18 +2375,18 @@ body[data-theme="dark"] {
 [data-theme="dark"] .node-manager-change-image-btn,
 [data-theme="dark"] .workspace-page-actions button,
 [data-theme="dark"] .mc-close-btn {
-    background: var(--theme-elevated-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .device-action-btn:hover:not(:disabled),
 [data-theme="dark"] .node-manager-change-image-btn:hover,
 [data-theme="dark"] .workspace-page-actions button:hover:not(:disabled),
 [data-theme="dark"] .mc-close-btn:hover {
-    background: var(--theme-card-hover) !important;
-    border-color: var(--theme-focus) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    border-color: var(--focus-ring-color) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .device-action-btn.primary,
@@ -2452,61 +2402,61 @@ body[data-theme="dark"] {
 [data-theme="dark"] .waypoints-tools-card,
 [data-theme="dark"] .waypoint-tools-panel,
 [data-theme="dark"] .waypoint-tools-list {
-    background: var(--theme-panel-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-card-bg) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .management-tools h3,
 [data-theme="dark"] .management-tools h4,
 [data-theme="dark"] .waypoints-tools-card h3,
 [data-theme="dark"] .waypoint-tools-panel h3 {
-    color: var(--theme-text) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .waypoint-tools-item {
-    background: var(--theme-card-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-bg-panel) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .waypoint-tools-main,
 [data-theme="dark"] .waypoint-tools-main strong {
-    color: var(--theme-text) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .waypoint-tools-main small,
 [data-theme="dark"] .waypoint-tools-meta {
-    color: var(--theme-text-secondary) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 [data-theme="dark"] .waypoint-tools-item:hover {
-    background: var(--theme-card-hover) !important;
+    background: var(--mc-button-secondary-bg) !important;
 }
 
 [data-theme="dark"] .waypoint-tools-item.is-selected {
-    background: color-mix(in srgb, #e14d68 18%, var(--theme-card-bg)) !important;
+    background: color-mix(in srgb, #e14d68 18%, var(--mc-bg-panel)) !important;
 }
 
 [data-theme="dark"] .waypoint-tools-item.is-selected.is-expired {
-    background: color-mix(in srgb, #a985d3 24%, var(--theme-card-bg)) !important;
+    background: color-mix(in srgb, #a985d3 24%, var(--mc-bg-panel)) !important;
 }
 
 /* Local node title. */
 [data-theme="dark"] .base-node-manager-entry,
 [data-theme="dark"] .base-card,
 [data-theme="dark"] .base-card-title {
-    background: var(--theme-panel-bg) !important;
-    border-color: var(--theme-border) !important;
+    background: var(--mc-card-bg) !important;
+    border-color: var(--mc-border) !important;
 }
 
 [data-theme="dark"] .base-node-name-stack #baseNodeName,
 [data-theme="dark"] .base-card-name {
-    color: var(--theme-text) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .base-status-uptime {
-    color: var(--theme-text-secondary) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 /* Light theme remains inverse: pale surfaces and dark readable text. */
@@ -2515,99 +2465,99 @@ body[data-theme="dark"] {
 :root:not([data-theme="dark"]) .device-hero-card,
 :root:not([data-theme="dark"]) .device-info-card,
 :root:not([data-theme="dark"]) .peripheral-card {
-    background: var(--theme-card-bg);
-    border-color: var(--theme-border);
-    color: var(--theme-text);
+    background: var(--mc-bg-panel);
+    border-color: var(--mc-border);
+    color: var(--mc-text-primary);
 }
 
 :root:not([data-theme="dark"]) .device-card-title,
 :root:not([data-theme="dark"]) .node-manager-section-heading h3,
 :root:not([data-theme="dark"]) .peripheral-card-header h3,
 :root:not([data-theme="dark"]) .device-detail-list dd {
-    color: var(--theme-text);
+    color: var(--mc-text-primary);
 }
 
 :root:not([data-theme="dark"]) .device-detail-list dt,
 :root:not([data-theme="dark"]) .node-manager-section-heading p,
 :root:not([data-theme="dark"]) .device-card-eyebrow {
-    color: var(--theme-text-secondary);
+    color: var(--mc-text-secondary);
 }
 /* ============================================================
    WAYPOINT CREATE DIALOG - LIGHT / DARK THEME FIX
    ============================================================ */
 
 .waypoint-create-dialog {
-    background: var(--theme-card-bg, #ffffff);
-    border-color: var(--theme-border, #d5dfeb);
-    color: var(--theme-text, #14243a);
+    background: var(--mc-bg-panel, #ffffff);
+    border-color: var(--mc-border, #d5dfeb);
+    color: var(--mc-text-primary, #14243a);
 }
 
 .waypoint-create-header,
 .waypoint-create-footer {
-    background: var(--theme-card-bg, #ffffff);
-    border-color: var(--theme-border-soft, #e7edf4);
+    background: var(--mc-bg-panel, #ffffff);
+    border-color: var(--mc-border-soft, #e7edf4);
 }
 
 .waypoint-create-header strong,
 .waypoint-create-body label {
-    color: var(--theme-text, #14243a);
+    color: var(--mc-text-primary, #14243a);
 }
 
 .waypoint-create-header small,
 .waypoint-create-note,
 .waypoint-create-notify {
-    color: var(--theme-text-secondary, #506983);
+    color: var(--mc-text-secondary, #506983);
 }
 
 .waypoint-create-header button {
-    color: var(--theme-text-secondary, #506983);
+    color: var(--mc-text-secondary, #506983);
 }
 
 .waypoint-create-header button:hover {
-    color: var(--theme-text, #14243a);
+    color: var(--mc-text-primary, #14243a);
 }
 
 .waypoint-create-body input,
 .waypoint-create-body textarea,
 .waypoint-create-body select {
-    background: var(--theme-workspace-bg, #f7f9fc);
-    border-color: var(--theme-border, #d5dfeb);
-    color: var(--theme-text, #14243a);
+    background: var(--mc-bg-workspace, #f7f9fc);
+    border-color: var(--mc-border, #d5dfeb);
+    color: var(--mc-text-primary, #14243a);
 }
 
 .waypoint-create-body input::placeholder,
 .waypoint-create-body textarea::placeholder {
-    color: var(--theme-text-muted, #7d91a7);
+    color: var(--mc-text-muted, #7d91a7);
 }
 
 .waypoint-create-body input:focus,
 .waypoint-create-body textarea:focus,
 .waypoint-create-body select:focus {
-    border-color: var(--theme-focus, #4f8cff);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-focus, #4f8cff) 24%, transparent);
+    border-color: var(--focus-ring-color, #4f8cff);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring-color, #4f8cff) 24%, transparent);
     outline: none;
 }
 
 .waypoint-create-coordinates {
-    background: var(--theme-elevated-bg, #edf4fb);
-    color: var(--theme-text-secondary, #506983);
+    background: var(--mc-button-secondary-bg, #edf4fb);
+    color: var(--mc-text-secondary, #506983);
 }
 
 .waypoint-create-footer .secondary {
     background: transparent;
-    border-color: var(--theme-border, #d5dfeb);
-    color: var(--theme-text-secondary, #506983);
+    border-color: var(--mc-border, #d5dfeb);
+    color: var(--mc-text-secondary, #506983);
 }
 
 .waypoint-create-footer .secondary:hover:not(:disabled) {
-    background: var(--theme-card-hover, #f4f8fd);
-    border-color: var(--theme-focus, #4f8cff);
-    color: var(--theme-text, #14243a);
+    background: var(--mc-button-secondary-bg, #f4f8fd);
+    border-color: var(--focus-ring-color, #4f8cff);
+    color: var(--mc-text-primary, #14243a);
 }
 
 .waypoint-create-footer .primary {
-    background: var(--theme-accent, #1769e0);
-    border-color: var(--theme-accent, #1769e0);
+    background: var(--mc-primary, #1769e0);
+    border-color: var(--mc-primary, #1769e0);
     color: #ffffff;
 }
 
@@ -2622,9 +2572,9 @@ body[data-theme="dark"] {
 
 [data-theme="dark"] .waypoint-create-dialog,
 body[data-theme="dark"] .waypoint-create-dialog {
-    background: var(--theme-card-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-bg-panel) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
     box-shadow: 0 24px 70px rgba(0, 0, 0, .52);
 }
 
@@ -2632,15 +2582,15 @@ body[data-theme="dark"] .waypoint-create-dialog {
 [data-theme="dark"] .waypoint-create-footer,
 body[data-theme="dark"] .waypoint-create-header,
 body[data-theme="dark"] .waypoint-create-footer {
-    background: var(--theme-card-bg) !important;
-    border-color: var(--theme-border-soft) !important;
+    background: var(--mc-bg-panel) !important;
+    border-color: var(--mc-border-soft) !important;
 }
 
 [data-theme="dark"] .waypoint-create-header strong,
 [data-theme="dark"] .waypoint-create-body label,
 body[data-theme="dark"] .waypoint-create-header strong,
 body[data-theme="dark"] .waypoint-create-body label {
-    color: var(--theme-text) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .waypoint-create-header small,
@@ -2649,17 +2599,17 @@ body[data-theme="dark"] .waypoint-create-body label {
 body[data-theme="dark"] .waypoint-create-header small,
 body[data-theme="dark"] .waypoint-create-note,
 body[data-theme="dark"] .waypoint-create-notify {
-    color: var(--theme-text-secondary) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 [data-theme="dark"] .waypoint-create-header button,
 body[data-theme="dark"] .waypoint-create-header button {
-    color: var(--theme-text-secondary) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 [data-theme="dark"] .waypoint-create-header button:hover,
 body[data-theme="dark"] .waypoint-create-header button:hover {
-    color: var(--theme-text) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .waypoint-create-body input,
@@ -2669,35 +2619,35 @@ body[data-theme="dark"] .waypoint-create-body input,
 body[data-theme="dark"] .waypoint-create-body textarea,
 body[data-theme="dark"] .waypoint-create-body select {
     background: #0f1a26 !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .waypoint-create-body input::placeholder,
 [data-theme="dark"] .waypoint-create-body textarea::placeholder,
 body[data-theme="dark"] .waypoint-create-body input::placeholder,
 body[data-theme="dark"] .waypoint-create-body textarea::placeholder {
-    color: var(--theme-text-muted) !important;
+    color: var(--mc-text-muted) !important;
 }
 
 [data-theme="dark"] .waypoint-create-coordinates,
 body[data-theme="dark"] .waypoint-create-coordinates {
-    background: var(--theme-elevated-bg) !important;
-    color: var(--theme-text-secondary) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 [data-theme="dark"] .waypoint-create-footer .secondary,
 body[data-theme="dark"] .waypoint-create-footer .secondary {
     background: transparent !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text-secondary) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 [data-theme="dark"] .waypoint-create-footer .secondary:hover:not(:disabled),
 body[data-theme="dark"] .waypoint-create-footer .secondary:hover:not(:disabled) {
-    background: var(--theme-card-hover) !important;
-    border-color: var(--theme-focus) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    border-color: var(--focus-ring-color) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .waypoint-create-footer .primary,
@@ -2732,7 +2682,7 @@ body[data-theme="dark"] .waypoint-create-footer .primary {
     height: 16px !important;
     margin: 0 !important;
     padding: 0 !important;
-    accent-color: var(--theme-accent, #1769e0);
+    accent-color: var(--mc-primary, #1769e0);
     cursor: pointer;
 }
 
@@ -2768,34 +2718,34 @@ body[data-theme="dark"] .waypoint-create-footer .primary {
 
 [data-theme="dark"] .node-detail-card,
 body[data-theme="dark"] .node-detail-card {
-    background: var(--theme-panel-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-card-bg) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .node-detail-tabs,
 body[data-theme="dark"] .node-detail-tabs {
-    border-bottom-color: var(--theme-border) !important;
+    border-bottom-color: var(--mc-border) !important;
 }
 
 [data-theme="dark"] .node-detail-tab,
 body[data-theme="dark"] .node-detail-tab {
     background: transparent !important;
-    color: var(--theme-text-secondary) !important;
+    color: var(--mc-text-secondary) !important;
     border-color: transparent !important;
 }
 
 [data-theme="dark"] .node-detail-tab:hover,
 body[data-theme="dark"] .node-detail-tab:hover {
-    background: var(--theme-card-hover) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .node-detail-tab.active,
 body[data-theme="dark"] .node-detail-tab.active {
-    background: var(--theme-elevated-bg) !important;
-    color: var(--theme-accent) !important;
-    border-bottom-color: var(--theme-accent) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    color: var(--mc-primary) !important;
+    border-bottom-color: var(--mc-primary) !important;
 }
 
 /* Main cards across all detail tabs. */
@@ -2811,9 +2761,9 @@ body[data-theme="dark"] .node-detail-card .radio-history,
 body[data-theme="dark"] .node-detail-card .data-group,
 body[data-theme="dark"] .node-detail-card .log-summary,
 body[data-theme="dark"] .node-detail-card .log-events {
-    background: var(--theme-card-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-bg-panel) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 /* Titles and values. */
@@ -2833,7 +2783,7 @@ body[data-theme="dark"] .node-detail-card .data-group-title,
 body[data-theme="dark"] .node-detail-card .data-grid .value,
 body[data-theme="dark"] .node-detail-card .log-summary-item .value,
 body[data-theme="dark"] .node-detail-card .log-event strong {
-    color: var(--theme-text) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 /* Labels, secondary information and empty states. */
@@ -2865,7 +2815,7 @@ body[data-theme="dark"] .node-detail-card .data-grid .label,
 body[data-theme="dark"] .node-detail-card .data-no-data,
 body[data-theme="dark"] .node-detail-card .log-summary-item .label,
 body[data-theme="dark"] .node-detail-card .log-event {
-    color: var(--theme-text-secondary) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 /* Internal separators. */
@@ -2877,7 +2827,7 @@ body[data-theme="dark"] .node-detail-card .radio-param,
 body[data-theme="dark"] .node-detail-card .coord,
 body[data-theme="dark"] .node-detail-card .data-grid > div,
 body[data-theme="dark"] .node-detail-card .log-summary-item {
-    border-bottom-color: var(--theme-border-soft) !important;
+    border-bottom-color: var(--mc-border-soft) !important;
 }
 
 /* Action buttons at the bottom of Overview, Radio, Position and Data. */
@@ -2893,9 +2843,9 @@ body[data-theme="dark"] .node-detail-card .position-actions button,
 body[data-theme="dark"] .node-detail-card .data-actions button,
 body[data-theme="dark"] .node-detail-card .data-request,
 body[data-theme="dark"] .node-detail-card .position-no-data button {
-    background: var(--theme-elevated-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .node-detail-card .quick-action:hover:not(:disabled),
@@ -2910,30 +2860,30 @@ body[data-theme="dark"] .node-detail-card .position-actions button:hover:not(:di
 body[data-theme="dark"] .node-detail-card .data-actions button:hover:not(:disabled),
 body[data-theme="dark"] .node-detail-card .data-request:hover:not(:disabled),
 body[data-theme="dark"] .node-detail-card .position-no-data button:hover:not(:disabled) {
-    background: var(--theme-card-hover) !important;
-    border-color: var(--theme-focus) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    border-color: var(--focus-ring-color) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 /* Preserve blue informational emphasis without returning to a light card. */
 [data-theme="dark"] .node-detail-card .node-detail-last-msg,
 body[data-theme="dark"] .node-detail-card .node-detail-last-msg {
-    border-left-color: var(--theme-accent) !important;
+    border-left-color: var(--mc-primary) !important;
 }
 
 [data-theme="dark"] .node-detail-card .data-request,
 [data-theme="dark"] .node-detail-card .position-no-data button,
 body[data-theme="dark"] .node-detail-card .data-request,
 body[data-theme="dark"] .node-detail-card .position-no-data button {
-    color: var(--theme-accent) !important;
+    color: var(--mc-primary) !important;
 }
 
 /* Disabled controls remain readable but clearly inactive. */
 [data-theme="dark"] .node-detail-card button:disabled,
 body[data-theme="dark"] .node-detail-card button:disabled {
-    background: color-mix(in srgb, var(--theme-card-bg) 78%, #000000) !important;
-    border-color: var(--theme-border-soft) !important;
-    color: var(--theme-text-muted) !important;
+    background: color-mix(in srgb, var(--mc-bg-panel) 78%, #000000) !important;
+    border-color: var(--mc-border-soft) !important;
+    color: var(--mc-text-muted) !important;
     opacity: .66;
 }
 
@@ -2943,9 +2893,9 @@ body[data-theme="dark"] .node-detail-card button:disabled {
 :root:not([data-theme="dark"]) .node-detail-card .log-summary,
 :root:not([data-theme="dark"]) .node-detail-card .log-events,
 :root:not([data-theme="dark"]) .node-detail-card .tile {
-    background: var(--theme-card-bg, #ffffff);
-    border-color: var(--theme-border, #d5dfeb);
-    color: var(--theme-text, #14243a);
+    background: var(--mc-bg-panel, #ffffff);
+    border-color: var(--mc-border, #d5dfeb);
+    color: var(--mc-text-primary, #14243a);
 }
 
 /* ============================================================
@@ -2954,29 +2904,29 @@ body[data-theme="dark"] .node-detail-card button:disabled {
 
 [data-theme="dark"] .node-detail-card .log-events-title,
 body[data-theme="dark"] .node-detail-card .log-events-title {
-    color: var(--theme-text) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .node-detail-card .log-history-placeholder,
 body[data-theme="dark"] .node-detail-card .log-history-placeholder {
-    background: var(--theme-elevated-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text-secondary) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 [data-theme="dark"] .node-detail-card .log-time,
 body[data-theme="dark"] .node-detail-card .log-time {
-    color: var(--theme-text-muted) !important;
+    color: var(--mc-text-muted) !important;
 }
 
 [data-theme="dark"] .node-detail-card .log-text,
 body[data-theme="dark"] .node-detail-card .log-text {
-    color: var(--theme-text) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .node-detail-card .log-event,
 body[data-theme="dark"] .node-detail-card .log-event {
-    border-bottom-color: var(--theme-border-soft) !important;
+    border-bottom-color: var(--mc-border-soft) !important;
 }
 
 /* Toolkit tab and radio profile activation */
@@ -2985,8 +2935,8 @@ body[data-theme="dark"] .node-detail-card .log-event {
 }
 
 .node-profile-card:not(.is-active):hover {
-    border-color: var(--theme-focus, #4f8cff);
-    background: var(--theme-card-hover, #f4f8fd);
+    border-color: var(--focus-ring-color, #4f8cff);
+    background: var(--mc-button-secondary-bg, #f4f8fd);
 }
 
 .node-profile-card.is-switching {
@@ -2995,20 +2945,20 @@ body[data-theme="dark"] .node-detail-card .log-event {
 }
 
 .node-profile-badge.saved {
-    background: var(--theme-elevated-bg, #edf4fb);
-    color: var(--theme-text-secondary, #506983);
+    background: var(--mc-button-secondary-bg, #edf4fb);
+    color: var(--mc-text-secondary, #506983);
 }
 
 [data-theme="dark"] .node-profile-card:not(.is-active):hover,
 body[data-theme="dark"] .node-profile-card:not(.is-active):hover {
-    border-color: var(--theme-focus) !important;
-    background: var(--theme-card-hover) !important;
+    border-color: var(--focus-ring-color) !important;
+    background: var(--mc-button-secondary-bg) !important;
 }
 
 [data-theme="dark"] .node-profile-badge.saved,
 body[data-theme="dark"] .node-profile-badge.saved {
-    background: var(--theme-elevated-bg) !important;
-    color: var(--theme-text-secondary) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    color: var(--mc-text-secondary) !important;
 }
 
 /* Node Manager - radio discovery controls */
@@ -3021,10 +2971,10 @@ body[data-theme="dark"] .node-profile-badge.saved {
 .node-manager-detect-radio-btn {
     min-height: 30px;
     padding: 5px 11px;
-    border: 1px solid var(--theme-border, #d5dfeb);
+    border: 1px solid var(--mc-border, #d5dfeb);
     border-radius: 9px;
-    background: var(--theme-elevated-bg, #edf4fb);
-    color: var(--theme-text, #14243a);
+    background: var(--mc-button-secondary-bg, #edf4fb);
+    color: var(--mc-text-primary, #14243a);
     font: inherit;
     font-size: 12px;
     font-weight: 700;
@@ -3032,21 +2982,21 @@ body[data-theme="dark"] .node-profile-badge.saved {
 }
 
 .node-manager-detect-radio-btn:hover {
-    border-color: var(--theme-focus, #4f8cff);
-    background: var(--theme-card-hover, #f4f8fd);
+    border-color: var(--focus-ring-color, #4f8cff);
+    background: var(--mc-button-secondary-bg, #f4f8fd);
 }
 
 [data-theme="dark"] .node-manager-detect-radio-btn,
 body[data-theme="dark"] .node-manager-detect-radio-btn {
-    background: var(--theme-elevated-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 [data-theme="dark"] .node-manager-detect-radio-btn:hover,
 body[data-theme="dark"] .node-manager-detect-radio-btn:hover {
-    background: var(--theme-card-hover) !important;
-    border-color: var(--theme-focus) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    border-color: var(--focus-ring-color) !important;
 }
 
 @media (max-width: 700px) {
@@ -3073,10 +3023,10 @@ body[data-theme="dark"] .node-manager-detect-radio-btn:hover {
     min-width: min(420px, calc(100vw - 28px));
     max-width: min(620px, calc(100vw - 28px));
     padding: 12px 14px;
-    border: 1px solid var(--theme-border, #cbd8e6);
+    border: 1px solid var(--mc-border, #cbd8e6);
     border-radius: 12px;
-    background: var(--theme-elevated-bg, #ffffff);
-    color: var(--theme-text, #14243a);
+    background: var(--mc-button-secondary-bg, #ffffff);
+    color: var(--mc-text-primary, #14243a);
     box-shadow: 0 14px 38px rgba(10, 25, 45, .24);
     opacity: 0;
     transform: translate(-50%, 16px);
@@ -3095,7 +3045,7 @@ body[data-theme="dark"] .node-manager-detect-radio-btn:hover {
    #d34f5d -> --mc-danger (d=19.0, correct semantic role). Both are
    border-colors (a UI-component role, not text), consolidated. */
 .waypoint-action-toast.sending {
-    border-color: var(--theme-focus, #4f8cff);
+    border-color: var(--focus-ring-color, #4f8cff);
 }
 
 .waypoint-action-toast.success {
@@ -3128,18 +3078,18 @@ body[data-theme="dark"] .node-manager-detect-radio-btn:hover {
 .waypoint-action-toast button {
     min-height: 34px;
     padding: 6px 12px;
-    border: 1px solid var(--theme-border, #cbd8e6);
+    border: 1px solid var(--mc-border, #cbd8e6);
     border-radius: 8px;
-    background: var(--theme-card-bg, #f6f9fc);
-    color: var(--theme-text, #14243a);
+    background: var(--mc-bg-panel, #f6f9fc);
+    color: var(--mc-text-primary, #14243a);
     font: inherit;
     font-weight: 700;
     cursor: pointer;
 }
 
 .waypoint-action-toast button.retry {
-    border-color: var(--theme-focus, #4f8cff);
-    background: var(--theme-focus, #2b72dc);
+    border-color: var(--focus-ring-color, #4f8cff);
+    background: var(--focus-ring-color, #2b72dc);
     color: #fff;
 }
 
@@ -3151,9 +3101,9 @@ body[data-theme="dark"] .node-manager-detect-radio-btn:hover {
    --theme-text's dark values match any current --mc-* token exactly). */
 [data-theme="dark"] .waypoint-action-toast,
 body[data-theme="dark"] .waypoint-action-toast {
-    background: var(--theme-elevated-bg) !important;
-    border-color: var(--theme-border) !important;
-    color: var(--theme-text) !important;
+    background: var(--mc-button-secondary-bg) !important;
+    border-color: var(--mc-border) !important;
+    color: var(--mc-text-primary) !important;
 }
 
 /* raw: error-state border, not part of the legacy bundle above (theme-registry

@@ -4116,11 +4116,17 @@ html[data-theme-family="sharp"] {
    already correct for both since fg/base don't change here. --mc-warning-
    soft is the surface token - re-grepped for Stage 9.2 and found this
    comment's own earlier "the only consumer" claim (.node-card.favorite,
-   ui-kit.css:270) was incomplete: style-part3.css:3935's
+   ui-kit.css:270) was incomplete: style-part3.css:3935's unqualified
    .notification-warning .notification-item-icon background also consumes
-   it, in both light and dark. This override is therefore genuinely
-   load-bearing for that real warning consumer, independent of the
-   favorite-role question below - left exactly as-is.
+   it - but only in LIGHT mode. Under dark specifically, the more specific
+   style-part3.css:3969 [data-theme="dark"] .notification-warning
+   .notification-item-icon rule wins and uses a raw rgba(196,143,31,.17)
+   value instead of this token - re-checked directly against that
+   selector, not assumed from the light-mode rule. So Gunmetal's dark
+   --mc-warning-soft override above is currently unused dead code, not
+   load-bearing for anything. Left unchanged in this PR anyway (removing
+   it, or reconnecting the dark notification rule to the token, is
+   unrelated cleanup, not this bug fix).
    Success/danger/info get no Gunmetal exception at all and stay unset.
 
    Stage 9.2 (fix bug 1.2) update: #c2a669 (the source doc's "favorite/
@@ -4319,10 +4325,16 @@ html[data-theme-family="gunmetal"] {
    Stage 9.2 and found this comment's own earlier "only ever used as a
    soft background wash" list was incomplete: besides .node-card.favorite
    (ui-kit.css:270) and the dark-mode !important restore, style-
-   part3.css:3935's .notification-warning .notification-item-icon
-   background also consumes it, in both light and dark. This override
-   remains genuinely load-bearing for that real warning consumer,
-   independent of the favorite-role question below - left exactly as-is.
+   part3.css:3935's unqualified .notification-warning .notification-item-
+   icon background also consumes it - but only in LIGHT mode. Under dark
+   specifically, the more specific style-part3.css:3969 [data-theme="dark"]
+   .notification-warning .notification-item-icon rule wins and uses a raw
+   rgba(196,143,31,.17) value instead of this token - re-checked directly
+   against that selector, not assumed from the light-mode rule. So
+   Alpine's dark --mc-warning-soft override above is currently unused dead
+   code, not load-bearing for anything. Left unchanged in this PR anyway
+   (removing it, or reconnecting the dark notification rule to the token,
+   is unrelated cleanup, not this bug fix).
 
    Border (#f08a24) and fill/base (#a84300, the value --mc-warning did NOT
    take) have no existing token to land on - re-checked specifically for

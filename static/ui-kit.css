@@ -3565,24 +3565,42 @@ body[data-theme="dark"] .workspace-popover::after {
     --mc-button-secondary-border-hover: #bdccdc;
     --mc-button-secondary-text: #274766;
 
-    /* Tabs */
-    --mc-tab-bg: #f7f9fc;
-    --mc-tab-bg-hover: #ffffff;
-    --mc-tab-bg-active: #ffffff;
+    /* Tabs (theme-registry Stage 9.1 - fix bug 1.1: tab/popover/chat never
+       followed the active family. Converted to var() aliases wherever the
+       literal is a near-zero RGB-distance match to a base surface/text/
+       border/accent token (recomputed against static/ui-kit.css's actual
+       light values, not assumed) - renders pixel-identical in Original,
+       live-verified, and now correctly inherits a family's own palette.
+       --mc-tab-text/--mc-tab-text-active are a genuinely distinct role in
+       light (nearest base candidates are 31-67 RGB distance away, not a
+       near-duplicate by any reasonable threshold) - left as their own
+       literal here; each family block gets its own explicit override
+       instead of a forced bad alias (see the family blocks below). */
+    --mc-tab-bg: var(--mc-bg-subtle);
+    --mc-tab-bg-hover: var(--mc-bg-panel);
+    --mc-tab-bg-active: var(--mc-bg-panel);
     --mc-tab-text: #334b68;
     --mc-tab-text-active: #102f5c;
-    --mc-tab-line-active: #214f91;
+    --mc-tab-line-active: var(--mc-accent);
 
-    /* Shared popovers and menus */
-    --mc-popover-bg: #ffffff;
-    --mc-popover-header-bg: #f7f9fc;
-    --mc-popover-item-hover: #eef3f8;
-    --mc-popover-divider: #e5eaf0;
-    --mc-popover-border: #d7dee8;
+    /* Shared popovers and menus (theme-registry Stage 9.1, same reasoning
+       as Tabs above). --mc-popover-text/--mc-popover-muted are likewise
+       genuinely distinct roles in light (nearest base candidates 30-31 RGB
+       distance away) - left literal, family overrides added instead.
+       --mc-popover-shadow is left as a shared literal in both canonical
+       blocks (light and dark) - a shadow's blur/spread/alpha reads as
+       elevation, not family hue, and no family currently needs its own
+       shadow tone; revisit only if a future family's own shadow needs
+       differ. */
+    --mc-popover-bg: var(--mc-bg-panel);
+    --mc-popover-header-bg: var(--mc-bg-subtle);
+    --mc-popover-item-hover: var(--mc-bg-muted);
+    --mc-popover-divider: var(--mc-border-soft);
+    --mc-popover-border: var(--mc-border);
     --mc-popover-text: #26364b;
     --mc-popover-muted: #7a8798;
-    --mc-popover-control-bg: #eef3f8;
-    --mc-popover-control-hover: #e1e9f2;
+    --mc-popover-control-bg: var(--mc-bg-muted);
+    --mc-popover-control-hover: var(--mc-border-soft);
     --mc-popover-shadow: 0 14px 34px rgba(15, 23, 42, .20);
 
     /* Chat */
@@ -3744,33 +3762,69 @@ html[data-theme="dark"] {
     --mc-button-secondary-border-hover: #4b6685;
     --mc-button-secondary-text: #eef6ff;
 
-    /* Tabs */
-    --mc-tab-bg: #121c28;
-    --mc-tab-bg-hover: #182535;
-    --mc-tab-bg-active: #1d2b3b;
+    /* Tabs (theme-registry Stage 9.1 - fix bug 1.1, dark half; see the
+       :root block above for the shared rationale). --mc-tab-text and
+       --mc-tab-line-active are genuinely distinct in DARK specifically
+       (18.6 and 25.9 RGB distance from their nearest base candidate,
+       text-secondary and primary/accent respectively) - note the
+       asymmetry with light, where tab-line-active *is* an exact alias
+       (light's literal was deliberately set equal to --mc-accent; dark's
+       was deliberately set brighter than --mc-primary/--mc-accent for
+       visibility against a dark background, not a near-duplicate). Both
+       left literal here; family overrides added in the 3 dark families
+       instead (Gunmetal/Alpine/Teal Dark - see those blocks below). */
+    --mc-tab-bg: var(--mc-bg-workspace);
+    --mc-tab-bg-hover: var(--mc-bg-panel);
+    --mc-tab-bg-active: var(--mc-bg-panel);
     --mc-tab-text: #b7c6d6;
-    --mc-tab-text-active: #f4f8fc;
+    --mc-tab-text-active: var(--mc-text-primary);
     --mc-tab-line-active: #4f9cff;
 
-    /* Shared popovers and menus */
-    --mc-popover-bg: #1b2837;
-    --mc-popover-header-bg: #162231;
-    --mc-popover-item-hover: #223349;
-    --mc-popover-divider: #2f3e50;
-    --mc-popover-border: #3a526d;
-    --mc-popover-text: #eef6ff;
+    /* Shared popovers and menus (theme-registry Stage 9.1, dark half).
+       --mc-popover-item-hover/-border/-control-bg/-control-hover alias to
+       the --mc-button-secondary-* "control surface"/"control border" roles
+       (exact 0.0 RGB-distance matches here) rather than a generic
+       surface/border base token - this mirrors the family blocks' own
+       already-established convention (see e.g. the Gunmetal family
+       comment's "surface-control -> --mc-button-secondary-bg" / "border-
+       control -> --mc-button-secondary-border" mapping), not a new
+       precedent. --mc-popover-muted stays a genuinely distinct literal in
+       dark too (20.7 RGB distance from its nearest base candidate,
+       text-muted) - family override added instead. */
+    --mc-popover-bg: var(--mc-bg-panel);
+    --mc-popover-header-bg: var(--mc-bg-subtle);
+    --mc-popover-item-hover: var(--mc-button-secondary-bg);
+    --mc-popover-divider: var(--mc-border);
+    --mc-popover-border: var(--mc-button-secondary-border);
+    --mc-popover-text: var(--mc-text-primary);
     --mc-popover-muted: #9fb0c3;
-    --mc-popover-control-bg: #223349;
-    --mc-popover-control-hover: #2b4059;
+    --mc-popover-control-bg: var(--mc-button-secondary-bg);
+    --mc-popover-control-hover: var(--mc-button-secondary-bg-hover);
     --mc-popover-shadow: 0 16px 38px rgba(0, 0, 0, .48);
 
-    /* Chat */
-    --mc-chat-bg: #111c29;
-    --mc-chat-surface: #182636;
-    --mc-chat-surface-raised: #203044;
-    --mc-chat-border: #2e4258;
-    --mc-chat-input: #1b2b3d;
-    --mc-chat-text: #eef6ff;
+    /* Chat (theme-registry Stage 9.1 - fix bug 1.1; light's chat block was
+       already aliased since Stage 2.1, dark never was). Recomputed each
+       token against every base token independently rather than assuming
+       dark mirrors light's exact role choice - most do (surface/border/
+       text land on the same base role as light), but --mc-chat-surface-
+       raised and --mc-chat-input land on a different, closer-fitting base
+       token in dark than the one light uses (bg-muted/bg-panel here vs
+       bg-panel/bg-workspace in light) because dark's hand-tuned literals
+       simply sit closer to those instead - picked whichever base token
+       the actual dark literal is nearest to (all within ~9 RGB distance,
+       verified pixel-negligible live) rather than force-mirroring light's
+       role and accepting a bigger, visible drift. --mc-chat-muted (20.7
+       from its nearest candidate, text-muted) is genuinely distinct in
+       dark, same as light's chat-unread tokens' precedent - left literal,
+       family override added in the 3 dark families instead.
+       --mc-chat-unread-* is untouched (Stage 2.1's own documented
+       exception, light-only, not part of this fix). */
+    --mc-chat-bg: var(--mc-bg-workspace);
+    --mc-chat-surface: var(--mc-bg-subtle);
+    --mc-chat-surface-raised: var(--mc-bg-muted);
+    --mc-chat-border: var(--mc-border);
+    --mc-chat-input: var(--mc-bg-panel);
+    --mc-chat-text: var(--mc-text-primary);
     --mc-chat-muted: #9fb0c3;
 
     /* Dark controls */
@@ -3967,6 +4021,19 @@ html[data-theme-family="sharp"] {
     --mc-success-soft: #d9fff1;
     --mc-danger: #b42332;
     --mc-danger-soft: #ffe9e9;
+
+    /* theme-registry Stage 9.1 (fix bug 1.1) - tab-text/tab-text-active/
+       popover-text/popover-muted are genuinely distinct roles in the
+       canonical light block (no near-zero base-token match), so they
+       stay a literal there and every light-mode family needs its own
+       explicit override instead of inheriting a forced-bad alias. Reusing
+       Sharp's own already-declared text-primary/text-secondary rather
+       than inventing a new hue - same "no arbitrary new hue" judgment
+       already applied to Sharp's other family-specific choices above. */
+    --mc-tab-text: var(--mc-text-secondary);
+    --mc-tab-text-active: var(--mc-text-primary);
+    --mc-popover-text: var(--mc-text-primary);
+    --mc-popover-muted: var(--mc-text-secondary);
 }
 
 /* theme-registry Stage 5.1: MeshCenter Gunmetal - a 'fixed', DARK-only
@@ -4080,6 +4147,19 @@ html[data-theme-family="gunmetal"] {
        are identical to the inherited dark value and need no override.
        No success/danger/info exception for Gunmetal. */
     --mc-warning-soft: #473529;
+
+    /* theme-registry Stage 9.1 (fix bug 1.1) - tab-text/tab-line-active/
+       popover-muted/chat-muted are genuinely distinct roles in the
+       canonical dark block (no near-zero base-token match), so each dark
+       family needs its own explicit override. --mc-tab-line-active reuses
+       --mc-primary-hover (Gunmetal's own brighter accent variant) rather
+       than --mc-accent/--mc-primary, matching the canonical dark block's
+       own intent of a brighter-than-primary active-tab indicator; the
+       other three reuse Gunmetal's own text-secondary. */
+    --mc-tab-text: var(--mc-text-secondary);
+    --mc-tab-line-active: var(--mc-primary-hover);
+    --mc-popover-muted: var(--mc-text-secondary);
+    --mc-chat-muted: var(--mc-text-secondary);
 }
 
 /* theme-registry Stage 6.1: MeshCenter Alpine - a 'fixed', DARK-only
@@ -4212,6 +4292,17 @@ html[data-theme-family="alpine"] {
        success/danger/info exception for Alpine. */
     --mc-warning: #ff9a3d;
     --mc-warning-soft: #3a281a;
+
+    /* theme-registry Stage 9.1 (fix bug 1.1) - same reasoning as
+       Gunmetal's own Stage 9.1 addendum above: tab-text/tab-line-active/
+       popover-muted/chat-muted are genuinely distinct roles in the
+       canonical dark block, so each dark family gets its own explicit
+       override, reusing Alpine's own already-declared text-secondary/
+       primary-hover rather than inventing a new hue. */
+    --mc-tab-text: var(--mc-text-secondary);
+    --mc-tab-line-active: var(--mc-primary-hover);
+    --mc-popover-muted: var(--mc-text-secondary);
+    --mc-chat-muted: var(--mc-text-secondary);
 }
 
 /* theme-registry Stage 7.1: MeshCenter Teal Dark - wired provisionally as
@@ -4318,6 +4409,17 @@ html[data-theme-family="teal"][data-theme="dark"] {
     --mc-primary: #10c2c2;
     --mc-primary-hover: #13ebeb;
     --mc-accent: #10c2c2;
+
+    /* theme-registry Stage 9.1 (fix bug 1.1) - same reasoning as
+       Gunmetal/Alpine's own Stage 9.1 addenda above: tab-text/
+       tab-line-active/popover-muted/chat-muted are genuinely distinct
+       roles in the canonical dark block, so Teal Dark gets its own
+       explicit override too, reusing its own already-declared
+       text-secondary/primary-hover. */
+    --mc-tab-text: var(--mc-text-secondary);
+    --mc-tab-line-active: var(--mc-primary-hover);
+    --mc-popover-muted: var(--mc-text-secondary);
+    --mc-chat-muted: var(--mc-text-secondary);
 }
 
 /* theme-registry Stage 8.1: MeshCenter Teal Light - the second half of
@@ -4403,5 +4505,16 @@ html[data-theme-family="teal"][data-theme="light"] {
     --mc-primary: #096c6c;
     --mc-primary-hover: #075656;
     --mc-accent: #096c6c;
+
+    /* theme-registry Stage 9.1 (fix bug 1.1) - same reasoning as Sharp's
+       own Stage 9.1 addendum above (this is Teal's light-mode half):
+       tab-text/tab-text-active/popover-text/popover-muted are genuinely
+       distinct roles in the canonical light block, so Teal Light gets its
+       own explicit override too, reusing its own already-declared
+       text-primary/text-secondary. */
+    --mc-tab-text: var(--mc-text-secondary);
+    --mc-tab-text-active: var(--mc-text-primary);
+    --mc-popover-text: var(--mc-text-primary);
+    --mc-popover-muted: var(--mc-text-secondary);
 }
 

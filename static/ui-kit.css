@@ -221,7 +221,11 @@ body {
 .time-btn,
 .cpu-range-btn,
 .telemetry-time-controls .time-btn {
-    background: var(--mc-bg-subtle);
+    /* theme-registry Stage 9.4 - fix bug 1.5: was var(--mc-bg-subtle),
+       part of the interactive-control role (rest/hover/active state
+       machine) carved out into its own token (same value today, see
+       :root's own Stage 9.4 comment). */
+    background: var(--mc-surface-control);
     color: var(--mc-text-secondary);
     border-color: var(--mc-border);
 }
@@ -298,7 +302,10 @@ body {
 .node-detail-placeholder,
 .node-detail-pane .empty-state,
 .node-event-history-empty {
-    background: var(--mc-bg-subtle);
+    /* theme-registry Stage 9.4 - fix bug 1.5: was var(--mc-bg-subtle),
+       part of the sunken/empty-state role carved out into its own token
+       (same value today, see :root's own Stage 9.4 comment). */
+    background: var(--mc-surface-sunken);
     color: var(--mc-text-muted);
     border-color: var(--mc-border-soft);
 }
@@ -408,7 +415,11 @@ body {
 .map-provider-select,
 .reference-location-card select,
 .reference-location-card input {
-    background: var(--mc-bg-subtle);
+    /* theme-registry Stage 9.4 - fix bug 1.5: was var(--mc-bg-subtle),
+       same interactive-control role as .time-btn above (this cluster has
+       the same rest/hover/active-soft-primary state machine, confirmed
+       via .settings-segmented button:hover/.active below). */
+    background: var(--mc-surface-control);
     border-color: var(--mc-border);
     color: var(--mc-text-primary);
 }
@@ -3340,7 +3351,10 @@ body[data-theme="dark"] .workspace-page-close-btn:hover {
     justify-content: center;
     border: 1px solid var(--mc-border-soft);
     border-radius: var(--mc-card-radius, 12px);
-    background: var(--mc-bg-subtle);
+    /* theme-registry Stage 9.4 - fix bug 1.5: was var(--mc-bg-subtle),
+       part of the sunken/empty-state role carved out into its own token
+       (same value today, see :root's own Stage 9.4 comment). */
+    background: var(--mc-surface-sunken);
     text-align: center;
     box-shadow: var(--mc-shadow-panel);
 }
@@ -3365,8 +3379,10 @@ html[data-theme="dark"] .devices-content {
 }
 
 html[data-theme="dark"] .devices-empty-state {
+    /* theme-registry Stage 9.4 - fix bug 1.5: was var(--mc-bg-subtle), same
+       sunken/empty-state split as the light rule above. */
     border-color: var(--mc-border-soft);
-    background: var(--mc-bg-subtle);
+    background: var(--mc-surface-sunken);
 }
 
 
@@ -3602,6 +3618,47 @@ body[data-theme="dark"] .workspace-popover::after {
     --mc-bg-subtle: #f7f9fc;
     --mc-bg-muted: #eef3f8;
     --mc-bg-media-stage: #e9edf2;
+    --mc-surface-sunken: #f7f9fc;
+    --mc-surface-control: #f7f9fc;
+    /* theme-registry Stage 9.4 - fix bug 1.5: --mc-bg-subtle was serving
+       several structurally distinct roles (card surface, nav chrome,
+       scrollbar chrome, chat, AND sunken/empty-state, AND interactive
+       control surfaces) with no way for any one of them to diverge
+       independently. Path C (additive-only): --mc-bg-subtle keeps its
+       value and keeps covering the majority role (generic card/static
+       surface, nav chrome, scrollbar, chat - unchanged, still its
+       consumers). Two roles carved out into their own tokens above, same
+       value today (this is a structural split, not a color change -
+       nothing should render differently as a direct result of adding
+       these):
+         - surface-sunken: the empty-state/placeholder cluster
+           (.node-detail-empty/-placeholder/.empty-state/
+           .node-event-history-empty, .devices-empty-state) - reads as
+           "recessed" (paired with --mc-text-muted, no elevation), a
+           different visual intent than a card surface even though the
+           literal color coincides today.
+         - surface-control: the interactive-control cluster that shares a
+           real, repeated hover/active state machine (rest = this token,
+           hover = --mc-primary-soft, active = --mc-primary) -
+           .time-btn/.cpu-range-btn/.telemetry-time-controls .time-btn,
+           .settings-segmented button, .map-provider-select,
+           .reference-location-card select/input, light
+           .map-popup-actions button. This mirrors a role this project's
+           own family-block comments already name ("surface-control",
+           currently mapped to --mc-button-secondary-bg for OTHER
+           components) - a real, not purely theoretical, existing
+           semantic category in this codebase, just previously miswired
+           to --mc-bg-subtle for these specific components. NOT aliased
+           to --mc-button-secondary-bg here, though - that would be a
+           real value change (families already diverge button-secondary-
+           bg from bg-subtle), out of scope for this additive-only PR;
+           flagged as a natural follow-up in the PR description.
+       Card surface (.system-card/.settings-card/.about-*/.time-card/
+       .weather-card/etc.), nav chrome (.base-sidebar/.sidebar),
+       scrollbar chrome, and chat (.chat-list-container) stay on
+       --mc-bg-subtle directly - no concrete divergence need found for
+       any of them (no family overrides --mc-bg-subtle today, so nothing
+       currently forces these apart either). */
 
     --mc-surface: var(--mc-bg-panel);
     --mc-surface-soft: var(--mc-bg-subtle);
@@ -3833,6 +3890,11 @@ html[data-theme="dark"] {
     --mc-bg-subtle: #162231;
     --mc-bg-muted: #202f40;
     --mc-bg-media-stage: #101923;
+    /* theme-registry Stage 9.4 (fix bug 1.5, dark half) - see :root's own
+       comment for the full rationale. Same value as --mc-bg-subtle today
+       (a structural split, not a color change). */
+    --mc-surface-sunken: #162231;
+    --mc-surface-control: #162231;
 
     --mc-surface: var(--mc-bg-panel);
     --mc-surface-soft: var(--mc-bg-subtle);
@@ -4135,6 +4197,11 @@ html[data-theme-family="sharp"] {
     --mc-card-bg: #f0f1f2;
     --mc-button-secondary-bg: #e6e8e9;
     --mc-primary-soft: #d9fff1;
+    /* theme-registry Stage 9.4 (fix bug 1.5) - Sharp doesn't override
+       --mc-bg-subtle either, so this is just the explicit slot for future
+       divergence, same value it already inherits from :root today. */
+    --mc-surface-sunken: #f7f9fc;
+    --mc-surface-control: #f7f9fc;
 
     /* Text */
     --mc-text-primary: #2e2e2e;
@@ -4300,6 +4367,12 @@ html[data-theme-family="gunmetal"] {
     --mc-card-bg: #1d2225;
     --mc-button-secondary-bg: #23292d;
     --mc-primary-soft: #353e43;
+    /* theme-registry Stage 9.4 (fix bug 1.5) - Gunmetal doesn't override
+       --mc-bg-subtle either, so this is just the explicit slot for future
+       divergence, same value it already inherits from the dark canonical
+       block today. */
+    --mc-surface-sunken: #162231;
+    --mc-surface-control: #162231;
 
     /* Text */
     --mc-text-primary: #f2f5f6;
@@ -4477,6 +4550,12 @@ html[data-theme-family="alpine"] {
     --mc-card-bg: #2f4555;
     --mc-button-secondary-bg: #354d5e;
     --mc-primary-soft: #314f64;
+    /* theme-registry Stage 9.4 (fix bug 1.5) - Alpine doesn't override
+       --mc-bg-subtle either, so this is just the explicit slot for future
+       divergence, same value it already inherits from the dark canonical
+       block today. */
+    --mc-surface-sunken: #162231;
+    --mc-surface-control: #162231;
 
     /* Text */
     --mc-text-primary: #f4f7f9;
@@ -4618,6 +4697,12 @@ html[data-theme-family="teal"][data-theme="dark"] {
     --mc-card-bg: #053c3c;
     --mc-button-secondary-bg: #064747;
     --mc-primary-soft: #096c6c;
+    /* theme-registry Stage 9.4 (fix bug 1.5) - Teal Dark doesn't override
+       --mc-bg-subtle either, so this is just the explicit slot for future
+       divergence, same value it already inherits from the dark canonical
+       block today. */
+    --mc-surface-sunken: #162231;
+    --mc-surface-control: #162231;
 
     /* Text */
     --mc-text-primary: #f0fafa;
@@ -4728,6 +4813,11 @@ html[data-theme-family="teal"][data-theme="light"] {
     --mc-card-bg: #f0f7f7;
     --mc-button-secondary-bg: #e4f1f1;
     --mc-primary-soft: #d9f5f5;
+    /* theme-registry Stage 9.4 (fix bug 1.5) - Teal Light doesn't override
+       --mc-bg-subtle either, so this is just the explicit slot for future
+       divergence, same value it already inherits from :root today. */
+    --mc-surface-sunken: #f7f9fc;
+    --mc-surface-control: #f7f9fc;
 
     /* Text */
     --mc-text-primary: #123536;

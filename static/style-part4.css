@@ -976,7 +976,11 @@
    .map-fit-btn's light color above), --mc-border (d=30.9), --mc-primary-soft
    (d=4.6) respectively - all close consolidations onto the same tokens
    already used for this popup's other light rules above. */
-[data-theme="light"] .map-popup-actions button { background: var(--mc-bg-subtle); color: var(--mc-text-primary); border-color: var(--mc-border); }
+/* theme-registry Stage 9.4 - fix bug 1.5: background was var(--mc-bg-subtle),
+   same interactive-control role as .time-btn/.settings-segmented button in
+   ui-kit.css (rest/hover-primary-soft state machine, confirmed by the
+   :hover rule right below). */
+[data-theme="light"] .map-popup-actions button { background: var(--mc-surface-control); color: var(--mc-text-primary); border-color: var(--mc-border); }
 [data-theme="light"] .map-popup-actions button:hover { background: var(--mc-primary-soft); }
 
 @media (max-height:700px) {

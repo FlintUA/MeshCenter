@@ -103,6 +103,21 @@ def normalize_origin(base_url: str) -> str:
     return raw.rstrip("/").lower()
 
 
+def encode_provider_id(raw: bytes) -> str:
+    """Base64URL-encode an already-known 8-byte provider_id (e.g. from an
+    OFFER's wire field, ADR-0001 section 3 key 2 - raw bytes on the wire)
+    into the text form `ProviderRegistry` keys rows by. Not to be confused
+    with `compute_provider_id()`, which *derives* a provider_id from
+    (origin, service_public_key) - use this one when the raw 8 bytes are
+    already in hand and only need the matching text key (ADR-0007:
+    `receiver.py` uses this for every `provider_registry.resolve()` call,
+    since storing/looking up an OFFER's provider_id as hex - a different
+    encoding - would never match a real registration)."""
+    if len(raw) != 8:
+        raise ProviderRegistryError(f"provider_id must be 8 raw bytes, got {len(raw)}")
+    return _b64url_encode(raw)
+
+
 def compute_provider_id(origin: str, service_public_key: bytes) -> str:
     """ADR-0005 / real Relay `mca_provider_id()`: Base64URL of the first 8
     bytes of SHA-256(`origin` + `"\\n"` + raw 32-byte Ed25519 public key).

@@ -40,10 +40,13 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import json
 import time
 from typing import Any, Dict, List, Optional
 
 import requests
+from nacl.exceptions import BadSignatureError
+from nacl.signing import VerifyKey
 
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DEFAULT_MAX_RETRIES = 3
@@ -88,6 +91,16 @@ class RelayUnavailableError(RelayError):
     is exhausted. Distinct from RelayHTTPError so callers can tell "the
     Relay rejected this request" from "the Relay could not be reached right
     now, try the whole operation again later"."""
+
+
+class RelayVerificationError(RelayError):
+    """Raised by `verify_descriptor_signature()` when a descriptor's
+    `service_signature` does not verify against the caller-supplied
+    (pinned) `service_public_key`. Distinct from `RelayHTTPError` because
+    this is never about the HTTP transaction failing - the request
+    succeeded and returned a well-formed body that simply is not
+    authentic, which is a strictly worse outcome a caller must never
+    conflate with "try again"."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -414,3 +427,62 @@ class RelayClient:
             service_signature=_b64url_decode(body["service_signature"]["signature"], 64),
             service_public_key=_b64url_decode(body["service_signature"]["public_key"], 32),
         )
+
+
+_DESCRIPTOR_SIGNATURE_DOMAIN = "MCA-RELAY-DESCRIPTOR-V1"
+
+
+def _canonical_json(value: Any) -> str:
+    """Byte-for-byte the same canonicalization
+    `meshsrv/attachments/relay/mock_server.py::_canonical_json()` uses
+    (ADR-0007): recursively sort dict keys as strings, compact separators,
+    unescaped Unicode/slashes. Duplicated here (not imported from the mock
+    server, which is test-only scaffolding) because this is the one place
+    production code needs to reproduce the real Relay's own
+    `mca_canonical_json` exactly - a signature verification helper must
+    never depend on a module that only exists to emulate the Relay for
+    tests."""
+
+    def normalize(item):
+        if isinstance(item, dict):
+            return {key: normalize(item[key]) for key in sorted(item.keys())}
+        if isinstance(item, list):
+            return [normalize(entry) for entry in item]
+        return item
+
+    return json.dumps(normalize(value), ensure_ascii=False, separators=(",", ":"))
+
+
+def verify_descriptor_signature(descriptor: ObjectDescriptor, service_public_key: bytes) -> None:
+    """Verify `descriptor.service_signature` against `service_public_key`.
+
+    ADR-0007: `service_public_key` MUST be the pinned key from the local
+    Provider Registry (the key confirmed during one of the three MVP trust
+    bootstrap paths - see `provider_registry.py`), never
+    `descriptor.service_public_key` - that field is attacker-controlled
+    data from the very same untrusted response being verified, and using
+    it here would make this function verify nothing. Raises
+    `RelayVerificationError` on any mismatch; returns `None` on success.
+    """
+
+    if len(service_public_key) != 32:
+        raise RelayVerificationError(f"service_public_key must be 32 raw bytes, got {len(service_public_key)}")
+    signed = {
+        "domain": _DESCRIPTOR_SIGNATURE_DOMAIN,
+        "protocol": "MCA/1",
+        "provider_id": descriptor.provider_id,
+        "transfer_id": _b64url_encode(descriptor.transfer_id),
+        "total_size": descriptor.total_size,
+        "ciphertext_sha256": descriptor.ciphertext_sha256.hex(),
+        "manifest_size": descriptor.manifest_size,
+        "manifest_sha256": descriptor.manifest_sha256.hex(),
+        "chunks": [{"index": c.index, "size": c.size, "sha256": c.sha256.hex()} for c in descriptor.chunks],
+        "committed_at": descriptor.committed_at,
+        "hard_expires_at": descriptor.hard_expires_at,
+        "delete_after": descriptor.delete_after,
+    }
+    message = _canonical_json(signed).encode("utf-8")
+    try:
+        VerifyKey(service_public_key).verify(message, descriptor.service_signature)
+    except BadSignatureError as exc:
+        raise RelayVerificationError("descriptor service_signature failed verification") from exc

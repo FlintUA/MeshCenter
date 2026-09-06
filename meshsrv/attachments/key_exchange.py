@@ -426,6 +426,22 @@ class KeyExchangeCoordinator:
         ).fetchone()
         return _row_to_binding(row) if row is not None else None
 
+    def get_binding_by_key_id(self, sender_key_id: str) -> Optional[RecipientBinding]:
+        """ADR-0007: a second, independent index into the same table for
+        resolving an inbound OFFER's ``sender_key_id`` field to a public
+        identity for signature verification - regardless of whether this
+        particular delivery arrived over the same transport address the
+        binding was originally established on. Does not replace
+        `get_binding()`: the address-keyed lookup above stays the one used
+        for this module's own rate-limiting/TOFU-pinning logic, unchanged.
+        `None` means the OFFER's signer is unknown - expected and common
+        for a brand-new contact's first file, not an error."""
+        row = self._conn.execute(
+            "SELECT * FROM mca_recipient_bindings WHERE workspace_id = ? AND adapter_id = ? AND sender_key_id = ?",
+            (self._principal.workspace_id, self._adapter_id, sender_key_id),
+        ).fetchone()
+        return _row_to_binding(row) if row is not None else None
+
     def get_status(self, source_address: str) -> AddressStatus:
         binding = self.get_binding(source_address)
         return AddressStatus.KEY_UNKNOWN if binding is None else binding.status

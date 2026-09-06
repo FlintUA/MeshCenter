@@ -28,4 +28,4 @@ The Map workspace (`static/chat-map.js`) renders tiles from `tile.openstreetmap.
 
 ## Everything else
 
-Core's own dependencies (`requirements.txt`) — Flask, Pillow, requests, psutil, v4l2py, gunicorn — are all permissively licensed (MIT/BSD/Apache-family). See each package's own PyPI page for its specific license.
+Core's own dependencies (`requirements.txt`) — Flask, Pillow, requests, psutil, v4l2py, gunicorn, cbor2 (MCAttach codec, MIT), pynacl (MCAttach crypto, Apache-2.0) — are all permissively licensed (MIT/BSD/Apache-family). See each package's own PyPI page for its specific license.

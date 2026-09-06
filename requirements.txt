@@ -29,3 +29,10 @@ v4l2py>=3.0.0,<4.0.0
 # gunicorn.conf.py) are exactly the kind of thing a major version bump could
 # change without MeshCenter's own code ever noticing until it's live.
 gunicorn>=23.0.0,<24.0.0
+# MCAttach (ADR-0001/ADR-0002, meshsrv/attachments/): canonical CBOR codec
+# and Ed25519/X25519 signing+encryption live in Core, not in the GPLv3
+# adapter - see docs/architecture/ADR-0001-mca-protocol.md. Both are
+# permissively licensed (cbor2: MIT, PyNaCl: Apache-2.0); versions below
+# are what's live-verified in the Step 0.3 codec test run.
+cbor2>=6.1.0,<7.0.0
+pynacl>=1.6.0,<2.0.0

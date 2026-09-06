@@ -99,6 +99,22 @@ def derive_x25519_public(public_identity: bytes) -> bytes:
     return sodium.crypto_sign_ed25519_pk_to_curve25519(public_identity)
 
 
+def derive_x25519_private(signing_key: SigningKey) -> bytes:
+    """The X25519 private scalar matching ``derive_x25519_public()``'s
+    public half, for *this* principal's own signing key - needed to open
+    (``nacl.public.SealedBox``) a sealed envelope addressed to us
+    (ADR-0006). Delegates to libsodium's own
+    ``crypto_sign_ed25519_sk_to_curve25519`` via the same
+    ``crypto_sign_seed_keypair`` expansion PyNaCl itself uses internally -
+    no reimplementation, and confirmed byte-identical alongside the public
+    half in ADR-0002's cross-machine benchmark."""
+    seed = bytes(signing_key)
+    if len(seed) != 32:
+        raise IdentityError(f"signing_key seed must be 32 raw bytes, got {len(seed)}")
+    _public_key, secret_key64 = sodium.crypto_sign_seed_keypair(seed)
+    return sodium.crypto_sign_ed25519_sk_to_curve25519(secret_key64)
+
+
 def _row_to_principal(row: sqlite3.Row) -> MCAPrincipal:
     return MCAPrincipal(
         workspace_id=row["workspace_id"],

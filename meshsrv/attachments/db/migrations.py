@@ -282,6 +282,67 @@ DROP TABLE IF EXISTS mca_principal;
 """
 
 
+# Execution Plan Step 1.4 (sender state machine and queue; ADR-0006). The
+# sender-side pipeline (Encrypting -> QueuedUpload -> Uploading ->
+# ReadyToSend) needs to survive a process restart at any point without
+# re-deriving cryptographic material or double-sending. Two things must be
+# persisted, and nothing else has to be, because everything else can be
+# recomputed deterministically from what is:
+#
+# - `data_key`/`nonce_prefix`: chunk/header AEAD (crypto.py) is fully
+#   deterministic given these plus the transfer_id and the original
+#   plaintext file (still at `attachments.saved_path` for a 'sent'
+#   attachment) - so ciphertext bytes and every chunk hash are
+#   byte-for-byte reproducible on a retry without re-persisting the
+#   ciphertext itself. Only the ~32+16 bytes of key material need saving,
+#   not a second copy of the file.
+# - `manifest_blob`: NOT reproducible on retry, unlike the chunks - it
+#   embeds one `nacl.public.SealedBox` ciphertext per recipient, and
+#   SealedBox is randomized (a fresh ephemeral key each call). If
+#   `create_upload()` has already pinned a `manifest_sha256` and the
+#   process then crashes before `upload_manifest()`, recomputing the
+#   manifest blob from scratch on resume would produce different bytes
+#   with a different hash, permanently breaking that upload session. The
+#   manifest blob is therefore built exactly once (Encrypting) and stored
+#   verbatim - it is capped at the Relay's own `max_manifest_bytes`
+#   (256 KiB in the mock/real Relay's defaults), small enough for a
+#   BLOB column, so no separate staging file is needed.
+#
+# `upload_id`/`upload_token`/`revoke_token` are the live Relay upload
+# session handle, persisted the moment `create_upload()` returns them so a
+# crash immediately after can resume via `get_upload_status()` instead of
+# re-calling `create_upload()` (which the real Relay rejects with 409
+# `transfer_exists` for a `transfer_id` it has already seen - sender.py's
+# recovery path treats that specific conflict, when no local `upload_id`
+# survived, as a lost/orphaned session: the old `transfer_id` is
+# tombstoned via the already-existing `mca_tombstones` table and a fresh
+# one is generated, since nothing was ever committed under it).
+#
+# One row per in-flight *sent* attachment; deleted once the attachment
+# reaches a terminal state (Sent/Received/Downloaded/Expired/Revoked/
+# Cancelled/FAILED_*) - this table only ever holds transient state for
+# work still in progress, mirroring `mca_jobs`' own "queue, not ledger"
+# character.
+_MIGRATION_0005_UP = """
+CREATE TABLE mca_sender_state (
+    attachment_id TEXT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE,
+    data_key TEXT NOT NULL,
+    nonce_prefix TEXT NOT NULL,
+    manifest_blob BLOB,
+    manifest_sha256 TEXT,
+    upload_id TEXT,
+    upload_token TEXT,
+    revoke_token TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+"""
+
+_MIGRATION_0005_DOWN = """
+DROP TABLE IF EXISTS mca_sender_state;
+"""
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -295,6 +356,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(2, "extend_provider_profiles", _MIGRATION_0002_UP, _MIGRATION_0002_DOWN),
     Migration(3, "rename_provider_public_key_to_b64url", _MIGRATION_0003_UP, _MIGRATION_0003_DOWN),
     Migration(4, "mca_principal_and_key_exchange_state", _MIGRATION_0004_UP, _MIGRATION_0004_DOWN),
+    Migration(5, "mca_sender_state", _MIGRATION_0005_UP, _MIGRATION_0005_DOWN),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0
@@ -314,6 +376,7 @@ ALL_TABLE_NAMES = frozenset(
         "mca_principal",
         "mca_key_exchange_contact_state",
         "mca_key_exchange_quota",
+        "mca_sender_state",
     }
 )
 

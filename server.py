@@ -51,6 +51,7 @@ from meshsrv.radio_transport import ConnectionType
 from meshsrv.adapter_ipc_client import AdapterIPCTransport, AdapterSupervisor
 from meshsrv.transport_router import TransportRouter
 from meshsrv.schedule_engine import start as start_schedule_engine
+from meshsrv.attachments import mca_runtime
 from meshsrv import update_service
 from api.api_camera import register_camera_routes
 from api.api_camera_manager import register_camera_manager_routes
@@ -3873,6 +3874,20 @@ def _handle_listener_line(line):
                 reply_to=reply_to,
                 packet_id=pid,
             )
+
+        # MCAttach Step 1.3 (spec 19.1): cheap O(1) prefix check only,
+        # after the normal message is already saved above - never block
+        # this listener thread on MCA parsing/crypto/Relay. Direct
+        # messages only (Stage 1 scope: supports_channel=False in
+        # MeshtasticTextAdapter.capabilities()); a channel/broadcast
+        # "MCA1:"-prefixed text is not dispatched here at all.
+        if not is_channel and node_id and text.startswith("MCA1:"):
+            try:
+                mca_runtime.handle_incoming_meshtastic_text(
+                    text, node_id, transport_router, data_dir=DATA_DIR, packet_id=pid,
+                )
+            except Exception as e:
+                print(f"[MCA] listener dispatch error: {e}", flush=True)
 
     except Exception as e:
         print(f"[LISTEN] Error processing line: {e}", flush=True)

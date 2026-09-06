@@ -16,7 +16,7 @@ sockets, threads, or time to pass.
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from meshsrv.attachments import codec
 from meshsrv.attachments.delivery.base import (
@@ -32,6 +32,18 @@ from meshsrv.attachments.delivery.base import (
     RouteType,
     UnsupportedRouteError,
     WireFormat,
+)
+from meshsrv.radio_transport import (
+    ChannelInfo,
+    ConnectionDescriptor,
+    ConnectionInfo,
+    ConnectionState,
+    ConnectionType,
+    NodeInfo,
+    OutgoingMessage,
+    RadioTransport,
+    SendResult,
+    WaypointResult,
 )
 
 
@@ -218,3 +230,99 @@ class FakeBinaryAdapter(DeliveryAdapter):
             received_at=time.time(),
             transport_metadata={},
         )
+
+
+class FakeRadioTransport(RadioTransport):
+    """In-memory `RadioTransport` stand-in for `MeshtasticTextAdapter`'s
+    own contract tests (Execution Plan Step 1.3) - the *adapter* under
+    test is real, only the radio underneath it is faked, the same
+    division `FakeTextAdapter`/`FakeBinaryAdapter` above draw between
+    "real adapter logic" and "fake ether".
+
+    Only `send_text()` and `get_connection_info()`/`is_connected()` have
+    real behavior - `MeshtasticTextAdapter` never calls anything else on
+    a `RadioTransport`. Every other abstract method raises
+    `NotImplementedError` outright rather than returning a plausible-
+    looking fake value nothing here actually exercises - a test that
+    somehow reached one of them would fail loudly instead of silently
+    passing against made-up data.
+
+    Delivers `{"text": ..., "source_address": ...}` into the shared
+    `InMemoryEther` - already shaped exactly like the dict
+    `MeshtasticTextAdapter.ingest()` expects (see server.py's real
+    listener hook, which builds the same shape), so a test can drain the
+    ether and hand the event straight to the receiver's `ingest()`
+    without any adapter-specific translation step.
+    """
+
+    def __init__(
+        self,
+        ether: InMemoryEther,
+        own_address: str,
+        *,
+        connection_type: ConnectionType = ConnectionType.SERIAL,
+        connection_state: ConnectionState = ConnectionState.CONNECTED,
+    ):
+        self._ether = ether
+        self._own_address = own_address
+        self._connection_type = connection_type
+        self._connection_state = connection_state
+        self._next_packet_id = 1
+        ether.register(own_address)
+
+    def send_text(self, message: OutgoingMessage, *, timeout: float = 15.0) -> SendResult:
+        packet_id = self._next_packet_id
+        self._next_packet_id += 1
+        self._ether.deliver(
+            message.destination_id,
+            {"text": message.text, "source_address": self._own_address, "packet_id": packet_id},
+        )
+        return SendResult(accepted=True, packet_id=packet_id)
+
+    def get_connection_info(self) -> ConnectionInfo:
+        return ConnectionInfo(
+            state=self._connection_state,
+            descriptor=ConnectionDescriptor(type=self._connection_type, address=self._own_address),
+            node_id=self._own_address,
+        )
+
+    def is_connected(self) -> bool:
+        return self._connection_state == ConnectionState.CONNECTED
+
+    # ---- Not exercised by MeshtasticTextAdapter - see class docstring. ----
+
+    def connect(self, descriptor, *, force: bool = False, timeout: float = 30.0) -> ConnectionInfo:
+        raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
+
+    def disconnect(self, *, timeout: float = 15.0) -> None:
+        raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
+
+    def reconnect(self, *, timeout: float = 30.0) -> ConnectionInfo:
+        raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
+
+    def send_packet(self, payload, destination_id, *, port_num, want_ack=False, timeout=15.0):
+        raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
+
+    def send_messages(self, messages: Sequence[OutgoingMessage], *, timeout: float = 30.0) -> list:
+        raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
+
+    def send_waypoint(self, waypoint, *, timeout: float = 15.0) -> WaypointResult:
+        raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
+
+    def get_nodes(self, *, timeout: float = 15.0) -> List[NodeInfo]:
+        raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
+
+    def get_local_node(self, *, timeout: float = 15.0) -> NodeInfo:
+        raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
+
+    def get_channels(self, *, timeout: float = 15.0) -> List[ChannelInfo]:
+        raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
+
+    def get_metadata(self, *, timeout: float = 15.0) -> dict:
+        raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
+
+    def set_device_time(self, epoch_seconds: int, *, timeout: float = 15.0) -> bool:
+        raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
+
+    def close(self) -> None:
+        pass

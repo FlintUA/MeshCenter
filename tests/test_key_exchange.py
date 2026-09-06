@@ -305,6 +305,49 @@ def test_accept_pending_key_change_without_a_pending_change_raises(tmp_path, clo
         coordinator.accept_pending_key_change("!nobody")
 
 
+def test_reject_pending_key_change_leaves_trusted_binding_untouched(tmp_path, clock):
+    from nacl.signing import SigningKey
+
+    from meshsrv.attachments.identity import load_signing_key
+    from meshsrv.attachments.workspace import MCAWorkspaceManager as _WM
+
+    _, _, _, coordinator_a = _make_node(tmp_path, "a", clock)
+    _, _, principal_b, _ = _make_node(tmp_path, "b", clock)
+    signing_key_b = load_signing_key(_WM(tmp_path / "b"), principal_b)
+    first_announce = codec.encode_key_announce(
+        codec.KeyAnnounceFields(public_identity=principal_b.public_identity, epoch=0), signing_key_b
+    )
+    coordinator_a.handle_incoming(_direct_envelope(first_announce, "!node-b", clock()))
+    coordinator_a.confirm_tofu("!node-b")
+    confirmed_at = coordinator_a.get_binding("!node-b").tofu_confirmed_at
+
+    impostor_key = SigningKey.generate()
+    impostor_announce = codec.encode_key_announce(
+        codec.KeyAnnounceFields(public_identity=bytes(impostor_key.verify_key), epoch=0), impostor_key
+    )
+    coordinator_a.handle_incoming(_direct_envelope(impostor_announce, "!node-b", clock()))
+    assert coordinator_a.get_status("!node-b") == AddressStatus.KEY_CHANGED
+
+    coordinator_a.reject_pending_key_change("!node-b")
+
+    binding = coordinator_a.get_binding("!node-b")
+    assert binding.public_identity == principal_b.public_identity  # untouched
+    assert binding.tofu_confirmed_at == confirmed_at  # untouched
+    assert binding.pending_public_identity is None
+    assert binding.pending_key_epoch is None
+    assert coordinator_a.get_status("!node-b") == AddressStatus.MCA_READY
+
+    # Not a blacklist: the same impostor identity can be parked again later.
+    coordinator_a.handle_incoming(_direct_envelope(impostor_announce, "!node-b", clock()))
+    assert coordinator_a.get_status("!node-b") == AddressStatus.KEY_CHANGED
+
+
+def test_reject_pending_key_change_without_a_pending_change_raises(tmp_path, clock):
+    _, _, _, coordinator = _make_node(tmp_path, "a", clock)
+    with pytest.raises(KeyExchangeError):
+        coordinator.reject_pending_key_change("!nobody")
+
+
 # ---- full two-node round trip over the fake transport contract ---------
 
 

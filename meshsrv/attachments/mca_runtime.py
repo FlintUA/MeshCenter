@@ -27,6 +27,23 @@ Owns the process-lifetime singletons this integration needs:
     workspace, and this MVP has exactly one workspace, "local", for
     the life of the instance).
 
+ADR-0008 extends this module's singleton with the four backend pieces
+that ADR needed (`ProviderRegistry`, `ConnectivityMonitor`,
+`AttachmentsService`) and, in `handle_incoming_meshtastic_text()`,
+routes an inbound OFFER frame to `receiver.handle_offer()` -
+previously this function only ever reached `KeyExchangeCoordinator`,
+so a real incoming attachment offer over the radio had no consumer at
+all in production (only in tests calling `receiver.handle_offer()`
+directly). `ProviderRegistry`/`ConnectivityMonitor` are constructed
+eagerly in `_MCARuntimeState.__init__` (cheap - no thread, no network
+I/O until `refresh()`/`service.start()` are explicitly called), so an
+OFFER can be handled correctly even before `start_attachments_service()`
+below has run; `AttachmentsService` itself is *not* constructed there,
+because it needs `radio_transport` (only ever handed to us per-call by
+`handle_incoming_meshtastic_text()`'s caller, never stored) to build
+the one `MeshtasticTextAdapter` it sends through - see
+`start_attachments_service()`'s own docstring.
+
 DEVIATION FROM ADR-0003, flagged explicitly rather than silently: that
 ADR's own wording names a schema path nested one level deeper than
 what this module actually uses (under the per-principal workspace
@@ -52,12 +69,16 @@ import sqlite3
 import threading
 from typing import Optional
 
+from meshsrv.attachments import codec, receiver, sender
 from meshsrv.attachments.db.migrations import migrate
 from meshsrv.attachments.delivery.base import DeliveryError, Route, RouteType
 from meshsrv.attachments.delivery.meshtastic import MeshtasticTextAdapter
 from meshsrv.attachments.identity import MCAPrincipal, ensure_principal
 from meshsrv.attachments.key_exchange import KeyExchangeCoordinator, RateLimited
+from meshsrv.attachments.provider_registry import ProviderRegistry
+from meshsrv.attachments.service import AttachmentsService
 from meshsrv.attachments.workspace import MCAWorkspaceManager
+from meshsrv.connectivity_monitor import ConnectivityMonitor, InternetStatus
 from meshsrv.radio_transport import RadioTransport
 
 WORKSPACE_ID = "local"
@@ -83,6 +104,75 @@ class _MCARuntimeState:
         self.coordinator = KeyExchangeCoordinator(
             self.conn, self.workspace_manager, self.principal, ADAPTER_ID
         )
+        # ADR-0008 decision 2/3: both are cheap to construct (plain SQL
+        # wrappers - no thread, no network I/O happens until refresh()
+        # is explicitly called) so they're built eagerly here rather than
+        # deferred to ensure_service() below. This means an inbound OFFER
+        # can be handled correctly (see handle_incoming_meshtastic_text())
+        # even in the narrow startup window before server.py's
+        # start_attachments_service() call has actually run.
+        self.provider_registry = ProviderRegistry(self.conn, WORKSPACE_ID)
+        self.connectivity_monitor = ConnectivityMonitor(self.provider_registry)
+        # Unlike the two above, the worker thread itself is not started
+        # until ensure_service() runs - see that method's own docstring
+        # for why it needs radio_transport, which this constructor never
+        # receives.
+        self.service: Optional[AttachmentsService] = None
+
+    def ensure_service(self, radio_transport: RadioTransport) -> AttachmentsService:
+        """ADR-0008 decision 1's five-step startup sequence, steps 2-4
+        (step 1, migrate(), already happened in __init__ above). Building
+        `AttachmentsService` needs a `MeshtasticTextAdapter`, which in
+        turn needs `radio_transport` - the one piece `_MCARuntimeState`
+        cannot construct itself, since today it only ever reaches this
+        module per-call, via `handle_incoming_meshtastic_text()`'s own
+        parameter, never as something stored at process startup. Callers
+        pass it in explicitly (`start_attachments_service()` below).
+
+        Idempotent and lock-guarded by the caller (both current callers
+        already hold `_lock` when they call this) so a second call -
+        whether a second real startup attempt or an incoming message
+        racing server.py's own startup call - just returns the already-
+        running instance rather than building a second worker thread or
+        re-running resume_pending()/reconcile_pending() a second time.
+        """
+        if self.service is not None:
+            return self.service
+        adapter = MeshtasticTextAdapter(radio_transport)
+        self.service = AttachmentsService(
+            self.conn,
+            workspace_manager=self.workspace_manager,
+            principal=self.principal,
+            provider_registry=self.provider_registry,
+            key_exchange=self.coordinator,
+            connectivity_monitor=self.connectivity_monitor,
+            delivery_adapter=adapter,
+        )
+        # Deliberately network_available=False and no relay_client/
+        # delivery_adapter override for this *synchronous* startup pass:
+        # this runs before the worker thread (and its Lock-held tick
+        # discipline) exists at all, so it stays local-only - unsticking
+        # whatever a restart left mid-state at the DB level (ADR-0008's
+        # "restart never loses a job" guarantee) without making any
+        # network call from the caller's thread. `service.start()` right
+        # below does an immediate first tick, which is what actually
+        # resumes uploads/downloads with a real, per-row relay client.
+        sender.resume_pending(
+            self.conn,
+            workspace_manager=self.workspace_manager,
+            principal=self.principal,
+            network_available=False,
+        )
+        receiver.reconcile_pending(
+            self.conn,
+            workspace_manager=self.workspace_manager,
+            principal=self.principal,
+            provider_registry=self.provider_registry,
+            key_exchange=self.coordinator,
+            network_available=False,
+        )
+        self.service.start()
+        return self.service
 
 
 def _get_state(data_dir: str) -> "_MCARuntimeState":
@@ -93,13 +183,33 @@ def _get_state(data_dir: str) -> "_MCARuntimeState":
         return _state
 
 
+def start_attachments_service(data_dir: str, radio_transport: RadioTransport) -> None:
+    """Called once from server.py's `start_runtime()`, alongside its
+    existing `threading.Thread(target=..., daemon=True).start()` calls
+    for `radio_health_worker` etc. (ADR-0008 decision 1's "Startup
+    sequence"). Safe to call more than once (e.g. a hypothetical future
+    profile-swap re-init path) - `ensure_service()` is idempotent."""
+    state = _get_state(data_dir)
+    with _lock:
+        state.ensure_service(radio_transport)
+
+
 def reset_state_for_tests() -> None:
     """Test-only: drop the process-lifetime singleton so a test can
     re-initialize against a fresh temp data_dir. Not called anywhere in
-    production code."""
+    production code.
+
+    Stops `AttachmentsService`'s daemon thread (if `ensure_service()` was
+    ever called on this state) before closing the connection - closing
+    a still-ticking worker's connection out from under it would otherwise
+    surface as sporadic "Cannot operate on a closed database" noise in
+    whichever test happens to be running next, not in the test that
+    actually caused it."""
     global _state
     with _lock:
         if _state is not None:
+            if _state.service is not None:
+                _state.service.stop()
             _state.conn.close()
         _state = None
 
@@ -129,6 +239,25 @@ def handle_incoming_meshtastic_text(
     listener thread - each failure mode is caught and logged here,
     the same "best-effort, never crash the listener" contract every
     other block in server.py's process_message_line() already follows.
+
+    ADR-0008: an OFFER frame is routed to `receiver.handle_offer()`
+    instead of `coordinator.handle_incoming()` - the latter only ever
+    dispatches KEY_REQUEST/KEY_ANNOUNCE/KEY_ACK (see its own
+    `codec.peek_message_type()`-based dispatch) and returns None for
+    anything else, so an OFFER reaching it before this change was
+    silently dropped with no attachment row ever created. Every other
+    message type (ACK_RECEIVED/ACK_DOWNLOADED/ACK_PROVIDER_UNKNOWN/
+    CANCEL/REJECTED/EXPIRED/KEY_ROTATE) still falls through to
+    `coordinator.handle_incoming()`, which returns None for those today
+    - a pre-existing gap flagged, not fixed, here: `sender.py`'s own
+    module docstring already documents that nothing yet drives
+    `on_ack_received()`/`on_ack_downloaded()` from a real incoming wire
+    message (no production caller exists for either), so the sender
+    side's SENT->RECEIVED->DOWNLOADED progression does not yet advance
+    off of a real ACK on the wire. Out of scope for ADR-0008 (which
+    does not touch `sender.py`'s or `receiver.py`'s signatures at all)
+    and for this wiring pass; revisit as its own reviewed change, since
+    it involves verifying a signed wire payload, not just routing one.
     """
     state = _get_state(data_dir)
     adapter = MeshtasticTextAdapter(radio_transport)
@@ -138,6 +267,39 @@ def handle_incoming_meshtastic_text(
         envelope = adapter.ingest(transport_event)
         if envelope is None:
             return False
+
+        try:
+            message_type = codec.peek_message_type(envelope.logical_message)
+        except codec.CodecError as exc:
+            print(f"[MCA] malformed MCA message from {source_address}: {exc}", flush=True)
+            return True
+
+        if message_type == codec.MessageType.OFFER:
+            # Fail-open, same policy as ConnectivityMonitor.can_attempt_relay():
+            # this only decides which of the two equally-automatic starting
+            # states (WAITING_CONSENT vs WAITING_NETWORK) the new attachment
+            # begins in - AttachmentsService's own tick (woken just below)
+            # re-evaluates it within one tick regardless, so getting this
+            # guess wrong for an unknown/never-checked internet state costs
+            # nothing beyond one extra tick.
+            network_available = state.connectivity_monitor.snapshot().internet != InternetStatus.OFFLINE
+            try:
+                receiver.handle_offer(
+                    state.conn,
+                    workspace_manager=state.workspace_manager,
+                    principal=state.principal,
+                    provider_registry=state.provider_registry,
+                    key_exchange=state.coordinator,
+                    raw_offer=envelope.logical_message,
+                    network_available=network_available,
+                )
+            except receiver.ReceiverError as exc:
+                print(f"[MCA] rejected OFFER from {source_address}: {exc}", flush=True)
+                return True
+            if state.service is not None:
+                state.service.wake()
+            return True
+
         try:
             reply_logical = state.coordinator.handle_incoming(envelope)
         except RateLimited as exc:

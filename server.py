@@ -6050,6 +6050,17 @@ def start_runtime():
         threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
         threading.Thread(target=radio_health_worker, daemon=True).start()
         threading.Thread(target=ack_timeout_worker, daemon=True).start()
+
+        # ADR-0008 decision 1's startup sequence: same identity_match
+        # precondition as the radio listener above, since AttachmentsService
+        # sends/receives over the same transport_router. Best-effort like
+        # every other block here - a failure to start the MCA worker must
+        # not prevent the rest of start_runtime() (or the radio listener
+        # already started above) from coming up.
+        try:
+            mca_runtime.start_attachments_service(DATA_DIR, transport_router)
+        except Exception as e:
+            print(f"[MCA] failed to start AttachmentsService: {e}", flush=True)
     else:
         pause_listen.set()
         print(f"[IDENTITY] Listener not started because status={identity_status}", flush=True)

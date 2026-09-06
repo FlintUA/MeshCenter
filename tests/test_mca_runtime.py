@@ -11,9 +11,14 @@ protocol survives a real radio link.
 
 from __future__ import annotations
 
+import time
+import uuid
+
 from meshsrv.attachments import codec
 from meshsrv.attachments import mca_runtime
 from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
+from meshsrv.attachments.identity import load_signing_key
+from meshsrv.attachments.service import AttachmentsService
 
 
 def test_key_request_to_key_announce_round_trip_through_the_real_glue(tmp_path):
@@ -104,5 +109,138 @@ def test_ordinary_chat_message_is_not_recognized_as_mca(tmp_path):
         )
         assert recognized is False
         assert ether.drain("!aaaaaaaa") == []
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+# ---- ADR-0008: OFFER routing and AttachmentsService startup wiring --------
+
+
+def test_offer_from_unknown_provider_is_routed_to_receiver_not_dropped(tmp_path):
+    """Before ADR-0008's wiring, `handle_incoming_meshtastic_text()` only
+    ever reached `KeyExchangeCoordinator`, which returns None for an
+    OFFER (it only dispatches KEY_REQUEST/KEY_ANNOUNCE/KEY_ACK) - a real
+    incoming OFFER was silently dropped with no attachment row ever
+    created. This proves the fix through the exact same glue function
+    server.py's listener calls, encoding a real, signed OFFER through
+    the real `MeshtasticTextAdapter`/`codec` - not by calling
+    `receiver.handle_offer()` directly."""
+    mca_runtime.reset_state_for_tests()
+    try:
+        ether = InMemoryEther()
+        transport_a = FakeRadioTransport(ether, "!aaaaaaaa")
+        transport_b = FakeRadioTransport(ether, "!bbbbbbbb")
+        data_dir_a = str(tmp_path / "a")
+        data_dir_b = str(tmp_path / "b")
+
+        from meshsrv.attachments.delivery.meshtastic import MeshtasticTextAdapter
+
+        adapter_a = MeshtasticTextAdapter(transport_a)
+        state_a = mca_runtime._get_state(data_dir_a)  # noqa: SLF001
+        signing_key_a = load_signing_key(state_a.workspace_manager, state_a.principal)
+
+        offer = codec.encode_offer(
+            codec.OfferFields(
+                provider_id=b"\x01\x02\x03\x04\x05\x06\x07\x08",
+                transfer_id=uuid.uuid4().bytes,
+                sender_key_id=bytes.fromhex(state_a.principal.key_id),
+                kind=1,
+                size_bucket=1,
+                hard_expires_at=int(time.time()) + 3600,
+                flags=0,
+            ),
+            signing_key_a,
+        )
+        route = adapter_a.resolve_route({"node_id": "!bbbbbbbb"})
+        wire_payload = adapter_a.encode(offer, route)
+        adapter_a.send(wire_payload, route, idempotency_key="test-offer")
+
+        events = ether.drain("!bbbbbbbb")
+        assert len(events) == 1
+        recognized = mca_runtime.handle_incoming_meshtastic_text(
+            events[0]["text"], events[0]["source_address"], transport_b,
+            data_dir=data_dir_b, packet_id=events[0]["packet_id"],
+        )
+        assert recognized is True
+
+        # No binding is known for sender_key_id yet (WAITING_KEY takes
+        # priority over the provider check - receiver.py's own state
+        # machine only evaluates the provider once the sender's identity
+        # is known) - per Step 1.5's own DoD, this must create exactly
+        # one non-terminal row and send zero network requests (there is
+        # no HTTP client wired into this test at all, so a network
+        # attempt would raise, not just fail an assertion).
+        state_b = mca_runtime._get_state(data_dir_b)  # noqa: SLF001
+        rows = state_b.conn.execute("SELECT state FROM attachments").fetchall()
+        assert [r[0] for r in rows] == ["WAITING_KEY"]
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_offer_wakes_the_attachments_service_when_one_is_running(tmp_path, monkeypatch):
+    """If `start_attachments_service()` has already run, an inbound OFFER
+    must call `service.wake()` so the worker re-scans promptly instead of
+    waiting out its full `tick_seconds` interval."""
+    mca_runtime.reset_state_for_tests()
+    try:
+        ether = InMemoryEther()
+        transport_a = FakeRadioTransport(ether, "!aaaaaaaa")
+        transport_b = FakeRadioTransport(ether, "!bbbbbbbb")
+        data_dir_a = str(tmp_path / "a")
+        data_dir_b = str(tmp_path / "b")
+
+        from meshsrv.attachments.delivery.meshtastic import MeshtasticTextAdapter
+
+        adapter_a = MeshtasticTextAdapter(transport_a)
+        state_a = mca_runtime._get_state(data_dir_a)  # noqa: SLF001
+        signing_key_a = load_signing_key(state_a.workspace_manager, state_a.principal)
+
+        mca_runtime.start_attachments_service(data_dir_b, transport_b)
+        state_b = mca_runtime._get_state(data_dir_b)  # noqa: SLF001
+        assert isinstance(state_b.service, AttachmentsService)
+
+        woken = []
+        monkeypatch.setattr(state_b.service, "wake", lambda: woken.append(True))
+
+        offer = codec.encode_offer(
+            codec.OfferFields(
+                provider_id=b"\x01\x02\x03\x04\x05\x06\x07\x08",
+                transfer_id=uuid.uuid4().bytes,
+                sender_key_id=bytes.fromhex(state_a.principal.key_id),
+                kind=1,
+                size_bucket=1,
+                hard_expires_at=int(time.time()) + 3600,
+                flags=0,
+            ),
+            signing_key_a,
+        )
+        route = adapter_a.resolve_route({"node_id": "!bbbbbbbb"})
+        wire_payload = adapter_a.encode(offer, route)
+        adapter_a.send(wire_payload, route, idempotency_key="test-offer-wake")
+
+        events = ether.drain("!bbbbbbbb")
+        mca_runtime.handle_incoming_meshtastic_text(
+            events[0]["text"], events[0]["source_address"], transport_b,
+            data_dir=data_dir_b, packet_id=events[0]["packet_id"],
+        )
+        assert woken == [True]
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_start_attachments_service_is_idempotent(tmp_path):
+    mca_runtime.reset_state_for_tests()
+    try:
+        ether = InMemoryEther()
+        transport = FakeRadioTransport(ether, "!cccccccc")
+        data_dir = str(tmp_path / "c")
+
+        mca_runtime.start_attachments_service(data_dir, transport)
+        state = mca_runtime._get_state(data_dir)  # noqa: SLF001
+        first_service = state.service
+        assert isinstance(first_service, AttachmentsService)
+
+        mca_runtime.start_attachments_service(data_dir, transport)
+        assert state.service is first_service
     finally:
         mca_runtime.reset_state_for_tests()

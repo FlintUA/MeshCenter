@@ -25,7 +25,13 @@ from meshsrv.attachments.delivery.base import (
     UnsupportedRouteError,
     WireFormat,
 )
-from meshsrv.attachments.delivery.fakes import FakeBinaryAdapter, FakeTextAdapter, InMemoryEther
+from meshsrv.attachments.delivery.fakes import (
+    FakeBinaryAdapter,
+    FakeRadioTransport,
+    FakeTextAdapter,
+    InMemoryEther,
+)
+from meshsrv.attachments.delivery.meshtastic import MeshtasticTextAdapter
 
 
 def _max_offer_fields():
@@ -210,3 +216,149 @@ def test_repeated_idempotency_key_does_not_duplicate_delivery(adapter_kind):
     receipt_1 = sender.send(wire_payload, route, idempotency_key="same-key")
     receipt_2 = sender.send(wire_payload, route, idempotency_key="same-key")
     assert receipt_1.idempotency_key == receipt_2.idempotency_key == "same-key"
+
+
+# --------------------------------------------------------------------------
+# MeshtasticTextAdapter (Execution Plan Step 1.3) - a real DeliveryAdapter,
+# not a fake, but driven through FakeRadioTransport so these tests need no
+# real hardware. Not folded into the ADAPTER_FACTORIES/adapter_kind
+# parametrization above: MeshtasticTextAdapter.resolve_route() requires a
+# real "!node_id"-shaped selection (spec 19), unlike the fakes' arbitrary
+# "address" strings, so its route-selection tests need their own shape
+# rather than forcing every generic test through a real format
+# constraint it was never written to satisfy. Covers exactly what
+# STEP_1.3_HANDOFF.md calls out as not needing real hardware: encode/
+# decode round-trip, oversized-payload rejection, capabilities reporting.
+# The real dev<->prod hardware round trip is
+# tests/hardware/test_meshtastic_delivery_adapter_live.py, not this file.
+# --------------------------------------------------------------------------
+
+from meshsrv.radio_transport import ConnectionState, ConnectionType  # noqa: E402
+
+
+def _build_meshtastic_pair(**transport_kwargs):
+    ether = InMemoryEther()
+    sender_transport = FakeRadioTransport(ether, "!aaaaaaaa", **transport_kwargs)
+    receiver_transport = FakeRadioTransport(ether, "!bbbbbbbb")
+    sender = MeshtasticTextAdapter(sender_transport)
+    receiver = MeshtasticTextAdapter(receiver_transport)
+    return ether, sender, receiver
+
+
+def test_meshtastic_capabilities_report_expected_wire_format_and_180_byte_ceiling():
+    _ether, sender, _receiver = _build_meshtastic_pair()
+    caps = sender.capabilities()
+    assert caps.wire_formats == frozenset({WireFormat.MCA1_TEXT})
+    assert caps.max_payload_bytes == 180
+    assert caps.supports_direct is True
+    assert caps.supports_channel is False
+    assert caps.supports_incoming is True
+
+
+def test_meshtastic_ack_semantics_is_confirmed_over_serial_best_effort_over_ble():
+    """spec 19.3: MeshCenter cannot reliably receive over BLE at all
+    (pre-existing, documented limitation) - the adapter must never claim
+    CONFIRMED delivery when the live transport is BLE."""
+    from meshsrv.attachments.delivery.base import AckSemantics
+
+    _ether, serial_sender, _r = _build_meshtastic_pair(connection_type=ConnectionType.SERIAL)
+    assert serial_sender.capabilities().ack_semantics == AckSemantics.CONFIRMED
+
+    _ether2, ble_sender, _r2 = _build_meshtastic_pair(connection_type=ConnectionType.BLUETOOTH)
+    assert ble_sender.capabilities().ack_semantics == AckSemantics.BEST_EFFORT
+
+
+def test_meshtastic_connector_state_reflects_connection_state():
+    from meshsrv.attachments.delivery.base import ConnectorState
+
+    _ether, sender, _r = _build_meshtastic_pair(connection_state=ConnectionState.CONNECTED)
+    assert sender.capabilities().connector_state == ConnectorState.READY
+
+    _ether2, sender2, _r2 = _build_meshtastic_pair(connection_state=ConnectionState.DISCONNECTED)
+    assert sender2.capabilities().connector_state == ConnectorState.UNAVAILABLE
+
+    _ether3, sender3, _r3 = _build_meshtastic_pair(connection_state=ConnectionState.CONNECTING)
+    assert sender3.capabilities().connector_state == ConnectorState.DEGRADED
+
+
+def test_meshtastic_resolve_route_requires_bang_prefixed_node_id():
+    _ether, sender, _receiver = _build_meshtastic_pair()
+    with pytest.raises(UnsupportedRouteError):
+        sender.resolve_route({})
+    with pytest.raises(UnsupportedRouteError):
+        sender.resolve_route({"node_id": "not-a-node-id"})
+    route = sender.resolve_route({"node_id": "!bbbbbbbb"})
+    assert route.route_type == RouteType.DIRECT
+    assert route.destination_address == "!bbbbbbbb"
+
+
+def test_meshtastic_encode_rejects_channel_route():
+    from meshsrv.attachments.delivery.base import Route
+
+    _ether, sender, _receiver = _build_meshtastic_pair()
+    signing_key = SigningKey.generate()
+    logical_message = _make_offer_message(signing_key)
+    bad_route = Route(route_type=RouteType.CHANNEL, route_id="general", destination_address="!bbbbbbbb")
+    with pytest.raises(UnsupportedRouteError):
+        sender.encode(logical_message, bad_route)
+
+
+def test_meshtastic_round_trip_preserves_canonical_bytes_and_signature():
+    """The same core contract-test requirement as the fakes above, through
+    the real adapter: encode -> send (via FakeRadioTransport) -> ingest
+    must round-trip byte-identical canonical CBOR and a still-verifiable
+    signature."""
+    ether, sender, receiver = _build_meshtastic_pair()
+    signing_key = SigningKey.generate()
+    logical_message = _make_offer_message(signing_key)
+
+    route = sender.resolve_route({"node_id": "!bbbbbbbb"})
+    wire_payload = sender.encode(logical_message, route)
+    assert len(wire_payload) == 168  # same golden number as the fake-text case
+    receipt = sender.send(wire_payload, route, idempotency_key="idem-1")
+    assert receipt.sent is True
+    assert receipt.external_message_id is not None  # a real packet_id, not echoed idempotency_key
+
+    events = ether.drain("!bbbbbbbb")
+    assert len(events) == 1
+    envelope = receiver.ingest(events[0])
+    assert envelope is not None
+    assert envelope.logical_message == logical_message
+    assert envelope.route_type == RouteType.DIRECT
+    assert envelope.source_address == "!aaaaaaaa"
+    assert envelope.adapter_id == "meshtastic"
+
+    decoded = codec.decode_offer(envelope.logical_message, verify_key=signing_key.verify_key)
+    assert decoded.transfer_id == b"\xff" * 16
+
+
+def test_meshtastic_oversized_payload_is_never_sent():
+    """encode() must raise before send() is ever reached, checked against
+    this instance's own configured limit - not a global constant."""
+    ether = InMemoryEther()
+    transport = FakeRadioTransport(ether, "!aaaaaaaa")
+    tiny_sender = MeshtasticTextAdapter(transport, max_payload_bytes=4)
+
+    signing_key = SigningKey.generate()
+    logical_message = _make_offer_message(signing_key)
+    route = tiny_sender.resolve_route({"node_id": "!bbbbbbbb"})
+
+    with pytest.raises(PayloadTooLargeError) as exc_info:
+        tiny_sender.encode(logical_message, route)
+    assert exc_info.value.limit_bytes == 4
+
+    assert ether.drain("!bbbbbbbb") == []
+
+
+def test_meshtastic_ingest_ignores_unrelated_events():
+    _ether, _sender, receiver = _build_meshtastic_pair()
+    assert receiver.ingest({"text": "just a normal chat message"}) is None
+    assert receiver.ingest({"unrelated": True}) is None
+    assert receiver.ingest("not even a dict") is None
+
+
+def test_meshtastic_ingest_raises_on_malformed_mca_prefixed_payload():
+    _ether, _sender, receiver = _build_meshtastic_pair()
+    bad_event = {"text": codec.TEXT_PREFIX + "!!!not-base64!!!", "source_address": "!aaaaaaaa"}
+    with pytest.raises(DeliveryError):
+        receiver.ingest(bad_event)

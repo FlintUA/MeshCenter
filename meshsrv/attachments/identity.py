@@ -157,7 +157,17 @@ def create_principal(
     # something went wrong earlier (partial create, manual tampering);
     # failing loudly here is safer than generating a second key that
     # doesn't match whatever is already on disk.
-    fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _KEY_FILE_MODE)
+    # getattr(..., 0): os.O_BINARY only exists on Windows, where os.open()
+    # otherwise defaults to text mode and silently corrupts any raw byte
+    # in the seed that happens to be \n (0x0A -> 0x0D 0x0A) - a real,
+    # non-theoretical bug, reproduced locally on ~1-in-9 random seeds. A
+    # no-op on POSIX (this project's only real target), so unconditionally
+    # OR-ing it in is always safe.
+    fd = os.open(
+        key_path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
+        _KEY_FILE_MODE,
+    )
     try:
         os.write(fd, bytes(signing_key))
     finally:

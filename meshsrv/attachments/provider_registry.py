@@ -85,6 +85,14 @@ def _b64url_encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
+def b64url_encode(data: bytes) -> str:
+    """Public alias for `_b64url_encode`, for callers outside this module
+    (e.g. `connectivity_monitor.py` comparing a Relay's self-reported
+    `/v1/info` public key against the pinned profile) that need the exact
+    same Base64URL-no-padding encoding this registry uses on disk."""
+    return _b64url_encode(data)
+
+
 def _b64url_decode(text: str, expected_length: Optional[int] = None) -> bytes:
     padding = "=" * (-len(text) % 4)
     try:

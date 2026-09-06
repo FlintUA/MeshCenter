@@ -96,6 +96,33 @@ DEFAULT_HARD_TTL_SECONDS = 72 * 3600  # design spec 14: hard_expiry = 72h
 DEFAULT_DOWNLOAD_GRACE_SECONDS = 3600  # design spec 14: download_grace = 1h
 
 KIND_GENERIC = 0
+
+# design spec 17.4 point 5: an optional caption, stored only in the
+# encrypted manifest, never sent to the Relay in the clear. Bounded so a
+# UI text field can't be used to smuggle an arbitrarily large plaintext
+# blob into local storage under the guise of a "comment".
+MAX_COMMENT_BYTES = 1000
+
+
+def _normalize_comment(comment: Optional[str]) -> Optional[str]:
+    """None and the empty/whitespace-only string are treated identically
+    (both mean "no comment") - a UI text field that the user left empty
+    must not round-trip as a comment=="" manifest header down the line.
+    Rejects an embedded NUL (would truncate as a C string in some
+    consumers) and anything over MAX_COMMENT_BYTES once UTF-8 encoded."""
+
+    if comment is None:
+        return None
+    stripped = comment.strip()
+    if not stripped:
+        return None
+    if "\x00" in stripped:
+        raise SenderError("comment must not contain a NUL byte")
+    encoded = stripped.encode("utf-8", errors="strict")
+    if len(encoded) > MAX_COMMENT_BYTES:
+        raise SenderError(f"comment exceeds {MAX_COMMENT_BYTES} bytes once UTF-8 encoded (got {len(encoded)})")
+    return stripped
+
 KIND_IMAGE = 1
 KIND_VIDEO = 2
 KIND_AUDIO = 3
@@ -195,6 +222,7 @@ def create_draft(
         raise SenderError("a draft must have at least one recipient")
     if len(provider_id) != 8:
         raise SenderError(f"provider_id must be 8 raw bytes, got {len(provider_id)}")
+    comment = _normalize_comment(comment)
 
     now = _now() if now is None else now
     attachment_id = uuid.uuid4().hex
@@ -204,8 +232,9 @@ def create_draft(
         """
         INSERT INTO attachments
             (id, workspace_id, transfer_id, direction, principal_id, provider_id, state,
-             file_name, mime_type, created_at, hard_expires_at, download_grace_seconds, saved_path)
-        VALUES (?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             file_name, mime_type, created_at, hard_expires_at, download_grace_seconds, saved_path,
+             draft_comment)
+        VALUES (?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             attachment_id,
@@ -220,6 +249,7 @@ def create_draft(
             0,  # hard_expires_at: unknown until commit(); 0 is never a valid real value
             download_grace_seconds,
             source_path,
+            comment,
         ),
     )
     for recipient in recipients:
@@ -397,7 +427,7 @@ def _step_encrypting(
         plain_size=plain_size,
         plain_sha256=plain_sha256,
         chunk_count=plan.chunk_count,
-        comment=None,
+        comment=row["draft_comment"],
     )
 
     envelopes = []
@@ -449,7 +479,12 @@ def _step_encrypting(
         attachment_id,
         QUEUED_UPLOAD,
         now,
-        extra_sql=", cipher_size = ?",
+        # draft_comment was only ever needed to build `header` above (it's
+        # now sealed inside manifest_blob, already persisted to
+        # mca_sender_state a few lines up) - clear the local plaintext
+        # copy now that it has done its one job, same spirit as clearing
+        # `pending_offer_cbor` once receiver.py is done with it.
+        extra_sql=", cipher_size = ?, draft_comment = NULL",
         extra_params=(total_ciphertext_size,),
     )
     return QUEUED_UPLOAD

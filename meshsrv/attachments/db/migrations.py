@@ -12,6 +12,13 @@ schemas here are this ADR's own reasonable design, to be revised by
 whichever later step (Provider Registry Step 0.7, principal/binding Step
 1.2, job queue Step 1.4) first needs a column this migration doesn't have.
 
+Later migrations: 2 extends `mca_provider_profiles` (Step 0.7); 3 renames
+its public-key column to match the real Relay's Base64URL encoding
+(Step 1.1/ADR-0005); 4 adds `mca_principal` (this workspace's own MCA
+identity) and the key-exchange rate-limit state tables `mca_key_exchange_
+contact_state`/`mca_key_exchange_quota` (Step 1.2, design spec section
+7.1/7.4).
+
 Migrations are tracked via `PRAGMA user_version` - a plain SQLite
 mechanism, deliberately not a bespoke `schema_migrations` table, since
 `attachments.db` has no other consumer to keep compatible with it.
@@ -207,6 +214,74 @@ ALTER TABLE mca_provider_profiles RENAME COLUMN service_public_key_b64url TO ser
 """
 
 
+# Execution Plan Step 1.2 (MCA principal + Meshtastic address binding):
+# one workspace has exactly one MCA principal (design spec section 7.1,
+# "для первой реализации используется один MCA principal на MCA
+# workspace") - `mca_principal` is therefore a single-row-per-workspace
+# table, not a list. `principal_id` is the stable, never-changing
+# identifier the workspace directory itself is keyed by
+# (`MCAWorkspaceManager`/ADR-0003) - it is set once, at creation, to the
+# genesis epoch's `key_id`, and does NOT change on a future key rotation
+# (spec section 7.5), even though `key_id`/`public_identity`/`epoch` do.
+# That distinction has no rotation logic to exercise yet (out of scope
+# for Step 1.2 - see ADR-0001 section 6 and spec 7.5) but the column
+# split is here now so a later rotation step is an UPDATE, not a schema
+# change. Private key material itself is never stored in this table or
+# any other DB row (ADR-0003: private keys live under `keys/`, 0700) -
+# `private_key_file` is only the filename (not full path) of the raw
+# 32-byte Ed25519 seed file within that principal's own `keys/` dir.
+_MIGRATION_0004_UP = """
+CREATE TABLE mca_principal (
+    workspace_id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    epoch INTEGER NOT NULL,
+    public_identity TEXT NOT NULL,
+    public_x25519 TEXT NOT NULL,
+    private_key_file TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE mca_key_exchange_contact_state (
+    workspace_id TEXT NOT NULL,
+    adapter_id TEXT NOT NULL,
+    source_address TEXT NOT NULL,
+    last_announce_sent_at INTEGER,
+    last_seen_sender_key_id TEXT,
+    last_seen_key_epoch INTEGER,
+    last_request_at INTEGER,
+    PRIMARY KEY (workspace_id, adapter_id, source_address)
+);
+
+CREATE TABLE mca_key_exchange_quota (
+    workspace_id TEXT PRIMARY KEY,
+    window_start_at INTEGER NOT NULL,
+    announces_sent INTEGER NOT NULL DEFAULT 0
+);
+
+-- Spec 7.3 last paragraph: "При неожиданной смене ключа... автоматическая
+-- отправка блокируется" - an already-TOFU-confirmed binding must never be
+-- silently overwritten by a later KEY_ANNOUNCE claiming a different
+-- public_identity for the same transport_address. These three columns
+-- hold that *candidate* replacement (mirroring the same not-yet-trusted
+-- shape as a brand new binding) until an explicit user action promotes it
+-- - see key_exchange.py's `accept_pending_key_change()`.
+ALTER TABLE mca_recipient_bindings ADD COLUMN pending_public_identity TEXT;
+ALTER TABLE mca_recipient_bindings ADD COLUMN pending_key_epoch INTEGER;
+ALTER TABLE mca_recipient_bindings ADD COLUMN pending_detected_at INTEGER;
+"""
+
+_MIGRATION_0004_DOWN = """
+ALTER TABLE mca_recipient_bindings DROP COLUMN pending_detected_at;
+ALTER TABLE mca_recipient_bindings DROP COLUMN pending_key_epoch;
+ALTER TABLE mca_recipient_bindings DROP COLUMN pending_public_identity;
+DROP TABLE IF EXISTS mca_key_exchange_quota;
+DROP TABLE IF EXISTS mca_key_exchange_contact_state;
+DROP TABLE IF EXISTS mca_principal;
+"""
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -219,6 +294,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(1, "create_core_tables", _MIGRATION_0001_UP, _MIGRATION_0001_DOWN),
     Migration(2, "extend_provider_profiles", _MIGRATION_0002_UP, _MIGRATION_0002_DOWN),
     Migration(3, "rename_provider_public_key_to_b64url", _MIGRATION_0003_UP, _MIGRATION_0003_DOWN),
+    Migration(4, "mca_principal_and_key_exchange_state", _MIGRATION_0004_UP, _MIGRATION_0004_DOWN),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0
@@ -235,6 +311,9 @@ ALL_TABLE_NAMES = frozenset(
         "mca_provider_profiles",
         "mca_jobs",
         "mca_tombstones",
+        "mca_principal",
+        "mca_key_exchange_contact_state",
+        "mca_key_exchange_quota",
     }
 )
 

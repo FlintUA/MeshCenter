@@ -427,6 +427,45 @@ ALTER TABLE attachments DROP COLUMN draft_comment;
 """
 
 
+# ADR-0008 (Step 1.6A backend layer): extends the provider profile model
+# for real Settings/worker use (kind/enabled/limits/health-cache columns)
+# and fixes a real bug - register(..., is_default=True) never cleared
+# is_default on any other row in the workspace, so two rows could end up
+# with is_default=1 and get_default()'s unordered `LIMIT 1` would pick
+# between them non-deterministically. The partial unique index below
+# makes "at most one default per workspace" a schema-enforced invariant;
+# ProviderRegistry.set_default() is the only sanctioned way to change it.
+_MIGRATION_0008_UP = """
+ALTER TABLE mca_provider_profiles ADD COLUMN kind TEXT NOT NULL DEFAULT 'own';
+ALTER TABLE mca_provider_profiles ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE mca_provider_profiles ADD COLUMN min_ttl_seconds INTEGER;
+ALTER TABLE mca_provider_profiles ADD COLUMN max_ttl_seconds INTEGER;
+ALTER TABLE mca_provider_profiles ADD COLUMN protocol_version TEXT;
+ALTER TABLE mca_provider_profiles ADD COLUMN upload_token_file TEXT;
+ALTER TABLE mca_provider_profiles ADD COLUMN last_checked_at INTEGER;
+ALTER TABLE mca_provider_profiles ADD COLUMN last_check_result TEXT;
+ALTER TABLE mca_provider_profiles ADD COLUMN last_latency_ms INTEGER;
+ALTER TABLE mca_provider_profiles ADD COLUMN last_error_code TEXT;
+
+CREATE UNIQUE INDEX idx_mca_provider_profiles_one_default
+    ON mca_provider_profiles(workspace_id) WHERE is_default = 1;
+"""
+
+_MIGRATION_0008_DOWN = """
+DROP INDEX IF EXISTS idx_mca_provider_profiles_one_default;
+ALTER TABLE mca_provider_profiles DROP COLUMN last_error_code;
+ALTER TABLE mca_provider_profiles DROP COLUMN last_latency_ms;
+ALTER TABLE mca_provider_profiles DROP COLUMN last_check_result;
+ALTER TABLE mca_provider_profiles DROP COLUMN last_checked_at;
+ALTER TABLE mca_provider_profiles DROP COLUMN upload_token_file;
+ALTER TABLE mca_provider_profiles DROP COLUMN protocol_version;
+ALTER TABLE mca_provider_profiles DROP COLUMN max_ttl_seconds;
+ALTER TABLE mca_provider_profiles DROP COLUMN min_ttl_seconds;
+ALTER TABLE mca_provider_profiles DROP COLUMN enabled;
+ALTER TABLE mca_provider_profiles DROP COLUMN kind;
+"""
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -443,6 +482,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(5, "mca_sender_state", _MIGRATION_0005_UP, _MIGRATION_0005_DOWN),
     Migration(6, "mca_receiver_state", _MIGRATION_0006_UP, _MIGRATION_0006_DOWN),
     Migration(7, "attachments_draft_comment", _MIGRATION_0007_UP, _MIGRATION_0007_DOWN),
+    Migration(8, "provider_profiles_v2", _MIGRATION_0008_UP, _MIGRATION_0008_DOWN),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0

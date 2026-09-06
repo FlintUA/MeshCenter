@@ -221,3 +221,151 @@ def test_workspaces_are_isolated(conn):
     )
     assert registry_b.resolve(profile.provider_id) is None
     assert registry_b.list_providers() == []
+
+
+# ---- ADR-0008 / migration 8: set_default(), upload tokens, update/remove -
+
+
+from meshsrv.attachments.workspace import MCAWorkspaceManager
+
+
+@pytest.fixture
+def wsm(tmp_path):
+    return MCAWorkspaceManager(str(tmp_path / "data"))
+
+
+def test_register_is_default_true_clears_previous_default(registry):
+    first = registry.register(
+        display_name="A", base_url="https://a.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024, is_default=True,
+    )
+    second = registry.register(
+        display_name="B", base_url="https://b.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024, is_default=True,
+    )
+    assert registry.resolve(first.provider_id).is_default is False
+    assert registry.resolve(second.provider_id).is_default is True
+    assert registry.get_default().provider_id == second.provider_id
+
+
+def test_set_default_switches_atomically_and_rejects_unknown_id(registry):
+    a = registry.register(
+        display_name="A", base_url="https://a.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024, is_default=True,
+    )
+    b = registry.register(
+        display_name="B", base_url="https://b.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    registry.set_default(b.provider_id)
+    assert registry.resolve(a.provider_id).is_default is False
+    assert registry.resolve(b.provider_id).is_default is True
+
+    with pytest.raises(ProviderRegistryError):
+        registry.set_default("does-not-exist")
+    # a failed set_default() must not have cleared the real default
+    assert registry.resolve(b.provider_id).is_default is True
+
+
+def test_partial_unique_index_enforces_at_most_one_default(conn, registry):
+    a = registry.register(
+        display_name="A", base_url="https://a.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024, is_default=True,
+    )
+    registry.register(
+        display_name="B", base_url="https://b.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    # bypass ProviderRegistry entirely and try to violate the invariant
+    # directly at the schema level - the partial unique index must reject it.
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "UPDATE mca_provider_profiles SET is_default = 1 WHERE workspace_id = 'ws-1' AND provider_id != ?",
+            (a.provider_id,),
+        )
+
+
+def test_upload_token_round_trips_and_is_never_on_the_profile(registry, wsm):
+    profile = registry.register(
+        display_name="A", base_url="https://a.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    assert profile.upload_token_configured is False
+    assert registry.get_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718") is None
+
+    registry.set_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718", "super-secret-token")
+
+    refreshed = registry.resolve(profile.provider_id)
+    assert refreshed.upload_token_configured is True
+    # the dataclass never carries the raw token itself under any field name
+    assert "super-secret-token" not in repr(refreshed)
+
+    assert registry.get_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718") == "super-secret-token"
+
+    token_path = wsm.paths("a1b2c3d4e5f60718").keys / f"relay_upload_token_{profile.provider_id}.secret"
+    assert token_path.exists()
+    assert (token_path.stat().st_mode & 0o777) == 0o600
+
+
+def test_update_profile_never_changes_identity_fields(registry):
+    profile = registry.register(
+        display_name="Old Name", base_url="https://a.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    updated = registry.update_profile(profile.provider_id, display_name="New Name", enabled=False)
+    assert updated.display_name == "New Name"
+    assert updated.enabled is False
+    # provider_id/origin/service_public_key are untouched - update_profile()
+    # has no parameters for them at all
+    assert updated.provider_id == profile.provider_id
+    assert updated.origin == profile.origin
+    assert updated.service_public_key == profile.service_public_key
+
+
+def test_remove_or_disable_deletes_when_unused_disables_when_referenced(conn, registry, wsm):
+    unused = registry.register(
+        display_name="Unused", base_url="https://unused.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    in_use = registry.register(
+        display_name="InUse", base_url="https://inuse.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    registry.set_upload_token(in_use.provider_id, wsm, "a1b2c3d4e5f60718", "tok")
+    conn.execute(
+        """
+        INSERT INTO attachments (id, workspace_id, transfer_id, direction, principal_id, provider_id, state,
+                                  created_at, hard_expires_at, download_grace_seconds)
+        VALUES ('att-1', 'ws-1', 'deadbeef', 'sent', 'principal-1', ?, 'DRAFT', 0, 0, 0)
+        """,
+        (in_use.provider_id,),
+    )
+    conn.commit()
+
+    assert registry.remove_or_disable(unused.provider_id, wsm, "a1b2c3d4e5f60718") == "deleted"
+    assert registry.resolve(unused.provider_id) is None
+
+    assert registry.remove_or_disable(in_use.provider_id, wsm, "a1b2c3d4e5f60718") == "disabled"
+    still_there = registry.resolve(in_use.provider_id)
+    assert still_there is not None
+    assert still_there.enabled is False
+
+
+def test_get_upload_candidates_requires_enabled_upload_allowed_and_token(registry, wsm):
+    no_token = registry.register(
+        display_name="NoToken", base_url="https://no-token.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    with_token = registry.register(
+        display_name="WithToken", base_url="https://with-token.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    registry.set_upload_token(with_token.provider_id, wsm, "a1b2c3d4e5f60718", "tok")
+    download_only = registry.register(
+        display_name="DownloadOnly", base_url="https://download-only.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024, upload_allowed=False,
+    )
+    registry.set_upload_token(download_only.provider_id, wsm, "a1b2c3d4e5f60718", "tok")
+
+    candidates = {p.provider_id for p in registry.get_upload_candidates()}
+    assert candidates == {with_token.provider_id}

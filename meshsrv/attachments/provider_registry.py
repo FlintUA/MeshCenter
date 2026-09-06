@@ -39,10 +39,16 @@ from __future__ import annotations
 import base64
 import dataclasses
 import hashlib
+import os
 import sqlite3
 import time
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 from urllib.parse import urlsplit
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle avoidance only
+    from meshsrv.attachments.workspace import MCAWorkspaceManager
+
+_UPLOAD_TOKEN_FILE_MODE = 0o600
 
 
 class ProviderRegistryError(ValueError):
@@ -62,6 +68,17 @@ class ProviderProfile:
     max_ciphertext_bytes: int
     is_default: bool
     added_at: float
+    # ADR-0008 / migration 8 (Step 1.6A):
+    kind: str = "own"  # "own" | "third_party"
+    enabled: bool = True
+    min_ttl_seconds: Optional[int] = None
+    max_ttl_seconds: Optional[int] = None
+    protocol_version: Optional[str] = None
+    upload_token_configured: bool = False
+    last_checked_at: Optional[float] = None
+    last_check_result: Optional[str] = None
+    last_latency_ms: Optional[int] = None
+    last_error_code: Optional[str] = None
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -135,6 +152,7 @@ def compute_provider_id(origin: str, service_public_key: bytes) -> str:
 
 
 def _row_to_profile(row: sqlite3.Row) -> ProviderProfile:
+    row_keys = row.keys()
     return ProviderProfile(
         provider_id=row["provider_id"],
         display_name=row["display_name"],
@@ -146,6 +164,23 @@ def _row_to_profile(row: sqlite3.Row) -> ProviderProfile:
         max_ciphertext_bytes=row["max_ciphertext_bytes"],
         is_default=bool(row["is_default"]),
         added_at=row["added_at"],
+        # ADR-0008 columns (migration 8) - guarded with `in row_keys` so
+        # this function keeps working against a pre-migration-8 row shape
+        # in case any caller still passes one in (defensive only; every
+        # real caller migrates through migration 8 as part of the same
+        # `migrate()` call).
+        kind=(row["kind"] if "kind" in row_keys else "own"),
+        enabled=bool(row["enabled"]) if "enabled" in row_keys else True,
+        min_ttl_seconds=(row["min_ttl_seconds"] if "min_ttl_seconds" in row_keys else None),
+        max_ttl_seconds=(row["max_ttl_seconds"] if "max_ttl_seconds" in row_keys else None),
+        protocol_version=(row["protocol_version"] if "protocol_version" in row_keys else None),
+        upload_token_configured=(
+            row["upload_token_file"] is not None if "upload_token_file" in row_keys else False
+        ),
+        last_checked_at=(row["last_checked_at"] if "last_checked_at" in row_keys else None),
+        last_check_result=(row["last_check_result"] if "last_check_result" in row_keys else None),
+        last_latency_ms=(row["last_latency_ms"] if "last_latency_ms" in row_keys else None),
+        last_error_code=(row["last_error_code"] if "last_error_code" in row_keys else None),
     )
 
 
@@ -168,6 +203,10 @@ class ProviderRegistry:
         upload_allowed: bool = True,
         download_allowed: bool = True,
         is_default: bool = False,
+        kind: str = "own",
+        min_ttl_seconds: Optional[int] = None,
+        max_ttl_seconds: Optional[int] = None,
+        protocol_version: Optional[str] = None,
         now: Optional[float] = None,
     ) -> ProviderProfile:
         """Store a provider profile whose trust was already established by
@@ -175,7 +214,18 @@ class ProviderRegistry:
         docstring). Registering the same (origin, service key) pair again
         is idempotent - it refreshes the stored fields rather than
         conflicting, since re-importing the same signed `.mcaprovider`
-        profile is a normal admin action, not an error."""
+        profile is a normal admin action, not an error.
+
+        `is_default=True` is handled by a separate call to `set_default()`
+        below rather than folded into this INSERT's own `ON CONFLICT`
+        clause (ADR-0008): the old approach only ever updated the single
+        upserted row's own `is_default` column, so nothing ever cleared a
+        previously-default row when a second one was registered as
+        default - two rows could each hold `is_default=1` and
+        `get_default()`'s unordered `LIMIT 1` would then pick between them
+        non-deterministically. `set_default()` is transactional and is
+        the only place that clears the old default, so this method can
+        never reproduce that bug again."""
         origin = normalize_origin(base_url)
         if len(service_public_key) != 32:
             raise ProviderRegistryError(
@@ -188,14 +238,18 @@ class ProviderRegistry:
             INSERT INTO mca_provider_profiles
                 (provider_id, workspace_id, origin, service_public_key_b64url,
                  max_ciphertext_bytes, hard_expiry_default_seconds, is_default, added_at,
-                 display_name, tls_required, upload_allowed, download_allowed)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                 display_name, tls_required, upload_allowed, download_allowed,
+                 kind, min_ttl_seconds, max_ttl_seconds, protocol_version)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(provider_id) DO UPDATE SET
                 display_name = excluded.display_name,
                 max_ciphertext_bytes = excluded.max_ciphertext_bytes,
                 upload_allowed = excluded.upload_allowed,
                 download_allowed = excluded.download_allowed,
-                is_default = excluded.is_default
+                kind = excluded.kind,
+                min_ttl_seconds = excluded.min_ttl_seconds,
+                max_ttl_seconds = excluded.max_ttl_seconds,
+                protocol_version = excluded.protocol_version
             """,
             (
                 provider_id,
@@ -204,15 +258,214 @@ class ProviderRegistry:
                 _b64url_encode(service_public_key),
                 max_ciphertext_bytes,
                 72 * 3600,
-                int(is_default),
                 now,
                 display_name,
                 int(upload_allowed),
                 int(download_allowed),
+                kind,
+                min_ttl_seconds,
+                max_ttl_seconds,
+                protocol_version,
+            ),
+        )
+        self._conn.commit()
+        if is_default:
+            return self.set_default(provider_id)
+        return self.resolve(provider_id)  # type: ignore[return-value]
+
+    def set_default(self, provider_id: str) -> ProviderProfile:
+        """The one sanctioned way to change this workspace's default
+        provider (ADR-0008). Transactional: clears `is_default` on every
+        other row in this workspace before setting it on `provider_id`, so
+        two rows can never simultaneously hold `is_default=1` (also
+        enforced at the schema level by migration 8's partial unique
+        index `idx_mca_provider_profiles_one_default` - this method just
+        means that invariant is never violated in the first place, rather
+        than relying on the index to reject a bad write after the fact)."""
+        with self._conn:
+            self._conn.execute(
+                "UPDATE mca_provider_profiles SET is_default = 0 WHERE workspace_id = ? AND is_default = 1",
+                (self._workspace_id,),
+            )
+            cur = self._conn.execute(
+                "UPDATE mca_provider_profiles SET is_default = 1 WHERE workspace_id = ? AND provider_id = ?",
+                (self._workspace_id, provider_id),
+            )
+            if cur.rowcount == 0:
+                raise ProviderRegistryError(f"no such provider_id in this workspace: {provider_id!r}")
+        profile = self.resolve(provider_id)
+        assert profile is not None  # just written above, in the same connection
+        return profile
+
+    def update_profile(
+        self,
+        provider_id: str,
+        *,
+        display_name: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        upload_allowed: Optional[bool] = None,
+        download_allowed: Optional[bool] = None,
+        min_ttl_seconds: Optional[int] = None,
+        max_ttl_seconds: Optional[int] = None,
+    ) -> ProviderProfile:
+        """Edits the mutable, non-identity-defining fields of an existing
+        profile. Deliberately does not accept `service_public_key`/
+        `origin`/`base_url` - changing either of those changes what
+        `provider_id` even means (`compute_provider_id()`), which is a new
+        registration (a fresh trust-bootstrap confirmation), never a
+        silent edit of an existing one (ADR-0008)."""
+        existing = self.resolve(provider_id)
+        if existing is None:
+            raise ProviderRegistryError(f"no such provider_id in this workspace: {provider_id!r}")
+        self._conn.execute(
+            """
+            UPDATE mca_provider_profiles SET
+                display_name = COALESCE(?, display_name),
+                enabled = COALESCE(?, enabled),
+                upload_allowed = COALESCE(?, upload_allowed),
+                download_allowed = COALESCE(?, download_allowed),
+                min_ttl_seconds = COALESCE(?, min_ttl_seconds),
+                max_ttl_seconds = COALESCE(?, max_ttl_seconds)
+            WHERE workspace_id = ? AND provider_id = ?
+            """,
+            (
+                display_name,
+                None if enabled is None else int(enabled),
+                None if upload_allowed is None else int(upload_allowed),
+                None if download_allowed is None else int(download_allowed),
+                min_ttl_seconds,
+                max_ttl_seconds,
+                self._workspace_id,
+                provider_id,
             ),
         )
         self._conn.commit()
         return self.resolve(provider_id)  # type: ignore[return-value]
+
+    def record_check_result(
+        self,
+        provider_id: str,
+        *,
+        result: str,
+        latency_ms: Optional[int] = None,
+        error_code: Optional[str] = None,
+        now: Optional[float] = None,
+    ) -> None:
+        """Caches the last health/info probe result (`ConnectivityMonitor`
+        is the only intended caller) so `GET /api/mca/providers` (1.6A)
+        can serve a cheap cached status without the request itself
+        triggering network I/O."""
+        now = time.time() if now is None else now
+        self._conn.execute(
+            """
+            UPDATE mca_provider_profiles
+            SET last_checked_at = ?, last_check_result = ?, last_latency_ms = ?, last_error_code = ?
+            WHERE workspace_id = ? AND provider_id = ?
+            """,
+            (now, result, latency_ms, error_code, self._workspace_id, provider_id),
+        )
+        self._conn.commit()
+
+    def remove_or_disable(self, provider_id: str, workspace_manager: "MCAWorkspaceManager", principal_id: str) -> str:
+        """Deletes the profile outright (and its upload token file, if
+        any) when nothing references it; otherwise disables it and keeps
+        history intact (ADR-0008). Returns `"deleted"` or `"disabled"`.
+        `resolve()` deliberately keeps returning a disabled profile (it is
+        a UI/worker-facing filter, not a trust decision) so an in-flight
+        transfer against a since-disabled Relay can still finish or fail
+        cleanly instead of hitting a `None` resolve mid-transfer."""
+        in_use = self._conn.execute(
+            "SELECT 1 FROM attachments WHERE workspace_id = ? AND provider_id = ? LIMIT 1",
+            (self._workspace_id, provider_id),
+        ).fetchone()
+        if in_use is not None:
+            self.update_profile(provider_id, enabled=False)
+            return "disabled"
+        self._delete_upload_token_file(provider_id, workspace_manager, principal_id)
+        self._conn.execute(
+            "DELETE FROM mca_provider_profiles WHERE workspace_id = ? AND provider_id = ?",
+            (self._workspace_id, provider_id),
+        )
+        self._conn.commit()
+        return "deleted"
+
+    def list_enabled(self) -> List[ProviderProfile]:
+        return [p for p in self.list_providers() if p.enabled]
+
+    def get_upload_candidates(self) -> List[ProviderProfile]:
+        """Profiles a send form may offer as a destination: enabled,
+        upload-allowed, and with an upload credential actually configured
+        - a Relay can be perfectly `download_allowed` (e.g. a
+        received-only or third-party profile) without ever being a valid
+        upload target."""
+        return [p for p in self.list_enabled() if p.upload_allowed and p.upload_token_configured]
+
+    def get_download_profile(self, provider_id: str) -> Optional[ProviderProfile]:
+        """Alias for `resolve()`, for read-path clarity at 1.6A call
+        sites that are specifically about the receive/download path -
+        behavior is identical, this adds no new restriction."""
+        return self.resolve(provider_id)
+
+    # ---- upload token storage (ADR-0008: never a plaintext DB column) --
+
+    def _upload_token_path(self, provider_id: str, workspace_manager: "MCAWorkspaceManager", principal_id: str):
+        paths = workspace_manager.ensure_workspace(principal_id)
+        return paths.keys / f"relay_upload_token_{provider_id}.secret"
+
+    def set_upload_token(
+        self, provider_id: str, workspace_manager: "MCAWorkspaceManager", principal_id: str, token: str
+    ) -> None:
+        """Writes `token` to a `0600` file under this workspace's `keys/`
+        directory (already `0700` - `WorkspacePaths`/`identity.py`'s
+        existing convention, not a new trust boundary) and records only
+        the filename in `mca_provider_profiles.upload_token_file`. The
+        token itself never touches a DB row, an HTTP response, or a log
+        line (ADR-0008)."""
+        if self.resolve(provider_id) is None:
+            raise ProviderRegistryError(f"no such provider_id in this workspace: {provider_id!r}")
+        token_path = self._upload_token_path(provider_id, workspace_manager, principal_id)
+        fd = os.open(str(token_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), _UPLOAD_TOKEN_FILE_MODE)
+        try:
+            os.write(fd, token.encode("utf-8"))
+        finally:
+            os.close(fd)
+        os.chmod(token_path, _UPLOAD_TOKEN_FILE_MODE)
+        self._conn.execute(
+            "UPDATE mca_provider_profiles SET upload_token_file = ? WHERE workspace_id = ? AND provider_id = ?",
+            (token_path.name, self._workspace_id, provider_id),
+        )
+        self._conn.commit()
+
+    def get_upload_token(
+        self, provider_id: str, workspace_manager: "MCAWorkspaceManager", principal_id: str
+    ) -> Optional[str]:
+        """Reads the raw upload token back off disk. Intended callers:
+        `sender.py`'s own `run_step()` path (building a `RelayClient`) -
+        never an HTTP handler (ADR-0008: `GET /api/mca/providers` exposes
+        only `upload_token_configured: bool` off `ProviderProfile`, never
+        this)."""
+        row = self._conn.execute(
+            "SELECT upload_token_file FROM mca_provider_profiles WHERE workspace_id = ? AND provider_id = ?",
+            (self._workspace_id, provider_id),
+        ).fetchone()
+        if row is None or row["upload_token_file"] is None:
+            return None
+        paths = workspace_manager.paths(principal_id)
+        token_path = paths.keys / row["upload_token_file"]
+        if not token_path.exists():
+            return None
+        return token_path.read_bytes().decode("utf-8")
+
+    def _delete_upload_token_file(self, provider_id: str, workspace_manager: "MCAWorkspaceManager", principal_id: str) -> None:
+        row = self._conn.execute(
+            "SELECT upload_token_file FROM mca_provider_profiles WHERE workspace_id = ? AND provider_id = ?",
+            (self._workspace_id, provider_id),
+        ).fetchone()
+        if row is None or row["upload_token_file"] is None:
+            return
+        paths = workspace_manager.paths(principal_id)
+        token_path = paths.keys / row["upload_token_file"]
+        token_path.unlink(missing_ok=True)
 
     def resolve(self, provider_id: str) -> Optional[ProviderProfile]:
         """The only sanctioned provider_id -> profile lookup. Returns

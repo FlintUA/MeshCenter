@@ -44,6 +44,12 @@ _HEADER_NONCE_SUFFIX = b"\xff" * _NONCE_SUFFIX_BYTES
 
 CHUNK_SIZE_BYTES = 256 * 1024
 
+# ADR-0007: exposed so receiver.py can derive plain_size from the
+# signed descriptor's ciphertext chunk sizes (plaintext = ciphertext -
+# TAG_BYTES per chunk, IETF construction) without duplicating a bare
+# "16" outside this module.
+TAG_BYTES = sodium.crypto_aead_xchacha20poly1305_ietf_ABYTES  # 16
+
 _AAD_VERSION = 1
 _ROLE_CHUNK = "chunk"
 _ROLE_HEADER = "header"

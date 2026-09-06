@@ -294,12 +294,16 @@ def decrypt_manifest_header(
     plain_size: int,
 ) -> ManifestHeader:
     """Decrypt the header once the receiver has the DEK (from its own
-    opened sealed envelope). ``chunk_count``/``plain_size`` are the values
-    from that same opened ``RecipientSecret`` (mirrored into the plaintext
-    header, per ADR-0006), used here only to reconstruct the AAD - the
-    decrypted header's own ``chunk_count``/``plain_size`` are then
-    cross-checked against them by the caller (not by this function, which
-    only proves the ciphertext is authentic under the AAD it was given)."""
+    opened sealed envelope). ``chunk_count`` is the value from that same
+    opened ``RecipientSecret``; ``plain_size`` is NOT carried by
+    ``RecipientSecret`` at all (see its dataclass above) and must instead
+    be derived independently from the already-verified Relay descriptor's
+    ciphertext chunk sizes (ADR-0007: ``sum(chunk.size) - chunk_count *
+    crypto.TAG_BYTES``) before this function is ever called. Both values
+    are used here only to reconstruct the AAD - the decrypted header's own
+    ``chunk_count``/``plain_size`` fields are then cross-checked against
+    them by the caller (not by this function, which only proves the
+    ciphertext is authentic under the AAD it was given)."""
 
     try:
         plaintext = crypto.decrypt_header(

@@ -343,6 +343,67 @@ DROP TABLE IF EXISTS mca_sender_state;
 """
 
 
+# Execution Plan Step 1.5 (receiver state machine; ADR-0007). The mirror
+# image of migration 5's `mca_sender_state`: the receiver's own two
+# pieces of mid-flight secret material that are NOT re-derivable from
+# only the plaintext file on disk (there is none yet, on this side) and
+# so must be persisted the moment they become known, so a restart between
+# `WaitingConsent -> Downloading` and `Verifying -> Available` does not
+# need to re-open the sealed envelope from a re-fetched manifest blob
+# every time (though - ADR-0007 decision 6 - it is also always SAFE to
+# just redo the network calls and re-derive this row from scratch if it's
+# missing, since `Downloading` never does genuine chunk-level resume in
+# this pass):
+#
+# - `data_key`/`nonce_prefix`/`receipt_secret`: opened once from this
+#   principal's own sealed envelope (`manifest.open_recipient_secret()`,
+#   randomized-at-seal-time so the *envelope* itself isn't
+#   re-derivable, but once opened these three values are plain fixed
+#   bytes worth keeping around rather than re-opening the envelope on
+#   every retry).
+# - `chunk_count`/`plain_size`: independently derived from the
+#   already-signature-verified Relay descriptor's ciphertext chunk sizes
+#   (ADR-0007 decision 2) - cheap to recompute, but storing them avoids
+#   a second `get_descriptor()` round-trip purely to redo arithmetic that
+#   was already done once this attachment's `Downloading` state was first
+#   entered.
+#
+# One row per in-flight *received* attachment; deleted once the
+# attachment reaches a terminal state (Available/Expired/Rejected/Failed)
+# - same "queue, not ledger" lifetime as `mca_sender_state`.
+_MIGRATION_0006_UP = """
+CREATE TABLE mca_receiver_state (
+    attachment_id TEXT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE,
+    data_key TEXT NOT NULL,
+    nonce_prefix TEXT NOT NULL,
+    receipt_secret TEXT NOT NULL,
+    chunk_count INTEGER NOT NULL,
+    plain_size INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+-- design spec 15.2's WaitingKey -> WaitingProvider/WaitingNetwork/
+-- WaitingConsent transition is drawn as automatic ("ключ получен") once a
+-- binding for the sender's key_id appears - it does NOT require the
+-- sender to re-deliver the OFFER over radio a second time. That means
+-- this workspace must keep enough of the original OFFER around, from the
+-- moment it lands in WAITING_KEY, to finish verifying it later without
+-- redelivery: the full canonical CBOR bytes (~122 bytes - ADR-0001
+-- section 4 - cheap to keep for the handful of pending-unknown-sender
+-- offers this MVP will ever have outstanding at once). Cleared back to
+-- NULL the moment the signature is successfully re-verified (receiver.py
+-- never needs it again after that point - it is not re-checked on every
+-- subsequent run_step() call, only once, at the WAITING_KEY -> * edge).
+ALTER TABLE attachments ADD COLUMN pending_offer_cbor BLOB;
+"""
+
+_MIGRATION_0006_DOWN = """
+ALTER TABLE attachments DROP COLUMN pending_offer_cbor;
+DROP TABLE IF EXISTS mca_receiver_state;
+"""
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -357,6 +418,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(3, "rename_provider_public_key_to_b64url", _MIGRATION_0003_UP, _MIGRATION_0003_DOWN),
     Migration(4, "mca_principal_and_key_exchange_state", _MIGRATION_0004_UP, _MIGRATION_0004_DOWN),
     Migration(5, "mca_sender_state", _MIGRATION_0005_UP, _MIGRATION_0005_DOWN),
+    Migration(6, "mca_receiver_state", _MIGRATION_0006_UP, _MIGRATION_0006_DOWN),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0
@@ -377,6 +439,7 @@ ALL_TABLE_NAMES = frozenset(
         "mca_key_exchange_contact_state",
         "mca_key_exchange_quota",
         "mca_sender_state",
+        "mca_receiver_state",
     }
 )
 

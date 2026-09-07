@@ -54,6 +54,31 @@ def _generate_csrf_token():
     return secrets.token_urlsafe(32)
 
 
+def _csrf_token_matches(expected, provided):
+    """Constant-time CSRF comparison that fails closed on malformed input.
+
+    secrets.compare_digest() only accepts two ASCII-only str (or two
+    bytes-like) values — anything else raises TypeError. A token that is
+    missing, empty, non-string, or non-ASCII must produce the exact 403
+    csrf_invalid envelope like a wrong token, never a 500, so this validates
+    the shape first and only hands genuinely comparable ASCII strings to
+    compare_digest(). Neither value is ever logged or echoed back.
+    """
+    if not isinstance(expected, str) or not isinstance(provided, str):
+        return False
+    if not expected or not provided:
+        return False
+    try:
+        if not (expected.isascii() and provided.isascii()):
+            return False
+    except Exception:
+        return False
+    try:
+        return secrets.compare_digest(provided, expected)
+    except TypeError:
+        return False
+
+
 def _ensure_csrf_token():
     """Return the session's CSRF token, minting one lazily if absent.
 
@@ -315,7 +340,7 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
 
         expected = session.get(_CSRF_SESSION_KEY)
         provided = request.headers.get(_CSRF_HEADER)
-        if expected and provided and secrets.compare_digest(provided, expected):
+        if _csrf_token_matches(expected, provided):
             return None
 
         return jsonify({

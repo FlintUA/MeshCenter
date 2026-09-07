@@ -5,19 +5,24 @@
 //
 // One small wrapper around window.fetch that transparently adds the
 // session's CSRF token (read from a <meta name="csrf-token"> tag) to
-// same-origin /api/ requests whose method mutates state (POST/PUT/
-// PATCH/DELETE). It never touches GET/HEAD, cross-origin URLs, or
-// non-/api/ paths, so the token can't leak to the Leaflet CDN, the
-// weather/map providers, or any other third party. Caller-supplied
-// options (body, method, credentials, signal, Headers, FormData,
-// Request, ...) are preserved untouched — the helper builds a shallow
-// copy rather than mutating the caller's objects, and it never forces a
-// Content-Type (so FormData keeps its automatic multipart boundary).
+// same-origin /api/ requests whose method is anything other than GET/HEAD
+// (POST/PUT/PATCH/DELETE/OPTIONS and any future method — the same rule the
+// backend enforces, so the two can't drift). It never touches GET/HEAD,
+// cross-origin URLs, or non-/api/ paths, so the token can't leak to the
+// Leaflet CDN, the weather/map providers, or any other third party.
+// Caller-supplied options (body, method, credentials, signal, cache, mode,
+// redirect, Headers, FormData, Request, ...) are preserved untouched — the
+// helper builds a shallow copy rather than mutating the caller's objects,
+// inherits a Request input's own headers when init.headers isn't supplied,
+// and it never forces a Content-Type (so FormData keeps its automatic
+// multipart boundary).
 //
 // Failure behaviour: a 403 whose JSON body names error_code ===
-// "csrf_invalid" is never retried or replayed. It shows one persistent
-// notification telling the user to reload the page (which fetches a fresh
-// token). Every other response — including ordinary 403s — passes through
+// "csrf_invalid" is never retried or replayed. It shows at most one
+// persistent notification telling the user to reload the page (which
+// fetches a fresh token) — checked whenever the original request was a
+// same-origin mutating /api/ call, even if the page's token was missing or
+// stale. Every other response — including ordinary 403s — passes through
 // unchanged, body unconsumed.
 // ============================================================
 (function (window) {
@@ -29,9 +34,14 @@
 
     var TOKEN_META_SELECTOR = 'meta[name="csrf-token"]';
     var CSRF_HEADER = 'X-CSRF-Token';
-    var UNSAFE_METHODS = { POST: true, PUT: true, PATCH: true, DELETE: true };
+    // Same rule as the backend's _CSRF_SAFE_METHODS: only GET and HEAD are
+    // safe. Every other explicit method — including OPTIONS and any future
+    // verb — mutates and needs the token. No four-method allowlist that can
+    // drift out of sync with api/api_auth.py.
+    var SAFE_METHODS = { GET: true, HEAD: true };
 
     var originalFetch = window.fetch;
+    var reloadPromptShown = false;
 
     function getToken() {
         if (typeof document === 'undefined') return '';
@@ -42,7 +52,8 @@
 
     // Resolve the request URL against the current page, the same way fetch
     // itself would, so same-origin/relative/absolute URLs all compare
-    // consistently. Returns null when the URL can't be parsed.
+    // consistently. A Request's own (already absolute) .url is picked up by
+    // the object branch. Returns null when the URL can't be parsed.
     function resolveURL(input) {
         try {
             if (typeof input === 'string') {
@@ -58,7 +69,9 @@
     }
 
     function isUnsafeMethod(method) {
-        return UNSAFE_METHODS[String(method || '').toUpperCase()] === true;
+        var m = String(method || '').toUpperCase();
+        // An empty/missing method defaults to GET and is safe.
+        return m !== '' && SAFE_METHODS[m] !== true;
     }
 
     function extractMethod(input, init) {
@@ -77,31 +90,66 @@
         return url.pathname.indexOf('/api/') === 0;
     }
 
-    // Returns a new init with the header added, leaving the caller's init
-    // and Headers untouched. Handles the three header shapes fetch accepts
-    // (Headers instance, array of [name, value] pairs, plain object).
-    function addTokenHeader(init, token) {
-        var next = Object.assign({}, init || {});
-        var headers = next.headers;
-
-        if (typeof Headers !== 'undefined' && headers instanceof Headers) {
-            var copied = new Headers(headers);
-            copied.set(CSRF_HEADER, token);
-            next.headers = copied;
-        } else if (Array.isArray(headers)) {
-            next.headers = headers.slice();
-            next.headers.push([CSRF_HEADER, token]);
-        } else if (headers && typeof headers === 'object') {
-            next.headers = Object.assign({}, headers);
-            next.headers[CSRF_HEADER] = token;
-        } else {
-            next.headers = {};
-            next.headers[CSRF_HEADER] = token;
+    // Fallback for environments with no global Headers (never in a browser,
+    // never in Node 18+): flatten the header input to a plain object.
+    function toHeaderObject(headers) {
+        var obj = {};
+        if (!headers) return obj;
+        if (Array.isArray(headers)) {
+            headers.forEach(function (pair) { obj[pair[0]] = pair[1]; });
+        } else if (typeof headers === 'object') {
+            Object.keys(headers).forEach(function (name) { obj[name] = headers[name]; });
         }
+        return obj;
+    }
+
+    // Delete every header whose name matches case-insensitively, so a
+    // pre-existing x-csrf-token is replaced rather than duplicated in the
+    // (browser/Node-never) no-Headers fallback path.
+    function removeHeaderCaseInsensitive(obj, targetName) {
+        var lower = targetName.toLowerCase();
+        Object.keys(obj).forEach(function (name) {
+            if (name.toLowerCase() === lower) delete obj[name];
+        });
+    }
+
+    // Returns a new init with the CSRF header added, leaving the caller's
+    // init and Headers (and a Request input's Headers) untouched.
+    //
+    // Header-source precedence follows fetch itself: if init.headers is
+    // explicitly supplied that set wins (the CSRF header is added/replaced
+    // into a copy of it); otherwise a Request input's own headers are copied;
+    // otherwise a fresh empty set. The copied set is normalized through the
+    // standard Headers API, so X-CSRF-Token is added or replaced
+    // case-insensitively (a caller's lowercase x-csrf-token is overwritten,
+    // never duplicated) regardless of the original header shape.
+    function addTokenHeader(input, init, token) {
+        var next = Object.assign({}, init || {});
+        var base = next.headers;
+        if (base === undefined || base === null) {
+            base = (input && input.headers) ? input.headers : {};
+        }
+
+        var out;
+        if (typeof Headers !== 'undefined') {
+            out = new Headers(base);
+            out.set(CSRF_HEADER, token);
+        } else {
+            out = toHeaderObject(base);
+            removeHeaderCaseInsensitive(out, CSRF_HEADER);
+            out[CSRF_HEADER] = token;
+        }
+        next.headers = out;
         return next;
     }
 
     function showReloadPrompt() {
+        // At most one persistent prompt per page lifetime — several requests
+        // failing at once (e.g. a burst of parallel fetches after the session
+        // token went stale) must not stack a wall of identical banners.
+        if (reloadPromptShown) return;
+        reloadPromptShown = true;
+
         var message;
         var actionLabel;
         if (window.I18N && typeof window.I18N.tOrFallback === 'function') {
@@ -155,14 +203,22 @@
     }
 
     function wrappedFetch(input, init) {
-        var token = getToken();
-        if (token && needsToken(input, init)) {
-            init = addTokenHeader(init, token);
+        // needsToken() (same-origin mutating /api/) decides BOTH whether the
+        // token is added and whether a 403 is inspected for csrf_invalid. The
+        // second must not depend on a token actually being present: a missing
+        // or stale page token is precisely when the reload instruction is
+        // needed, and it must never fire for cross-origin or safe calls.
+        var needs = needsToken(input, init);
+        if (needs) {
+            var token = getToken();
+            if (token) {
+                init = addTokenHeader(input, init, token);
+            }
         }
 
         var promise = originalFetch.call(window, input, init);
 
-        if (token) {
+        if (needs) {
             promise = promise.then(function (response) {
                 var reason = csrfRejectReason(response);
                 if (reason) {
@@ -182,7 +238,7 @@
 
     window.fetch = wrappedFetch;
     window.MeshCenterCSRF = {
-        version: '1',
+        version: '2',
         getToken: getToken,
         needsToken: needsToken,
         addTokenHeader: addTokenHeader,

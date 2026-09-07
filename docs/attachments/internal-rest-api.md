@@ -1,41 +1,41 @@
 # MCAttach Internal REST API Contract
 
-**Status:** Design contract (Step 1.6A). This document defines the HTTP surface — it does **not** implement it. No endpoint below exists yet; no runtime code was changed in the Step 1.6A change that added this document.
+**Status:** Design contract (Step 1.6A), revised. This document defines the HTTP surface — it does **not** implement it. No endpoint below exists yet; no runtime code, migration, test, JS, HTML or CSS was changed in the Step 1.6A change that added/revised this document.
 **Canonical source:** the Russian system design spec (section 18 primary, sections 17/19/20 and the state machines also consulted). That spec is reference-only and is not committed to the repository.
-**Audience:** a future implementation task. The contract is written to be precise enough to implement against without re-deriving decisions.
+**Audience:** a future implementation task, split into sub-stages (§5).
 
 ---
 
 ## 1. Scope and non-goals
 
-This document specifies the **internal** REST API MeshCenter exposes to its own browser UI for the MCAttach (file-transfer-over-Meshtastic) subsystem. "Internal" means: browser-session-authenticated, same-origin, never a public or machine-to-machine API. It does not specify the **Relay** wire API (that is `docs/architecture/ADR-0003`-adjacent and lives in `meshsrv/attachments/relay_client.py`) and does not specify the **mesh** wire format (ADR-0001 / `meshsrv/attachments/codec.py`).
+This document specifies the **internal** REST API MeshCenter exposes to its own browser UI for the MCAttach (file-transfer-over-Meshtastic) subsystem. "Internal" means: browser-session-authenticated, same-origin, never a public or machine-to-machine API. It does not specify the **Relay** wire API (that lives in `meshsrv/attachments/relay_client.py`) and does not specify the **mesh** wire format (ADR-0001 / `meshsrv/attachments/codec.py`).
 
 Everything here is bounded by the MVP narrowing that is already in force across the backend layer:
 
-- **Single transport:** Meshtastic direct text (`MCA1_TEXT`) only. `MeshtasticTextAdapter.capabilities()` reports `supports_channel=False` and `supports_incoming` only for direct messages (design spec §19.1/§19.3).
-- **Single recipient:** one sender → one recipient per attachment (design spec §3.2 / Multi-Relay requirements §4). `attachment_recipients` is schema-capable of more than one row, but no code path exercises it; `AttachmentsService._resolve_recipient_identities()`'s TOFU-binding check is scoped to `DIRECT` routes only.
-- **No automatic download:** receiving never starts without an explicit user action (design spec §13; `receiver.begin_download()` is never called automatically).
-- **No automatic Relay failover, no per-Relay upload quota, no broadcast/group delivery** (Multi-Relay requirements §4).
+- **Single transport:** Meshtastic direct text (`MCA1_TEXT`) only. `MeshtasticTextAdapter` reports `supports_channel=False` and incoming only for direct messages.
+- **Single recipient:** one sender → one recipient per attachment. `attachment_recipients` is schema-capable of more than one row, but no code path exercises it; `AttachmentsService._resolve_recipient_identities()`'s TOFU-binding check is scoped to `DIRECT` routes only.
+- **No automatic download:** receiving never starts without an explicit user action (`receiver.begin_download()` is never called automatically; `WAITING_CONSENT` is excluded from `receiver.AUTOMATIC_STATES`).
+- **No automatic Relay failover, no per-Relay upload quota, no broadcast/group delivery.**
 
 ---
 
 ## 2. Conventions inherited from the existing codebase
 
-These are **not** new decisions — they are the conventions already in force in `server.py` / `api/*.py`, which the MCAttach routes must follow for consistency. Each is cited to its source.
+These are the conventions already in force in `server.py` / `api/*.py`, which the MCAttach routes must follow for consistency. Each is cited.
 
 ### 2.1 Route registration
 
-Follow the DI-by-parameter-list pattern, not Blueprints (CLAUDE.md "Architecture"): one plain function
+DI-by-parameter-list pattern, not Blueprints (CLAUDE.md): one plain function
 
 ```python
 def register_mca_routes(app, state_lock, handle_errors, mca, ...):
 ```
 
-called from `server.py`'s `__main__` block, closing over the shared objects it needs. The single object every handler should call through is a request-facing **facade** (see §5), not `server.py`'s raw globals.
+called from `server.py`, closing over the shared objects it needs. The single object every handler calls through is a request-facing **facade** (§3), never `server.py`'s raw globals and never a raw `sqlite3.Connection`.
 
 ### 2.2 Browser-session authentication
 
-A single shared password (no usernames/roles). `api/api_auth.py`'s `before_request` hook returns, for any `/api/` path with a valid session but no `session["authenticated"]`:
+A single shared password (no usernames/roles). `api/api_auth.py`'s `before_request` hook returns, for any `/api/` path with no `session["authenticated"]`:
 
 ```json
 {"ok": false, "error": "Authentication required", "error_code": "auth_required"}
@@ -43,440 +43,515 @@ A single shared password (no usernames/roles). `api/api_auth.py`'s `before_reque
 
 with HTTP **401**. Every MCAttach endpoint is an `/api/` path and inherits this with **no extra work** — do not add a second auth layer. Exempt paths are only `/login` and `/static/`, so no MCAttach endpoint is reachable unauthenticated.
 
-### 2.3 CSRF
+### 2.3 CSRF (project-wide contract — a prerequisite, not a per-endpoint detail)
 
-**The existing codebase has no CSRF token mechanism** — there is no `csrf_token` in any JS or Python file, and no `SameSite` override on the session cookie. This is an existing, pre-MCAttach gap, not something Step 1.6A introduces or is expected to fix by itself. The design spec's section 18 requirement "CSRF-защита для mutation endpoints" is therefore **currently unmet across the whole app**, not just MCAttach.
+The audited codebase has **no CSRF mechanism today**: there is no `csrf_token` in any JS or Python file, and `server.py` sets no `SESSION_COOKIE_SAMESITE`, no `SESSION_COOKIE_HTTPONLY`, and no `MAX_CONTENT_LENGTH` (verified by grep — zero hits for all of these). The Flask session cookie therefore relies on the framework default (effectively `SameSite=Lax` in a browser), which is **not** sufficient protection for state-changing requests.
 
-For this contract:
+Because MCAttach introduces the project's first `multipart/form-data` surface and its first write-heavy mutation set, the following project-wide CSRF contract is a **required prerequisite** — implemented once in `server.py`/`api_auth.py`, shared by every feature, not invented per-MCAttach:
 
-- Mark every **mutation** endpoint `CSRF: required (project-wide gap)`. This records the requirement without pretending the mechanism already exists.
-- The implementation task should **not** invent a bespoke MCAttach CSRF token. If CSRF protection is to be added, it must be added once, project-wide (e.g. a session-bound `X-CSRF-Token` checked in a single `before_request` hook and issued to the frontend), and this document flags that as an open decision (§11), not a per-endpoint design detail.
+1. **Cookie hardening.** Set `SESSION_COOKIE_SAMESITE = "Strict"` (or `"Lax"` *combined with* an explicit CSRF token — one of the two, not neither) and `SESSION_COOKIE_HTTPONLY = True`. This is a single `app.config` change, not MCAttach-specific.
+2. **Token issuance.** At login, mint a per-session random token (≥ 128 bits), store it in the session, and expose it to the page (e.g. a `<meta name="csrf-token">`). The token is **not** returned by any API read endpoint.
+3. **Token check.** One `before_request` hook rejects any non-GET/HEAD `/api/` request whose `X-CSRF-Token` header does not equal the session token, returning `{"ok": false, "error": "CSRF token missing or invalid", "error_code": "csrf_invalid"}` with **403**.
+4. **Client usage.** The frontend sends the token as `X-CSRF-Token` on every mutating `fetch`/`XMLHttpRequest`. Custom headers are settable on multipart `FormData` requests, so the `multipart/form-data` create endpoint is covered; JSON and form mutations carry it identically.
+
+Every mutation endpoint in this contract is marked `CSRF: required`. Until the project-wide mechanism above exists, **no MCAttach mutation may ship** — recorded as the first gap in §13 and as sub-stage 1.6A.0 in §5.
 
 ### 2.4 JSON envelope
 
-Two shapes, both already standard:
+- **Success:** `{"ok": true, ...}` with domain fields.
+- **Error:** `{"ok": false, "error": "<human text>", "error_code": "<snake_case_code>"}` plus the correct HTTP status. Codes are snake_case: existing examples `waypoint_not_found`, `radio_busy`, `auth_required`, `password_too_short`.
 
-- **Success:** `{"ok": true, ...}` with domain-specific fields.
-- **Error:** `{"ok": false, "error": "<human text>", "error_code": "<snake_case_code>"}` plus the correct HTTP status. Error codes are snake_case: existing examples are `waypoint_not_found`, `invalid_waypoint_id`, `radio_busy`, `radio_released`, `auth_required`, `password_too_short`.
-
-`handle_errors` (server.py:496) already wraps every route and turns an uncaught exception into `{"ok": false, "error": str(e), ...}` with HTTP 500 — MCAttach routes must **not** leak internal exception text; where a domain error has a stable code, catch it and return the stable `error_code` instead of relying on the `str(e)` fallback (see §8.1).
+`handle_errors` (server.py:496) turns an uncaught exception into a 500 envelope; MCAttach routes must catch domain errors and return a stable `error_code` rather than leaking `str(e)` (see §10).
 
 ### 2.5 Request body
 
-- JSON bodies: `request.get_json(force=True)` (or `silent=True` where the existing style tolerates a missing body).
-- File upload: **`multipart/form-data`** (see §4.2 — this is the one place MCAttach needs a content-type the existing codebase does not yet use).
+- JSON: `request.get_json(force=True)`.
+- File upload: `multipart/form-data` (see §7.2 — the one place MCAttach needs a content-type the existing codebase does not yet use).
 
 ### 2.6 Status codes
 
-Use the codebase's established vocabulary: `200` (read), `201`/`202` (created/accepted — see §4.2), `400` (validation), `401` (auth, inherited), `404` (not found), `409` (conflict — e.g. wrong state, already exists), `429` (rate-limited), `500` (unexpected), `503` (radio/relay unavailable). Where an action is queued rather than completed synchronously, prefer `202 Accepted` over `200`.
+`200` (read), `201`/`202` (created/accepted — see §3.4), `400` (validation), `401` (auth, inherited), `403` (CSRF), `404` (not found), `409` (conflict / wrong state / idempotency), `429` (rate-limited / queue full), `500` (unexpected), `503` (radio/relay unavailable at an action's runtime). See §3.4 for the uniform async rule.
 
 ### 2.7 Pagination
 
-The only existing list route (`GET /api/waypoints`) returns everything plus a `total` count and does **not** paginate. For MCAttach's list endpoint, follow that shape (`total` + full list) for the MVP and add `limit`/`offset` as **optional** query params with server-defined defaults, because attachment history can grow unboundedly (metadata retained 90 days by default, design spec §16.5). No cursor-based pagination — out of scope.
+The only existing list route (`GET /api/waypoints`) returns everything plus `total` and does not paginate. MCAttach's list endpoint keeps `total` and adds `limit`/`offset` as optional query params with server defaults (metadata retained 90 days by default). No cursor pagination.
 
 ### 2.8 Idempotency
 
-Job creation is idempotent by **client request ID** (design spec §18 "создание job идемпотентно по client request ID"). Use a `client_request_id` field (see §4.2). The database already models per-delivery idempotency (`attachment_deliveries.idempotency_key` unique constraint, design spec §16.4), but there is **no** client-request-id column on `attachments` yet — that is a schema gap (§9).
+Job creation is idempotent by **client request ID**. Full semantics are in §3.5 and §7.2: identical replay returns the original result; the same `client_request_id` with different canonical content returns **409**.
 
-### 2.9 Secrets and absolute paths
+### 2.9 Secrets, absolute paths, and logging
 
-- Messenger/Relay credentials (upload tokens, revoke tokens, receipt secrets, private keys) are **never** returned to the browser. They are replaced by a boolean `configured`/`upload_token_configured` flag (design spec §18 "messenger credentials никогда не выдаются browser API и заменяются признаком `configured`").
-- Responses must never expose absolute filesystem paths. `saved_path` is returned only as a path **relative to the controlled workspace root**, or omitted entirely in favour of a generated download URL (§4.6). This mirrors `api_camera.py`'s screenshot pattern (serves by validated filename, never by absolute path).
-- Never log plaintext filename/comment, keys, full MCA pointers, or bearer/revoke credentials (design spec §22.2).
+- Relay credentials (upload/revoke tokens, receipt secrets, private keys) are **never** returned — replaced by `upload_token_configured` / `configured` booleans.
+- Responses never expose absolute filesystem paths (§7.4 replaces `saved_path` with a `saved` boolean).
+- Logs omit plaintext filename/comment, keys, full MCA pointers, and tokens.
 
 ---
 
-## 3. Domain-layer inventory (what the endpoints call)
+## 3. Threading and data-access model (the architectural core)
 
-All real work lives in `meshsrv/attachments/` and `meshsrv/connectivity_monitor.py`. The endpoints are a thin translation layer over these — they must **never** import the `meshtastic` package, touch the radio directly, or perform Relay/network I/O on the request thread (design spec §19.1/§19.2).
+This is the one real architectural addition Step 1.6A requires, and it supersedes the earlier revision's "dedicated read-only connection" idea — which is **rejected**: a read-only connection is still a second thread reaching into SQLite, and routing reads through the worker's `tick` lock would serialize them behind the network-bound tick. The model below preserves the single-owner invariant *and* keeps request threads off both `conn` and the tick lock.
 
-### 3.1 Service and runtime
+### 3.1 The invariant (already true of the backend)
 
-| Object | Module | Role |
-|---|---|---|
-| `AttachmentsService` | `meshsrv/attachments/service.py` | The single-owner worker. Public surface today: `start()`, `stop()`, `wake()`, `evaluate_upload_readiness(...)`, `enqueue_inbound(event)`, `tick()`. **It has no CRUD methods** — see §5. |
-| `_MCARuntimeState` (singleton) | `meshsrv/attachments/mca_runtime.py` | Builds and holds `conn`, `principal`, `provider_registry`, `connectivity_monitor`, `coordinator` (key exchange), `service`. Reached via `mca_runtime._get_state(data_dir)`. |
-| `start_attachments_service()` | `meshsrv/attachments/mca_runtime.py` | Called once from `server.py`'s `start_runtime()` (before the listener thread). |
+The single `sqlite3.Connection` is touched by exactly two threads over the process lifetime:
 
-### 3.2 Sender (`meshsrv/attachments/sender.py`)
+1. the **startup thread** — construction + `migrate()` + the eager `ConnectivityMonitor._refresh_profile_snapshot()` and `sender.resume_pending()`/`receiver.reconcile_pending()` inside `mca_runtime.ensure_service()`;
+2. the **worker thread** (`AttachmentsService._run`) — every tick.
 
-States: `DRAFT → VALIDATING → ENCRYPTING → QUEUED_UPLOAD → UPLOADING → READY_TO_SEND → SENT → RECEIVED → DOWNLOADED`, plus terminal `EXPIRED`, `REVOKED`, `CANCELLED`, `FAILED_VALIDATION`, `FAILED_UPLOAD`, `FAILED_RADIO`. `AUTOMATIC_STATES` excludes `SENT`/`RECEIVED`/`DOWNLOADED` and all terminal states.
+`AttachmentsService._lock` exists **only** to make `tick()` re-entrant (its own docstring says so), *not* to arbitrate between two owners. A Flask request thread must therefore never call `tick()`, take `_lock`, or touch `conn`. `ConnectivityMonitor.snapshot()` and `evaluate_upload_decision()` are the worked example: they read an atomically-published in-memory `_profile_snapshot`/`_relay_statuses`, never SQLite — and a dedicated thread-identity test already asserts a simulated REST call performs zero SQLite operations.
 
-Key functions (all take a raw `sqlite3.Connection`):
+### 3.2 Two request-thread-safe surfaces
 
-- `create_draft(conn, workspace_manager, principal, *, workspace_id, source_path, file_name, mime_type, recipients, adapter_id, connector_profile_id, route_type, route_id, provider_id, kind, comment, hard_ttl_seconds, download_grace_seconds, now)` → returns `attachment_id`. **Does no file I/O** — `source_path` is recorded, not opened.
-- `run_step(conn, *, workspace_manager, principal, recipient_identities, relay_client, delivery_adapter, network_available, attachment_id, now)` → one state transition.
-- `cancel(conn, attachment_id)` → `CANCELLED` (refuses terminal states and `SENT`/`RECEIVED`/`DOWNLOADED`).
+**Reads — immutable snapshots.** The worker publishes, at the end of each tick (and once at startup), immutable projections built by copy (a fresh `dict`/`list`, swapped in with one reference assignment, atomic under the GIL — the exact pattern `ConnectivityMonitor._refresh_profile_snapshot()` already documents). The request thread reads only these:
+
+- **connectivity snapshot** — exists: `ConnectivityMonitor.snapshot()`.
+- **provider snapshot** — exists: `ConnectivityMonitor._profile_snapshot` (private; expose a read-only accessor).
+- **attachments snapshot** — **new**: a worker-built projection of `attachments` in the public row shape of §7.4 (no `saved_path`, no protocol-internal columns), keyed by `id`, plus an ordered list for the list endpoint. Built each tick from the same row-scan the worker already performs, so it stays fresh without extra queries.
+- **idempotency index snapshot** — **new**: `client_request_id → {attachment_id, canonical_hash, created_at}` (§3.5).
+
+**Writes — a bounded command queue.** Every mutation is an immutable, frozen `Command` dataclass validated on the request thread (using **pure functions only** — no `conn`, no file I/O beyond the create endpoint's spool write, §7.2), then enqueued on a bounded queue the same way the existing inbound queue works:
+
+- `queue.Queue(maxsize=COMMAND_QUEUE_MAXSIZE)`, `put_nowait()`; `queue.Full` → **429** `command_queue_full` (never block the request thread).
+- The worker drains up to `MAX_COMMANDS_PER_TICK` commands per tick (before the row-scan), executing each on its own thread — the single owner — then `wake()`s itself. A command that raises is caught and logged like a bad attachment; it never kills the worker.
+- Command execution does the real domain work: `sender.create_draft()`, `sender.run_step()` (for retry), `receiver.begin_download()`/`reject()`, the Relay revoke, the workspace file move, `ProviderRegistry.register()`/`update_profile()`/`set_default()`/`set_upload_token()`/`remove_or_disable()`, etc.
+
+The set of commands is enumerated per endpoint in §7. `wake()` remains the handler's only post-action call *after* enqueueing (it flags the worker without touching DB/network).
+
+### 3.3 The one allowed file read on the request thread
+
+`GET /api/attachments/{id}/content` serves a **file from disk**, not a SQLite row. Files written by the worker (decrypted `cache/incoming/` blob, or a persisted `files/` copy) are immutable once written, so the content endpoint may read them directly on the request thread, gated on the attachments snapshot for state (`content_available` / `saved`). It must not open `conn`.
+
+### 3.4 Sync vs async: the uniform response model
+
+This resolves the earlier contradiction between a "blanket 202" and synchronous-looking provider/action endpoints. There are exactly two response classes:
+
+- **Reads** → `200` + snapshot data (or `404`). No command, no queue.
+- **Mutations** → `202 Accepted` + `{"ok": true, "command_id": "<uuid>"}`. Every mutation — attachment *and* provider/registry — is a worker command, because the registry and the attachments service share the same single-owner `conn`; a "synchronous" registry write from the request thread would violate §3.1 just as surely as an attachment write would.
+
+Synchronous validation that produces a **4xx** still happens on the request thread (pure functions: `normalize_origin`, `compute_provider_id`, key-length checks, snapshot-state preconditions) so the client gets an immediate, deterministic error. The persistence is always the deferred command. The client observes success/state-change by polling the read snapshot (design spec §18: polling, not streaming).
+
+### 3.5 Idempotency and synchronous result resolution
+
+`create` (and provider `register`) must answer three cases deterministically even though the write is deferred:
+
+1. **new** `client_request_id` → `202` + `command_id`.
+2. **identical replay** (same `client_request_id`, same canonical content) → `200` + the *original* result (`attachment_id`) read from the worker-published **idempotency index snapshot**.
+3. **same `client_request_id`, different canonical content** → **409** `idempotency_conflict`.
+
+Canonical content for create is `SHA-256(file bytes ‖ recipient source_address ‖ comment ‖ hard_ttl_seconds ‖ download_grace_seconds ‖ provider_id ‖ route_id)`. The idempotency index is another immutable snapshot (§3.2), so cases 2/3 resolve without touching `conn`. This requires two new `attachments` columns (`client_request_id`, `canonical_hash`) — listed in §13.
+
+---
+
+## 4. Domain-layer inventory (what the worker executes)
+
+All real work lives in `meshsrv/attachments/` and `meshsrv/connectivity_monitor.py`. The endpoints are a thin translation layer; the worker is the only executor. Names below are verbatim.
+
+### 4.1 Service and runtime
+
+- `AttachmentsService` (`service.py`): `start()`, `stop()`, `wake()`, `evaluate_upload_readiness()`, `enqueue_inbound()`, `tick()`. `wake()`'s docstring names it "the only method API handlers … are meant to call after a domain-layer action."
+- `_MCARuntimeState` singleton (`mca_runtime.py`): builds and holds `conn`, `principal`, `provider_registry`, `connectivity_monitor`, `coordinator`, `service`; reached via `mca_runtime._get_state(data_dir)`.
+- `start_attachments_service()` (`mca_runtime.py`), called once from `server.py`'s `start_runtime()`.
+
+### 4.2 Sender (`sender.py`)
+
+States: `DRAFT → VALIDATING → ENCRYPTING → QUEUED_UPLOAD → UPLOADING → READY_TO_SEND → SENT → RECEIVED → DOWNLOADED`; terminal `EXPIRED`, `REVOKED`, `CANCELLED`, `FAILED_VALIDATION`, `FAILED_UPLOAD`, `FAILED_RADIO`.
+
+- `TERMINAL_STATES = {DOWNLOADED, EXPIRED, REVOKED, CANCELLED, FAILED_VALIDATION, FAILED_UPLOAD, FAILED_RADIO}`.
+- `AUTOMATIC_STATES = {DRAFT, VALIDATING, ENCRYPTING, QUEUED_UPLOAD, UPLOADING, READY_TO_SEND}`. `SENT`/`RECEIVED` are intentionally excluded (event-driven via `on_ack_received`/`on_ack_downloaded`).
+- `create_draft(conn, workspace_manager, principal, *, workspace_id, source_path, file_name, mime_type, recipients, adapter_id, connector_profile_id, route_type, route_id, provider_id, kind, comment, hard_ttl_seconds, download_grace_seconds, now)` → `attachment_id`. **Does no file I/O** (`source_path` is recorded, not opened — a draft can exist before the file/radio are ready).
+- `run_step(...)` → exactly one transition; no-op for terminal/`SENT`/`RECEIVED`/`DOWNLOADED`.
+- `cancel(conn, attachment_id)` → `CANCELLED`; raises for terminal states and `SENT`/`RECEIVED`/`DOWNLOADED`.
 - `resume_pending(...)`, `on_ack_received(...)`, `on_ack_downloaded(...)`.
+- **Retry semantics:** `run_step` is the only forward driver and only makes progress from `AUTOMATIC_STATES`. `FAILED_VALIDATION`/`FAILED_UPLOAD` are terminal by design (retrying unchanged would fail identically forever); `FAILED_RADIO` is reserved/unreached. `READY_TO_SEND` on a radio-send failure stays `READY_TO_SEND` (retryable). So **retry is valid only for `AUTOMATIC_STATES`** — see §8.
 
-`RecipientTarget` = `{public_identity: bytes, key_id: str}` — resolved by the caller from `mca_recipient_bindings`, **not** supplied as a raw public key by the browser.
+`RecipientTarget` = `{public_identity: bytes, key_id: hex16}` — resolved by the caller from `mca_recipient_bindings`, **not** supplied as a raw public key by the browser.
 
-### 3.3 Receiver (`meshsrv/attachments/receiver.py`)
+### 4.3 Receiver (`receiver.py`)
 
-States: `OFFER_RECEIVED → WAITING_KEY → WAITING_PROVIDER → WAITING_NETWORK → WAITING_CONSENT → DOWNLOADING → VERIFYING → AVAILABLE`, plus terminal `EXPIRED`, `REJECTED`, `FAILED`. `WAITING_CONSENT` is **excluded** from auto-advance; `begin_download()` is the only transition out of it (→ `DOWNLOADING`) and `reject()` (→ `REJECTED`) is the only other action valid there.
+States: `OFFER_RECEIVED → WAITING_KEY → WAITING_PROVIDER → WAITING_NETWORK → WAITING_CONSENT → DOWNLOADING → VERIFYING → AVAILABLE`; terminal `EXPIRED`, `REJECTED`, `FAILED`.
 
-Key functions: `handle_offer(...)`, `run_step(...)`, `begin_download(conn, attachment_id)` (only from `WAITING_CONSENT`), `reject(conn, attachment_id)` (only from `WAITING_CONSENT`), `reconcile_pending(...)`.
+- `TERMINAL_STATES = {AVAILABLE, EXPIRED, REJECTED, FAILED}`.
+- `AUTOMATIC_STATES = {WAITING_KEY, WAITING_PROVIDER, WAITING_NETWORK, DOWNLOADING}`. `WAITING_CONSENT`, `VERIFYING`, `OFFER_RECEIVED` are **not** automatic.
+- `begin_download(conn, id)` → only from `WAITING_CONSENT` (else raises); `reject(conn, id)` → only from `WAITING_CONSENT`. `handle_offer(...)`, `run_step(...)`, `reconcile_pending(...)`.
 
-### 3.4 Provider registry (`meshsrv/attachments/provider_registry.py`)
+### 4.4 Provider registry (`provider_registry.py`)
 
-`ProviderProfile` fields: `provider_id` (Base64URL, 11 chars), `display_name`, `origin`, `service_public_key` (32 bytes), `tls_required`, `upload_allowed`, `download_allowed`, `max_ciphertext_bytes`, `is_default`, `added_at`, `kind` (`own`|`third_party`), `enabled`, `min_ttl_seconds`, `max_ttl_seconds`, `protocol_version`, `upload_token_configured`, `last_checked_at`, `last_check_result`, `last_latency_ms`, `last_error_code`.
+`ProviderProfile` fields: `provider_id` (Base64URL, 11 chars — the table primary key), `display_name`, `origin`, `service_public_key` (32 bytes), `tls_required`, `upload_allowed`, `download_allowed`, `max_ciphertext_bytes`, `is_default`, `added_at`, `kind` (`own`|`third_party`), `enabled`, `min_ttl_seconds`, `max_ttl_seconds`, `protocol_version`, `upload_token_configured`, `last_checked_at`, `last_check_result`, `last_latency_ms`, `last_error_code`.
 
-Methods: `register(...)`, `set_default(provider_id)`, `update_profile(...)` (with a `CLEAR` sentinel for nullable fields), `record_check_result(...)`, `remove_or_disable(...)`, `list_enabled()`, `get_upload_candidates()`, `get_download_profile(provider_id)`, `set_upload_token(...)`, `get_upload_token(...)`, `resolve(provider_id)` (the SSRF boundary — a miss returns `None`, never a network attempt), `list_providers()`, `get_default()`.
+Methods: `register(...)`, `set_default(provider_id)`, `update_profile(...)` (with a `CLEAR` sentinel for the nullable TTL/`protocol_version` fields), `record_check_result(...)`, `remove_or_disable(provider_id, workspace_manager, principal_id)` (→ `"deleted"`|`"disabled"`), `list_enabled()`, `get_upload_candidates()`, `get_download_profile()`, `set_upload_token(...)`, `get_upload_token(...)`, `resolve(provider_id)` (the SSRF boundary — a miss returns `None`, no DNS/HTTP), `list_providers()`, `get_default()`.
 
-### 3.5 Connectivity (`meshsrv/connectivity_monitor.py`)
+Key facts for the contract:
 
-- `InternetStatus`: `unknown | online | offline | limited`.
-- `RelayState`: `unknown | online | degraded | unreachable | identity_mismatch | incompatible | disabled`.
-- `UploadReadiness`: `ready | upload_token_missing | upload_disabled`.
-- `UploadRejectionReason`: `profile_not_found | profile_disabled | upload_not_allowed | upload_token_missing | relay_not_yet_checked | relay_unreachable | relay_identity_mismatch | relay_incompatible | ciphertext_too_large | ttl_below_minimum | ttl_above_maximum`.
-- `UploadDecision`: `{ready: bool, reason: UploadRejectionReason|None, detail: str|None}`.
-- `ConnectivitySnapshot`: `{internet: InternetStatus, relays: {provider_id: RelayStatus}}`; `RelayStatus` = `{provider_id, state, upload_readiness, checked_at, latency_ms, error_code}`.
-- Methods: `snapshot()`, `refresh(force=False)`, `can_attempt_relay(provider_id)`, `can_upload_to(provider_id)`, `evaluate_upload_decision(provider_id, *, ciphertext_bytes, requested_ttl_seconds)`.
+- `compute_provider_id(origin, service_public_key)` = Base64URL of the first 8 bytes of `SHA-256(origin + "\n" + raw 32-byte Ed25519 key)`; `normalize_origin(base_url)` enforces HTTPS-only, a hostname, no credentials, and a bare origin (no path/query/fragment). These two are pure functions — safe on the request thread for validation.
+- **There is no separate `profile_id`.** `mca_provider_profiles.provider_id` is the sole primary key and the sole public identifier (§9).
+- **No `clear_upload_token()` method exists** — token removal is only reachable as a side effect of `remove_or_disable()` (`_delete_upload_token_file`, private). §7.9 requires a new public method (gap).
+- **No "check now" method** — the health/info probe lives in `ConnectivityMonitor.refresh(force=True)` (worker-thread only). §7.9 exposes it as a worker command.
 
-`snapshot()` and `evaluate_upload_decision()` are documented as **safe to call from a request thread** (they read an atomically-published in-memory snapshot, never SQLite, never network). These are the two connectivity surfaces the REST layer may call directly.
+### 4.5 Connectivity (`connectivity_monitor.py`)
 
-### 3.6 Contacts and key exchange
+`InternetStatus` {`unknown`,`online`,`offline`,`limited`}; `RelayState` {`unknown`,`online`,`degraded`,`unreachable`,`identity_mismatch`,`incompatible`,`disabled`}; `UploadReadiness` {`ready`,`upload_token_missing`,`upload_disabled`}; `UploadRejectionReason` (11 values, §10); `UploadDecision(ready, reason, detail)`; `RelayStatus(provider_id, state, upload_readiness, checked_at, latency_ms, error_code)`; `ConnectivitySnapshot(internet, relays)`.
 
-- `contacts.ContactStatus`: `key_unknown | confirmation_required | trusted | key_changed` (mapped 1:1 from `key_exchange.AddressStatus`).
-- `contacts.contact_status(coordinator, source_address)`, `confirm_binding(...)`, `accept_key_change(...)`, `reject_key_change(...)`.
-- `key_exchange.KeyExchangeCoordinator`: `build_key_request()`, `force_announce(source_address)`, `get_binding(source_address)`, `get_binding_by_key_id(sender_key_id)`, `get_status(source_address)`, `confirm_tofu(...)`, `accept_pending_key_change(...)`, `reject_pending_key_change(...)`.
-- **No "list all bindings" method exists** — contacts are keyed by transport address, and `contacts.py`'s own docstring says a browsable directory is out of scope (§9).
+- `snapshot()` and `evaluate_upload_decision()` are the two documented thread-safe reads (no SQLite, no network). `refresh(force=False)` is the **only** method that performs network I/O and is worker-only.
+- Probing: `/health` every `RELAY_HEALTH_INTERVAL_SECONDS` (backoff to `RELAY_HEALTH_BACKOFF_CEILING_SECONDS`), `/v1/info` every `RELAY_INFO_MIN_INTERVAL_SECONDS` (identity + protocol re-check), `MAX_CONCURRENT_RELAY_PROBES = 2`, `DEFAULT_TIMEOUT_SECONDS = 5.0`. Per-probe `requests.Session` (never shared), closed deterministically.
 
-### 3.7 Delivery (`meshsrv/attachments/delivery/`)
+### 4.6 Contacts, key exchange, delivery, identity
 
-- `DeliveryAdapter` ABC: `capabilities()`, `resolve_route(user_selection)`, `encode(logical_message, route)`, `send(wire_payload, route, idempotency_key)`, `ingest(transport_event)`; attributes `adapter_id`, `connector_profile_id`.
-- `DeliveryCapabilities`: `wire_formats`, `max_payload_bytes`, `supports_direct`, `supports_channel`, `supports_incoming`, `ack_semantics`, `connector_state`.
-- `WireFormat`: `MCA1_TEXT | MCA1_CBOR`. `RouteType`: `DIRECT | CHANNEL | CHAT | MANUAL`. `ConnectorState`: `READY | DEGRADED | UNAVAILABLE`. `AckSemantics`: `NONE | BEST_EFFORT | CONFIRMED`.
-- `Route`: `{route_type, route_id, destination_address?}`.
+- `contacts.ContactStatus` {`key_unknown`,`confirmation_required`,`trusted`,`key_changed`}; `contact_status(...)`, `confirm_binding(...)`, `accept_key_change(...)`, `reject_key_change(...)`. **No "list all bindings" method** (keyed by address only — §13).
+- `key_exchange.KeyExchangeCoordinator`: `build_key_request()`, `force_announce()`, `get_binding()`, `get_binding_by_key_id()`, `get_status()`, `confirm_tofu()`, `accept_pending_key_change()`, `reject_pending_key_change()`.
+- `delivery.DeliveryAdapter` ABC: `adapter_id`, `connector_profile_id`, `capabilities()`, `resolve_route()`, `encode()`, `send()`, `ingest()`. `WireFormat` {`MCA1_TEXT`,`MCA1_CBOR`}; `RouteType` {`DIRECT`,`CHANNEL`,`CHAT`,`MANUAL`}; `ConnectorState` {`READY`,`DEGRADED`,`UNAVAILABLE`}; `AckSemantics` {`NONE`,`BEST_EFFORT`,`CONFIRMED`}; `Route(route_type, route_id, destination_address?)`.
+- `identity.MCAPrincipal`: `workspace_id`, `principal_id` (hex16), `key_id` (hex16), `epoch`, `public_identity` (32B), `public_x25519`, `private_key_file`, `created_at`, `status`. `compute_key_id(public_identity)` → hex16.
 
-### 3.8 Identity (`meshsrv/attachments/identity.py`)
+### 4.7 Relay client (`relay_client.py`)
 
-`MCAPrincipal`: `workspace_id`, `principal_id` (hex 16), `key_id` (hex 16), `epoch`, `public_identity` (32 bytes), `public_x25519` (32 bytes), `private_key_file`, `created_at`, `status` (`ACTIVE`). `compute_key_id(public_identity)` → hex 16.
+`RelayClient(base_url, upload_access_token=None, ...)`. Uses a `requests.Session` with a fixed `timeout`; `_url(path) = f"{base_url}{path}"`. **No `allow_redirects=False`, no IP-range/DNS-rebinding validation, no TLS pinning beyond `requests`' default** — this is the precise SSRF surface corrected in §12.
 
 ---
 
-## 4. Endpoint inventory
+## 5. Sub-stage split (Step 1.6A → implementable increments)
 
-### 4.0 Stage classification legend
+Each sub-stage is independently implementable and shippable against the existing domain layer; later stages depend only on §3's facade plumbing.
 
-| Tag | Meaning |
-|---|---|
-| **1.6A** | Target of the Step 1.6A implementation (the REST layer itself). Achievable against the existing domain layer plus the new facade of §5. |
-| **Stage 1** | Within the MVP vertical slice but deferred within it (needs a small domain addition). |
-| **Multi-transport** | Needs a non-Meshtastic or non-direct transport (MeshCore / Telegram / WhatsApp / channel) — Stage 3+. |
+| Sub-stage | Content | Endpoints | Domain prerequisite |
+|---|---|---|---|
+| **1.6A.0** | Project-wide CSRF contract (§2.3) + facade plumbing (§3): command queue, attachments/idempotency snapshots, `clear_upload_token()`. | — (infrastructure) | none — prerequisite for every mutation |
+| **1.6A.1** | Read-only surface | list, detail, deliveries, connectivity, providers, providers/{id}, upload-readiness, identity, delivery-adapters, connectors, contacts | §3 snapshots |
+| **1.6A.2** | Create + idempotency + import | `POST /api/attachments`, `POST /api/mca/import` | `client_request_id`/`canonical_hash` columns + multipart staging (§7.2) |
+| **1.6A.3** | Attachment actions | retry, download, save, reject, revoke, delete-local-content, request-key | §3 command queue |
+| **1.6A.4** | Provider onboarding & management | probe, register, patch, default, delete, upload-token (PUT/DELETE), check | two-phase bootstrap (§12), `clear_upload_token()` |
+| **1.6A.5** | Content download/preview + copy-code (Stage 1) | content, copy-code | pointer persistence for copy-code (§13) |
 
-### 4.1 Summary table
+---
 
-| # | Method | Endpoint | Purpose | Stage |
+## 6. Endpoint inventory (31)
+
+Legend: **1.6A.N** = sub-stage target; **Stage 1** = within MVP but deferred; **Multi-transport** = Stage 3+ (needs a non-Meshtastic/direct transport).
+
+| # | Method | Endpoint | Class | Stage |
 |---|---|---|---|---|
-| 1 | GET | `/api/attachments` | List with filters/pagination | 1.6A |
-| 2 | POST | `/api/attachments` | Create outgoing send (file + metadata) | 1.6A |
-| 3 | GET | `/api/attachments/{id}` | Detail + timeline | 1.6A |
-| 4 | POST | `/api/attachments/{id}/retry` | Retry a failed/paused job | 1.6A |
-| 5 | POST | `/api/attachments/{id}/download` | Begin receiving from Relay | 1.6A |
-| 6 | POST | `/api/attachments/{id}/save` | Save to MeshCenter Files | 1.6A |
-| 7 | GET | `/api/attachments/{id}/content` | Authorized download/preview | 1.6A |
-| 8 | POST | `/api/attachments/{id}/reject` | Reject an incoming offer | 1.6A |
-| 9 | POST | `/api/attachments/{id}/revoke` | Revoke the object on the Relay | 1.6A |
-| 10 | DELETE | `/api/attachments/{id}/local-content` | Delete persistent file, keep history | 1.6A |
-| 11 | GET | `/api/attachments/{id}/deliveries` | All delivery-route states | 1.6A |
-| 12 | POST | `/api/attachments/{id}/deliveries` | Add a route without re-upload | Stage 1 |
-| 13 | POST | `/api/attachments/{id}/copy-code` | Get verified `MCA1-TEXT` for manual transfer | Stage 1 |
-| 14 | POST | `/api/mca/import` | Import an MCA text/binary envelope | 1.6A |
-| 15 | GET | `/api/mca/contacts` | MCA compatibility of contacts | Stage 1 |
-| 16 | POST | `/api/mca/contacts/{contact_id}/request-key` | Send `KEY_REQUEST` via a binding | 1.6A |
-| 17 | GET | `/api/mca/delivery-adapters` | Adapter capabilities and state | 1.6A |
-| 18 | GET | `/api/mca/connectors` | Configured connector profiles | Multi-transport |
-| 19 | GET | `/api/mca/providers` | Provider registry (read) | 1.6A |
-| 20 | GET | `/api/mca/connectivity` | Connectivity snapshot | 1.6A |
-| 21 | POST | `/api/mca/providers` | Register a provider (trust bootstrap) | 1.6A |
-| 22 | GET | `/api/mca/providers/{id}` | Provider detail | 1.6A |
-| 23 | PATCH | `/api/mca/providers/{id}` | Update provider profile | 1.6A |
-| 24 | POST | `/api/mca/providers/{id}/default` | Set default provider | 1.6A |
-| 25 | DELETE | `/api/mca/providers/{id}` | Remove or disable provider | 1.6A |
-| 26 | PUT | `/api/mca/providers/{id}/upload-token` | Set upload token (secret in, `configured` out) | 1.6A |
-| 27 | GET | `/api/mca/providers/{id}/upload-readiness` | Contextual upload decision | 1.6A |
-| 28 | GET | `/api/mca/identity` | Local MCA principal (fingerprint/epoch) | 1.6A |
+| 1 | GET | `/api/attachments` | read | 1.6A.1 |
+| 2 | GET | `/api/attachments/{id}` | read | 1.6A.1 |
+| 3 | GET | `/api/attachments/{id}/deliveries` | read | 1.6A.1 |
+| 4 | GET | `/api/attachments/{id}/content` | read (file) | 1.6A.5 |
+| 5 | GET | `/api/mca/contacts` | read | 1.6A.1 |
+| 6 | GET | `/api/mca/delivery-adapters` | read | 1.6A.1 |
+| 7 | GET | `/api/mca/connectors` | read | Multi-transport |
+| 8 | GET | `/api/mca/providers` | read | 1.6A.1 |
+| 9 | GET | `/api/mca/providers/{id}` | read | 1.6A.1 |
+| 10 | GET | `/api/mca/providers/{id}/upload-readiness` | read | 1.6A.1 |
+| 11 | GET | `/api/mca/connectivity` | read | 1.6A.1 |
+| 12 | GET | `/api/mca/identity` | read | 1.6A.1 |
+| 13 | POST | `/api/attachments` | mutation | 1.6A.2 |
+| 14 | POST | `/api/attachments/{id}/retry` | mutation | 1.6A.3 |
+| 15 | POST | `/api/attachments/{id}/download` | mutation | 1.6A.3 |
+| 16 | POST | `/api/attachments/{id}/save` | mutation | 1.6A.3 |
+| 17 | POST | `/api/attachments/{id}/reject` | mutation | 1.6A.3 |
+| 18 | POST | `/api/attachments/{id}/revoke` | mutation | 1.6A.3 |
+| 19 | DELETE | `/api/attachments/{id}/local-content` | mutation | 1.6A.3 |
+| 20 | POST | `/api/attachments/{id}/deliveries` | mutation | Stage 1 |
+| 21 | POST | `/api/attachments/{id}/copy-code` | mutation | Stage 1 |
+| 22 | POST | `/api/mca/import` | mutation | 1.6A.2 |
+| 23 | POST | `/api/mca/contacts/{contact_id}/request-key` | mutation | 1.6A.3 |
+| 24 | POST | `/api/mca/providers/probe` | mutation | 1.6A.4 |
+| 25 | POST | `/api/mca/providers` | mutation | 1.6A.4 |
+| 26 | PATCH | `/api/mca/providers/{id}` | mutation | 1.6A.4 |
+| 27 | POST | `/api/mca/providers/{id}/default` | mutation | 1.6A.4 |
+| 28 | DELETE | `/api/mca/providers/{id}` | mutation | 1.6A.4 |
+| 29 | PUT | `/api/mca/providers/{id}/upload-token` | mutation | 1.6A.4 |
+| 30 | DELETE | `/api/mca/providers/{id}/upload-token` | mutation | 1.6A.4 |
+| 31 | POST | `/api/mca/providers/{id}/check` | mutation | 1.6A.4 |
 
-Endpoint 20 (`/api/mca/connectivity`) is the explicit extension required beyond the spec's section 18; 21–28 are the multi-Relay profile management and identity surface the spec's settings section (§17.6) and `ProviderRegistry`/`MCAPrincipal` imply but section 18's single `GET /api/mca/providers` does not cover.
+Rows 1–8, 13–23 (19 rows) are the design spec's section-18 endpoints; 4, 9–12, 24–31 (12 rows) are extensions. See §14 for the adaptation list.
 
-### 4.2 `POST /api/attachments` — create outgoing send
+---
 
-- **Stage:** 1.6A. **Auth:** yes (inherited). **CSRF:** required (project-wide gap).
-- **Content-Type:** `multipart/form-data`. **Idempotency:** `client_request_id`.
+## 7. Per-endpoint contracts
 
-**Form parts:**
+Every mutation returns `202` + `command_id` (§3.4) unless a synchronous validation error applies. `CSRF: required` on every mutation; `Auth: yes (inherited)` on all. "Read" endpoints return `200` from a snapshot. `State precondition` is validated synchronously from the attachments snapshot.
 
-| Part | Type | Required | Limits / notes |
+### 7.1 Reads (1.6A.1)
+
+**`GET /api/attachments`** — list.
+- Query: `direction` (`sent`|`received`|`all`, default `all`); `state` (one state or `all`); `filter` (`pending`|`errors`|`saved`|`all`); `limit` (default 100, max 500); `offset` (default 0).
+- Response: `{"ok": true, "attachments": [<public projection §7.4>], "total": <int>}`.
+- Errors: `400 invalid_direction` / `invalid_state` / `invalid_filter`.
+
+**`GET /api/attachments/{id}`** — detail + timeline.
+- Response: `{"ok": true, "attachment": {…§7.4…}, "timeline": [{"event_type", "detail", "created_at"}]}` (timeline from `attachment_events`, redacted per §12).
+- Errors: `400 invalid_attachment_id`, `404 attachment_not_found`.
+
+**`GET /api/attachments/{id}/deliveries`** — delivery-route states.
+- Response: `{"ok": true, "deliveries": [{"id", "adapter_id", "connector_profile_id", "route_type", "route_id", "state", "external_message_id", "sent_at"}]}`.
+- Errors: as above.
+
+**`GET /api/mca/contacts`** — MCA compatibility of known bindings.
+- Response: `{"ok": true, "contacts": [{"source_address", "key_id", "status": "trusted|confirmation_required|key_unknown|key_changed"}]}`.
+- Gap: needs a new enumeration method (§13).
+
+**`GET /api/mca/delivery-adapters`** — capabilities/state of the one adapter.
+- Response: `{"ok": true, "adapters": [{"adapter_id": "meshtastic", "connector_profile_id": "meshtastic", "capabilities": {"wire_formats": ["MCA1_TEXT"], "max_payload_bytes": 180, "supports_direct": true, "supports_channel": false, "supports_incoming": true, "ack_semantics": "CONFIRMED", "connector_state": "READY"}}]}`.
+
+**`GET /api/mca/connectors`** — Multi-transport placeholder; MVP returns the single Meshtastic connector plus its BLE receive-blindness flag.
+
+**`GET /api/mca/providers`** — registry.
+- Response: `{"ok": true, "providers": [<public provider projection §7.10>]}` — includes `state`/`upload_readiness`/`latency_ms`/`error_code` joined from the connectivity snapshot by `provider_id`.
+
+**`GET /api/mca/providers/{id}`** — one profile (public projection §7.10). `404 provider_not_found`.
+
+**`GET /api/mca/providers/{id}/upload-readiness`** — delegates to `AttachmentsService.evaluate_upload_readiness()`.
+- Query (optional): `ciphertext_bytes`, `requested_ttl_seconds`.
+- Response: `{"ok": true, "ready": bool, "reason": "<UploadRejectionReason|null>", "detail": null}`.
+
+**`GET /api/mca/connectivity`** — `{"ok": true, "internet": "...", "relays": {provider_id: {"state","upload_readiness","checked_at","latency_ms","error_code"}}}`.
+
+**`GET /api/mca/identity`** — `{"ok": true, "principal_id", "key_id", "epoch", "fingerprint": "<hex>", "status": "ACTIVE"}`. `fingerprint` is the full-key fingerprint, distinct from the 64-bit `key_id`.
+
+### 7.2 `POST /api/attachments` — create outgoing send (1.6A.2)
+
+- **Content-Type:** `multipart/form-data`. **CSRF:** required. **Idempotency:** `client_request_id` (§3.5).
+- **Form parts:**
+  - `file` (binary, required): ≤ 5 MiB plaintext (MVP); MIME in the allowlist (jpeg/png/webp/pdf/txt/log/csv/json).
+  - `metadata` (JSON string, required): `{client_request_id, recipient: {source_address}, route?, provider_id?, comment?, hard_ttl_seconds?, download_grace_seconds?}`.
+- **Validation (synchronous, pure):** `client_request_id` `[A-Za-z0-9_-]{1,64}`; `comment` ≤ 1000 bytes UTF-8; `provider_id` resolves in the provider snapshot; `route_type` must be `DIRECT`; recipient binding must be `trusted` (else `recipient_not_trusted`); `hard_ttl_seconds` within the provider's `[min,max]`.
+- **Flow:** the route stages the bytes to `spool/outgoing/<uuid>` (server path, never the client filename), sniffs MIME from magic bytes, then enqueues `CreateDraftCommand` (worker runs `create_draft` + immediate `run_step` + `wake`). Encryption/upload/send happen on the worker.
+- **Responses:** `202 {"ok": true, "command_id"}`; idempotent replay `200 {"ok": true, "attachment_id", "state"}`; `409 idempotency_conflict`; `400 mime_not_allowed` / `file_too_large` / `recipient_not_found` / `recipient_not_trusted` / `provider_not_found` / `ttl_out_of_range` / `invalid_metadata`.
+- **Radio availability is NOT a precondition.** The draft is created and queued even with no radio connected; only the `READY_TO_SEND → SENT` step needs the radio, and it parks in `READY_TO_SEND` (retryable) until the radio returns (§4.2). No `503 radio_unavailable` here.
+
+### 7.3 Attachment action endpoints (1.6A.3) — command + state matrix
+
+| Endpoint | Command (worker executes) | State precondition | Result |
 |---|---|---|---|
-| `file` | binary | yes | ≤ 5 MiB plaintext (MVP, design spec §16.5); MIME must be in the allowlist (`mime_allowlist.py`): jpeg/png/webp/pdf/txt/log/csv/json. |
-| `metadata` | JSON string | yes | A single JSON object (see below). |
+| `POST /api/attachments/{id}/retry` | `NudgeAttachmentCommand` → `run_step` | `state ∈ sender.AUTOMATIC_STATES ∪ receiver.AUTOMATIC_STATES` | next step (no new `transfer_id`) |
+| `POST /api/attachments/{id}/download` | `BeginDownloadCommand` → `receiver.begin_download` | `WAITING_CONSENT` only | `DOWNLOADING` |
+| `POST /api/attachments/{id}/save` | `SaveToFilesCommand` → move `cache/incoming/` → `files/` | `AVAILABLE` only | `saved=true` (idempotent via `unique_file_name`) |
+| `POST /api/attachments/{id}/reject` | `RejectCommand` → `receiver.reject` | `WAITING_CONSENT` only | `REJECTED` |
+| `POST /api/attachments/{id}/revoke` | `RevokeCommand` → `relay_client.revoke` | `SENT`/`RECEIVED`/`DOWNLOADED` | `REVOKED` |
+| `DELETE /api/attachments/{id}/local-content` | `DeleteLocalContentCommand` → delete `files/` copy | `saved=true` | `saved=false` (history kept) |
 
-**`metadata` fields:**
+Common errors: `404 attachment_not_found`; `409 invalid_state_transition` (with the current state) for any violated precondition; `503 relay_unreachable` (revoke at runtime); `409 not_saved` (local-content when `saved=false`).
 
-| Field | Type | Required | Validation |
-|---|---|---|---|
-| `client_request_id` | string | yes | 1–64 chars, `[A-Za-z0-9_-]`; unique per create (idempotency key, §9 gap). |
-| `recipient` | object | yes | `{source_address: string}` — the transport address of the open direct chat. The server resolves the trusted key itself; the browser **never** supplies a raw public key. |
-| `route` | object | no | `{adapter_id, connector_profile_id, route_type, route_id}`. Defaults to the sole Meshtastic direct adapter. `route_type` must be `DIRECT` for the MVP. |
-| `provider_id` | string | no | Base64URL provider id. Defaults to the registry default. |
-| `comment` | string | no | ≤ 1000 bytes UTF-8 (`MAX_COMMENT_BYTES`). |
-| `hard_ttl_seconds` | int | no | Within the chosen provider's `[min_ttl_seconds, max_ttl_seconds]`; default 259200 (72 h). |
-| `download_grace_seconds` | int | no | Default 3600 (1 h). |
-
-**Flow:** the route stages the uploaded bytes into `spool/outgoing/` (server-controlled path, filename derived from a UUID — never the client filename), sniffs MIME from magic bytes (never trusts the client filename/extension), then calls `sender.create_draft(...)` via the facade with `source_path` = the staged path. Encryption/upload/send happens on the worker thread, not the request thread.
-
-**Responses:**
-
-- `202 Accepted`:
-  ```json
-  {"ok": true, "attachment_id": "<uuid hex>", "state": "DRAFT"}
-  ```
-- `400` `mime_not_allowed`, `file_too_large`, `recipient_not_found`, `provider_not_found`, `ttl_out_of_range`, `invalid_metadata`.
-- `409` `idempotency_conflict` — a draft for this `client_request_id` already exists; the response body carries the existing `attachment_id`.
-- `503` `radio_unavailable` — no radio is currently connected (send cannot be queued for direct delivery).
-
-### 4.3 `GET /api/attachments` — list
-
-- **Stage:** 1.6A. **Auth:** yes. **CSRF:** n/a (read).
-- **Query params:** `direction` (`sent`|`received`|`all`, default `all`), `state` (one state or `all`), `filter` (one of `pending`/`errors`/`saved`/`all`), `limit` (default 100, max 500), `offset` (default 0), `include_raw` (`1`/`true`/`yes`, default off — drops protocol-level fields).
-- **Response:** `{"ok": true, "attachments": [ ... ], "total": <int>}`. Each item is the public projection (see §4.4) **without** the timeline. No absolute paths; `file_name` is present only where it is already known (sender's file, or a received file that has been decrypted — otherwise `null` per design spec §17.2 "Зашифрованный файл" until the manifest is opened).
-
-### 4.4 `GET /api/attachments/{id}` — detail + timeline
-
-- **Stage:** 1.6A. **Auth:** yes. **CSRF:** n/a.
-- **Response:** `{"ok": true, "attachment": {...}, "timeline": [ ... ]}`.
-
-Public projection of `attachments` (see §8.1 for what is **excluded**):
+### 7.4 Public attachment projection (all read endpoints)
 
 ```json
 {
-  "id": "<uuid hex>",
-  "direction": "sent | received",
-  "state": "<state>",
-  "file_name": "photo.jpg | null",
-  "mime_type": "image/jpeg | null",
-  "plain_size": 12345,
-  "cipher_size": 16728,
-  "created_at": 1750000000,
-  "hard_expires_at": 1750259200,
-  "download_grace_seconds": 3600,
-  "provider_id": "<base64url>",
-  "primary_delivery_id": "<uuid | null>",
-  "error_code": "relay_unreachable | null",
+  "id": "<uuid hex>", "direction": "sent|received", "state": "<state>",
+  "file_name": "photo.jpg|null", "mime_type": "image/jpeg|null",
+  "plain_size": 12345, "cipher_size": 16728,
+  "created_at": 1750000000, "hard_expires_at": 1750259200,
+  "download_grace_seconds": 3600, "provider_id": "<base64url>",
+  "saved": false, "content_available": false,
+  "primary_delivery_id": "<uuid|null>", "error_code": "relay_unreachable|null",
   "recipients": [{"key_id": "<hex16>", "principal_id": "<hex16>"}],
   "deliveries": [ ... ]
 }
 ```
 
-`timeline` is `attachment_events` (`event_type`, `detail`, `created_at`) — redacted per §8.1.
+`content_available` is `true` only for a received attachment in `AVAILABLE` (decrypted+verified blob present) or a sent attachment with `saved=true`. **No `saved_path`, no `include_raw`** — both removed from this revision (finding 11). `file_name` is `null` until the manifest is opened for a received attachment (design spec §17.2).
 
-### 4.5 Action endpoints (retry / download / save / reject / revoke / local-content)
+### 7.5 `POST /api/mca/import` (1.6A.2)
 
-| Endpoint | Domain op | Allowed from state(s) | Result state | Notes |
-|---|---|---|---|---|
-| `POST /api/attachments/{id}/retry` | `sender.run_step` re-entry / re-queue | any **non-terminal** sender state, or `FAILED_*` | next step | Does **not** mint a new `transfer_id` (design spec §22.1). |
-| `POST /api/attachments/{id}/download` | `receiver.begin_download` | `WAITING_CONSENT` only | `DOWNLOADING` | 409 otherwise. |
-| `POST /api/attachments/{id}/save` | workspace `files/` move | `AVAILABLE` only | (state unchanged; sets `saved_path`) | Copies from `cache/incoming/` to `files/`. |
-| `POST /api/attachments/{id}/reject` | `receiver.reject` | `WAITING_CONSENT` only | `REJECTED` | 409 otherwise. |
-| `POST /api/attachments/{id}/revoke` | `relay_client.revoke` via facade | `SENT` / `RECEIVED` / `DOWNLOADED` (sent direction) | `REVOKED` | Needs the revoke token (server-side; never returned). |
-| `DELETE /api/attachments/{id}/local-content` | delete `saved_path` file | `AVAILABLE` (received) or any sent with `saved_path` | (keeps history; clears `saved_path`) | Deletes the persistent copy only. |
+- **CSRF:** required. **Content-Type:** `application/json`. **Body:** `{"envelope": "<MCA1:... | base64url CBOR>", "wire_format": "MCA1_TEXT"}`.
+- **Flow:** synchronous validation via `codec.peek_message_type` (pure), then enqueue `ImportEnvelopeCommand` → worker ingests through a `MANUAL` route (no real adapter) and dispatches as if it were an inbound event. Signature verification, known-provider resolution, and consent still gate any download.
+- **Responses:** `202 {"ok": true, "command_id"}`; `400 invalid_mca_envelope`; `409 duplicate_transfer`; `429 admission_rejected` (per-source/global pending caps).
 
-All six return `{"ok": true, "state": "<result-state>"}` on success (or `{"ok": true, ...}` for delete), `404 attachment_not_found`, `409 invalid_state_transition` with the current state, and 5xx codes for Relay/radio failures (§4.7).
+### 7.6 `POST /api/attachments/{id}/copy-code` (Stage 1)
 
-### 4.6 `GET /api/attachments/{id}/content` — download/preview
+- **CSRF:** required. **Precondition:** `READY_TO_SEND`/`SENT`/`RECEIVED`/`DOWNLOADED`.
+- **Response:** `202` + command; the signed `MCA1-TEXT` is produced by the worker. Gap: the signed pointer is not persisted for re-read today (§13).
 
-- **Stage:** 1.6A. **Auth:** yes. **CSRF:** n/a (GET). **Content-Type:** `application/octet-stream` for unknown types; the sniffed MIME for allowlisted preview types (image/*, text/*, application/pdf).
-- **Headers (mandatory, design spec §20.3):** `Content-Disposition` (attachment for non-preview, inline only for decoded-and-verified images), `X-Content-Type-Options: nosniff`.
-- **Behaviour:** serves the **decrypted** file only when the attachment is `AVAILABLE` (or a sent draft whose `saved_path` exists). Never serves ciphertext. SVG/HTML/JS/archives are never auto-previewed. `404 attachment_not_found` / `409 not_available` / `404 content_missing`.
-- **Security:** the filename is validated against a controlled root (the `api_camera.py` screenshot pattern — a single `safe_*_path()` validation, not two independent path-resolution steps).
+### 7.7 `POST /api/attachments/{id}/deliveries` (Stage 1) — add a route without re-upload. No domain method yet (§13).
 
-### 4.7 `POST /api/attachments/{id}/copy-code`
+### 7.8 `POST /api/mca/contacts/{contact_id}/request-key` (1.6A.3)
 
-- **Stage:** Stage 1. **Auth:** yes. **CSRF:** required (project-wide gap).
-- **Purpose:** return the verified, signed `MCA1-TEXT` string so the user can paste it into any messenger/email (design spec §19.5 "Manual share"). Only valid once the pointer exists (`READY_TO_SEND`/`SENT`/`RECEIVED`/`DOWNLOADED`).
-- **Response:** `{"ok": true, "mca1_text": "MCA1:..."}`.
-- **Gap:** the signed pointer bytes are currently produced at send time and not persisted for re-read; returning them here needs the pointer stored (or re-signable) after commit (§9).
+- **CSRF:** required. **Body:** `{"route": {"adapter_id", "route_id"}}` (optional; defaults to the binding's route).
+- **Flow:** `RequestKeyCommand` → `key_exchange.build_key_request()` → send via the adapter. Rate-limited by `key_exchange`'s per-address gate.
+- **Responses:** `202`; `429 rate_limited`; `409 key_already_known`; `503 radio_unavailable` (at command runtime).
 
-### 4.8 `POST /api/mca/import`
+### 7.9 Provider management (1.6A.4)
 
-- **Stage:** 1.6A. **Auth:** yes. **CSRF:** required (project-wide gap). **Content-Type:** `application/json`.
-- **Body:** `{"envelope": "<MCA1:... | base64url CBOR>", "wire_format": "MCA1_TEXT"}` (or `MCA1_CBOR`).
-- **Flow:** the route validates the envelope is an MCA message (`codec.peek_message_type`), wraps it in a `DeliveryEnvelope` with `adapter_id="manual"`, `route_type=MANUAL`, and enqueues an `InboundEvent` on the service's bounded queue. Import **does not** start a download or Relay access without signature verification, a known provider, and user consent (design spec §17.5).
-- **Responses:** `202 {"ok": true, "state": "<WAITING_*|OFFER_RECEIVED>"}`; `400 invalid_mca_envelope`; `409 duplicate_transfer` (already-known `transfer_id`); `429 admission_rejected` (per-source/global pending caps).
+All mutations are worker commands (§3.4); synchronous validation uses `normalize_origin`/`compute_provider_id`/key-length checks (pure).
 
-### 4.9 `GET /api/mca/contacts`
+- **`POST /api/mca/providers/probe`** (phase 1 of bootstrap, §12): body `{"base_url"}`. Pure-validation of the origin, then a worker command that resolves DNS, classifies the address, and fetches `/v1/info` (async probe). Returns `202` + `command_id`; the probe **result** is read back via `GET /api/mca/providers/{id}`'s `last_check_result`/`last_error_code` (or a probe-specific read). No persistence.
+- **`POST /api/mca/providers`** (phase 2 commit): body `{display_name, base_url, service_public_key (b64url), kind, tls_required, upload_allowed, download_allowed, max_ciphertext_bytes, min_ttl_seconds?, max_ttl_seconds?, protocol_version?, fingerprint_confirmation}`. The server re-derives `provider_id` and requires `fingerprint_confirmation` to match the full-key fingerprint shown in phase 1; a mismatch is `400 provider_id_mismatch`. Enqueues `RegisterProviderCommand` → `register()`.
+- **`PATCH /api/mca/providers/{id}`**: partial update of non-identity fields; `CLEAR` (JSON `null` with an explicit `clear: true` companion, or a documented sentinel) clears the TTL/`protocol_version` fields. Enqueues `UpdateProviderCommand` → `update_profile()`. Identity fields (`origin`, `service_public_key`) are **not** editable — changing them is a new registration.
+- **`POST /api/mca/providers/{id}/default`**: `SetDefaultProviderCommand` → `set_default()` (transactional single-default).
+- **`DELETE /api/mca/providers/{id}`**: `RemoveProviderCommand` → `remove_or_disable()` → returns `{"action": "deleted"|"disabled"}` once applied.
+- **`PUT /api/mca/providers/{id}/upload-token`**: body `{"upload_token": "<secret>"}`; `SetUploadTokenCommand` → `set_upload_token()` (0600 file). Response never echoes the token.
+- **`DELETE /api/mca/providers/{id}/upload-token`**: `ClearUploadTokenCommand` → new `clear_upload_token()` (§13 gap). Response `upload_token_configured: false`.
+- **`POST /api/mca/providers/{id}/check`**: `CheckProviderCommand` → `connectivity.refresh(force=True)` (worker). Response `202`; the fresh status is observable in the connectivity snapshot.
 
-- **Stage:** Stage 1 (the enumeration is the missing piece — §9). **Auth:** yes. **CSRF:** n/a.
-- **Response:** `{"ok": true, "contacts": [{"source_address": "...", "key_id": "<hex16|null>", "status": "trusted|confirmation_required|key_unknown|key_changed"}]}`.
-- **Gap:** no domain method enumerates all bindings; a facade method must be added.
+### 7.10 Public provider projection (all provider reads)
 
-### 4.10 `POST /api/mca/contacts/{contact_id}/request-key`
+```json
+{
+  "provider_id": "<base64url>", "display_name": "...", "origin": "https://...",
+  "service_key_fingerprint": "<hex>", "kind": "own|third_party",
+  "tls_required": true, "upload_allowed": true, "download_allowed": true,
+  "max_ciphertext_bytes": 5242880, "is_default": true, "enabled": true,
+  "min_ttl_seconds": null, "max_ttl_seconds": null, "protocol_version": null,
+  "upload_token_configured": false,
+  "last_checked_at": null, "last_check_result": null, "last_latency_ms": null,
+  "last_error_code": null,
+  "state": "online|...", "upload_readiness": "ready|..."
+}
+```
 
-- **Stage:** 1.6A. **Auth:** yes. **CSRF:** required (project-wide gap).
-- **Body:** `{"route": {"adapter_id": "meshtastic", "route_id": "<node id>"}}` (optional; defaults to the contact's known binding).
-- **Flow:** `key_exchange.build_key_request()` → send via the delivery adapter; rate-limited by `key_exchange`'s own per-address gate (`RateLimited`).
-- **Responses:** `202 {"ok": true}`; `429 rate_limited`; `409 key_already_known`; `503 radio_unavailable`.
+**No raw `service_public_key` bytes** (replaced by `service_key_fingerprint` = hex SHA-256 of the 32-byte key), no `upload_token_file`, no token.
 
-### 4.11 `GET /api/mca/delivery-adapters`
+### 7.11 `GET /api/attachments/{id}/content` (1.6A.5)
 
-- **Stage:** 1.6A. **Auth:** yes. **CSRF:** n/a.
-- **Response:** `{"ok": true, "adapters": [{"adapter_id": "meshtastic", "connector_profile_id": "meshtastic", "capabilities": {wire_formats: ["MCA1_TEXT"], max_payload_bytes: 180, supports_direct: true, supports_channel: false, supports_incoming: true, ack_semantics: "CONFIRMED", connector_state: "READY"}}]}`.
-- Backed by `adapter.capabilities()`. For the MVP this is a one-element list.
-
-### 4.12 `GET /api/mca/connectors`
-
-- **Stage:** Multi-transport. **Auth:** yes. **CSRF:** n/a.
-- **Purpose:** configured radio/messenger profiles with their MCA capabilities (design spec §17.6 "radio connectors и их MCA capabilities"). For the MVP, returns the single Meshtastic connector and its BLE receive-blindness flag (design spec §19.3 — the UI must surface "Отправка без подтверждения" for BLE). Full multi-connector surface is Stage 3+.
-
-### 4.13 `GET /api/mca/providers` and provider management (19, 21–27)
-
-- `GET /api/mca/providers` (**1.6A**): `{"ok": true, "providers": [<public ProviderProfile>]}`. Public projection excludes `service_public_key` raw bytes (return `service_key_fingerprint` instead), and never includes any token. Includes `state`/`upload_readiness`/`latency_ms`/`error_code` from the connectivity snapshot joined by `provider_id`.
-- `POST /api/mca/providers` (**1.6A**): register. Body `{display_name, origin, service_public_key, kind, tls_required, upload_allowed, download_allowed, max_ciphertext_bytes, min_ttl_seconds?, max_ttl_seconds?, protocol_version?}`. Trust bootstrap is admin-driven and **requires explicit full-fingerprint confirmation** (Multi-Relay §3); the `origin` → `provider_id` derivation (`compute_provider_id(origin, service_public_key)`) is server-side, and a mismatch against the client-supplied fingerprint is a `400 provider_id_mismatch`. The built-in-default and signed `.mcaprovider`/QR import paths are separate and not yet exposed (Stage 1+).
-- `PATCH /api/mca/providers/{id}` (**1.6A**): partial update; use `CLEAR` (`null` sentinel) to clear nullable TTL/`protocol_version` fields; same validation as `update_profile()`.
-- `POST /api/mca/providers/{id}/default` (**1.6A**): `set_default()` — transactional single-default invariant.
-- `DELETE /api/mca/providers/{id}` (**1.6A**): `remove_or_disable()` — deletes only if no attachment references it, otherwise disables (`enabled=0`) and returns `{"ok": true, "action": "disabled"}`.
-- `PUT /api/mca/providers/{id}/upload-token` (**1.6A**): body `{"upload_token": "<secret>"}`; stored `0600`; response returns `{"ok": true, "upload_token_configured": true}` — the token is **never** echoed back.
-- `GET /api/mca/providers/{id}/upload-readiness` (**1.6A**): body-less; delegates to `AttachmentsService.evaluate_upload_readiness(provider_id)`; returns `{"ok": true, "ready": bool, "reason": "<UploadRejectionReason|null>", "detail": null}`. Accepts optional query `ciphertext_bytes` and `requested_ttl_seconds` to surface `ciphertext_too_large` / `ttl_below_minimum` / `ttl_above_maximum`.
-
-### 4.14 `GET /api/mca/connectivity`
-
-- **Stage:** 1.6A. **Auth:** yes. **CSRF:** n/a.
-- **Response:** `{"ok": true, "internet": "online|offline|limited|unknown", "relays": {"<provider_id>": {"state": "...", "upload_readiness": "...", "checked_at": ..., "latency_ms": ..., "error_code": null}}}`.
-- Backed by `ConnectivityMonitor.snapshot()` — read-only, thread-safe, no SQLite/network on the request thread.
-
-### 4.15 `GET /api/mca/identity`
-
-- **Stage:** 1.6A. **Auth:** yes. **CSRF:** n/a.
-- **Response:** `{"ok": true, "principal_id": "<hex16>", "key_id": "<hex16>", "epoch": 0, "fingerprint": "<hex>", "status": "ACTIVE"}`. `fingerprint` is the full public-key fingerprint (`compute_key_id`'s parent, i.e. SHA-256 of the public key), distinct from the 64-bit lookup `key_id`. Backups/rotation of the private key are explicit user actions (design spec §17.6) and **not** part of this read endpoint.
+- **CSRF:** n/a (GET). **Precondition:** `content_available` (§7.4). **Auth:** yes.
+- **Headers:** `X-Content-Type-Options: nosniff` always; `Content-Disposition` = `attachment` for non-preview types, `inline` only for decoded-and-verified allowlisted image/text/PDF.
+- **Content-Type:** sniffed MIME for preview types; `application/octet-stream` otherwise.
+- **Never serves ciphertext.** Never inline-serves SVG/HTML/JS/archives.
+- **Errors:** `404 attachment_not_found`; `409 not_available`; `404 content_missing`.
+- Path is resolved by validated filename against the controlled workspace root (the `api_camera.py` screenshot pattern) — one path validation, not two independent resolutions.
 
 ---
 
-## 5. The request-facing facade (the one real architectural addition)
+## 8. State / action matrix (corrected)
 
-The single-owner SQLite model (ADR-0008 + its PR #231 amendment) means **only `AttachmentsService`'s worker thread may touch `conn`**. The CRUD operations in `sender.py`/`receiver.py` are module-level functions taking a raw `conn` — so a Flask request thread must **not** call them directly.
-
-`AttachmentsService` today exposes `wake()` explicitly as "the only method API handlers are meant to call after a domain-layer action", and `evaluate_upload_readiness()` as "the service-layer surface Step 1.6A's REST endpoints should call". The rest of the CRUD surface does not exist yet.
-
-Step 1.6A therefore requires a **request-facing facade** — either new methods on `AttachmentsService` or a thin companion object that holds the same collaborators — exposing, at minimum:
-
-- read paths: `list_attachments(filters)`, `get_attachment(id)`, `get_timeline(id)`, `get_deliveries(id)`, `get_content_path(id)` (read-only; may use a dedicated read connection or run under the service's lock);
-- write paths that enqueue/delegate to the worker rather than touching `conn` from the request thread: `create_draft(...)` (stage file → enqueue), `retry(id)`, `begin_download(id)`, `save_to_files(id)`, `reject(id)`, `revoke(id)`, `delete_local_content(id)`, `import_envelope(...)`, `request_key(...)`;
-- provider/connectivity/identity reads (delegate to `ProviderRegistry`/`ConnectivityMonitor`/`MCAPrincipal`).
-
-Every mutating facade method must end by calling `service.wake()` (never block, never network) and return immediately with a `202`. This is the design spec §18 "события прогресса идут через существующий механизм обновления UI либо легкий polling" — the browser polls the list/detail endpoints rather than the API streaming progress.
-
----
-
-## 6. State / action matrix
-
-Allowed actions per state (sender states above the line, receiver below):
+Allowed actions per state. `retry` is valid **only** for `AUTOMATIC_STATES`; `REJECTED` and permanent failures (`FAILED_VALIDATION`, `FAILED_UPLOAD`, `FAILED_RADIO`) are **not** retryable — the user re-creates a draft (sender) or the offer is terminal (receiver).
 
 | State | retry | download | save | reject | revoke | copy-code | local-content | cancel* |
 |---|---|---|---|---|---|---|---|---|
-| DRAFT → READY_TO_SEND (sender) | — | — | — | — | — | — | — | ✓ |
+| DRAFT / VALIDATING / ENCRYPTING / QUEUED_UPLOAD / UPLOADING / READY_TO_SEND | ✓ | — | — | — | — | — | — | ✓ |
 | SENT / RECEIVED / DOWNLOADED | — | — | — | — | ✓ | ✓ | ✓(if saved) | — |
-| FAILED_* | ✓ | — | — | — | — | — | — | — |
+| FAILED_VALIDATION / FAILED_UPLOAD / FAILED_RADIO | — | — | — | — | — | — | — | — |
 | EXPIRED / REVOKED / CANCELLED | — | — | — | — | — | — | — | — |
-| OFFER_RECEIVED / WAITING_KEY / WAITING_PROVIDER / WAITING_NETWORK | ✓ | — | — | — | — | — | — | — |
-| WAITING_CONSENT | ✓ | ✓ | — | ✓ | — | — | — | — |
-| DOWNLOADING / VERIFYING | ✓ | — | — | — | — | — | — | — |
+| OFFER_RECEIVED | ✓ | — | — | — | — | — | — | — |
+| WAITING_KEY / WAITING_PROVIDER / WAITING_NETWORK / DOWNLOADING | ✓ | — | — | — | — | — | — | — |
+| WAITING_CONSENT | — | ✓ | — | ✓ | — | — | — | — |
+| VERIFYING | ✓ | — | — | — | — | — | — | — |
 | AVAILABLE | — | — | ✓ | — | — | ✓ | ✓ | — |
-| REJECTED / FAILED (receiver) | ✓ | — | — | — | — | — | — | — |
+| REJECTED / FAILED / EXPIRED (receiver) | — | — | — | — | — | — | — | — |
 
-`*` cancel is not in the section-18 endpoint list (design spec's outbound card offers "Отозван", not "Отменён"); it is listed here for completeness and is **not** an endpoint in this contract.
+`*` cancel is not a section-18 endpoint (the outbound card offers "Отозван", not "Отменён"); listed for completeness only — if a cancel endpoint is ever added it uses `sender.cancel()`, whose own guard (`terminal ∪ {SENT,RECEIVED,DOWNLOADED}`) this row encodes.
 
-`retry` is the universal "nudge the worker" action for any stuck non-terminal state, including receiver `WAITING_*` states — it never mutates state directly, only re-dispatches `run_step`/`reconcile_pending`.
+`retry` never mutates state directly — it re-dispatches `run_step`/`reconcile_pending` for a state the tick already drives, forcing immediacy (e.g. `READY_TO_SEND` after the radio returns, `QUEUED_UPLOAD` after the network returns). It never mints a new `transfer_id`.
 
 ---
 
-## 7. Error code reference
+## 9. `provider_id` vs `profile_id` — the schema decision
 
-Stable, snake_case, additive. Endpoints return these as `error_code` with the status shown.
+`mca_provider_profiles.provider_id` (Base64URL, 11 chars, derived from `origin + "\n" + service_public_key`) is the **primary key and the sole public identifier** in this contract. There is no separate `profile_id`/autoincrement id exposed anywhere.
+
+- **Why not a local `profile_id`:** the MVP has no operation that needs a stable identity decoupled from the derived `provider_id`. A profile is identified end-to-end (wire OFFER field, `attachments.provider_id`, the Relay's self-reported `/v1/info` `provider_id`, and the registry key) by the same derived value; introducing a second local id would fork the identity space with no consumer.
+- **The honest consequence:** changing `origin` or `service_public_key` changes `provider_id`, so "re-key a Relay" is a *new registration* (a fresh trust-bootstrap), never an edit — this is already the behavior `update_profile()` deliberately enforces (it refuses `origin`/`service_public_key`).
+- **Open (recorded, not decided):** whether a later stage needs a separate local `profile_id` to keep a stable UI reference across a re-key, or to support multiple profiles for one origin. This is left as an explicit unresolved decision (§15.4); the contract commits to `provider_id`-only for the MVP.
+
+---
+
+## 10. Error code reference
+
+Stable, snake_case, additive.
 
 | Status | `error_code` | Meaning |
 |---|---|---|
-| 400 | `invalid_metadata` | malformed `metadata` JSON |
-| 400 | `invalid_attachment_id` | id is not a UUID |
-| 400 | `mime_not_allowed` | MIME not in `mime_allowlist` |
-| 400 | `file_too_large` | plaintext exceeds 5 MiB / provider max |
-| 400 | `recipient_not_found` | no binding for the address |
-| 400 | `recipient_not_trusted` | binding exists but not confirmed (`confirmation_required`/`key_changed`) |
-| 400 | `provider_not_found` | `resolve()` returned `None` |
-| 400 | `ttl_out_of_range` | TTL outside provider bounds |
+| 400 | `invalid_metadata` / `invalid_attachment_id` / `invalid_direction` / `invalid_state` / `invalid_filter` | malformed input |
+| 400 | `mime_not_allowed` / `file_too_large` | file validation |
+| 400 | `recipient_not_found` / `recipient_not_trusted` | binding missing or not `trusted` |
+| 400 | `provider_not_found` / `ttl_out_of_range` / `provider_id_mismatch` | provider/registration |
 | 400 | `invalid_mca_envelope` | not a parseable MCA message |
-| 400 | `provider_id_mismatch` | derived provider id ≠ client fingerprint |
 | 401 | `auth_required` | inherited (existing) |
+| 403 | `csrf_invalid` | CSRF token missing/mismatch (§2.3) |
 | 404 | `attachment_not_found` / `contact_not_found` / `provider_not_found` | — |
 | 409 | `invalid_state_transition` | action not valid in current state |
-| 409 | `idempotency_conflict` | `client_request_id` already used |
+| 409 | `idempotency_conflict` | same `client_request_id`, different canonical content |
 | 409 | `duplicate_transfer` | `transfer_id` already known |
-| 409 | `key_already_known` | `request-key` for an already-trusted address |
-| 429 | `rate_limited` | key-exchange / ACK quota |
-| 429 | `admission_rejected` | inbound pending cap hit |
-| 503 | `radio_unavailable` / `radio_busy` | existing radio vocabulary |
-| 503 | `relay_unreachable` | Relay down at call time |
+| 409 | `key_already_known` | request-key for an already-trusted address |
+| 409 | `not_saved` | local-content when `saved=false` |
+| 429 | `rate_limited` | key-exchange/ACK quota |
+| 429 | `admission_rejected` | inbound pending cap |
+| 429 | `command_queue_full` | worker command queue at capacity |
+| 503 | `radio_unavailable` / `relay_unreachable` | runtime unavailability at an action's execution |
 
-`UploadRejectionReason` values map 1:1 to `error_code`s on the upload-readiness endpoint (`profile_not_found`, `profile_disabled`, `upload_not_allowed`, `upload_token_missing`, `relay_not_yet_checked`, `relay_unreachable`, `relay_identity_mismatch`, `relay_incompatible`, `ciphertext_too_large`, `ttl_below_minimum`, `ttl_above_maximum`).
-
----
-
-## 8. Security and privacy protections
-
-1. **Auth on everything:** every endpoint is `/api/`, inheriting `_enforce_auth` (401 with `auth_required`).
-2. **CSRF:** required on mutations, but the mechanism is a project-wide gap (§2.3, §11).
-3. **No absolute paths:** `saved_path` is workspace-relative or absent; content is served by validated name against a controlled root.
-4. **No secret egress:** upload/revoke tokens, receipt secret, private keys, and messenger credentials never appear in a response; replaced by `configured` flags. Token-write endpoint returns `upload_token_configured` only.
-5. **No secret logging:** `error` text in error envelopes is a sanitized message, not a raw exception; the stable `error_code` is the machine-readable surface. Logs omit plaintext filename/comment, keys, full pointers, tokens (design spec §22.2).
-6. **SSRF:** the browser never supplies a Relay URL — only a `provider_id`, resolved server-side through `ProviderRegistry.resolve()` (a miss is `None`, never a network attempt).
-7. **Recipient identity never client-derived:** the create endpoint takes a transport address; the server resolves the trusted Ed25519 key from `mca_recipient_bindings` and enforces TOFU-address binding (ADR-0008 §8) before encrypting. A `confirmation_required`/`key_changed`/`key_unknown` contact blocks create with `recipient_not_trusted`.
-8. **Preview policy:** `X-Content-Type-Options: nosniff` always; auto-preview only for decoded-and-verified images/text/PDF; everything else `application/octet-stream` attachment disposition (design spec §20.3).
-9. **Bounded inbound admission:** import/handle-offer path is capped per-source and globally (already in `receiver.py`); the import endpoint surfaces `admission_rejected` rather than silently dropping.
+`UploadRejectionReason` maps 1:1 to `error_code`s on upload-readiness: `profile_not_found`, `profile_disabled`, `upload_not_allowed`, `upload_token_missing`, `relay_not_yet_checked`, `relay_unreachable`, `relay_identity_mismatch`, `relay_incompatible`, `ciphertext_too_large`, `ttl_below_minimum`, `ttl_above_maximum`.
 
 ---
 
-## 9. Implementation gaps (must be resolved before/with Step 1.6A)
+## 11. Security and privacy protections
 
-This is the honest list of what does **not** exist yet and blocks a literal implementation of the contract. None of these are defects in the current backend; they are the deliberate Step 1.6A boundary.
-
-1. **No request-facing facade.** `AttachmentsService` has no CRUD methods (only `start/stop/wake/evaluate_upload_readiness/enqueue_inbound/tick`). All of §4 requires the §5 facade to be built first.
-2. **No `client_request_id` column** on `attachments`. Idempotent creation (§4.2) needs a new schema column + migration (the idempotency constraint today exists only on `attachment_deliveries`).
-3. **No file-staging endpoint plumbing.** No existing route accepts `multipart/form-data`; the spool write path, magic-byte MIME sniff on the request thread, and the 5 MiB cap enforcement are all new.
-4. **Signed pointer not persisted for re-read.** `copy-code` (§4.7) needs the canonical `MCA1-TEXT` (or its inputs) persisted at commit time so it can be returned on demand.
-5. **No contact enumeration.** `contacts.py`/`key_exchange.py` key by address with no "list all bindings" method — `GET /api/mca/contacts` needs one added.
-6. **No "add delivery route to existing attachment" operation.** `POST /api/attachments/{id}/deliveries` (Stage 1) has no domain method; `sender.create_draft` only creates deliveries at draft time.
-7. **No "save to Files" domain method.** `receiver._step_downloading` writes decrypted bytes to `cache/incoming/`; a `cache → files/` move that sets `saved_path` is a new workspace-level operation.
-8. **No revoke exposure.** `relay_client.revoke(transfer_id, revoke_token)` exists, but the revoke token is not surfaced through the facade and no service method invokes it.
-9. **CSRF mechanism absent project-wide** (§2.3) — a project decision, not an MCAttach one.
-10. **No connector registry.** `connector_profile_id` is a fixed `"meshtastic"` string; `GET /api/mca/connectors` is a placeholder until a real connector registry exists (Multi-transport).
+1. **Auth on everything** — every endpoint is `/api/`, inheriting `_enforce_auth` (401 `auth_required`).
+2. **CSRF** — §2.3, a project-wide prerequisite; mutations fail closed (`403`) until it exists.
+3. **Single-owner SQLite** — §3.1; no request thread touches `conn` or the tick lock; a dedicated read-only connection is explicitly rejected.
+4. **No absolute paths** — `saved_path` removed from the projection; content served by validated filename against a controlled root.
+5. **No secret egress** — upload/revoke tokens, receipt secret, private keys never in a response; `upload_token_configured`/`configured` only; token-write/clear endpoints never echo the token.
+6. **No secret logging** — stable `error_code`s, sanitized messages, no plaintext filename/comment/keys/pointers/tokens.
+7. **SSRF** — see §12 (corrected): runtime lookups go through `resolve()` (a miss is `None`, no network), but the onboarding origin is browser-supplied and needs DNS/IP/redirect validation that does not exist yet.
+8. **Recipient identity never client-derived** — the create endpoint takes a transport address; the server resolves the trusted Ed25519 key from `mca_recipient_bindings` and enforces the TOFU address binding before encrypting (§4.2).
+9. **Preview policy** — §7.11; `nosniff` always; inline only for decoded-and-verified allowlisted image/text/PDF; everything else `application/octet-stream` + attachment.
+10. **Bounded admission** — inbound caps (per-source/global) and a bounded command queue (§3.2), both surfaced as `429` rather than silent drops.
 
 ---
 
-## 10. Section-18 adaptations (deliberate deviations)
+## 12. SSRF: corrected claim, and safe Relay onboarding
 
-The spec's §18 inventory was adapted to the audited codebase rather than transcribed. Each deviation is deliberate:
+**Correction of the earlier revision:** the statement "the browser never supplies a Relay URL — only a provider_id" was **false**. It is true for the *runtime* path (send/receive resolve a pinned origin from `provider_id` via `ProviderRegistry.resolve()`, which returns `None` on a miss and never performs DNS/HTTP). But **onboarding** (`POST /api/mca/providers`, `POST /api/mca/providers/probe`) accepts a browser-supplied `base_url`/`origin` that the server later fetches. The SSRF surface is therefore the onboarding origin plus the worker's subsequent fetch of it.
 
-1. **Added `GET /api/mca/connectivity`** — the spec's "provider registry + capabilities" implies connectivity state but never names an endpoint for it; `ConnectivityMonitor.snapshot()` is the ready-made, thread-safe source.
-2. **Expanded `GET /api/mca/providers` into a full CRUD set (21–27)** — the spec's §17.6 settings list (provider profiles, default, upload/download limits, quotas) requires write/management routes the single `GET` does not provide; the domain (`ProviderRegistry`) already has every method.
-3. **`POST /api/attachments` is `multipart/form-data`, not JSON** — the spec leaves the upload mechanism unstated; multipart is chosen for the MVP (≤5 MiB, single request, standard browser `FormData`), with a JSON `metadata` part carrying the non-file fields. Two-step staging is the recorded alternative (§11).
-4. **Recipient is an address, never a key** — the spec's §7.2 form takes a recipient; the contract makes explicit that the browser supplies a transport address and the server resolves the trusted key (TOFU binding, §8.7), because nothing in the audited code accepts a client-derived public key.
-5. **`retry` does not mint a new `transfer_id`** — the spec's §22.1 rule is pinned into the endpoint contract.
-6. **`cancel` omitted** — not in §18; the sender-side lifecycle action is `revoke` (Relay-side) and the outbound card's "Отозван".
-7. **`GET /api/mca/connectors` deferred to Multi-transport** — the MVP has one hardcoded connector; a registry is Stage 3+.
+**What exists today:**
+- `normalize_origin()` enforces HTTPS-only, a hostname, no credentials, and a bare origin — pure, request-thread-safe, but does **not** resolve DNS or classify the address.
+- `resolve()` never turns an unknown `provider_id` into a network attempt.
+
+**What does not exist (all gaps, §13):**
+- DNS resolution + address classification (public vs loopback/link-local/site-local/multicast) at onboarding.
+- Redirect pinning: `relay_client` and `connectivity_monitor` call `requests.Session.request(...)` with no `allow_redirects=False`, so a Relay can redirect a request to an internal address (SSRF via redirect). Redirects must be either disabled or re-validated against the pinned origin on every hop.
+- DNS-rebinding protection: the resolved IP must be re-resolved and re-validated on each request, not trusted from onboarding time.
+- A gate between "origin entered" and "origin persisted" that performs an asynchronous probe before trust is committed.
+
+**Safe onboarding (two-phase, §7.9), required before any provider can be registered:**
+
+1. **Phase 1 — probe (no persistence).** `POST /api/mca/providers/probe` accepts `base_url`. The request thread runs `normalize_origin` (pure). The worker then: resolves DNS; rejects loopback/link-local/site-local/multicast/unspecified addresses unless the operator has opted into the LAN policy (below); fetches `GET {origin}/v1/info` with redirects disabled; compares the Relay's self-reported `provider_id` and `service_public_key` against the values derived from the pinned origin+key; and records the outcome (and a full-key fingerprint) for the UI to show. Nothing is persisted.
+2. **Phase 2 — commit (fingerprint confirmation).** `POST /api/mca/providers` requires the fingerprint shown in phase 1 to match (`fingerprint_confirmation`); the server re-derives `provider_id` and persists via `register()` only on match.
+
+The trust-bootstrap trust is thus: **operator-confirmed fingerprint + probe-verified identity**, not a blind origin.
+
+**Open decision (private-IP / self-hosted policy).** A blanket ban on private IPs would break a self-hosted LAN Relay, which the design spec explicitly wants to support. The final policy — whether private/LAN origins are (a) allowed only with an explicit per-profile "this is a LAN relay" opt-in, (b) allowed for `https` with a pinned cert, or (c) gated on a config flag — is **not yet decided** and is recorded in §15.3. The contract states the mechanism (resolve → classify → probe → confirm) and leaves the private-range *policy* open; the implementation must not silently apply either extreme.
 
 ---
 
-## 11. Unresolved decisions (for the implementation task)
+## 13. Implementation gaps (resolve before/with the named sub-stage)
 
-1. **File upload in one request vs. two-step stage-then-create.** Chosen: one multipart request. Alternative: `POST /api/attachments/stage` (multipart) → `POST /api/attachments` (JSON referencing the staged token). The alternative gives resumability and clearer idempotency at the cost of a second round-trip and server-side staging-session bookkeeping.
-2. **CSRF mechanism shape.** Project-wide token vs. `SameSite=Strict` cookie vs. both — a project-level decision; do not solve it inside MCAttach (§2.3).
-3. **Idempotency-key form.** Header `X-Idempotency-Key` vs. the `client_request_id` body field specified here. Chosen: body field (matches the existing codebase's field-in-body style; no header precedent). The implementation may alias both.
-4. **Read consistency for list/detail.** A dedicated read-only SQLite connection vs. all reads through the worker lock. Chosen-in-principle: read-only connection for queries (the worker's `conn` is `check_same_thread=False` but single-owner-by-discipline); must be validated against the single-owner model before committing.
-5. **`save_to_files` collision semantics.** Whether saving an already-saved attachment is idempotent (`unique_file_name` dedup) or a 409. Chosen: idempotent via `workspace_manager.unique_file_name()`.
-6. **Progress polling cadence.** The contract specifies polling (design spec §18); the interval and whether `GET /api/attachments/{id}` returns a `progress` field (upload/download bytes) are left to the UI task, constrained by §22.3's metrics.
+1. **No request-facing facade / queue / snapshots.** `AttachmentsService` has no CRUD methods and no command queue; the §3 model (attachments snapshot, idempotency snapshot, command queue, `clear_upload_token()`) must be built first (1.6A.0/1).
+2. **No `client_request_id` / `canonical_hash` columns** on `attachments` (migration needed) — idempotency (§3.5) cannot work without them.
+3. **No multipart staging** — no existing route accepts `multipart/form-data`; spool write, magic-byte sniff, 5 MiB cap are new.
+4. **Signed pointer not persisted for re-read** — `copy-code` (§7.6) needs the canonical `MCA1-TEXT` (or its inputs) persisted at commit.
+5. **No contact enumeration** — `GET /api/mca/contacts` needs a "list all bindings" method.
+6. **No add-route / save-to-files / revoke / clear-token domain methods** — `deliveries` POST, `save`, `revoke`-via-facade, and `clear_upload_token()` all need new worker-executed methods.
+7. **SSRF hardening (§12)** — DNS/IP classification, redirect pinning, DNS-rebinding re-validation, async onboarding probe: all absent.
+8. **No connector registry** — `connector_profile_id` is a fixed `"meshtastic"` string; `GET /api/mca/connectors` is a Multi-transport placeholder.
+9. **CSRF mechanism absent project-wide** (§2.3) — a project prerequisite, not MCAttach-specific.
+10. **`MAX_CONTENT_LENGTH` absent** — the 5 MiB upload cap must be enforced server-side (Flask `MAX_CONTENT_LENGTH` or an explicit streaming check), not only by the client.
 
 ---
 
-## 12. Validation notes
+## 14. Section-18 adaptations (deliberate deviations, updated)
 
-This contract was produced against a full read of: `api/api_auth.py`, `api/api_settings.py`, `api/api_waypoints.py`, `api/api_camera.py`, `server.py` (auth/CSRF/error/route-registration paths), `meshsrv/attachments/{service,sender,receiver,provider_registry,contacts,identity,key_exchange,workspace,relay_client,codec,manifest,crypto,mime_allowlist,mca_runtime}.py`, `meshsrv/attachments/delivery/{base,meshtastic,fakes}.py`, `meshsrv/attachments/db/migrations.py`, `meshsrv/connectivity_monitor.py`, and the design spec sections 12–22 (the section-18 endpoint inventory and its surrounding state/storage/UI/security/diagnostics sections). Method names, enum values, and state names in §3 are taken verbatim from those modules as they exist on `main`.
+1. **Added `GET /api/mca/connectivity`** — the spec implies connectivity state but never names an endpoint; `ConnectivityMonitor.snapshot()` is the ready-made, thread-safe source.
+2. **Expanded `GET /api/mca/providers` into a full CRUD set (9, 24–31)** — §17.6's settings list (profiles, default, limits, quotas) requires write routes the single `GET` doesn't provide; `ProviderRegistry` already has every method except `clear_upload_token()` and the probe.
+3. **Added `GET /api/mca/identity`** — the principal/fingerprint the UI and the bootstrap flow both need.
+4. **`POST /api/attachments` is `multipart/form-data`** — the spec leaves the upload mechanism unstated; multipart is chosen for the MVP (≤ 5 MiB, one request, standard `FormData`).
+5. **Recipient is an address, never a key** — the server resolves the trusted key from the TOFU binding; nothing in the audited code accepts a client-derived public key.
+6. **All mutations are worker commands (202), reads are snapshots (200)** — the uniform §3.4 model, replacing the earlier mixed sync/async description.
+7. **`retry` restricted to `AUTOMATIC_STATES`** — `REJECTED`/`FAILED_*` are terminal, not universally retryable (corrected per finding 10).
+8. **`cancel` omitted** — not in §18; the sender-side lifecycle action is `revoke` (Relay-side).
+9. **`GET /api/mca/connectors` deferred to Multi-transport** — the MVP has one hardcoded connector.
+10. **`retry` does not mint a new `transfer_id`** — the spec's §22.1 rule is pinned into the endpoint contract.
+11. **`saved_path` and `include_raw` removed** from responses; replaced by `saved`/`content_available` (§7.4).
+
+---
+
+## 15. Unresolved decisions
+
+1. **Command/query queue architecture** — the exact queue mechanics (single queue vs. separate command and query queues; `MAX_COMMANDS_PER_TICK`; whether create's `attachment_id` is minted at enqueue-time or worker-time) should be chosen **after** measuring the worker tick's current runtime on real hardware. §3 is the required *shape*; the constants are tunable, not fixed.
+2. **File upload in one request vs. two-step stage-then-create** — §7.2 commits to one multipart request; the stage-then-create alternative is recorded (better resumability, an extra round-trip) and may be revisited if resumable uploads become a requirement.
+3. **Private-IP / self-hosted Relay policy** — §12, left open (blanket ban would break self-hosted LAN Relays).
+4. **Whether a separate local `profile_id` is needed** — §9, left open for a later re-key/multi-profile stage.
+5. **CSRF mechanism shape** — `SameSite=Strict` alone vs. `SameSite=Lax` + token vs. token-only (§2.3) — a project-level decision, not MCAttach's.
+6. **Progress polling cadence / whether list-detail returns a `progress` field** — left to the UI task.
+
+---
+
+## 16. Validation notes
+
+This contract was produced against a full read of: `api/api_auth.py`, `api/api_settings.py`, `api/api_waypoints.py`, `api/api_camera.py`, `server.py` (auth/CSRF/cookie/error/route paths), `meshsrv/attachments/{service,sender,receiver,provider_registry,contacts,identity,key_exchange,workspace,relay_client,codec,manifest,crypto,mime_allowlist,mca_runtime}.py`, `meshsrv/attachments/delivery/{base,meshtastic,fakes}.py`, `meshsrv/attachments/db/migrations.py`, `meshsrv/connectivity_monitor.py`, and design spec sections 12–22. State names, enum values, `AUTOMATIC_STATES`/`TERMINAL_STATES` sets, and method signatures in §4 are verbatim from `main`. Specific verification this revision relied on: `sender.cancel()`'s `terminal ∪ {SENT,RECEIVED,DOWNLOADED}` guard, `sender`'s `FAILED_*` terminal semantics, `receiver.TERMINAL_STATES`/`AUTOMATIC_STATES`, `provider_registry.normalize_origin()`/`compute_provider_id()`/`resolve()` semantics, `ConnectivityMonitor._profile_snapshot` build-swap publication and `refresh(force=)` signature, and `relay_client._request()`'s absent `allow_redirects`.

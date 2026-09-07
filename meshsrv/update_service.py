@@ -222,6 +222,9 @@ def git_preflight(project_dir: str) -> dict[str, Any]:
     return result
 
 
+_REQUIREMENTS_FILES = ("requirements.txt", "adapters/meshtastic/requirements.txt")
+
+
 def apply_update(project_dir: str, upstream: str) -> dict[str, Any]:
     """Only call this after git_preflight() reported ok=True for this same
     upstream - it does not re-verify safety itself, so the preflight
@@ -235,6 +238,26 @@ def apply_update(project_dir: str, upstream: str) -> dict[str, Any]:
     previous_sha = run(["git", "rev-parse", "HEAD"], timeout=10).stdout.strip()
     pull = run(["git", "merge", "--ff-only", upstream])
 
+    # PR #231 review, section 15: a plain `git merge --ff-only` can pull in
+    # a requirements.txt change (a new/updated Core dependency - e.g. this
+    # same MCAttach work adding cbor2/pynacl) with nothing to install it.
+    # Detecting that here is deliberately read-only - it never runs pip
+    # itself. Actually installing here would mean shelling out to pip from
+    # inside the live Flask process, against the exact venv that process
+    # is currently running out of - a change to its own already-imported
+    # packages mid-request, with no isolation from whatever state the
+    # request handling itself is in. That is unsafe in a way a plain `git
+    # merge` on source files is not; the safe fix is to surface the need
+    # for a manual `pip install -r requirements.txt` (see INSTALL.md and
+    # scripts/verify-install.sh's own dependency-import checks) rather than
+    # attempt it automatically.
+    requirements_changed = False
+    if pull.returncode == 0 and previous_sha:
+        new_sha = run(["git", "rev-parse", "HEAD"], timeout=10).stdout.strip()
+        if new_sha and new_sha != previous_sha:
+            diff = run(["git", "diff", "--name-only", previous_sha, new_sha, "--", *_REQUIREMENTS_FILES], timeout=10)
+            requirements_changed = bool(diff.stdout.strip())
+
     with _lock:
         cache = _load_cache()
         cache["previous_version_sha"] = previous_sha
@@ -246,4 +269,5 @@ def apply_update(project_dir: str, upstream: str) -> dict[str, Any]:
         "ok": pull.returncode == 0,
         "previous_sha": previous_sha,
         "output": (pull.stdout + pull.stderr).strip(),
+        "requirements_changed": requirements_changed,
     }

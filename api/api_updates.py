@@ -57,6 +57,19 @@ def register_updates_routes(app, resolve_version, project_dir, handle_errors):
                 "detail": result,
             }), 500
 
+        if result.get("requirements_changed"):
+            print(
+                "[UPDATES] requirements.txt changed as part of this update - "
+                "run `source venv/bin/activate && pip install -r requirements.txt` "
+                "manually before/after the restart below (never done automatically - "
+                "see update_service.apply_update()'s own comment on why).",
+                flush=True,
+            )
+
         threading.Thread(target=_restart_after_update, daemon=True).start()
 
-        return jsonify({"ok": True, "previous_sha": result["previous_sha"]}), 202
+        return jsonify({
+            "ok": True,
+            "previous_sha": result["previous_sha"],
+            "requirements_changed": result.get("requirements_changed", False),
+        }), 202

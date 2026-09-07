@@ -34,6 +34,28 @@ if [ -x "venv/bin/python" ]; then
     else
         bad "flask not importable inside venv — run: source venv/bin/activate && pip install -r requirements.txt"
     fi
+    # PR #231 review, section 15: MCAttach (meshsrv/attachments/) is Core
+    # code, not adapter code - cbor2/PyNaCl/requests are all Core's own
+    # requirements.txt entries (permissively licensed, no GPLv3 concern),
+    # but an install that only ever ran `git pull` + service restart
+    # (never re-running `pip install -r requirements.txt`) could still be
+    # missing a dependency this repo's own code now imports at module load
+    # time - checked here the same way flask is above, not assumed.
+    if venv/bin/python -c "import cbor2" >/dev/null 2>&1; then
+        ok "cbor2 importable inside venv (MCAttach wire codec)"
+    else
+        bad "cbor2 not importable inside venv — run: source venv/bin/activate && pip install -r requirements.txt"
+    fi
+    if venv/bin/python -c "import nacl" >/dev/null 2>&1; then
+        ok "PyNaCl (nacl) importable inside venv (MCAttach signing/encryption)"
+    else
+        bad "PyNaCl not importable inside venv — run: source venv/bin/activate && pip install -r requirements.txt"
+    fi
+    if venv/bin/python -c "import requests" >/dev/null 2>&1; then
+        ok "requests importable inside venv (MCAttach Relay HTTP client, ConnectivityMonitor)"
+    else
+        bad "requests not importable inside venv — run: source venv/bin/activate && pip install -r requirements.txt"
+    fi
     # Task 48: meshtastic (GPLv3) no longer belongs in Core's own venv -
     # Core never imports it directly. Its presence here isn't wrong (a
     # pre-split install or a leftover from before the split still has it,

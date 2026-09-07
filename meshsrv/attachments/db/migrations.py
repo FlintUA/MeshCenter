@@ -581,6 +581,16 @@ def _migration_0009_down_fixup_sent_provider_id_encoding(conn: sqlite3.Connectio
 _MIGRATION_0010_UP = """
 ALTER TABLE attachments ADD COLUMN reply_route_type TEXT;
 ALTER TABLE attachments ADD COLUMN reply_route_id TEXT;
+-- PR #231 review, section 4.2: a reply route must be reconstructable
+-- after a restart without assuming "the" one global Meshtastic adapter
+-- - adapter_id/connector_profile_id/destination_address are persisted
+-- alongside route_type/route_id (source_address is not a separate
+-- column: for the DIRECT-only MVP, reply_route_id already *is* the
+-- sender's source_address - see receiver.handle_offer()'s own comment
+-- on why "DIRECT" is the only route shape an OFFER can arrive over).
+ALTER TABLE attachments ADD COLUMN reply_adapter_id TEXT;
+ALTER TABLE attachments ADD COLUMN reply_connector_profile_id TEXT;
+ALTER TABLE attachments ADD COLUMN reply_destination_address TEXT;
 
 CREATE TABLE mca_outgoing_replies (
     id TEXT PRIMARY KEY,
@@ -596,10 +606,29 @@ CREATE TABLE mca_outgoing_replies (
     UNIQUE (attachment_id, event_type)
 );
 CREATE INDEX idx_mca_outgoing_replies_due ON mca_outgoing_replies(state, next_attempt_at);
+
+-- PR #231 review, section 4.3: real, persisted ACK rate limiting - not
+-- just "N rows per dispatch call" (which only ever bounded one SQL
+-- query, never the actual send rate). One row per (workspace_id,
+-- scope) - scope is either the literal string '__global__' or a
+-- specific source_address - tracking a fixed window's start time and
+-- how many replies have been sent/attempted in it. Persisted (not
+-- in-memory) so a restart never resets the count mid-window.
+CREATE TABLE mca_ack_quota (
+    workspace_id TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    window_start_at INTEGER NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (workspace_id, scope)
+);
 """
 
 _MIGRATION_0010_DOWN = """
+DROP TABLE IF EXISTS mca_ack_quota;
 DROP TABLE IF EXISTS mca_outgoing_replies;
+ALTER TABLE attachments DROP COLUMN reply_destination_address;
+ALTER TABLE attachments DROP COLUMN reply_connector_profile_id;
+ALTER TABLE attachments DROP COLUMN reply_adapter_id;
 ALTER TABLE attachments DROP COLUMN reply_route_id;
 ALTER TABLE attachments DROP COLUMN reply_route_type;
 """

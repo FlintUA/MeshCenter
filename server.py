@@ -6050,20 +6050,30 @@ def start_runtime():
         threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
         threading.Thread(target=radio_health_worker, daemon=True).start()
         threading.Thread(target=ack_timeout_worker, daemon=True).start()
-
-        # ADR-0008 decision 1's startup sequence: same identity_match
-        # precondition as the radio listener above, since AttachmentsService
-        # sends/receives over the same transport_router. Best-effort like
-        # every other block here - a failure to start the MCA worker must
-        # not prevent the rest of start_runtime() (or the radio listener
-        # already started above) from coming up.
-        try:
-            mca_runtime.start_attachments_service(DATA_DIR, transport_router)
-        except Exception as e:
-            print(f"[MCA] failed to start AttachmentsService: {e}", flush=True)
     else:
         pause_listen.set()
         print(f"[IDENTITY] Listener not started because status={identity_status}", flush=True)
+
+    # PR #231 review, section 3: deliberately NOT gated on identity_match,
+    # unlike the radio listener block above. A mismatched/unconfirmed
+    # radio identity means no inbound message will ever reach
+    # handle_incoming_meshtastic_text() (the listener itself doesn't
+    # start), but AttachmentsService's own job is not limited to inbound
+    # processing - it is also what resumes previously-drafted/in-flight
+    # SENT-side attachments and reconciles RECEIVED-side ones left
+    # mid-state by a prior restart (ensure_service()'s own "restart never
+    # loses a job" guarantee). Gating this behind identity_match would
+    # mean every pending attachment stays frozen for as long as the radio
+    # identity question is unresolved, even though that question has
+    # nothing to do with whether previously-queued work can advance.
+    # Best-effort like every other block here - a failure to start the
+    # MCA worker must not prevent the rest of start_runtime() from coming
+    # up.
+    try:
+        mca_runtime.start_attachments_service(DATA_DIR, transport_router)
+    except Exception as e:
+        print(f"[MCA] failed to start AttachmentsService: {e}", flush=True)
+
     threading.Thread(target=cpu_history_worker, args=(CPU_HISTORY_FILE,), daemon=True).start()
 
     def _notify_update_available(status):

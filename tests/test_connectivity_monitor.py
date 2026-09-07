@@ -510,6 +510,56 @@ def test_limit_exceeded_upload_readiness_was_removed():
     assert {member.value for member in UploadReadiness} == {"ready", "upload_token_missing", "upload_disabled"}
 
 
+def test_can_upload_to_requires_both_reachability_and_local_upload_config(registry, store, flask_session):
+    """PR #231 review (2nd pass), "contextual upload readiness":
+    can_upload_to() must combine live reachability with local upload
+    config - neither RelayStatus.state nor .upload_readiness alone
+    answers this."""
+    from meshsrv.attachments.workspace import MCAWorkspaceManager
+    from meshsrv.attachments import identity as identity_module
+
+    profile = _register(registry, store, upload_allowed=True)
+    monitor = ConnectivityMonitor(registry, session=flask_session)
+
+    # Reachable (ONLINE after refresh), but no upload token configured yet.
+    monitor.refresh()
+    assert monitor.snapshot().relays[profile.provider_id].state == RelayState.ONLINE
+    assert monitor.can_upload_to(profile.provider_id) is False
+
+    # Configure the token - now both halves agree.
+    import tempfile
+
+    wsm = MCAWorkspaceManager(tempfile.mkdtemp())
+    principal = identity_module.ensure_principal(registry._conn, wsm, "local")
+    registry.set_upload_token(profile.provider_id, wsm, principal.principal_id, "mca_up_test-token")
+    monitor.refresh()
+    assert monitor.can_upload_to(profile.provider_id) is True
+
+
+def test_can_upload_to_is_false_when_relay_is_unreachable_even_with_upload_configured(registry, store):
+    from meshsrv.attachments.workspace import MCAWorkspaceManager
+    from meshsrv.attachments import identity as identity_module
+    import tempfile
+
+    profile = _register(registry, store, upload_allowed=True)
+    wsm = MCAWorkspaceManager(tempfile.mkdtemp())
+    principal = identity_module.ensure_principal(registry._conn, wsm, "local")
+    registry.set_upload_token(profile.provider_id, wsm, principal.principal_id, "mca_up_test-token")
+
+    def handler(method, url):
+        raise requests.ConnectionError("down")
+
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(handler))
+    monitor.refresh()
+    assert monitor.snapshot().relays[profile.provider_id].state == RelayState.UNREACHABLE
+    assert monitor.can_upload_to(profile.provider_id) is False
+
+
+def test_can_upload_to_is_false_for_an_unknown_provider_id(registry):
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse()))
+    assert monitor.can_upload_to("never-registered") is False
+
+
 def test_evaluate_upload_readiness_is_a_real_public_function(registry, store):
     profile = _register(registry, store, upload_allowed=True)
     assert evaluate_upload_readiness(profile) == UploadReadiness.UPLOAD_TOKEN_MISSING

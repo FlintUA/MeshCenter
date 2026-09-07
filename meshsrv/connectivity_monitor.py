@@ -215,6 +215,39 @@ class ConnectivityMonitor:
             return True
         return status.state in _ATTEMPTABLE_RELAY_STATES
 
+    def can_upload_to(self, provider_id: str) -> bool:
+        """PR #231 review (2nd pass), "contextual upload readiness":
+        `RelayStatus.upload_readiness` (module docstring, `RelayStatus`'s
+        own docstring, and `evaluate_upload_readiness()`'s own docstring)
+        is deliberately computed from local configuration alone (upload
+        allowed, a credential on file) - independent of live `state` on
+        purpose, since a Relay's upload-config-readiness and its current
+        reachability are genuinely different questions, reported side by
+        side rather than merged. That independence is correct for
+        `RelayStatus` itself, but it means neither field alone answers
+        "is it actually safe/sensible to start an upload to this Relay
+        right now" - `ProviderRegistry.get_upload_candidates()` filters
+        purely on local config too, with no live-state awareness at all.
+        This is that missing combined, contextual predicate: `True` only
+        when both `can_attempt_relay()` (live reachability) AND
+        `upload_readiness == READY` (local config) agree. A caller
+        deciding where to actually start a real upload (as opposed to
+        `RelayStatus` itself, which must keep reporting both dimensions
+        separately for diagnostic/UI purposes) should call this, not
+        either field alone.
+
+        A miss (never checked yet) still fails open on the connectivity
+        half, matching `can_attempt_relay()`'s own reasoning - but the
+        local-config half is checked directly against the registry
+        regardless of whether a health probe has ever run, since that
+        part needs no network evidence to answer."""
+        profile = self._provider_registry.resolve(provider_id)
+        if profile is None:
+            return False
+        if evaluate_upload_readiness(profile) != UploadReadiness.READY:
+            return False
+        return self.can_attempt_relay(provider_id)
+
     # ---- the only method that performs network I/O -------------------
 
     def refresh(self, *, force: bool = False) -> ConnectivitySnapshot:

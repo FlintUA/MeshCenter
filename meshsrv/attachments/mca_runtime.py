@@ -29,20 +29,40 @@ Owns the process-lifetime singletons this integration needs:
 
 ADR-0008 extends this module's singleton with the four backend pieces
 that ADR needed (`ProviderRegistry`, `ConnectivityMonitor`,
-`AttachmentsService`) and, in `handle_incoming_meshtastic_text()`,
-routes an inbound OFFER frame to `receiver.handle_offer()` -
-previously this function only ever reached `KeyExchangeCoordinator`,
-so a real incoming attachment offer over the radio had no consumer at
-all in production (only in tests calling `receiver.handle_offer()`
-directly). `ProviderRegistry`/`ConnectivityMonitor` are constructed
-eagerly in `_MCARuntimeState.__init__` (cheap - no thread, no network
-I/O until `refresh()`/`service.start()` are explicitly called), so an
-OFFER can be handled correctly even before `start_attachments_service()`
-below has run; `AttachmentsService` itself is *not* constructed there,
+`AttachmentsService`). `ProviderRegistry`/`ConnectivityMonitor` are
+constructed eagerly in `_MCARuntimeState.__init__` (cheap - no thread,
+no network I/O until `refresh()`/`service.start()` are explicitly
+called); `AttachmentsService` itself is *not* constructed there,
 because it needs `radio_transport` (only ever handed to us per-call by
 `handle_incoming_meshtastic_text()`'s caller, never stored) to build
 the one `MeshtasticTextAdapter` it sends through - see
 `start_attachments_service()`'s own docstring.
+
+PR #231 review, section 2 (single-owner SQLite model): this module's
+own `_lock`/`state.conn` are no longer touched by
+`handle_incoming_meshtastic_text()` at all. That function now does
+exactly one thing - build an immutable `service.InboundEvent` from the
+raw text/metadata and hand it to `AttachmentsService.enqueue_inbound()`
+(a bounded, non-blocking queue) - and returns. Every real MCA
+message-type dispatch (KEY_REQUEST/KEY_ANNOUNCE/KEY_ACK via
+`KeyExchangeCoordinator`, an OFFER via `receiver.handle_offer()`), the
+CBOR decode/signature verification that dispatch needs, and every
+database write now happen only on `AttachmentsService`'s own worker
+thread, draining that same queue at the start of each tick (see
+`service.py`'s `_drain_inbound_events()`/`_process_one_inbound_event()`).
+The radio listener thread (`server.py`'s `process_message_line()`,
+via this function) therefore never blocks on SQLite, Relay network
+I/O, or attachment cryptography - it cannot, since it no longer reaches
+any of them.
+
+If `AttachmentsService` has not started yet (the narrow window between
+process start and `start_attachments_service()` completing, or if it
+failed to start), events still queue safely - `_MCARuntimeState.__init__`
+constructs the bounded queue eagerly, before any listener thread could
+plausibly call this function, and `ensure_service()` hands that same
+queue object to the real `AttachmentsService` once it exists (not a
+second, throwaway queue) - so nothing queued during that window is
+lost, only delayed until the worker starts draining it.
 
 DEVIATION FROM ADR-0003, flagged explicitly rather than silently: that
 ADR's own wording names a schema path nested one level deeper than
@@ -65,36 +85,58 @@ scope for Stage 1).
 
 from __future__ import annotations
 
+import queue
 import sqlite3
 import threading
+import time
 from typing import Optional
 
-from meshsrv.attachments import codec, receiver, sender
+from meshsrv.attachments import receiver, sender
 from meshsrv.attachments.db.migrations import migrate
-from meshsrv.attachments.delivery.base import DeliveryError, Route, RouteType
 from meshsrv.attachments.delivery.meshtastic import MeshtasticTextAdapter
 from meshsrv.attachments.identity import MCAPrincipal, ensure_principal
-from meshsrv.attachments.key_exchange import KeyExchangeCoordinator, RateLimited
+from meshsrv.attachments.key_exchange import KeyExchangeCoordinator
 from meshsrv.attachments.provider_registry import ProviderRegistry
-from meshsrv.attachments.service import AttachmentsService
+from meshsrv.attachments.service import INBOUND_QUEUE_MAXSIZE, AttachmentsService, InboundEvent
 from meshsrv.attachments.workspace import MCAWorkspaceManager
-from meshsrv.connectivity_monitor import ConnectivityMonitor, InternetStatus
+from meshsrv.connectivity_monitor import ConnectivityMonitor
 from meshsrv.radio_transport import RadioTransport
 
 WORKSPACE_ID = "local"
 ADAPTER_ID = "meshtastic"
 
-# The single lock for all access to `_MCARuntimeState.conn` (ADR-0008-
-# hardening, PR #227 defect #2: this used to guard only this module's own
-# singleton bookkeeping and direct-write call sites, while AttachmentsService
-# separately built and held its own private Lock over the very same
-# connection - two locks, one connection, no real mutual exclusion between
-# the radio listener thread and the service's worker thread). Handed to
-# AttachmentsService's constructor in ensure_service() below so both sides
-# serialize on this one instance - this module is the connection's single
-# owner, everyone else borrows the lock, never a copy of it.
+# Guards only this module's own singleton bookkeeping (_state creation/
+# reset) - NOT database access any more (PR #231 review, section 2: the
+# radio listener thread no longer touches `conn` at all, so there is no
+# second accessor left to serialize against; see AttachmentsService's own
+# `_lock` for tick() re-entrancy, a separate, narrower concern).
 _lock = threading.Lock()
 _state: "Optional[_MCARuntimeState]" = None
+
+# Test-only hook (never set in production): lets a test give the
+# ConnectivityMonitor this module constructs a fake `requests`-shaped
+# session before any tick can run, instead of the real
+# `requests.Session()` ConnectivityMonitor defaults to. Needed because
+# of a real behavior change from the section-3 "first tick runs
+# immediately" fix - before that fix, a fast-running test's own
+# assertions and reset_state_for_tests() call typically completed well
+# within the old 5-second wait before the very first tick would ever
+# fire, so this never surfaced; now the first tick (and therefore
+# ConnectivityMonitor.refresh()'s real network call on a workspace with
+# no registered providers yet) runs immediately on ensure_service(),
+# which a test with no network access could otherwise block on for the
+# monitor's own DEFAULT_TIMEOUT_SECONDS.
+_test_connectivity_session_override: "Optional[object]" = None
+
+
+def set_connectivity_session_for_tests(session: "Optional[object]") -> None:
+    """Test-only. Must be called before the first `_get_state()`/
+    `handle_incoming_meshtastic_text()`/`start_attachments_service()`
+    call for a given `data_dir` - `_MCARuntimeState.__init__` reads this
+    exactly once, at construction. Not called anywhere in production
+    code."""
+    global _test_connectivity_session_override
+    _test_connectivity_session_override = session
 
 
 class _MCARuntimeState:
@@ -121,11 +163,21 @@ class _MCARuntimeState:
         # even in the narrow startup window before server.py's
         # start_attachments_service() call has actually run.
         self.provider_registry = ProviderRegistry(self.conn, WORKSPACE_ID)
-        self.connectivity_monitor = ConnectivityMonitor(self.provider_registry)
-        # Unlike the two above, the worker thread itself is not started
-        # until ensure_service() runs - see that method's own docstring
-        # for why it needs radio_transport, which this constructor never
-        # receives.
+        self.connectivity_monitor = ConnectivityMonitor(
+            self.provider_registry, session=_test_connectivity_session_override
+        )
+        # PR #231 review, section 2: constructed here, eagerly, rather
+        # than deferred to ensure_service() below - a message can arrive
+        # (and needs somewhere safe to queue) in the narrow window before
+        # AttachmentsService itself exists. The *same* queue object is
+        # handed to AttachmentsService once it is constructed, so nothing
+        # queued during that window is a second, throwaway queue that
+        # gets silently dropped.
+        self.inbound_queue: "queue.Queue[InboundEvent]" = queue.Queue(maxsize=INBOUND_QUEUE_MAXSIZE)
+        # Unlike the pieces above, the worker thread itself is not
+        # started until ensure_service() runs - see that method's own
+        # docstring for why it needs radio_transport, which this
+        # constructor never receives.
         self.service: Optional[AttachmentsService] = None
 
     def ensure_service(self, radio_transport: RadioTransport) -> AttachmentsService:
@@ -138,13 +190,22 @@ class _MCARuntimeState:
         parameter, never as something stored at process startup. Callers
         pass it in explicitly (`start_attachments_service()` below).
 
-        Idempotent and lock-guarded by the caller (both current callers
-        already hold `_lock` when they call this) so a second call -
-        whether a second real startup attempt or an incoming message
-        racing server.py's own startup call - just returns the already-
-        running instance rather than building a second worker thread or
-        re-running resume_pending()/reconcile_pending() a second time.
+        Idempotent and self-locking (acquires the module-level `_lock`
+        internally, rather than requiring every caller to remember to -
+        PR #231 review found this module's own `handle_incoming_
+        meshtastic_text()` calling this method without holding `_lock` at
+        all, a real bug introduced while wiring the queue-based redesign
+        in, fixed here by moving the lock inside this method instead of
+        trusting each call site) so a second call - whether a second real
+        startup attempt or an incoming message racing server.py's own
+        startup call - just returns the already-running instance rather
+        than building a second worker thread or re-running
+        resume_pending()/reconcile_pending() a second time.
         """
+        with _lock:
+            return self._ensure_service_locked(radio_transport)
+
+    def _ensure_service_locked(self, radio_transport: RadioTransport) -> AttachmentsService:
         if self.service is not None:
             return self.service
         adapter = MeshtasticTextAdapter(radio_transport)
@@ -156,18 +217,16 @@ class _MCARuntimeState:
             key_exchange=self.coordinator,
             connectivity_monitor=self.connectivity_monitor,
             delivery_adapter=adapter,
-            # Reviewer-found defect (PR #227 defect #2): `self.conn` is
-            # also written to directly by handle_incoming_meshtastic_text()
-            # below (coordinator.handle_incoming()/receiver.handle_offer()),
-            # which runs on the radio listener thread, not this service's
-            # own worker thread. Passing this module's own `_lock` here -
-            # the same lock handle_incoming_meshtastic_text() already
-            # holds for every direct write it makes - means AttachmentsService.
-            # tick() and the listener's direct writes now serialize on one
-            # single lock instead of two independent ones that each only
-            # ever protected their own call site. See AttachmentsService.
-            # __init__()'s own docstring/comment for the full defect.
+            # PR #231 review, section 2: `self.conn` is now touched only
+            # by this service's own worker thread - `lock` here is just
+            # for tick()'s own re-entrancy (its own docstring), not for
+            # serializing against the radio listener, which no longer
+            # accesses `conn` at all. `self.inbound_queue` (not a second,
+            # private one) is what the listener actually reaches -
+            # thread-safe by construction (queue.Queue), needing no lock
+            # of its own.
             lock=_lock,
+            inbound_queue=self.inbound_queue,
         )
         # Deliberately network_available=False and no relay_client/
         # delivery_adapter override for this *synchronous* startup pass:
@@ -209,10 +268,10 @@ def start_attachments_service(data_dir: str, radio_transport: RadioTransport) ->
     existing `threading.Thread(target=..., daemon=True).start()` calls
     for `radio_health_worker` etc. (ADR-0008 decision 1's "Startup
     sequence"). Safe to call more than once (e.g. a hypothetical future
-    profile-swap re-init path) - `ensure_service()` is idempotent."""
+    profile-swap re-init path) - `ensure_service()` is idempotent and
+    self-locking (its own docstring)."""
     state = _get_state(data_dir)
-    with _lock:
-        state.ensure_service(radio_transport)
+    state.ensure_service(radio_transport)
 
 
 def reset_state_for_tests() -> None:
@@ -225,14 +284,32 @@ def reset_state_for_tests() -> None:
     a still-ticking worker's connection out from under it would otherwise
     surface as sporadic "Cannot operate on a closed database" noise in
     whichever test happens to be running next, not in the test that
-    actually caused it."""
-    global _state
+    actually caused it.
+
+    PR #231 review, section 2/3: never deadlocks - `AttachmentsService.
+    stop()` itself is bounded (`join(timeout=...)`) and now returns
+    whether the worker actually stopped. If it did not (a pathologically
+    slow tick still running after the timeout - not expected in normal
+    operation), `conn` is deliberately NOT closed out from under it; this
+    function still clears the module-level `_state` singleton so the
+    *next* call to `_get_state()` builds a fresh `_MCARuntimeState` (and,
+    with it, a fresh connection) rather than reusing one whose owning
+    thread might still be alive. The old, still-running worker and its
+    connection are leaked in that rare case, not corrupted.
+
+    Also clears `set_connectivity_session_for_tests()`'s override back
+    to `None`, so a test that set one does not silently leak a fake
+    session into a later, unrelated test."""
+    global _state, _test_connectivity_session_override
     with _lock:
         if _state is not None:
+            stopped = True
             if _state.service is not None:
-                _state.service.stop()
-            _state.conn.close()
+                stopped = _state.service.stop()
+            if stopped:
+                _state.conn.close()
         _state = None
+        _test_connectivity_session_override = None
 
 
 def handle_incoming_meshtastic_text(
@@ -250,101 +327,35 @@ def handle_incoming_meshtastic_text(
     *before* this function is ever reached, so this function itself
     only runs for messages that already passed that cheap filter).
 
-    Returns True if `text` was recognized as an MCA1-TEXT message
-    (whether or not a reply was actually sent), False if `ingest()`
-    decided it wasn't MCA after all - purely informational for the
-    caller's own logging, callers don't need to branch on it.
+    PR #231 review, section 2: this function does exactly two things -
+    build an immutable `InboundEvent` and hand it to
+    `AttachmentsService.enqueue_inbound()` - and nothing else. No CBOR
+    decode, no signature verification, no database access, no network
+    call happens here or anywhere this function calls into; all of that
+    now happens later, on `AttachmentsService`'s own worker thread (see
+    `service.py`'s `_drain_inbound_events()`/`_process_one_inbound_event()`).
+    `radio_transport` is still accepted (server.py's existing call site
+    already passes it, and `start_attachments_service()`/`ensure_service()`
+    need it to build the one `MeshtasticTextAdapter` the worker thread
+    sends replies through) but this function itself never calls anything
+    on it - ingest/encode/send all move to the worker side too.
 
-    Never raises: a malformed/hostile MCA payload, a rate-limited
-    KEY_REQUEST, or a failed reply-send must not take down the radio
-    listener thread - each failure mode is caught and logged here,
-    the same "best-effort, never crash the listener" contract every
-    other block in server.py's process_message_line() already follows.
+    Returns True if the event was queued, False if it was dropped
+    because the queue was full (`AttachmentsService.enqueue_inbound()`'s
+    own return value) - purely informational for the caller's own
+    logging (server.py currently discards it), callers don't need to
+    branch on it.
 
-    ADR-0008: an OFFER frame is routed to `receiver.handle_offer()`
-    instead of `coordinator.handle_incoming()` - the latter only ever
-    dispatches KEY_REQUEST/KEY_ANNOUNCE/KEY_ACK (see its own
-    `codec.peek_message_type()`-based dispatch) and returns None for
-    anything else, so an OFFER reaching it before this change was
-    silently dropped with no attachment row ever created. Every other
-    message type (ACK_RECEIVED/ACK_DOWNLOADED/ACK_PROVIDER_UNKNOWN/
-    CANCEL/REJECTED/EXPIRED/KEY_ROTATE) still falls through to
-    `coordinator.handle_incoming()`, which returns None for those today
-    - a pre-existing gap flagged, not fixed, here: `sender.py`'s own
-    module docstring already documents that nothing yet drives
-    `on_ack_received()`/`on_ack_downloaded()` from a real incoming wire
-    message (no production caller exists for either), so the sender
-    side's SENT->RECEIVED->DOWNLOADED progression does not yet advance
-    off of a real ACK on the wire. Out of scope for ADR-0008 (which
-    does not touch `sender.py`'s or `receiver.py`'s signatures at all)
-    and for this wiring pass; revisit as its own reviewed change, since
-    it involves verifying a signed wire payload, not just routing one.
+    Never raises: `ensure_service()`/`_get_state()` themselves are the
+    only things that could plausibly fail here (e.g. a filesystem
+    error), and server.py's own call site already wraps this whole call
+    in a try/except for exactly that reason - this function does not
+    duplicate that guard internally, to avoid silently swallowing a
+    real startup-path failure that caller wants to see and log itself.
     """
     state = _get_state(data_dir)
-    adapter = MeshtasticTextAdapter(radio_transport)
-    transport_event = {"text": text, "source_address": source_address, "packet_id": packet_id}
-
-    with _lock:
-        envelope = adapter.ingest(transport_event)
-        if envelope is None:
-            return False
-
-        try:
-            message_type = codec.peek_message_type(envelope.logical_message)
-        except codec.CodecError as exc:
-            print(f"[MCA] malformed MCA message from {source_address}: {exc}", flush=True)
-            return True
-
-        if message_type == codec.MessageType.OFFER:
-            # Fail-open, same policy as ConnectivityMonitor.can_attempt_relay():
-            # this only decides which of the two equally-automatic starting
-            # states (WAITING_CONSENT vs WAITING_NETWORK) the new attachment
-            # begins in - AttachmentsService's own tick (woken just below)
-            # re-evaluates it within one tick regardless, so getting this
-            # guess wrong for an unknown/never-checked internet state costs
-            # nothing beyond one extra tick.
-            network_available = state.connectivity_monitor.snapshot().internet != InternetStatus.OFFLINE
-            try:
-                receiver.handle_offer(
-                    state.conn,
-                    workspace_manager=state.workspace_manager,
-                    principal=state.principal,
-                    provider_registry=state.provider_registry,
-                    key_exchange=state.coordinator,
-                    raw_offer=envelope.logical_message,
-                    network_available=network_available,
-                    # PR #227 defect #1: this is the only place a
-                    # 'received' attachment's reply route is ever learned
-                    # - persisted on the attachment row so AttachmentsService's
-                    # dispatch step can actually send ACK_RECEIVED/
-                    # ACK_PROVIDER_UNKNOWN/ACK_DOWNLOADED back later,
-                    # possibly ticks (or a restart) after this call returns.
-                    source_address=source_address,
-                )
-            except receiver.ReceiverError as exc:
-                print(f"[MCA] rejected OFFER from {source_address}: {exc}", flush=True)
-                return True
-            if state.service is not None:
-                state.service.wake()
-            return True
-
-        try:
-            reply_logical = state.coordinator.handle_incoming(envelope)
-        except RateLimited as exc:
-            print(f"[MCA] KEY_REQUEST from {source_address} rate-limited: {exc}", flush=True)
-            return True
-        except DeliveryError as exc:
-            print(f"[MCA] malformed MCA message from {source_address}: {exc}", flush=True)
-            return True
-
-    if reply_logical is None:
-        return True
-
-    try:
-        route = Route(route_type=RouteType.DIRECT, route_id=source_address, destination_address=source_address)
-        wire_payload = adapter.encode(reply_logical, route)
-        adapter.send(wire_payload, route, idempotency_key=f"mca-reply-{packet_id or source_address}")
-    except Exception as exc:  # noqa: BLE001 - must never crash the listener thread
-        print(f"[MCA] failed to send reply to {source_address}: {exc}", flush=True)
-
-    return True
+    service = state.ensure_service(radio_transport)
+    event = InboundEvent(
+        text=text, source_address=source_address, packet_id=packet_id, received_at=time.time()
+    )
+    return service.enqueue_inbound(event)

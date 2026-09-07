@@ -44,16 +44,18 @@ simply inlined.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+import queue
 import sqlite3
 import threading
 import time
 from typing import Callable, Dict, List, Optional
 
-from meshsrv.attachments import receiver, sender
-from meshsrv.attachments.delivery.base import DeliveryAdapter, Route, RouteType
+from meshsrv.attachments import codec, receiver, sender
+from meshsrv.attachments.delivery.base import DeliveryAdapter, DeliveryEnvelope, DeliveryError, Route, RouteType
 from meshsrv.attachments.identity import MCAPrincipal
-from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator
+from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator, RateLimited
 from meshsrv.attachments.provider_registry import ProviderRegistry
 from meshsrv.attachments.relay_client import RelayClient
 from meshsrv.attachments.workspace import MCAWorkspaceManager
@@ -73,7 +75,41 @@ DEFAULT_TICK_SECONDS = 5.0
 # work one tick takes before yielding back to the wake-driven loop.
 MAX_ATTACHMENTS_PER_TICK = 8
 
+# PR #231 review, section 2 (single-owner SQLite model): the radio
+# listener thread never touches the MCA database directly any more - it
+# only builds an immutable InboundEvent and puts it on this bounded
+# queue (see enqueue_inbound()'s own docstring). Bounded so a listener
+# thread that outruns a stalled worker (e.g. every registered Relay
+# timing out) cannot grow memory without limit; a full queue drops the
+# oldest-pending event's *replacement* (put_nowait() raises queue.Full,
+# the event is logged and discarded, never blocking the caller) rather
+# than ever blocking the radio listener thread.
+INBOUND_QUEUE_MAXSIZE = 256
+
+# How many queued inbound events one tick drains before moving on to the
+# rest of its work - bounds one tick's own duration under a flood the
+# same way MAX_ATTACHMENTS_PER_TICK already bounds the row-scan; the
+# rest simply wait for the next tick/wake(), never blocking anything.
+MAX_INBOUND_EVENTS_PER_TICK = 16
+
 RelayClientFactory = Callable[[str], Optional[RelayClient]]
+
+
+@dataclasses.dataclass(frozen=True)
+class InboundEvent:
+    """One raw incoming MCA1-TEXT message, captured by the radio listener
+    thread (meshsrv.attachments.mca_runtime.handle_incoming_meshtastic_text())
+    *before* any CBOR decoding, signature verification, or database
+    access - all of that now happens only on AttachmentsService's own
+    worker thread, once this event is drained off the queue (PR #231
+    review, section 2). `text` is the raw MCA1-TEXT string exactly as
+    received; `adapter.ingest()` (base64url decode + CBOR parse) runs on
+    the worker side, not here."""
+
+    text: str
+    source_address: str
+    packet_id: Optional[str]
+    received_at: float
 
 
 class AttachmentsServiceError(RuntimeError):
@@ -116,6 +152,7 @@ class AttachmentsService:
         max_per_tick: int = MAX_ATTACHMENTS_PER_TICK,
         now_fn=time.time,
         lock: Optional[threading.Lock] = None,
+        inbound_queue: Optional["queue.Queue[InboundEvent]"] = None,
     ):
         self._conn = conn
         self._workspace_manager = workspace_manager
@@ -129,28 +166,30 @@ class AttachmentsService:
         self._max_per_tick = max_per_tick
         self._now = now_fn
 
-        # Reviewer-found defect (PR #227 defect #2): this used to always
-        # build its own private Lock here, guarding *this service's own*
-        # access to `conn` - but `conn` is not necessarily this service's
-        # alone. In production (mca_runtime.py) the exact same
-        # sqlite3.Connection is also written to directly by the radio
-        # listener thread (handle_incoming_meshtastic_text()'s
-        # coordinator.handle_incoming()/receiver.handle_offer() calls),
-        # guarded by that module's own, entirely separate
-        # threading.Lock(). Two independent locks over one shared
-        # connection is not mutual exclusion at all: the listener thread
-        # and this service's own worker thread could freely interleave
-        # statements/commits on the same connection. A caller that shares
-        # `conn` across threads must now also share the *same* Lock
-        # instance across every accessor of that connection - passed in
-        # here, not built fresh - so there is exactly one owner of "who
-        # may touch this connection right now", matching the "single-
-        # owner SQLite access model" callers must already keep by
-        # convention (never enforced before this fix). Standalone/test
-        # callers that own `conn` exclusively (nothing else ever touches
-        # it) can still omit `lock` and get a private one, unchanged from
-        # before.
+        # PR #231 review, section 2: this service's own worker thread is
+        # now the SOLE owner of `conn` at runtime - the radio listener no
+        # longer touches it at all (it only enqueues an InboundEvent, see
+        # enqueue_inbound()/_drain_inbound_events() below), so there is no
+        # second thread left to race against for database access. `_lock`
+        # is kept only to make `tick()` itself safely re-entrant (its
+        # module docstring already documents "safe to call directly...
+        # as well as from the worker thread" - e.g. a synchronous startup
+        # pass, or a future direct call from a test), not because two
+        # different owners still need to be serialized against each
+        # other. A caller that constructs its own dedicated `conn` (every
+        # test in this module does) can omit `lock` and get a private
+        # one.
         self._lock = lock if lock is not None else threading.Lock()
+
+        # PR #231 review, section 2: the bounded inbound-event queue -
+        # the radio listener's only touchpoint with this service. Callers
+        # that already have their own queue (mca_runtime.py, so events
+        # queued before ensure_service() has even run are not lost - see
+        # that module's own docstring) pass it in; a standalone/test
+        # caller gets a private one.
+        self._inbound_queue: "queue.Queue[InboundEvent]" = (
+            inbound_queue if inbound_queue is not None else queue.Queue(maxsize=INBOUND_QUEUE_MAXSIZE)
+        )
         self._wake_event = threading.Event()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -166,12 +205,30 @@ class AttachmentsService:
         self._thread = threading.Thread(target=self._run, name="mca-attachments-worker", daemon=True)
         self._thread.start()
 
-    def stop(self, *, timeout: Optional[float] = 5.0) -> None:
+    def stop(self, *, timeout: Optional[float] = 5.0) -> bool:
+        """Returns True if the worker thread actually stopped within
+        `timeout`, False otherwise. PR #231 review: the old version
+        unconditionally set `self._thread = None` after `join(timeout=...)`
+        regardless of whether the thread had actually exited - a caller
+        that then closed `conn` (mca_runtime.reset_state_for_tests()) could
+        race a still-running worker mid-tick. Callers must check the
+        return value before treating shutdown as complete; see
+        reset_state_for_tests()'s own handling."""
         self._stop_event.set()
         self._wake_event.set()
-        if self._thread is not None:
-            self._thread.join(timeout=timeout)
+        if self._thread is None:
+            return True
+        self._thread.join(timeout=timeout)
+        stopped = not self._thread.is_alive()
+        if stopped:
             self._thread = None
+        else:
+            logger.warning(
+                "AttachmentsService worker did not stop within %ss (workspace_id=%s) - "
+                "not clearing the thread handle or touching the connection",
+                timeout, self._principal.workspace_id,
+            )
+        return stopped
 
     def wake(self) -> None:
         """The only method API handlers (once Step 1.6A exists) are meant
@@ -180,8 +237,41 @@ class AttachmentsService:
         to return early."""
         self._wake_event.set()
 
+    def enqueue_inbound(self, event: InboundEvent) -> bool:
+        """The radio listener's ONLY touchpoint with this service (PR #231
+        review, section 2) - called from mca_runtime.handle_incoming_
+        meshtastic_text(), on the radio listener thread, never on this
+        service's own worker thread. Never blocks: `queue.Queue.put_nowait()`
+        either succeeds immediately or raises `queue.Full`, which is
+        caught here and turned into a logged, dropped event rather than
+        ever blocking the caller. The log line deliberately omits `text`
+        (the raw MCA1-TEXT payload) - only `source_address` (a Meshtastic
+        node id, not a secret) is logged, per the review's own "logged
+        without including message contents, keys, tokens" requirement.
+        Returns True if the event was queued, False if it was dropped."""
+        try:
+            self._inbound_queue.put_nowait(event)
+        except queue.Full:
+            logger.warning(
+                "AttachmentsService: inbound queue full (maxsize=%d) - dropping event from %s",
+                INBOUND_QUEUE_MAXSIZE, event.source_address,
+            )
+            return False
+        self.wake()
+        return True
+
     def _run(self) -> None:
         logger.info("AttachmentsService worker started (workspace_id=%s)", self._principal.workspace_id)
+        # PR #231 review, section 3: the first tick must run immediately,
+        # not after waiting a full tick_seconds for the first wake()/
+        # timeout - Event.wait(timeout=...) on a not-yet-set Event always
+        # blocks for the full timeout, so without this explicit call the
+        # very first tick would only happen after DEFAULT_TICK_SECONDS
+        # (5s) had already elapsed.
+        try:
+            self.tick()
+        except Exception:  # noqa: BLE001 - the worker thread must never die from one bad tick
+            logger.exception("AttachmentsService initial tick failed")
         while not self._stop_event.is_set():
             self._wake_event.wait(timeout=self._tick_seconds)
             self._wake_event.clear()
@@ -195,19 +285,28 @@ class AttachmentsService:
     # ---- one tick ---------------------------------------------------------
 
     def tick(self) -> int:
-        """One reconciliation pass: up to `max_per_tick` non-terminal
-        attachments, one run_step() call each. Safe to call directly (a
-        synchronous pass at startup right after resume_pending()/
-        reconcile_pending(), or from a test) as well as from the worker
-        thread - the lock serializes concurrent callers instead of
-        racing them, matching "one crypto worker" (ADR-0008)."""
+        """One reconciliation pass: drain queued inbound events, then up
+        to `max_per_tick` non-terminal attachments, one run_step() call
+        each. Safe to call directly (a synchronous pass at startup right
+        after resume_pending()/reconcile_pending(), or from a test) as
+        well as from the worker thread - the lock makes repeated/
+        concurrent calls to this method itself safely re-entrant."""
         with self._lock:
             return self._tick_locked()
 
     def _tick_locked(self) -> int:
-        # The only network I/O this tick performs itself - everything
-        # after this is either a cheap DB scan or a run_step() call,
-        # which does its own I/O only when a row is actually due.
+        # PR #231 review, section 2: CBOR decoding, signature
+        # verification, TOFU processing, attachment creation, and ACK
+        # creation for an inbound radio message all happen right here -
+        # on this worker thread, holding this connection - never on the
+        # radio listener thread, which only ever built the InboundEvent
+        # and enqueued it (enqueue_inbound() above).
+        self._drain_inbound_events()
+
+        # The only network I/O this tick performs itself beyond the
+        # inbound-event dispatch above - everything after this is either
+        # a cheap DB scan or a run_step() call, which does its own I/O
+        # only when a row is actually due.
         self._connectivity.refresh()
 
         processed = 0
@@ -226,6 +325,137 @@ class AttachmentsService:
             processed += 1
         self._dispatch_outgoing_replies()
         return processed
+
+    def _drain_inbound_events(self) -> None:
+        """Up to MAX_INBOUND_EVENTS_PER_TICK events, oldest first - the
+        rest simply wait for the next tick/wake(), the same bounded-work-
+        per-tick discipline `_due_rows()`'s own `max_per_tick` already
+        uses. One malformed/exception-raising event is caught and logged
+        here, same as one bad attachment in the row-scan above - it must
+        never stop the rest of this drain or kill the worker thread."""
+        for _ in range(MAX_INBOUND_EVENTS_PER_TICK):
+            try:
+                event = self._inbound_queue.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                self._process_one_inbound_event(event)
+            except Exception:  # noqa: BLE001 - one bad inbound event must not stop the drain or the worker
+                logger.exception(
+                    "AttachmentsService: failed to process inbound event from %s", event.source_address
+                )
+
+    def _process_one_inbound_event(self, event: InboundEvent) -> None:
+        """Everything that used to run on the radio listener thread
+        itself (PR #231 review, section 2) - ingest (base64url decode +
+        CBOR parse), message-type dispatch, and, for a KEY_REQUEST/
+        KEY_ANNOUNCE/KEY_ACK, the actual KeyExchangeCoordinator call - now
+        runs here, on this worker thread, holding this connection.
+        Mirrors the dispatch logic that used to live directly in
+        mca_runtime.handle_incoming_meshtastic_text()."""
+        if self._delivery_adapter is None:
+            # No transport configured for this service instance (e.g. a
+            # test constructing AttachmentsService without one) - nothing
+            # to ingest through. Not an error: a standalone service that
+            # only ever processes already-created attachment rows is a
+            # legitimate configuration.
+            return
+        transport_event = {
+            "text": event.text, "source_address": event.source_address, "packet_id": event.packet_id,
+        }
+        envelope = self._delivery_adapter.ingest(transport_event)
+        if envelope is None:
+            return
+
+        try:
+            message_type = codec.peek_message_type(envelope.logical_message)
+        except codec.CodecError as exc:
+            logger.info("AttachmentsService: malformed MCA message from %s: %s", event.source_address, exc)
+            return
+
+        if message_type == codec.MessageType.OFFER:
+            self._process_inbound_offer(envelope, source_address=event.source_address)
+            return
+
+        try:
+            reply_logical = self._key_exchange.handle_incoming(envelope)
+        except RateLimited as exc:
+            logger.info("AttachmentsService: KEY_REQUEST from %s rate-limited: %s", event.source_address, exc)
+            return
+        except DeliveryError as exc:
+            logger.info("AttachmentsService: malformed MCA message from %s: %s", event.source_address, exc)
+            return
+        if reply_logical is None:
+            return
+        self._send_reply_now(reply_logical, event.source_address, idempotency_key=f"mca-reply-{event.packet_id or event.source_address}")
+
+    def _process_inbound_offer(self, envelope: DeliveryEnvelope, *, source_address: str) -> None:
+        """PR #231 review, section 5: the OFFER's *own* provider_id
+        decides WAITING_CONSENT vs WAITING_NETWORK, never the workspace-
+        wide internet flag - a Relay this OFFER doesn't even reference
+        being reachable (or not) must never influence this decision.
+        `codec.decode_offer(..., verify_key=None)` mirrors exactly what
+        `receiver.handle_offer()` itself does internally to reach the
+        same field before any signature is checked - this is not a
+        second, differently-trusted parse of the same bytes, just reading
+        the one field needed one call earlier so the right
+        `can_attempt_relay()` argument can be passed in.
+
+        PR #231 review, section 4.2: also builds the `receiver.ReplyRoute`
+        `handle_offer()` now persists, straight from the same `envelope`
+        `_process_one_inbound_event()` already ingested - `adapter_id`/
+        `connector_profile_id`/`route_type`/`route_id` all come from the
+        real adapter that actually received this OFFER, not a hardcoded
+        Meshtastic assumption. `route_id` is always exactly
+        `source_address` for the DIRECT-only MVP (see
+        `MeshtasticTextAdapter.ingest()`'s own construction), matching
+        `handle_offer()`'s own validation that the two must agree."""
+        from meshsrv.attachments.provider_registry import encode_provider_id
+
+        raw_offer = envelope.logical_message
+        try:
+            unverified = codec.decode_offer(raw_offer, verify_key=None)
+            provider_id_text = encode_provider_id(unverified.provider_id)
+        except codec.CodecError as exc:
+            logger.info("AttachmentsService: rejected OFFER from %s: not well-formed: %s", source_address, exc)
+            return
+        network_available = self._connectivity.can_attempt_relay(provider_id_text)
+        reply_route = receiver.ReplyRoute(
+            adapter_id=envelope.adapter_id,
+            connector_profile_id=envelope.connector_profile_id,
+            route_type=envelope.route_type.value,
+            route_id=envelope.route_id,
+            destination_address=envelope.route_id,
+        )
+        try:
+            receiver.handle_offer(
+                self._conn,
+                workspace_manager=self._workspace_manager,
+                principal=self._principal,
+                provider_registry=self._provider_registry,
+                key_exchange=self._key_exchange,
+                raw_offer=raw_offer,
+                network_available=network_available,
+                source_address=source_address,
+                reply_route=reply_route,
+            )
+        except receiver.ReceiverError as exc:
+            logger.info("AttachmentsService: rejected OFFER from %s: %s", source_address, exc)
+
+    def _send_reply_now(self, reply_logical: bytes, source_address: str, *, idempotency_key: str) -> None:
+        """A KEY_ANNOUNCE/KEY_ACK reply is small, already-signed, and has
+        no persisted retry queue of its own (unlike the receiver-side ACK
+        outbox below) - sent inline, on this same worker thread, the same
+        best-effort/log-and-continue policy the radio listener used to
+        apply to it directly."""
+        if self._delivery_adapter is None:
+            return
+        try:
+            route = Route(route_type=RouteType.DIRECT, route_id=source_address, destination_address=source_address)
+            wire_payload = self._delivery_adapter.encode(reply_logical, route)
+            self._delivery_adapter.send(wire_payload, route, idempotency_key=idempotency_key)
+        except Exception:  # noqa: BLE001 - must never crash the worker thread
+            logger.exception("AttachmentsService: failed to send reply to %s", source_address)
 
     def _dispatch_outgoing_replies(self) -> None:
         """PR #227 defect #1: the one place a queued receiver-side ACK
@@ -251,13 +481,36 @@ class AttachmentsService:
                     self._conn, reply.id, self._now(), error_code="no_reply_route_recorded"
                 )
                 continue
+            if not receiver.check_and_record_reply_quota(
+                self._conn, self._principal.workspace_id, reply.route_id, self._now()
+            ):
+                # PR #231 review, section 4.3: a real, persisted quota -
+                # per-source-address and global - not just "5 rows per
+                # dispatch call" (which only limited one SQL query, not
+                # the actual send rate: at the 5s tick interval that
+                # still allowed up to 60 sends/minute with zero per-
+                # source protection). Left PENDING, retried on a later
+                # dispatch once the relevant window has room again -
+                # never marked sent, never dropped.
+                continue
             route = Route(route_type=RouteType(reply.route_type), route_id=reply.route_id, destination_address=reply.route_id)
             try:
                 wire_payload = self._delivery_adapter.encode(reply.message, route)
-                self._delivery_adapter.send(wire_payload, route, idempotency_key=f"mca-reply-{reply.id}")
+                receipt = self._delivery_adapter.send(wire_payload, route, idempotency_key=f"mca-reply-{reply.id}")
             except Exception as exc:  # noqa: BLE001 - one bad reply must not stop the others or the tick
                 logger.exception("AttachmentsService: failed to send queued reply %s", reply.id)
                 receiver.mark_reply_attempt_failed(self._conn, reply.id, self._now(), error_code=str(exc))
+                continue
+            if not receipt.sent:
+                # PR #231 review, section 4.1: adapter.send() returning
+                # normally (no exception) does NOT mean the message was
+                # actually sent - DeliveryReceipt.sent is the real
+                # signal. Treated exactly like a raised exception: stays
+                # PENDING, attempt counted, backoff scheduled.
+                logger.warning("AttachmentsService: reply %s not sent (receipt.sent=False)", reply.id)
+                receiver.mark_reply_attempt_failed(
+                    self._conn, reply.id, self._now(), error_code="delivery_receipt_sent_false"
+                )
                 continue
             receiver.mark_reply_sent(self._conn, reply.id, self._now())
 

@@ -121,10 +121,19 @@ _ATTEMPTABLE_RELAY_STATES = frozenset({RelayState.ONLINE, RelayState.DEGRADED})
 
 
 class UploadReadiness(str, enum.Enum):
+    """PR #231 review, section 10: LIMIT_EXCEEDED was removed - nothing
+    in this codebase computes a per-Relay upload quota/limit today (no
+    such tracking exists anywhere), so this state could never actually
+    be returned; a state a caller could branch on but that
+    evaluate_upload_readiness() can never produce is worse than not
+    having it, since it invites dead code at every call site that
+    handles it "for completeness". Revisit if/when a real per-Relay
+    upload quota is implemented - add it back then, with the logic that
+    actually computes it, not before."""
+
     READY = "ready"
     UPLOAD_TOKEN_MISSING = "upload_token_missing"
     UPLOAD_DISABLED = "upload_disabled"
-    LIMIT_EXCEEDED = "limit_exceeded"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -143,7 +152,22 @@ class ConnectivitySnapshot:
     relays: Dict[str, RelayStatus]
 
 
-def _upload_readiness_for(profile: ProviderProfile) -> UploadReadiness:
+def evaluate_upload_readiness(profile: ProviderProfile) -> UploadReadiness:
+    """The only sanctioned way to compute a profile's `UploadReadiness` -
+    a real function (PR #231 review, section 10: the old `_upload_
+    readiness_for()` name/leading-underscore made this look like a
+    private implementation detail of this module rather than the one
+    place that decision is actually made; a caller reasoning about
+    whether a Relay is upload-ready should call this, not re-derive the
+    same two-field check itself).
+
+    Deliberately independent of `RelayState`/live connectivity (module
+    docstring, and see the `RelayStatus` fields it feeds into: `state`
+    and `upload_readiness` are reported side by side, never merged) -
+    this only reflects local configuration (is uploading allowed for
+    this profile at all, is a credential actually on file), not whether
+    the Relay is currently reachable. A Relay can be perfectly upload-
+    READY while UNREACHABLE right now, or vice versa."""
     if not profile.upload_allowed:
         return UploadReadiness.UPLOAD_DISABLED
     if not profile.upload_token_configured:
@@ -334,7 +358,7 @@ class ConnectivityMonitor:
             self._consecutive_failures[profile.provider_id] = self._consecutive_failures.get(profile.provider_id, 0) + 1
             return RelayStatus(
                 provider_id=profile.provider_id, state=RelayState.UNREACHABLE,
-                upload_readiness=_upload_readiness_for(profile), checked_at=now, latency_ms=None,
+                upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=None,
                 error_code=type(exc).__name__,
             )
 
@@ -342,7 +366,7 @@ class ConnectivityMonitor:
             self._consecutive_failures[profile.provider_id] = self._consecutive_failures.get(profile.provider_id, 0) + 1
             return RelayStatus(
                 provider_id=profile.provider_id, state=RelayState.DEGRADED,
-                upload_readiness=_upload_readiness_for(profile), checked_at=now, latency_ms=latency_ms,
+                upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=latency_ms,
                 error_code=f"http_{response.status_code}",
             )
 
@@ -363,13 +387,13 @@ class ConnectivityMonitor:
                 mismatch_state, error_code = result
                 return RelayStatus(
                     provider_id=profile.provider_id, state=mismatch_state,
-                    upload_readiness=_upload_readiness_for(profile), checked_at=now, latency_ms=latency_ms,
+                    upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=latency_ms,
                     error_code=error_code,
                 )
 
         return RelayStatus(
             provider_id=profile.provider_id, state=RelayState.ONLINE,
-            upload_readiness=_upload_readiness_for(profile), checked_at=now, latency_ms=latency_ms, error_code=None,
+            upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=latency_ms, error_code=None,
         )
 
     def _check_identity(self, profile: ProviderProfile):

@@ -41,6 +41,7 @@ from meshsrv.connectivity_monitor import (
     InternetStatus,
     RelayState,
     UploadReadiness,
+    evaluate_upload_readiness,
 )
 
 BASE_URL = "https://mock-relay.test"
@@ -462,6 +463,21 @@ def test_refresh_persists_failure_details(registry, store):
 
 
 # ---- PR #231 review, section 6 --------------------------------------------
+
+
+def test_limit_exceeded_upload_readiness_was_removed():
+    """PR #231 review, section 10: nothing in this codebase computes a
+    per-Relay upload quota, so LIMIT_EXCEEDED could never actually be
+    returned - removed rather than kept as permanently-dead state."""
+    assert {member.value for member in UploadReadiness} == {"ready", "upload_token_missing", "upload_disabled"}
+
+
+def test_evaluate_upload_readiness_is_a_real_public_function(registry, store):
+    profile = _register(registry, store, upload_allowed=True)
+    assert evaluate_upload_readiness(profile) == UploadReadiness.UPLOAD_TOKEN_MISSING
+
+    disabled_profile = _register(registry, store, base_url="https://second.example.net", upload_allowed=False)
+    assert evaluate_upload_readiness(disabled_profile) == UploadReadiness.UPLOAD_DISABLED
 
 
 def test_checking_enum_members_were_removed():

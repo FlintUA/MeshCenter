@@ -35,6 +35,7 @@ from meshsrv.attachments.db.migrations import migrate
 from meshsrv.attachments.provider_registry import ProviderRegistry
 from meshsrv.attachments.relay.mock_server import MockRelayStore, create_mock_relay_app
 from meshsrv.connectivity_monitor import (
+    FALLBACK_INTERNET_CHECK_URL,
     RELAY_HEALTH_BACKOFF_CEILING_SECONDS,
     ConnectivityMonitor,
     InternetStatus,
@@ -333,11 +334,23 @@ def test_identity_check_passes_against_the_real_mock_relay(registry, store, flas
 
 
 def test_identity_check_does_not_run_on_every_health_tick(registry, store):
+    """This test's info payload deliberately doesn't match the real
+    profile's pinned service_public_key, so the relay ends up
+    IDENTITY_MISMATCH (not attemptable) - which correctly triggers this
+    module's own independent fallback probe (this ADR-0008-hardening
+    pass's own defect #3 fix). That fallback call is a distinct concern
+    from what this test actually checks (the /v1/info call's own
+    cadence) - the handler below buckets it separately so the two don't
+    get conflated in one counter."""
     profile = _register(registry, store)
     info_calls = []
+    fallback_calls = []
 
     def handler(method, url):
         if url.endswith("/health"):
+            return _ScriptedResponse(status_code=200)
+        if url == FALLBACK_INTERNET_CHECK_URL:
+            fallback_calls.append(url)
             return _ScriptedResponse(status_code=200)
         info_calls.append(url)
         return _ScriptedResponse(status_code=200, payload={"provider_id": profile.provider_id, "service_key": {"public_key": "x"}})
@@ -346,6 +359,7 @@ def test_identity_check_does_not_run_on_every_health_tick(registry, store):
     monitor = ConnectivityMonitor(registry, session=_ScriptedSession(handler), now_fn=lambda: now[0])
     monitor.refresh(force=True)
     assert len(info_calls) == 1
+    assert len(fallback_calls) == 1  # identity mismatch - fallback correctly consulted once
 
     # Force a health re-check (well past the 60s interval) without forcing info.
     now[0] += 61

@@ -52,10 +52,13 @@ RELAY_HEALTH_BACKOFF_CEILING_SECONDS = 300
 # the profile's identity could have changed - not on every health tick.
 RELAY_INFO_MIN_INTERVAL_SECONDS = 3600
 
-# Used only when no provider is registered yet (first-run state, before
-# any profile exists to health-check against) - a plain, documented,
-# operator-configurable placeholder. Revisit if this needs to be a
-# Settings-configurable value instead of a code constant.
+# Used whenever no registered Relay is currently attemptable - the
+# first-run case (no profile exists yet) and the case every registered
+# Relay is down while general internet may be fine (a real, reviewer-
+# found defect this module used to conflate - see _check_fallback_
+# internet()'s own docstring). A plain, documented, operator-
+# configurable placeholder. Revisit if this needs to be a Settings-
+# configurable value instead of a code constant.
 FALLBACK_INTERNET_CHECK_URL = "https://www.gstatic.com/generate_204"
 
 
@@ -134,6 +137,7 @@ class ConnectivityMonitor:
         self._internet_status = InternetStatus.UNKNOWN
         self._consecutive_failures: Dict[str, int] = {}
         self._last_info_check: Dict[str, float] = {}
+        self._last_fallback_check_at: Optional[float] = None
 
     # ---- cheap, non-blocking read -----------------------------------
 
@@ -168,11 +172,22 @@ class ConnectivityMonitor:
         # profile, so including it here costs nothing.
         profiles = self._provider_registry.list_providers()
         any_online = False
+        # A DISABLED relay is a deliberate user choice, not a failure -
+        # it must never by itself trigger the fallback probe below (a
+        # workspace with only disabled Relays configured gets the
+        # zero-network-calls guarantee `_check_relay()` already gives a
+        # disabled profile, same as before this fix). any_failing tracks
+        # only genuine failure states (unreachable/degraded/incompatible/
+        # identity_mismatch), which is what actually needs disambiguating
+        # from a real internet outage.
+        any_failing = False
 
         for profile in profiles:
             if not force and not self._due_for_health_check(profile.provider_id, now):
                 if profile.provider_id in self._relay_statuses:
-                    any_online = any_online or self._relay_statuses[profile.provider_id].state in _ATTEMPTABLE_RELAY_STATES
+                    cached_state = self._relay_statuses[profile.provider_id].state
+                    any_online = any_online or cached_state in _ATTEMPTABLE_RELAY_STATES
+                    any_failing = any_failing or cached_state not in _ATTEMPTABLE_RELAY_STATES | {RelayState.DISABLED}
                 continue
             status = self._check_relay(profile, now, force_info=force)
             self._relay_statuses[profile.provider_id] = status
@@ -182,15 +197,40 @@ class ConnectivityMonitor:
             )
             if status.state in _ATTEMPTABLE_RELAY_STATES:
                 any_online = True
+            elif status.state != RelayState.DISABLED:
+                any_failing = True
 
         if any_online:
             self._internet_status = InternetStatus.ONLINE
-        elif profiles:
-            self._internet_status = InternetStatus.OFFLINE
-        else:
+        elif (not profiles or any_failing) and (force or self._due_for_fallback_check(now)):
+            # Reviewer-found defect, confirmed against the code: the old
+            # `elif profiles: OFFLINE` branch here meant "every registered
+            # Relay is down" was reported as the *internet itself* being
+            # down - indistinguishable from a genuinely dead connection,
+            # even with exactly one Relay registered and general internet
+            # completely fine. The independent fallback probe (originally
+            # written for the zero-providers first-run case only) is the
+            # one signal this module has that doesn't depend on any
+            # particular Relay's health, so it's now the authority
+            # whenever no relay evidence says otherwise - not only when
+            # none are registered yet.
             self._internet_status = self._check_fallback_internet(now)
+            self._last_fallback_check_at = now
+        # else: no relay is attemptable, but the fallback probe isn't due
+        # yet - keep the last computed internet status rather than
+        # guessing or hammering the fallback URL every tick.
 
         return self.snapshot()
+
+    def _due_for_fallback_check(self, now: float) -> bool:
+        """Same interval discipline as `_due_for_health_check()`, without
+        per-target backoff - there's exactly one fallback target, and a
+        transient failure here just means the next tick tries again at
+        the normal cadence, same as any other health probe's baseline
+        interval."""
+        if self._last_fallback_check_at is None:
+            return True
+        return now - self._last_fallback_check_at >= RELAY_HEALTH_INTERVAL_SECONDS
 
     def _due_for_health_check(self, provider_id: str, now: float) -> bool:
         status = self._relay_statuses.get(provider_id)
@@ -276,9 +316,13 @@ class ConnectivityMonitor:
         return None
 
     def _check_fallback_internet(self, now: float) -> InternetStatus:
-        """Only reached when no provider is registered at all yet (first
-        run) - once at least one Relay exists, its own health check is
-        always the more meaningful signal (module docstring)."""
+        """Reached whenever no registered Relay is currently attemptable
+        (online/degraded) - including the first-run case (no Relay
+        registered at all) and the case a single (or every) registered
+        Relay is down while general internet may be completely fine.
+        `now` is accepted for the same signature shape as every other
+        `_check_*` method here, even though this probe has no per-target
+        state keyed by it."""
         try:
             response = self._session.request("HEAD", FALLBACK_INTERNET_CHECK_URL, timeout=self._timeout)
         except requests.RequestException:

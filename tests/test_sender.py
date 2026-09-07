@@ -16,7 +16,7 @@ import sqlite3
 import pytest
 from nacl.signing import SigningKey
 
-from meshsrv.attachments import identity, sender
+from meshsrv.attachments import identity, manifest, sender
 from meshsrv.attachments.db import migrations
 from meshsrv.attachments.delivery.fakes import FakeTextAdapter, InMemoryEther
 from meshsrv.attachments.relay.mock_server import MockRelayStore, create_mock_relay_app
@@ -88,7 +88,7 @@ def recipient():
     return sk, pub, key_id
 
 
-def _draft(conn, wsm, principal, recipient, tmp_path, *, file_name="a.txt", mime_type="text/plain", content=b"hello" * 1000, adapter_id="fake-text", route_id="receiver"):
+def _draft(conn, wsm, principal, recipient, tmp_path, *, file_name="a.txt", mime_type="text/plain", content=b"hello" * 1000, adapter_id="fake-text", route_id="receiver", comment=None):
     _, pub, key_id = recipient
     source_path = tmp_path / file_name
     source_path.write_bytes(content)
@@ -104,8 +104,29 @@ def _draft(conn, wsm, principal, recipient, tmp_path, *, file_name="a.txt", mime
         route_type="DIRECT",
         route_id=route_id,
         provider_id=b"\x01" * 8,
+        comment=comment,
     )
     return attachment_id, str(source_path)
+
+
+def _decrypt_sender_manifest_header(conn, attachment_id, recipient):
+    """Decrypts the header of the manifest sender.py has already built and
+    persisted to mca_sender_state for `attachment_id`, using the
+    recipient's own private key - exactly what a real receiver would do,
+    but reading the manifest_blob straight out of local sender-side state
+    instead of round-tripping it through a mock Relay + receiver.py."""
+
+    _, _, key_id = recipient
+    sk = recipient[0]
+    row = conn.execute("SELECT plain_size FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+    state_row = sender._get_sender_state(conn, attachment_id)
+    parsed = manifest.parse_manifest_blob(state_row["manifest_blob"])
+    envelope = manifest.find_recipient_envelope(parsed, bytes.fromhex(key_id))
+    secret = manifest.open_recipient_secret(envelope.sealed_envelope, sk)
+    return manifest.decrypt_manifest_header(
+        parsed, data_key=secret.data_key, nonce_prefix=secret.nonce_prefix,
+        chunk_count=secret.chunk_count, plain_size=row["plain_size"],
+    )
 
 
 def _drive_to(conn, wsm, principal, recipient, relay_client, delivery_adapter, attachment_id, target_states, max_steps=20):
@@ -313,3 +334,112 @@ def test_create_upload_409_with_no_local_upload_id_tombstones_and_restarts(
     adapter = FakeTextAdapter(ether, "sender-addr")
     final = _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
     assert final == sender.SENT
+
+
+# ---- draft_comment (fixes the comment-loss bug: create_draft() accepted ---
+# ---- `comment` but _step_encrypting() hard-coded comment=None) -----------
+
+
+def test_comment_survives_from_create_draft_to_decrypted_manifest(conn, wsm, principal, recipient, tmp_path, relay_client):
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path, comment="hello from the sender")
+    recipient_identities = {recipient[2]: recipient[1]}
+    for _ in range(5):
+        if sender.get_state(conn, attachment_id) == sender.QUEUED_UPLOAD:
+            break
+        sender.run_step(
+            conn, workspace_manager=wsm, principal=principal, recipient_identities=recipient_identities,
+            relay_client=relay_client, delivery_adapter=None, attachment_id=attachment_id,
+        )
+    assert sender.get_state(conn, attachment_id) == sender.QUEUED_UPLOAD
+
+    header = _decrypt_sender_manifest_header(conn, attachment_id, recipient)
+    assert header.comment == "hello from the sender"
+
+
+def test_none_comment_stays_none(conn, wsm, principal, recipient, tmp_path, relay_client):
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path, comment=None)
+    recipient_identities = {recipient[2]: recipient[1]}
+    for _ in range(5):
+        if sender.get_state(conn, attachment_id) == sender.QUEUED_UPLOAD:
+            break
+        sender.run_step(
+            conn, workspace_manager=wsm, principal=principal, recipient_identities=recipient_identities,
+            relay_client=relay_client, delivery_adapter=None, attachment_id=attachment_id,
+        )
+    header = _decrypt_sender_manifest_header(conn, attachment_id, recipient)
+    assert header.comment is None
+
+
+def test_empty_and_whitespace_comment_normalizes_to_none(conn, wsm, principal, recipient, tmp_path, relay_client):
+    for raw in ("", "   ", "\t\n"):
+        attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path, file_name=f"a-{len(raw)}.txt", route_id=f"r-{len(raw)}", comment=raw)
+        row = conn.execute("SELECT draft_comment FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+        assert row[0] is None
+
+
+def test_comment_survives_a_restart_between_draft_and_encrypting(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """A crash between create_draft() and _step_encrypting() actually
+    running must not lose the comment - it has to come from persisted
+    state, not a variable held only in the caller's process."""
+
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path, comment="survives a restart")
+    # simulate "restart": nothing but the DB row exists at this point: no
+    # in-memory reference to the original comment string is used below.
+    recipient_identities = {recipient[2]: recipient[1]}
+    for _ in range(5):
+        if sender.get_state(conn, attachment_id) == sender.QUEUED_UPLOAD:
+            break
+        sender.run_step(
+            conn, workspace_manager=wsm, principal=principal, recipient_identities=recipient_identities,
+            relay_client=relay_client, delivery_adapter=None, attachment_id=attachment_id,
+        )
+    header = _decrypt_sender_manifest_header(conn, attachment_id, recipient)
+    assert header.comment == "survives a restart"
+
+
+def test_comment_over_length_limit_rejected_before_draft_created(conn, wsm, principal, recipient, tmp_path):
+    too_long = "x" * (sender.MAX_COMMENT_BYTES + 1)
+    source_path = tmp_path / "a.txt"
+    source_path.write_bytes(b"hello")
+    _, pub, key_id = recipient
+    with pytest.raises(sender.SenderError):
+        sender.create_draft(
+            conn, wsm, principal, workspace_id="local", source_path=str(source_path), file_name="a.txt",
+            mime_type="text/plain", recipients=[sender.RecipientTarget(public_identity=pub, key_id=key_id)],
+            adapter_id="fake-text", connector_profile_id="default", route_type="DIRECT", route_id="r",
+            provider_id=b"\x01" * 8, comment=too_long,
+        )
+    # rejected before any row was created at all
+    count = conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0]
+    assert count == 0
+
+
+def test_comment_never_reaches_relay_in_plaintext(conn, wsm, principal, recipient, tmp_path, relay_client, store):
+    secret_comment = "this must never appear in cleartext on the wire"
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path, comment=secret_comment)
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "sender-addr")
+    final = _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+    assert final == sender.SENT
+
+    transfer_id = bytes.fromhex(conn.execute("SELECT transfer_id FROM attachments WHERE id = ?", (attachment_id,)).fetchone()[0])
+    transfer = store._fetch_object(transfer_id)
+    haystacks = [transfer.manifest_data] + [c.data for c in transfer.chunks.values()]
+    needle = secret_comment.encode("utf-8")
+    for blob in haystacks:
+        assert needle not in blob
+
+
+def test_draft_comment_column_cleared_after_encrypting(conn, wsm, principal, recipient, tmp_path, relay_client):
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path, comment="temporary plaintext")
+    recipient_identities = {recipient[2]: recipient[1]}
+    for _ in range(5):
+        if sender.get_state(conn, attachment_id) == sender.QUEUED_UPLOAD:
+            break
+        sender.run_step(
+            conn, workspace_manager=wsm, principal=principal, recipient_identities=recipient_identities,
+            relay_client=relay_client, delivery_adapter=None, attachment_id=attachment_id,
+        )
+    assert sender.get_state(conn, attachment_id) == sender.QUEUED_UPLOAD
+    row = conn.execute("SELECT draft_comment FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+    assert row[0] is None

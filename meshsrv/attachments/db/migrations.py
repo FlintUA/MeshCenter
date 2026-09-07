@@ -404,6 +404,29 @@ DROP TABLE IF EXISTS mca_receiver_state;
 """
 
 
+_MIGRATION_0007_UP = """
+-- Fixes a real gap: create_draft()'s `comment` parameter (design spec
+-- 17.4 point 5, "Комментарий") was accepted but silently dropped -
+-- _step_encrypting() hard-coded ManifestHeader(comment=None) regardless
+-- of what the caller passed. A comment must survive an arbitrary restart
+-- between create_draft() and the ENCRYPTING step actually running (same
+-- crash-recovery guarantee as every other draft field), so it cannot
+-- live only in a local Python variable - it needs a persisted column,
+-- exactly like `file_name`/`mime_type` already do. Nullable and plaintext
+-- at rest (this workspace already stores the plaintext source file at
+-- `saved_path` for the same DRAFT/VALIDATING/ENCRYPTING window, so this
+-- is not a new trust boundary) - cleared back to NULL by
+-- _step_encrypting() once the encrypted manifest has been built, since
+-- nothing needs the plaintext copy again after that point and the Relay
+-- itself only ever receives the already-encrypted manifest blob.
+ALTER TABLE attachments ADD COLUMN draft_comment TEXT;
+"""
+
+_MIGRATION_0007_DOWN = """
+ALTER TABLE attachments DROP COLUMN draft_comment;
+"""
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -419,6 +442,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(4, "mca_principal_and_key_exchange_state", _MIGRATION_0004_UP, _MIGRATION_0004_DOWN),
     Migration(5, "mca_sender_state", _MIGRATION_0005_UP, _MIGRATION_0005_DOWN),
     Migration(6, "mca_receiver_state", _MIGRATION_0006_UP, _MIGRATION_0006_DOWN),
+    Migration(7, "attachments_draft_comment", _MIGRATION_0007_UP, _MIGRATION_0007_DOWN),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0

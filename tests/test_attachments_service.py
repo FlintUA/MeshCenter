@@ -205,6 +205,26 @@ def _bind_recipient(conn, principal2, *, transport_address="remote-addr", now=No
     )
 
 
+def _bind_recipient_unconfirmed(conn, principal2, *, transport_address="remote-addr", now=None):
+    """Same shape as `_bind_recipient()` but leaves `tofu_confirmed_at`
+    NULL - `AddressStatus.KEY_UNVERIFIED`, the "we've seen a KEY_ANNOUNCE
+    for this address but nobody has pressed 'Доверять этому MCA-ключу'
+    yet" state key_exchange.py's own module docstring describes. Used by
+    defect #6's regression tests (PR #227): a recipient in this state
+    must never receive a sealed envelope."""
+    now = time.time() if now is None else now
+    conn.execute(
+        """
+        INSERT INTO mca_recipient_bindings
+            (id, workspace_id, adapter_id, transport_address, principal_id, sender_key_id, public_identity,
+             key_epoch, bound_at, tofu_confirmed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, NULL)
+        """,
+        (uuid.uuid4().hex, "local", ADAPTER_ID, transport_address, principal2.principal_id, principal2.key_id, principal2.public_identity.hex(), now),
+    )
+    conn.commit()
+
+
 def _create_draft(conn, wsm, principal, *, recipient_principal, registered_provider, tmp_path, content=b"hello"):
     source_path = tmp_path / "outgoing.txt"
     source_path.write_bytes(content)
@@ -330,6 +350,76 @@ def test_recipient_identity_is_re_resolved_from_bindings_not_reused(conn, wsm, p
             break
         service.tick()
     assert sender.get_state(conn, attachment_id) == sender.SENT
+
+
+# ---- TOFU/binding trust enforced before encrypting (PR #227 defect #6) ----
+# Regression coverage for a reviewer-found defect: _resolve_recipient_
+# identities() used to hand back a recipient's public_identity for ANY
+# key_exchange binding it found, regardless of whether that binding was
+# ever TOFU-confirmed. An attacker (or just a stale contact) could get a
+# file encrypted and sent to a key nobody ever verified.
+
+
+def test_resolve_recipient_identities_excludes_unconfirmed_binding(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service):
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient_unconfirmed(conn, recipient_principal)
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+
+    for _ in range(20):
+        if sender.get_state(conn, attachment_id) == sender.ENCRYPTING:
+            break
+        service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.ENCRYPTING
+
+    assert service._resolve_recipient_identities(attachment_id) == {}
+
+
+def test_tick_fails_attachment_instead_of_encrypting_to_an_unconfirmed_key(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service):
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient_unconfirmed(conn, recipient_principal)
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+
+    for _ in range(20):
+        state = sender.get_state(conn, attachment_id)
+        if state in (sender.FAILED_VALIDATION, sender.SENT):
+            break
+        service.tick()
+
+    assert sender.get_state(conn, attachment_id) == sender.FAILED_VALIDATION
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT error_code FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+    assert row["error_code"] == "recipient_not_trusted"
+    # mca_sender_state must never have been created - no key material
+    # was ever generated or sealed for this attachment.
+    assert conn.execute("SELECT 1 FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone() is None
+
+
+def test_tick_fails_attachment_when_binding_has_a_pending_key_change(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service, key_exchange):
+    """KEY_CHANGED (a conflicting KEY_ANNOUNCE parked in
+    pending_public_identity) must be treated the same as KEY_UNVERIFIED:
+    the identity this attachment was drafted against may no longer be
+    the recipient's current key at all."""
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal)
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+
+    # Simulate a later, conflicting KEY_ANNOUNCE parking a pending key
+    # change on this same binding, without disturbing its now-trusted
+    # public_identity/tofu_confirmed_at columns.
+    conn.execute(
+        "UPDATE mca_recipient_bindings SET pending_public_identity = ?, pending_key_epoch = 1, pending_detected_at = ? "
+        "WHERE sender_key_id = ?",
+        ((b"\x99" * 32).hex(), time.time(), recipient_principal.key_id),
+    )
+    conn.commit()
+
+    for _ in range(20):
+        state = sender.get_state(conn, attachment_id)
+        if state in (sender.FAILED_VALIDATION, sender.SENT):
+            break
+        service.tick()
+
+    assert sender.get_state(conn, attachment_id) == sender.FAILED_VALIDATION
 
 
 # ---- network gating via ConnectivityMonitor --------------------------------

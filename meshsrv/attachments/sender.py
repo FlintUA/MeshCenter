@@ -331,6 +331,38 @@ def _set_state(
     conn.commit()
 
 
+def fail_recipients_not_trusted(conn: sqlite3.Connection, attachment_id: str, now: float) -> str:
+    """Reviewer-found defect (PR #227 defect #6): nothing in this module
+    ever checked a recipient's `key_exchange.RecipientBinding.status`
+    before sealing their envelope in `_step_encrypting()` -
+    `_public_identity_for()` happily used whatever `public_identity`
+    bytes the caller handed it, whether the binding backing that identity
+    was TOFU-confirmed (`AddressStatus.MCA_READY`), still unverified
+    (`KEY_UNVERIFIED`), or had since received a conflicting KEY_ANNOUNCE
+    parked in `pending_public_identity` (`KEY_CHANGED`, meaning the
+    identity this attachment was drafted against may no longer be the
+    recipient's current key at all). Encrypting to a stale or unconfirmed
+    key before the caller can act on that violates the whole point of
+    TOFU pinning.
+
+    The caller (`AttachmentsService._step_sent()`) is the one positioned
+    to make this check - it already owns the `KeyExchangeCoordinator`
+    instance `sender.py` deliberately does not import here (this module
+    doesn't know about `key_exchange.py`'s trust bookkeeping, see
+    `_public_identity_for()`'s own docstring) - by calling this function
+    for an attachment stuck in ENCRYPTING with one or more recipients it
+    could not resolve a currently-trusted identity for, instead of ever
+    invoking `run_step()`. This is the terminal, safe outcome for that
+    case: FAILED_VALIDATION, exactly like any other precondition
+    `_step_draft()` enforces before this attachment is allowed to leave
+    DRAFT - a recipient whose key needs re-confirming is a data problem
+    for the user to resolve (re-run `confirm_tofu()`/
+    `accept_pending_key_change()` and start a new draft), not something
+    this worker retries on its own."""
+    _set_state(conn, attachment_id, FAILED_VALIDATION, now, error_code="recipient_not_trusted")
+    return FAILED_VALIDATION
+
+
 # ---- VALIDATING -------------------------------------------------------------
 
 

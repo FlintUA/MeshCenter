@@ -53,7 +53,7 @@ from typing import Callable, Dict, List, Optional
 from meshsrv.attachments import receiver, sender
 from meshsrv.attachments.delivery.base import DeliveryAdapter
 from meshsrv.attachments.identity import MCAPrincipal
-from meshsrv.attachments.key_exchange import KeyExchangeCoordinator
+from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator
 from meshsrv.attachments.provider_registry import ProviderRegistry
 from meshsrv.attachments.relay_client import RelayClient
 from meshsrv.attachments.workspace import MCAWorkspaceManager
@@ -231,9 +231,20 @@ class AttachmentsService:
     def _step_sent(self, row: sqlite3.Row) -> None:
         attachment_id = row["id"]
         state = sender.get_state(self._conn, attachment_id)
-        recipient_identities = (
-            self._resolve_recipient_identities(attachment_id) if state == sender.ENCRYPTING else None
-        )
+        recipient_identities = None
+        if state == sender.ENCRYPTING:
+            recipient_identities = self._resolve_recipient_identities(attachment_id)
+            required_key_ids = self._required_recipient_key_ids(attachment_id)
+            if any(key_id not in recipient_identities for key_id in required_key_ids):
+                # Reviewer-found defect (PR #227 defect #6): at least one
+                # recipient's key_exchange binding is not currently
+                # trusted (see _resolve_recipient_identities()'s
+                # docstring) - fail the whole attachment now, before any
+                # envelope is sealed to an unverified or superseded key,
+                # rather than handing sender.run_step() a partial mapping
+                # and letting _public_identity_for() raise mid-encrypt.
+                sender.fail_recipients_not_trusted(self._conn, attachment_id, self._now())
+                return
         provider_id_text = _provider_id_text(row["direction"], row["provider_id"])
         relay_client = self._relay_client_factory(provider_id_text) if provider_id_text else None
         sender.run_step(
@@ -281,7 +292,19 @@ class AttachmentsService:
         the public identity from `key_exchange`'s bindings table here is
         exactly what a caller driving run_step() after a restart, rather
         than right after create_draft(), has to do instead of reusing an
-        in-memory value that no longer exists."""
+        in-memory value that no longer exists.
+
+        Reviewer-found defect (PR #227 defect #6): this used to hand back
+        `binding.public_identity` for ANY binding it found, trusted or
+        not - so an attachment could be encrypted and sent to a recipient
+        whose key was never TOFU-confirmed, or whose key_exchange binding
+        had since received a conflicting KEY_ANNOUNCE (`KEY_CHANGED`,
+        parked in `pending_public_identity` until the user explicitly
+        accepts it). A recipient is only included here when their binding
+        is currently `AddressStatus.MCA_READY` - `_step_sent()` treats
+        any recipient missing from this mapping as a reason to fail the
+        whole attachment (`sender.fail_recipients_not_trusted()`) rather
+        than seal a copy to an unverified or superseded key."""
         self._conn.row_factory = sqlite3.Row
         recipient_rows = self._conn.execute(
             "SELECT DISTINCT recipient_principal_id FROM attachment_recipients WHERE attachment_id = ?",
@@ -293,9 +316,25 @@ class AttachmentsService:
             if not key_id:
                 continue
             binding = self._key_exchange.get_binding_by_key_id(key_id)
-            if binding is not None:
+            if binding is not None and binding.status == AddressStatus.MCA_READY:
                 identities[key_id] = binding.public_identity
         return identities
+
+    def _required_recipient_key_ids(self, attachment_id: str) -> List[str]:
+        """The full recipient list `_resolve_recipient_identities()` above
+        is filtering - kept as its own query (rather than folded into
+        that method's return value) so `_step_sent()` can tell "no
+        recipients at all" (nothing to compare against - unreachable in
+        practice, create_draft() already refuses that) apart from "some
+        recipients resolved, some didn't" without the caller needing to
+        re-derive the untrusted set from a dict of only the trusted
+        ones."""
+        self._conn.row_factory = sqlite3.Row
+        recipient_rows = self._conn.execute(
+            "SELECT DISTINCT recipient_principal_id FROM attachment_recipients WHERE attachment_id = ?",
+            (attachment_id,),
+        ).fetchall()
+        return [row["recipient_principal_id"] for row in recipient_rows if row["recipient_principal_id"]]
 
     def _default_relay_client(self, provider_id_text: str) -> Optional[RelayClient]:
         """The production factory: resolve the pinned profile and its

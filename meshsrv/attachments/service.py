@@ -249,9 +249,18 @@ class AttachmentsService:
         this module's own "API handlers never touch the Relay/radio
         themselves" rule (module docstring) - a handler validates input,
         calls this, and returns the structured `UploadDecision` as JSON.
-        Never blocks, never performs network I/O of its own (`refresh()`
-        already ran on this same worker thread's own tick; this only
-        reads the snapshot it produced)."""
+        Never blocks, never performs network I/O, and - PR #231 review
+        (4th pass), "preserve the single-owner SQLite model" - never
+        touches `self._conn`/SQLite either, from whatever thread calls
+        it: `evaluate_upload_decision()` itself only reads
+        `ConnectivityMonitor`'s own atomically-published, in-memory
+        `_profile_snapshot` (built once at construction time and
+        refreshed on every `refresh()` tick - never on a request thread;
+        see that method's own docstring). This is genuinely safe to call
+        from a future Flask REST request thread, not just documented as
+        if it were - confirmed by a dedicated thread-identity test
+        (`tests/test_connectivity_monitor.py`) that a simulated REST call
+        performs zero SQLite operations."""
         return self._connectivity.evaluate_upload_decision(
             provider_id, ciphertext_bytes=ciphertext_bytes, requested_ttl_seconds=requested_ttl_seconds
         )

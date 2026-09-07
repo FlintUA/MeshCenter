@@ -603,6 +603,105 @@ def test_a_slow_relay_does_not_prevent_another_due_relay_from_being_probed(store
     assert snapshot.relays[profile_b.provider_id].state == RelayState.ONLINE
 
 
+class _TrackedSession:
+    """Mimics `requests.Session`'s real per-instance shape - independent
+    mutable state per instance, with a real `.close()` this test can
+    observe - standing in for "a production-style session object", not a
+    stateless test double. Used with `session_factory=` (not `session=`)
+    so each call to the factory produces a genuinely distinct instance,
+    proving PR #231 review (4th pass)'s "one Session per probe" fix:
+    concurrent probes must never share one session object."""
+
+    _next_id = 1
+
+    def __init__(self, on_request=None) -> None:
+        self.instance_id = _TrackedSession._next_id
+        _TrackedSession._next_id += 1
+        self.closed = False
+        self._on_request = on_request
+
+    def request(self, method, url, json=None, data=None, headers=None, timeout=None):
+        if self._on_request is not None:
+            self._on_request(self, method, url)
+        return _ScriptedResponse(status_code=200)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_concurrent_probes_use_separate_session_instances_each_closed_after_use(store):
+    """PR #231 review (4th pass), the core regression test for
+    "concurrent HTTP client safety": proves, against production-style
+    session objects (not a single shared fake), that (a) relay-a and
+    relay-b are probed using two genuinely DIFFERENT session instances,
+    (b) both were simultaneously "in flight" (relay-b's probe completes
+    while relay-a's is still blocked, the same deterministic technique
+    as the slow-relay test above), and (c) every session this monitor's
+    factory created is closed by the time refresh() returns."""
+    # A dedicated check_same_thread=False connection, not the shared conn/
+    # registry fixtures - refresh() runs in a background thread here (to
+    # observe blocking behavior from the main test thread while it's in
+    # flight), same reasoning as the slow-relay test above.
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    migrate(conn)
+    registry = ProviderRegistry(conn, workspace_id="ws-1")
+    profile_a = _register(registry, store, display_name="A", base_url="https://relay-a.example.net")
+    profile_b = _register(registry, store, display_name="B", base_url="https://relay-b.example.net")
+
+    created_sessions: List[_TrackedSession] = []
+    a_entered = threading.Event()
+    a_release = threading.Event()
+    a_instance_id_holder = []
+    b_instance_id_holder = []
+
+    def on_request(session, method, url):
+        if "relay-a" in url:
+            a_instance_id_holder.append(session.instance_id)
+            a_entered.set()
+            released = a_release.wait(timeout=10)
+            if not released:
+                raise AssertionError("relay-a was never released - test bug")
+        elif "relay-b" in url:
+            b_instance_id_holder.append(session.instance_id)
+
+    def factory():
+        session = _TrackedSession(on_request=on_request)
+        created_sessions.append(session)
+        return session
+
+    monitor = ConnectivityMonitor(registry, session_factory=factory)
+
+    refresh_thread = threading.Thread(target=monitor.refresh, daemon=True)
+    refresh_thread.start()
+
+    assert a_entered.wait(timeout=5), "relay-a was never probed"
+    # relay-b must complete - using its OWN session instance - while
+    # relay-a's own session is still blocked inside its own .request().
+    deadline = time.time() + 5
+    while not b_instance_id_holder and time.time() < deadline:
+        time.sleep(0.01)
+    assert b_instance_id_holder, "relay-b's probe never completed while relay-a was still blocked"
+    assert refresh_thread.is_alive(), "refresh() returned before relay-a was released - it should still be blocked"
+
+    # The actual point of this test: two concurrently in-flight probes
+    # used two genuinely different session instances, not one shared
+    # object - proven while relay-a's own probe is STILL blocked, so
+    # this isn't just "they happened to differ after the fact".
+    assert a_instance_id_holder[0] != b_instance_id_holder[0]
+
+    a_release.set()
+    refresh_thread.join(timeout=5)
+    assert not refresh_thread.is_alive()
+
+    assert len(created_sessions) >= 2
+    instance_ids = [s.instance_id for s in created_sessions]
+    assert len(instance_ids) == len(set(instance_ids))  # every instance is genuinely distinct
+
+    # Every session this monitor's factory ever created is closed by now.
+    for session in created_sessions:
+        assert session.closed, f"session {session.instance_id} was never closed"
+
+
 class _ConcurrencyTrackingSession:
     """Tracks how many `.request()` calls are simultaneously in flight -
     used to pin the actual concurrency ceiling, not just "a slow one
@@ -740,9 +839,13 @@ def test_evaluate_upload_decision_profile_not_found(registry):
 
 def test_evaluate_upload_decision_profile_disabled_even_before_the_first_refresh(registry, store):
     """PR #231 review (3rd pass) explicit requirement: a disabled
-    profile must be rejected even before refresh() has ever run - the
-    disabled check reads the registry directly, not ConnectivityMonitor's
-    own (still-empty) relay-status cache."""
+    profile must be rejected even before refresh() has ever run.
+    Satisfied differently as of the 4th pass: __init__ eagerly builds
+    self._profile_snapshot once at construction time (see that method's
+    own docstring) - evaluate_upload_decision() itself never touches the
+    registry/SQLite directly any more (see the dedicated thread-identity
+    test below), but the snapshot it reads from already has this
+    profile's current enabled=False by the time this method is called."""
     profile = _register(registry, store, upload_allowed=True)
     registry.update_profile(profile.provider_id, enabled=False)
 
@@ -915,6 +1018,62 @@ def test_can_upload_to_is_a_thin_wrapper_over_evaluate_upload_decision(registry,
     monitor, profile = _ready_profile(registry, store, conn, wsm, flask_session)
     assert monitor.can_upload_to(profile.provider_id) is True
     assert monitor.can_upload_to("never-registered") is False
+
+
+def test_evaluate_upload_decision_performs_no_sqlite_operation_from_a_simulated_rest_thread(registry, store, conn, wsm, flask_session):
+    """PR #231 review (4th pass), "preserve the single-owner SQLite
+    model": deterministically proves evaluate_upload_decision() (the
+    method AttachmentsService.evaluate_upload_readiness() delegates to -
+    the surface a future Step 1.6A REST handler would call, on a Flask
+    request thread, not the AttachmentsService worker thread) makes NO
+    SQLite call at all when invoked from a different thread, by wrapping
+    the real connection's own .execute() to record which thread called
+    it and asserting that list stays empty across the simulated call."""
+    monitor, profile = _ready_profile(registry, store, conn, wsm, flask_session)
+
+    # sqlite3.Connection.execute is a read-only attribute on the C-level
+    # Connection object itself (can't be monkeypatched directly) - instead,
+    # wrap the one Python-level object ConnectivityMonitor could possibly
+    # reach SQLite through at all: self._provider_registry. Every one of
+    # its methods ultimately calls self._conn.execute() internally
+    # (provider_registry.py), so tracking calls to the registry object
+    # itself is an exact, sufficient proxy for "touched SQLite" here -
+    # there is no other SQLite handle anywhere in ConnectivityMonitor.
+    sql_call_threads = []
+    real_registry = monitor._provider_registry
+
+    class _TrackingRegistryProxy:
+        def __getattr__(self, name):
+            real_attr = getattr(real_registry, name)
+            if not callable(real_attr):
+                return real_attr
+
+            def _tracked(*args, **kwargs):
+                sql_call_threads.append(threading.current_thread())
+                return real_attr(*args, **kwargs)
+
+            return _tracked
+
+    monitor._provider_registry = _TrackingRegistryProxy()
+
+    result_holder = {}
+
+    def _simulated_rest_call():
+        result_holder["decision"] = monitor.evaluate_upload_decision(
+            profile.provider_id, ciphertext_bytes=1000, requested_ttl_seconds=3600
+        )
+
+    rest_thread = threading.Thread(target=_simulated_rest_call)
+    rest_thread.start()
+    rest_thread.join(timeout=5)
+
+    assert not rest_thread.is_alive()
+    # Sanity check the call actually did real work (not a no-op that
+    # trivially made no SQL calls because it also did nothing useful).
+    assert result_holder["decision"] == UploadDecision(ready=True, reason=None)
+    assert sql_call_threads == [], (
+        f"evaluate_upload_decision() executed SQL from the calling thread: {sql_call_threads}"
+    )
 
 
 def test_evaluate_upload_readiness_is_a_real_public_function(registry, store):

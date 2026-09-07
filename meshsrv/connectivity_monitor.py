@@ -34,7 +34,7 @@ import dataclasses
 import enum
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 
@@ -248,11 +248,44 @@ class ConnectivityMonitor:
         provider_registry: ProviderRegistry,
         *,
         session: Optional[Any] = None,
+        session_factory: Optional[Callable[[], Any]] = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         now_fn=time.time,
     ):
+        """PR #231 review (4th pass), "concurrent HTTP client safety":
+        `requests.Session` is **not** documented as thread-safe for
+        concurrent `.request()` calls from multiple threads at once - an
+        earlier pass of this module's own docstring claimed otherwise,
+        which was false (`requests`' own docs only ever claim the
+        underlying `urllib3` connection pool is safe to *share*; the
+        `Session` object itself carries mutable state - `cookies`, hooks,
+        `adapters` - that concurrent callers can race on). Sharing one
+        `Session` instance across `_probe_due_relays_concurrently()`'s
+        concurrent probe workers would reintroduce exactly the kind of
+        subtle race this project's own review process exists to catch.
+
+        `session_factory` (new) is called fresh for **every** probe
+        (`_probe_relay()`/`_check_fallback_internet()`) - real production
+        use gets a brand-new `requests.Session()` per probe (the default,
+        `requests.Session` itself as the factory), never shared across
+        concurrently-running probes, and each one is closed
+        deterministically once that probe returns (`_close_session()`).
+        `session` (kept for backward compatibility with existing test
+        call sites) wraps a single caller-supplied object in a factory
+        that always returns that same instance - explicit, single-shared-
+        session semantics a caller opts into knowingly; safe for a test
+        double with no real mutable per-request HTTP state, not a
+        substitute for `session_factory` against a real `requests.Session`
+        under real concurrent I/O. Passing both is a caller error."""
+        if session is not None and session_factory is not None:
+            raise ValueError("ConnectivityMonitor accepts at most one of session=/session_factory=")
+        if session_factory is not None:
+            self._session_factory: Callable[[], Any] = session_factory
+        elif session is not None:
+            self._session_factory = lambda: session
+        else:
+            self._session_factory = requests.Session
         self._provider_registry = provider_registry
-        self._session = session if session is not None else requests.Session()
         self._timeout = timeout
         self._now = now_fn
         self._relay_statuses: Dict[str, RelayStatus] = {}
@@ -260,6 +293,49 @@ class ConnectivityMonitor:
         self._consecutive_failures: Dict[str, int] = {}
         self._last_info_check: Dict[str, float] = {}
         self._last_fallback_check_at: Optional[float] = None
+        # PR #231 review (4th pass), "preserve the single-owner SQLite
+        # model": an atomically-published snapshot of every registered
+        # profile, so `evaluate_upload_decision()`/`can_upload_to()` can
+        # answer without touching SQLite themselves (see those methods'
+        # own docstrings, and `_refresh_profile_snapshot()` below for why
+        # this construction-time call is safe). Built as a whole new dict
+        # and swapped in with one reference assignment (never mutated in
+        # place) - a single `dict` reference assignment is atomic under
+        # the GIL, so a concurrent reader always sees either the complete
+        # old snapshot or the complete new one, never a partial update.
+        self._profile_snapshot: Dict[str, ProviderProfile] = {}
+        self._refresh_profile_snapshot()
+
+    def _refresh_profile_snapshot(self) -> None:
+        """The one place this class calls `ProviderRegistry.
+        list_providers()` (a SQLite read). Safe to call from `__init__`
+        (construction always happens on the startup thread - `mca_runtime.
+        py`'s own `_MCARuntimeState.__init__`, never a Flask REST thread -
+        see ADR-0008's PR #231 amendment) and from `refresh()` (the
+        `AttachmentsService` worker thread, inside its `tick_lock`).
+        **Never** called from `evaluate_upload_decision()`/
+        `can_upload_to()`/anywhere else - those must only ever read the
+        already-published `self._profile_snapshot`, to preserve the
+        single-owner SQLite model (only the worker thread - or, for this
+        one eager call, the startup thread - ever touches `conn`)."""
+        profiles = self._provider_registry.list_providers()
+        self._profile_snapshot = {profile.provider_id: profile for profile in profiles}
+
+    @staticmethod
+    def _close_session(session: Any) -> None:
+        """PR #231 review (4th pass): every session `_session_factory()`
+        produces is closed deterministically once the probe that acquired
+        it is done - a real `requests.Session()` always has `.close()`
+        (releases its connection pool); a test double may not, since
+        session-closing is optional best-effort cleanup, not part of a
+        formal contract this module defines (unlike `DeliveryAdapter`'s
+        `connector_profile_id` elsewhere in this review pass, which *is*
+        a required contract field) - `hasattr` here is a genuine "does
+        this optional capability exist" check, not a mask over a missing
+        required one."""
+        close = getattr(session, "close", None)
+        if callable(close):
+            close()
 
     # ---- cheap, non-blocking read -----------------------------------
 
@@ -300,14 +376,26 @@ class ConnectivityMonitor:
         against `max_ciphertext_bytes` and a requested TTL against
         `min_ttl_seconds`/`max_ttl_seconds`.
 
+        PR #231 review (4th pass), "preserve the single-owner SQLite
+        model": this method must be safe to call from any thread,
+        including a hypothetical future Step 1.6A REST request thread -
+        it therefore never touches `self._provider_registry`/SQLite
+        directly. It reads `self._profile_snapshot`, an atomically-
+        published, in-memory-only dict built once eagerly at construction
+        time (on the startup thread) and refreshed on every `refresh()`
+        call thereafter (the worker thread) - see `_refresh_profile_
+        snapshot()`'s own docstring. This is also what still lets step 2
+        below answer correctly even before the first real `refresh()` has
+        run: the constructor's own eager snapshot build already covers
+        it, so "disabled" is known from the moment this object exists,
+        not only after the first tick.
+
         Checked in this fixed order, returning on the first failure
         (fail closed, cheapest/most-fundamental checks first):
         1. the profile exists at all (`PROFILE_NOT_FOUND`);
-        2. it is enabled (`PROFILE_DISABLED`) - checked directly against
-           the registry, deliberately *before* any `refresh()` has ever
-           run, since a disabled profile is never upload-ready
-           regardless of what (if anything) `ConnectivityMonitor` has
-           observed about it yet;
+        2. it is enabled (`PROFILE_DISABLED`) - a disabled profile is
+           never upload-ready regardless of what (if anything)
+           `ConnectivityMonitor` has otherwise observed about it;
         3. `upload_allowed`/a token is configured (`UPLOAD_NOT_ALLOWED`/
            `UPLOAD_TOKEN_MISSING` - `evaluate_upload_readiness()`'s own
            two checks, reused here rather than re-implemented);
@@ -338,7 +426,7 @@ class ConnectivityMonitor:
         Relay even usable in principle" before a file has been
         encrypted, and therefore before its real ciphertext size is
         known, has nothing to check step 5 against yet)."""
-        profile = self._provider_registry.resolve(provider_id)
+        profile = self._profile_snapshot.get(provider_id)
         if profile is None:
             return UploadDecision(ready=False, reason=UploadRejectionReason.PROFILE_NOT_FOUND)
         if not profile.enabled:
@@ -425,7 +513,13 @@ class ConnectivityMonitor:
         # observable state, e.g. for a Settings page) - `_probe_relay()`
         # already short-circuits before any network call for a disabled
         # profile, so including it here costs nothing.
-        profiles = self._provider_registry.list_providers()
+        #
+        # PR #231 review (4th pass): also republishes self._profile_snapshot
+        # (the same SQLite read this line already needed) - see
+        # `_refresh_profile_snapshot()`'s own docstring for why this is
+        # the only other place (besides __init__) that reads the registry.
+        self._refresh_profile_snapshot()
+        profiles = list(self._profile_snapshot.values())
 
         # PR #231 review, section 6: prune every per-provider dict of an
         # entry for a provider_id that no longer exists in this
@@ -561,12 +655,15 @@ class ConnectivityMonitor:
         Every argument `_probe_relay()` needs (`current_failures`,
         `last_info_check_at`) is read from `self` here, on the calling
         thread, *before* dispatch - the worker threads themselves never
-        read or write any `self.` dict, only `self._session`/
-        `self._timeout` (read-only, and `requests.Session` is documented
-        as thread-safe for concurrent requests). This is what makes
-        concurrent dispatch safe without introducing a new lock inside
-        this class: every actual mutation happens back on the calling
-        thread, in `refresh()`, after this method returns."""
+        read or write any `self.` dict, only `self._timeout` (read-only)
+        and `self._session_factory()` (PR #231 review, 4th pass: called
+        fresh inside `_probe_relay()` for *each* probe - `requests.
+        Session` is not documented as safe for concurrent use from
+        multiple threads, so no session object is ever shared between
+        concurrently-running probes; see `__init__`'s own docstring).
+        This is what makes concurrent dispatch safe without introducing a
+        new lock inside this class: every actual mutation happens back on
+        the calling thread, in `refresh()`, after this method returns."""
         if not due_profiles:
             return []
 
@@ -587,17 +684,21 @@ class ConnectivityMonitor:
         current_failures: int, last_info_check_at: Optional[float],
     ) -> "_RelayProbeResult":
         """The actual network I/O for one profile - deliberately a pure
-        function with respect to `self` state (PR #231 review, 3rd
-        pass): it reads only `self._session`/`self._timeout` (read-only)
-        and the caller-supplied `current_failures`/`last_info_check_at`
-        values, and returns a `_RelayProbeResult` for the caller to apply
-        - it never writes `self._relay_statuses`/`_consecutive_failures`/
-        `_last_info_check`, and never calls
-        `self._provider_registry.record_check_result()` (a SQLite
-        write). This is what makes it safe to call from a worker thread
-        via `_probe_due_relays_concurrently()`: nothing here touches
-        anything another concurrently-running call to this same method
-        could also be touching."""
+        function with respect to `self`'s *mutable* state (PR #231
+        review, 3rd pass, tightened in the 4th): it reads only
+        `self._timeout` (read-only) and the caller-supplied
+        `current_failures`/`last_info_check_at` values, and returns a
+        `_RelayProbeResult` for the caller to apply - it never writes
+        `self._relay_statuses`/`_consecutive_failures`/`_last_info_check`,
+        and never calls `self._provider_registry.record_check_result()`
+        (a SQLite write). Its own HTTP session is acquired fresh from
+        `self._session_factory()` and closed deterministically before
+        returning (4th pass - see `__init__`'s own docstring for why a
+        shared `requests.Session` is not safe here). This is what makes
+        it safe to call from a worker thread via `_probe_due_relays_
+        concurrently()`: nothing here touches anything another
+        concurrently-running call to this same method could also be
+        touching, including the HTTP session itself."""
         if not profile.enabled:
             return _RelayProbeResult(
                 status=RelayStatus(
@@ -607,9 +708,26 @@ class ConnectivityMonitor:
                 new_consecutive_failures=0, info_check_completed=False,
             )
 
+        session = self._session_factory()
+        try:
+            return self._probe_relay_with_session(
+                profile, now, session, force_info=force_info,
+                current_failures=current_failures, last_info_check_at=last_info_check_at,
+            )
+        finally:
+            self._close_session(session)
+
+    def _probe_relay_with_session(
+        self, profile: ProviderProfile, now: float, session: Any, *, force_info: bool,
+        current_failures: int, last_info_check_at: Optional[float],
+    ) -> "_RelayProbeResult":
+        """The actual `/health` (and, rarely, `/v1/info`) requests, using
+        the one `session` `_probe_relay()` acquired for this call and
+        will close once this returns - split out only so `_probe_relay()`
+        itself stays a short acquire/use/close wrapper."""
         start = time.monotonic()
         try:
-            response = self._session.request("GET", f"{profile.origin}/health", timeout=self._timeout)
+            response = session.request("GET", f"{profile.origin}/health", timeout=self._timeout)
             latency_ms = int((time.monotonic() - start) * 1000)
         except requests.RequestException as exc:
             return _RelayProbeResult(
@@ -633,7 +751,7 @@ class ConnectivityMonitor:
 
         info_due = force_info or (now - (last_info_check_at or 0)) >= RELAY_INFO_MIN_INTERVAL_SECONDS
         if info_due:
-            result = self._check_identity(profile)
+            result = self._check_identity(profile, session)
             if result is _INFO_CHECK_INCONCLUSIVE:
                 # PR #231 review, section 6: a transient /v1/info failure
                 # must not be treated as a completed check - the caller
@@ -676,7 +794,7 @@ class ConnectivityMonitor:
             new_consecutive_failures=0, info_check_completed=False,
         )
 
-    def _check_identity(self, profile: ProviderProfile):
+    def _check_identity(self, profile: ProviderProfile, session: Any):
         """Returns `None` if `/v1/info` agrees with the pinned profile
         and speaks a protocol version this client supports; a
         `(RelayState, error_code)` pair for a genuine, confirmed problem
@@ -693,9 +811,15 @@ class ConnectivityMonitor:
         already performs on every actual object download; it exists so a
         re-keyed, misconfigured, or protocol-incompatible Relay shows up
         as a distinct, more severe state well before any transfer is
-        attempted against it."""
+        attempted against it.
+
+        `session` (PR #231 review, 4th pass) is the *same* session
+        `_probe_relay()` already acquired for this one profile's `/health`
+        call - reused here for `/v1/info` (both are part of one probe),
+        never a second, independently-acquired session, and never shared
+        with a concurrently-running probe for a different profile."""
         try:
-            response = self._session.request("GET", f"{profile.origin}/v1/info", timeout=self._timeout)
+            response = session.request("GET", f"{profile.origin}/v1/info", timeout=self._timeout)
         except requests.RequestException:
             # health already succeeded; treat a flaky info call as
             # inconclusive, not a mismatch - and, critically, not as a
@@ -737,9 +861,18 @@ class ConnectivityMonitor:
         Relay is down while general internet may be completely fine.
         `now` is accepted for the same signature shape as every other
         `_check_*` method here, even though this probe has no per-target
-        state keyed by it."""
+        state keyed by it. Always called from `refresh()` itself (never
+        concurrently with the per-Relay probes, which have already
+        completed by the time this runs), but still acquires its own
+        session via `self._session_factory()` and closes it
+        deterministically - the same discipline every other network call
+        in this class follows now (PR #231 review, 4th pass), rather than
+        this one call site being the sole exception."""
+        session = self._session_factory()
         try:
-            response = self._session.request("HEAD", FALLBACK_INTERNET_CHECK_URL, timeout=self._timeout)
+            response = session.request("HEAD", FALLBACK_INTERNET_CHECK_URL, timeout=self._timeout)
         except requests.RequestException:
             return InternetStatus.OFFLINE
+        finally:
+            self._close_session(session)
         return InternetStatus.ONLINE if response.status_code < 500 else InternetStatus.LIMITED

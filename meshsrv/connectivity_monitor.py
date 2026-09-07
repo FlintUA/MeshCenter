@@ -253,16 +253,18 @@ class ConnectivityMonitor:
             for stale_id in [pid for pid in stale_dict if pid not in current_ids]:
                 del stale_dict[stale_id]
 
+        # PR #231 review (2nd pass): only `any_online` is tracked now -
+        # `any_failing` (a DISABLED-excluding "did anything actually go
+        # wrong" flag) was removed along with the `elif` condition that
+        # used to read it (see below): the only thing that should ever
+        # suppress the fallback internet probe is already-confirmed
+        # evidence that the internet is fine, which `any_online` alone
+        # already expresses. A DISABLED relay was never evidence of a
+        # failure anyway (a deliberate user choice) - the zero-network-
+        # calls guarantee `_check_relay()` gives a disabled profile is
+        # unaffected either way, disabled profiles still short-circuit
+        # inside the loop below before any HTTP call.
         any_online = False
-        # A DISABLED relay is a deliberate user choice, not a failure -
-        # it must never by itself trigger the fallback probe below (a
-        # workspace with only disabled Relays configured gets the
-        # zero-network-calls guarantee `_check_relay()` already gives a
-        # disabled profile, same as before this fix). any_failing tracks
-        # only genuine failure states (unreachable/degraded/incompatible/
-        # identity_mismatch), which is what actually needs disambiguating
-        # from a real internet outage.
-        any_failing = False
 
         for profile in profiles:
             if not profile.enabled:
@@ -287,7 +289,6 @@ class ConnectivityMonitor:
                 if profile.provider_id in self._relay_statuses:
                     cached_state = self._relay_statuses[profile.provider_id].state
                     any_online = any_online or cached_state in _ATTEMPTABLE_RELAY_STATES
-                    any_failing = any_failing or cached_state not in _ATTEMPTABLE_RELAY_STATES | {RelayState.DISABLED}
                 continue
             status = self._check_relay(profile, now, force_info=force)
             self._relay_statuses[profile.provider_id] = status
@@ -297,12 +298,10 @@ class ConnectivityMonitor:
             )
             if status.state in _ATTEMPTABLE_RELAY_STATES:
                 any_online = True
-            elif status.state != RelayState.DISABLED:
-                any_failing = True
 
         if any_online:
             self._internet_status = InternetStatus.ONLINE
-        elif (not profiles or any_failing) and (force or self._due_for_fallback_check(now)):
+        elif force or self._due_for_fallback_check(now):
             # Reviewer-found defect, confirmed against the code: the old
             # `elif profiles: OFFLINE` branch here meant "every registered
             # Relay is down" was reported as the *internet itself* being
@@ -312,8 +311,20 @@ class ConnectivityMonitor:
             # written for the zero-providers first-run case only) is the
             # one signal this module has that doesn't depend on any
             # particular Relay's health, so it's now the authority
-            # whenever no relay evidence says otherwise - not only when
-            # none are registered yet.
+            # whenever no relay evidence says otherwise.
+            #
+            # PR #231 review (2nd pass): the condition used to also
+            # require `(not profiles or any_failing)` - meaning a
+            # workspace where every registered Relay is *disabled* (not
+            # failing - `any_failing` deliberately excludes DISABLED)
+            # never reached this branch at all, so `_internet_status`
+            # stayed at whatever it last was (typically UNKNOWN forever,
+            # on an instance whose only registered Relays have always
+            # been disabled) instead of reflecting general internet
+            # reachability independently of Relay-specific state. The
+            # only thing that should ever suppress this probe is already-
+            # confirmed evidence that internet is fine (any_online, above)
+            # - there is no other case worth special-casing out of it.
             self._internet_status = self._check_fallback_internet(now)
             self._last_fallback_check_at = now
         # else: no relay is attemptable, but the fallback probe isn't due

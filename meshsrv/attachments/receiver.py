@@ -322,13 +322,27 @@ def _maybe_send_ack(
 
 @dataclasses.dataclass(frozen=True)
 class PendingReply:
-    """One row due for a real send attempt. `route_type`/`route_id` come
-    from the owning attachment's own `reply_route_type`/`reply_route_id`
-    (set once, at `handle_offer()` time) - `None` for either means no
+    """One row due for a real send attempt. `route_type`/`route_id`/
+    `adapter_id`/`connector_profile_id`/`destination_address` all come
+    from the owning attachment's own `reply_route_type`/`reply_route_id`/
+    `reply_adapter_id`/`reply_connector_profile_id`/
+    `reply_destination_address` (set once, at `handle_offer()` time, from
+    the real `DeliveryEnvelope` that received the OFFER - PR #231
+    review, section 4.2). `route_type`/`route_id` being `None` means no
     route was ever recorded for this attachment (a caller that ran
-    `handle_offer()` without `source_address`, e.g. this module's own
-    non-integration tests), which the dispatch step treats as permanently
-    undeliverable rather than retrying forever for no reason."""
+    `handle_offer()` without `source_address`/`reply_route`, e.g. this
+    module's own non-integration tests), which the dispatch step treats
+    as permanently undeliverable rather than retrying forever for no
+    reason. `adapter_id`/`connector_profile_id` can independently be
+    `None` even when a route exists - the pre-hardening-pass
+    `source_address`-only call shape (still accepted by `handle_offer()`
+    for backward compatibility with callers that only need rate-
+    limiting/audit) never recorded them; the dispatch step (PR #231
+    review, 2nd pass) treats a missing `adapter_id` as "unknown, trust
+    the currently-configured adapter" (unchanged, permissive behavior),
+    but fails closed - permanently undeliverable, never guessed past -
+    on a *confirmed* mismatch (`adapter_id` was recorded and disagrees
+    with the dispatching service's own adapter)."""
 
     id: str
     attachment_id: str
@@ -337,6 +351,9 @@ class PendingReply:
     attempts: int
     route_type: Optional[str]
     route_id: Optional[str]
+    adapter_id: Optional[str]
+    connector_profile_id: Optional[str]
+    destination_address: Optional[str]
 
 
 def fetch_due_outgoing_replies(
@@ -350,7 +367,9 @@ def fetch_due_outgoing_replies(
     rows = conn.execute(
         """
         SELECT r.id AS id, r.attachment_id AS attachment_id, r.event_type AS event_type, r.message AS message,
-               r.attempts AS attempts, a.reply_route_type AS route_type, a.reply_route_id AS route_id
+               r.attempts AS attempts, a.reply_route_type AS route_type, a.reply_route_id AS route_id,
+               a.reply_adapter_id AS adapter_id, a.reply_connector_profile_id AS connector_profile_id,
+               a.reply_destination_address AS destination_address
         FROM mca_outgoing_replies AS r
         JOIN attachments AS a ON a.id = r.attachment_id
         WHERE a.workspace_id = ? AND r.state = 'PENDING' AND r.next_attempt_at <= ?
@@ -363,6 +382,8 @@ def fetch_due_outgoing_replies(
         PendingReply(
             id=row["id"], attachment_id=row["attachment_id"], event_type=row["event_type"], message=row["message"],
             attempts=row["attempts"], route_type=row["route_type"], route_id=row["route_id"],
+            adapter_id=row["adapter_id"], connector_profile_id=row["connector_profile_id"],
+            destination_address=row["destination_address"],
         )
         for row in rows
     ]

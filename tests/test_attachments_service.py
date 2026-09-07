@@ -697,6 +697,67 @@ def test_tick_dispatches_a_real_ack_received_back_to_the_sender(conn, wsm, princ
     assert ack_fields.transfer_id == transfer_id
 
 
+def test_dispatch_marks_undeliverable_when_persisted_adapter_id_does_not_match(
+    conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR #231 review (2nd pass): the reply route's own adapter_id/
+    connector_profile_id (persisted at handle_offer() time from the real
+    DeliveryEnvelope that received the OFFER) were being persisted but
+    never actually consumed by the dispatch step - it built a Route from
+    only route_type/route_id and sent it through whichever delivery_
+    adapter the service happened to be constructed with, regardless of
+    whether that's really the adapter this reply was recorded against.
+    Proves the fix: a reply whose persisted adapter_id disagrees with the
+    dispatching service's own adapter is marked UNDELIVERABLE and never
+    reaches the wire, rather than being silently sent through the wrong
+    adapter."""
+    sender_conn, sender_wsm, sender_principal = remote_recipient
+    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+
+    ether = InMemoryEther()
+    receiver_adapter = FakeTextAdapter(ether, "receiver-addr")
+    assert receiver_adapter.adapter_id == "fake-text"
+
+    receiver_service = AttachmentsService(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, connectivity_monitor=connectivity_monitor,
+        delivery_adapter=receiver_adapter, relay_client_factory=lambda provider_id_text: relay_client,
+    )
+
+    sender_signing_key = identity.load_signing_key(sender_wsm, sender_principal)
+    transfer_id = uuid.uuid4().bytes
+    offer_fields = codec.OfferFields(
+        provider_id=_raw_provider_id(registered_provider), transfer_id=transfer_id,
+        sender_key_id=bytes.fromhex(sender_principal.key_id), kind=0, size_bucket=1,
+        hard_expires_at=int(time.time()) + 3600, flags=0,
+    )
+    raw_offer = codec.encode_offer(offer_fields, sender_signing_key)
+
+    # Persisted with a DIFFERENT adapter_id than the one this service is
+    # actually constructed with ("fake-text") - simulates a stale/
+    # mismatched reply route (e.g. a future multi-adapter world, or a
+    # row surviving some hypothetical adapter reconfiguration).
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+        source_address="remote-addr",
+        reply_route=receiver.ReplyRoute(
+            adapter_id="a-completely-different-adapter", connector_profile_id="default",
+            route_type="DIRECT", route_id="remote-addr", destination_address="remote-addr",
+        ),
+    )
+
+    receiver_service.tick()
+
+    row = conn.execute(
+        "SELECT state, last_error FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = 'ack_received_sent'",
+        (result.attachment_id,),
+    ).fetchone()
+    assert row[0] == "UNDELIVERABLE"
+    assert "reply_adapter_mismatch" in row[1]
+    assert ether.drain("remote-addr") == []
+
+
 def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient):
     """A DeliveryAdapter.send() failure must never be confused with
     success: the queued reply stays PENDING (retried on a later tick,

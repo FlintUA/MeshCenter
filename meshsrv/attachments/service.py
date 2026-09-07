@@ -481,6 +481,33 @@ class AttachmentsService:
                     self._conn, reply.id, self._now(), error_code="no_reply_route_recorded"
                 )
                 continue
+            # PR #231 review (2nd pass), requirement "full persisted ACK
+            # route consumption or strict adapter/connector validation":
+            # the reply route's adapter_id/connector_profile_id (PR #231
+            # review, section 4.2 - persisted from the real DeliveryEnvelope
+            # that received the OFFER) were being persisted but never
+            # actually read here - this dispatch step built a Route from
+            # only route_type/route_id and sent it through whichever
+            # delivery_adapter this service happened to be constructed
+            # with, regardless of whether that adapter is really the one
+            # the reply was recorded against. Fail closed on a CONFIRMED
+            # mismatch (adapter_id was recorded and it disagrees with this
+            # service's own delivery_adapter.adapter_id) - never silently
+            # sent through a wrong adapter. A missing adapter_id (NULL) is
+            # NOT treated as a mismatch: handle_offer()'s source_address-
+            # only call shape (its own docstring: "kept as a separate,
+            # simpler parameter for callers ... that do not need a full
+            # reply route") never records one, and remains a supported,
+            # non-terminal case - the reply still dispatches through
+            # whichever adapter this service was constructed with, the
+            # same behavior as before this fix, since this MVP only ever
+            # runs one adapter per process anyway (module docstring).
+            if reply.adapter_id is not None and reply.adapter_id != self._delivery_adapter.adapter_id:
+                receiver.mark_reply_undeliverable(
+                    self._conn, reply.id, self._now(),
+                    error_code=f"reply_adapter_mismatch:persisted={reply.adapter_id!r}",
+                )
+                continue
             if not receiver.check_and_record_reply_quota(
                 self._conn, self._principal.workspace_id, reply.route_id, self._now()
             ):
@@ -493,7 +520,18 @@ class AttachmentsService:
                 # dispatch once the relevant window has room again -
                 # never marked sent, never dropped.
                 continue
-            route = Route(route_type=RouteType(reply.route_type), route_id=reply.route_id, destination_address=reply.route_id)
+            # destination_address (not bare route_id) is the actual send
+            # target - kept as a separate persisted field precisely so a
+            # future non-DIRECT route shape (where "reply to" is not
+            # simply "the same address route_id already names") does not
+            # have to change this call site, only stop conflating them
+            # (ReplyRoute's own docstring, receiver.py). For the
+            # DIRECT-only MVP the two are always equal in practice, but
+            # falling back to route_id only when destination_address is
+            # somehow unset keeps this call site correct either way
+            # rather than assuming that equality always holds.
+            destination = reply.destination_address or reply.route_id
+            route = Route(route_type=RouteType(reply.route_type), route_id=reply.route_id, destination_address=destination)
             try:
                 wire_payload = self._delivery_adapter.encode(reply.message, route)
                 receipt = self._delivery_adapter.send(wire_payload, route, idempotency_key=f"mca-reply-{reply.id}")

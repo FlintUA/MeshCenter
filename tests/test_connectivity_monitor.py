@@ -371,22 +371,60 @@ def test_identity_check_does_not_run_on_every_health_tick(registry, store):
 # ---- DISABLED --------------------------------------------------------------
 
 
-def test_disabled_profile_is_disabled_state_without_any_network_call(registry, store):
+def test_disabled_profile_makes_no_per_relay_call_but_the_workspace_fallback_probe_still_runs(registry, store):
+    """PR #231 review (2nd pass): a disabled profile's own /health check
+    is still skipped entirely (_check_relay()'s own short-circuit,
+    unchanged) - but refresh() as a whole must not stay silent about
+    general internet reachability just because every registered Relay
+    happens to be disabled right now. Before this fix, `_internet_status`
+    would stay frozen at whatever it last was (typically UNKNOWN forever
+    on an instance whose only registered Relay has always been disabled)
+    since the fallback probe's own trigger condition explicitly excluded
+    this case. Renamed from this file's former test of the same disabled-
+    profile setup, which asserted zero network calls of any kind - no
+    longer true by design."""
     profile = _register(registry, store)
     registry.update_profile(profile.provider_id, enabled=False)
     calls = []
 
     def handler(method, url):
         calls.append(url)
-        return _ScriptedResponse(status_code=200)
+        return _ScriptedResponse(status_code=204)
 
     monitor = ConnectivityMonitor(registry, session=_ScriptedSession(handler))
     snapshot = monitor.refresh()
 
-    assert calls == []
+    # Exactly one call - the workspace-level fallback probe - never a
+    # per-relay /health call for the disabled profile itself.
+    assert calls == [FALLBACK_INTERNET_CHECK_URL]
     status = snapshot.relays[profile.provider_id]
     assert status.state == RelayState.DISABLED
     assert status.upload_readiness == UploadReadiness.UPLOAD_DISABLED
+    assert snapshot.internet == InternetStatus.ONLINE
+
+
+def test_all_relays_disabled_still_reports_a_real_internet_status(registry, store):
+    """The specific gap this fix closes: with every registered Relay
+    disabled, internet status must still be independently determined via
+    the fallback probe - not left stuck at UNKNOWN (or any other stale
+    value) forever."""
+    profile = _register(registry, store)
+    registry.update_profile(profile.provider_id, enabled=False)
+
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse(status_code=204)))
+    assert monitor.snapshot().internet == InternetStatus.UNKNOWN  # nothing probed yet
+
+    monitor.refresh()
+    assert monitor.snapshot().internet == InternetStatus.ONLINE
+
+    # And the reverse: a genuinely unreachable fallback while all relays
+    # are disabled must report OFFLINE, not silently stay ONLINE/UNKNOWN.
+    def down(method, url):
+        raise requests.ConnectionError("no route")
+
+    monitor_offline = ConnectivityMonitor(registry, session=_ScriptedSession(down), now_fn=lambda: 1_000_000.0)
+    monitor_offline.refresh()
+    assert monitor_offline.snapshot().internet == InternetStatus.OFFLINE
 
 
 # ---- fallback internet check ----------------------------------------------

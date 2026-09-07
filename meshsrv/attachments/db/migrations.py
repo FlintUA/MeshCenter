@@ -685,6 +685,12 @@ ALL_TABLE_NAMES = frozenset(
         "mca_sender_state",
         "mca_receiver_state",
         "mca_outgoing_replies",
+        # PR #231 review (2nd pass): was missing here - added by the same
+        # Migration 10 extension as mca_outgoing_replies above, but never
+        # added to this completeness set, so every existing
+        # ALL_TABLE_NAMES.issubset(...) test silently never verified this
+        # table's presence after a full migration run.
+        "mca_ack_quota",
     }
 )
 

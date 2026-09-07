@@ -28,17 +28,18 @@ domain-layer call (create_draft(), begin_download(), reject(), cancel()
 download/decrypt/verify work happens on this module's own thread, never
 on a Flask request thread.
 
-A pre-existing wrinkle this module has to paper over rather than fix in
-place: `attachments.provider_id` is stored in two different text
-encodings depending on `direction` - hex for 'sent' rows (sender.py's own
-`create_draft()`/`_step_ready_to_send()` round-trip the raw 8-byte OFFER
-wire field through hex, and changing that now would touch already
-hardware-tested Step 1.4 wire-format code for no behavioral gain), and
-Base64URL for 'received' rows (receiver.py, ADR-0007, stores exactly the
-text form `ProviderRegistry` keys rows by, since it calls `resolve()`
-directly with the column value). `_provider_id_text()` below normalizes
-both to the Base64URL form every `ProviderRegistry` lookup actually needs
-- see its docstring.
+`attachments.provider_id` is stored as Base64URL text for both
+directions (the form `ProviderRegistry` keys rows by) - 'received' rows
+always were (receiver.py, ADR-0007); 'sent' rows used to be stored as hex
+instead (a reviewer-found defect: `ProviderRegistry.remove_or_disable()`'s
+"is this provider still referenced?" check compares against the
+Base64URL form, so it never matched a 'sent' row and could delete a
+profile a real outgoing attachment still depended on - reproduced
+locally). Fixed at the source in `sender.py` (ADR-0008-hardening), with
+Migration 9 re-encoding any row a pre-fix process already wrote as hex.
+`_provider_id_text()` below is now a thin, defensive pass-through kept
+for the two call sites' clarity - see its own docstring for why it isn't
+simply inlined.
 """
 
 from __future__ import annotations
@@ -53,7 +54,7 @@ from meshsrv.attachments import receiver, sender
 from meshsrv.attachments.delivery.base import DeliveryAdapter
 from meshsrv.attachments.identity import MCAPrincipal
 from meshsrv.attachments.key_exchange import KeyExchangeCoordinator
-from meshsrv.attachments.provider_registry import ProviderRegistry, encode_provider_id
+from meshsrv.attachments.provider_registry import ProviderRegistry
 from meshsrv.attachments.relay_client import RelayClient
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
@@ -80,21 +81,18 @@ class AttachmentsServiceError(RuntimeError):
 
 
 def _provider_id_text(direction: str, provider_id_column: Optional[str]) -> Optional[str]:
-    """Normalize `attachments.provider_id` to the Base64URL text form
-    `ProviderRegistry` keys rows by, regardless of which direction's
-    (inconsistent - module docstring) encoding produced it. Returns None
+    """Both directions store the same Base64URL encoding on disk now
+    (module docstring) - this is a thin pass-through, not a real
+    normalization step, kept only so both call sites below read the same
+    way regardless of direction and so a future re-introduction of a
+    per-direction difference has one obvious place to fix instead of two
+    call sites drifting apart again. `direction` is accepted but
+    currently unused - a defensive signature, not dead weight: a caller
+    passing the wrong direction for a row would be a bug worth being able
+    to assert on later, not something to silently ignore. Returns None
     unchanged: a draft can reach VALIDATING/ENCRYPTING before a relay
-    lookup is ever needed, and a malformed stored value should surface as
-    "no such provider" (via `ProviderRegistry.resolve()` returning None)
-    rather than as an exception from this normalization step."""
-    if not provider_id_column:
-        return None
-    if direction == "sent":
-        try:
-            return encode_provider_id(bytes.fromhex(provider_id_column))
-        except ValueError:
-            return None
-    return provider_id_column
+    lookup is ever needed."""
+    return provider_id_column or None
 
 
 class AttachmentsService:

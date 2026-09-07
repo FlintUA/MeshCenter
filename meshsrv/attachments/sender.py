@@ -54,6 +54,7 @@ import uuid
 from typing import List, Optional, Sequence
 
 from meshsrv.attachments import codec, crypto, identity, manifest, mime_allowlist
+from meshsrv.attachments.provider_registry import decode_provider_id, encode_provider_id
 from meshsrv.attachments.delivery.base import DeliveryAdapter, DeliveryError, Route, RouteType
 from meshsrv.attachments.identity import MCAPrincipal
 from meshsrv.attachments.relay_client import (
@@ -241,7 +242,17 @@ def create_draft(
             workspace_id,
             transfer_id.hex(),
             principal.principal_id,
-            provider_id.hex(),
+            # Base64URL, matching ProviderRegistry's own key format and
+            # receiver.py's own storage (encode_provider_id()) - not hex.
+            # Fixed here (reviewer-found defect, reproduced locally):
+            # storing 'sent' rows as hex while ProviderRegistry.resolve()/
+            # remove_or_disable() key everything by Base64URL text meant a
+            # 'sent' attachment's provider_id NEVER matched
+            # remove_or_disable()'s "is this provider still referenced?"
+            # query - silently letting it delete a Relay profile a
+            # real outgoing attachment still depended on. See Migration 9
+            # for the one-time re-encoding of any already-hex-stored rows.
+            encode_provider_id(provider_id),
             DRAFT,
             file_name,
             mime_type,
@@ -722,7 +733,7 @@ def _step_ready_to_send(
     )
 
     fields = codec.OfferFields(
-        provider_id=bytes.fromhex(row["provider_id"]),
+        provider_id=decode_provider_id(row["provider_id"]),
         transfer_id=bytes.fromhex(row["transfer_id"]),
         sender_key_id=bytes.fromhex(principal.key_id),
         kind=KIND_GENERIC,

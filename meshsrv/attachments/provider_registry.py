@@ -143,6 +143,14 @@ def encode_provider_id(raw: bytes) -> str:
     return _b64url_encode(raw)
 
 
+def decode_provider_id(text: str) -> bytes:
+    """Inverse of `encode_provider_id()` - Base64URL text (the form
+    `ProviderRegistry` keys rows by, and now the sole on-disk encoding of
+    `attachments.provider_id` for both 'sent' and 'received' rows -
+    Migration 9) back to the raw 8 bytes an OFFER's wire field needs."""
+    return _b64url_decode(text, 8)
+
+
 def compute_provider_id(origin: str, service_public_key: bytes) -> str:
     """ADR-0005 / real Relay `mca_provider_id()`: Base64URL of the first 8
     bytes of SHA-256(`origin` + `"\\n"` + raw 32-byte Ed25519 public key).

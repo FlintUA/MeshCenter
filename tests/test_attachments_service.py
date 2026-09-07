@@ -223,24 +223,27 @@ def _create_draft(conn, wsm, principal, *, recipient_principal, registered_provi
     )
 
 
-# ---- _provider_id_text() normalization -------------------------------------
+# ---- _provider_id_text() pass-through --------------------------------------
+# Regression coverage for a reviewer-found defect: attachments.provider_id
+# used to be stored as hex for 'sent' rows and Base64URL for 'received'
+# rows; sender.py now stores Base64URL for both (ADR-0008-hardening,
+# Migration 9), so this helper is a thin, direction-agnostic pass-through,
+# not a normalizer - these tests pin exactly that, so a future regression
+# back to per-direction branching here would fail loudly.
 
 
-def test_provider_id_text_normalizes_sent_hex_to_base64url():
-    raw = b"\x01\x02\x03\x04\x05\x06\x07\x08"
-    from meshsrv.attachments.provider_registry import encode_provider_id
-
-    assert _provider_id_text("sent", raw.hex()) == encode_provider_id(raw)
+def test_provider_id_text_passes_sent_value_through_unchanged():
+    assert _provider_id_text("sent", "already-base64url-text") == "already-base64url-text"
 
 
-def test_provider_id_text_passes_received_text_through_unchanged():
+def test_provider_id_text_passes_received_value_through_unchanged():
     assert _provider_id_text("received", "already-base64url-text") == "already-base64url-text"
 
 
-def test_provider_id_text_returns_none_for_missing_or_malformed_value():
+def test_provider_id_text_returns_none_for_missing_value():
     assert _provider_id_text("sent", None) is None
     assert _provider_id_text("sent", "") is None
-    assert _provider_id_text("sent", "not-valid-hex") is None
+    assert _provider_id_text("received", None) is None
 
 
 # ---- tick scan: capping and direction filtering ----------------------------

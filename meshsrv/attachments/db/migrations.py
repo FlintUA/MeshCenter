@@ -665,6 +665,33 @@ def current_version(conn: sqlite3.Connection) -> int:
     return int(row[0]) if row is not None else 0
 
 
+# Matches a `--` comment (through end of line) so _split_sql_statements()
+# can strip it before splitting on `;` - none of this module's own SQL
+# blocks use any other comment style, string literal containing a
+# semicolon, or multi-statement construct (trigger/procedure body) that
+# would need a smarter splitter than this.
+_SQL_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
+
+
+def _split_sql_statements(script: str) -> list:
+    """Split one migration's SQL block into individual statements, each
+    to be run through `conn.execute()` rather than `conn.executescript()`.
+
+    This exists because of a real, empirically-confirmed atomicity gap:
+    `sqlite3.Connection.executescript()` does not honor an explicit outer
+    `BEGIN`/`ROLLBACK` on this project's Python build (3.13/3.14) -
+    reproduced directly: wrapping `executescript()` in `conn.execute("BEGIN")`
+    / `except: conn.rollback()` still left earlier statements in the script
+    committed after a later statement raised. Running each statement
+    through `conn.execute()` individually inside the same explicit
+    transaction *does* roll back correctly (also reproduced directly)
+    - see `migrate()`'s own docstring for what this means for callers,
+    and tests/test_mca_db_migrations.py::test_failed_migration_rolls_back_
+    completely for the regression test this fix is verified against."""
+    without_comments = _SQL_LINE_COMMENT_RE.sub("", script)
+    return [stmt.strip() for stmt in without_comments.split(";") if stmt.strip()]
+
+
 def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> None:
     """Bring `conn`'s schema to `target_version` (latest, by default),
     applying up migrations if behind or down migrations if ahead. Safe to
@@ -673,6 +700,21 @@ def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> N
     `PRAGMA user_version` cannot use parameter binding; the integers
     interpolated below always come from this module's own `MIGRATIONS`
     list, never from external input.
+
+    Atomicity (fixed per PR #231 review): each migration's DDL/DML *and*
+    its own `PRAGMA user_version` update now run inside one explicit
+    `BEGIN`/`COMMIT` transaction, executed statement-by-statement via
+    `conn.execute()` (see `_split_sql_statements()`'s docstring for why
+    `executescript()` cannot be used here). If any statement or
+    `data_fixup`/`down_data_fixup` callable raises, the whole migration
+    (including everything already run earlier in the *same* migration)
+    is rolled back and `user_version` is left exactly where it was before
+    this call started - never left pointing at a partially-applied
+    schema. A multi-migration `migrate()` call (e.g. version 7 -> 10)
+    commits one migration at a time, so a failure partway through still
+    leaves every *earlier* migration in that run fully applied and
+    committed - only the migration that actually failed (and anything
+    after it) is rolled back/not attempted.
     """
     if target_version is None:
         target_version = LATEST_VERSION
@@ -682,22 +724,33 @@ def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> N
     if target_version > current:
         for migration in MIGRATIONS:
             if current < migration.version <= target_version:
-                if migration.up_sql:
-                    conn.executescript(migration.up_sql)
-                if migration.data_fixup is not None:
-                    migration.data_fixup(conn)
-                conn.execute(f"PRAGMA user_version = {migration.version}")
+                try:
+                    conn.execute("BEGIN")
+                    for stmt in _split_sql_statements(migration.up_sql):
+                        conn.execute(stmt)
+                    if migration.data_fixup is not None:
+                        migration.data_fixup(conn)
+                    conn.execute(f"PRAGMA user_version = {migration.version}")
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
                 current = migration.version
     else:
         for migration in reversed(MIGRATIONS):
             if target_version < migration.version <= current:
-                if migration.down_data_fixup is not None:
-                    migration.down_data_fixup(conn)
-                if migration.down_sql:
-                    conn.executescript(migration.down_sql)
-                conn.execute(f"PRAGMA user_version = {migration.version - 1}")
+                try:
+                    conn.execute("BEGIN")
+                    if migration.down_data_fixup is not None:
+                        migration.down_data_fixup(conn)
+                    for stmt in _split_sql_statements(migration.down_sql):
+                        conn.execute(stmt)
+                    conn.execute(f"PRAGMA user_version = {migration.version - 1}")
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
                 current = migration.version - 1
-    conn.commit()
 
 
 def open_attachments_db(path) -> sqlite3.Connection:

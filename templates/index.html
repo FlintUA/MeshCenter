@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="app-version" content="{{ app_version }}">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20260905-theme-correction-pr6">
@@ -2284,6 +2285,7 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
+<script src="{{ url_for('static', filename='csrf.js') }}?v=20260907-csrf"></script>
 <script src="{{ url_for('static', filename='chat-emoji.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-photo.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20260904-theme-stage2-5"></script>

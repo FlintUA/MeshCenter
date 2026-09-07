@@ -287,8 +287,15 @@ def test_generated_initial_password_passes_the_real_min_length_validation(tmp_pa
 
     with client.session_transaction() as sess:
         sess["authenticated"] = True  # /api/security itself needs a session
+        # /api/security is a mutating /api/ route, so it also needs the
+        # project-wide CSRF token (Step 1.6A.0) alongside the auth session.
+        sess["csrf_token"] = "test-csrf-token"
 
-    resp = client.post("/api/security", json={"password": generated})
+    resp = client.post(
+        "/api/security",
+        json={"password": generated},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
     data = resp.get_json()
     assert data["ok"] is True, data
     assert data.get("error_code") != "password_too_short"

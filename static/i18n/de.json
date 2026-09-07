@@ -1149,6 +1149,10 @@
     "login_throttled": "Zu viele Versuche. Versuche es in {seconds} Sekunden erneut.",
     "login_submit": "Anmelden"
   },
+  "csrf": {
+    "expired_reload": "Sicherheitsprüfung abgelaufen. Bitte lade die Seite neu, um fortzufahren.",
+    "reload_action": "Neu laden"
+  },
   "workspace": {
     "theme_family_group_label": "Themenfamilie",
     "theme_family_original": "MeshCenter Original",

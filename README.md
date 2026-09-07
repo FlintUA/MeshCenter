@@ -1509,6 +1509,12 @@ MeshCenter can be protected with a single shared password - **Settings → Secur
 - The password is hashed (`werkzeug.security`, never stored in plain text) in `data/auth.json`, not in `config.py` or `settings.json` - it isn't wiped by an unrelated settings save and never comes back in a settings API response. `config.py`'s `AUTH_PASSWORD_HASH` is only ever consulted the first time (to seed `auth.json`, or to generate a password when it's left empty) - once `auth.json` exists, `config.py`'s two auth variables are ignored on every later restart.
 - This is one shared secret for the whole app, not per-user accounts - it doesn't replace a VPN for remote access, it's meant to reduce exposure on a shared or guest local network.
 
+### Session cookie and CSRF protection
+
+The Flask session cookie is hardened by default: `HttpOnly` (unreachable from JavaScript) and `SameSite=Lax` (restricted to same-site requests). A `SESSION_COOKIE_SECURE` flag in `config.example.py` defaults to `False` (plain-HTTP local-network deployments) and should be set `True` only when MeshCenter is served behind HTTPS — do not set it on a plain-HTTP deployment, or the session cookie is never sent and login/session state breaks.
+
+Every state-changing `/api/` request (`POST`/`PUT`/`PATCH`/`DELETE`) additionally requires a CSRF token: a per-session random token (≥ 128 bits, `secrets`) stored in the signed session and exposed to the page via a `<meta name="csrf-token">` tag, sent back as an `X-CSRF-Token` header and compared with `secrets.compare_digest()` (constant-time). `GET`/`HEAD` are exempt. The token is minted lazily on the first page render (so an unprotected `AUTH_ENABLED = False` instance is covered too) and rotated on every login. Missing or mismatched tokens fail closed with HTTP `403`.
+
 ---
 
 ## Major Features

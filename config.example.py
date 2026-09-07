@@ -102,3 +102,12 @@ EPAPER_ENABLED = False
 #   python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('your-password'))"
 AUTH_ENABLED = True
 AUTH_PASSWORD_HASH = ""
+
+# ===== SESSION COOKIE SECURITY =====
+# Controls the Secure flag on the session cookie. False (the default) lets
+# MeshCenter run over plain HTTP on a trusted local network - the cookie is
+# still HttpOnly and SameSite=Lax, so it is unreachable from JavaScript and
+# restricted to same-site requests. Set True only when serving behind HTTPS:
+# the browser then sends the cookie exclusively over encrypted connections.
+# Do not set True on a plain-HTTP deployment, or login/session state breaks.
+SESSION_COOKIE_SECURE = False

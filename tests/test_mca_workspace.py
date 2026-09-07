@@ -160,7 +160,15 @@ def test_no_stray_data_mca_path_construction():
         (repo_root / "docs" / "architecture" / "ADR-0003-attachments-sqlite-exception.md").resolve(),
         Path(__file__).resolve(),
     }
-    skip_dir_names = {".git", "node_modules", "__pycache__", "venv", ".venv"}
+    # .claude/worktrees: a separate git worktree's own full checkout can
+    # be mounted here (e.g. another session working on its own branch in
+    # isolation) - its files are a different commit's content, not this
+    # one's, and walking into it would make this test's result depend on
+    # which other worktrees happen to exist on disk at the moment it
+    # runs, not on this repo's own tree. Confirmed live: a
+    # mcattach-adr-0008-hardening worktree under here made this test
+    # fail on an unrelated run before this exclusion was added.
+    skip_dir_names = {".git", "node_modules", "__pycache__", "venv", ".venv", ".claude"}
     offenders = []
     for path in repo_root.rglob("*.py"):
         if path.resolve() in allowed_files:

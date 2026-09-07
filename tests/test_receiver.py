@@ -269,6 +269,84 @@ def test_waiting_key_advances_automatically_once_binding_recorded(conn, wsm, pri
     assert row[1] == principal2.principal_id
 
 
+# ---- PR #231 review (2nd pass): inbound OFFER admission limits ------------
+
+
+def test_offer_flood_from_one_source_is_rejected_once_per_source_limit_reached(conn, wsm, principal, provider_registry, key_exchange):
+    """PR #231 review (2nd pass): before this fix, a flood of OFFERs
+    carrying distinct, attacker-chosen transfer_ids had no ceiling at
+    all - each one became a permanent attachments row (the existing
+    transfer_id dedup only protects against a *repeated* transfer_id).
+    Drives the per-source limit (MAX_PENDING_RECEIVED_PER_SOURCE) to
+    exhaustion from one source_address and confirms the next OFFER is
+    rejected outright, with no new row created."""
+    sk = SigningKey.generate()
+    fake_principal = type("P", (), {"key_id": identity.compute_key_id(bytes(sk.verify_key))})()
+
+    for _ in range(receiver.MAX_PENDING_RECEIVED_PER_SOURCE):
+        raw_offer = _build_offer(
+            provider_id=os.urandom(8), transfer_id=os.urandom(16), sender_principal=fake_principal,
+            sender_signing_key=sk, hard_expires_at=int(time.time()) + 3600,
+        )
+        result = receiver.handle_offer(
+            conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+            key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+            source_address="!flooding-node",
+        )
+        assert result.state == receiver.WAITING_KEY
+
+    count_before = conn.execute(
+        "SELECT COUNT(*) FROM attachments WHERE direction = 'received'"
+    ).fetchone()[0]
+    assert count_before == receiver.MAX_PENDING_RECEIVED_PER_SOURCE
+
+    one_too_many = _build_offer(
+        provider_id=os.urandom(8), transfer_id=os.urandom(16), sender_principal=fake_principal,
+        sender_signing_key=sk, hard_expires_at=int(time.time()) + 3600,
+    )
+    with pytest.raises(receiver.ReceiverError, match="pending_received_per_source_limit_exceeded"):
+        receiver.handle_offer(
+            conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+            key_exchange=key_exchange, raw_offer=one_too_many, network_available=True,
+            source_address="!flooding-node",
+        )
+
+    count_after = conn.execute(
+        "SELECT COUNT(*) FROM attachments WHERE direction = 'received'"
+    ).fetchone()[0]
+    assert count_after == count_before  # nothing new was created
+
+
+def test_offer_from_a_different_source_is_not_blocked_by_another_sources_limit(conn, wsm, principal, provider_registry, key_exchange):
+    """The per-source limit must actually be per-source, not a disguised
+    global one - a second, distinct source_address must still be able to
+    send an OFFER even while the first is at its own per-source ceiling."""
+    sk = SigningKey.generate()
+    fake_principal = type("P", (), {"key_id": identity.compute_key_id(bytes(sk.verify_key))})()
+
+    for _ in range(receiver.MAX_PENDING_RECEIVED_PER_SOURCE):
+        raw_offer = _build_offer(
+            provider_id=os.urandom(8), transfer_id=os.urandom(16), sender_principal=fake_principal,
+            sender_signing_key=sk, hard_expires_at=int(time.time()) + 3600,
+        )
+        receiver.handle_offer(
+            conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+            key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+            source_address="!flooding-node",
+        )
+
+    from_elsewhere = _build_offer(
+        provider_id=os.urandom(8), transfer_id=os.urandom(16), sender_principal=fake_principal,
+        sender_signing_key=sk, hard_expires_at=int(time.time()) + 3600,
+    )
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=from_elsewhere, network_available=True,
+        source_address="!a-different-node",
+    )
+    assert result.state == receiver.WAITING_KEY
+
+
 # ---- WAITING_PROVIDER: known sender, unknown provider ----------------------
 
 

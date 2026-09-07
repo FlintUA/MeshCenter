@@ -158,6 +158,24 @@ _ACK_QUOTA_GLOBAL_SCOPE = "__global__"
 _ACK_QUOTA_CLEANUP_BATCH = 50
 _ACK_QUOTA_STALE_AFTER_SECONDS = 86400  # a full day past its own window - safely expired either way
 
+# PR #231 review (2nd pass): inbound OFFER admission limits - a real gap
+# the earlier ACK-outbox rate limiting above did not cover. Nothing
+# previously bounded how many `attachments` rows a flood of OFFERs
+# carrying distinct, attacker-chosen `transfer_id`s could create (the
+# existing transfer_id dedup in handle_offer() only protects against a
+# *repeated* transfer_id, not against unlimited *distinct* ones) - each
+# accepted OFFER is a permanent DB row until it resolves or expires, so
+# this was an unbounded-storage-growth admission gap, not just a rate
+# concern. Same two-tier shape as ACK_PER_SOURCE_LIMIT/ACK_GLOBAL_LIMIT
+# above (a single misbehaving/spoofed sender cannot exhaust the whole
+# workspace's admission budget on its own), but counting *live*
+# (non-terminal) 'received' rows rather than a rolling time window -
+# this is a capacity ceiling, not a send-rate limit. Conservative MVP
+# starting points, same "named constant for Step 1.9's real hardware
+# pass to retune" framing as the ACK quota above.
+MAX_PENDING_RECEIVED_PER_SOURCE = 20
+MAX_PENDING_RECEIVED_GLOBAL = 200
+
 
 @dataclasses.dataclass(frozen=True)
 class ReplyRoute:
@@ -518,6 +536,51 @@ def check_and_record_reply_quota(conn: sqlite3.Connection, workspace_id: str, so
     return True
 
 
+def _would_exceed_inbound_admission_limit(
+    conn: sqlite3.Connection, workspace_id: str, source_address: Optional[str]
+) -> Optional[str]:
+    """PR #231 review (2nd pass): the admission-control check
+    `handle_offer()` runs before creating a new attachment row for a
+    brand-new (never-before-seen) `transfer_id` - the existing dedup in
+    `handle_offer()` only protects against a *repeated* transfer_id, not
+    against a flood of distinct, attacker-chosen ones, each of which
+    would otherwise become a permanent DB row. Returns an error code
+    string if admission should be refused, `None` if there is room.
+
+    Counts *live* (non-terminal) 'received' rows - a resolved/expired/
+    rejected/failed attachment stops counting against either limit,
+    matching this being a capacity ceiling on outstanding work, not a
+    historical audit constraint. The per-source count only applies when
+    `source_address` is known (the source_address-only/no-route callers
+    this module already treats as a supported, simpler shape elsewhere -
+    PendingReply's own docstring) - such a row still counts toward the
+    global ceiling regardless."""
+    terminal_placeholders = ",".join("?" for _ in TERMINAL_STATES)
+    global_count = conn.execute(
+        f"""
+        SELECT COUNT(*) FROM attachments
+        WHERE workspace_id = ? AND direction = 'received' AND state NOT IN ({terminal_placeholders})
+        """,
+        (workspace_id, *TERMINAL_STATES),
+    ).fetchone()[0]
+    if global_count >= MAX_PENDING_RECEIVED_GLOBAL:
+        return f"pending_received_global_limit_exceeded:{global_count}"
+
+    if source_address is not None:
+        per_source_count = conn.execute(
+            f"""
+            SELECT COUNT(*) FROM attachments
+            WHERE workspace_id = ? AND direction = 'received' AND reply_route_id = ?
+                AND state NOT IN ({terminal_placeholders})
+            """,
+            (workspace_id, source_address, *TERMINAL_STATES),
+        ).fetchone()[0]
+        if per_source_count >= MAX_PENDING_RECEIVED_PER_SOURCE:
+            return f"pending_received_per_source_limit_exceeded:{per_source_count}"
+
+    return None
+
+
 def _resolve_provider_or_wait(
     conn: sqlite3.Connection,
     *,
@@ -647,6 +710,12 @@ def handle_offer(
     effective_source_address = source_address if source_address is not None else (
         reply_route.route_id if reply_route is not None else None
     )
+
+    admission_rejection = _would_exceed_inbound_admission_limit(
+        conn, principal.workspace_id, effective_source_address
+    )
+    if admission_rejection is not None:
+        raise ReceiverError(f"OFFER rejected: {admission_rejection}")
 
     attachment_id = uuid.uuid4().hex
     conn.execute(

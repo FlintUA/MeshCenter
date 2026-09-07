@@ -84,6 +84,15 @@ from meshsrv.radio_transport import RadioTransport
 WORKSPACE_ID = "local"
 ADAPTER_ID = "meshtastic"
 
+# The single lock for all access to `_MCARuntimeState.conn` (ADR-0008-
+# hardening, PR #227 defect #2: this used to guard only this module's own
+# singleton bookkeeping and direct-write call sites, while AttachmentsService
+# separately built and held its own private Lock over the very same
+# connection - two locks, one connection, no real mutual exclusion between
+# the radio listener thread and the service's worker thread). Handed to
+# AttachmentsService's constructor in ensure_service() below so both sides
+# serialize on this one instance - this module is the connection's single
+# owner, everyone else borrows the lock, never a copy of it.
 _lock = threading.Lock()
 _state: "Optional[_MCARuntimeState]" = None
 
@@ -147,6 +156,18 @@ class _MCARuntimeState:
             key_exchange=self.coordinator,
             connectivity_monitor=self.connectivity_monitor,
             delivery_adapter=adapter,
+            # Reviewer-found defect (PR #227 defect #2): `self.conn` is
+            # also written to directly by handle_incoming_meshtastic_text()
+            # below (coordinator.handle_incoming()/receiver.handle_offer()),
+            # which runs on the radio listener thread, not this service's
+            # own worker thread. Passing this module's own `_lock` here -
+            # the same lock handle_incoming_meshtastic_text() already
+            # holds for every direct write it makes - means AttachmentsService.
+            # tick() and the listener's direct writes now serialize on one
+            # single lock instead of two independent ones that each only
+            # ever protected their own call site. See AttachmentsService.
+            # __init__()'s own docstring/comment for the full defect.
+            lock=_lock,
         )
         # Deliberately network_available=False and no relay_client/
         # delivery_adapter override for this *synchronous* startup pass:

@@ -115,6 +115,7 @@ class AttachmentsService:
         tick_seconds: float = DEFAULT_TICK_SECONDS,
         max_per_tick: int = MAX_ATTACHMENTS_PER_TICK,
         now_fn=time.time,
+        lock: Optional[threading.Lock] = None,
     ):
         self._conn = conn
         self._workspace_manager = workspace_manager
@@ -128,7 +129,28 @@ class AttachmentsService:
         self._max_per_tick = max_per_tick
         self._now = now_fn
 
-        self._lock = threading.Lock()
+        # Reviewer-found defect (PR #227 defect #2): this used to always
+        # build its own private Lock here, guarding *this service's own*
+        # access to `conn` - but `conn` is not necessarily this service's
+        # alone. In production (mca_runtime.py) the exact same
+        # sqlite3.Connection is also written to directly by the radio
+        # listener thread (handle_incoming_meshtastic_text()'s
+        # coordinator.handle_incoming()/receiver.handle_offer() calls),
+        # guarded by that module's own, entirely separate
+        # threading.Lock(). Two independent locks over one shared
+        # connection is not mutual exclusion at all: the listener thread
+        # and this service's own worker thread could freely interleave
+        # statements/commits on the same connection. A caller that shares
+        # `conn` across threads must now also share the *same* Lock
+        # instance across every accessor of that connection - passed in
+        # here, not built fresh - so there is exactly one owner of "who
+        # may touch this connection right now", matching the "single-
+        # owner SQLite access model" callers must already keep by
+        # convention (never enforced before this fix). Standalone/test
+        # callers that own `conn` exclusively (nothing else ever touches
+        # it) can still omit `lock` and get a private one, unchanged from
+        # before.
+        self._lock = lock if lock is not None else threading.Lock()
         self._wake_event = threading.Event()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None

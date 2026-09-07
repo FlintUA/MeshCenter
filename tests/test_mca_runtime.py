@@ -244,3 +244,31 @@ def test_start_attachments_service_is_idempotent(tmp_path):
         assert state.service is first_service
     finally:
         mca_runtime.reset_state_for_tests()
+
+
+def test_attachments_service_shares_the_runtime_lock_not_a_private_one(tmp_path):
+    """Regression coverage for a reviewer-found defect (PR #227 defect
+    #2): AttachmentsService used to always build its own private
+    threading.Lock(), independent of mca_runtime's own module-level
+    `_lock` - the lock handle_incoming_meshtastic_text() holds for every
+    direct write it makes to the exact same `state.conn`. Two
+    independent locks over one shared sqlite3.Connection is not mutual
+    exclusion: the radio listener thread and the service's own worker
+    thread could freely interleave statements/commits on that one
+    connection. ensure_service() must now hand its own `_lock` to
+    AttachmentsService's constructor, so both sides serialize on the
+    exact same lock object - this pins that wiring directly rather than
+    trying to provoke and detect an actual race (inherently flaky)."""
+    mca_runtime.reset_state_for_tests()
+    try:
+        ether = InMemoryEther()
+        transport = FakeRadioTransport(ether, "!dddddddd")
+        data_dir = str(tmp_path / "d")
+
+        mca_runtime.start_attachments_service(data_dir, transport)
+        state = mca_runtime._get_state(data_dir)  # noqa: SLF001
+        assert isinstance(state.service, AttachmentsService)
+
+        assert state.service._lock is mca_runtime._lock  # noqa: SLF001
+    finally:
+        mca_runtime.reset_state_for_tests()

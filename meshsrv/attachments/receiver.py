@@ -135,6 +135,51 @@ OUTGOING_REPLY_BACKOFF_BASE_SECONDS = 30
 OUTGOING_REPLY_BACKOFF_CEILING_SECONDS = 3600
 MAX_OUTGOING_REPLY_SENDS_PER_DISPATCH = 5  # rate limit: drain the queue gradually, not all at once
 
+# PR #231 review, section 4.3: real, persisted ACK rate limiting -
+# mca_ack_quota (migration 10). Two independent fixed windows: one per
+# source_address (a single misbehaving/spoofed sender cannot exhaust the
+# whole workspace's reply budget) and one global (a workspace-wide
+# ceiling regardless of how many distinct addresses are involved).
+# Conservative MVP starting points, named so Step 1.9's real Pi Zero 2 W
+# + real LoRa airtime hardware pass can retune them with evidence -
+# LoRa's own airtime duty-cycle limits are the real ceiling this exists
+# to respect, and this project has not yet measured that directly (same
+# open-uncertainty framing as RELAY_HEALTH_INTERVAL_SECONDS in
+# connectivity_monitor.py).
+ACK_PER_SOURCE_LIMIT = 5
+ACK_PER_SOURCE_WINDOW_SECONDS = 600  # 10 minutes - same window shape as key_exchange.py's own per-address gate
+ACK_GLOBAL_LIMIT = 30
+ACK_GLOBAL_WINDOW_SECONDS = 3600  # 1 hour
+_ACK_QUOTA_GLOBAL_SCOPE = "__global__"
+# Bounds how many stale per-source quota rows one check_and_record_reply_
+# quota() call prunes - keeps mca_ack_quota's size from growing without
+# bound over a long-running instance's lifetime (many distinct sender
+# addresses over time) without ever doing an unbounded table scan.
+_ACK_QUOTA_CLEANUP_BATCH = 50
+_ACK_QUOTA_STALE_AFTER_SECONDS = 86400  # a full day past its own window - safely expired either way
+
+
+@dataclasses.dataclass(frozen=True)
+class ReplyRoute:
+    """Everything `_dispatch_outgoing_replies()` needs to reconstruct the
+    same transport destination after a restart, persisted once at
+    `handle_offer()` time (PR #231 review, section 4.2) - deliberately a
+    small immutable bundle instead of a bare `source_address` string, so
+    a future non-Meshtastic adapter does not have to be threaded through
+    as yet another loose positional parameter. `destination_address` is
+    the address `Route(...)` needs when actually sending; for the
+    DIRECT-only MVP this is always the same value as `route_id` (an
+    inbound OFFER's own sender), but the two are kept as separate fields
+    - not silently assumed equal - so a future CHANNEL/non-DIRECT route
+    (where sending back is not simply "reply to the sender") does not
+    have to change this shape, only stop conflating them."""
+
+    adapter_id: str
+    connector_profile_id: str
+    route_type: str
+    route_id: str
+    destination_address: str
+
 
 class ReceiverError(RuntimeError):
     """Base class for every error this module raises directly. Failures
@@ -373,6 +418,85 @@ def mark_reply_undeliverable(conn: sqlite3.Connection, reply_id: str, now: float
     conn.commit()
 
 
+def _quota_row(conn: sqlite3.Connection, workspace_id: str, scope: str) -> Optional[sqlite3.Row]:
+    conn.row_factory = sqlite3.Row
+    return conn.execute(
+        "SELECT window_start_at, count FROM mca_ack_quota WHERE workspace_id = ? AND scope = ?",
+        (workspace_id, scope),
+    ).fetchone()
+
+
+def _quota_would_exceed(row: Optional[sqlite3.Row], now: float, window_seconds: int, limit: int) -> bool:
+    if row is None:
+        return False
+    if now - row["window_start_at"] >= window_seconds:
+        return False  # window has rolled over - about to be reset, not exceeded
+    return row["count"] >= limit
+
+
+def _quota_bump(conn: sqlite3.Connection, workspace_id: str, scope: str, now: float, window_seconds: int) -> None:
+    row = _quota_row(conn, workspace_id, scope)
+    if row is None or now - row["window_start_at"] >= window_seconds:
+        conn.execute(
+            """
+            INSERT INTO mca_ack_quota (workspace_id, scope, window_start_at, count) VALUES (?, ?, ?, 1)
+            ON CONFLICT(workspace_id, scope) DO UPDATE SET window_start_at = excluded.window_start_at, count = 1
+            """,
+            (workspace_id, scope, now),
+        )
+    else:
+        conn.execute(
+            "UPDATE mca_ack_quota SET count = count + 1 WHERE workspace_id = ? AND scope = ?",
+            (workspace_id, scope),
+        )
+
+
+def check_and_record_reply_quota(conn: sqlite3.Connection, workspace_id: str, source_address: str, now: float) -> bool:
+    """PR #231 review, section 4.3: the real, persisted rate limit
+    `_dispatch_outgoing_replies()` (service.py) checks before every send
+    attempt - not just `MAX_OUTGOING_REPLY_SENDS_PER_DISPATCH` (which only
+    ever bounded one SQL query's row count, not the actual send rate: at
+    the default 5s tick interval that alone still allowed up to 60
+    sends/minute with zero per-source protection). Checks (never records
+    a partial success) both windows before bumping either - a reply that
+    would exceed either the per-source or the global quota is rejected
+    outright, with neither counter incremented, so a caller can safely
+    retry the exact same call later without having already "spent" a slot
+    it never actually got to use. Deliberately does not distinguish
+    "which" quota was hit in its return value - both are visible via
+    `mca_ack_quota` directly (e.g. for a future admin/debug view) if that
+    ever matters; the caller's only decision is retry-later either way.
+
+    Also does the small, bounded cleanup of stale per-source rows the
+    review asks for (`_ACK_QUOTA_CLEANUP_BATCH` per call) - a source
+    address that stops sending eventually has its quota row deleted
+    rather than kept forever, without ever doing an unbounded scan."""
+    conn.execute(
+        """
+        DELETE FROM mca_ack_quota WHERE rowid IN (
+            SELECT rowid FROM mca_ack_quota
+            WHERE workspace_id = ? AND scope != ? AND ? - window_start_at > ?
+            LIMIT ?
+        )
+        """,
+        (workspace_id, _ACK_QUOTA_GLOBAL_SCOPE, now, _ACK_QUOTA_STALE_AFTER_SECONDS, _ACK_QUOTA_CLEANUP_BATCH),
+    )
+
+    per_source_row = _quota_row(conn, workspace_id, source_address)
+    global_row = _quota_row(conn, workspace_id, _ACK_QUOTA_GLOBAL_SCOPE)
+    if _quota_would_exceed(per_source_row, now, ACK_PER_SOURCE_WINDOW_SECONDS, ACK_PER_SOURCE_LIMIT):
+        conn.commit()
+        return False
+    if _quota_would_exceed(global_row, now, ACK_GLOBAL_WINDOW_SECONDS, ACK_GLOBAL_LIMIT):
+        conn.commit()
+        return False
+
+    _quota_bump(conn, workspace_id, source_address, now, ACK_PER_SOURCE_WINDOW_SECONDS)
+    _quota_bump(conn, workspace_id, _ACK_QUOTA_GLOBAL_SCOPE, now, ACK_GLOBAL_WINDOW_SECONDS)
+    conn.commit()
+    return True
+
+
 def _resolve_provider_or_wait(
     conn: sqlite3.Connection,
     *,
@@ -420,6 +544,7 @@ def handle_offer(
     network_available: bool,
     now: Optional[float] = None,
     source_address: Optional[str] = None,
+    reply_route: Optional[ReplyRoute] = None,
 ) -> ReceiveResult:
     """Handle one inbound OFFER frame's already-`ingest()`-ed logical
     bytes. `key_exchange` is this workspace/adapter's own
@@ -427,17 +552,24 @@ def handle_offer(
     instance driving KEY_REQUEST/KEY_ANNOUNCE) - used here only for its
     read-only `get_binding_by_key_id()` lookup, never mutated.
 
-    `source_address` (PR #227 defect #1) is persisted on the new
-    attachment row as `reply_route_type`/`reply_route_id` - the only
-    place this module ever learns where a reply for this attachment
-    should go, since receiver.py holds no transport of its own (module
-    docstring) and never will. Optional and defaults to `None` for
-    callers (mostly this module's own test suite) that only care about
-    this function's state-machine/dedup behavior, not real dispatch: an
-    attachment created with no route recorded simply never has its
-    queued ACKs picked up by AttachmentsService's dispatch step (nothing
-    to send them through), exactly as if this fix didn't exist for that
-    one attachment - not a crash, not a wrong send target.
+    `reply_route` (PR #231 review, section 4.2 - supersedes the bare
+    `source_address`-only version from PR #227 defect #1) is persisted
+    on the new attachment row (`reply_adapter_id`/
+    `reply_connector_profile_id`/`reply_route_type`/`reply_route_id`/
+    `reply_destination_address`) - the only place this module ever
+    learns where a reply for this attachment should go, since
+    receiver.py holds no transport of its own (module docstring) and
+    never will. `source_address` alone is kept as a separate, simpler
+    parameter for callers (mostly this module's own test suite, and any
+    caller that only cares about rate-limiting/audit, not real dispatch)
+    that do not need a full reply route - when only `source_address` is
+    given, `reply_route` is left unset and this attachment's queued ACKs
+    are never picked up by AttachmentsService's dispatch step (nothing
+    to send them through), exactly as before this fix - not a crash,
+    not a wrong send target. When both are given, `reply_route`'s own
+    `route_id` must equal `source_address` (DIRECT-only MVP invariant -
+    see `ReplyRoute`'s own docstring for why the two are still kept as
+    separate fields rather than merged into one).
 
     A repeat OFFER for a `transfer_id` this workspace has already
     recorded is idempotent: if the existing attachment is still
@@ -487,14 +619,23 @@ def handle_offer(
         except codec.CodecError as exc:
             raise ReceiverError(f"OFFER signature verification failed for known key: {exc}") from exc
 
+    if reply_route is not None and source_address is not None and reply_route.route_id != source_address:
+        raise ReceiverError(
+            f"reply_route.route_id ({reply_route.route_id!r}) must match source_address ({source_address!r})"
+        )
+    effective_source_address = source_address if source_address is not None else (
+        reply_route.route_id if reply_route is not None else None
+    )
+
     attachment_id = uuid.uuid4().hex
     conn.execute(
         """
         INSERT INTO attachments
             (id, workspace_id, transfer_id, direction, principal_id, sender_principal_id, provider_id, state,
              created_at, hard_expires_at, download_grace_seconds, pending_offer_cbor,
-             reply_route_type, reply_route_id)
-        VALUES (?, ?, ?, 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             reply_route_type, reply_route_id,
+             reply_adapter_id, reply_connector_profile_id, reply_destination_address)
+        VALUES (?, ?, ?, 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             attachment_id,
@@ -514,10 +655,13 @@ def handle_offer(
             # since an OFFER-triggered reply is always a direct reply to
             # whoever sent the OFFER - there is no other route shape an
             # inbound OFFER could have arrived over. `None` (not "DIRECT")
-            # when `source_address` itself is `None`, so the dispatch step
-            # can tell "no route recorded" apart from "recorded, empty".
-            ("DIRECT" if source_address is not None else None),
-            source_address,
+            # when no address is known at all, so the dispatch step can
+            # tell "no route recorded" apart from "recorded, empty".
+            ("DIRECT" if effective_source_address is not None else None),
+            effective_source_address,
+            (reply_route.adapter_id if reply_route is not None else None),
+            (reply_route.connector_profile_id if reply_route is not None else None),
+            (reply_route.destination_address if reply_route is not None else effective_source_address),
         ),
     )
     _record_event(

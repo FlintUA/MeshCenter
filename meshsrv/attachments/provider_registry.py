@@ -50,6 +50,28 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle avoidance only
 
 _UPLOAD_TOKEN_FILE_MODE = 0o600
 
+_VALID_KINDS = frozenset({"own", "third_party"})
+
+
+class _ClearSentinel:
+    """A distinct sentinel type (not just `object()`) so `repr()` on an
+    accidentally-unhandled value in a log line or debugger is still
+    legible - see `CLEAR` below."""
+
+    def __repr__(self) -> str:
+        return "CLEAR"
+
+
+# PR #231 review, section 9: `update_profile()`'s optional TTL/
+# protocol_version fields used a plain `Optional[int] = None` default,
+# which cannot distinguish "caller did not mention this field, leave it
+# alone" from "caller wants it explicitly cleared back to NULL" - both
+# looked like `None` to the old `COALESCE(?, column)` SQL, so a caller
+# could never actually clear a previously-set TTL. Pass this sentinel
+# instead of `None` to mean "clear it"; omit the argument (or pass
+# `None`) to mean "leave it alone".
+CLEAR = _ClearSentinel()
+
 
 class ProviderRegistryError(ValueError):
     """Raised for a malformed provider registration - never silently
@@ -167,6 +189,41 @@ def compute_provider_id(origin: str, service_public_key: bytes) -> str:
     return _b64url_encode(digest[:8])
 
 
+def _validate_display_name(display_name: str) -> None:
+    if not display_name or not display_name.strip():
+        raise ProviderRegistryError("display_name must not be empty")
+
+
+def _validate_kind(kind: str) -> None:
+    if kind not in _VALID_KINDS:
+        raise ProviderRegistryError(f"kind must be one of {sorted(_VALID_KINDS)}, got {kind!r}")
+
+
+def _validate_max_ciphertext_bytes(max_ciphertext_bytes: int) -> None:
+    if max_ciphertext_bytes <= 0:
+        raise ProviderRegistryError(f"max_ciphertext_bytes must be positive, got {max_ciphertext_bytes!r}")
+
+
+def _validate_protocol_version(protocol_version: Optional[str]) -> None:
+    if protocol_version is not None and not protocol_version.strip():
+        raise ProviderRegistryError("protocol_version must not be an empty string (use CLEAR/None to omit it)")
+
+
+def _validate_ttl_pair(min_ttl_seconds: Optional[int], max_ttl_seconds: Optional[int]) -> None:
+    """PR #231 review, section 9: both TTL bounds must be positive when
+    given, and min must never exceed max - a Relay whose min_ttl exceeds
+    its own max_ttl can never satisfy any request, a silently-broken
+    profile rather than a rejected-at-the-door one."""
+    if min_ttl_seconds is not None and min_ttl_seconds <= 0:
+        raise ProviderRegistryError(f"min_ttl_seconds must be positive, got {min_ttl_seconds!r}")
+    if max_ttl_seconds is not None and max_ttl_seconds <= 0:
+        raise ProviderRegistryError(f"max_ttl_seconds must be positive, got {max_ttl_seconds!r}")
+    if min_ttl_seconds is not None and max_ttl_seconds is not None and min_ttl_seconds > max_ttl_seconds:
+        raise ProviderRegistryError(
+            f"min_ttl_seconds ({min_ttl_seconds!r}) must not exceed max_ttl_seconds ({max_ttl_seconds!r})"
+        )
+
+
 def _row_to_profile(row: sqlite3.Row) -> ProviderProfile:
     row_keys = row.keys()
     return ProviderProfile(
@@ -241,12 +298,23 @@ class ProviderRegistry:
         `get_default()`'s unordered `LIMIT 1` would then pick between them
         non-deterministically. `set_default()` is transactional and is
         the only place that clears the old default, so this method can
-        never reproduce that bug again."""
+        never reproduce that bug again.
+
+        PR #231 review, section 9: validates `kind`/`display_name`/
+        `max_ciphertext_bytes`/the TTL pair/`protocol_version` up front -
+        a malformed profile used to be accepted silently and only fail
+        later, mid-transfer, in a way much harder to trace back to a bad
+        registration."""
         origin = normalize_origin(base_url)
         if len(service_public_key) != 32:
             raise ProviderRegistryError(
                 f"service_public_key must be 32 raw bytes (Ed25519), got {len(service_public_key)}"
             )
+        _validate_display_name(display_name)
+        _validate_kind(kind)
+        _validate_max_ciphertext_bytes(max_ciphertext_bytes)
+        _validate_ttl_pair(min_ttl_seconds, max_ttl_seconds)
+        _validate_protocol_version(protocol_version)
         provider_id = compute_provider_id(origin, service_public_key)
         now = time.time() if now is None else now
         self._conn.execute(
@@ -321,18 +389,46 @@ class ProviderRegistry:
         enabled: Optional[bool] = None,
         upload_allowed: Optional[bool] = None,
         download_allowed: Optional[bool] = None,
-        min_ttl_seconds: Optional[int] = None,
-        max_ttl_seconds: Optional[int] = None,
+        min_ttl_seconds: "Optional[int] | _ClearSentinel" = None,
+        max_ttl_seconds: "Optional[int] | _ClearSentinel" = None,
+        protocol_version: "Optional[str] | _ClearSentinel" = None,
     ) -> ProviderProfile:
         """Edits the mutable, non-identity-defining fields of an existing
         profile. Deliberately does not accept `service_public_key`/
         `origin`/`base_url` - changing either of those changes what
         `provider_id` even means (`compute_provider_id()`), which is a new
         registration (a fresh trust-bootstrap confirmation), never a
-        silent edit of an existing one (ADR-0008)."""
+        silent edit of an existing one (ADR-0008).
+
+        PR #231 review, section 9: `min_ttl_seconds`/`max_ttl_seconds`/
+        `protocol_version` used a plain `COALESCE(?, column)` UPDATE,
+        which can never distinguish "not mentioned, leave alone" from
+        "explicitly clear to NULL" - both arrive at the SQL layer as the
+        same `None`. Pass `provider_registry.CLEAR` for one of these
+        three fields to explicitly clear it; omit the argument (or pass
+        `None`) to leave it untouched. A plain int/str value sets it, and
+        is validated the same way `register()` validates it - positive,
+        min<=max, non-empty."""
         existing = self.resolve(provider_id)
         if existing is None:
             raise ProviderRegistryError(f"no such provider_id in this workspace: {provider_id!r}")
+        if display_name is not None:
+            _validate_display_name(display_name)
+
+        def _resolve(value, current):
+            """None -> leave alone (current value); CLEAR -> NULL; else -> the new value."""
+            if value is None:
+                return current
+            if value is CLEAR:
+                return None
+            return value
+
+        effective_min_ttl = _resolve(min_ttl_seconds, existing.min_ttl_seconds)
+        effective_max_ttl = _resolve(max_ttl_seconds, existing.max_ttl_seconds)
+        _validate_ttl_pair(effective_min_ttl, effective_max_ttl)
+        effective_protocol_version = _resolve(protocol_version, existing.protocol_version)
+        _validate_protocol_version(effective_protocol_version)
+
         self._conn.execute(
             """
             UPDATE mca_provider_profiles SET
@@ -340,8 +436,9 @@ class ProviderRegistry:
                 enabled = COALESCE(?, enabled),
                 upload_allowed = COALESCE(?, upload_allowed),
                 download_allowed = COALESCE(?, download_allowed),
-                min_ttl_seconds = COALESCE(?, min_ttl_seconds),
-                max_ttl_seconds = COALESCE(?, max_ttl_seconds)
+                min_ttl_seconds = ?,
+                max_ttl_seconds = ?,
+                protocol_version = ?
             WHERE workspace_id = ? AND provider_id = ?
             """,
             (
@@ -349,8 +446,9 @@ class ProviderRegistry:
                 None if enabled is None else int(enabled),
                 None if upload_allowed is None else int(upload_allowed),
                 None if download_allowed is None else int(download_allowed),
-                min_ttl_seconds,
-                max_ttl_seconds,
+                effective_min_ttl,
+                effective_max_ttl,
+                effective_protocol_version,
                 self._workspace_id,
                 provider_id,
             ),
@@ -436,9 +534,17 @@ class ProviderRegistry:
         existing convention, not a new trust boundary) and records only
         the filename in `mca_provider_profiles.upload_token_file`. The
         token itself never touches a DB row, an HTTP response, or a log
-        line (ADR-0008)."""
+        line (ADR-0008).
+
+        PR #231 review, section 9: rejects an empty token outright - a
+        silently-stored empty upload token file used to read back as a
+        real, "configured" token (`upload_token_configured=True`) that
+        then failed every real upload attempt with an opaque auth error
+        instead of never being marked configured in the first place."""
         if self.resolve(provider_id) is None:
             raise ProviderRegistryError(f"no such provider_id in this workspace: {provider_id!r}")
+        if not token or not token.strip():
+            raise ProviderRegistryError("upload token must not be empty")
         token_path = self._upload_token_path(provider_id, workspace_manager, principal_id)
         fd = os.open(str(token_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), _UPLOAD_TOKEN_FILE_MODE)
         try:

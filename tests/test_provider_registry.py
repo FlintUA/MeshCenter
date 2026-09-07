@@ -21,6 +21,7 @@ import pytest
 
 from meshsrv.attachments.db.migrations import migrate
 from meshsrv.attachments.provider_registry import (
+    CLEAR,
     ProviderRegistry,
     ProviderRegistryError,
     compute_provider_id,
@@ -322,6 +323,82 @@ def test_update_profile_never_changes_identity_fields(registry):
     assert updated.provider_id == profile.provider_id
     assert updated.origin == profile.origin
     assert updated.service_public_key == profile.service_public_key
+
+
+def test_update_profile_clear_sentinel_explicitly_nulls_a_ttl(registry):
+    """PR #231 review, section 9: the old COALESCE(?, column) UPDATE could
+    never distinguish 'not mentioned' from 'clear it' - both were plain
+    None. registry.CLEAR is the fix; a caller that means 'leave alone'
+    still just omits the argument."""
+    profile = registry.register(
+        display_name="Clearable", base_url="https://clear.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024, min_ttl_seconds=60, max_ttl_seconds=3600,
+        protocol_version="1.0",
+    )
+    assert profile.min_ttl_seconds == 60
+    assert profile.protocol_version == "1.0"
+
+    # Omitting the argument must leave it untouched...
+    unchanged = registry.update_profile(profile.provider_id, display_name="Still Clearable")
+    assert unchanged.min_ttl_seconds == 60
+    assert unchanged.protocol_version == "1.0"
+
+    # ...while passing CLEAR must actually null it, not leave the old value.
+    cleared = registry.update_profile(
+        profile.provider_id, min_ttl_seconds=CLEAR, max_ttl_seconds=CLEAR, protocol_version=CLEAR
+    )
+    assert cleared.min_ttl_seconds is None
+    assert cleared.max_ttl_seconds is None
+    assert cleared.protocol_version is None
+
+
+def test_update_profile_rejects_a_ttl_pair_that_would_become_invalid(registry):
+    """Validation runs against the *effective* (post-update) values, not
+    just whatever this one call happens to pass - lowering min_ttl_seconds
+    above the existing max_ttl_seconds must be rejected even though this
+    call never touches max_ttl_seconds itself."""
+    profile = registry.register(
+        display_name="Bounded", base_url="https://bounded.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024, min_ttl_seconds=60, max_ttl_seconds=120,
+    )
+    with pytest.raises(ProviderRegistryError):
+        registry.update_profile(profile.provider_id, min_ttl_seconds=500)
+    with pytest.raises(ProviderRegistryError):
+        registry.update_profile(profile.provider_id, min_ttl_seconds=-1)
+    with pytest.raises(ProviderRegistryError):
+        registry.update_profile(profile.provider_id, protocol_version="   ")
+
+
+def test_register_rejects_malformed_backend_fields(registry):
+    """PR #231 review, section 9: kind/display_name/max_ciphertext_bytes/
+    the TTL pair/protocol_version must all be validated at registration
+    time, not left to fail later, mid-transfer, far from the actual
+    mistake."""
+    base_kwargs = dict(base_url="https://bad.example.net", service_public_key=SERVICE_KEY)
+
+    with pytest.raises(ProviderRegistryError):
+        registry.register(display_name="", max_ciphertext_bytes=1024, **base_kwargs)
+    with pytest.raises(ProviderRegistryError):
+        registry.register(display_name="X", max_ciphertext_bytes=0, **base_kwargs)
+    with pytest.raises(ProviderRegistryError):
+        registry.register(display_name="X", max_ciphertext_bytes=1024, kind="bogus", **base_kwargs)
+    with pytest.raises(ProviderRegistryError):
+        registry.register(
+            display_name="X", max_ciphertext_bytes=1024, min_ttl_seconds=100, max_ttl_seconds=50, **base_kwargs
+        )
+    with pytest.raises(ProviderRegistryError):
+        registry.register(display_name="X", max_ciphertext_bytes=1024, protocol_version="  ", **base_kwargs)
+
+
+def test_set_upload_token_rejects_empty_token(registry, wsm):
+    profile = registry.register(
+        display_name="Tokened", base_url="https://tokened.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    with pytest.raises(ProviderRegistryError):
+        registry.set_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718", "")
+    with pytest.raises(ProviderRegistryError):
+        registry.set_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718", "   ")
 
 
 def test_remove_or_disable_deletes_when_unused_disables_when_referenced(conn, registry, wsm):

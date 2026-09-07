@@ -738,10 +738,17 @@ class AttachmentsService:
         `fail_recipients_not_trusted()` for the whole attachment.
 
         Once a delivery record passes all three, each individual
-        recipient's binding must also match: `binding.transport_address`
-        must equal the delivery's own `route_id` - fail closed
-        (excluded, same as an untrusted/KEY_UNKNOWN binding) on a
-        mismatch, never silently sent anyway.
+        recipient's binding must also match on two independent fields
+        (PR #231 review, 4th pass adds the first of these - the earlier
+        pass only checked the second): `binding.adapter_id` must equal
+        the delivery's own `adapter_id` (a binding recorded for the
+        right address but under a *different* adapter is not the same
+        trust relationship as one recorded for the adapter this
+        attachment is actually being sent through), and
+        `binding.transport_address` must equal the delivery's own
+        `route_id`. Fail closed (excluded, same as an untrusted/
+        KEY_UNKNOWN binding) on either mismatch, never silently sent
+        anyway.
 
         Logging note (PR #231 review, 3rd pass): none of the log lines
         below include a raw transport address, key_id, or attachment_id
@@ -777,12 +784,27 @@ class AttachmentsService:
             return identities
 
         delivery_route_id = delivery_row["route_id"]
+        delivery_adapter_id = delivery_row["adapter_id"]
         for recipient_row in recipient_rows:
             key_id = recipient_row["recipient_principal_id"]
             if not key_id:
                 continue
             binding = self._key_exchange.get_binding_by_key_id(key_id)
             if binding is None or binding.status != AddressStatus.MCA_READY:
+                continue
+            # PR #231 review (4th pass): the binding's own adapter_id must
+            # also match this delivery's adapter_id - a binding recorded
+            # for the right address but under a *different* adapter (e.g.
+            # a hypothetical future second adapter reusing an overlapping
+            # address namespace) is not the same trust relationship as one
+            # recorded for the adapter this attachment is actually being
+            # sent through. Checked in addition to, not instead of, the
+            # transport_address check below - both must agree.
+            if binding.adapter_id != delivery_adapter_id:
+                logger.info(
+                    "AttachmentsService: excluding a recipient - TOFU binding was recorded under a "
+                    "different adapter than this attachment's own delivery adapter"
+                )
                 continue
             if binding.transport_address != delivery_route_id:
                 logger.info(

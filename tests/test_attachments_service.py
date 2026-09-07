@@ -468,6 +468,118 @@ def test_tick_fails_attachment_instead_of_encrypting_to_a_key_bound_at_a_differe
     assert conn.execute("SELECT 1 FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone() is None
 
 
+_MISMATCHED_ADAPTER_ID = "a-completely-different-adapter"
+
+
+def _service_with_mismatched_key_exchange_adapter(conn, wsm, principal, provider_registry, connectivity_monitor, relay_client):
+    """PR #231 review (4th pass): `KeyExchangeCoordinator.
+    get_binding_by_key_id()` itself filters by its OWN configured
+    `adapter_id` (one coordinator per workspace/adapter - module
+    docstring), so a binding recorded under a genuinely different
+    adapter_id than the coordinator's own is simply never found at all
+    (silently skipped by the existing `binding is None` guard, not by
+    the new adapter check this test is actually after). To exercise
+    `binding.adapter_id != delivery_row["adapter_id"]` for real, this
+    builds a service around a KeyExchangeCoordinator deliberately
+    misconfigured with `_MISMATCHED_ADAPTER_ID` - so its lookup finds a
+    binding recorded under *that* adapter_id, while `_create_draft()`'s
+    delivery record (built separately, always ADAPTER_ID="fake-text")
+    still names the real one. This simulates a coordinator/delivery-
+    adapter configuration mismatch - not reachable through this
+    module's normal fixtures, which always keep the two in sync, but a
+    real defense-in-depth case this check exists to catch regardless."""
+    mismatched_key_exchange = KeyExchangeCoordinator(conn, wsm, principal, _MISMATCHED_ADAPTER_ID)
+    delivery_adapter = FakeTextAdapter(InMemoryEther(), "local-addr")
+    return AttachmentsService(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=mismatched_key_exchange, connectivity_monitor=connectivity_monitor,
+        delivery_adapter=delivery_adapter, relay_client_factory=lambda provider_id_text: relay_client,
+        max_per_tick=8,
+    )
+
+
+def test_resolve_recipient_identities_excludes_a_binding_recorded_under_a_different_adapter(
+    conn, wsm, principal, provider_registry, registered_provider, connectivity_monitor, relay_client, remote_recipient, tmp_path, caplog
+):
+    """PR #231 review (4th pass): the binding's own adapter_id must also
+    match the delivery's adapter_id - a binding whose address AND key
+    are otherwise perfectly valid, but recorded under a *different*
+    adapter than the one this attachment is actually being sent
+    through, must still be excluded. Address alone is not the whole
+    trust relationship TOFU establishes; the adapter it was bound
+    through is part of it too."""
+    import logging
+
+    _, _, recipient_principal = remote_recipient
+    mismatched_service = _service_with_mismatched_key_exchange_adapter(
+        conn, wsm, principal, provider_registry, connectivity_monitor, relay_client
+    )
+    # Same transport_address _create_draft() uses as its own route_id
+    # ("remote-addr") and a genuinely valid, TOFU-confirmed key - bound
+    # under _MISMATCHED_ADAPTER_ID, matching mismatched_service's own
+    # (deliberately misconfigured) key_exchange, but NOT ADAPTER_ID
+    # ("fake-text"), which _create_draft()'s delivery record always uses.
+    _insert_binding(
+        conn, workspace_id="local", adapter_id=_MISMATCHED_ADAPTER_ID,
+        transport_address="remote-addr", principal_id=recipient_principal.principal_id,
+        sender_key_id=recipient_principal.key_id, public_identity=recipient_principal.public_identity,
+        now=time.time(),
+    )
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+
+    for _ in range(20):
+        if sender.get_state(conn, attachment_id) == sender.ENCRYPTING:
+            break
+        mismatched_service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.ENCRYPTING
+
+    # Sanity check that the binding really is found (otherwise this test
+    # would trivially pass via the unrelated "binding is None" guard).
+    found_binding = mismatched_service._key_exchange.get_binding_by_key_id(recipient_principal.key_id)
+    assert found_binding is not None
+    assert found_binding.adapter_id == _MISMATCHED_ADAPTER_ID
+
+    with caplog.at_level(logging.INFO, logger="meshsrv.attachments.service"):
+        result = mismatched_service._resolve_recipient_identities(attachment_id)
+    assert result == {}
+
+    rejection_records = [r for r in caplog.records if "different adapter" in r.message]
+    assert len(rejection_records) == 1
+    # Same logging-hygiene requirement as the other rejection paths -
+    # no raw key_id/attachment_id/transport_address in the log line.
+    assert recipient_principal.key_id not in rejection_records[0].message
+    assert attachment_id not in rejection_records[0].message
+    assert "remote-addr" not in rejection_records[0].message
+
+
+def test_tick_fails_attachment_instead_of_encrypting_to_a_key_bound_under_a_different_adapter(
+    conn, wsm, principal, provider_registry, registered_provider, connectivity_monitor, relay_client, remote_recipient, tmp_path
+):
+    _, _, recipient_principal = remote_recipient
+    mismatched_service = _service_with_mismatched_key_exchange_adapter(
+        conn, wsm, principal, provider_registry, connectivity_monitor, relay_client
+    )
+    _insert_binding(
+        conn, workspace_id="local", adapter_id=_MISMATCHED_ADAPTER_ID,
+        transport_address="remote-addr", principal_id=recipient_principal.principal_id,
+        sender_key_id=recipient_principal.key_id, public_identity=recipient_principal.public_identity,
+        now=time.time(),
+    )
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+
+    for _ in range(20):
+        state = sender.get_state(conn, attachment_id)
+        if state in (sender.FAILED_VALIDATION, sender.SENT):
+            break
+        mismatched_service.tick()
+
+    assert sender.get_state(conn, attachment_id) == sender.FAILED_VALIDATION
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT error_code FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+    assert row["error_code"] == "recipient_not_trusted"
+    assert conn.execute("SELECT 1 FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone() is None
+
+
 def test_resolve_recipient_identities_accepts_a_binding_matching_the_destination_address(
     conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
 ):
@@ -604,8 +716,12 @@ def test_rejection_log_lines_never_include_raw_address_key_id_or_attachment_id(
 ):
     """PR #231 review (3rd pass): the rejection path must not leak raw
     transport addresses, key IDs, or attachment IDs into logs - checked
-    across all four rejection reasons in one pass (missing delivery,
-    non-DIRECT route, adapter mismatch, address mismatch)."""
+    across four rejection reasons in one pass (missing delivery,
+    non-DIRECT route, delivery adapter mismatch, address mismatch). See
+    the dedicated binding-adapter-mismatch tests below for that fifth
+    reason's own log-content assertion - it needs a differently-
+    configured service (a mismatched KeyExchangeCoordinator) that
+    doesn't fit this shared-fixture test's setup."""
     import logging
 
     _, _, recipient_principal = remote_recipient

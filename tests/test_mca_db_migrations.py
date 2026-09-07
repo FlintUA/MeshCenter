@@ -59,6 +59,82 @@ def test_migrate_rolls_back_to_zero(conn):
     assert ALL_TABLE_NAMES.isdisjoint(_table_names(conn))
 
 
+def test_migration_8_dedupes_multiple_is_default_rows_before_indexing(conn):
+    """Regression test for a real reviewer-found defect: register(...,
+    is_default=True)'s pre-ADR-0008 bug (documented directly above
+    migration 8's own SQL) never cleared is_default on any other row in
+    the workspace, so a real install could already have two or more
+    is_default=1 rows in the same workspace by the time it upgrades to
+    this migration. Creating a partial UNIQUE index over that column
+    without first collapsing such a row set would fail the migration
+    outright - this seeds exactly that pre-existing-bug state at
+    migration 7 and proves migrating to 8 both succeeds and leaves
+    exactly one is_default=1 row per workspace, chosen deterministically
+    (earliest added_at)."""
+    migrate(conn, target_version=7)
+    conn.execute(
+        """
+        INSERT INTO mca_provider_profiles
+            (provider_id, workspace_id, origin, service_public_key_b64url,
+             max_ciphertext_bytes, hard_expiry_default_seconds, is_default, added_at)
+        VALUES
+            ('provider-older', 'local', 'https://a.example', 'aa', 1000, 3600, 1, 100),
+            ('provider-newer', 'local', 'https://b.example', 'bb', 1000, 3600, 1, 200),
+            ('provider-other-workspace', 'other', 'https://c.example', 'cc', 1000, 3600, 1, 50)
+        """
+    )
+    conn.commit()
+
+    migrate(conn, target_version=8)
+    assert current_version(conn) == 8
+
+    local_defaults = conn.execute(
+        "SELECT provider_id FROM mca_provider_profiles WHERE workspace_id = 'local' AND is_default = 1"
+    ).fetchall()
+    assert [row[0] for row in local_defaults] == ["provider-older"]
+
+    # The other workspace's own single default row must be untouched -
+    # this cleanup is scoped per-workspace, not global.
+    other_defaults = conn.execute(
+        "SELECT provider_id FROM mca_provider_profiles WHERE workspace_id = 'other' AND is_default = 1"
+    ).fetchall()
+    assert [row[0] for row in other_defaults] == ["provider-other-workspace"]
+
+    # The unique index is real and enforced going forward, not just
+    # created over already-clean data by coincidence.
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO mca_provider_profiles
+                (provider_id, workspace_id, origin, service_public_key_b64url,
+                 max_ciphertext_bytes, hard_expiry_default_seconds, is_default, added_at)
+            VALUES ('provider-third', 'local', 'https://d.example', 'dd', 1000, 3600, 1, 300)
+            """
+        )
+
+
+def test_migration_8_is_a_noop_for_a_workspace_with_only_one_default(conn):
+    """The common case - already exactly one is_default=1 row per
+    workspace - must not be touched by the new cleanup UPDATE."""
+    migrate(conn, target_version=7)
+    conn.execute(
+        """
+        INSERT INTO mca_provider_profiles
+            (provider_id, workspace_id, origin, service_public_key_b64url,
+             max_ciphertext_bytes, hard_expiry_default_seconds, is_default, added_at)
+        VALUES ('provider-only', 'local', 'https://a.example', 'aa', 1000, 3600, 1, 100)
+        """
+    )
+    conn.commit()
+
+    migrate(conn, target_version=8)
+
+    row = conn.execute(
+        "SELECT is_default FROM mca_provider_profiles WHERE provider_id = 'provider-only'"
+    ).fetchone()
+    assert row[0] == 1
+
+
 def test_open_attachments_db_migrates_a_real_file(tmp_path):
     db_path = tmp_path / "attachments.db"
     conn = open_attachments_db(db_path)

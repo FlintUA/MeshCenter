@@ -26,9 +26,10 @@ mechanism, deliberately not a bespoke `schema_migrations` table, since
 
 from __future__ import annotations
 
+import re
 import sqlite3
-from dataclasses import dataclass
-from typing import Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Callable, Optional, Sequence
 
 _MIGRATION_0001_UP = """
 CREATE TABLE attachments (
@@ -447,6 +448,30 @@ ALTER TABLE mca_provider_profiles ADD COLUMN last_check_result TEXT;
 ALTER TABLE mca_provider_profiles ADD COLUMN last_latency_ms INTEGER;
 ALTER TABLE mca_provider_profiles ADD COLUMN last_error_code TEXT;
 
+-- Deterministic cleanup BEFORE the unique index below: this migration's
+-- own comment (see the module-level ADR-0008 note above) already admits
+-- register(..., is_default=True) never cleared is_default on any other
+-- row in the workspace, so a real install that hit that bug can have two
+-- or more is_default=1 rows in the same workspace today. Creating a
+-- partial UNIQUE index over that column without first collapsing such a
+-- row set would fail the migration outright (sqlite3.IntegrityError) on
+-- exactly the installs this ADR is trying to fix. Keep the earliest-added
+-- default per workspace (added_at, provider_id as a deterministic
+-- tiebreaker so two rows with the same added_at don't leave the choice to
+-- SQLite's own unspecified row order); clear every other is_default=1 row
+-- in that same workspace. A workspace with only one is_default=1 row (the
+-- overwhelming common case) matches its own subquery result and this
+-- UPDATE touches zero rows for it.
+UPDATE mca_provider_profiles
+SET is_default = 0
+WHERE is_default = 1
+  AND provider_id != (
+      SELECT p2.provider_id FROM mca_provider_profiles AS p2
+      WHERE p2.workspace_id = mca_provider_profiles.workspace_id AND p2.is_default = 1
+      ORDER BY p2.added_at ASC, p2.provider_id ASC
+      LIMIT 1
+  );
+
 CREATE UNIQUE INDEX idx_mca_provider_profiles_one_default
     ON mca_provider_profiles(workspace_id) WHERE is_default = 1;
 """
@@ -466,12 +491,79 @@ ALTER TABLE mca_provider_profiles DROP COLUMN kind;
 """
 
 
+_MIGRATION_0009_UP = ""  # data-only migration - see the fixup functions below
+
+_MIGRATION_0009_DOWN = ""  # data-only migration - see the fixup functions below
+
+_HEX16_RE = re.compile(r"^[0-9a-f]{16}$")
+
+
+def _migration_0009_fixup_sent_provider_id_encoding(conn: sqlite3.Connection) -> None:
+    """Reviewer-found defect, reproduced locally: `sender.create_draft()`
+    stored `attachments.provider_id` as hex for 'sent' rows while
+    `receiver.py` already stored it as Base64URL (matching
+    `ProviderRegistry`'s own key format) for 'received' rows -
+    `ProviderRegistry.remove_or_disable()`'s "is this provider_id still
+    referenced by any attachment?" check compares against the Base64URL
+    form, so it NEVER matched a 'sent' row and could delete a Relay
+    profile a real outgoing attachment still depended on. `sender.py`'s
+    write/read sites are now fixed to use Base64URL like everything else
+    (this ADR-0008-hardening pass); this one-time fixup re-encodes any
+    row a pre-fix process already wrote as hex, on any real install that
+    already sent an attachment before this fix existed (dev/prod both
+    did, during Step 1.3/1.4's hardware tests).
+
+    Deliberately conservative: only touches a value that looks exactly
+    like the old hex encoding (16 lowercase hex chars, matching an 8-byte
+    provider_id) - anything else (already Base64URL, NULL, or some
+    unexpected value) is left untouched rather than guessed at."""
+    from meshsrv.attachments.provider_registry import encode_provider_id
+
+    rows = conn.execute(
+        "SELECT id, provider_id FROM attachments WHERE direction = 'sent' AND provider_id IS NOT NULL"
+    ).fetchall()
+    for attachment_id, provider_id_value in rows:
+        if not _HEX16_RE.match(provider_id_value or ""):
+            continue
+        raw = bytes.fromhex(provider_id_value)
+        conn.execute(
+            "UPDATE attachments SET provider_id = ? WHERE id = ?",
+            (encode_provider_id(raw), attachment_id),
+        )
+
+
+def _migration_0009_down_fixup_sent_provider_id_encoding(conn: sqlite3.Connection) -> None:
+    """Inverse of the above, for symmetry with every other migration's
+    down path - converts a 'sent' row's provider_id back to hex, the
+    encoding a downgraded `sender.py` (pre-this-fix) would expect."""
+    from meshsrv.attachments.provider_registry import ProviderRegistryError, decode_provider_id
+
+    rows = conn.execute(
+        "SELECT id, provider_id FROM attachments WHERE direction = 'sent' AND provider_id IS NOT NULL"
+    ).fetchall()
+    for attachment_id, provider_id_value in rows:
+        try:
+            raw = decode_provider_id(provider_id_value)
+        except ProviderRegistryError:
+            continue  # already hex (or unexpected) - never touch
+        conn.execute(
+            "UPDATE attachments SET provider_id = ? WHERE id = ?",
+            (raw.hex(), attachment_id),
+        )
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
     name: str
     up_sql: str
     down_sql: str
+    # Optional Python step run after up_sql/down_sql's executescript() -
+    # for a transformation plain SQL can't express (Migration 9: re-
+    # encoding a column's text using this codebase's own Base64URL
+    # helper). None for every migration that is pure schema DDL.
+    data_fixup: Optional[Callable[[sqlite3.Connection], None]] = None
+    down_data_fixup: Optional[Callable[[sqlite3.Connection], None]] = None
 
 
 MIGRATIONS: Sequence[Migration] = (
@@ -483,6 +575,11 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(6, "mca_receiver_state", _MIGRATION_0006_UP, _MIGRATION_0006_DOWN),
     Migration(7, "attachments_draft_comment", _MIGRATION_0007_UP, _MIGRATION_0007_DOWN),
     Migration(8, "provider_profiles_v2", _MIGRATION_0008_UP, _MIGRATION_0008_DOWN),
+    Migration(
+        9, "unify_sent_provider_id_encoding", _MIGRATION_0009_UP, _MIGRATION_0009_DOWN,
+        data_fixup=_migration_0009_fixup_sent_provider_id_encoding,
+        down_data_fixup=_migration_0009_down_fixup_sent_provider_id_encoding,
+    ),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0
@@ -530,13 +627,19 @@ def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> N
     if target_version > current:
         for migration in MIGRATIONS:
             if current < migration.version <= target_version:
-                conn.executescript(migration.up_sql)
+                if migration.up_sql:
+                    conn.executescript(migration.up_sql)
+                if migration.data_fixup is not None:
+                    migration.data_fixup(conn)
                 conn.execute(f"PRAGMA user_version = {migration.version}")
                 current = migration.version
     else:
         for migration in reversed(MIGRATIONS):
             if target_version < migration.version <= current:
-                conn.executescript(migration.down_sql)
+                if migration.down_data_fixup is not None:
+                    migration.down_data_fixup(conn)
+                if migration.down_sql:
+                    conn.executescript(migration.down_sql)
                 conn.execute(f"PRAGMA user_version = {migration.version - 1}")
                 current = migration.version - 1
     conn.commit()

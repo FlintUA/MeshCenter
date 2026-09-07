@@ -43,7 +43,9 @@ from meshsrv.connectivity_monitor import (
     ConnectivityMonitor,
     InternetStatus,
     RelayState,
+    UploadDecision,
     UploadReadiness,
+    UploadRejectionReason,
     evaluate_upload_readiness,
 )
 
@@ -132,6 +134,20 @@ def _register(registry, store, **overrides):
     )
     kwargs.update(overrides)
     return registry.register(**kwargs)
+
+
+@pytest.fixture
+def wsm(tmp_path):
+    from meshsrv.attachments.workspace import MCAWorkspaceManager
+
+    return MCAWorkspaceManager(str(tmp_path / "data"))
+
+
+def _configure_upload_token(registry, conn, wsm, provider_id, token="mca_up_test-token"):
+    from meshsrv.attachments import identity as identity_module
+
+    principal = identity_module.ensure_principal(conn, wsm, "local")
+    registry.set_upload_token(provider_id, wsm, principal.principal_id, token)
 
 
 # ---- can_attempt_relay() -------------------------------------------------
@@ -710,6 +726,194 @@ def test_can_upload_to_is_false_when_relay_is_unreachable_even_with_upload_confi
 
 def test_can_upload_to_is_false_for_an_unknown_provider_id(registry):
     monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse()))
+    assert monitor.can_upload_to("never-registered") is False
+
+
+# ---- PR #231 review (3rd pass): evaluate_upload_decision() - table-driven -
+
+
+def test_evaluate_upload_decision_profile_not_found(registry):
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse()))
+    decision = monitor.evaluate_upload_decision("never-registered")
+    assert decision == UploadDecision(ready=False, reason=UploadRejectionReason.PROFILE_NOT_FOUND)
+
+
+def test_evaluate_upload_decision_profile_disabled_even_before_the_first_refresh(registry, store):
+    """PR #231 review (3rd pass) explicit requirement: a disabled
+    profile must be rejected even before refresh() has ever run - the
+    disabled check reads the registry directly, not ConnectivityMonitor's
+    own (still-empty) relay-status cache."""
+    profile = _register(registry, store, upload_allowed=True)
+    registry.update_profile(profile.provider_id, enabled=False)
+
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse()))
+    # Deliberately no monitor.refresh() call anywhere in this test.
+    decision = monitor.evaluate_upload_decision(profile.provider_id)
+    assert decision == UploadDecision(ready=False, reason=UploadRejectionReason.PROFILE_DISABLED)
+
+
+def test_evaluate_upload_decision_upload_not_allowed(registry, store):
+    profile = _register(registry, store, upload_allowed=False)
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse()))
+    decision = monitor.evaluate_upload_decision(profile.provider_id)
+    assert decision == UploadDecision(ready=False, reason=UploadRejectionReason.UPLOAD_NOT_ALLOWED)
+
+
+def test_evaluate_upload_decision_upload_token_missing(registry, store):
+    profile = _register(registry, store, upload_allowed=True)
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse()))
+    decision = monitor.evaluate_upload_decision(profile.provider_id)
+    assert decision == UploadDecision(ready=False, reason=UploadRejectionReason.UPLOAD_TOKEN_MISSING)
+
+
+def test_evaluate_upload_decision_relay_not_yet_checked(registry, store, conn, wsm):
+    """Unlike can_attempt_relay()'s deliberate fail-open on a never-
+    checked profile, evaluate_upload_decision() must NOT claim readiness
+    for a Relay ConnectivityMonitor has not actually confirmed reachable
+    yet - a human-facing "can I upload" decision, not an internal
+    scheduling heuristic."""
+    profile = _register(registry, store, upload_allowed=True)
+    _configure_upload_token(registry, conn, wsm, profile.provider_id)
+
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse()))
+    decision = monitor.evaluate_upload_decision(profile.provider_id)
+    assert decision == UploadDecision(ready=False, reason=UploadRejectionReason.RELAY_NOT_YET_CHECKED)
+
+
+def test_evaluate_upload_decision_relay_unreachable(registry, store, conn, wsm):
+    profile = _register(registry, store, upload_allowed=True)
+    _configure_upload_token(registry, conn, wsm, profile.provider_id)
+
+    def handler(method, url):
+        raise requests.ConnectionError("down")
+
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(handler))
+    monitor.refresh()
+    decision = monitor.evaluate_upload_decision(profile.provider_id)
+    assert decision == UploadDecision(ready=False, reason=UploadRejectionReason.RELAY_UNREACHABLE)
+
+
+def test_evaluate_upload_decision_relay_identity_mismatch(registry, store, conn, wsm):
+    profile = _register(registry, store, upload_allowed=True)
+    _configure_upload_token(registry, conn, wsm, profile.provider_id)
+
+    def handler(method, url):
+        if url.endswith("/health"):
+            return _ScriptedResponse(status_code=200)
+        return _ScriptedResponse(status_code=200, payload={"provider_id": "wrong", "service_key": {"public_key": "x"}})
+
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(handler))
+    monitor.refresh(force=True)
+    decision = monitor.evaluate_upload_decision(profile.provider_id)
+    assert decision == UploadDecision(ready=False, reason=UploadRejectionReason.RELAY_IDENTITY_MISMATCH)
+
+
+def test_evaluate_upload_decision_relay_incompatible(registry, store, conn, wsm):
+    from meshsrv.attachments.provider_registry import b64url_encode
+
+    profile = _register(registry, store, upload_allowed=True)
+    _configure_upload_token(registry, conn, wsm, profile.provider_id)
+
+    def handler(method, url):
+        if url.endswith("/health"):
+            return _ScriptedResponse(status_code=200)
+        return _ScriptedResponse(
+            status_code=200,
+            payload={
+                "provider_id": profile.provider_id,
+                "service_key": {"public_key": b64url_encode(profile.service_public_key)},
+                "protocol_version": "99",
+            },
+        )
+
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(handler))
+    monitor.refresh(force=True)
+    decision = monitor.evaluate_upload_decision(profile.provider_id)
+    assert decision == UploadDecision(ready=False, reason=UploadRejectionReason.RELAY_INCOMPATIBLE)
+
+
+def _ready_profile(registry, store, conn, wsm, flask_session, **overrides):
+    """Registers a profile, configures its upload token, and drives one
+    real refresh() (against the mock Relay app, so /v1/info naturally
+    matches) so it reaches a genuinely upload-ready baseline - the
+    shared setup every ciphertext-size/TTL test below starts from."""
+    profile = _register(registry, store, upload_allowed=True, **overrides)
+    _configure_upload_token(registry, conn, wsm, profile.provider_id)
+    monitor = ConnectivityMonitor(registry, session=flask_session)
+    monitor.refresh(force=True)
+    return monitor, profile
+
+
+def test_evaluate_upload_decision_ciphertext_too_large(registry, store, conn, wsm, flask_session):
+    monitor, profile = _ready_profile(registry, store, conn, wsm, flask_session, max_ciphertext_bytes=1000)
+    decision = monitor.evaluate_upload_decision(profile.provider_id, ciphertext_bytes=1001)
+    assert decision.ready is False
+    assert decision.reason == UploadRejectionReason.CIPHERTEXT_TOO_LARGE
+    assert decision.detail == "1001 > 1000"
+
+
+def test_evaluate_upload_decision_ciphertext_within_limit_is_ready(registry, store, conn, wsm, flask_session):
+    monitor, profile = _ready_profile(registry, store, conn, wsm, flask_session, max_ciphertext_bytes=1000)
+    decision = monitor.evaluate_upload_decision(profile.provider_id, ciphertext_bytes=1000)
+    assert decision == UploadDecision(ready=True, reason=None)
+
+
+def test_evaluate_upload_decision_ttl_below_minimum(registry, store, conn, wsm, flask_session):
+    monitor, profile = _ready_profile(registry, store, conn, wsm, flask_session, min_ttl_seconds=3600, max_ttl_seconds=86400)
+    decision = monitor.evaluate_upload_decision(profile.provider_id, requested_ttl_seconds=1800)
+    assert decision.ready is False
+    assert decision.reason == UploadRejectionReason.TTL_BELOW_MINIMUM
+    assert decision.detail == "1800 < 3600"
+
+
+def test_evaluate_upload_decision_ttl_above_maximum(registry, store, conn, wsm, flask_session):
+    monitor, profile = _ready_profile(registry, store, conn, wsm, flask_session, min_ttl_seconds=3600, max_ttl_seconds=86400)
+    decision = monitor.evaluate_upload_decision(profile.provider_id, requested_ttl_seconds=90000)
+    assert decision.ready is False
+    assert decision.reason == UploadRejectionReason.TTL_ABOVE_MAXIMUM
+    assert decision.detail == "90000 > 86400"
+
+
+def test_evaluate_upload_decision_ttl_within_bounds_is_ready(registry, store, conn, wsm, flask_session):
+    monitor, profile = _ready_profile(registry, store, conn, wsm, flask_session, min_ttl_seconds=3600, max_ttl_seconds=86400)
+    decision = monitor.evaluate_upload_decision(profile.provider_id, requested_ttl_seconds=7200)
+    assert decision == UploadDecision(ready=True, reason=None)
+
+
+def test_evaluate_upload_decision_unbounded_ttl_profile_accepts_any_requested_ttl(registry, store, conn, wsm, flask_session):
+    """min_ttl_seconds/max_ttl_seconds are both optional (Optional[int] =
+    None) - a profile that never set either bound must not reject any
+    requested_ttl_seconds value."""
+    monitor, profile = _ready_profile(registry, store, conn, wsm, flask_session)
+    decision = monitor.evaluate_upload_decision(profile.provider_id, requested_ttl_seconds=10_000_000)
+    assert decision == UploadDecision(ready=True, reason=None)
+
+
+def test_evaluate_upload_decision_ready_when_no_size_or_ttl_given(registry, store, conn, wsm, flask_session):
+    """Omitting ciphertext_bytes/requested_ttl_seconds skips those two
+    checks entirely - a caller asking "is this Relay even usable in
+    principle" before a file has been encrypted has nothing to check
+    ciphertext size against yet."""
+    monitor, profile = _ready_profile(registry, store, conn, wsm, flask_session)
+    decision = monitor.evaluate_upload_decision(profile.provider_id)
+    assert decision == UploadDecision(ready=True, reason=None)
+
+
+def test_evaluate_upload_decision_check_order_profile_disabled_wins_over_upload_not_allowed(registry, store):
+    """Confirms the documented fixed check order: a disabled profile is
+    rejected for PROFILE_DISABLED even when it would also fail a later
+    check (upload not allowed) - the caller learns about the first,
+    most-fundamental problem, not an arbitrary one."""
+    profile = _register(registry, store, upload_allowed=False)
+    registry.update_profile(profile.provider_id, enabled=False)
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse()))
+    decision = monitor.evaluate_upload_decision(profile.provider_id)
+    assert decision.reason == UploadRejectionReason.PROFILE_DISABLED
+
+
+def test_can_upload_to_is_a_thin_wrapper_over_evaluate_upload_decision(registry, store, conn, wsm, flask_session):
+    monitor, profile = _ready_profile(registry, store, conn, wsm, flask_session)
+    assert monitor.can_upload_to(profile.provider_id) is True
     assert monitor.can_upload_to("never-registered") is False
 
 

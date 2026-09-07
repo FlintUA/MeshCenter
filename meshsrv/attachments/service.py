@@ -237,6 +237,25 @@ class AttachmentsService:
         to return early."""
         self._wake_event.set()
 
+    def evaluate_upload_readiness(
+        self, provider_id: str, *, ciphertext_bytes: Optional[int] = None, requested_ttl_seconds: Optional[int] = None
+    ):
+        """PR #231 review (3rd pass), "contextual upload readiness":
+        thin, read-only delegation to `ConnectivityMonitor.
+        evaluate_upload_decision()` - the service-layer surface Step
+        1.6A's future REST endpoints (`GET /api/mca/providers/
+        <id>/upload-readiness` or similar - not built yet) should call
+        rather than reaching into `self._connectivity` directly, matching
+        this module's own "API handlers never touch the Relay/radio
+        themselves" rule (module docstring) - a handler validates input,
+        calls this, and returns the structured `UploadDecision` as JSON.
+        Never blocks, never performs network I/O of its own (`refresh()`
+        already ran on this same worker thread's own tick; this only
+        reads the snapshot it produced)."""
+        return self._connectivity.evaluate_upload_decision(
+            provider_id, ciphertext_bytes=ciphertext_bytes, requested_ttl_seconds=requested_ttl_seconds
+        )
+
     def enqueue_inbound(self, event: InboundEvent) -> bool:
         """The radio listener's ONLY touchpoint with this service (PR #231
         review, section 2) - called from mca_runtime.handle_incoming_

@@ -165,6 +165,42 @@ class ConnectivitySnapshot:
     relays: Dict[str, RelayStatus]
 
 
+class UploadRejectionReason(str, enum.Enum):
+    """PR #231 review (3rd pass), "contextual upload readiness": every
+    distinct reason `evaluate_upload_decision()` can refuse an upload,
+    named so a caller (and its own tests) can branch/assert on *why*,
+    not just whether. `PROFILE_NOT_FOUND` doubles as this dataclass's
+    definition of "unknown provider_id" - there is no separate "unknown"
+    reason, since a caller can't be told to fix a profile that does not
+    exist."""
+
+    PROFILE_NOT_FOUND = "profile_not_found"
+    PROFILE_DISABLED = "profile_disabled"
+    UPLOAD_NOT_ALLOWED = "upload_not_allowed"
+    UPLOAD_TOKEN_MISSING = "upload_token_missing"
+    RELAY_NOT_YET_CHECKED = "relay_not_yet_checked"
+    RELAY_UNREACHABLE = "relay_unreachable"
+    RELAY_IDENTITY_MISMATCH = "relay_identity_mismatch"
+    RELAY_INCOMPATIBLE = "relay_incompatible"
+    CIPHERTEXT_TOO_LARGE = "ciphertext_too_large"
+    TTL_BELOW_MINIMUM = "ttl_below_minimum"
+    TTL_ABOVE_MAXIMUM = "ttl_above_maximum"
+
+
+@dataclasses.dataclass(frozen=True)
+class UploadDecision:
+    """The structured result of `evaluate_upload_decision()` - PR #231
+    review (3rd pass) explicitly asked for "a structured decision/
+    reason, not an unexplained boolean". `ready=True` iff `reason is
+    None`; kept as two fields rather than one so a caller can check
+    `decision.ready` without an `is None` comparison, while still having
+    `reason`/`detail` available for logging/UI display when it is not."""
+
+    ready: bool
+    reason: Optional[UploadRejectionReason]
+    detail: Optional[str] = None
+
+
 @dataclasses.dataclass(frozen=True)
 class _RelayProbeResult:
     """Everything one call to `_probe_relay()` learned about one profile -
@@ -242,38 +278,124 @@ class ConnectivityMonitor:
             return True
         return status.state in _ATTEMPTABLE_RELAY_STATES
 
-    def can_upload_to(self, provider_id: str) -> bool:
-        """PR #231 review (2nd pass), "contextual upload readiness":
-        `RelayStatus.upload_readiness` (module docstring, `RelayStatus`'s
-        own docstring, and `evaluate_upload_readiness()`'s own docstring)
-        is deliberately computed from local configuration alone (upload
-        allowed, a credential on file) - independent of live `state` on
-        purpose, since a Relay's upload-config-readiness and its current
-        reachability are genuinely different questions, reported side by
-        side rather than merged. That independence is correct for
-        `RelayStatus` itself, but it means neither field alone answers
-        "is it actually safe/sensible to start an upload to this Relay
-        right now" - `ProviderRegistry.get_upload_candidates()` filters
-        purely on local config too, with no live-state awareness at all.
-        This is that missing combined, contextual predicate: `True` only
-        when both `can_attempt_relay()` (live reachability) AND
-        `upload_readiness == READY` (local config) agree. A caller
-        deciding where to actually start a real upload (as opposed to
-        `RelayStatus` itself, which must keep reporting both dimensions
-        separately for diagnostic/UI purposes) should call this, not
-        either field alone.
+    def evaluate_upload_decision(
+        self,
+        provider_id: str,
+        *,
+        ciphertext_bytes: Optional[int] = None,
+        requested_ttl_seconds: Optional[int] = None,
+    ) -> UploadDecision:
+        """PR #231 review (3rd pass), "contextual upload readiness" -
+        REPLACES the earlier `can_upload_to()` (2nd pass), which only
+        combined local config with live reachability into an unexplained
+        `bool`. This is the full, structured decision a caller
+        (eventually Step 1.6A's REST layer, via `AttachmentsService.
+        evaluate_upload_readiness()` below - not built yet, this is the
+        function it will call into) needs before actually starting an
+        upload: profile existence, `enabled`, `upload_allowed`, a
+        credential on file, the Relay's *current* live state (distinct
+        reasons for `UNKNOWN`/`UNREACHABLE`/`IDENTITY_MISMATCH`/
+        `INCOMPATIBLE`, not folded into one generic "not ready"), and -
+        when the caller already knows them - the actual ciphertext size
+        against `max_ciphertext_bytes` and a requested TTL against
+        `min_ttl_seconds`/`max_ttl_seconds`.
 
-        A miss (never checked yet) still fails open on the connectivity
-        half, matching `can_attempt_relay()`'s own reasoning - but the
-        local-config half is checked directly against the registry
-        regardless of whether a health probe has ever run, since that
-        part needs no network evidence to answer."""
+        Checked in this fixed order, returning on the first failure
+        (fail closed, cheapest/most-fundamental checks first):
+        1. the profile exists at all (`PROFILE_NOT_FOUND`);
+        2. it is enabled (`PROFILE_DISABLED`) - checked directly against
+           the registry, deliberately *before* any `refresh()` has ever
+           run, since a disabled profile is never upload-ready
+           regardless of what (if anything) `ConnectivityMonitor` has
+           observed about it yet;
+        3. `upload_allowed`/a token is configured (`UPLOAD_NOT_ALLOWED`/
+           `UPLOAD_TOKEN_MISSING` - `evaluate_upload_readiness()`'s own
+           two checks, reused here rather than re-implemented);
+        4. the Relay's current `RelayState` - only `ONLINE`/`DEGRADED`
+           (the existing `_ATTEMPTABLE_RELAY_STATES` set, unchanged) are
+           upload-ready; every other state gets its own named reason
+           (`RELAY_NOT_YET_CHECKED` for `UNKNOWN`/never-probed -
+           deliberately NOT fail-open here, unlike `can_attempt_relay()`:
+           that method's fail-open behavior exists so a scheduling tick
+           isn't stuck refusing a freshly-registered profile for no
+           reason, but a human-facing "can I upload here" decision should
+           not claim readiness this module has not actually confirmed
+           yet; `RELAY_UNREACHABLE`/`RELAY_IDENTITY_MISMATCH`/
+           `RELAY_INCOMPATIBLE` map directly from the matching
+           `RelayState`; `PROFILE_DISABLED` is unreachable here since
+           step 2 already returned for a disabled profile - `DEGRADED`
+           counts as upload-ready, matching `_ATTEMPTABLE_RELAY_STATES`'s
+           existing "worth attempting" meaning elsewhere in this module,
+           not a new, stricter standard invented just for this check);
+        5. `ciphertext_bytes` (when given) against `profile.
+           max_ciphertext_bytes` (`CIPHERTEXT_TOO_LARGE`);
+        6. `requested_ttl_seconds` (when given) against `profile.
+           min_ttl_seconds`/`max_ttl_seconds`, whichever bound is
+           actually configured (`TTL_BELOW_MINIMUM`/`TTL_ABOVE_MAXIMUM`).
+
+        `ciphertext_bytes`/`requested_ttl_seconds` are optional:
+        omitting either skips that one check (a caller asking "is this
+        Relay even usable in principle" before a file has been
+        encrypted, and therefore before its real ciphertext size is
+        known, has nothing to check step 5 against yet)."""
         profile = self._provider_registry.resolve(provider_id)
         if profile is None:
-            return False
-        if evaluate_upload_readiness(profile) != UploadReadiness.READY:
-            return False
-        return self.can_attempt_relay(provider_id)
+            return UploadDecision(ready=False, reason=UploadRejectionReason.PROFILE_NOT_FOUND)
+        if not profile.enabled:
+            return UploadDecision(ready=False, reason=UploadRejectionReason.PROFILE_DISABLED)
+        if not profile.upload_allowed:
+            return UploadDecision(ready=False, reason=UploadRejectionReason.UPLOAD_NOT_ALLOWED)
+        if not profile.upload_token_configured:
+            return UploadDecision(ready=False, reason=UploadRejectionReason.UPLOAD_TOKEN_MISSING)
+
+        relay_status = self._relay_statuses.get(provider_id)
+        relay_state = relay_status.state if relay_status is not None else RelayState.UNKNOWN
+        if relay_state == RelayState.UNKNOWN:
+            return UploadDecision(ready=False, reason=UploadRejectionReason.RELAY_NOT_YET_CHECKED)
+        if relay_state == RelayState.UNREACHABLE:
+            return UploadDecision(ready=False, reason=UploadRejectionReason.RELAY_UNREACHABLE)
+        if relay_state == RelayState.IDENTITY_MISMATCH:
+            return UploadDecision(ready=False, reason=UploadRejectionReason.RELAY_IDENTITY_MISMATCH)
+        if relay_state == RelayState.INCOMPATIBLE:
+            return UploadDecision(ready=False, reason=UploadRejectionReason.RELAY_INCOMPATIBLE)
+        if relay_state not in _ATTEMPTABLE_RELAY_STATES:
+            # DISABLED is unreachable here (step 2 above already returned
+            # for that case) - this is a defensive catch-all for any
+            # future RelayState this function has not been explicitly
+            # taught about yet, so a new state defaults to "not ready"
+            # rather than silently falling through to READY.
+            return UploadDecision(
+                ready=False, reason=UploadRejectionReason.RELAY_UNREACHABLE,
+                detail=f"unrecognized_relay_state:{relay_state.value}",
+            )
+
+        if ciphertext_bytes is not None and ciphertext_bytes > profile.max_ciphertext_bytes:
+            return UploadDecision(
+                ready=False, reason=UploadRejectionReason.CIPHERTEXT_TOO_LARGE,
+                detail=f"{ciphertext_bytes} > {profile.max_ciphertext_bytes}",
+            )
+        if requested_ttl_seconds is not None:
+            if profile.min_ttl_seconds is not None and requested_ttl_seconds < profile.min_ttl_seconds:
+                return UploadDecision(
+                    ready=False, reason=UploadRejectionReason.TTL_BELOW_MINIMUM,
+                    detail=f"{requested_ttl_seconds} < {profile.min_ttl_seconds}",
+                )
+            if profile.max_ttl_seconds is not None and requested_ttl_seconds > profile.max_ttl_seconds:
+                return UploadDecision(
+                    ready=False, reason=UploadRejectionReason.TTL_ABOVE_MAXIMUM,
+                    detail=f"{requested_ttl_seconds} > {profile.max_ttl_seconds}",
+                )
+
+        return UploadDecision(ready=True, reason=None)
+
+    def can_upload_to(self, provider_id: str) -> bool:
+        """Thin boolean convenience wrapper around
+        `evaluate_upload_decision()` for callers that only need a
+        yes/no answer (e.g. a quick internal gate) and don't need to
+        report *why* - prefer calling `evaluate_upload_decision()`
+        directly wherever the reason matters, which is most real
+        callers (module-level "contextual upload readiness" note)."""
+        return self.evaluate_upload_decision(provider_id).ready
 
     # ---- the only method that performs network I/O -------------------
 

@@ -268,6 +268,30 @@ def test_provider_id_text_returns_none_for_missing_value():
     assert _provider_id_text("received", None) is None
 
 
+# ---- PR #231 review (3rd pass): service-layer upload readiness surface ----
+
+
+def test_evaluate_upload_readiness_delegates_to_connectivity_monitor(service, registered_provider, connectivity_monitor, relay_session):
+    """AttachmentsService.evaluate_upload_readiness() is the service-
+    layer surface Step 1.6A's future REST endpoints should call - a thin
+    delegation to ConnectivityMonitor.evaluate_upload_decision(), not a
+    second implementation of the same logic."""
+    connectivity_monitor.refresh(force=True)
+    decision = service.evaluate_upload_readiness(registered_provider.provider_id)
+    assert decision == connectivity_monitor.evaluate_upload_decision(registered_provider.provider_id)
+
+
+def test_evaluate_upload_readiness_passes_through_ciphertext_and_ttl(
+    service, registered_provider, connectivity_monitor, provider_registry, wsm, principal
+):
+    provider_registry.set_upload_token(registered_provider.provider_id, wsm, principal.principal_id, "mca_up_test-token")
+    connectivity_monitor.refresh(force=True)
+    huge = registered_provider.max_ciphertext_bytes + 1
+    decision = service.evaluate_upload_readiness(registered_provider.provider_id, ciphertext_bytes=huge)
+    assert decision.ready is False
+    assert decision.reason.value == "ciphertext_too_large"
+
+
 # ---- tick scan: capping and direction filtering ----------------------------
 
 

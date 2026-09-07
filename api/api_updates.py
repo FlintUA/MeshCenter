@@ -57,19 +57,29 @@ def register_updates_routes(app, resolve_version, project_dir, handle_errors):
                 "detail": result,
             }), 500
 
-        if result.get("requirements_changed"):
+        requirements_changed = result.get("requirements_changed", False)
+        if requirements_changed:
+            # PR #231 review (2nd pass): restarting automatically here
+            # would very likely crash-loop the service - the code on disk
+            # now expects a dependency that was never installed, and
+            # apply_update() deliberately never runs pip itself (see its
+            # own comment on why). Skip the auto-restart; the operator is
+            # told to install dependencies and restart manually, the same
+            # instruction the log line already gave, now also carried in
+            # the response so a caller doesn't have to go read the
+            # server's own console output to learn a restart is needed.
             print(
-                "[UPDATES] requirements.txt changed as part of this update - "
-                "run `source venv/bin/activate && pip install -r requirements.txt` "
-                "manually before/after the restart below (never done automatically - "
-                "see update_service.apply_update()'s own comment on why).",
+                "[UPDATES] requirements.txt changed as part of this update - skipping the "
+                "automatic restart below. Run `source venv/bin/activate && "
+                "pip install -r requirements.txt`, then restart meshcenter.service manually.",
                 flush=True,
             )
-
-        threading.Thread(target=_restart_after_update, daemon=True).start()
+        else:
+            threading.Thread(target=_restart_after_update, daemon=True).start()
 
         return jsonify({
             "ok": True,
             "previous_sha": result["previous_sha"],
-            "requirements_changed": result.get("requirements_changed", False),
+            "requirements_changed": requirements_changed,
+            "restarted": not requirements_changed,
         }), 202

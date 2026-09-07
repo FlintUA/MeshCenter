@@ -27,6 +27,8 @@ the Flask test client.
 from __future__ import annotations
 
 import sqlite3
+import threading
+import time
 
 import pytest
 import requests
@@ -36,6 +38,7 @@ from meshsrv.attachments.provider_registry import ProviderRegistry
 from meshsrv.attachments.relay.mock_server import MockRelayStore, create_mock_relay_app
 from meshsrv.connectivity_monitor import (
     FALLBACK_INTERNET_CHECK_URL,
+    MAX_CONCURRENT_RELAY_PROBES,
     RELAY_HEALTH_BACKOFF_CEILING_SECONDS,
     ConnectivityMonitor,
     InternetStatus,
@@ -498,6 +501,156 @@ def test_refresh_persists_failure_details(registry, store):
     persisted = registry.resolve(profile.provider_id)
     assert persisted.last_check_result == "unreachable"
     assert persisted.last_error_code == "ConnectionError"
+
+
+# ---- PR #231 review (3rd pass): bounded concurrent Relay probing ---------
+
+
+class _SlowThenFastSession:
+    """relay-a.example.net's /health blocks until explicitly released;
+    relay-b.example.net answers immediately and signals `b_completed`
+    when it does. Used to prove, deterministically (no fixed sleep
+    needed to "win" the assertion), that a slow Relay does not prevent
+    another due Relay from being probed in the same refresh() pass.
+    Also answers /v1/info correctly for both profiles (matching their
+    real provider_id/service_public_key) - the very first refresh() for
+    a freshly-registered profile always has its info check due too
+    (never checked before), so a malformed /v1/info response would
+    otherwise turn this test's profiles IDENTITY_MISMATCH instead of
+    ONLINE, unrelated to what this test is actually about."""
+
+    def __init__(self, profile_a, profile_b) -> None:
+        from meshsrv.attachments.provider_registry import b64url_encode as _b64
+
+        def _info_payload(profile):
+            return {
+                "provider_id": profile.provider_id,
+                "service_key": {"public_key": _b64(profile.service_public_key)},
+            }
+
+        self._info_payload_a = _info_payload(profile_a)
+        self._info_payload_b = _info_payload(profile_b)
+        self.a_entered = threading.Event()
+        self.a_release = threading.Event()
+        self.b_completed = threading.Event()
+
+    def request(self, method, url, json=None, data=None, headers=None, timeout=None):
+        if "relay-a" in url:
+            if url.endswith("/health"):
+                self.a_entered.set()
+                released = self.a_release.wait(timeout=10)
+                if not released:
+                    raise AssertionError("_SlowThenFastSession relay-a was never released - test bug")
+                return _ScriptedResponse(status_code=200)
+            if url.endswith("/v1/info"):
+                return _ScriptedResponse(status_code=200, payload=self._info_payload_a)
+        elif "relay-b" in url:
+            if url.endswith("/health"):
+                self.b_completed.set()
+                return _ScriptedResponse(status_code=200)
+            if url.endswith("/v1/info"):
+                return _ScriptedResponse(status_code=200, payload=self._info_payload_b)
+        raise AssertionError(f"unexpected URL in this test: {url}")
+
+
+def test_a_slow_relay_does_not_prevent_another_due_relay_from_being_probed(store):
+    # A dedicated check_same_thread=False connection, not the shared conn/
+    # registry fixtures - this test deliberately calls refresh() from a
+    # background thread (to observe blocking behavior from the main test
+    # thread while it's in flight), and AttachmentsService's own real
+    # wiring gives ConnectivityMonitor a check_same_thread=False
+    # connection too (mca_runtime.py), so this matches production.
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    migrate(conn)
+    registry = ProviderRegistry(conn, workspace_id="ws-1")
+    profile_a = _register(registry, store, display_name="A", base_url="https://relay-a.example.net")
+    profile_b = _register(registry, store, display_name="B", base_url="https://relay-b.example.net")
+    session = _SlowThenFastSession(profile_a, profile_b)
+    monitor = ConnectivityMonitor(registry, session=session)
+
+    refresh_thread = threading.Thread(target=monitor.refresh, daemon=True)
+    refresh_thread.start()
+
+    assert session.a_entered.wait(timeout=5), "relay-a was never probed"
+    # The whole point: B must complete its own probe while A is still
+    # blocked - proven by waiting for b_completed BEFORE releasing A, not
+    # by timing/ordering assumptions.
+    assert session.b_completed.wait(timeout=5), "relay-b's probe never ran while relay-a was still blocked"
+    assert refresh_thread.is_alive(), "refresh() returned before relay-a was released - it should still be blocked"
+
+    session.a_release.set()
+    refresh_thread.join(timeout=5)
+    assert not refresh_thread.is_alive()
+
+    snapshot = monitor.snapshot()
+    assert snapshot.relays[profile_a.provider_id].state == RelayState.ONLINE
+    assert snapshot.relays[profile_b.provider_id].state == RelayState.ONLINE
+
+
+class _ConcurrencyTrackingSession:
+    """Tracks how many `.request()` calls are simultaneously in flight -
+    used to pin the actual concurrency ceiling, not just "a slow one
+    doesn't block a fast one". A short, fixed hold per request widens the
+    overlap window so the peak is reliably observed regardless of exact
+    thread scheduling - unlike the other tests in this file, this one
+    genuinely needs *some* in-request delay to make concurrent overlap
+    observable at all, not to make an assertion "win" a race."""
+
+    def __init__(self, hold_seconds: float = 0.05) -> None:
+        self._lock = threading.Lock()
+        self._current = 0
+        self.max_seen = 0
+        self._hold_seconds = hold_seconds
+
+    def request(self, method, url, json=None, data=None, headers=None, timeout=None):
+        with self._lock:
+            self._current += 1
+            self.max_seen = max(self.max_seen, self._current)
+        time.sleep(self._hold_seconds)
+        with self._lock:
+            self._current -= 1
+        return _ScriptedResponse(status_code=200)
+
+
+def test_concurrent_relay_probes_never_exceed_the_bound(registry, store):
+    for i in range(5):
+        _register(registry, store, display_name=f"relay-{i}", base_url=f"https://relay-{i}.example.net")
+
+    session = _ConcurrencyTrackingSession()
+    monitor = ConnectivityMonitor(registry, session=session)
+    monitor.refresh()
+
+    assert session.max_seen <= MAX_CONCURRENT_RELAY_PROBES
+    assert session.max_seen >= 2  # confirms probes actually overlapped at all, not accidentally serialized
+
+
+def test_refresh_mutates_state_only_on_the_calling_thread(registry, store):
+    """PR #231 review (3rd pass) requirement: ConnectivityMonitor state
+    mutation and ProviderRegistry/SQLite writes stay on the owning
+    (calling) thread even though probes themselves run concurrently on a
+    small pool. Asserts this indirectly but concretely: every
+    record_check_result() call (the SQLite write) must have happened by
+    the time refresh() returns, on the thread that called refresh() -
+    verified by monkeypatching record_check_result() to record which
+    thread called it."""
+    for i in range(4):
+        _register(registry, store, display_name=f"relay-{i}", base_url=f"https://relay-{i}.example.net")
+
+    calling_threads = []
+    original_record = registry.record_check_result
+
+    def _tracking_record(*args, **kwargs):
+        calling_threads.append(threading.current_thread())
+        return original_record(*args, **kwargs)
+
+    registry.record_check_result = _tracking_record
+    monitor = ConnectivityMonitor(registry, session=_ConcurrencyTrackingSession(hold_seconds=0.02))
+    this_thread = threading.current_thread()
+
+    monitor.refresh()
+
+    assert len(calling_threads) == 4
+    assert all(t is this_thread for t in calling_threads)
 
 
 # ---- PR #231 review, section 6 --------------------------------------------

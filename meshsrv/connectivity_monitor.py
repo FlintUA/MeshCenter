@@ -33,13 +33,26 @@ from __future__ import annotations
 import dataclasses
 import enum
 import time
-from typing import Any, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
 from meshsrv.attachments.provider_registry import ProviderProfile, ProviderRegistry, b64url_encode
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
+
+# PR #231 review (3rd pass): bounded concurrency for Relay health/info
+# probes - a slow/unreachable Relay must not delay probing another,
+# already-due Relay behind it in the same refresh() pass. Kept at 2 (not
+# unbounded) per the review's own explicit ceiling; every actual state
+# mutation (self._relay_statuses/_consecutive_failures/_last_info_check,
+# ProviderRegistry.record_check_result()'s SQLite write) still happens
+# only on the calling thread - AttachmentsService's own worker thread,
+# inside its tick_lock - never inside a probe worker thread. See
+# _probe_relay()'s own docstring for the pure-function split that makes
+# this safe.
+MAX_CONCURRENT_RELAY_PROBES = 2
 
 # The fast, frequent per-Relay probe interval, and how far it backs off
 # after consecutive failures - named constants so Step 1.9's real Pi
@@ -152,6 +165,20 @@ class ConnectivitySnapshot:
     relays: Dict[str, RelayStatus]
 
 
+@dataclasses.dataclass(frozen=True)
+class _RelayProbeResult:
+    """Everything one call to `_probe_relay()` learned about one profile -
+    the pure-function output `refresh()` applies to `self` state itself,
+    on its own (calling) thread, after every dispatched probe has
+    returned. Kept as a single bundle rather than returning `RelayStatus`
+    alone so `refresh()` doesn't have to re-derive `new_consecutive_
+    failures`/`info_check_completed` from the status after the fact."""
+
+    status: RelayStatus
+    new_consecutive_failures: int
+    info_check_completed: bool
+
+
 def evaluate_upload_readiness(profile: ProviderProfile) -> UploadReadiness:
     """The only sanctioned way to compute a profile's `UploadReadiness` -
     a real function (PR #231 review, section 10: the old `_upload_
@@ -256,19 +283,24 @@ class ConnectivityMonitor:
         Intended caller: `AttachmentsService`'s own tick loop - never an
         HTTP request handler (module docstring).
 
-        PR #231 review, section 6 asked for concurrent probes bounded at
-        <=2: this loop already probes strictly one profile at a time
-        (concurrency of 1, well within that bound) - AttachmentsService
-        calls this from its own single worker thread, holding its tick
-        lock, the same "real concurrency ceiling is 1 by construction"
-        shape the rest of that module's docstring already describes.
-        Nothing here spawns a thread/task per profile, so there is no
-        actual concurrency to bound."""
+        PR #231 review (3rd pass): due profiles are now probed with
+        bounded concurrency (`MAX_CONCURRENT_RELAY_PROBES=2`, via
+        `_probe_due_relays_concurrently()`) - a slow/unreachable Relay no
+        longer delays probing another, already-due Relay behind it in
+        the same pass. Every state mutation this method makes
+        (`self._relay_statuses`/`_consecutive_failures`/
+        `_last_info_check`, `ProviderRegistry.record_check_result()`'s
+        SQLite write) still happens only here, on the calling thread
+        (`AttachmentsService`'s own worker thread, inside its
+        `tick_lock`) - never inside a probe worker thread. See
+        `_probe_relay()`'s own docstring for the pure-function split
+        that makes concurrent dispatch safe without any additional
+        locking inside this class."""
         now = self._now()
         # All profiles, not just enabled ones: a disabled profile must
         # still surface as a `DISABLED` RelayStatus in the snapshot
         # (design spec's per-Relay state list includes "disabled" as an
-        # observable state, e.g. for a Settings page) - `_check_relay()`
+        # observable state, e.g. for a Settings page) - `_probe_relay()`
         # already short-circuits before any network call for a disabled
         # profile, so including it here costs nothing.
         profiles = self._provider_registry.list_providers()
@@ -294,10 +326,11 @@ class ConnectivityMonitor:
         # evidence that the internet is fine, which `any_online` alone
         # already expresses. A DISABLED relay was never evidence of a
         # failure anyway (a deliberate user choice) - the zero-network-
-        # calls guarantee `_check_relay()` gives a disabled profile is
-        # unaffected either way, disabled profiles still short-circuit
-        # inside the loop below before any HTTP call.
+        # calls guarantee a disabled profile gets is unaffected either
+        # way, disabled profiles still short-circuit below before any
+        # HTTP call.
         any_online = False
+        due_profiles: List[ProviderProfile] = []
 
         for profile in profiles:
             if not profile.enabled:
@@ -309,7 +342,7 @@ class ConnectivityMonitor:
                 # `_due_for_health_check()`'s own backoff/interval logic
                 # decide when a just-disabled profile's status next got
                 # recomputed, which could be minutes away). No network
-                # call either way - matches _check_relay()'s own
+                # call either way - matches `_probe_relay()`'s own
                 # short-circuit for a disabled profile.
                 status = RelayStatus(
                     provider_id=profile.provider_id, state=RelayState.DISABLED,
@@ -323,13 +356,18 @@ class ConnectivityMonitor:
                     cached_state = self._relay_statuses[profile.provider_id].state
                     any_online = any_online or cached_state in _ATTEMPTABLE_RELAY_STATES
                 continue
-            status = self._check_relay(profile, now, force_info=force)
-            self._relay_statuses[profile.provider_id] = status
+            due_profiles.append(profile)
+
+        for profile, probe_result in self._probe_due_relays_concurrently(due_profiles, now, force_info=force):
+            self._relay_statuses[profile.provider_id] = probe_result.status
+            self._consecutive_failures[profile.provider_id] = probe_result.new_consecutive_failures
+            if probe_result.info_check_completed:
+                self._last_info_check[profile.provider_id] = now
             self._provider_registry.record_check_result(
-                profile.provider_id, result=status.state.value, latency_ms=status.latency_ms,
-                error_code=status.error_code, now=now,
+                profile.provider_id, result=probe_result.status.state.value, latency_ms=probe_result.status.latency_ms,
+                error_code=probe_result.status.error_code, now=now,
             )
-            if status.state in _ATTEMPTABLE_RELAY_STATES:
+            if probe_result.status.state in _ATTEMPTABLE_RELAY_STATES:
                 any_online = True
 
         if any_online:
@@ -387,11 +425,64 @@ class ConnectivityMonitor:
         )
         return now - status.checked_at >= interval
 
-    def _check_relay(self, profile: ProviderProfile, now: float, *, force_info: bool) -> RelayStatus:
+    def _probe_due_relays_concurrently(
+        self, due_profiles: List[ProviderProfile], now: float, *, force_info: bool
+    ) -> List[Tuple[ProviderProfile, "_RelayProbeResult"]]:
+        """PR #231 review (3rd pass): dispatches up to
+        `MAX_CONCURRENT_RELAY_PROBES` (2) `_probe_relay()` calls at once -
+        a slow/unreachable Relay's `/health` (or `/v1/info`) call must
+        not delay probing another, already-due Relay behind it in the
+        same `refresh()` pass. `ThreadPoolExecutor.map()` preserves
+        input order in its output, so the returned list lines up 1:1
+        with `due_profiles` without needing to track futures by hand.
+
+        Every argument `_probe_relay()` needs (`current_failures`,
+        `last_info_check_at`) is read from `self` here, on the calling
+        thread, *before* dispatch - the worker threads themselves never
+        read or write any `self.` dict, only `self._session`/
+        `self._timeout` (read-only, and `requests.Session` is documented
+        as thread-safe for concurrent requests). This is what makes
+        concurrent dispatch safe without introducing a new lock inside
+        this class: every actual mutation happens back on the calling
+        thread, in `refresh()`, after this method returns."""
+        if not due_profiles:
+            return []
+
+        def _run_one(profile: ProviderProfile) -> "_RelayProbeResult":
+            return self._probe_relay(
+                profile, now, force_info=force_info,
+                current_failures=self._consecutive_failures.get(profile.provider_id, 0),
+                last_info_check_at=self._last_info_check.get(profile.provider_id),
+            )
+
+        max_workers = min(MAX_CONCURRENT_RELAY_PROBES, len(due_profiles))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            results = list(pool.map(_run_one, due_profiles))
+        return list(zip(due_profiles, results))
+
+    def _probe_relay(
+        self, profile: ProviderProfile, now: float, *, force_info: bool,
+        current_failures: int, last_info_check_at: Optional[float],
+    ) -> "_RelayProbeResult":
+        """The actual network I/O for one profile - deliberately a pure
+        function with respect to `self` state (PR #231 review, 3rd
+        pass): it reads only `self._session`/`self._timeout` (read-only)
+        and the caller-supplied `current_failures`/`last_info_check_at`
+        values, and returns a `_RelayProbeResult` for the caller to apply
+        - it never writes `self._relay_statuses`/`_consecutive_failures`/
+        `_last_info_check`, and never calls
+        `self._provider_registry.record_check_result()` (a SQLite
+        write). This is what makes it safe to call from a worker thread
+        via `_probe_due_relays_concurrently()`: nothing here touches
+        anything another concurrently-running call to this same method
+        could also be touching."""
         if not profile.enabled:
-            return RelayStatus(
-                provider_id=profile.provider_id, state=RelayState.DISABLED,
-                upload_readiness=UploadReadiness.UPLOAD_DISABLED, checked_at=now, latency_ms=None, error_code=None,
+            return _RelayProbeResult(
+                status=RelayStatus(
+                    provider_id=profile.provider_id, state=RelayState.DISABLED,
+                    upload_readiness=UploadReadiness.UPLOAD_DISABLED, checked_at=now, latency_ms=None, error_code=None,
+                ),
+                new_consecutive_failures=0, info_check_completed=False,
             )
 
         start = time.monotonic()
@@ -399,45 +490,68 @@ class ConnectivityMonitor:
             response = self._session.request("GET", f"{profile.origin}/health", timeout=self._timeout)
             latency_ms = int((time.monotonic() - start) * 1000)
         except requests.RequestException as exc:
-            self._consecutive_failures[profile.provider_id] = self._consecutive_failures.get(profile.provider_id, 0) + 1
-            return RelayStatus(
-                provider_id=profile.provider_id, state=RelayState.UNREACHABLE,
-                upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=None,
-                error_code=type(exc).__name__,
+            return _RelayProbeResult(
+                status=RelayStatus(
+                    provider_id=profile.provider_id, state=RelayState.UNREACHABLE,
+                    upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=None,
+                    error_code=type(exc).__name__,
+                ),
+                new_consecutive_failures=current_failures + 1, info_check_completed=False,
             )
 
         if response.status_code != 200:
-            self._consecutive_failures[profile.provider_id] = self._consecutive_failures.get(profile.provider_id, 0) + 1
-            return RelayStatus(
-                provider_id=profile.provider_id, state=RelayState.DEGRADED,
-                upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=latency_ms,
-                error_code=f"http_{response.status_code}",
+            return _RelayProbeResult(
+                status=RelayStatus(
+                    provider_id=profile.provider_id, state=RelayState.DEGRADED,
+                    upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=latency_ms,
+                    error_code=f"http_{response.status_code}",
+                ),
+                new_consecutive_failures=current_failures + 1, info_check_completed=False,
             )
 
-        self._consecutive_failures[profile.provider_id] = 0
-
-        info_due = force_info or (now - self._last_info_check.get(profile.provider_id, 0)) >= RELAY_INFO_MIN_INTERVAL_SECONDS
+        info_due = force_info or (now - (last_info_check_at or 0)) >= RELAY_INFO_MIN_INTERVAL_SECONDS
         if info_due:
             result = self._check_identity(profile)
-            if result is not _INFO_CHECK_INCONCLUSIVE:
-                # PR #231 review, section 6: only stamped when the check
-                # actually completed (succeeded or found a real mismatch)
-                # - a transient failure (result is _INFO_CHECK_INCONCLUSIVE)
-                # must not advance this, or the *next* real attempt could
-                # be silently deferred by up to RELAY_INFO_MIN_INTERVAL_
-                # SECONDS (an hour) because of one flaky request.
-                self._last_info_check[profile.provider_id] = now
-            if result is not None and result is not _INFO_CHECK_INCONCLUSIVE:
-                mismatch_state, error_code = result
-                return RelayStatus(
-                    provider_id=profile.provider_id, state=mismatch_state,
-                    upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=latency_ms,
-                    error_code=error_code,
+            if result is _INFO_CHECK_INCONCLUSIVE:
+                # PR #231 review, section 6: a transient /v1/info failure
+                # must not be treated as a completed check - the caller
+                # must not advance _last_info_check, or the *next* real
+                # attempt could be silently deferred by up to
+                # RELAY_INFO_MIN_INTERVAL_SECONDS (an hour) because of one
+                # flaky request.
+                return _RelayProbeResult(
+                    status=RelayStatus(
+                        provider_id=profile.provider_id, state=RelayState.ONLINE,
+                        upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=latency_ms,
+                        error_code=None,
+                    ),
+                    new_consecutive_failures=0, info_check_completed=False,
                 )
+            if result is not None:
+                mismatch_state, error_code = result
+                return _RelayProbeResult(
+                    status=RelayStatus(
+                        provider_id=profile.provider_id, state=mismatch_state,
+                        upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=latency_ms,
+                        error_code=error_code,
+                    ),
+                    new_consecutive_failures=0, info_check_completed=True,
+                )
+            return _RelayProbeResult(
+                status=RelayStatus(
+                    provider_id=profile.provider_id, state=RelayState.ONLINE,
+                    upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=latency_ms,
+                    error_code=None,
+                ),
+                new_consecutive_failures=0, info_check_completed=True,
+            )
 
-        return RelayStatus(
-            provider_id=profile.provider_id, state=RelayState.ONLINE,
-            upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=latency_ms, error_code=None,
+        return _RelayProbeResult(
+            status=RelayStatus(
+                provider_id=profile.provider_id, state=RelayState.ONLINE,
+                upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=latency_ms, error_code=None,
+            ),
+            new_consecutive_failures=0, info_check_completed=False,
         )
 
     def _check_identity(self, profile: ProviderProfile):

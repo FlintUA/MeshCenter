@@ -24,6 +24,8 @@ import uuid
 
 import pytest
 
+from nacl.signing import VerifyKey
+
 from meshsrv.attachments import codec, identity, receiver, sender
 from meshsrv.attachments.db import migrations
 from meshsrv.attachments.delivery.fakes import FakeTextAdapter, InMemoryEther
@@ -528,6 +530,191 @@ def test_tick_drives_an_offer_all_the_way_to_available(conn, wsm, principal, pro
     ).fetchone()[0]
     with open(saved_path, "rb") as f:
         assert f.read() == content
+
+
+# ---- receiver ACK outbox: real dispatch (PR #227 defect #1) ---------------
+
+
+def test_tick_dispatches_a_real_ack_received_back_to_the_sender(conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient, tmp_path):
+    """End-to-end regression coverage for a reviewer-found defect:
+    handle_offer()/run_step() only ever returned encoded ACK frames as
+    ReceiveResult.replies - both real production callers (mca_runtime.py,
+    this module's own _step_received()) discarded that return value
+    entirely, so no ACK was ever actually transmitted. This drives the
+    fix through AttachmentsService.tick() exactly as production does:
+    handle_offer(source_address=...) persists the reply route, tick()'s
+    own dispatch step sends the queued ACK through a real DeliveryAdapter,
+    and the frame is confirmed to actually arrive - decodable and
+    correctly signed - at the sending node's own inbox."""
+    sender_conn, sender_wsm, sender_principal = remote_recipient
+    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+
+    shared_ether = InMemoryEther()
+    receiver_adapter = FakeTextAdapter(shared_ether, "receiver-addr")
+    sender_adapter = FakeTextAdapter(shared_ether, "remote-addr")
+
+    receiver_service = AttachmentsService(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, connectivity_monitor=connectivity_monitor,
+        delivery_adapter=receiver_adapter, relay_client_factory=lambda provider_id_text: relay_client,
+    )
+
+    provider_id = _raw_provider_id(registered_provider)
+    content = b"a real received file"
+    source_path = tmp_path / "incoming.txt"
+    source_path.write_bytes(content)
+    sent_attachment_id = sender.create_draft(
+        sender_conn, sender_wsm, sender_principal,
+        workspace_id="local", source_path=str(source_path), file_name="incoming.txt", mime_type="text/plain",
+        recipients=[sender.RecipientTarget(public_identity=principal.public_identity, key_id=principal.key_id)],
+        adapter_id=ADAPTER_ID, connector_profile_id="default", route_type="DIRECT", route_id="receiver-addr",
+        provider_id=provider_id,
+    )
+    recipient_identities = {principal.key_id: principal.public_identity}
+    for _ in range(20):
+        if sender.get_state(sender_conn, sent_attachment_id) == sender.SENT:
+            break
+        sender.run_step(
+            sender_conn, workspace_manager=sender_wsm, principal=sender_principal,
+            recipient_identities=recipient_identities, relay_client=relay_client,
+            delivery_adapter=sender_adapter, attachment_id=sent_attachment_id,
+        )
+    assert sender.get_state(sender_conn, sent_attachment_id) == sender.SENT
+
+    row = sender_conn.execute(
+        "SELECT transfer_id, hard_expires_at FROM attachments WHERE id = ?", (sent_attachment_id,)
+    ).fetchone()
+    transfer_id = bytes.fromhex(row[0])
+    hard_expires_at = row[1]
+    sender_signing_key = identity.load_signing_key(sender_wsm, sender_principal)
+    offer_fields = codec.OfferFields(
+        provider_id=provider_id, transfer_id=transfer_id, sender_key_id=bytes.fromhex(sender_principal.key_id),
+        kind=0, size_bucket=1, hard_expires_at=hard_expires_at, flags=0,
+    )
+    raw_offer = codec.encode_offer(offer_fields, sender_signing_key)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+        source_address="remote-addr",
+    )
+    received_attachment_id = result.attachment_id
+
+    # Enqueued, not yet sent - the send-before-mark-sent ordering this fix
+    # establishes means nothing should be on the wire yet.
+    assert shared_ether.drain("remote-addr") == []
+    pending_state = conn.execute(
+        "SELECT state FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = 'ack_received_sent'",
+        (received_attachment_id,),
+    ).fetchone()[0]
+    assert pending_state == "PENDING"
+
+    receiver_service.tick()
+
+    sent_row = conn.execute(
+        "SELECT state, sent_at FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = 'ack_received_sent'",
+        (received_attachment_id,),
+    ).fetchone()
+    assert sent_row[0] == "SENT"
+    assert sent_row[1] is not None
+
+    events = shared_ether.drain("remote-addr")
+    assert len(events) == 1
+    envelope = sender_adapter.ingest(events[0])
+    ack_fields = codec.decode_simple_ack(
+        envelope.logical_message, codec.MessageType.ACK_RECEIVED, verify_key=VerifyKey(principal.public_identity)
+    )
+    assert ack_fields.transfer_id == transfer_id
+
+
+def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient):
+    """A DeliveryAdapter.send() failure must never be confused with
+    success: the queued reply stays PENDING (retried on a later tick,
+    with backoff), not silently marked SENT or dropped."""
+
+    class _AlwaysFailsToSendAdapter(FakeTextAdapter):
+        def send(self, wire_payload, route, idempotency_key):
+            raise RuntimeError("simulated transport failure")
+
+    _, _, sender_principal = remote_recipient
+    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+
+    failing_adapter = _AlwaysFailsToSendAdapter(InMemoryEther(), "receiver-addr")
+    receiver_service = AttachmentsService(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, connectivity_monitor=connectivity_monitor,
+        delivery_adapter=failing_adapter, relay_client_factory=lambda provider_id_text: relay_client,
+    )
+
+    sender_signing_key = identity.load_signing_key(remote_recipient[1], sender_principal)
+    transfer_id = uuid.uuid4().bytes
+    offer_fields = codec.OfferFields(
+        provider_id=_raw_provider_id(registered_provider), transfer_id=transfer_id,
+        sender_key_id=bytes.fromhex(sender_principal.key_id), kind=0, size_bucket=1,
+        hard_expires_at=int(time.time()) + 3600, flags=0,
+    )
+    raw_offer = codec.encode_offer(offer_fields, sender_signing_key)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+        source_address="remote-addr",
+    )
+
+    before = conn.execute(
+        "SELECT attempts, next_attempt_at FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = 'ack_received_sent'",
+        (result.attachment_id,),
+    ).fetchone()
+    assert before[0] == 0
+
+    receiver_service.tick()
+
+    after = conn.execute(
+        "SELECT state, attempts, next_attempt_at, last_error FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = 'ack_received_sent'",
+        (result.attachment_id,),
+    ).fetchone()
+    assert after[0] == "PENDING"  # never marked SENT on a failed send
+    assert after[1] == 1
+    assert after[2] > before[1]  # backed off into the future
+    assert "simulated transport failure" in after[3]
+
+
+def test_handle_offer_without_source_address_never_dispatches(conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient):
+    """A caller that never learns/records a return route (this module's
+    own non-integration tests calling handle_offer() with no
+    source_address) must not have its queued ACK retried forever with no
+    possible destination - it's marked UNDELIVERABLE on the first
+    dispatch attempt instead."""
+    _, _, sender_principal = remote_recipient
+    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+
+    adapter = FakeTextAdapter(InMemoryEther(), "receiver-addr")
+    receiver_service = AttachmentsService(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, connectivity_monitor=connectivity_monitor,
+        delivery_adapter=adapter, relay_client_factory=lambda provider_id_text: relay_client,
+    )
+
+    sender_signing_key = identity.load_signing_key(remote_recipient[1], sender_principal)
+    offer_fields = codec.OfferFields(
+        provider_id=_raw_provider_id(registered_provider), transfer_id=uuid.uuid4().bytes,
+        sender_key_id=bytes.fromhex(sender_principal.key_id), kind=0, size_bucket=1,
+        hard_expires_at=int(time.time()) + 3600, flags=0,
+    )
+    raw_offer = codec.encode_offer(offer_fields, sender_signing_key)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+    )
+
+    receiver_service.tick()
+
+    state = conn.execute(
+        "SELECT state FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = 'ack_received_sent'",
+        (result.attachment_id,),
+    ).fetchone()[0]
+    assert state == "UNDELIVERABLE"
 
 
 # ---- start()/stop()/wake() lifecycle ---------------------------------------

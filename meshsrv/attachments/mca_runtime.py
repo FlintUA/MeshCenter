@@ -313,6 +313,13 @@ def handle_incoming_meshtastic_text(
                     key_exchange=state.coordinator,
                     raw_offer=envelope.logical_message,
                     network_available=network_available,
+                    # PR #227 defect #1: this is the only place a
+                    # 'received' attachment's reply route is ever learned
+                    # - persisted on the attachment row so AttachmentsService's
+                    # dispatch step can actually send ACK_RECEIVED/
+                    # ACK_PROVIDER_UNKNOWN/ACK_DOWNLOADED back later,
+                    # possibly ticks (or a restart) after this call returns.
+                    source_address=source_address,
                 )
             except receiver.ReceiverError as exc:
                 print(f"[MCA] rejected OFFER from {source_address}: {exc}", flush=True)

@@ -381,8 +381,12 @@ def test_repeat_offer_is_idempotent_no_duplicate_row_or_ack(conn, wsm, principal
 
     count = conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0]
     assert count == 1
+    # PR #227 defect #1: `mca_outgoing_replies` (not `attachment_events`)
+    # is now the real idempotency ledger for "has this ACK been decided
+    # already" - its own UNIQUE(attachment_id, event_type) constraint is
+    # what actually enforces at-most-once now, not just this COUNT(*).
     ack_events = conn.execute(
-        "SELECT COUNT(*) FROM attachment_events WHERE attachment_id = ? AND event_type = 'ack_received_sent'",
+        "SELECT COUNT(*) FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = 'ack_received_sent'",
         (result1.attachment_id,),
     ).fetchone()[0]
     assert ack_events == 1

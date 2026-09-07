@@ -123,6 +123,18 @@ _EVENT_ACK_DOWNLOADED_SENT = "ack_downloaded_sent"
 
 DEFAULT_DOWNLOAD_GRACE_SECONDS = 3600  # design spec 14: download_grace = 1h (mirrors sender.py's default)
 
+# ---- outgoing ACK outbox (PR #227 defect #1) -------------------------------
+# `mca_outgoing_replies` (migration 10) is the real, persisted, retryable
+# queue nothing existed for before this fix - see migrations.py's own
+# comment above _MIGRATION_0010_UP for the full defect this replaces.
+# Backoff shape mirrors ConnectivityMonitor's own Relay health backoff:
+# doubling from a base, capped at a ceiling, retried forever rather than
+# ever giving up (an ACK the sender is still waiting on stays worth
+# retrying for as long as this attachment itself is retained).
+OUTGOING_REPLY_BACKOFF_BASE_SECONDS = 30
+OUTGOING_REPLY_BACKOFF_CEILING_SECONDS = 3600
+MAX_OUTGOING_REPLY_SENDS_PER_DISPATCH = 5  # rate limit: drain the queue gradually, not all at once
+
 
 class ReceiverError(RuntimeError):
     """Base class for every error this module raises directly. Failures
@@ -177,9 +189,18 @@ def _record_event(conn: sqlite3.Connection, attachment_id: str, now: float, even
     )
 
 
-def _ack_already_sent(conn: sqlite3.Connection, attachment_id: str, event_type: str) -> bool:
+def _ack_already_enqueued(conn: sqlite3.Connection, attachment_id: str, event_type: str) -> bool:
+    """`mca_outgoing_replies` is now the single idempotency ledger for
+    "has this ACK been handled" - a row existing here (PENDING, SENT, or
+    UNDELIVERABLE) means this call already decided to send it once, no
+    matter whether the real transmission has happened yet. Renamed from
+    `_ack_already_sent()`/its old `attachment_events`-backed check
+    (PR #227 defect #1): that name/table pairing conflated "we decided to
+    send this" with "this was actually transmitted", which is exactly
+    the ambiguity that let this module claim an ACK was sent when it
+    never left the process."""
     row = conn.execute(
-        "SELECT 1 FROM attachment_events WHERE attachment_id = ? AND event_type = ? LIMIT 1",
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ? LIMIT 1",
         (attachment_id, event_type),
     ).fetchone()
     return row is not None
@@ -212,16 +233,144 @@ def _maybe_send_ack(
     workspace_manager: MCAWorkspaceManager,
     now: float,
 ) -> Optional[bytes]:
-    """Send `message_type` at most once per `attachment_id` (ADR-0007
-    decision 5). Returns the encoded frame if this call is the one that
-    sends it, or `None` if it was already sent before."""
+    """Enqueue `message_type` at most once per `attachment_id` (ADR-0007
+    decision 5 - unchanged) into the real `mca_outgoing_replies` outbox
+    (PR #227 defect #1) instead of handing the encoded frame to a caller
+    that (in production) never actually transmitted it. Returns the
+    encoded frame that was newly enqueued this call, or `None` if this
+    event_type was already enqueued before - same observable return
+    contract callers/tests already depend on, so `ReceiveResult.replies`
+    still means "how many ACK types this call newly decided to send",
+    even though *sending* now happens later, out of this call entirely,
+    via AttachmentsService's own dispatch step
+    (`fetch_due_outgoing_replies()`/`mark_reply_sent()`/
+    `mark_reply_attempt_failed()` below).
 
-    if _ack_already_sent(conn, attachment_id, event_type):
+    Deliberately does NOT record any "sent" bookkeeping here - that used
+    to happen via `_record_event()` in this exact spot, before any
+    transmission was attempted at all (the commit-before-send ordering
+    bug this fix closes). The outbox row this inserts starts, and stays,
+    PENDING until the dispatch step's own `mark_reply_sent()` call
+    confirms a real `DeliveryAdapter.send()` succeeded."""
+
+    if _ack_already_enqueued(conn, attachment_id, event_type):
         return None
     signing_key = identity.load_signing_key(workspace_manager, principal)
     ack = codec.encode_simple_ack(message_type, transfer_id, signing_key)
-    _record_event(conn, attachment_id, now, event_type, {})
+    conn.execute(
+        """
+        INSERT INTO mca_outgoing_replies
+            (id, attachment_id, event_type, message, state, attempts, created_at, next_attempt_at)
+        VALUES (?, ?, ?, ?, 'PENDING', 0, ?, ?)
+        """,
+        (uuid.uuid4().hex, attachment_id, event_type, ack, now, now),
+    )
     return ack
+
+
+# ---- outgoing ACK outbox: dispatch-side API (PR #227 defect #1) -----------
+# Called only by AttachmentsService's own dispatch step (service.py owns
+# the DeliveryAdapter this module never imports - module docstring). These
+# functions only ever touch `mca_outgoing_replies`/`attachments` rows, the
+# same persistence boundary every other function in this module keeps.
+
+
+@dataclasses.dataclass(frozen=True)
+class PendingReply:
+    """One row due for a real send attempt. `route_type`/`route_id` come
+    from the owning attachment's own `reply_route_type`/`reply_route_id`
+    (set once, at `handle_offer()` time) - `None` for either means no
+    route was ever recorded for this attachment (a caller that ran
+    `handle_offer()` without `source_address`, e.g. this module's own
+    non-integration tests), which the dispatch step treats as permanently
+    undeliverable rather than retrying forever for no reason."""
+
+    id: str
+    attachment_id: str
+    event_type: str
+    message: bytes
+    attempts: int
+    route_type: Optional[str]
+    route_id: Optional[str]
+
+
+def fetch_due_outgoing_replies(
+    conn: sqlite3.Connection, workspace_id: str, now: float, limit: int = MAX_OUTGOING_REPLY_SENDS_PER_DISPATCH
+) -> List[PendingReply]:
+    """Up to `limit` PENDING replies whose `next_attempt_at` has arrived,
+    oldest-created first - the rate limit (PR #227 defect #1) that keeps
+    a burst of queued ACKs from being flushed onto the radio all at once
+    in a single dispatch pass; the rest simply wait for the next tick."""
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """
+        SELECT r.id AS id, r.attachment_id AS attachment_id, r.event_type AS event_type, r.message AS message,
+               r.attempts AS attempts, a.reply_route_type AS route_type, a.reply_route_id AS route_id
+        FROM mca_outgoing_replies AS r
+        JOIN attachments AS a ON a.id = r.attachment_id
+        WHERE a.workspace_id = ? AND r.state = 'PENDING' AND r.next_attempt_at <= ?
+        ORDER BY r.created_at ASC
+        LIMIT ?
+        """,
+        (workspace_id, now, limit),
+    ).fetchall()
+    return [
+        PendingReply(
+            id=row["id"], attachment_id=row["attachment_id"], event_type=row["event_type"], message=row["message"],
+            attempts=row["attempts"], route_type=row["route_type"], route_id=row["route_id"],
+        )
+        for row in rows
+    ]
+
+
+def mark_reply_sent(conn: sqlite3.Connection, reply_id: str, now: float) -> None:
+    """Called only after `DeliveryAdapter.send()` has actually returned
+    successfully - never before (that ordering is the whole point of
+    this fix). Also records the same `attachment_events` entry the old,
+    premature call used to (event_type unchanged), so anything downstream
+    already reading that table for audit/history purposes keeps working,
+    now at the point transmission is truly confirmed instead of merely
+    attempted."""
+    row = conn.execute(
+        "SELECT attachment_id, event_type FROM mca_outgoing_replies WHERE id = ?", (reply_id,)
+    ).fetchone()
+    conn.execute(
+        "UPDATE mca_outgoing_replies SET state = 'SENT', sent_at = ? WHERE id = ?",
+        (now, reply_id),
+    )
+    if row is not None:
+        _record_event(conn, row[0], now, row[1], {})
+    conn.commit()
+
+
+def mark_reply_attempt_failed(conn: sqlite3.Connection, reply_id: str, now: float, *, error_code: str) -> None:
+    """A real send attempt failed (transport/adapter raised). Stays
+    PENDING - retried on a later dispatch, never lost - with `attempts`
+    incremented and `next_attempt_at` pushed out by an exponential
+    backoff capped at `OUTGOING_REPLY_BACKOFF_CEILING_SECONDS`, the same
+    shape ConnectivityMonitor uses for Relay health checks."""
+    row = conn.execute("SELECT attempts FROM mca_outgoing_replies WHERE id = ?", (reply_id,)).fetchone()
+    attempts = (row[0] if row is not None else 0) + 1
+    backoff = min(
+        OUTGOING_REPLY_BACKOFF_BASE_SECONDS * (2 ** (attempts - 1)),
+        OUTGOING_REPLY_BACKOFF_CEILING_SECONDS,
+    )
+    conn.execute(
+        "UPDATE mca_outgoing_replies SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE id = ?",
+        (attempts, now + backoff, error_code[:200], reply_id),
+    )
+    conn.commit()
+
+
+def mark_reply_undeliverable(conn: sqlite3.Connection, reply_id: str, now: float, *, error_code: str) -> None:
+    """No route was ever recorded for this reply's attachment (see
+    `PendingReply`'s own docstring) - there is nothing to retry towards,
+    so this is a terminal outcome for the row, not a backoff case."""
+    conn.execute(
+        "UPDATE mca_outgoing_replies SET state = 'UNDELIVERABLE', last_error = ? WHERE id = ?",
+        (error_code[:200], reply_id),
+    )
+    conn.commit()
 
 
 def _resolve_provider_or_wait(
@@ -270,12 +419,25 @@ def handle_offer(
     raw_offer: bytes,
     network_available: bool,
     now: Optional[float] = None,
+    source_address: Optional[str] = None,
 ) -> ReceiveResult:
     """Handle one inbound OFFER frame's already-`ingest()`-ed logical
     bytes. `key_exchange` is this workspace/adapter's own
     `KeyExchangeCoordinator` (already constructed by the caller, same
     instance driving KEY_REQUEST/KEY_ANNOUNCE) - used here only for its
     read-only `get_binding_by_key_id()` lookup, never mutated.
+
+    `source_address` (PR #227 defect #1) is persisted on the new
+    attachment row as `reply_route_type`/`reply_route_id` - the only
+    place this module ever learns where a reply for this attachment
+    should go, since receiver.py holds no transport of its own (module
+    docstring) and never will. Optional and defaults to `None` for
+    callers (mostly this module's own test suite) that only care about
+    this function's state-machine/dedup behavior, not real dispatch: an
+    attachment created with no route recorded simply never has its
+    queued ACKs picked up by AttachmentsService's dispatch step (nothing
+    to send them through), exactly as if this fix didn't exist for that
+    one attachment - not a crash, not a wrong send target.
 
     A repeat OFFER for a `transfer_id` this workspace has already
     recorded is idempotent: if the existing attachment is still
@@ -330,8 +492,9 @@ def handle_offer(
         """
         INSERT INTO attachments
             (id, workspace_id, transfer_id, direction, principal_id, sender_principal_id, provider_id, state,
-             created_at, hard_expires_at, download_grace_seconds, pending_offer_cbor)
-        VALUES (?, ?, ?, 'received', ?, ?, ?, ?, ?, ?, ?, ?)
+             created_at, hard_expires_at, download_grace_seconds, pending_offer_cbor,
+             reply_route_type, reply_route_id)
+        VALUES (?, ?, ?, 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             attachment_id,
@@ -345,6 +508,16 @@ def handle_offer(
             unverified.hard_expires_at,
             DEFAULT_DOWNLOAD_GRACE_SECONDS,
             (raw_offer if binding is None else None),
+            # "DIRECT" - must match delivery.base.RouteType.DIRECT.value.
+            # Not imported here (this module never imports anything from
+            # delivery.base/DeliveryAdapter, per its own module docstring)
+            # since an OFFER-triggered reply is always a direct reply to
+            # whoever sent the OFFER - there is no other route shape an
+            # inbound OFFER could have arrived over. `None` (not "DIRECT")
+            # when `source_address` itself is `None`, so the dispatch step
+            # can tell "no route recorded" apart from "recorded, empty".
+            ("DIRECT" if source_address is not None else None),
+            source_address,
         ),
     )
     _record_event(

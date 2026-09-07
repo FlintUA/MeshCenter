@@ -51,7 +51,7 @@ import time
 from typing import Callable, Dict, List, Optional
 
 from meshsrv.attachments import receiver, sender
-from meshsrv.attachments.delivery.base import DeliveryAdapter
+from meshsrv.attachments.delivery.base import DeliveryAdapter, Route, RouteType
 from meshsrv.attachments.identity import MCAPrincipal
 from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator
 from meshsrv.attachments.provider_registry import ProviderRegistry
@@ -224,7 +224,42 @@ class AttachmentsService:
                     row["direction"],
                 )
             processed += 1
+        self._dispatch_outgoing_replies()
         return processed
+
+    def _dispatch_outgoing_replies(self) -> None:
+        """PR #227 defect #1: the one place a queued receiver-side ACK
+        (mca_outgoing_replies, receiver.py) is ever actually handed to a
+        transport. Runs every tick, after the row-scan above, so a reply
+        enqueued by this same tick's own _step_received() calls is
+        dispatched without waiting for a second tick. Rate-limited to
+        `receiver.MAX_OUTGOING_REPLY_SENDS_PER_DISPATCH` rows per call
+        (receiver.fetch_due_outgoing_replies()'s own LIMIT) - the rest
+        simply wait for the next tick, rather than flushing an entire
+        backlog onto the radio at once."""
+        if self._delivery_adapter is None:
+            return
+        for reply in receiver.fetch_due_outgoing_replies(
+            self._conn, self._principal.workspace_id, self._now()
+        ):
+            if reply.route_type is None or reply.route_id is None:
+                # No route was ever recorded for this reply's attachment
+                # (handle_offer() ran without source_address - see
+                # PendingReply's own docstring). Nothing to retry
+                # towards: terminal, not a backoff case.
+                receiver.mark_reply_undeliverable(
+                    self._conn, reply.id, self._now(), error_code="no_reply_route_recorded"
+                )
+                continue
+            route = Route(route_type=RouteType(reply.route_type), route_id=reply.route_id, destination_address=reply.route_id)
+            try:
+                wire_payload = self._delivery_adapter.encode(reply.message, route)
+                self._delivery_adapter.send(wire_payload, route, idempotency_key=f"mca-reply-{reply.id}")
+            except Exception as exc:  # noqa: BLE001 - one bad reply must not stop the others or the tick
+                logger.exception("AttachmentsService: failed to send queued reply %s", reply.id)
+                receiver.mark_reply_attempt_failed(self._conn, reply.id, self._now(), error_code=str(exc))
+                continue
+            receiver.mark_reply_sent(self._conn, reply.id, self._now())
 
     def _due_rows(self) -> List[sqlite3.Row]:
         self._conn.row_factory = sqlite3.Row

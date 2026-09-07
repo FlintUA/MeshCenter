@@ -552,6 +552,59 @@ def _migration_0009_down_fixup_sent_provider_id_encoding(conn: sqlite3.Connectio
         )
 
 
+# Execution Plan Step 1.6A-hardening (PR #227 defect #1). Nothing in
+# receiver.py's own ACK generation ever persisted a real queue: the
+# encoded ACK_RECEIVED/ACK_PROVIDER_UNKNOWN/ACK_DOWNLOADED frames it built
+# were simply returned up the call stack as `ReceiveResult.replies`, and
+# both real callers (mca_runtime.py's OFFER branch, AttachmentsService.
+# _step_received()) discarded that return value entirely - no ACK was
+# ever actually transmitted in production. Separately, the "has this
+# already been sent" bookkeeping (`attachment_events`) was written
+# *before* any transmission was even attempted (a commit-before-send
+# ordering bug, wrong even if a caller HAD been sending the return value)
+# - a crash or a failed send between that commit and the real wire send
+# would have permanently and silently lost the ACK.
+#
+# `mca_outgoing_replies` is a real, persisted, retryable queue: a row is
+# inserted (state=PENDING) the moment receiver.py decides an ACK is due
+# (still at-most-once per (attachment_id, event_type), same as before),
+# and is only ever marked SENT by AttachmentsService's own dispatch step,
+# after `DeliveryAdapter.send()` actually succeeds - never by the code
+# that builds the frame. A failed send bumps `attempts`/`next_attempt_at`
+# (exponential backoff, same shape as ConnectivityMonitor's own Relay
+# health backoff) rather than being lost. `attachments.reply_route_type`/
+# `reply_route_id` (added on the same attachments row a 'received'
+# attachment already has - never used for 'sent' rows) is where the
+# return route is captured, once, at handle_offer() time from the
+# inbound envelope's own source address - the only place that
+# information is available at all today.
+_MIGRATION_0010_UP = """
+ALTER TABLE attachments ADD COLUMN reply_route_type TEXT;
+ALTER TABLE attachments ADD COLUMN reply_route_id TEXT;
+
+CREATE TABLE mca_outgoing_replies (
+    id TEXT PRIMARY KEY,
+    attachment_id TEXT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    message BLOB NOT NULL,
+    state TEXT NOT NULL DEFAULT 'PENDING' CHECK (state IN ('PENDING', 'SENT', 'UNDELIVERABLE')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    next_attempt_at INTEGER NOT NULL,
+    sent_at INTEGER,
+    last_error TEXT,
+    UNIQUE (attachment_id, event_type)
+);
+CREATE INDEX idx_mca_outgoing_replies_due ON mca_outgoing_replies(state, next_attempt_at);
+"""
+
+_MIGRATION_0010_DOWN = """
+DROP TABLE IF EXISTS mca_outgoing_replies;
+ALTER TABLE attachments DROP COLUMN reply_route_id;
+ALTER TABLE attachments DROP COLUMN reply_route_type;
+"""
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -580,6 +633,7 @@ MIGRATIONS: Sequence[Migration] = (
         data_fixup=_migration_0009_fixup_sent_provider_id_encoding,
         down_data_fixup=_migration_0009_down_fixup_sent_provider_id_encoding,
     ),
+    Migration(10, "receiver_ack_outbox", _MIGRATION_0010_UP, _MIGRATION_0010_DOWN),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0
@@ -601,6 +655,7 @@ ALL_TABLE_NAMES = frozenset(
         "mca_key_exchange_quota",
         "mca_sender_state",
         "mca_receiver_state",
+        "mca_outgoing_replies",
     }
 )
 

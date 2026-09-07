@@ -110,7 +110,7 @@ The single `sqlite3.Connection` is touched by exactly two threads over the proce
 - **provider snapshot** — exists: `ConnectivityMonitor._profile_snapshot` (private; expose a read-only accessor).
 - **attachments snapshot** — **new**: see §3.3.
 - **idempotency index snapshot** — **new**: `client_request_id → {attachment_id, canonical_hash, created_at}` (§3.5, §3.6).
-- **command-result snapshot** — **new**: `command_id → CommandResult` (§3.4).
+- **command-result registry** — **new**: `command_id → CommandResult` (§3.4); a separate thread-safe in-memory registry, **not** a worker-published snapshot (the request thread publishes `queued`, the worker publishes `running`/`succeeded`/`failed`).
 - **probe snapshot** — **new**: `probe_id → ProbeRecord` (§7.10).
 
 **Writes — a bounded command queue.** Every mutation is an immutable, frozen `Command` dataclass validated on the request thread (using **pure functions only** — no `conn`, no file I/O beyond the create endpoint's spool write, §7.3), then enqueued on a bounded queue the same way the existing inbound queue works:
@@ -133,6 +133,12 @@ The attachments snapshot is **not** derived from the worker's existing automatic
 
 and atomically swaps the results in as fresh snapshots. It is this publisher — not the row scan — that makes `GET /api/attachments`, `GET /api/attachments/{id}` (with timeline) and `GET /api/attachments/{id}/deliveries` correct. The publisher is worker-owned (runs on the worker thread, the single owner of `conn`) and its output is what request threads read.
 
+**Publication cost is bounded.** A full re-read of 90 days of history, `recipients`, `deliveries` and `events` on every tick would be wasteful on a Pi Zero 2 W. The publisher therefore:
+
+- re-publishes **only when data changed** (a command executed, a state transition ran, or an inbound event was ingested) **or** on a limited cadence (`SNAPSHOT_REPUBLISH_INTERVAL_SECONDS` fallback), never unconditionally every tick;
+- keeps the **list** projection compact — no full timeline (a bounded number of `events` per row, or none), with `recipients`/`deliveries` summarized — and loads the **full bounded timeline only for the detail** projection (`GET /api/attachments/{id}`);
+- is covered by a **mandatory benchmark** in sub-stage 1.6A.1 (§5) measuring snapshot build time and memory on target hardware before the read API ships.
+
 ### 3.4 Sync vs async: the uniform response model, and the command-result endpoint
 
 This resolves the earlier contradiction between a "blanket 202" and synchronous-looking provider/action endpoints. There are exactly two response classes:
@@ -148,22 +154,27 @@ Synchronous validation that produces a **4xx** still happens on the request thre
 GET /api/mca/commands/{command_id}
 ```
 
-which returns the command's status and a safe result payload (§7.9). This is mandatory because several commands can fail without mutating the domain (a failed provider registration creates no provider; a failed save/revoke/delete leaves the attachment unchanged; an upload-token write can fail) — polling the domain snapshots alone cannot distinguish "queued/running" from "failed". The command-result snapshot is:
+which returns the command's status and a safe result payload (§7.9). This is mandatory because several commands can fail without mutating the domain (a failed provider registration creates no provider; a failed save/revoke/delete leaves the attachment unchanged; an upload-token write can fail) — polling the domain snapshots alone cannot distinguish "queued/running" from "failed".
 
-- **bounded** — retained up to `COMMAND_RESULT_MAX_ENTRIES` (LRU) **and** up to `COMMAND_RESULT_TTL_SECONDS`, whichever is hit first;
-- **immutable** — published build-swap like every other snapshot;
+**`CommandRegistry` — a separate thread-safe in-memory store.** The command-result store is **not** a worker-published immutable snapshot (the worker has not necessarily run when the first `GET` arrives). It is a dedicated `CommandRegistry`:
+
+- **request thread** registers `queued` at enqueue time (immediately after `put_nowait`, so a `GET` that lands right away sees `queued`, never `404`);
+- **worker** transitions `running` → `succeeded`/`failed` as it dequeues and executes;
+- guarded by a short dedicated lock (not the tick lock); **no SQLite**;
+- **LRU/TTL eviction only of terminal results** (`succeeded`/`failed`); `queued` and `running` entries are **never** evicted (a client polling an in-flight command must keep seeing it);
 - **safe** — `result` payloads contain no secrets, no absolute paths, no ciphertext; `error_code` is a stable snake_case code;
-- **restart-amnesic** — in-memory only. On restart, all `command_id`s are forgotten and `GET` returns `404 command_not_found`; a command that was still `queued`/`running` never executes. Clients must fall back to polling the domain snapshots. (This is safe: each command is either idempotent — create — or re-drivable — the action endpoints — and the single-owner SQLite transaction model guarantees a crash mid-command leaves a consistent on-disk state.)
+- **restart-amnesic** — in-memory only. On restart, all `command_id`s are forgotten and `GET` returns `404 command_not_found`; a command that was still `queued`/`running` never executes, so the client must **re-issue** (or, for `provider_probe`, re-run the probe rather than looking for its result in a domain snapshot). (This is safe: each command is either idempotent — create — or re-drivable — the action endpoints — and the single-owner SQLite transaction model guarantees a crash mid-command leaves a consistent on-disk state.)
 
-Command lifecycle: `queued` (request thread enqueued) → `running` (worker dequeued) → `succeeded`/`failed` (worker recorded). `command_id` is minted on the request thread so the client can poll immediately.
+Command lifecycle: `queued` (request thread) → `running` (worker) → `succeeded`/`failed` (worker). `command_id` and, for `attachment_create`, `attachment_id` are minted on the request thread (§3.6).
 
 ### 3.5 Idempotency — canonical hash
 
-`create` must answer three cases deterministically even though the write is deferred:
+`create` must answer these cases deterministically even though the write is deferred:
 
-1. **new** `client_request_id` → `202` + `command_id`.
-2. **identical replay** (same `client_request_id`, same canonical content) → `200` + the *original* result (`attachment_id`) read from the idempotency index snapshot.
-3. **same `client_request_id`, different canonical content** → **409** `idempotency_conflict`.
+1. **new** `client_request_id` → `202` + `command_id` (and, for create, `attachment_id` — both minted before enqueue, §3.6).
+2. **identical replay while the command is still pending** (`queued`/`running`) → `202` + the **same** `command_id`/`attachment_id` with `replayed: true`.
+3. **identical replay after success** → `200` + the *original* `attachment_id` (from the committed idempotency index).
+4. **same `client_request_id`, different canonical content** → **409** `idempotency_conflict`.
 
 The canonical content hash is **versioned and boundary-unambiguous** — not a concatenation of variable-length fields:
 
@@ -202,13 +213,14 @@ Every field that influences the result is included; `source_name` is the sanitiz
 
 Two concurrent Flask threads could both observe "this `client_request_id` is absent" and both enqueue a create before the worker publishes a new idempotency snapshot. To close that race, creation reserves the id before enqueueing:
 
-1. **Compute** `canonical_hash` (§3.5).
-2. **Reserve.** Under a small dedicated lock, consult an in-memory `pending_reservations: client_request_id → canonical_hash` map (and the committed idempotency index):
-   - if already **reserved or committed** with the same `canonical_hash` → idempotent replay, return the existing `attachment_id` (200);
+1. **Mint IDs.** On the request thread, generate both `attachment_id` and `command_id` **before** enqueueing (so a replay can return them).
+2. **Compute** `canonical_hash` (§3.5).
+3. **Reserve.** Under a small dedicated lock, consult an in-memory `pending_reservations: client_request_id → {canonical_hash, attachment_id, command_id}` map (and the committed idempotency index):
+   - if already **reserved or committed** with the same `canonical_hash` → idempotent replay: if still pending, return `202` with the **same** `command_id`/`attachment_id` and `replayed: true`; if committed, return `200` with the existing `attachment_id`;
    - if already **reserved or committed** with a different `canonical_hash` → `409 idempotency_conflict`;
-   - otherwise → insert the reservation and release the lock.
-3. **Enqueue** the command (`put_nowait`). On `queue.Full`, **release the reservation** and return `429 command_queue_full`.
-4. Return `202` + `command_id`.
+   - otherwise → insert the reservation (with all three ids) and release the lock.
+4. **Enqueue** the command (`put_nowait`). On `queue.Full`, **release the reservation** and return `429 command_queue_full`.
+5. Return `202` + `command_id` (+ `attachment_id` for create).
 
 The reservation is transient (in-memory only). The worker, on successfully committing the row, moves the entry from `pending_reservations` into the committed idempotency index (with `attachment_id`) and publishes it; on a failed create it drops the reservation. On restart, `pending_reservations` is discarded and the committed idempotency index is **restored from the database** (the worker reads `client_request_id`/`canonical_hash`/`attachment_id` from `attachments` at startup). A **unique index on `(workspace_id, client_request_id)`** in `attachments` is the final, database-level backstop against any duplicate that slips past the in-memory reservation (§13).
 
@@ -304,7 +316,7 @@ Each sub-stage is independently implementable and shippable against the existing
 | Sub-stage | Content | Endpoints | Domain prerequisite |
 |---|---|---|---|
 | **1.6A.0** | Project-wide CSRF contract (§2.3). | — (infrastructure) | none — prerequisite for every mutation |
-| **1.6A.1** | Facade plumbing (§3): command queue + command-result snapshot, attachments/provider/idempotency/probe snapshots, dedicated snapshot publisher (§3.3), `ContentDescriptor` (§3.7), idempotency migration + unique index (§3.6), `clear_upload_token()`. | — (infrastructure; `commands/{command_id}` read lands in 1.6A.2) | none |
+| **1.6A.1** | Facade plumbing (§3): command queue + `CommandRegistry`, attachments/provider/idempotency/probe snapshots, dedicated snapshot publisher (§3.3), `ContentDescriptor` (§3.7), idempotency migration + unique index (§3.6), `clear_upload_token()`, and a **mandatory snapshot-cost benchmark** (§3.3). | — (infrastructure; `commands/{command_id}` read lands in 1.6A.2) | none |
 | **1.6A.2** | Read-only API | list, detail, deliveries, connectivity, providers, providers/{id}, upload-readiness, identity, delivery-adapters, commands/{command_id} | §3 snapshots |
 | **1.6A.3** | Attachment lifecycle — create / download / reject / cancel / retry / request-key | `POST /api/attachments`, `POST /api/attachments/{id}/download`, `POST /api/attachments/{id}/reject`, `POST /api/attachments/{id}/cancel`, `POST /api/attachments/{id}/retry`, `POST /api/mca/contacts/{contact_id}/request-key` | §3 command queue, idempotency (§3.5/§3.6) |
 | **1.6A.4** | Provider onboarding & management | probe, register, patch, default, delete, upload-token (PUT/DELETE), check | two-phase bootstrap via `probe_id` (§7.10/§12), `clear_upload_token()` |
@@ -405,8 +417,8 @@ Every mutation returns `202` + `command_id` (§3.4) unless a synchronous validat
   - `file` (binary, required): ≤ 5 MiB plaintext (MVP); MIME in the allowlist (jpeg/png/webp/pdf/txt/log/csv/json).
   - `metadata` (JSON string, required): `{client_request_id, recipient: {source_address}, route?, provider_id?, comment?, hard_ttl_seconds?, download_grace_seconds?}`.
 - **Validation (synchronous, pure):** `client_request_id` `[A-Za-z0-9_-]{1,64}`; `comment` ≤ 1000 bytes UTF-8; `provider_id` resolves in the provider snapshot; `route_type` must be `DIRECT`; recipient binding must be `trusted` (else `recipient_not_trusted`); `hard_ttl_seconds` within the provider's `[min,max]`.
-- **Flow:** the route stages the bytes to `spool/outgoing/<uuid>` (server path, never the client filename), sniffs MIME from magic bytes, computes `file_sha256` and `canonical_hash` (§3.5), performs the atomic reservation (§3.6), then enqueues `CreateDraftCommand` (worker runs `create_draft` + immediate `run_step` + `wake`). Encryption/upload/send happen on the worker.
-- **Responses:** `202 {"ok": true, "command_id"}`; idempotent replay `200 {"ok": true, "attachment_id", "state"}`; `409 idempotency_conflict`; `400 mime_not_allowed` / `file_too_large` / `recipient_not_found` / `recipient_not_trusted` / `provider_not_found` / `ttl_out_of_range` / `invalid_metadata`; `429 command_queue_full`.
+- **Flow:** the route stages the bytes to `spool/outgoing/<uuid>` (server path, never the client filename), sniffs MIME from magic bytes, mints `attachment_id`/`command_id`, computes `file_sha256` and `canonical_hash` (§3.5), performs the atomic reservation (§3.6), then enqueues `CreateDraftCommand` (worker runs `create_draft` + immediate `run_step` + `wake`). Encryption/upload/send happen on the worker.
+- **Responses:** `202 {"ok": true, "command_id", "attachment_id"}`; pending idempotent replay `202 {"ok": true, "command_id", "attachment_id", "replayed": true}` (same ids); committed idempotent replay `200 {"ok": true, "attachment_id", "state"}`; `409 idempotency_conflict`; `400 mime_not_allowed` / `file_too_large` / `recipient_not_found` / `recipient_not_trusted` / `provider_not_found` / `ttl_out_of_range` / `invalid_metadata`; `429 command_queue_full`.
 - **Radio availability is NOT a precondition.** The draft is created and queued even with no radio connected; only the `READY_TO_SEND → SENT` step needs the radio, and it parks in `READY_TO_SEND` (retryable) until the radio returns (§4.2). No `503 radio_unavailable` here.
 
 ### 7.3 Attachment action endpoints (retry / download / save / reject / revoke / local-content)
@@ -415,24 +427,27 @@ Every mutation returns `202` + `command_id` (§3.4) unless a synchronous validat
 |---|---|---|---|
 | `POST /api/attachments/{id}/retry` | `NudgeAttachmentCommand` → `run_step` | `state ∈ sender.AUTOMATIC_STATES ∪ receiver.AUTOMATIC_STATES` | next step (no new `transfer_id`) |
 | `POST /api/attachments/{id}/download` | `BeginDownloadCommand` → `receiver.begin_download` | `WAITING_CONSENT` only | `DOWNLOADING` |
-| `POST /api/attachments/{id}/save` | `SaveToFilesCommand` → move `cache/incoming/` → `files/` | `AVAILABLE` only | `saved=true` (idempotent via `unique_file_name`) |
+| `POST /api/attachments/{id}/save` | `SaveToFilesCommand` → move `cache/incoming/` → `files/` | `AVAILABLE` only | `saved=true` (genuinely idempotent, §7.3 note) |
 | `POST /api/attachments/{id}/reject` | `RejectCommand` → `receiver.reject` | `WAITING_CONSENT` only | `REJECTED` |
 | `POST /api/attachments/{id}/revoke` | `RevokeCommand` → `relay_client.revoke` | `SENT`/`RECEIVED`/`DOWNLOADED` | `REVOKED` |
 | `DELETE /api/attachments/{id}/local-content` | `DeleteLocalContentCommand` → delete `files/` copy | `saved=true` | `saved=false` (history kept) |
 
 - **`/retry` is limited to `AUTOMATIC_STATES`.** Retrying a terminal `FAILED_*` (e.g. `FAILED_UPLOAD`) is a **future** state-machine change and is **not** promised by this contract (§4.2, §13, §15). The endpoint returns `409 invalid_state_transition` for any non-`AUTOMATIC_STATES` state.
 - Common errors: `404 attachment_not_found`; `409 invalid_state_transition` (with the current state) for any violated precondition; `503 relay_unreachable` (revoke at runtime, observed via the command result); `409 not_saved` (local-content when `saved=false`).
+- **`/save` is genuinely idempotent, not merely deduplicated.** `unique_file_name()` only resolves a name collision at **first** save — it is **not** an idempotency mechanism (a second save would otherwise create a second copy under a new name). The command instead: if `saved=true` and the file exists → return the prior result (`saved=true`, same `file_name`) **without copying**; if `saved=true` but the file is missing → `content_missing` (or a separately-specified re-save recovery), never a silent duplicate; `unique_file_name()` is applied **only** on the first save to resolve a name conflict.
 
 ### 7.4 `POST /api/attachments/{id}/cancel` — cancel an outgoing send (1.6A.3)
 
-Cancel the send before it is `SENT`. The Relay-commit boundary matters:
+Cancel the send before it is `SENT`. Cleanup is decided by **persisted remote state** (a Relay upload session and/or revoke token), not by the attachment state *name* alone — `UPLOADING` does not imply "committed", and `READY_TO_SEND` implies commit but the revoke token is the authoritative signal:
 
-- **Before Relay commit** (`DRAFT`, `VALIDATING`, `ENCRYPTING`, `QUEUED_UPLOAD` — no Relay object exists): `CancelAttachmentCommand` cancels the local operation and **clears the spool** (`spool/outgoing/<uuid>`), then → `CANCELLED`.
-- **After Relay commit, before `SENT`** (`UPLOADING`, `READY_TO_SEND` — a Relay object may exist): first **revoke the Relay object**, then → `CANCELLED`. If the revoke fails, the command **fails** (result `error_code: relay_unreachable`) and the attachment is **not** marked `CANCELLED` — the state stays `READY_TO_SEND` so the user can retry or revoke.
+- **No persisted remote session / revoke token** (nothing was ever uploaded): cancel the local operation and **clear the spool** (`spool/outgoing/<uuid>`), then → `CANCELLED`.
+- **Upload session created but not yet committed** (no revoke token yet): **abort or revoke the session**, then cancel locally → `CANCELLED`.
+- **Committed Relay object, OFFER not yet sent** (a revoke token exists, still in `READY_TO_SEND`): **revoke the object**, then → `CANCELLED`.
+- **Remote cleanup not confirmed:** if the revoke/abort fails, the command **fails** (`error_code: relay_unreachable`) and the attachment is **not** marked `CANCELLED` — the state stays `READY_TO_SEND` so the user can retry or revoke.
 - **After `SENT`** (`SENT`/`RECEIVED`/`DOWNLOADED`): `cancel` is **not** valid — use `/revoke`. → `409 invalid_state_transition`.
 - **Terminal states:** `409 invalid_state_transition`.
 
-Responses: `202 {"ok": true, "command_id"}`; `404 attachment_not_found`; `409 invalid_state_transition`. Success/failure is observed via the command result (§7.9). The "revoke then CANCELLED" orchestration is a **new** worker command composing `relay_client.revoke` + `sender.cancel` (§13).
+Responses: `202 {"ok": true, "command_id"}`; `404 attachment_not_found`; `409 invalid_state_transition`. Success/failure is observed via the command result (§7.9). The "revoke/abort then CANCELLED" orchestration is a **new** worker command composing the Relay session cleanup + `sender.cancel` (§13); it keys off persisted upload-session/revoke-token state.
 
 ### 7.5 Public attachment projection (all read endpoints)
 
@@ -522,8 +537,9 @@ Onboarding is **two-phase and trust-anchored on a single-use probe record**, so 
 - **Result:** the `provider_probe` command result carries `{probe_id, provider_id, origin, service_key_fingerprint, protocol_version, max_ciphertext_bytes, min_ttl_seconds, max_ttl_seconds, expires_at}` (§7.9) — the browser shows the fingerprint and hands `probe_id` + `fingerprint_confirmation` to phase 2. A failed probe returns `error_code` (`relay_unreachable`, `relay_identity_mismatch`, `relay_incompatible`, `origin_not_routable`, …).
 
 **Phase 2 — `POST /api/mca/providers`.**
-- **Body:** `{probe_id, display_name, policy: {kind, tls_required, upload_allowed, download_allowed, max_ciphertext_bytes?}, fingerprint_confirmation}`.
-- **What the browser does NOT supply:** `base_url`/`origin`, `service_public_key`, `protocol_version`, `min_ttl_seconds`/`max_ttl_seconds`, and the derived `provider_id`. All of those come from the `ProbeRecord`, so a corrupted frontend cannot fabricate a consistent set — it can only reference a probe the server already performed.
+- **Body:** `{probe_id, display_name, policy: {kind, upload_allowed, download_allowed, max_ciphertext_bytes?}, fingerprint_confirmation}`.
+- **What the browser does NOT supply:** `base_url`/`origin`, `service_public_key`, `protocol_version`, `min_ttl_seconds`/`max_ttl_seconds`, the derived `provider_id`, and `tls_required`. All of those come from the `ProbeRecord`, so a corrupted frontend cannot fabricate a consistent set — it can only reference a probe the server already performed.
+- **`tls_required` is not browser-controllable.** For the globally-routable HTTPS-only MVP, `tls_required` is **always `true`** with TLS certificate verification **always enabled**; the policy body cannot set it to `false`. Relaxing this is only possible via a future ADR (e.g. the deferred LAN-Relay advanced mode).
 - **Synchronous validation (pure, against the probe snapshot):** `probe_id` must exist and be unexpired (`400 probe_id_not_found` / `400 probe_id_expired`); `fingerprint_confirmation` must equal the probe's `service_key_fingerprint` (`400 provider_id_mismatch`); `max_ciphertext_bytes` (if supplied) must not exceed the probe's advertised limit.
 - **Worker command** (`provider_register`): atomically **checks-and-consumes** `probe_id` (marks it used) and calls `register()` with the probe's fields. A second register with the same `probe_id` fails with `probe_id_used` in the command result.
 - **Responses:** `202 {"ok": true, "command_id"}`; `400 probe_id_not_found` / `probe_id_expired` / `provider_id_mismatch` / `invalid_metadata`.
@@ -555,7 +571,7 @@ All mutations are worker commands (§3.4); synchronous validation uses `normaliz
 }
 ```
 
-**No raw `service_public_key` bytes** (replaced by `service_key_fingerprint`), no `upload_token_file`, no token.
+**No raw `service_public_key` bytes** (replaced by `service_key_fingerprint`), no `upload_token_file`, no token. `tls_required` is always `true` for the MVP (read-only; see §7.11).
 
 ### 7.14 `GET /api/attachments/{id}/content` (1.6A.5)
 
@@ -576,23 +592,24 @@ All mutations are worker commands (§3.4); synchronous validation uses `normaliz
 
 ## 8. State / action matrix (corrected)
 
-Allowed actions per state. `retry` is valid **only** for `AUTOMATIC_STATES`; `REJECTED` and permanent failures (`FAILED_VALIDATION`, `FAILED_UPLOAD`, `FAILED_RADIO`) are **not** retryable. `cancel` distinguishes pre-commit vs post-commit (see §7.4).
+Allowed actions per state. `retry` is valid **only** for `AUTOMATIC_STATES` — `OFFER_RECEIVED`, `WAITING_CONSENT` and `VERIFYING` are **not** automatic and are therefore **not** retryable; `REJECTED` and permanent failures (`FAILED_VALIDATION`, `FAILED_UPLOAD`, `FAILED_RADIO`) are likewise **not** retryable. `cancel` is keyed off persisted remote state (see §7.4).
 
 | State | retry | download | save | reject | revoke | cancel | copy-code | local-content |
 |---|---|---|---|---|---|---|---|---|
-| DRAFT / VALIDATING / ENCRYPTING / QUEUED_UPLOAD | ✓ | — | — | — | — | ✓ (local + spool) | — | — |
-| UPLOADING / READY_TO_SEND | ✓ | — | — | — | — | ✓ (revoke→CANCELLED) | — | — |
+| DRAFT / VALIDATING / ENCRYPTING / QUEUED_UPLOAD | ✓ | — | — | — | — | ✓ (no remote session: local + spool) | — | — |
+| UPLOADING | ✓ | — | — | — | — | ✓ (session uncommitted: abort/revoke session) | — | — |
+| READY_TO_SEND | ✓ | — | — | — | — | ✓ (committed: revoke object) | — | — |
 | SENT / RECEIVED / DOWNLOADED | — | — | — | — | ✓ | — (use revoke) | ✓ | ✓(if saved) |
 | FAILED_VALIDATION / FAILED_UPLOAD / FAILED_RADIO | — | — | — | — | — | — | — | — |
 | EXPIRED / REVOKED / CANCELLED | — | — | — | — | — | — | — | — |
-| OFFER_RECEIVED | ✓ | — | — | — | — | — | — | — |
+| OFFER_RECEIVED | — | — | — | — | — | — | — | — |
 | WAITING_KEY / WAITING_PROVIDER / WAITING_NETWORK / DOWNLOADING | ✓ | — | — | — | — | — | — | — |
 | WAITING_CONSENT | — | ✓ | — | ✓ | — | — | — | — |
-| VERIFYING | ✓ | — | — | — | — | — | — | — |
+| VERIFYING | — | — | — | — | — | — | — | — |
 | AVAILABLE | — | — | ✓ | — | — | — | ✓ | ✓ |
 | REJECTED / FAILED / EXPIRED (receiver) | — | — | — | — | — | — | — | — |
 
-`cancel` semantics: `DRAFT→QUEUED_UPLOAD` = cancel local + clear spool → `CANCELLED`; `UPLOADING`/`READY_TO_SEND` = revoke Relay object first → `CANCELLED` (revoke failure ⇒ not `CANCELLED`, `error_code: relay_unreachable`); `SENT/RECEIVED/DOWNLOADED` = use `/revoke`, not `/cancel`.
+`cancel` semantics (keyed off persisted remote state, §7.4): no remote session/revoke token → local cancel + clear spool → `CANCELLED`; upload session uncommitted → abort/revoke session → `CANCELLED`; committed object not yet sent → revoke object → `CANCELLED` (any remote-cleanup failure ⇒ not `CANCELLED`, `error_code: relay_unreachable`); `SENT/RECEIVED/DOWNLOADED` → use `/revoke`, not `/cancel`.
 
 `retry` never mutates state directly — it re-dispatches `run_step`/`reconcile_pending` for a state the tick already drives, forcing immediacy (e.g. `READY_TO_SEND` after the radio returns, `QUEUED_UPLOAD` after the network returns). It never mints a new `transfer_id`, and it does **not** recover a terminal `FAILED_*` (that is a future state-machine change).
 
@@ -646,7 +663,7 @@ Command-result `error_code`s reuse this table plus the probe failure codes (`ori
 4. **No absolute paths** — `saved_path` removed; `ContentDescriptor.locator` is internal-only, never serialized.
 5. **No secret egress** — upload/revoke tokens, receipt secret, private keys never in a response or command result; `upload_token_configured`/`configured` only; token-write/clear endpoints never echo the token.
 6. **No secret logging** — stable `error_code`s, sanitized messages, no plaintext filename/comment/keys/pointers/tokens.
-7. **SSRF** — §12 (finalized): MVP allows only globally-routable HTTPS Relay origins; special/private address ranges and redirects are blocked at probe time and on every subsequent fetch.
+7. **SSRF** — §12 (finalized): MVP allows only globally-routable HTTPS Relay origins (`is_global` + IPv4-mapped-IPv6 check); special/private address ranges, redirects, and unvalidated re-resolution are blocked, and the fetch is IP-pinned (§12.2).
 8. **Recipient identity never client-derived** — the create endpoint takes a transport address; the server resolves the trusted Ed25519 key from `mca_recipient_bindings` and enforces the TOFU address binding before encrypting (§4.2).
 9. **Preview policy** — §7.14; `nosniff`, `Cache-Control: no-store`, `Content-Security-Policy: sandbox` always; inline only for decoded-and-verified JPEG/PNG/WebP (and optionally strict `text/plain`); PDF and everything else `application/octet-stream` + attachment with a safe ASCII/`filename*` disposition.
 10. **Bounded admission** — inbound caps (per-source/global), a bounded command queue (§3.2), and a bounded command-result/probe store (§3.4), all surfaced as `429`/`404` rather than silent drops.
@@ -659,15 +676,15 @@ Command-result `error_code`s reuse this table plus the probe failure codes (`ori
 
 ### 12.1 Finalized MVP policy: globally-routable HTTPS only
 
-For the MVP, only a Relay whose origin resolves to a **globally routable** address over HTTPS is accepted. The following are **blocked** at probe time and re-checked on every subsequent fetch:
+For the MVP, only a Relay whose origin resolves to a **globally routable** address over HTTPS is accepted. The concrete check is `ipaddress.ip_address(addr).is_global == True` (which correctly classifies `0.0.0.0/32` and `::/128` as non-global *without* blacklisting the entire internet the way `0.0.0.0/0`/`::/0` would), **plus** an explicit IPv4-mapped-IPv6 check (`::ffff:a.b.c.d` is rejected when the embedded IPv4 address is not global). The following are **blocked** at probe time and re-checked on every subsequent fetch:
 
 - loopback (`127.0.0.0/8`, `::1`);
 - private / site-local (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`);
 - link-local (`169.254.0.0/16`, `fe80::/10`);
 - multicast (`224.0.0.0/4`, `ff00::/8`);
-- unspecified (`0.0.0.0/0`, `::/0`);
+- unspecified (`0.0.0.0/32`, `::/128`);
 - reserved / special-use ranges;
-- IPv4-mapped IPv6 addresses in the above special ranges (`::ffff:a.b.c.d` mapping onto a blocked IPv4 range);
+- IPv4-mapped IPv6 addresses whose embedded IPv4 address falls in the above special ranges;
 - **redirects** — `allow_redirects=False` everywhere; any 3xx is an error, never followed.
 
 This does **not** hinder a user's own Hostinger-hosted public HTTPS Relay, and it substantially simplifies safe implementation. **LAN / self-hosted Relay (a private-origin Relay) is deferred to a future "advanced mode" with its own ADR.** In this contract, "own Relay" means a *user-owned public HTTPS Relay* (a globally-routable origin the user controls), not a LAN-only service.
@@ -675,7 +692,17 @@ This does **not** hinder a user's own Hostinger-hosted public HTTPS Relay, and i
 ### 12.2 What exists today vs. what is required
 
 - **Exists:** `normalize_origin()` (HTTPS-only, hostname, no credentials, bare origin — pure, request-thread-safe); `resolve()` (a miss is `None`, no network).
-- **Required (all gaps, §13):** DNS resolution + the §12.1 address classification at probe time and on every fetch (re-resolved each request — DNS-rebinding protection); `allow_redirects=False` in `relay_client`/`connectivity_monitor`; and a gate between "origin probed" and "origin persisted" that runs the probe asynchronously before trust is committed.
+- **Required (all gaps, §13):** DNS resolution + the §12.1 address classification at probe time; **IP pinning** on every subsequent fetch (see below); `allow_redirects=False` in `relay_client`/`connectivity_monitor`; and a gate between "origin probed" and "origin persisted" that runs the probe asynchronously before trust is committed.
+
+**DNS-rebinding protection requires IP pinning, not "re-resolve then request."** The sequence "resolve DNS, check the IP, then issue a `requests` call by hostname" still leaves a window — `requests` performs its **own independent DNS resolution** internally, which a rebinding attacker can answer differently. The contract therefore requires the fetch path to:
+
+1. resolve **all** addresses for the hostname;
+2. **reject** the origin if **any** resolved address is not globally routable per §12.1;
+3. connect **to one of the already-validated IPs** (the HTTP client is pinned to a specific IP — no second, independent DNS lookup inside the client);
+4. while verifying the **TLS certificate and SNI against the original hostname** (so the pinned IP does not break hostname verification);
+5. and forbid redirects.
+
+If this IP-pinning approach is judged too involved for the MVP, the document must **not** claim DNS-rebinding protection is fully designed — the honest fallback is to state that rebinding protection is *deferred*, and that mitigation is limited to the probe-time blocklist. Either way, the runtime `resolve()` lookup and every Relay fetch must enforce §12.1.
 
 ### 12.3 Trust bootstrap (two-phase, §7.11)
 
@@ -688,14 +715,14 @@ The trust is thus **operator-confirmed fingerprint + server-side probe-verified 
 
 ## 13. Implementation gaps (resolve before/with the named sub-stage)
 
-1. **No request-facing facade / queue / snapshots.** `AttachmentsService` has no CRUD methods and no command queue; the §3 model (command queue, command-result snapshot, attachments/provider/idempotency/probe snapshots, dedicated snapshot publisher, `ContentDescriptor`, `clear_upload_token()`) must be built first (1.6A.0/1).
+1. **No request-facing facade / queue / snapshots.** `AttachmentsService` has no CRUD methods and no command queue; the §3 model (command queue, `CommandRegistry`, attachments/provider/idempotency/probe snapshots, dedicated snapshot publisher, `ContentDescriptor`, `clear_upload_token()`) must be built first (1.6A.0/1).
 2. **No `client_request_id` / `canonical_hash` columns** on `attachments`, and **no unique index on `(workspace_id, client_request_id)`** — the migration needed for idempotency (§3.5/§3.6).
 3. **No multipart staging** — no existing route accepts `multipart/form-data`; spool write, magic-byte sniff, `file_sha256` computation, and the 5 MiB cap are new.
-4. **No cancel orchestration** — `sender.cancel()` does not clear the spool or revoke an already-committed Relay object; the `CancelAttachmentCommand`'s pre/post-commit behavior (§7.4) is a new worker command composing `relay_client.revoke` + `sender.cancel`.
+4. **No cancel orchestration** — `sender.cancel()` does not clear the spool or abort/revoke an in-flight Relay upload session/object; the `CancelAttachmentCommand`'s persisted-remote-state behavior (§7.4) is a new worker command composing the Relay session cleanup + `sender.cancel`.
 5. **No probe store / `probe_id` flow** — the single-use in-memory `ProbeRecord` store and its check-and-consume semantics (§7.11) are new; `register()` currently re-trusts browser-supplied fields, which the `probe_id` flow replaces.
 6. **No contact enumeration** — `GET /api/mca/contacts` needs a "list all bindings" method.
 7. **No add-route / save-to-files / revoke / clear-token domain methods** — `deliveries` POST, `save`, `revoke`-via-facade, and `clear_upload_token()` all need new worker-executed methods.
-8. **SSRF hardening (§12)** — DNS/IP classification, redirect pinning (`allow_redirects=False`), DNS-rebinding re-validation, async onboarding probe: all absent in `relay_client`/`connectivity_monitor`.
+8. **SSRF hardening (§12)** — DNS/IP classification (`is_global` + IPv4-mapped-IPv6), IP pinning with hostname/SNI TLS verification (no independent client-side DNS), redirect pinning (`allow_redirects=False`), async onboarding probe: all absent in `relay_client`/`connectivity_monitor`.
 9. **No connector registry** — `connector_profile_id` is a fixed `"meshtastic"` string; `GET /api/mca/connectors` is a Multi-transport placeholder.
 10. **CSRF mechanism absent project-wide** (§2.3) — a project prerequisite, not MCAttach-specific.
 11. **`MAX_CONTENT_LENGTH` absent** — the 5 MiB upload cap must be enforced server-side (Flask `MAX_CONTENT_LENGTH` or an explicit streaming check), not only by the client.
@@ -713,7 +740,7 @@ The trust is thus **operator-confirmed fingerprint + server-side probe-verified 
 6. **Recipient is an address, never a key** — the server resolves the trusted key from the TOFU binding; nothing in the audited code accepts a client-derived public key.
 7. **All mutations are worker commands (202), reads are snapshots (200)** — the uniform §3.4 model, with `GET /api/mca/commands/{command_id}` as the outcome surface.
 8. **`retry` restricted to `AUTOMATIC_STATES`** — `REJECTED`/`FAILED_*` are terminal; terminal-failure retry is a future state-machine change, not promised here.
-9. **`cancel` added** (not in §18) — the outbound card's pre-`SENT` lifecycle action, with revoke-then-CANCELLED after Relay commit (§7.4).
+9. **`cancel` added** (not in §18) — the outbound card's pre-`SENT` lifecycle action, keyed off persisted upload-session/revoke-token state (§7.4).
 10. **Provider onboarding via `probe_id`** — the spec's "trust bootstrap + fingerprint confirm" is pinned to a single-use probe record so registration never re-trusts browser parameters (§7.11).
 11. **`GET /api/mca/connectors` deferred to Multi-transport** — the MVP has one hardcoded connector.
 12. **`retry` does not mint a new `transfer_id`** — the spec's §22.1 rule is pinned into the endpoint contract.
@@ -725,7 +752,7 @@ The trust is thus **operator-confirmed fingerprint + server-side probe-verified 
 ## 15. Unresolved decisions
 
 1. **Whether a separate local `profile_id` is needed** — §9; open for a later re-key/multi-profile stage.
-2. **Command-queue topology constants** — single queue vs. separate command/query queues, `MAX_COMMANDS_PER_TICK`, `COMMAND_RESULT_MAX_ENTRIES`/`COMMAND_RESULT_TTL_SECONDS`, and whether `attachment_id` is minted at enqueue-time or worker-time: the §3 model fixes the *shape*, but the constants should be chosen **after** measuring the worker tick's runtime on real hardware.
+2. **Command-queue topology constants** — `MAX_COMMANDS_PER_TICK`, `COMMAND_RESULT_MAX_ENTRIES`/`COMMAND_RESULT_TTL_SECONDS`, and the snapshot-republish cadence (`SNAPSHOT_REPUBLISH_INTERVAL_SECONDS`): the §3 model fixes the *shape* (reads use immutable snapshots, not a query queue; ids are minted on the request thread), but the constants should be chosen **after** the 1.6A.1 snapshot-cost benchmark and a measurement of the worker tick's runtime on real hardware.
 3. **File upload in one request vs. two-step stage-then-create** — §7.2 commits to one multipart request; the stage-then-create alternative is recorded (better resumability, an extra round-trip) and may be revisited if resumable uploads become a requirement.
 4. **Terminal-failure retry state-machine change** — retrying `FAILED_UPLOAD` (and other terminal failures) is deferred to a separate change (§4.2, §7.3); the exact new transition is out of scope for this contract.
 5. **Progress polling cadence / whether list-detail returns a `progress` field** — left to the UI task.

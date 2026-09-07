@@ -707,30 +707,76 @@ class AttachmentsService:
         DIRECT destination address is the *same* address that key was
         actually TOFU-pinned at would silently decouple "who we trust"
         from "where we're sending", exactly the property TOFU exists to
-        bind together. For the DIRECT-only MVP (every real route today),
-        a recipient is now only included when `binding.transport_address`
-        also equals this attachment's own delivery `route_id` - fail
-        closed (excluded, same as an untrusted/KEY_UNKNOWN binding) on a
-        mismatch, never silently sent anyway. A non-DIRECT route (not
-        reachable in this MVP - see attachment_deliveries.route_type)
-        has no single fixed destination address to compare against
-        (a channel broadcast's `route_id` names the channel, not any one
-        recipient), so this check is skipped for those - not a channel-
-        delivery security decision the MVP is prepared to make yet, out
-        of scope per this review's own "no MCA/1 wire-format or new
-        route-shape changes" instruction."""
+        bind together.
+
+        PR #231 review (3rd pass), tightened further: the earlier fix
+        above only checked the transport address when a delivery record
+        happened to exist and be DIRECT - a *missing* delivery record or
+        a non-DIRECT one silently skipped the address check entirely,
+        letting every otherwise-trusted recipient through with no TOFU-
+        to-destination binding verified at all. That was backwards: TOFU
+        verification before encryption must fail closed on exactly those
+        cases, not fail open. Now, before resolving any individual
+        recipient: (1) an attachment must have a delivery record at all
+        (`attachment_deliveries` - `create_draft()`'s own required
+        `adapter_id`/`connector_profile_id`/`route_type`/`route_id`
+        parameters mean a normal attachment always has exactly one; a
+        missing row is a data-integrity problem, not a shape this MVP's
+        own API can legitimately produce); (2) for the current MVP, that
+        delivery's `route_type` must be `DIRECT` (the only route shape
+        this MVP ever creates or knows how to verify an address against
+        - see `ReplyRoute`'s own docstring on the same DIRECT-only
+        reasoning for the receiver side); (3) the delivery's own
+        `adapter_id` must match this service's actually-configured
+        `delivery_adapter.adapter_id` - encrypting for a delivery
+        record that names a *different* adapter than the one this
+        service is about to send through would be exactly the same
+        "trust the key, but not the destination" gap the transport-
+        address check already closes, just one field over. Any of these
+        three failing excludes every recipient (empty mapping) - the
+        same fail-closed outcome `_step_sent()` already treats as
+        `fail_recipients_not_trusted()` for the whole attachment.
+
+        Once a delivery record passes all three, each individual
+        recipient's binding must also match: `binding.transport_address`
+        must equal the delivery's own `route_id` - fail closed
+        (excluded, same as an untrusted/KEY_UNKNOWN binding) on a
+        mismatch, never silently sent anyway.
+
+        Logging note (PR #231 review, 3rd pass): none of the log lines
+        below include a raw transport address, key_id, or attachment_id
+        - only which *kind* of check failed, so a rejection is
+        diagnosable from logs without them becoming a secondary channel
+        for exactly the identifying data TOFU/binding checks exist to
+        protect."""
         self._conn.row_factory = sqlite3.Row
         recipient_rows = self._conn.execute(
             "SELECT DISTINCT recipient_principal_id FROM attachment_recipients WHERE attachment_id = ?",
             (attachment_id,),
         ).fetchall()
         delivery_row = self._conn.execute(
-            "SELECT route_type, route_id FROM attachment_deliveries WHERE attachment_id = ? ORDER BY id LIMIT 1",
+            "SELECT adapter_id, route_type, route_id FROM attachment_deliveries WHERE attachment_id = ? ORDER BY id LIMIT 1",
             (attachment_id,),
         ).fetchone()
-        delivery_route_type = delivery_row["route_type"] if delivery_row is not None else None
-        delivery_route_id = delivery_row["route_id"] if delivery_row is not None else None
         identities: Dict[str, bytes] = {}
+
+        if delivery_row is None:
+            logger.info("AttachmentsService: excluding all recipients - no delivery record found for this attachment")
+            return identities
+        if delivery_row["route_type"] != RouteType.DIRECT.value:
+            logger.info(
+                "AttachmentsService: excluding all recipients - unsupported (non-DIRECT) delivery route for this MVP"
+            )
+            return identities
+        configured_adapter_id = self._delivery_adapter.adapter_id if self._delivery_adapter is not None else None
+        if delivery_row["adapter_id"] != configured_adapter_id:
+            logger.info(
+                "AttachmentsService: excluding all recipients - delivery record's adapter does not match "
+                "the currently configured delivery adapter"
+            )
+            return identities
+
+        delivery_route_id = delivery_row["route_id"]
         for recipient_row in recipient_rows:
             key_id = recipient_row["recipient_principal_id"]
             if not key_id:
@@ -738,12 +784,10 @@ class AttachmentsService:
             binding = self._key_exchange.get_binding_by_key_id(key_id)
             if binding is None or binding.status != AddressStatus.MCA_READY:
                 continue
-            if delivery_route_type == RouteType.DIRECT.value and binding.transport_address != delivery_route_id:
+            if binding.transport_address != delivery_route_id:
                 logger.info(
-                    "AttachmentsService: excluding recipient %s from attachment %s - "
-                    "TOFU binding is pinned to a different transport address than this "
-                    "attachment's own DIRECT destination (bound=%r, destination=%r)",
-                    key_id, attachment_id, binding.transport_address, delivery_route_id,
+                    "AttachmentsService: excluding a recipient - TOFU binding is pinned to a different "
+                    "transport address than this attachment's own delivery destination"
                 )
                 continue
             identities[key_id] = binding.public_identity

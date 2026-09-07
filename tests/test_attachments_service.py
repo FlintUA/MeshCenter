@@ -490,6 +490,174 @@ def test_resolve_recipient_identities_accepts_a_binding_matching_the_destination
     assert identities[recipient_principal.key_id] == recipient_principal.public_identity
 
 
+# ---- PR #231 review (3rd pass): TOFU verification tightened further -------
+# require a delivery record, a supported DIRECT route, and a matching
+# delivery adapter, all fail-closed BEFORE encryption - the earlier pass's
+# fix only checked the transport address when a delivery record happened
+# to already be DIRECT, silently skipping the check (fail OPEN) for a
+# missing or non-DIRECT delivery.
+
+
+def _draft_to_encrypting(conn, wsm, principal, recipient_principal, registered_provider, tmp_path, service):
+    """Shared setup: a real draft with a trusted binding, ticked forward
+    to ENCRYPTING - the same starting point every test below needs before
+    tampering with its own attachment_deliveries row."""
+    attachment_id = _create_draft(
+        conn, wsm, principal, recipient_principal=recipient_principal,
+        registered_provider=registered_provider, tmp_path=tmp_path,
+    )
+    for _ in range(20):
+        if sender.get_state(conn, attachment_id) == sender.ENCRYPTING:
+            break
+        service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.ENCRYPTING
+    return attachment_id
+
+
+def test_resolve_recipient_identities_excludes_everyone_when_delivery_record_is_missing(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal, transport_address="remote-addr")
+    attachment_id = _draft_to_encrypting(conn, wsm, principal, recipient_principal, registered_provider, tmp_path, service)
+
+    conn.execute("DELETE FROM attachment_deliveries WHERE attachment_id = ?", (attachment_id,))
+    conn.commit()
+
+    assert service._resolve_recipient_identities(attachment_id) == {}
+
+
+def test_tick_fails_attachment_when_delivery_record_is_missing(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal, transport_address="remote-addr")
+    attachment_id = _draft_to_encrypting(conn, wsm, principal, recipient_principal, registered_provider, tmp_path, service)
+    conn.execute("DELETE FROM attachment_deliveries WHERE attachment_id = ?", (attachment_id,))
+    conn.commit()
+
+    for _ in range(20):
+        state = sender.get_state(conn, attachment_id)
+        if state in (sender.FAILED_VALIDATION, sender.SENT):
+            break
+        service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.FAILED_VALIDATION
+
+
+def test_resolve_recipient_identities_excludes_everyone_for_a_non_direct_route(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    """For the current MVP, only a DIRECT delivery route can be
+    TOFU-verified at all - a channel broadcast's route_id names the
+    channel, not any one recipient's address, so this must fail closed
+    rather than silently skip the address check (the earlier pass's bug)."""
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal, transport_address="remote-addr")
+    attachment_id = _draft_to_encrypting(conn, wsm, principal, recipient_principal, registered_provider, tmp_path, service)
+
+    conn.execute("UPDATE attachment_deliveries SET route_type = 'CHANNEL' WHERE attachment_id = ?", (attachment_id,))
+    conn.commit()
+
+    assert service._resolve_recipient_identities(attachment_id) == {}
+
+
+def test_resolve_recipient_identities_excludes_everyone_when_delivery_adapter_does_not_match(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    """The delivery record's own adapter_id must match the service's
+    actually-configured delivery_adapter - encrypting for a delivery that
+    names a different adapter than the one this service is about to send
+    through is the same "trust the key, not the destination" gap as a
+    transport-address mismatch, just one field over."""
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal, transport_address="remote-addr")
+    attachment_id = _draft_to_encrypting(conn, wsm, principal, recipient_principal, registered_provider, tmp_path, service)
+
+    conn.execute(
+        "UPDATE attachment_deliveries SET adapter_id = 'a-completely-different-adapter' WHERE attachment_id = ?",
+        (attachment_id,),
+    )
+    conn.commit()
+
+    assert service._resolve_recipient_identities(attachment_id) == {}
+
+
+def test_tick_fails_attachment_for_a_non_direct_route(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal, transport_address="remote-addr")
+    attachment_id = _draft_to_encrypting(conn, wsm, principal, recipient_principal, registered_provider, tmp_path, service)
+    conn.execute("UPDATE attachment_deliveries SET route_type = 'CHANNEL' WHERE attachment_id = ?", (attachment_id,))
+    conn.commit()
+
+    for _ in range(20):
+        state = sender.get_state(conn, attachment_id)
+        if state in (sender.FAILED_VALIDATION, sender.SENT):
+            break
+        service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.FAILED_VALIDATION
+
+
+def test_rejection_log_lines_never_include_raw_address_key_id_or_attachment_id(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service, caplog
+):
+    """PR #231 review (3rd pass): the rejection path must not leak raw
+    transport addresses, key IDs, or attachment IDs into logs - checked
+    across all four rejection reasons in one pass (missing delivery,
+    non-DIRECT route, adapter mismatch, address mismatch)."""
+    import logging
+
+    _, _, recipient_principal = remote_recipient
+    sensitive_values = [recipient_principal.key_id, "remote-addr", "a-different-address"]
+
+    _bind_recipient(conn, recipient_principal, transport_address="remote-addr")
+
+    scenarios = []
+    for mutate in (
+        lambda aid: conn.execute("DELETE FROM attachment_deliveries WHERE attachment_id = ?", (aid,)),
+        lambda aid: conn.execute("UPDATE attachment_deliveries SET route_type = 'CHANNEL' WHERE attachment_id = ?", (aid,)),
+        lambda aid: conn.execute("UPDATE attachment_deliveries SET adapter_id = 'other' WHERE attachment_id = ?", (aid,)),
+    ):
+        attachment_id = _draft_to_encrypting(conn, wsm, principal, recipient_principal, registered_provider, tmp_path, service)
+        mutate(attachment_id)
+        conn.commit()
+        scenarios.append(attachment_id)
+
+    # A fourth scenario: a real address mismatch (a second, independent
+    # recipient principal, bound at a different address than this
+    # attachment's own delivery route_id).
+    conn3 = sqlite3.connect(str(tmp_path / "second_recipient_attachments.db"))
+    conn3.execute("PRAGMA foreign_keys = ON")
+    migrations.migrate(conn3)
+    wsm3 = MCAWorkspaceManager(str(tmp_path / "second_recipient_data"))
+    mismatched_principal = identity.ensure_principal(conn3, wsm3, "local")
+    sensitive_values.append(mismatched_principal.key_id)
+    _bind_recipient(conn, mismatched_principal, transport_address="a-different-address")
+    mismatched_attachment_id = _create_draft(
+        conn, wsm, principal, recipient_principal=mismatched_principal,
+        registered_provider=registered_provider, tmp_path=tmp_path,
+    )
+    for _ in range(20):
+        if sender.get_state(conn, mismatched_attachment_id) == sender.ENCRYPTING:
+            break
+        service.tick()
+    assert sender.get_state(conn, mismatched_attachment_id) == sender.ENCRYPTING
+    scenarios.append(mismatched_attachment_id)
+
+    with caplog.at_level(logging.INFO, logger="meshsrv.attachments.service"):
+        for attachment_id in scenarios:
+            service._resolve_recipient_identities(attachment_id)
+
+    rejection_records = [r for r in caplog.records if "excluding" in r.message]
+    assert len(rejection_records) >= 4
+    for record in rejection_records:
+        for sensitive in sensitive_values:
+            assert sensitive not in record.message
+        for attachment_id in scenarios:
+            assert attachment_id not in record.message
+
+
 def test_tick_fails_attachment_when_binding_has_a_pending_key_change(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service, key_exchange):
     """KEY_CHANGED (a conflicting KEY_ANNOUNCE parked in
     pending_public_identity) must be treated the same as KEY_UNVERIFIED:

@@ -158,12 +158,13 @@ which returns the command's status and a safe result payload (§7.9). This is ma
 
 **`CommandRegistry` — a separate thread-safe in-memory store.** The command-result store is **not** a worker-published immutable snapshot (the worker has not necessarily run when the first `GET` arrives). It is a dedicated `CommandRegistry`:
 
-- **request thread** registers `queued` at enqueue time (immediately after `put_nowait`, so a `GET` that lands right away sees `queued`, never `404`);
+- **request thread** registers `queued` **before** `put_nowait()` (so the worker can never dequeue a command whose registry entry does not yet exist, and a `GET` that lands right away sees `queued`, never `404`);
 - **worker** transitions `running` → `succeeded`/`failed` as it dequeues and executes;
 - guarded by a short dedicated lock (not the tick lock); **no SQLite**;
 - **LRU/TTL eviction only of terminal results** (`succeeded`/`failed`); `queued` and `running` entries are **never** evicted (a client polling an in-flight command must keep seeing it);
 - **safe** — `result` payloads contain no secrets, no absolute paths, no ciphertext; `error_code` is a stable snake_case code;
 - **restart-amnesic** — in-memory only. On restart, all `command_id`s are forgotten and `GET` returns `404 command_not_found`; a command that was still `queued`/`running` never executes, so the client must **re-issue** (or, for `provider_probe`, re-run the probe rather than looking for its result in a domain snapshot). (This is safe: each command is either idempotent — create — or re-drivable — the action endpoints — and the single-owner SQLite transaction model guarantees a crash mid-command leaves a consistent on-disk state.)
+- **`command_not_found` does not prove a side effect did not occur.** A command may have been dequeued and executed — including a Relay-facing side effect (upload, revoke, abort) — before the crash wiped the registry. A reissued Relay-facing command must therefore first **reconcile persisted/remote state** (the stored upload-session/revoke-token state of §7.4) and remain **idempotent**, rather than blindly repeating an external call.
 
 Command lifecycle: `queued` (request thread) → `running` (worker) → `succeeded`/`failed` (worker). `command_id` and, for `attachment_create`, `attachment_id` are minted on the request thread (§3.6).
 
@@ -219,8 +220,9 @@ Two concurrent Flask threads could both observe "this `client_request_id` is abs
    - if already **reserved or committed** with the same `canonical_hash` → idempotent replay: if still pending, return `202` with the **same** `command_id`/`attachment_id` and `replayed: true`; if committed, return `200` with the existing `attachment_id`;
    - if already **reserved or committed** with a different `canonical_hash` → `409 idempotency_conflict`;
    - otherwise → insert the reservation (with all three ids) and release the lock.
-4. **Enqueue** the command (`put_nowait`). On `queue.Full`, **release the reservation** and return `429 command_queue_full`.
-5. Return `202` + `command_id` (+ `attachment_id` for create).
+4. **Register the command as `queued`** in the `CommandRegistry` (§3.4) — **before** the queue write, so the worker can never dequeue a command whose registry entry does not yet exist.
+5. **Enqueue** the command (`put_nowait`). On `queue.Full`, **remove both** the `CommandRegistry` entry **and** the `pending_reservations` entry, then return `429 command_queue_full`.
+6. Return `202` + `command_id` (+ `attachment_id` for create) **only after** the command was successfully enqueued.
 
 The reservation is transient (in-memory only). The worker, on successfully committing the row, moves the entry from `pending_reservations` into the committed idempotency index (with `attachment_id`) and publishes it; on a failed create it drops the reservation. On restart, `pending_reservations` is discarded and the committed idempotency index is **restored from the database** (the worker reads `client_request_id`/`canonical_hash`/`attachment_id` from `attachments` at startup). A **unique index on `(workspace_id, client_request_id)`** in `attachments` is the final, database-level backstop against any duplicate that slips past the in-memory reservation (§13).
 

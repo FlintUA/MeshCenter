@@ -6036,6 +6036,35 @@ def start_runtime():
             flush=True,
         )
 
+    # PR #231 review (2nd pass), requirement 1: AttachmentsService - and,
+    # critically, its bounded inbound queue - must be fully initialized
+    # BEFORE listen_meshtastic starts, never after. handle_incoming_
+    # meshtastic_text() (called from the listener thread) is only safe to
+    # be lock-free/init-free (requirement 2 below) because by the time it
+    # can ever run, mca_runtime's singleton state and the queue it enqueues
+    # onto already exist - if the listener could start first, an inbound
+    # message could arrive before this initialization completes, and
+    # handle_incoming_meshtastic_text() would have to choose between
+    # blocking the listener thread on first-time init (defeating the
+    # whole point) or dropping real early traffic. Deliberately NOT gated
+    # on identity_match, unlike the radio listener block below: a
+    # mismatched/unconfirmed radio identity means no inbound message will
+    # ever reach handle_incoming_meshtastic_text() (the listener itself
+    # doesn't start), but AttachmentsService's own job is not limited to
+    # inbound processing - it is also what resumes previously-drafted/
+    # in-flight SENT-side attachments and reconciles RECEIVED-side ones
+    # left mid-state by a prior restart (ensure_service()'s own "restart
+    # never loses a job" guarantee). Gating this behind identity_match
+    # would mean every pending attachment stays frozen for as long as the
+    # radio identity question is unresolved, even though that question has
+    # nothing to do with whether previously-queued work can advance.
+    # Best-effort like every other block here - a failure to start the MCA
+    # worker must not prevent the rest of start_runtime() from coming up.
+    try:
+        mca_runtime.start_attachments_service(DATA_DIR, transport_router)
+    except Exception as e:
+        print(f"[MCA] failed to start AttachmentsService: {e}", flush=True)
+
     # Start radio workers only for the accepted physical radio.  This prevents
     # another USB node from contaminating the active profile.
     if identity_match:
@@ -6053,26 +6082,6 @@ def start_runtime():
     else:
         pause_listen.set()
         print(f"[IDENTITY] Listener not started because status={identity_status}", flush=True)
-
-    # PR #231 review, section 3: deliberately NOT gated on identity_match,
-    # unlike the radio listener block above. A mismatched/unconfirmed
-    # radio identity means no inbound message will ever reach
-    # handle_incoming_meshtastic_text() (the listener itself doesn't
-    # start), but AttachmentsService's own job is not limited to inbound
-    # processing - it is also what resumes previously-drafted/in-flight
-    # SENT-side attachments and reconciles RECEIVED-side ones left
-    # mid-state by a prior restart (ensure_service()'s own "restart never
-    # loses a job" guarantee). Gating this behind identity_match would
-    # mean every pending attachment stays frozen for as long as the radio
-    # identity question is unresolved, even though that question has
-    # nothing to do with whether previously-queued work can advance.
-    # Best-effort like every other block here - a failure to start the
-    # MCA worker must not prevent the rest of start_runtime() from coming
-    # up.
-    try:
-        mca_runtime.start_attachments_service(DATA_DIR, transport_router)
-    except Exception as e:
-        print(f"[MCA] failed to start AttachmentsService: {e}", flush=True)
 
     threading.Thread(target=cpu_history_worker, args=(CPU_HISTORY_FILE,), daemon=True).start()
 

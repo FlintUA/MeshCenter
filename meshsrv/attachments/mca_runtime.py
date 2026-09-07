@@ -38,11 +38,11 @@ because it needs `radio_transport` (only ever handed to us per-call by
 the one `MeshtasticTextAdapter` it sends through - see
 `start_attachments_service()`'s own docstring.
 
-PR #231 review, section 2 (single-owner SQLite model): this module's
-own `_lock`/`state.conn` are no longer touched by
-`handle_incoming_meshtastic_text()` at all. That function now does
-exactly one thing - build an immutable `service.InboundEvent` from the
-raw text/metadata and hand it to `AttachmentsService.enqueue_inbound()`
+PR #231 review, section 2 (single-owner SQLite model) - and its 2nd-pass
+correction, below: this module's own `_lock`/`state.conn` are no longer
+touched by `handle_incoming_meshtastic_text()` at all. That function now
+does exactly one thing - build an immutable `service.InboundEvent` from
+the raw text/metadata and hand it to `AttachmentsService.enqueue_inbound()`
 (a bounded, non-blocking queue) - and returns. Every real MCA
 message-type dispatch (KEY_REQUEST/KEY_ANNOUNCE/KEY_ACK via
 `KeyExchangeCoordinator`, an OFFER via `receiver.handle_offer()`), the
@@ -55,14 +55,42 @@ via this function) therefore never blocks on SQLite, Relay network
 I/O, or attachment cryptography - it cannot, since it no longer reaches
 any of them.
 
-If `AttachmentsService` has not started yet (the narrow window between
-process start and `start_attachments_service()` completing, or if it
-failed to start), events still queue safely - `_MCARuntimeState.__init__`
-constructs the bounded queue eagerly, before any listener thread could
-plausibly call this function, and `ensure_service()` hands that same
-queue object to the real `AttachmentsService` once it exists (not a
-second, throwaway queue) - so nothing queued during that window is
-lost, only delayed until the worker starts draining it.
+CORRECTION (2nd-pass review): the first version of this redesign still
+had an indirect blocking path the module docstring above did not
+account for. `handle_incoming_meshtastic_text()` called `_get_state()`
+and `state.ensure_service()` on *every* invocation (not just the first),
+and both acquired this module's own `_lock` - the *same* lock object
+`AttachmentsService` was constructed with (`lock=_lock` in
+`_ensure_service_locked()`, since removed) for `tick()`'s own
+re-entrancy guard. Since `tick()` holds that lock for its *entire*
+duration - including `ConnectivityMonitor.refresh()`'s real Relay HTTP
+calls - a slow/unreachable Relay meant the radio listener thread would
+block on `_lock` for the same duration, exactly the hazard this whole
+redesign exists to eliminate. Confirmed via direct code reading, not
+assumed, and reproduced by test (see `tests/test_mca_runtime.py`'s
+`test_handle_incoming_meshtastic_text_does_not_block_on_a_slow_tick`).
+
+Fixed with two changes: (1) `AttachmentsService` is now given its own,
+dedicated `_tick_lock` (constructed fresh in `_MCARuntimeState.__init__`,
+never `mca_runtime._lock`) - the singleton-bookkeeping lock and the
+tick-reentrancy lock are two genuinely independent concerns now, not
+accidentally sharing one object; (2) `handle_incoming_meshtastic_text()`
+no longer calls `ensure_service()`/`_get_state()` at all after startup -
+it only ever reads the already-initialized module-level `_state`
+directly (a single reference read, safe without a lock under the GIL)
+and calls straight through to `_state.service.enqueue_inbound()`, which
+itself touches only the thread-safe `queue.Queue` and a `threading.Event`
+- never `_lock`, never SQLite, never the filesystem, never the network.
+`start_attachments_service()` remains the *only* place that performs
+real initialization (`_get_state()`/`ensure_service()`), and `server.py`
+now calls it before starting the radio listener (`start_runtime()`), not
+after - see that call site's own comment. If the runtime is somehow not
+ready yet when a message arrives (should never happen in production
+given that ordering, but a test or a future call site could still reach
+this function without it), `handle_incoming_meshtastic_text()` fails
+fast: it logs and drops the event, exactly like a full inbound queue -
+it never falls back to initializing the database or the worker from the
+listener thread itself.
 
 DEVIATION FROM ADR-0003, flagged explicitly rather than silently: that
 ADR's own wording names a schema path nested one level deeper than
@@ -85,6 +113,7 @@ scope for Stage 1).
 
 from __future__ import annotations
 
+import logging
 import queue
 import sqlite3
 import threading
@@ -102,14 +131,26 @@ from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
 from meshsrv.radio_transport import RadioTransport
 
+logger = logging.getLogger(__name__)
+
 WORKSPACE_ID = "local"
 ADAPTER_ID = "meshtastic"
 
-# Guards only this module's own singleton bookkeeping (_state creation/
-# reset) - NOT database access any more (PR #231 review, section 2: the
-# radio listener thread no longer touches `conn` at all, so there is no
-# second accessor left to serialize against; see AttachmentsService's own
-# `_lock` for tick() re-entrancy, a separate, narrower concern).
+# Guards only this module's own singleton bookkeeping (_state creation in
+# _get_state(), reset in reset_state_for_tests()) - genuinely nothing
+# else. PR #231 review (2nd pass): this lock must never be handed to
+# AttachmentsService as its tick lock (see _MCARuntimeState.__init__'s
+# own _tick_lock, a separate, freshly-constructed Lock) - the two are
+# unrelated concerns (rare, startup-only singleton creation vs. a lock
+# held for a tick()'s entire duration, including real Relay HTTP calls),
+# and sharing one object between them was the root cause of a real
+# listener-thread-blocks-on-a-slow-tick bug the first version of this
+# redesign introduced (see the module docstring's own "CORRECTION"
+# section). handle_incoming_meshtastic_text() - the radio listener's own
+# call path - never acquires this lock at all after startup; only
+# _get_state()/ensure_service()/reset_state_for_tests() do, and those are
+# only ever called from start_runtime()'s own startup sequence (before
+# the listener thread exists) or from tests.
 _lock = threading.Lock()
 _state: "Optional[_MCARuntimeState]" = None
 
@@ -174,6 +215,19 @@ class _MCARuntimeState:
         # queued during that window is a second, throwaway queue that
         # gets silently dropped.
         self.inbound_queue: "queue.Queue[InboundEvent]" = queue.Queue(maxsize=INBOUND_QUEUE_MAXSIZE)
+        # PR #231 review (2nd pass), requirement 4: AttachmentsService's
+        # own tick-reentrancy lock, constructed fresh here and never
+        # shared with this module's `_lock` (singleton bookkeeping only -
+        # see that name's own comment). Sharing one lock object between
+        # "guards _state creation, held briefly, startup-only" and "held
+        # for a tick()'s entire duration, including real Relay HTTP calls"
+        # was the root cause of a real bug: handle_incoming_meshtastic_
+        # text() used to call ensure_service() unconditionally, which
+        # acquired that same shared lock - blocking the radio listener
+        # thread for as long as a slow Relay request kept a tick running.
+        # See the module docstring's "CORRECTION" section for the full
+        # account.
+        self.tick_lock = threading.Lock()
         # Unlike the pieces above, the worker thread itself is not
         # started until ensure_service() runs - see that method's own
         # docstring for why it needs radio_transport, which this
@@ -186,21 +240,21 @@ class _MCARuntimeState:
         `AttachmentsService` needs a `MeshtasticTextAdapter`, which in
         turn needs `radio_transport` - the one piece `_MCARuntimeState`
         cannot construct itself, since today it only ever reaches this
-        module per-call, via `handle_incoming_meshtastic_text()`'s own
-        parameter, never as something stored at process startup. Callers
-        pass it in explicitly (`start_attachments_service()` below).
+        module per-call, via `start_attachments_service()`'s own
+        parameter, never as something stored at process startup.
 
-        Idempotent and self-locking (acquires the module-level `_lock`
-        internally, rather than requiring every caller to remember to -
-        PR #231 review found this module's own `handle_incoming_
-        meshtastic_text()` calling this method without holding `_lock` at
-        all, a real bug introduced while wiring the queue-based redesign
-        in, fixed here by moving the lock inside this method instead of
-        trusting each call site) so a second call - whether a second real
-        startup attempt or an incoming message racing server.py's own
-        startup call - just returns the already-running instance rather
-        than building a second worker thread or re-running
-        resume_pending()/reconcile_pending() a second time.
+        PR #231 review (2nd pass): this method - and therefore this
+        module's own `_lock` - is now called ONLY from `start_attachments_
+        service()`, which `server.py`'s `start_runtime()` calls once,
+        synchronously, before the radio listener thread is started at
+        all (see that call site's own comment). `handle_incoming_
+        meshtastic_text()` no longer calls this method on every message;
+        it only ever reads the already-built `_state`/`_state.service`
+        directly (module-level docstring). This method stays idempotent
+        and self-locking regardless - a second real startup attempt (a
+        hypothetical future profile-swap re-init path) must still be
+        safe - but the lock it acquires is no longer anywhere near the
+        radio listener's own hot path.
         """
         with _lock:
             return self._ensure_service_locked(radio_transport)
@@ -217,15 +271,17 @@ class _MCARuntimeState:
             key_exchange=self.coordinator,
             connectivity_monitor=self.connectivity_monitor,
             delivery_adapter=adapter,
-            # PR #231 review, section 2: `self.conn` is now touched only
-            # by this service's own worker thread - `lock` here is just
-            # for tick()'s own re-entrancy (its own docstring), not for
-            # serializing against the radio listener, which no longer
-            # accesses `conn` at all. `self.inbound_queue` (not a second,
-            # private one) is what the listener actually reaches -
-            # thread-safe by construction (queue.Queue), needing no lock
-            # of its own.
-            lock=_lock,
+            # PR #231 review (2nd pass), requirement 4: this service's OWN
+            # dedicated lock (self.tick_lock, constructed in __init__
+            # above) - never this module's `_lock`. `self.conn` is
+            # touched only by this service's own worker thread; `lock`
+            # here is purely for tick()'s own re-entrancy (its own
+            # docstring), a concern with no relation to the module-level
+            # singleton lock any more. `self.inbound_queue` (not a
+            # second, private one) is what the listener actually reaches
+            # - thread-safe by construction (queue.Queue), needing no
+            # lock of its own.
+            lock=self.tick_lock,
             inbound_queue=self.inbound_queue,
         )
         # Deliberately network_available=False and no relay_client/
@@ -327,35 +383,58 @@ def handle_incoming_meshtastic_text(
     *before* this function is ever reached, so this function itself
     only runs for messages that already passed that cheap filter).
 
-    PR #231 review, section 2: this function does exactly two things -
-    build an immutable `InboundEvent` and hand it to
-    `AttachmentsService.enqueue_inbound()` - and nothing else. No CBOR
-    decode, no signature verification, no database access, no network
-    call happens here or anywhere this function calls into; all of that
-    now happens later, on `AttachmentsService`'s own worker thread (see
-    `service.py`'s `_drain_inbound_events()`/`_process_one_inbound_event()`).
-    `radio_transport` is still accepted (server.py's existing call site
-    already passes it, and `start_attachments_service()`/`ensure_service()`
-    need it to build the one `MeshtasticTextAdapter` the worker thread
-    sends replies through) but this function itself never calls anything
-    on it - ingest/encode/send all move to the worker side too.
+    PR #231 review (2nd pass), requirement 2: after `start_runtime()`'s
+    own startup sequence has run (`server.py` now calls
+    `start_attachments_service()` before starting the radio listener at
+    all - see that call site's own comment), this function performs NO
+    initialization, acquires NO singleton or tick lock, and makes NO
+    SQLite/filesystem/network access of its own. It only ever reads the
+    already-built module-level `_state` (a single reference read - safe
+    without a lock under the GIL, and this module never mutates `_state`
+    except at startup/test-reset, both of which happen-before any real
+    listener call) and, if `_state`/`_state.service` already exist, hands
+    an immutable `InboundEvent` straight to `AttachmentsService.
+    enqueue_inbound()` - itself lock-free (a `queue.Queue.put_nowait()`
+    plus a `threading.Event.set()`, both thread-safe by construction).
+
+    `radio_transport` and `data_dir` are still accepted (server.py's
+    existing call site already passes both) but are no longer used to
+    initialize anything here - only `start_attachments_service()` (the
+    startup-time call) does that. Kept in this signature rather than
+    removed so server.py's call site does not need to branch on which
+    code path it's talking to.
+
+    Requirement 3 (fail fast, never initialize from the listener
+    thread): if `_state`/`_state.service` is not yet built - should never
+    happen in production given the startup ordering above, but a test or
+    a future call site could still reach this function too early - the
+    event is logged and dropped, exactly like a full inbound queue. This
+    function never falls back to calling `_get_state()`/`ensure_service()`
+    itself; that would reintroduce exactly the "listener thread
+    initializes the database/worker" hazard requirement 3 rules out, on
+    top of the shared-lock hazard the rest of this module's docstring
+    already recounts.
 
     Returns True if the event was queued, False if it was dropped
-    because the queue was full (`AttachmentsService.enqueue_inbound()`'s
-    own return value) - purely informational for the caller's own
-    logging (server.py currently discards it), callers don't need to
-    branch on it.
+    because the queue was full or the runtime was not ready yet -
+    purely informational for the caller's own logging (server.py
+    currently discards it), callers don't need to branch on it.
 
-    Never raises: `ensure_service()`/`_get_state()` themselves are the
-    only things that could plausibly fail here (e.g. a filesystem
-    error), and server.py's own call site already wraps this whole call
-    in a try/except for exactly that reason - this function does not
-    duplicate that guard internally, to avoid silently swallowing a
-    real startup-path failure that caller wants to see and log itself.
+    Never raises: an unready runtime is handled internally (returns
+    False, does not raise), and `enqueue_inbound()` itself cannot raise
+    either. server.py's own call site still wraps this whole call in a
+    try/except defensively, but nothing in this function's own body is
+    expected to reach it.
     """
-    state = _get_state(data_dir)
-    service = state.ensure_service(radio_transport)
+    state = _state
+    if state is None or state.service is None:
+        logger.warning(
+            "handle_incoming_meshtastic_text: MCA runtime not ready yet (source=%s) - "
+            "dropping event rather than initializing from the listener thread",
+            source_address,
+        )
+        return False
     event = InboundEvent(
         text=text, source_address=source_address, packet_id=packet_id, received_at=time.time()
     )
-    return service.enqueue_inbound(event)
+    return state.service.enqueue_inbound(event)

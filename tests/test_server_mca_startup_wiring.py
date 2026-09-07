@@ -51,6 +51,24 @@ def _is_start_attachments_service_call(stmt: ast.stmt) -> bool:
     return False
 
 
+def _contains_listen_meshtastic_thread_start(node: ast.AST) -> bool:
+    """True if `node` contains `threading.Thread(target=listen_meshtastic,
+    ...)` anywhere within it (a call expression, at any nesting depth) -
+    used both to locate the top-level `if identity_match:` statement that
+    contains it and, in the ordering test below, to make sure the two
+    "found" indices actually refer to the statements this test thinks
+    they do."""
+    for inner in ast.walk(node):
+        if not isinstance(inner, ast.Call):
+            continue
+        if not (isinstance(inner.func, ast.Attribute) and inner.func.attr == "Thread"):
+            continue
+        for kw in inner.keywords:
+            if kw.arg == "target" and isinstance(kw.value, ast.Name) and kw.value.id == "listen_meshtastic":
+                return True
+    return False
+
+
 def test_start_attachments_service_is_not_gated_on_identity_match():
     source = (REPO_ROOT / "server.py").read_text(encoding="utf-8")
     tree = ast.parse(source, filename="server.py")
@@ -83,3 +101,46 @@ def test_start_attachments_service_is_not_gated_on_identity_match():
                         "an `if`/`elif` block in start_runtime() - it must be unconditional "
                         "(see this test's module docstring)."
                     )
+
+
+def test_start_attachments_service_completes_before_listen_meshtastic_starts():
+    """PR #231 review (2nd pass), requirement 6: the previous test above
+    only proves start_attachments_service() is unconditional - it says
+    nothing about *when*, relative to listen_meshtastic, it runs. Actual
+    ORDER matters here, not just presence: handle_incoming_meshtastic_
+    text() (called only from the radio listener's own thread, started by
+    that `threading.Thread(target=listen_meshtastic, ...)` call) no
+    longer performs any initialization of its own (see mca_runtime.py's
+    module docstring) - it assumes the runtime, and the bounded queue it
+    enqueues onto, already exist. If listen_meshtastic's thread could
+    start before start_attachments_service() has run, an inbound message
+    could arrive and find no runtime to enqueue into.
+
+    This walks start_runtime()'s own top-level statement list (not a
+    full ast.walk() - order is only meaningful between siblings at the
+    same nesting level) and asserts the top-level statement containing
+    the start_attachments_service() call appears before the top-level
+    `if identity_match:` statement that starts listen_meshtastic's
+    thread."""
+    source = (REPO_ROOT / "server.py").read_text(encoding="utf-8")
+    tree = ast.parse(source, filename="server.py")
+    start_runtime = _find_function(tree, "start_runtime")
+
+    start_attachments_index = None
+    listen_meshtastic_index = None
+    for index, stmt in enumerate(start_runtime.body):
+        if start_attachments_index is None and _is_start_attachments_service_call(stmt):
+            start_attachments_index = index
+        if listen_meshtastic_index is None and _contains_listen_meshtastic_thread_start(stmt):
+            listen_meshtastic_index = index
+
+    assert start_attachments_index is not None, "mca_runtime.start_attachments_service(...) call not found"
+    assert listen_meshtastic_index is not None, "threading.Thread(target=listen_meshtastic, ...) call not found"
+    assert start_attachments_index < listen_meshtastic_index, (
+        f"mca_runtime.start_attachments_service(...) (top-level statement #{start_attachments_index}) "
+        f"must appear BEFORE the threading.Thread(target=listen_meshtastic, ...) statement "
+        f"(#{listen_meshtastic_index}) in start_runtime() - the radio listener must never be able "
+        "to start before the MCA runtime (and its inbound queue) is ready, since handle_incoming_"
+        "meshtastic_text() no longer initializes anything itself and will just drop an inbound "
+        "event if the runtime isn't there yet."
+    )

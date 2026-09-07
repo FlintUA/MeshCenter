@@ -614,20 +614,63 @@ class AttachmentsService:
         is currently `AddressStatus.MCA_READY` - `_step_sent()` treats
         any recipient missing from this mapping as a reason to fail the
         whole attachment (`sender.fail_recipients_not_trusted()`) rather
-        than seal a copy to an unverified or superseded key."""
+        than seal a copy to an unverified or superseded key.
+
+        PR #231 review, section 8 (independently re-verified, not just
+        trusted from the earlier fix above): `key_exchange.
+        get_binding_by_key_id()` is deliberately address-agnostic (its
+        own docstring: "regardless of whether this particular delivery
+        arrived over the same transport address the binding was
+        originally established on") - it exists for OFFER signature
+        verification, where that is correct (the signer's identity, not
+        the physical address an OFFER arrived over, is what matters
+        there). Reusing it here, unchanged, for the *sending* path would
+        have been a real gap: TOFU's entire guarantee is "this public key
+        belongs to whoever answers at this specific address" - encrypting
+        for a trusted key_id without confirming this attachment's own
+        DIRECT destination address is the *same* address that key was
+        actually TOFU-pinned at would silently decouple "who we trust"
+        from "where we're sending", exactly the property TOFU exists to
+        bind together. For the DIRECT-only MVP (every real route today),
+        a recipient is now only included when `binding.transport_address`
+        also equals this attachment's own delivery `route_id` - fail
+        closed (excluded, same as an untrusted/KEY_UNKNOWN binding) on a
+        mismatch, never silently sent anyway. A non-DIRECT route (not
+        reachable in this MVP - see attachment_deliveries.route_type)
+        has no single fixed destination address to compare against
+        (a channel broadcast's `route_id` names the channel, not any one
+        recipient), so this check is skipped for those - not a channel-
+        delivery security decision the MVP is prepared to make yet, out
+        of scope per this review's own "no MCA/1 wire-format or new
+        route-shape changes" instruction."""
         self._conn.row_factory = sqlite3.Row
         recipient_rows = self._conn.execute(
             "SELECT DISTINCT recipient_principal_id FROM attachment_recipients WHERE attachment_id = ?",
             (attachment_id,),
         ).fetchall()
+        delivery_row = self._conn.execute(
+            "SELECT route_type, route_id FROM attachment_deliveries WHERE attachment_id = ? ORDER BY id LIMIT 1",
+            (attachment_id,),
+        ).fetchone()
+        delivery_route_type = delivery_row["route_type"] if delivery_row is not None else None
+        delivery_route_id = delivery_row["route_id"] if delivery_row is not None else None
         identities: Dict[str, bytes] = {}
         for recipient_row in recipient_rows:
             key_id = recipient_row["recipient_principal_id"]
             if not key_id:
                 continue
             binding = self._key_exchange.get_binding_by_key_id(key_id)
-            if binding is not None and binding.status == AddressStatus.MCA_READY:
-                identities[key_id] = binding.public_identity
+            if binding is None or binding.status != AddressStatus.MCA_READY:
+                continue
+            if delivery_route_type == RouteType.DIRECT.value and binding.transport_address != delivery_route_id:
+                logger.info(
+                    "AttachmentsService: excluding recipient %s from attachment %s - "
+                    "TOFU binding is pinned to a different transport address than this "
+                    "attachment's own DIRECT destination (bound=%r, destination=%r)",
+                    key_id, attachment_id, binding.transport_address, delivery_route_id,
+                )
+                continue
+            identities[key_id] = binding.public_identity
         return identities
 
     def _required_recipient_key_ids(self, attachment_id: str) -> List[str]:

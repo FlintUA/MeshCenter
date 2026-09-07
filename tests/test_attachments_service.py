@@ -396,6 +396,76 @@ def test_tick_fails_attachment_instead_of_encrypting_to_an_unconfirmed_key(conn,
     assert conn.execute("SELECT 1 FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone() is None
 
 
+# ---- PR #231 review, section 8 ---------------------------------------------
+# get_binding_by_key_id() is deliberately address-agnostic (used correctly
+# for OFFER signature verification) - reusing it unchanged for the sending
+# path would decouple "which key we trust" from "where we're actually
+# sending", the exact property TOFU exists to bind together. A recipient
+# whose binding is TOFU-pinned to a *different* transport address than this
+# attachment's own DIRECT destination must be excluded, fail-closed, exactly
+# like an unconfirmed/KEY_UNVERIFIED binding.
+
+
+def test_resolve_recipient_identities_excludes_a_binding_pinned_to_a_different_address(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    _, _, recipient_principal = remote_recipient
+    # TOFU-confirmed, but at an address that is NOT this attachment's own
+    # DIRECT destination ("remote-addr", _create_draft()'s fixed route_id).
+    _bind_recipient(conn, recipient_principal, transport_address="a-completely-different-address")
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+
+    for _ in range(20):
+        if sender.get_state(conn, attachment_id) == sender.ENCRYPTING:
+            break
+        service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.ENCRYPTING
+
+    assert service._resolve_recipient_identities(attachment_id) == {}
+
+
+def test_tick_fails_attachment_instead_of_encrypting_to_a_key_bound_at_a_different_address(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal, transport_address="a-completely-different-address")
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+
+    for _ in range(20):
+        state = sender.get_state(conn, attachment_id)
+        if state in (sender.FAILED_VALIDATION, sender.SENT):
+            break
+        service.tick()
+
+    assert sender.get_state(conn, attachment_id) == sender.FAILED_VALIDATION
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT error_code FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+    assert row["error_code"] == "recipient_not_trusted"
+    assert conn.execute("SELECT 1 FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone() is None
+
+
+def test_resolve_recipient_identities_accepts_a_binding_matching_the_destination_address(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    """Sanity check paired with the exclusion tests above: a binding whose
+    transport_address DOES match the attachment's own DIRECT destination
+    must still be accepted - this fix must not turn into a blanket
+    rejection of every recipient."""
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal, transport_address="remote-addr")  # matches _create_draft()'s route_id
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+
+    for _ in range(20):
+        if sender.get_state(conn, attachment_id) == sender.ENCRYPTING:
+            break
+        service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.ENCRYPTING
+
+    identities = service._resolve_recipient_identities(attachment_id)
+    assert recipient_principal.key_id in identities
+    assert identities[recipient_principal.key_id] == recipient_principal.public_identity
+
+
 def test_tick_fails_attachment_when_binding_has_a_pending_key_change(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service, key_exchange):
     """KEY_CHANGED (a conflicting KEY_ANNOUNCE parked in
     pending_public_identity) must be treated the same as KEY_UNVERIFIED:

@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import sqlite3
+import sys
 import time
 from unittest import mock
 
@@ -285,6 +286,7 @@ def test_partial_unique_index_enforces_at_most_one_default(conn, registry):
         )
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file mode bits not meaningful on Windows")
 def test_upload_token_round_trips_and_is_never_on_the_profile(registry, wsm):
     profile = registry.register(
         display_name="A", base_url="https://a.example.net", service_public_key=SERVICE_KEY,

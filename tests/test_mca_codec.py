@@ -313,20 +313,57 @@ def test_decode_offer_rejects_wrong_field_length():
 
 
 def test_decode_offer_rejects_deeply_nested_cbor():
-    # Build a pathologically nested CBOR array as a stand-in for a hostile
-    # payload designed to exhaust the parser via recursion rather than
-    # size. This must come back as CodecError, never an uncaught
-    # RecursionError, regardless of overall byte size.
-    nested = []
-    cursor = nested
-    for _ in range(5000):
-        inner = []
-        cursor.append(inner)
-        cursor = inner
-    raw = cbor2.dumps(nested)
+    """A hostile deeply-nested payload, built directly from raw CBOR
+    bytes (repeated `0x81` = "array of 1 item" header bytes, terminated
+    by `0x80` = empty array) rather than by constructing 5000 nested
+    Python list objects.
+
+    This is a deliberate fix, not just a style change: the original
+    version built the nested structure as real Python lists before
+    encoding it, which (a) does not construct at all on some platforms
+    (Windows: RecursionError while *building* the fixture, before
+    cbor2.dumps() is ever reached - independent of the code under
+    test), and (b) produced a ~5001-byte payload, comfortably over
+    codec.MAX_MESSAGE_RAW_BYTES (2048) - meaning decode_offer() on Linux
+    was actually rejecting it on the *size* check (`len(raw) >
+    MAX_MESSAGE_RAW_BYTES`) before ever reaching the CBOR parser, so the
+    "protects against deep nesting" claim in this test's name was never
+    actually exercised there either.
+
+    Building the bytes directly avoids both problems: no Python-level
+    recursion happens while constructing the fixture (it's a bytes
+    multiplication), and the depth chosen here keeps the total payload
+    comfortably under MAX_MESSAGE_RAW_BYTES, so this test reaches
+    cbor2.loads() and proves the *nesting* guard specifically, not the
+    size guard.
+    """
+    depth = 500  # 501 raw bytes total - well under MAX_MESSAGE_RAW_BYTES (2048)
+    raw = b"\x81" * depth + b"\x80"
+    assert len(raw) < codec.MAX_MESSAGE_RAW_BYTES
 
     with pytest.raises(codec.CodecError):
         codec.decode_offer(raw)
+
+
+def test_decode_offer_converts_a_real_recursionerror_to_codecerror(monkeypatch):
+    """Direct, platform-independent unit test of the RecursionError ->
+    CodecError conversion in codec._decode_cbor_map(), regardless of
+    whether the installed cbor2 version's own internal nesting-depth
+    guard (observed: cbor2 6.1.4 raises CBORDecodeError around 400
+    levels, not RecursionError, so the test above exercises that path,
+    not this one) happens to fire first for any given payload. This is
+    what actually proves the except RecursionError clause itself is
+    live/correct code, not just that *some* exception eventually
+    becomes a CodecError.
+    """
+
+    def _raise_recursion_error(*_args, **_kwargs):
+        raise RecursionError("stack overflow (simulated)")
+
+    monkeypatch.setattr(codec.cbor2, "loads", _raise_recursion_error)
+
+    with pytest.raises(codec.CodecError, match="nesting too deep"):
+        codec.decode_offer(b"\x80")
 
 
 def test_encode_offer_rejects_invalid_field_sizes():

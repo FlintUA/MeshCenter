@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import sqlite3
+import sys
 
 import pytest
 
@@ -88,6 +89,7 @@ def test_load_principal_returns_none_before_creation(conn):
     assert load_principal(conn, "ws-never-enabled") is None
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file mode bits not meaningful on Windows")
 def test_private_key_file_is_0600_inside_keys_dir_which_is_0700(conn, workspace_manager):
     principal = create_principal(conn, workspace_manager, "ws-1")
     paths = workspace_manager.paths(principal.principal_id)

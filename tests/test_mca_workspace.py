@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,7 @@ def test_paths_are_transport_neutral_and_under_data_mca(manager, tmp_path):
     assert "profiles" not in expected_root.parts
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file mode bits not meaningful on Windows")
 def test_ensure_workspace_creates_directories_and_locks_keys_dir(manager):
     paths = manager.ensure_workspace(PRINCIPAL_A)
     for directory in (paths.root, paths.spool_outgoing, paths.cache_incoming, paths.files, paths.quarantine, paths.keys):
@@ -158,7 +160,15 @@ def test_no_stray_data_mca_path_construction():
         (repo_root / "docs" / "architecture" / "ADR-0003-attachments-sqlite-exception.md").resolve(),
         Path(__file__).resolve(),
     }
-    skip_dir_names = {".git", "node_modules", "__pycache__", "venv", ".venv"}
+    # .claude/worktrees: a separate git worktree's own full checkout can
+    # be mounted here (e.g. another session working on its own branch in
+    # isolation) - its files are a different commit's content, not this
+    # one's, and walking into it would make this test's result depend on
+    # which other worktrees happen to exist on disk at the moment it
+    # runs, not on this repo's own tree. Confirmed live: a
+    # mcattach-adr-0008-hardening worktree under here made this test
+    # fail on an unrelated run before this exclusion was added.
+    skip_dir_names = {".git", "node_modules", "__pycache__", "venv", ".venv", ".claude"}
     offenders = []
     for path in repo_root.rglob("*.py"):
         if path.resolve() in allowed_files:

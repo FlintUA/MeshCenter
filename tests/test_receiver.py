@@ -347,6 +347,59 @@ def test_offer_from_a_different_source_is_not_blocked_by_another_sources_limit(c
     assert result.state == receiver.WAITING_KEY
 
 
+def test_offer_flood_across_many_sources_is_rejected_once_global_limit_reached(conn, wsm, principal, provider_registry, key_exchange):
+    """PR #231 review (3rd pass): the global ceiling must actually be
+    global - reachable by spreading a flood across many distinct
+    sources, each safely under its own per-source limit, not just by
+    hammering a single source_address (already covered by the
+    per-source test above). Uses exactly MAX_PENDING_RECEIVED_PER_SOURCE
+    OFFERs from each of (MAX_PENDING_RECEIVED_GLOBAL /
+    MAX_PENDING_RECEIVED_PER_SOURCE) distinct sources, so the global
+    limit is reached at the same moment as the last source's own
+    per-source limit - proving the rejection is the GLOBAL check firing,
+    not a coincidental per-source one, since a source used only once
+    more afterward is nowhere near ITS OWN per-source ceiling."""
+    sk = SigningKey.generate()
+    fake_principal = type("P", (), {"key_id": identity.compute_key_id(bytes(sk.verify_key))})()
+
+    assert receiver.MAX_PENDING_RECEIVED_GLOBAL % receiver.MAX_PENDING_RECEIVED_PER_SOURCE == 0
+    source_count = receiver.MAX_PENDING_RECEIVED_GLOBAL // receiver.MAX_PENDING_RECEIVED_PER_SOURCE
+
+    for source_index in range(source_count):
+        source_address = f"!source-{source_index:04d}"
+        for _ in range(receiver.MAX_PENDING_RECEIVED_PER_SOURCE):
+            raw_offer = _build_offer(
+                provider_id=os.urandom(8), transfer_id=os.urandom(16), sender_principal=fake_principal,
+                sender_signing_key=sk, hard_expires_at=int(time.time()) + 3600,
+            )
+            receiver.handle_offer(
+                conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+                key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+                source_address=source_address,
+            )
+
+    count_before = conn.execute("SELECT COUNT(*) FROM attachments WHERE direction = 'received'").fetchone()[0]
+    assert count_before == receiver.MAX_PENDING_RECEIVED_GLOBAL
+
+    # One more OFFER, from a brand-new source that has never sent
+    # anything before (nowhere near its OWN per-source limit of 1/20) -
+    # must still be rejected, because the workspace-wide total is
+    # already at the global ceiling.
+    one_too_many = _build_offer(
+        provider_id=os.urandom(8), transfer_id=os.urandom(16), sender_principal=fake_principal,
+        sender_signing_key=sk, hard_expires_at=int(time.time()) + 3600,
+    )
+    with pytest.raises(receiver.ReceiverError, match="pending_received_global_limit_exceeded"):
+        receiver.handle_offer(
+            conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+            key_exchange=key_exchange, raw_offer=one_too_many, network_available=True,
+            source_address="!a-completely-fresh-source",
+        )
+
+    count_after = conn.execute("SELECT COUNT(*) FROM attachments WHERE direction = 'received'").fetchone()[0]
+    assert count_after == count_before  # nothing new was created
+
+
 # ---- WAITING_PROVIDER: known sender, unknown provider ----------------------
 
 

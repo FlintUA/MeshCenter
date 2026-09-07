@@ -434,6 +434,90 @@ def test_migration_10_creates_outbox_and_reply_route_columns(conn):
     assert "mca_outgoing_replies" in _table_names(conn)
 
 
+# PR #231 review (3rd pass), "strengthen Migration 10 tests": the test
+# above only ever checked reply_route_type/reply_route_id and
+# mca_outgoing_replies - not the full set of columns/tables migration 10
+# actually creates (reply_adapter_id/reply_connector_profile_id/
+# reply_destination_address, added in the PR #231 review section 4.2
+# extension; mca_ack_quota, added in the section 4.3 extension), and
+# never exercised downgrade/re-upgrade for this migration specifically,
+# unlike migrations 7-9's own dedicated coverage above.
+
+_MIGRATION_10_ATTACHMENTS_COLUMNS = frozenset({
+    "reply_route_type", "reply_route_id",
+    "reply_adapter_id", "reply_connector_profile_id", "reply_destination_address",
+})
+_MIGRATION_10_TABLES = frozenset({"mca_outgoing_replies", "mca_ack_quota"})
+
+
+def _attachments_columns(conn) -> set:
+    return {row[1] for row in conn.execute("PRAGMA table_info(attachments)").fetchall()}
+
+
+def test_migration_10_creates_every_reply_route_column_and_both_new_tables(conn):
+    migrate(conn, target_version=9)
+    columns_before = _attachments_columns(conn)
+    assert _MIGRATION_10_ATTACHMENTS_COLUMNS.isdisjoint(columns_before)
+    tables_before = _table_names(conn)
+    assert _MIGRATION_10_TABLES.isdisjoint(tables_before)
+
+    migrate(conn, target_version=10)
+
+    columns_after = _attachments_columns(conn)
+    assert _MIGRATION_10_ATTACHMENTS_COLUMNS.issubset(columns_after)
+    tables_after = _table_names(conn)
+    assert _MIGRATION_10_TABLES.issubset(tables_after)
+
+    # mca_ack_quota's own shape - not just "the table exists".
+    ack_quota_columns = {row[1] for row in conn.execute("PRAGMA table_info(mca_ack_quota)").fetchall()}
+    assert ack_quota_columns == {"workspace_id", "scope", "window_start_at", "count"}
+
+
+def test_migration_10_downgrade_removes_every_reply_route_column_and_both_new_tables(conn):
+    migrate(conn, target_version=10)
+    assert _MIGRATION_10_ATTACHMENTS_COLUMNS.issubset(_attachments_columns(conn))
+    assert _MIGRATION_10_TABLES.issubset(_table_names(conn))
+
+    migrate(conn, target_version=9)
+
+    columns_after_downgrade = _attachments_columns(conn)
+    assert _MIGRATION_10_ATTACHMENTS_COLUMNS.isdisjoint(columns_after_downgrade)
+    tables_after_downgrade = _table_names(conn)
+    assert _MIGRATION_10_TABLES.isdisjoint(tables_after_downgrade)
+
+
+def test_migration_10_survives_downgrade_then_re_upgrade_with_data_intact(conn):
+    """Not just "the schema comes back" - a real mca_ack_quota row
+    written before the downgrade must not silently reappear corrupted
+    (it can't survive the downgrade itself, DROP TABLE is DROP TABLE -
+    but the re-upgrade must produce a working, empty table a fresh write
+    to it succeeds against, not a broken one)."""
+    migrate(conn, target_version=10)
+    conn.execute(
+        "INSERT INTO mca_ack_quota (workspace_id, scope, window_start_at, count) VALUES ('local', '__global__', 1000, 3)"
+    )
+    conn.commit()
+    assert conn.execute("SELECT count FROM mca_ack_quota WHERE workspace_id = 'local'").fetchone()[0] == 3
+
+    migrate(conn, target_version=7)
+    assert current_version(conn) == 7
+    assert _MIGRATION_10_TABLES.isdisjoint(_table_names(conn))
+
+    migrate(conn)  # re-upgrade to LATEST_VERSION
+    assert current_version(conn) == LATEST_VERSION
+    assert _MIGRATION_10_ATTACHMENTS_COLUMNS.issubset(_attachments_columns(conn))
+    assert _MIGRATION_10_TABLES.issubset(_table_names(conn))
+
+    # A fresh row writes cleanly against the re-created table - proves it
+    # isn't just present by name but actually functional (right columns,
+    # right constraints).
+    conn.execute(
+        "INSERT INTO mca_ack_quota (workspace_id, scope, window_start_at, count) VALUES ('local', '__global__', 2000, 1)"
+    )
+    conn.commit()
+    assert conn.execute("SELECT count FROM mca_ack_quota WHERE workspace_id = 'local'").fetchone()[0] == 1
+
+
 def test_migrate_on_up_to_date_db_is_a_true_no_op(conn):
     migrate(conn)
     before = _table_names(conn)

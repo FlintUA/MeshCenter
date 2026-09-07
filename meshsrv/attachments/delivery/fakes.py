@@ -170,6 +170,14 @@ class FakeBinaryAdapter(DeliveryAdapter):
         self._max_payload_bytes = max_payload_bytes
         ether.register(own_address)
 
+    @property
+    def connector_profile_id(self) -> str:
+        """PR #231 review (4th pass): required by `DeliveryAdapter`'s
+        contract - see `FakeTextAdapter`'s own matching property for why
+        this exposes `self._own_address` (the same value `ingest()`
+        already reports below)."""
+        return self._own_address
+
     def capabilities(self) -> DeliveryCapabilities:
         return DeliveryCapabilities(
             wire_formats=frozenset({WireFormat.MCA1_CBOR}),

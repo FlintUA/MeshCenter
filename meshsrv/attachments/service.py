@@ -529,8 +529,17 @@ class AttachmentsService:
             # (this module's own non-integration tests) now correctly
             # gets an undeliverable reply rather than one silently sent
             # through a possibly-wrong adapter.
-            adapter_id = getattr(self._delivery_adapter, "adapter_id", None)
-            connector_profile_id = getattr(self._delivery_adapter, "connector_profile_id", None)
+            # PR #231 review (4th pass): `adapter_id`/`connector_profile_id`
+            # are now required, non-optional parts of the `DeliveryAdapter`
+            # contract itself (`delivery/base.py`) - reading them via plain
+            # attribute access, not `getattr(..., None)`, which used to
+            # silently mask a genuinely broken adapter implementation
+            # (one that forgot to declare `connector_profile_id`) as "no
+            # connector profile configured", the same outcome as a
+            # legitimately-missing persisted value. A real contract
+            # violation now raises `AttributeError` loudly instead.
+            adapter_id = self._delivery_adapter.adapter_id
+            connector_profile_id = self._delivery_adapter.connector_profile_id
             if reply.adapter_id is None or reply.adapter_id != adapter_id:
                 receiver.mark_reply_undeliverable(
                     self._conn, reply.id, self._now(),
@@ -558,18 +567,34 @@ class AttachmentsService:
                 # dispatch once the relevant window has room again -
                 # never marked sent, never dropped.
                 continue
-            # destination_address (not bare route_id) is the actual send
-            # target - kept as a separate persisted field precisely so a
-            # future non-DIRECT route shape (where "reply to" is not
-            # simply "the same address route_id already names") does not
-            # have to change this call site, only stop conflating them
-            # (ReplyRoute's own docstring, receiver.py). For the
-            # DIRECT-only MVP the two are always equal in practice, but
-            # falling back to route_id only when destination_address is
-            # somehow unset keeps this call site correct either way
-            # rather than assuming that equality always holds.
-            destination = reply.destination_address or reply.route_id
-            route = Route(route_type=RouteType(reply.route_type), route_id=reply.route_id, destination_address=destination)
+            # PR #231 review (4th pass): a missing destination_address is
+            # now fail-closed (UNDELIVERABLE), not silently defaulted to
+            # route_id. destination_address (not bare route_id) is the
+            # actual send target - kept as a separate persisted field
+            # precisely so a future non-DIRECT route shape (where "reply
+            # to" is not simply "the same address route_id already
+            # names") does not have to change this call site, only stop
+            # conflating them (ReplyRoute's own docstring, receiver.py).
+            # For the DIRECT-only MVP the two are structurally always
+            # equal by the time this line is reached (ReplyRoute.
+            # destination_address is a required, non-Optional dataclass
+            # field, and the adapter_id/connector_profile_id checks above
+            # already reject any row that was persisted without a full
+            # ReplyRoute) - this check has no known way to trigger today,
+            # but is made explicit anyway rather than left as an implicit
+            # "or route_id" fallback with no stated route-type contract
+            # justifying it, since a silent fallback is exactly the kind
+            # of masked assumption a future route shape (or a data
+            # migration bug) could quietly violate.
+            if reply.destination_address is None:
+                receiver.mark_reply_undeliverable(
+                    self._conn, reply.id, self._now(), error_code="reply_destination_address_missing"
+                )
+                continue
+            route = Route(
+                route_type=RouteType(reply.route_type), route_id=reply.route_id,
+                destination_address=reply.destination_address,
+            )
             try:
                 wire_payload = self._delivery_adapter.encode(reply.message, route)
                 receipt = self._delivery_adapter.send(wire_payload, route, idempotency_key=f"mca-reply-{reply.id}")

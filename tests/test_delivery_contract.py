@@ -72,6 +72,17 @@ def _build_pair(adapter_kind: str):
     return ether, sender, receiver
 
 
+def test_adapter_id_and_connector_profile_id_are_both_present(adapter_kind):
+    """PR #231 review (4th pass): connector_profile_id is now a required,
+    explicit part of the DeliveryAdapter contract, same standing as
+    adapter_id - not an optional attribute a caller has to getattr(...,
+    None) around. Every real adapter implementation must expose both as
+    non-empty strings."""
+    ether, sender, _receiver = _build_pair(adapter_kind)
+    assert isinstance(sender.adapter_id, str) and sender.adapter_id
+    assert isinstance(sender.connector_profile_id, str) and sender.connector_profile_id
+
+
 def test_capabilities_report_expected_wire_format(adapter_kind):
     ether, sender, _receiver = _build_pair(adapter_kind)
     caps = sender.capabilities()
@@ -243,6 +254,12 @@ def _build_meshtastic_pair(**transport_kwargs):
     sender = MeshtasticTextAdapter(sender_transport)
     receiver = MeshtasticTextAdapter(receiver_transport)
     return ether, sender, receiver
+
+
+def test_meshtastic_adapter_id_and_connector_profile_id_are_both_present():
+    _ether, sender, _receiver = _build_meshtastic_pair()
+    assert sender.adapter_id == "meshtastic"
+    assert sender.connector_profile_id == "meshtastic"
 
 
 def test_meshtastic_capabilities_report_expected_wire_format_and_180_byte_ceiling():

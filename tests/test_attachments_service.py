@@ -1246,6 +1246,63 @@ def test_dispatch_uses_persisted_destination_address_even_when_it_differs_from_r
     assert len(real_events) == 1  # delivered to destination_address instead
 
 
+def test_dispatch_marks_undeliverable_when_destination_address_is_missing_not_falling_back_to_route_id(
+    conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR #231 review (4th pass): a missing persisted destination_address
+    must fail closed (UNDELIVERABLE), not silently fall back to route_id.
+    ReplyRoute.destination_address is a required dataclass field, so this
+    can't happen through the normal handle_offer(reply_route=...) API -
+    simulated here via direct SQL, standing in for a data-integrity
+    anomaly (e.g. a row from an unexpected write path). Confirms the
+    explicit check actually fires and nothing is sent to route_id as an
+    implicit fallback."""
+    ether = InMemoryEther()
+    receiver_adapter = FakeTextAdapter(ether, "receiver-addr")
+
+    sender_conn, sender_wsm, sender_principal = remote_recipient
+    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+
+    receiver_service = AttachmentsService(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, connectivity_monitor=connectivity_monitor,
+        delivery_adapter=receiver_adapter, relay_client_factory=lambda provider_id_text: relay_client,
+    )
+    sender_signing_key = identity.load_signing_key(sender_wsm, sender_principal)
+    offer_fields = codec.OfferFields(
+        provider_id=_raw_provider_id(registered_provider), transfer_id=uuid.uuid4().bytes,
+        sender_key_id=bytes.fromhex(sender_principal.key_id), kind=0, size_bucket=1,
+        hard_expires_at=int(time.time()) + 3600, flags=0,
+    )
+    raw_offer = codec.encode_offer(offer_fields, sender_signing_key)
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+        source_address="remote-addr",
+        reply_route=receiver.ReplyRoute(
+            adapter_id=receiver_adapter.adapter_id, connector_profile_id=receiver_adapter.connector_profile_id,
+            route_type="DIRECT", route_id="remote-addr", destination_address="remote-addr",
+        ),
+    )
+    attachment_id = result.attachment_id
+
+    # Simulate the anomaly: null out destination_address directly,
+    # leaving adapter_id/connector_profile_id/route_type/route_id intact
+    # and matching - only destination_address is missing.
+    conn.execute("UPDATE attachments SET reply_destination_address = NULL WHERE id = ?", (attachment_id,))
+    conn.commit()
+
+    receiver_service.tick()
+
+    row = conn.execute(
+        "SELECT state, last_error FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = 'ack_received_sent'",
+        (attachment_id,),
+    ).fetchone()
+    assert row[0] == "UNDELIVERABLE"
+    assert row[1] == "reply_destination_address_missing"
+    assert ether.drain("remote-addr") == []  # never silently sent to route_id either
+
+
 def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient):
     """A DeliveryAdapter.send() failure must never be confused with
     success: the queued reply stays PENDING (retried on a later tick,

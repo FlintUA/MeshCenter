@@ -1149,6 +1149,10 @@
     "login_throttled": "Слишком много попыток. Повторите через {seconds} сек.",
     "login_submit": "Войти"
   },
+  "csrf": {
+    "expired_reload": "Срок действия проверки безопасности истёк. Пожалуйста, перезагрузите страницу, чтобы продолжить.",
+    "reload_action": "Перезагрузить"
+  },
   "workspace": {
     "theme_family_group_label": "Семейство тем",
     "theme_family_original": "MeshCenter Original",

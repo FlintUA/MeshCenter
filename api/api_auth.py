@@ -37,6 +37,39 @@ MIN_PASSWORD_LENGTH = 12
 _EXEMPT_PATH_PREFIXES = ("/static/",)
 _EXEMPT_PATHS = ("/login",)
 
+# Project-wide CSRF (docs/attachments/internal-rest-api.md §2.3): one
+# session-bound token, minted with secrets, sent back as an X-CSRF-Token
+# header on every mutating /api/ request and compared constant-time. Only
+# GET/HEAD are exempt from the check; /login (POST) and every non-/api/
+# route are outside the contract's scope entirely.
+_CSRF_SESSION_KEY = "csrf_token"
+_CSRF_HEADER = "X-CSRF-Token"
+_CSRF_SAFE_METHODS = frozenset(("GET", "HEAD"))
+
+
+def _generate_csrf_token():
+    """256-bit URL-safe random token (comfortably above the 128-bit floor
+    §2.3 requires). token_urlsafe() returns a str with 8/6 of the entropy
+    bits as characters, so 32 bytes -> ~43 URL-safe characters."""
+    return secrets.token_urlsafe(32)
+
+
+def _ensure_csrf_token():
+    """Return the session's CSRF token, minting one lazily if absent.
+
+    This is the single point of issuance for both auth modes: a successful
+    login rotates it explicitly (see login() below), while an unprotected
+    session (AUTH_ENABLED=False) or a pre-existing session that predates
+    CSRF gets one here on first main-page render (see the context processor
+    in register_auth_routes()). Only ever called with an active request
+    context, so the Flask session proxy is valid.
+    """
+    token = session.get(_CSRF_SESSION_KEY)
+    if not token:
+        token = _generate_csrf_token()
+        session[_CSRF_SESSION_KEY] = token
+    return token
+
 # Login throttling (P1 #6): the first few wrong-password attempts from one
 # source are free (typos happen), then the lockout window doubles each
 # attempt up to a cap. Keyed by request.remote_addr, not by account - this
@@ -264,6 +297,43 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
 
         return redirect("/login?next=" + quote(path, safe=""))
 
+    @app.before_request
+    def _enforce_csrf():
+        # Registered immediately after _enforce_auth, so auth always runs
+        # first: an unauthenticated unsafe /api/ request is answered with
+        # 401 auth_required by _enforce_auth and never reaches this hook, so
+        # it can't leak a 403 to someone who hasn't authenticated yet.
+        # GET/HEAD are exempt (§2.3 point 4); only /api/ paths are guarded -
+        # /login (POST) and every non-API route are out of scope. The token
+        # is compared with secrets.compare_digest() (constant-time), and a
+        # missing/malformed/mismatching token fails closed with the exact
+        # §2.3 envelope - never echoing the token back.
+        if request.method in _CSRF_SAFE_METHODS:
+            return None
+        if not request.path.startswith("/api/"):
+            return None
+
+        expected = session.get(_CSRF_SESSION_KEY)
+        provided = request.headers.get(_CSRF_HEADER)
+        if expected and provided and secrets.compare_digest(provided, expected):
+            return None
+
+        return jsonify({
+            "ok": False,
+            "error": "CSRF token missing or invalid",
+            "error_code": "csrf_invalid",
+        }), 403
+
+    @app.context_processor
+    def _csrf_context():
+        # Exposes {{ csrf_token }} to templates so index.html can embed it in
+        # a <meta name="csrf-token"> tag. For AUTH_ENABLED=False this is the
+        # ONLY issuance point (there is no login to rotate from); for a
+        # pre-existing authenticated session it's the lazy issuance point.
+        # login.html is rendered through this too, but minting a token before
+        # login is harmless - login() rotates it immediately after.
+        return {"csrf_token": _ensure_csrf_token()}
+
     @app.route("/login", methods=["GET", "POST"])
     def login():
         with state_lock:
@@ -305,6 +375,12 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
                 session.clear()
                 session.permanent = True
                 session["authenticated"] = True
+                # Rotate the CSRF token on every successful login (§2.3 point
+                # 3): a token minted before authentication (e.g. by the login
+                # page render, or carried over from an older session) is
+                # discarded so a session-fixation-style pre-auth token can't
+                # be replayed against the now-authenticated session.
+                session[_CSRF_SESSION_KEY] = _generate_csrf_token()
                 return redirect(next_url)
 
             with state_lock:

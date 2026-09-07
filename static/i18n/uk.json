@@ -1149,6 +1149,10 @@
     "login_throttled": "Забагато спроб. Спробуйте ще раз через {seconds} с.",
     "login_submit": "Увійти"
   },
+  "csrf": {
+    "expired_reload": "Термін дії перевірки безпеки минув. Будь ласка, перезавантажте сторінку, щоб продовжити.",
+    "reload_action": "Перезавантажити"
+  },
   "workspace": {
     "theme_family_group_label": "Сімейство тем",
     "theme_family_original": "MeshCenter Original",

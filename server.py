@@ -114,6 +114,12 @@ EPAPER_ENABLED = globals().get("EPAPER_ENABLED", False)
 AUTH_ENABLED = globals().get("AUTH_ENABLED", False)
 AUTH_PASSWORD_HASH = globals().get("AUTH_PASSWORD_HASH", "")
 
+# Session-cookie Secure flag (docs/attachments/internal-rest-api.md §2.3
+# point 1). config.py-driven because dev runs over plain HTTP on the Pi, so
+# the default is False (HTTP); set True only behind HTTPS. HttpOnly and
+# SameSite=Lax are always on regardless of this flag (see app.config below).
+SESSION_COOKIE_SECURE = globals().get("SESSION_COOKIE_SECURE", False)
+
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 # Radio-scoped paths are resolved after the accepted instance identity loads.
 WAYPOINTS_DB_FILE = ""
@@ -473,6 +479,13 @@ def _load_or_create_secret_key(path):
 
 app.secret_key = _load_or_create_secret_key(SECRET_KEY_FILE)
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=7)
+# Session-cookie hardening (docs/attachments/internal-rest-api.md §2.3 point
+# 1): the CSRF token rides in the signed Flask session cookie, so it must be
+# unreachable from JS (HttpOnly) and restricted to same-site requests (Lax).
+# Secure is config-driven (see SESSION_COOKIE_SECURE above) for plain-HTTP dev.
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = SESSION_COOKIE_SECURE
 
 # Optional whole-app password protection - see api/api_auth.py and
 # config.example.py's AUTH_ENABLED/AUTH_PASSWORD_HASH. Off by default;

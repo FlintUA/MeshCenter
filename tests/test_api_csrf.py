@@ -11,8 +11,10 @@ session-scoped server_module fixture from tests/conftest.py to assert the
 actual app.config values server.py assigns.
 """
 
+import ast
 import base64
 import threading
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -41,7 +43,7 @@ def _make_app(enabled=False, password="realpassword123"):
         # {{ csrf_token }} is the token _ensure_csrf_token() just minted.
         return render_template_string("{{ csrf_token }}")
 
-    @app.route("/api/ping", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
+    @app.route("/api/ping", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
     def api_ping():
         if request.method == "POST":
             effects["posts"] += 1
@@ -218,6 +220,67 @@ def test_auth_disabled_does_not_disable_csrf():
     assert resp.get_json()["error_code"] == "csrf_invalid"
 
 
+def test_options_method_is_also_protected():
+    # Any method other than GET/HEAD is unsafe (§2.3 point 4) - the backend
+    # must protect OPTIONS (and any future verb) exactly like POST/PUT/etc.,
+    # not maintain a four-method allowlist that can drift from the frontend.
+    app, _, _ = _make_app(enabled=False)
+    client = app.test_client()
+    token = _get_token(client)
+
+    resp = client.open("/api/ping", method="OPTIONS")
+    assert resp.status_code == 403
+    assert resp.get_json() == {
+        "ok": False,
+        "error": "CSRF token missing or invalid",
+        "error_code": "csrf_invalid",
+    }
+
+    resp = client.open("/api/ping", method="OPTIONS", headers={"X-CSRF-Token": token})
+    assert resp.status_code == 200
+
+
+# --- Malformed token inputs fail closed -------------------------------------
+
+def test_empty_or_non_ascii_header_fails_closed():
+    app, _, effects = _make_app(enabled=False)
+    client = app.test_client()
+    _get_token(client)
+
+    for provided in ("", "tökén"):
+        resp = client.post("/api/ping", headers={"X-CSRF-Token": provided})
+        assert resp.status_code == 403
+        assert resp.get_json() == {
+            "ok": False,
+            "error": "CSRF token missing or invalid",
+            "error_code": "csrf_invalid",
+        }
+        assert effects["posts"] == 0
+        # The malformed value must never be echoed back.
+        if provided:
+            assert provided not in resp.get_data(as_text=True)
+
+
+@pytest.mark.parametrize("corrupt", ["", 12345, {"bad": True}])
+def test_corrupt_session_token_fails_closed(corrupt):
+    # A session token that is empty, a non-string scalar, or a nested value
+    # must fail closed with 403 — secrets.compare_digest() would raise a
+    # TypeError on a non-string, and an empty value must never compare equal.
+    app, _, effects = _make_app(enabled=False)
+    client = app.test_client()
+    with client.session_transaction() as sess:
+        sess["csrf_token"] = corrupt
+
+    resp = client.post("/api/ping", headers={"X-CSRF-Token": "whatever"})
+    assert resp.status_code == 403
+    assert resp.get_json() == {
+        "ok": False,
+        "error": "CSRF token missing or invalid",
+        "error_code": "csrf_invalid",
+    }
+    assert effects["posts"] == 0
+
+
 # --- Session cookie config (server.py) -------------------------------------
 
 def test_server_sets_session_cookie_config(server_module):
@@ -247,3 +310,40 @@ def test_session_cookie_flags_are_emitted_secure_when_configured():
         assert "HttpOnly" in cookie
         assert "SameSite=Lax" in cookie
         assert ("Secure" in cookie) is expect_secure, f"secure={secure}: {cookie}"
+
+
+def test_session_cookie_secure_wiring_consumes_config(server_module):
+    # (a) app.config must reflect the module-level var, not a hardcoded False,
+    #     so a SESSION_COOKIE_SECURE=True in config.py actually reaches the
+    #     Set-Cookie flag.
+    assert (
+        server_module.app.config["SESSION_COOKIE_SECURE"]
+        == server_module.SESSION_COOKIE_SECURE
+    )
+
+    # (b) The module-level var must come from config via globals().get() with
+    #     a False (HTTP) default. Importing server.py a second time is unsafe
+    #     (heavy module-level side effects — see conftest.py), so this is
+    #     asserted structurally on the source instead of by re-import.
+    source = (Path(__file__).resolve().parents[1] / "server.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    read = wire = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "SESSION_COOKIE_SECURE":
+                read = node
+            elif (
+                isinstance(target, ast.Subscript)
+                and isinstance(target.slice, ast.Constant)
+                and target.slice.value == "SESSION_COOKIE_SECURE"
+            ):
+                wire = node
+
+    assert read is not None, "server.py must define SESSION_COOKIE_SECURE"
+    assert wire is not None, "server.py must assign app.config['SESSION_COOKIE_SECURE']"
+
+    assert ast.unparse(read.value) == "globals().get('SESSION_COOKIE_SECURE', False)"
+    assert ast.unparse(wire.value) == "SESSION_COOKIE_SECURE"

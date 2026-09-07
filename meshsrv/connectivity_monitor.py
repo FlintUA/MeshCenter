@@ -61,18 +61,53 @@ RELAY_INFO_MIN_INTERVAL_SECONDS = 3600
 # configurable value instead of a code constant.
 FALLBACK_INTERNET_CHECK_URL = "https://www.gstatic.com/generate_204"
 
+# PR #231 review, section 6: the MCA wire protocol version(s) this
+# client's own codec can speak - meshsrv.attachments.codec.PROTOCOL_VERSION
+# is the only one for this MVP (always 1, ADR-0001 section 2), kept as a
+# separate, string-keyed set here rather than importing codec.py directly
+# (this module has no other dependency on meshsrv.attachments.* beyond
+# provider_registry) so a future multi-version client only has to widen
+# this one set, not thread an import through connectivity_monitor.py's
+# own dependency graph.
+SUPPORTED_RELAY_PROTOCOL_VERSIONS = frozenset({"1"})
+
+# PR #231 review, section 6: a distinct sentinel (not None or a
+# (state, error_code) tuple) so _check_identity()'s three real outcomes -
+# "verified fine", "verified and it's a real mismatch", "the /v1/info
+# call itself failed transiently, nothing was actually verified" - can
+# never be confused with each other. Only the first two are genuine
+# checks worth advancing _last_info_check for; a transient failure must
+# not be treated as if identity had been confirmed (the bug this fixes:
+# _last_info_check used to be stamped unconditionally, so a single flaky
+# request could silently defer the *next real* identity check by up to
+# RELAY_INFO_MIN_INTERVAL_SECONDS, ~an hour).
+_INFO_CHECK_INCONCLUSIVE = object()
+
 
 class InternetStatus(str, enum.Enum):
+    """PR #231 review, section 6: CHECKING was removed - it was never
+    actually set anywhere (refresh() runs a probe to completion within
+    one tick(), synchronously; there is no caller today that reads
+    snapshot() concurrently, mid-probe, from a different thread - the
+    one thing CHECKING could ever have meant). Making it real would mean
+    adding thread-safety machinery for a consumer that does not exist
+    yet (Step 1.6A's REST layer, explicitly out of scope for this
+    review); removing a dead, never-set enum member is the honest
+    choice over shipping a status value snapshot() can never actually
+    return."""
+
     UNKNOWN = "unknown"
-    CHECKING = "checking"
     ONLINE = "online"
     OFFLINE = "offline"
     LIMITED = "limited"
 
 
 class RelayState(str, enum.Enum):
+    """See InternetStatus's own docstring - CHECKING removed for the same
+    reason, same audit (grepped, confirmed unused anywhere in the
+    codebase before removing)."""
+
     UNKNOWN = "unknown"
-    CHECKING = "checking"
     ONLINE = "online"
     DEGRADED = "degraded"
     UNREACHABLE = "unreachable"
@@ -162,7 +197,16 @@ class ConnectivityMonitor:
         """Probes every enabled provider profile's `/health` (and,
         rarely, `/v1/info`) and recomputes the derived internet status.
         Intended caller: `AttachmentsService`'s own tick loop - never an
-        HTTP request handler (module docstring)."""
+        HTTP request handler (module docstring).
+
+        PR #231 review, section 6 asked for concurrent probes bounded at
+        <=2: this loop already probes strictly one profile at a time
+        (concurrency of 1, well within that bound) - AttachmentsService
+        calls this from its own single worker thread, holding its tick
+        lock, the same "real concurrency ceiling is 1 by construction"
+        shape the rest of that module's docstring already describes.
+        Nothing here spawns a thread/task per profile, so there is no
+        actual concurrency to bound."""
         now = self._now()
         # All profiles, not just enabled ones: a disabled profile must
         # still surface as a `DISABLED` RelayStatus in the snapshot
@@ -171,6 +215,20 @@ class ConnectivityMonitor:
         # already short-circuits before any network call for a disabled
         # profile, so including it here costs nothing.
         profiles = self._provider_registry.list_providers()
+
+        # PR #231 review, section 6: prune every per-provider dict of an
+        # entry for a provider_id that no longer exists in this
+        # workspace's registry at all (deleted via remove_or_disable()) -
+        # otherwise this monitor's own state grows without bound over a
+        # long-running instance's lifetime as Relays are added and
+        # removed, and a stale entry could (harmlessly, but confusingly)
+        # keep answering can_attempt_relay() for a provider_id nothing
+        # references any more.
+        current_ids = {profile.provider_id for profile in profiles}
+        for stale_dict in (self._relay_statuses, self._consecutive_failures, self._last_info_check):
+            for stale_id in [pid for pid in stale_dict if pid not in current_ids]:
+                del stale_dict[stale_id]
+
         any_online = False
         # A DISABLED relay is a deliberate user choice, not a failure -
         # it must never by itself trigger the fallback probe below (a
@@ -183,6 +241,24 @@ class ConnectivityMonitor:
         any_failing = False
 
         for profile in profiles:
+            if not profile.enabled:
+                # PR #231 review, section 6: checked *before* the due-for-
+                # health-check gate below, and unconditionally - a
+                # disabled Relay must be reflected immediately, never
+                # served from a stale cached ONLINE/DEGRADED reading left
+                # over from before the user disabled it (the old code let
+                # `_due_for_health_check()`'s own backoff/interval logic
+                # decide when a just-disabled profile's status next got
+                # recomputed, which could be minutes away). No network
+                # call either way - matches _check_relay()'s own
+                # short-circuit for a disabled profile.
+                status = RelayStatus(
+                    provider_id=profile.provider_id, state=RelayState.DISABLED,
+                    upload_readiness=UploadReadiness.UPLOAD_DISABLED, checked_at=now, latency_ms=None, error_code=None,
+                )
+                self._relay_statuses[profile.provider_id] = status
+                self._consecutive_failures.pop(profile.provider_id, None)
+                continue
             if not force and not self._due_for_health_check(profile.provider_id, now):
                 if profile.provider_id in self._relay_statuses:
                     cached_state = self._relay_statuses[profile.provider_id].state
@@ -274,13 +350,21 @@ class ConnectivityMonitor:
 
         info_due = force_info or (now - self._last_info_check.get(profile.provider_id, 0)) >= RELAY_INFO_MIN_INTERVAL_SECONDS
         if info_due:
-            mismatch = self._check_identity(profile)
-            self._last_info_check[profile.provider_id] = now
-            if mismatch is not None:
+            result = self._check_identity(profile)
+            if result is not _INFO_CHECK_INCONCLUSIVE:
+                # PR #231 review, section 6: only stamped when the check
+                # actually completed (succeeded or found a real mismatch)
+                # - a transient failure (result is _INFO_CHECK_INCONCLUSIVE)
+                # must not advance this, or the *next* real attempt could
+                # be silently deferred by up to RELAY_INFO_MIN_INTERVAL_
+                # SECONDS (an hour) because of one flaky request.
+                self._last_info_check[profile.provider_id] = now
+            if result is not None and result is not _INFO_CHECK_INCONCLUSIVE:
+                mismatch_state, error_code = result
                 return RelayStatus(
-                    provider_id=profile.provider_id, state=RelayState.IDENTITY_MISMATCH,
+                    provider_id=profile.provider_id, state=mismatch_state,
                     upload_readiness=_upload_readiness_for(profile), checked_at=now, latency_ms=latency_ms,
-                    error_code=mismatch,
+                    error_code=error_code,
                 )
 
         return RelayStatus(
@@ -288,31 +372,58 @@ class ConnectivityMonitor:
             upload_readiness=_upload_readiness_for(profile), checked_at=now, latency_ms=latency_ms, error_code=None,
         )
 
-    def _check_identity(self, profile: ProviderProfile) -> Optional[str]:
-        """Returns an error code string if `/v1/info` disagrees with the
-        pinned profile, else None. This is a plausibility/early-warning
-        check only - it never substitutes for the real signature
-        verification `relay_client.verify_descriptor_signature()` (Step
-        1.5/ADR-0007) already performs on every actual object download;
-        it exists so a re-keyed or misconfigured Relay shows up as a
-        distinct, more severe `identity_mismatch` state well before any
-        transfer is attempted against it."""
+    def _check_identity(self, profile: ProviderProfile):
+        """Returns `None` if `/v1/info` agrees with the pinned profile
+        and speaks a protocol version this client supports; a
+        `(RelayState, error_code)` pair for a genuine, confirmed problem
+        (identity mismatch or an unsupported protocol version); or the
+        `_INFO_CHECK_INCONCLUSIVE` sentinel if the check itself could not
+        be completed (network error, non-200, malformed... no, malformed
+        JSON *is* a confirmed problem - see below) - callers must not
+        treat the sentinel as either a pass or a real finding (module-
+        level docstring: `_INFO_CHECK_INCONCLUSIVE`).
+
+        This is a plausibility/early-warning check only - it never
+        substitutes for the real signature verification
+        `relay_client.verify_descriptor_signature()` (Step 1.5/ADR-0007)
+        already performs on every actual object download; it exists so a
+        re-keyed, misconfigured, or protocol-incompatible Relay shows up
+        as a distinct, more severe state well before any transfer is
+        attempted against it."""
         try:
             response = self._session.request("GET", f"{profile.origin}/v1/info", timeout=self._timeout)
         except requests.RequestException:
-            return None  # health already succeeded; treat a flaky info call as inconclusive, not a mismatch
+            # health already succeeded; treat a flaky info call as
+            # inconclusive, not a mismatch - and, critically, not as a
+            # completed check either (see _check_relay()'s own comment on
+            # why this must not advance _last_info_check).
+            return _INFO_CHECK_INCONCLUSIVE
         if response.status_code != 200:
-            return None
+            return _INFO_CHECK_INCONCLUSIVE
         try:
             payload = response.json()
             reported_provider_id = payload["provider_id"]
             reported_public_key = payload["service_key"]["public_key"]
         except (ValueError, KeyError, TypeError):
-            return "info_malformed"
+            # Unlike a network error/non-200, a 200 response that fails to
+            # parse into the expected shape is a real, confirmed problem
+            # with this Relay - not a transient blip - so this counts as
+            # a completed check (advances _last_info_check) with a
+            # genuine finding, not _INFO_CHECK_INCONCLUSIVE.
+            return (RelayState.IDENTITY_MISMATCH, "info_malformed")
         if reported_provider_id != profile.provider_id:
-            return "provider_id_mismatch"
+            return (RelayState.IDENTITY_MISMATCH, "provider_id_mismatch")
         if reported_public_key != b64url_encode(profile.service_public_key):
-            return "service_public_key_mismatch"
+            return (RelayState.IDENTITY_MISMATCH, "service_public_key_mismatch")
+        reported_protocol_version = payload.get("protocol_version")
+        if reported_protocol_version is not None and str(reported_protocol_version) not in SUPPORTED_RELAY_PROTOCOL_VERSIONS:
+            # PR #231 review, section 6: a Relay's own reported protocol
+            # version must actually be checked against what this client
+            # can speak - a mismatch here is a distinct, more actionable
+            # problem (INCOMPATIBLE) than a spoofed/re-keyed Relay
+            # (IDENTITY_MISMATCH): the Relay is who it claims to be, this
+            # client just cannot talk to it.
+            return (RelayState.INCOMPATIBLE, f"unsupported_protocol_version:{reported_protocol_version}")
         return None
 
     def _check_fallback_internet(self, now: float) -> InternetStatus:

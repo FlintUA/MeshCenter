@@ -459,3 +459,141 @@ def test_refresh_persists_failure_details(registry, store):
     persisted = registry.resolve(profile.provider_id)
     assert persisted.last_check_result == "unreachable"
     assert persisted.last_error_code == "ConnectionError"
+
+
+# ---- PR #231 review, section 6 --------------------------------------------
+
+
+def test_checking_enum_members_were_removed():
+    """CHECKING was never actually set anywhere - dead, unreachable enum
+    members that snapshot() could never really return. Pinning their
+    absence directly, rather than only relying on "no code sets this",
+    which a future change could silently reintroduce without this test
+    noticing."""
+    assert not hasattr(InternetStatus, "CHECKING")
+    assert not hasattr(RelayState, "CHECKING")
+    assert {member.value for member in InternetStatus} == {"unknown", "online", "offline", "limited"}
+    assert {member.value for member in RelayState} == {
+        "unknown", "online", "degraded", "unreachable", "identity_mismatch", "incompatible", "disabled",
+    }
+
+
+def test_refresh_prunes_status_for_a_deleted_provider(registry, store, flask_session, tmp_path):
+    from meshsrv.attachments.workspace import MCAWorkspaceManager
+    from meshsrv.attachments import identity
+
+    profile = _register(registry, store)
+    monitor = ConnectivityMonitor(registry, session=flask_session)
+    monitor.refresh()
+    assert profile.provider_id in monitor.snapshot().relays
+
+    wsm = MCAWorkspaceManager(str(tmp_path / "data"))
+    principal = identity.ensure_principal(registry._conn, wsm, "local")
+    registry.remove_or_disable(profile.provider_id, wsm, principal.principal_id)
+
+    monitor.refresh()
+    assert profile.provider_id not in monitor.snapshot().relays
+    assert profile.provider_id not in monitor._consecutive_failures
+    assert profile.provider_id not in monitor._last_info_check
+
+
+def test_disabling_a_provider_reflects_immediately_not_after_the_health_interval(registry, store, flask_session):
+    """PR #231 review, section 6: the old code let a just-disabled
+    profile keep answering can_attempt_relay() (and snapshot()) with its
+    last cached ONLINE reading until _due_for_health_check()'s own
+    interval/backoff next elapsed - up to RELAY_HEALTH_INTERVAL_SECONDS,
+    longer under backoff. A user disabling a Relay is a deliberate
+    action that must be visible on the very next refresh(), not
+    minutes later."""
+    profile = _register(registry, store)
+    now = [0.0]
+    monitor = ConnectivityMonitor(registry, session=flask_session, now_fn=lambda: now[0])
+    monitor.refresh()
+    assert monitor.snapshot().relays[profile.provider_id].state == RelayState.ONLINE
+
+    registry.update_profile(profile.provider_id, enabled=False)
+    now[0] += 1  # nowhere near the 60s health-check interval
+    monitor.refresh()
+
+    status = monitor.snapshot().relays[profile.provider_id]
+    assert status.state == RelayState.DISABLED
+    assert monitor.can_attempt_relay(profile.provider_id) is False
+
+
+def test_transient_info_check_failure_does_not_defer_the_next_real_attempt(registry, store):
+    """PR #231 review, section 6: _last_info_check used to be stamped
+    unconditionally, even when the /v1/info call itself raised - so one
+    flaky request could silently defer the next *real* identity check by
+    up to RELAY_INFO_MIN_INTERVAL_SECONDS (an hour). A transient failure
+    must leave _last_info_check exactly as it was (never checked, here),
+    so the very next forced check still actually attempts the call."""
+    profile = _register(registry, store)
+    info_attempts = []
+
+    def handler(method, url):
+        if url.endswith("/health"):
+            return _ScriptedResponse(status_code=200)
+        info_attempts.append(url)
+        raise requests.ConnectionError("flaky /v1/info")
+
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(handler))
+    snapshot = monitor.refresh(force=True)
+
+    # Inconclusive, not a mismatch - the Relay is still reported ONLINE
+    # (health succeeded; only the identity check itself was flaky).
+    assert snapshot.relays[profile.provider_id].state == RelayState.ONLINE
+    assert profile.provider_id not in monitor._last_info_check
+    assert len(info_attempts) == 1
+
+    # A second forced call must attempt /v1/info again immediately - it
+    # must not have been silently deferred by the failed attempt above.
+    monitor.refresh(force=True)
+    assert len(info_attempts) == 2
+
+
+def test_identity_check_flags_unsupported_protocol_version(registry, store):
+    from meshsrv.attachments.provider_registry import b64url_encode
+
+    profile = _register(registry, store)
+
+    def handler(method, url):
+        if url.endswith("/health"):
+            return _ScriptedResponse(status_code=200)
+        return _ScriptedResponse(
+            status_code=200,
+            payload={
+                "provider_id": profile.provider_id,
+                "service_key": {"public_key": b64url_encode(profile.service_public_key)},
+                "protocol_version": "99",
+            },
+        )
+
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(handler))
+    snapshot = monitor.refresh(force=True)
+
+    status = snapshot.relays[profile.provider_id]
+    assert status.state == RelayState.INCOMPATIBLE
+    assert status.error_code == "unsupported_protocol_version:99"
+    assert monitor.can_attempt_relay(profile.provider_id) is False
+
+
+def test_identity_check_accepts_the_supported_protocol_version(registry, store):
+    from meshsrv.attachments.provider_registry import b64url_encode
+
+    profile = _register(registry, store)
+
+    def handler(method, url):
+        if url.endswith("/health"):
+            return _ScriptedResponse(status_code=200)
+        return _ScriptedResponse(
+            status_code=200,
+            payload={
+                "provider_id": profile.provider_id,
+                "service_key": {"public_key": b64url_encode(profile.service_public_key)},
+                "protocol_version": "1",
+            },
+        )
+
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(handler))
+    snapshot = monitor.refresh(force=True)
+    assert snapshot.relays[profile.provider_id].state == RelayState.ONLINE

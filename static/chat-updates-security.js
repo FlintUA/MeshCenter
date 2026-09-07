@@ -319,6 +319,31 @@ async function applyUpdate(button) {
         const applyResponse = await fetch('/api/updates/apply', { method: 'POST' });
         const applyData = await applyResponse.json();
 
+        // PR #231 review (3rd pass): a blocked update (dependency files
+        // changed - see meshsrv/update_service.py's apply_update()) is a
+        // distinct, non-error outcome from a real failure: nothing went
+        // wrong, HEAD/the working tree are untouched, and no restart was
+        // ever scheduled. Shown as a persistent result panel (not a
+        // transient toast) with the manual steps, since this needs to
+        // stay readable/copyable, not disappear after a few seconds -
+        // the button is re-enabled and pollAfterUpdateRestart() is never
+        // called, since there is nothing restarting to poll for.
+        if (applyResponse.status === 409 && applyData.blocked) {
+            renderUpdatesResult(`
+                <div class="updates-result-error">⚠️ ${escapeHtml(window.I18N.t('system.updates_blocked_deps_title'))}</div>
+                <div class="updates-result-hint">${escapeHtml(window.I18N.t('system.updates_blocked_deps_body', {
+                    files: (applyData.changed_requirements_files || []).join(', '),
+                }))}</div>
+                <div class="updates-result-hint">${escapeHtml(window.I18N.t('system.updates_blocked_deps_instructions'))}</div>
+                <div class="updates-rollback-row">
+                    <code class="updates-rollback-command">${escapeHtml(applyData.instructions || '')}</code>
+                    <button type="button" class="btn btn-xs" onclick="navigator.clipboard.writeText('${escapeHtml((applyData.instructions || '').replace(/'/g, ''))}')">${escapeHtml(window.I18N.t('modals.copy'))}</button>
+                </div>
+            `);
+            if (button) button.disabled = false;
+            return;
+        }
+
         if (!applyResponse.ok || !applyData.ok) {
             showToast(`❌ ${applyData.error || window.I18N.t('errors.unknown_error')}`, 'error');
             if (button) button.disabled = false;

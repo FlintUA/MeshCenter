@@ -417,6 +417,26 @@ class KeyExchangeCoordinator:
         )
         self._conn.commit()
 
+    def reject_pending_key_change(self, source_address: str) -> None:
+        """The other half of `accept_pending_key_change()` (ADR-0008,
+        contacts backend): dismiss a parked `pending_*` identity without
+        promoting it - the existing trusted binding (and its
+        `tofu_confirmed_at`) is left exactly as it was. A KEY_ANNOUNCE
+        carrying the same contradicting identity can still park it again
+        later; this only clears today's pending flag, it does not
+        blacklist the new key."""
+        cur = self._conn.execute(
+            """
+            UPDATE mca_recipient_bindings
+            SET pending_public_identity = NULL, pending_key_epoch = NULL, pending_detected_at = NULL
+            WHERE workspace_id = ? AND adapter_id = ? AND transport_address = ? AND pending_public_identity IS NOT NULL
+            """,
+            (self._principal.workspace_id, self._adapter_id, source_address),
+        )
+        if cur.rowcount == 0:
+            raise KeyExchangeError(f"no pending key change for {source_address!r}")
+        self._conn.commit()
+
     # ---- read-only status -------------------------------------------------
 
     def get_binding(self, source_address: str) -> Optional[RecipientBinding]:

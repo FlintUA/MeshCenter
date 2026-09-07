@@ -11,9 +11,62 @@ protocol survives a real radio link.
 
 from __future__ import annotations
 
+import threading
+import time
+import uuid
+
 from meshsrv.attachments import codec
 from meshsrv.attachments import mca_runtime
 from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
+from meshsrv.attachments.identity import load_signing_key
+from meshsrv.attachments.service import AttachmentsService
+
+
+class _BlockingRelaySession:
+    """PR #231 review (2nd pass), requirement 5: a fake `requests`-shaped
+    session whose `.request()` blocks on a `threading.Event` until the
+    test explicitly releases it - used to reproduce, deterministically,
+    a `tick()` call stuck inside a slow/unreachable Relay HTTP call, so
+    the fix (handle_incoming_meshtastic_text() never waiting on the same
+    lock a slow tick holds) can be proven directly rather than assumed
+    from code reading alone. `entered` lets the test wait until a tick
+    is genuinely inside the blocking call before proceeding - a fixed
+    `time.sleep()` here would be exactly the timing-sensitive
+    synchronization this project's own review guidance says to avoid."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def request(self, method, url, json=None, data=None, headers=None, timeout=None):
+        import requests
+
+        self.entered.set()
+        released = self.release.wait(timeout=10)
+        if not released:
+            raise AssertionError("_BlockingRelaySession was never released - test bug, not a real Relay timeout")
+        raise requests.ConnectionError("still down after unblocking - this session never succeeds")
+
+
+class _AlwaysDownSession:
+    """Feeds ConnectivityMonitor a permanently-unreachable fallback probe,
+    for the same reason tests/test_attachments_service.py's own
+    `_AlwaysDownSession` exists: PR #231 review section 3 made
+    `AttachmentsService`'s first tick run immediately on `start()` rather
+    than waiting out `tick_seconds`, so every test in this file that
+    reaches `ensure_service()` (directly or through
+    `handle_incoming_meshtastic_text()`/`start_attachments_service()`) now
+    triggers a real `ConnectivityMonitor.refresh()` call on the very first
+    tick. With zero registered providers (every test here), that call
+    reaches `_check_fallback_internet()`'s real HTTPS probe unless a fake
+    session is injected first via `mca_runtime.set_connectivity_session_
+    for_tests()` - this class stands in for that, raising immediately so
+    no test in this file ever makes a real network call."""
+
+    def request(self, method, url, json=None, data=None, headers=None, timeout=None):
+        import requests
+
+        raise requests.ConnectionError("down for this test")
 
 
 def test_key_request_to_key_announce_round_trip_through_the_real_glue(tmp_path):
@@ -24,6 +77,7 @@ def test_key_request_to_key_announce_round_trip_through_the_real_glue(tmp_path):
     back a real, signed KEY_ANNOUNCE - which Node A's own listener hook
     then also recognizes."""
     mca_runtime.reset_state_for_tests()
+    mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
     try:
         ether = InMemoryEther()
         transport_a = FakeRadioTransport(ether, "!aaaaaaaa")
@@ -49,19 +103,36 @@ def test_key_request_to_key_announce_round_trip_through_the_real_glue(tmp_path):
         wire_payload = adapter_a.encode(key_request, route)
         adapter_a.send(wire_payload, route, idempotency_key="test-key-request")
 
+        # PR #231 review (2nd pass), requirement 1/2: the runtime (and its
+        # AttachmentsService, and the inbound queue it owns) must already
+        # be started before handle_incoming_meshtastic_text() is ever
+        # called - that function no longer initializes anything itself.
+        # This mirrors server.py's own startup ordering (start_
+        # attachments_service() now runs before the radio listener
+        # starts).
+        mca_runtime.start_attachments_service(data_dir_b, transport_b)
+
         # Node B's listener "receives" it - this is the exact call
         # server.py's process_message_line() makes after saving the
-        # incoming message.
+        # incoming message. PR #231 review, section 2: this call now only
+        # enqueues an InboundEvent - the actual KeyExchangeCoordinator
+        # dispatch and the KEY_ANNOUNCE reply happen on
+        # AttachmentsService's own worker thread, drained at the start of
+        # its next tick() - so this test drives that tick() explicitly,
+        # synchronously, rather than asserting on state that used to be
+        # produced inline.
         events = ether.drain("!bbbbbbbb")
         assert len(events) == 1
-        recognized = mca_runtime.handle_incoming_meshtastic_text(
+        queued = mca_runtime.handle_incoming_meshtastic_text(
             events[0]["text"],
             events[0]["source_address"],
             transport_b,
             data_dir=data_dir_b,
             packet_id=events[0]["packet_id"],
         )
-        assert recognized is True
+        assert queued is True
+        state_b = mca_runtime._get_state(data_dir_b)  # noqa: SLF001
+        state_b.service.tick()
 
         # Node B's coordinator should have sent a real KEY_ANNOUNCE back.
         reply_events = ether.drain("!aaaaaaaa")
@@ -73,15 +144,18 @@ def test_key_request_to_key_announce_round_trip_through_the_real_glue(tmp_path):
         # Node A's own listener hook recognizes and processes the
         # KEY_ANNOUNCE too (records the binding, replies with KEY_ACK) -
         # proving the full round trip works from both sides through the
-        # same glue function.
-        recognized_a = mca_runtime.handle_incoming_meshtastic_text(
+        # same glue function. Same async/tick note as above: enqueue only,
+        # then drive it forward explicitly.
+        queued_a = mca_runtime.handle_incoming_meshtastic_text(
             reply_events[0]["text"],
             reply_events[0]["source_address"],
             transport_a,
             data_dir=data_dir_a,
             packet_id=reply_events[0]["packet_id"],
         )
-        assert recognized_a is True
+        assert queued_a is True
+        state_a_after = mca_runtime._get_state(data_dir_a)  # noqa: SLF001
+        state_a_after.service.tick()
 
         ack_events = ether.drain("!bbbbbbbb")
         assert len(ack_events) == 1
@@ -92,17 +166,316 @@ def test_key_request_to_key_announce_round_trip_through_the_real_glue(tmp_path):
 
 
 def test_ordinary_chat_message_is_not_recognized_as_mca(tmp_path):
+    """PR #231 review, section 2 changed what this function's return value
+    means: it now reports whether the event was *queued* (bounded-queue
+    capacity), not whether it was recognized as MCA - that determination
+    moved to AttachmentsService's own worker thread, which decides via
+    `delivery_adapter.ingest()` returning None for non-MCA1-TEXT content.
+    So this test now asserts on the actual observable outcome (no reply
+    sent, nothing crashes) after driving that worker forward explicitly,
+    rather than on a return value that no longer carries this meaning."""
     mca_runtime.reset_state_for_tests()
+    mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
     try:
         ether = InMemoryEther()
         transport_b = FakeRadioTransport(ether, "!bbbbbbbb")
-        recognized = mca_runtime.handle_incoming_meshtastic_text(
+        data_dir_b = str(tmp_path / "b")
+        mca_runtime.start_attachments_service(data_dir_b, transport_b)
+        queued = mca_runtime.handle_incoming_meshtastic_text(
             "hey, got your message",
             "!aaaaaaaa",
             transport_b,
-            data_dir=str(tmp_path / "b"),
+            data_dir=data_dir_b,
         )
-        assert recognized is False
+        assert queued is True
+
+        state_b = mca_runtime._get_state(data_dir_b)  # noqa: SLF001
+        state_b.service.tick()
+
         assert ether.drain("!aaaaaaaa") == []
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+# ---- ADR-0008: OFFER routing and AttachmentsService startup wiring --------
+
+
+def test_offer_from_unknown_provider_is_routed_to_receiver_not_dropped(tmp_path):
+    """Before ADR-0008's wiring, `handle_incoming_meshtastic_text()` only
+    ever reached `KeyExchangeCoordinator`, which returns None for an
+    OFFER (it only dispatches KEY_REQUEST/KEY_ANNOUNCE/KEY_ACK) - a real
+    incoming OFFER was silently dropped with no attachment row ever
+    created. This proves the fix through the exact same glue function
+    server.py's listener calls, encoding a real, signed OFFER through
+    the real `MeshtasticTextAdapter`/`codec` - not by calling
+    `receiver.handle_offer()` directly."""
+    mca_runtime.reset_state_for_tests()
+    mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+    try:
+        ether = InMemoryEther()
+        transport_a = FakeRadioTransport(ether, "!aaaaaaaa")
+        transport_b = FakeRadioTransport(ether, "!bbbbbbbb")
+        data_dir_a = str(tmp_path / "a")
+        data_dir_b = str(tmp_path / "b")
+
+        from meshsrv.attachments.delivery.meshtastic import MeshtasticTextAdapter
+
+        adapter_a = MeshtasticTextAdapter(transport_a)
+        state_a = mca_runtime._get_state(data_dir_a)  # noqa: SLF001
+        signing_key_a = load_signing_key(state_a.workspace_manager, state_a.principal)
+
+        offer = codec.encode_offer(
+            codec.OfferFields(
+                provider_id=b"\x01\x02\x03\x04\x05\x06\x07\x08",
+                transfer_id=uuid.uuid4().bytes,
+                sender_key_id=bytes.fromhex(state_a.principal.key_id),
+                kind=1,
+                size_bucket=1,
+                hard_expires_at=int(time.time()) + 3600,
+                flags=0,
+            ),
+            signing_key_a,
+        )
+        route = adapter_a.resolve_route({"node_id": "!bbbbbbbb"})
+        wire_payload = adapter_a.encode(offer, route)
+        adapter_a.send(wire_payload, route, idempotency_key="test-offer")
+
+        mca_runtime.start_attachments_service(data_dir_b, transport_b)
+
+        events = ether.drain("!bbbbbbbb")
+        assert len(events) == 1
+        queued = mca_runtime.handle_incoming_meshtastic_text(
+            events[0]["text"], events[0]["source_address"], transport_b,
+            data_dir=data_dir_b, packet_id=events[0]["packet_id"],
+        )
+        assert queued is True
+
+        # PR #231 review, section 2: OFFER dispatch (including the
+        # attachment-row creation this test is checking for) now happens
+        # on AttachmentsService's own worker thread, drained at the start
+        # of tick() - not synchronously inside handle_incoming_
+        # meshtastic_text() any more. Drive it forward explicitly before
+        # asserting.
+        state_b = mca_runtime._get_state(data_dir_b)  # noqa: SLF001
+        state_b.service.tick()
+
+        # No binding is known for sender_key_id yet (WAITING_KEY takes
+        # priority over the provider check - receiver.py's own state
+        # machine only evaluates the provider once the sender's identity
+        # is known) - per Step 1.5's own DoD, this must create exactly
+        # one non-terminal row and send zero network requests (there is
+        # no HTTP client wired into this test at all, so a network
+        # attempt would raise, not just fail an assertion).
+        rows = state_b.conn.execute("SELECT state FROM attachments").fetchall()
+        assert [r[0] for r in rows] == ["WAITING_KEY"]
+
+        # PR #231 review, section 4.2: the reply route must be persisted
+        # from the *real* adapter that actually received this OFFER
+        # (AttachmentsService._process_inbound_offer(), wired from the
+        # DeliveryEnvelope ingest() itself produced), not left unset -
+        # this is what lets a later ACK reach node A even after a
+        # restart, per handle_offer()'s own docstring on why source_
+        # address alone is not enough any more.
+        state_b.conn.row_factory = None
+        route_row = state_b.conn.execute(
+            "SELECT reply_adapter_id, reply_connector_profile_id, reply_route_type, "
+            "reply_route_id, reply_destination_address FROM attachments"
+        ).fetchone()
+        assert route_row == ("meshtastic", "meshtastic", "DIRECT", "!aaaaaaaa", "!aaaaaaaa")
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_offer_wakes_the_attachments_service_when_one_is_running(tmp_path, monkeypatch):
+    """If `start_attachments_service()` has already run, an inbound OFFER
+    must call `service.wake()` so the worker re-scans promptly instead of
+    waiting out its full `tick_seconds` interval."""
+    mca_runtime.reset_state_for_tests()
+    mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+    try:
+        ether = InMemoryEther()
+        transport_a = FakeRadioTransport(ether, "!aaaaaaaa")
+        transport_b = FakeRadioTransport(ether, "!bbbbbbbb")
+        data_dir_a = str(tmp_path / "a")
+        data_dir_b = str(tmp_path / "b")
+
+        from meshsrv.attachments.delivery.meshtastic import MeshtasticTextAdapter
+
+        adapter_a = MeshtasticTextAdapter(transport_a)
+        state_a = mca_runtime._get_state(data_dir_a)  # noqa: SLF001
+        signing_key_a = load_signing_key(state_a.workspace_manager, state_a.principal)
+
+        mca_runtime.start_attachments_service(data_dir_b, transport_b)
+        state_b = mca_runtime._get_state(data_dir_b)  # noqa: SLF001
+        assert isinstance(state_b.service, AttachmentsService)
+
+        woken = []
+        monkeypatch.setattr(state_b.service, "wake", lambda: woken.append(True))
+
+        offer = codec.encode_offer(
+            codec.OfferFields(
+                provider_id=b"\x01\x02\x03\x04\x05\x06\x07\x08",
+                transfer_id=uuid.uuid4().bytes,
+                sender_key_id=bytes.fromhex(state_a.principal.key_id),
+                kind=1,
+                size_bucket=1,
+                hard_expires_at=int(time.time()) + 3600,
+                flags=0,
+            ),
+            signing_key_a,
+        )
+        route = adapter_a.resolve_route({"node_id": "!bbbbbbbb"})
+        wire_payload = adapter_a.encode(offer, route)
+        adapter_a.send(wire_payload, route, idempotency_key="test-offer-wake")
+
+        events = ether.drain("!bbbbbbbb")
+        mca_runtime.handle_incoming_meshtastic_text(
+            events[0]["text"], events[0]["source_address"], transport_b,
+            data_dir=data_dir_b, packet_id=events[0]["packet_id"],
+        )
+        assert woken == [True]
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_start_attachments_service_is_idempotent(tmp_path):
+    mca_runtime.reset_state_for_tests()
+    mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+    try:
+        ether = InMemoryEther()
+        transport = FakeRadioTransport(ether, "!cccccccc")
+        data_dir = str(tmp_path / "c")
+
+        mca_runtime.start_attachments_service(data_dir, transport)
+        state = mca_runtime._get_state(data_dir)  # noqa: SLF001
+        first_service = state.service
+        assert isinstance(first_service, AttachmentsService)
+
+        mca_runtime.start_attachments_service(data_dir, transport)
+        assert state.service is first_service
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_attachments_service_has_its_own_tick_lock_not_the_runtime_singleton_lock(tmp_path):
+    """PR #231 review (2nd pass), requirement 4 - REPLACES this file's
+    former `test_attachments_service_shares_the_runtime_lock_not_a_
+    private_one`, which pinned the opposite (and, it turned out,
+    incorrect) design as if it were correct.
+
+    That older test asserted `state.service._lock is mca_runtime._lock`
+    - true at the time, but a real bug, not a safe simplification: `_lock`
+    is also what `_get_state()`/`ensure_service()` acquire, and
+    `handle_incoming_meshtastic_text()` used to call `ensure_service()`
+    on every single message. Since `AttachmentsService.tick()` holds
+    whatever lock it was constructed with for its *entire* duration -
+    including `ConnectivityMonitor.refresh()`'s real Relay HTTP calls -
+    sharing one lock object meant the radio listener thread could block
+    for as long as a slow/unreachable Relay kept a tick running,
+    defeating the entire point of the queue-based redesign. See this
+    module's own docstring "CORRECTION" section for the full account,
+    and `test_handle_incoming_meshtastic_text_does_not_block_on_a_slow_
+    tick` below for a reproduction of the actual hazard, not just this
+    static wiring check.
+
+    The fix: `_MCARuntimeState.__init__` now constructs its own
+    dedicated `tick_lock`, handed to `AttachmentsService` instead of the
+    module's `_lock`. This test pins the corrected wiring directly."""
+    mca_runtime.reset_state_for_tests()
+    mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+    try:
+        ether = InMemoryEther()
+        transport = FakeRadioTransport(ether, "!dddddddd")
+        data_dir = str(tmp_path / "d")
+
+        mca_runtime.start_attachments_service(data_dir, transport)
+        state = mca_runtime._get_state(data_dir)  # noqa: SLF001
+        assert isinstance(state.service, AttachmentsService)
+
+        assert state.service._lock is state.tick_lock  # noqa: SLF001
+        assert state.service._lock is not mca_runtime._lock  # noqa: SLF001
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_handle_incoming_meshtastic_text_does_not_block_on_a_slow_tick(tmp_path):
+    """PR #231 review (2nd pass), requirement 5. Reproduces the actual
+    hazard the previous fix missed, deterministically: a fake Relay
+    session that blocks inside its own HTTP call until explicitly
+    released (`_BlockingRelaySession`) stands in for a slow/unreachable
+    Relay; `start_attachments_service()`'s own immediate-first-tick
+    (section 3) drives a real `tick()` -> `ConnectivityMonitor.refresh()`
+    -> the blocking session, on the worker thread. Once that tick is
+    confirmed to genuinely be inside the blocking call (`entered.wait()`,
+    not a fixed sleep - avoids timing-sensitive synchronization),
+    `handle_incoming_meshtastic_text()` is called from this test's own
+    thread and must return - and have actually enqueued the event -
+    well within a short bounded interval, proving it never waits on
+    whatever lock that stuck tick holds."""
+    mca_runtime.reset_state_for_tests()
+    blocking_session = _BlockingRelaySession()
+    mca_runtime.set_connectivity_session_for_tests(blocking_session)
+    try:
+        ether = InMemoryEther()
+        transport = FakeRadioTransport(ether, "!eeeeeeee")
+        data_dir = str(tmp_path / "e")
+
+        mca_runtime.start_attachments_service(data_dir, transport)
+        state = mca_runtime._get_state(data_dir)  # noqa: SLF001
+
+        assert blocking_session.entered.wait(timeout=5), (
+            "the worker's immediate first tick never reached the blocking Relay call - "
+            "test setup problem, not the behavior under test"
+        )
+
+        start = time.monotonic()
+        queued = mca_runtime.handle_incoming_meshtastic_text(
+            "MCA1:not-a-real-payload-but-must-still-enqueue",
+            "!ffffffff",
+            transport,
+            data_dir=data_dir,
+        )
+        elapsed = time.monotonic() - start
+
+        assert queued is True
+        assert elapsed < 1.0, (
+            f"handle_incoming_meshtastic_text() took {elapsed:.3f}s while a tick was blocked "
+            "on a slow Relay call - it must never wait on any lock that tick() holds"
+        )
+        # The event actually reached the queue, not just "returned fast because
+        # it silently gave up" - drain it directly (the queue is the one thing
+        # this function is allowed to touch).
+        assert state.inbound_queue.qsize() >= 1
+
+        blocking_session.release.set()
+    finally:
+        # release() again defensively in case an assertion above failed
+        # before reaching it - reset_state_for_tests()'s own stop() call
+        # would otherwise hang joining a tick that can never finish.
+        blocking_session.release.set()
+        mca_runtime.reset_state_for_tests()
+
+
+def test_handle_incoming_meshtastic_text_drops_and_logs_when_runtime_is_not_ready(caplog):
+    """PR #231 review (2nd pass), requirement 3: if the runtime is not
+    ready (start_attachments_service() never ran for this process), the
+    listener must fail fast - log and drop - never fall back to
+    initializing the database/worker from the listener thread itself.
+    Deliberately does not call start_attachments_service()/_get_state()
+    at all before this call, unlike every other test in this file."""
+    mca_runtime.reset_state_for_tests()
+    try:
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="meshsrv.attachments.mca_runtime"):
+            queued = mca_runtime.handle_incoming_meshtastic_text(
+                "MCA1:irrelevant",
+                "!aaaaaaaa",
+                radio_transport=None,
+                data_dir="/should-never-be-touched",
+            )
+        assert queued is False
+        assert mca_runtime._state is None  # noqa: SLF001 - still never initialized
+        assert any("not ready" in record.message for record in caplog.records)
     finally:
         mca_runtime.reset_state_for_tests()

@@ -26,9 +26,10 @@ mechanism, deliberately not a bespoke `schema_migrations` table, since
 
 from __future__ import annotations
 
+import re
 import sqlite3
-from dataclasses import dataclass
-from typing import Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Callable, Optional, Sequence
 
 _MIGRATION_0001_UP = """
 CREATE TABLE attachments (
@@ -427,12 +428,224 @@ ALTER TABLE attachments DROP COLUMN draft_comment;
 """
 
 
+# ADR-0008 (Step 1.6A backend layer): extends the provider profile model
+# for real Settings/worker use (kind/enabled/limits/health-cache columns)
+# and fixes a real bug - register(..., is_default=True) never cleared
+# is_default on any other row in the workspace, so two rows could end up
+# with is_default=1 and get_default()'s unordered `LIMIT 1` would pick
+# between them non-deterministically. The partial unique index below
+# makes "at most one default per workspace" a schema-enforced invariant;
+# ProviderRegistry.set_default() is the only sanctioned way to change it.
+_MIGRATION_0008_UP = """
+ALTER TABLE mca_provider_profiles ADD COLUMN kind TEXT NOT NULL DEFAULT 'own';
+ALTER TABLE mca_provider_profiles ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE mca_provider_profiles ADD COLUMN min_ttl_seconds INTEGER;
+ALTER TABLE mca_provider_profiles ADD COLUMN max_ttl_seconds INTEGER;
+ALTER TABLE mca_provider_profiles ADD COLUMN protocol_version TEXT;
+ALTER TABLE mca_provider_profiles ADD COLUMN upload_token_file TEXT;
+ALTER TABLE mca_provider_profiles ADD COLUMN last_checked_at INTEGER;
+ALTER TABLE mca_provider_profiles ADD COLUMN last_check_result TEXT;
+ALTER TABLE mca_provider_profiles ADD COLUMN last_latency_ms INTEGER;
+ALTER TABLE mca_provider_profiles ADD COLUMN last_error_code TEXT;
+
+-- Deterministic cleanup BEFORE the unique index below: this migration's
+-- own comment (see the module-level ADR-0008 note above) already admits
+-- register(..., is_default=True) never cleared is_default on any other
+-- row in the workspace, so a real install that hit that bug can have two
+-- or more is_default=1 rows in the same workspace today. Creating a
+-- partial UNIQUE index over that column without first collapsing such a
+-- row set would fail the migration outright (sqlite3.IntegrityError) on
+-- exactly the installs this ADR is trying to fix. Keep the earliest-added
+-- default per workspace (added_at, provider_id as a deterministic
+-- tiebreaker so two rows with the same added_at don't leave the choice to
+-- SQLite's own unspecified row order); clear every other is_default=1 row
+-- in that same workspace. A workspace with only one is_default=1 row (the
+-- overwhelming common case) matches its own subquery result and this
+-- UPDATE touches zero rows for it.
+UPDATE mca_provider_profiles
+SET is_default = 0
+WHERE is_default = 1
+  AND provider_id != (
+      SELECT p2.provider_id FROM mca_provider_profiles AS p2
+      WHERE p2.workspace_id = mca_provider_profiles.workspace_id AND p2.is_default = 1
+      ORDER BY p2.added_at ASC, p2.provider_id ASC
+      LIMIT 1
+  );
+
+CREATE UNIQUE INDEX idx_mca_provider_profiles_one_default
+    ON mca_provider_profiles(workspace_id) WHERE is_default = 1;
+"""
+
+_MIGRATION_0008_DOWN = """
+DROP INDEX IF EXISTS idx_mca_provider_profiles_one_default;
+ALTER TABLE mca_provider_profiles DROP COLUMN last_error_code;
+ALTER TABLE mca_provider_profiles DROP COLUMN last_latency_ms;
+ALTER TABLE mca_provider_profiles DROP COLUMN last_check_result;
+ALTER TABLE mca_provider_profiles DROP COLUMN last_checked_at;
+ALTER TABLE mca_provider_profiles DROP COLUMN upload_token_file;
+ALTER TABLE mca_provider_profiles DROP COLUMN protocol_version;
+ALTER TABLE mca_provider_profiles DROP COLUMN max_ttl_seconds;
+ALTER TABLE mca_provider_profiles DROP COLUMN min_ttl_seconds;
+ALTER TABLE mca_provider_profiles DROP COLUMN enabled;
+ALTER TABLE mca_provider_profiles DROP COLUMN kind;
+"""
+
+
+_MIGRATION_0009_UP = ""  # data-only migration - see the fixup functions below
+
+_MIGRATION_0009_DOWN = ""  # data-only migration - see the fixup functions below
+
+_HEX16_RE = re.compile(r"^[0-9a-f]{16}$")
+
+
+def _migration_0009_fixup_sent_provider_id_encoding(conn: sqlite3.Connection) -> None:
+    """Reviewer-found defect, reproduced locally: `sender.create_draft()`
+    stored `attachments.provider_id` as hex for 'sent' rows while
+    `receiver.py` already stored it as Base64URL (matching
+    `ProviderRegistry`'s own key format) for 'received' rows -
+    `ProviderRegistry.remove_or_disable()`'s "is this provider_id still
+    referenced by any attachment?" check compares against the Base64URL
+    form, so it NEVER matched a 'sent' row and could delete a Relay
+    profile a real outgoing attachment still depended on. `sender.py`'s
+    write/read sites are now fixed to use Base64URL like everything else
+    (this ADR-0008-hardening pass); this one-time fixup re-encodes any
+    row a pre-fix process already wrote as hex, on any real install that
+    already sent an attachment before this fix existed (dev/prod both
+    did, during Step 1.3/1.4's hardware tests).
+
+    Deliberately conservative: only touches a value that looks exactly
+    like the old hex encoding (16 lowercase hex chars, matching an 8-byte
+    provider_id) - anything else (already Base64URL, NULL, or some
+    unexpected value) is left untouched rather than guessed at."""
+    from meshsrv.attachments.provider_registry import encode_provider_id
+
+    rows = conn.execute(
+        "SELECT id, provider_id FROM attachments WHERE direction = 'sent' AND provider_id IS NOT NULL"
+    ).fetchall()
+    for attachment_id, provider_id_value in rows:
+        if not _HEX16_RE.match(provider_id_value or ""):
+            continue
+        raw = bytes.fromhex(provider_id_value)
+        conn.execute(
+            "UPDATE attachments SET provider_id = ? WHERE id = ?",
+            (encode_provider_id(raw), attachment_id),
+        )
+
+
+def _migration_0009_down_fixup_sent_provider_id_encoding(conn: sqlite3.Connection) -> None:
+    """Inverse of the above, for symmetry with every other migration's
+    down path - converts a 'sent' row's provider_id back to hex, the
+    encoding a downgraded `sender.py` (pre-this-fix) would expect."""
+    from meshsrv.attachments.provider_registry import ProviderRegistryError, decode_provider_id
+
+    rows = conn.execute(
+        "SELECT id, provider_id FROM attachments WHERE direction = 'sent' AND provider_id IS NOT NULL"
+    ).fetchall()
+    for attachment_id, provider_id_value in rows:
+        try:
+            raw = decode_provider_id(provider_id_value)
+        except ProviderRegistryError:
+            continue  # already hex (or unexpected) - never touch
+        conn.execute(
+            "UPDATE attachments SET provider_id = ? WHERE id = ?",
+            (raw.hex(), attachment_id),
+        )
+
+
+# Execution Plan Step 1.6A-hardening (PR #227 defect #1). Nothing in
+# receiver.py's own ACK generation ever persisted a real queue: the
+# encoded ACK_RECEIVED/ACK_PROVIDER_UNKNOWN/ACK_DOWNLOADED frames it built
+# were simply returned up the call stack as `ReceiveResult.replies`, and
+# both real callers (mca_runtime.py's OFFER branch, AttachmentsService.
+# _step_received()) discarded that return value entirely - no ACK was
+# ever actually transmitted in production. Separately, the "has this
+# already been sent" bookkeeping (`attachment_events`) was written
+# *before* any transmission was even attempted (a commit-before-send
+# ordering bug, wrong even if a caller HAD been sending the return value)
+# - a crash or a failed send between that commit and the real wire send
+# would have permanently and silently lost the ACK.
+#
+# `mca_outgoing_replies` is a real, persisted, retryable queue: a row is
+# inserted (state=PENDING) the moment receiver.py decides an ACK is due
+# (still at-most-once per (attachment_id, event_type), same as before),
+# and is only ever marked SENT by AttachmentsService's own dispatch step,
+# after `DeliveryAdapter.send()` actually succeeds - never by the code
+# that builds the frame. A failed send bumps `attempts`/`next_attempt_at`
+# (exponential backoff, same shape as ConnectivityMonitor's own Relay
+# health backoff) rather than being lost. `attachments.reply_route_type`/
+# `reply_route_id` (added on the same attachments row a 'received'
+# attachment already has - never used for 'sent' rows) is where the
+# return route is captured, once, at handle_offer() time from the
+# inbound envelope's own source address - the only place that
+# information is available at all today.
+_MIGRATION_0010_UP = """
+ALTER TABLE attachments ADD COLUMN reply_route_type TEXT;
+ALTER TABLE attachments ADD COLUMN reply_route_id TEXT;
+-- PR #231 review, section 4.2: a reply route must be reconstructable
+-- after a restart without assuming "the" one global Meshtastic adapter
+-- - adapter_id/connector_profile_id/destination_address are persisted
+-- alongside route_type/route_id (source_address is not a separate
+-- column: for the DIRECT-only MVP, reply_route_id already *is* the
+-- sender's source_address - see receiver.handle_offer()'s own comment
+-- on why "DIRECT" is the only route shape an OFFER can arrive over).
+ALTER TABLE attachments ADD COLUMN reply_adapter_id TEXT;
+ALTER TABLE attachments ADD COLUMN reply_connector_profile_id TEXT;
+ALTER TABLE attachments ADD COLUMN reply_destination_address TEXT;
+
+CREATE TABLE mca_outgoing_replies (
+    id TEXT PRIMARY KEY,
+    attachment_id TEXT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    message BLOB NOT NULL,
+    state TEXT NOT NULL DEFAULT 'PENDING' CHECK (state IN ('PENDING', 'SENT', 'UNDELIVERABLE')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    next_attempt_at INTEGER NOT NULL,
+    sent_at INTEGER,
+    last_error TEXT,
+    UNIQUE (attachment_id, event_type)
+);
+CREATE INDEX idx_mca_outgoing_replies_due ON mca_outgoing_replies(state, next_attempt_at);
+
+-- PR #231 review, section 4.3: real, persisted ACK rate limiting - not
+-- just "N rows per dispatch call" (which only ever bounded one SQL
+-- query, never the actual send rate). One row per (workspace_id,
+-- scope) - scope is either the literal string '__global__' or a
+-- specific source_address - tracking a fixed window's start time and
+-- how many replies have been sent/attempted in it. Persisted (not
+-- in-memory) so a restart never resets the count mid-window.
+CREATE TABLE mca_ack_quota (
+    workspace_id TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    window_start_at INTEGER NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (workspace_id, scope)
+);
+"""
+
+_MIGRATION_0010_DOWN = """
+DROP TABLE IF EXISTS mca_ack_quota;
+DROP TABLE IF EXISTS mca_outgoing_replies;
+ALTER TABLE attachments DROP COLUMN reply_destination_address;
+ALTER TABLE attachments DROP COLUMN reply_connector_profile_id;
+ALTER TABLE attachments DROP COLUMN reply_adapter_id;
+ALTER TABLE attachments DROP COLUMN reply_route_id;
+ALTER TABLE attachments DROP COLUMN reply_route_type;
+"""
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
     name: str
     up_sql: str
     down_sql: str
+    # Optional Python step run after up_sql/down_sql's executescript() -
+    # for a transformation plain SQL can't express (Migration 9: re-
+    # encoding a column's text using this codebase's own Base64URL
+    # helper). None for every migration that is pure schema DDL.
+    data_fixup: Optional[Callable[[sqlite3.Connection], None]] = None
+    down_data_fixup: Optional[Callable[[sqlite3.Connection], None]] = None
 
 
 MIGRATIONS: Sequence[Migration] = (
@@ -443,6 +656,13 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(5, "mca_sender_state", _MIGRATION_0005_UP, _MIGRATION_0005_DOWN),
     Migration(6, "mca_receiver_state", _MIGRATION_0006_UP, _MIGRATION_0006_DOWN),
     Migration(7, "attachments_draft_comment", _MIGRATION_0007_UP, _MIGRATION_0007_DOWN),
+    Migration(8, "provider_profiles_v2", _MIGRATION_0008_UP, _MIGRATION_0008_DOWN),
+    Migration(
+        9, "unify_sent_provider_id_encoding", _MIGRATION_0009_UP, _MIGRATION_0009_DOWN,
+        data_fixup=_migration_0009_fixup_sent_provider_id_encoding,
+        down_data_fixup=_migration_0009_down_fixup_sent_provider_id_encoding,
+    ),
+    Migration(10, "receiver_ack_outbox", _MIGRATION_0010_UP, _MIGRATION_0010_DOWN),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0
@@ -464,6 +684,13 @@ ALL_TABLE_NAMES = frozenset(
         "mca_key_exchange_quota",
         "mca_sender_state",
         "mca_receiver_state",
+        "mca_outgoing_replies",
+        # PR #231 review (2nd pass): was missing here - added by the same
+        # Migration 10 extension as mca_outgoing_replies above, but never
+        # added to this completeness set, so every existing
+        # ALL_TABLE_NAMES.issubset(...) test silently never verified this
+        # table's presence after a full migration run.
+        "mca_ack_quota",
     }
 )
 
@@ -471,6 +698,33 @@ ALL_TABLE_NAMES = frozenset(
 def current_version(conn: sqlite3.Connection) -> int:
     row = conn.execute("PRAGMA user_version").fetchone()
     return int(row[0]) if row is not None else 0
+
+
+# Matches a `--` comment (through end of line) so _split_sql_statements()
+# can strip it before splitting on `;` - none of this module's own SQL
+# blocks use any other comment style, string literal containing a
+# semicolon, or multi-statement construct (trigger/procedure body) that
+# would need a smarter splitter than this.
+_SQL_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
+
+
+def _split_sql_statements(script: str) -> list:
+    """Split one migration's SQL block into individual statements, each
+    to be run through `conn.execute()` rather than `conn.executescript()`.
+
+    This exists because of a real, empirically-confirmed atomicity gap:
+    `sqlite3.Connection.executescript()` does not honor an explicit outer
+    `BEGIN`/`ROLLBACK` on this project's Python build (3.13/3.14) -
+    reproduced directly: wrapping `executescript()` in `conn.execute("BEGIN")`
+    / `except: conn.rollback()` still left earlier statements in the script
+    committed after a later statement raised. Running each statement
+    through `conn.execute()` individually inside the same explicit
+    transaction *does* roll back correctly (also reproduced directly)
+    - see `migrate()`'s own docstring for what this means for callers,
+    and tests/test_mca_db_migrations.py::test_failed_migration_rolls_back_
+    completely for the regression test this fix is verified against."""
+    without_comments = _SQL_LINE_COMMENT_RE.sub("", script)
+    return [stmt.strip() for stmt in without_comments.split(";") if stmt.strip()]
 
 
 def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> None:
@@ -481,6 +735,21 @@ def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> N
     `PRAGMA user_version` cannot use parameter binding; the integers
     interpolated below always come from this module's own `MIGRATIONS`
     list, never from external input.
+
+    Atomicity (fixed per PR #231 review): each migration's DDL/DML *and*
+    its own `PRAGMA user_version` update now run inside one explicit
+    `BEGIN`/`COMMIT` transaction, executed statement-by-statement via
+    `conn.execute()` (see `_split_sql_statements()`'s docstring for why
+    `executescript()` cannot be used here). If any statement or
+    `data_fixup`/`down_data_fixup` callable raises, the whole migration
+    (including everything already run earlier in the *same* migration)
+    is rolled back and `user_version` is left exactly where it was before
+    this call started - never left pointing at a partially-applied
+    schema. A multi-migration `migrate()` call (e.g. version 7 -> 10)
+    commits one migration at a time, so a failure partway through still
+    leaves every *earlier* migration in that run fully applied and
+    committed - only the migration that actually failed (and anything
+    after it) is rolled back/not attempted.
     """
     if target_version is None:
         target_version = LATEST_VERSION
@@ -490,16 +759,33 @@ def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> N
     if target_version > current:
         for migration in MIGRATIONS:
             if current < migration.version <= target_version:
-                conn.executescript(migration.up_sql)
-                conn.execute(f"PRAGMA user_version = {migration.version}")
+                try:
+                    conn.execute("BEGIN")
+                    for stmt in _split_sql_statements(migration.up_sql):
+                        conn.execute(stmt)
+                    if migration.data_fixup is not None:
+                        migration.data_fixup(conn)
+                    conn.execute(f"PRAGMA user_version = {migration.version}")
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
                 current = migration.version
     else:
         for migration in reversed(MIGRATIONS):
             if target_version < migration.version <= current:
-                conn.executescript(migration.down_sql)
-                conn.execute(f"PRAGMA user_version = {migration.version - 1}")
+                try:
+                    conn.execute("BEGIN")
+                    if migration.down_data_fixup is not None:
+                        migration.down_data_fixup(conn)
+                    for stmt in _split_sql_statements(migration.down_sql):
+                        conn.execute(stmt)
+                    conn.execute(f"PRAGMA user_version = {migration.version - 1}")
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
                 current = migration.version - 1
-    conn.commit()
 
 
 def open_attachments_db(path) -> sqlite3.Connection:

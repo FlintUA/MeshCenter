@@ -169,6 +169,25 @@ class DeliveryAdapter(abc.ABC):
 
     adapter_id: str
 
+    # PR #231 review (4th pass): an explicit, required part of this
+    # contract - not an optional/best-effort attribute a caller must
+    # `getattr(adapter, "connector_profile_id", None)` around. Every real
+    # implementation names the specific configured connector/profile
+    # this adapter instance actually sends through (for the current
+    # single-connector-per-adapter MVP, a fixed string is fine - see
+    # `MeshtasticTextAdapter`'s own `connector_profile_id = "meshtastic"`)
+    # - this is what lets a caller (`AttachmentsService._dispatch_
+    # outgoing_replies()`) validate a persisted reply route's own
+    # `connector_profile_id` against the adapter it is actually about to
+    # send through, the same way `adapter_id` already lets it validate
+    # which adapter. Like `adapter_id` above, this is a plain annotation,
+    # not enforced by `abc.ABC` machinery at class-definition time (Python
+    # has no mechanism for that) - a subclass that forgets it fails loudly
+    # with `AttributeError` on first access, which is the point: no
+    # implicit `getattr(..., None)` masking a missing implementation as
+    # "no connector profile configured".
+    connector_profile_id: str
+
     @abc.abstractmethod
     def capabilities(self) -> DeliveryCapabilities:
         """Return this adapter instance's current capabilities. May change

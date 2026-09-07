@@ -57,6 +57,12 @@ class LoggingTextAdapter(DeliveryAdapter):
     across a real process death."""
 
     adapter_id = "logging-text"
+    # PR #231 review (4th pass): required by DeliveryAdapter's contract -
+    # matches the literal "default" already passed to create_draft()'s
+    # own connector_profile_id parameter below (main()), so this adapter
+    # actually reports the same value the attachment's delivery record
+    # was created with.
+    connector_profile_id = "default"
 
     def __init__(self, sent_log_path: str):
         self._sent_log_path = sent_log_path

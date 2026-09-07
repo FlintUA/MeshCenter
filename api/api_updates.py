@@ -50,6 +50,32 @@ def register_updates_routes(app, resolve_version, project_dir, handle_errors):
             }), 409
 
         result = update_service.apply_update(project_dir, preflight["upstream"])
+
+        # PR #231 review (3rd pass): apply_update() itself now refuses to
+        # merge at all when requirements.txt/adapters/meshtastic/
+        # requirements.txt changed - HEAD and the working tree are left
+        # completely unchanged (see that function's own comment/tests).
+        # This is a distinct, non-error "blocked" outcome, not a failure:
+        # nothing went wrong, the update is just waiting on a manual
+        # dependency install the frontend must surface clearly - never an
+        # automatic restart, since there is nothing new to restart into
+        # yet.
+        if result.get("blocked"):
+            print(
+                f"[UPDATES] blocked: requirements changed "
+                f"({', '.join(result.get('changed_requirements_files', []))}) - not merged, no restart scheduled.",
+                flush=True,
+            )
+            return jsonify({
+                "ok": False,
+                "blocked": True,
+                "error": "Update blocked: dependency files changed",
+                "requirements_changed": True,
+                "changed_requirements_files": result.get("changed_requirements_files", []),
+                "instructions": result.get("instructions", ""),
+                "restarted": False,
+            }), 409
+
         if not result.get("ok"):
             return jsonify({
                 "ok": False,
@@ -59,4 +85,10 @@ def register_updates_routes(app, resolve_version, project_dir, handle_errors):
 
         threading.Thread(target=_restart_after_update, daemon=True).start()
 
-        return jsonify({"ok": True, "previous_sha": result["previous_sha"]}), 202
+        return jsonify({
+            "ok": True,
+            "blocked": False,
+            "previous_sha": result["previous_sha"],
+            "requirements_changed": False,
+            "restarted": True,
+        }), 202

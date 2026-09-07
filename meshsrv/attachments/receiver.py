@@ -123,6 +123,81 @@ _EVENT_ACK_DOWNLOADED_SENT = "ack_downloaded_sent"
 
 DEFAULT_DOWNLOAD_GRACE_SECONDS = 3600  # design spec 14: download_grace = 1h (mirrors sender.py's default)
 
+# ---- outgoing ACK outbox (PR #227 defect #1) -------------------------------
+# `mca_outgoing_replies` (migration 10) is the real, persisted, retryable
+# queue nothing existed for before this fix - see migrations.py's own
+# comment above _MIGRATION_0010_UP for the full defect this replaces.
+# Backoff shape mirrors ConnectivityMonitor's own Relay health backoff:
+# doubling from a base, capped at a ceiling, retried forever rather than
+# ever giving up (an ACK the sender is still waiting on stays worth
+# retrying for as long as this attachment itself is retained).
+OUTGOING_REPLY_BACKOFF_BASE_SECONDS = 30
+OUTGOING_REPLY_BACKOFF_CEILING_SECONDS = 3600
+MAX_OUTGOING_REPLY_SENDS_PER_DISPATCH = 5  # rate limit: drain the queue gradually, not all at once
+
+# PR #231 review, section 4.3: real, persisted ACK rate limiting -
+# mca_ack_quota (migration 10). Two independent fixed windows: one per
+# source_address (a single misbehaving/spoofed sender cannot exhaust the
+# whole workspace's reply budget) and one global (a workspace-wide
+# ceiling regardless of how many distinct addresses are involved).
+# Conservative MVP starting points, named so Step 1.9's real Pi Zero 2 W
+# + real LoRa airtime hardware pass can retune them with evidence -
+# LoRa's own airtime duty-cycle limits are the real ceiling this exists
+# to respect, and this project has not yet measured that directly (same
+# open-uncertainty framing as RELAY_HEALTH_INTERVAL_SECONDS in
+# connectivity_monitor.py).
+ACK_PER_SOURCE_LIMIT = 5
+ACK_PER_SOURCE_WINDOW_SECONDS = 600  # 10 minutes - same window shape as key_exchange.py's own per-address gate
+ACK_GLOBAL_LIMIT = 30
+ACK_GLOBAL_WINDOW_SECONDS = 3600  # 1 hour
+_ACK_QUOTA_GLOBAL_SCOPE = "__global__"
+# Bounds how many stale per-source quota rows one check_and_record_reply_
+# quota() call prunes - keeps mca_ack_quota's size from growing without
+# bound over a long-running instance's lifetime (many distinct sender
+# addresses over time) without ever doing an unbounded table scan.
+_ACK_QUOTA_CLEANUP_BATCH = 50
+_ACK_QUOTA_STALE_AFTER_SECONDS = 86400  # a full day past its own window - safely expired either way
+
+# PR #231 review (2nd pass): inbound OFFER admission limits - a real gap
+# the earlier ACK-outbox rate limiting above did not cover. Nothing
+# previously bounded how many `attachments` rows a flood of OFFERs
+# carrying distinct, attacker-chosen `transfer_id`s could create (the
+# existing transfer_id dedup in handle_offer() only protects against a
+# *repeated* transfer_id, not against unlimited *distinct* ones) - each
+# accepted OFFER is a permanent DB row until it resolves or expires, so
+# this was an unbounded-storage-growth admission gap, not just a rate
+# concern. Same two-tier shape as ACK_PER_SOURCE_LIMIT/ACK_GLOBAL_LIMIT
+# above (a single misbehaving/spoofed sender cannot exhaust the whole
+# workspace's admission budget on its own), but counting *live*
+# (non-terminal) 'received' rows rather than a rolling time window -
+# this is a capacity ceiling, not a send-rate limit. Conservative MVP
+# starting points, same "named constant for Step 1.9's real hardware
+# pass to retune" framing as the ACK quota above.
+MAX_PENDING_RECEIVED_PER_SOURCE = 20
+MAX_PENDING_RECEIVED_GLOBAL = 200
+
+
+@dataclasses.dataclass(frozen=True)
+class ReplyRoute:
+    """Everything `_dispatch_outgoing_replies()` needs to reconstruct the
+    same transport destination after a restart, persisted once at
+    `handle_offer()` time (PR #231 review, section 4.2) - deliberately a
+    small immutable bundle instead of a bare `source_address` string, so
+    a future non-Meshtastic adapter does not have to be threaded through
+    as yet another loose positional parameter. `destination_address` is
+    the address `Route(...)` needs when actually sending; for the
+    DIRECT-only MVP this is always the same value as `route_id` (an
+    inbound OFFER's own sender), but the two are kept as separate fields
+    - not silently assumed equal - so a future CHANNEL/non-DIRECT route
+    (where sending back is not simply "reply to the sender") does not
+    have to change this shape, only stop conflating them."""
+
+    adapter_id: str
+    connector_profile_id: str
+    route_type: str
+    route_id: str
+    destination_address: str
+
 
 class ReceiverError(RuntimeError):
     """Base class for every error this module raises directly. Failures
@@ -177,9 +252,18 @@ def _record_event(conn: sqlite3.Connection, attachment_id: str, now: float, even
     )
 
 
-def _ack_already_sent(conn: sqlite3.Connection, attachment_id: str, event_type: str) -> bool:
+def _ack_already_enqueued(conn: sqlite3.Connection, attachment_id: str, event_type: str) -> bool:
+    """`mca_outgoing_replies` is now the single idempotency ledger for
+    "has this ACK been handled" - a row existing here (PENDING, SENT, or
+    UNDELIVERABLE) means this call already decided to send it once, no
+    matter whether the real transmission has happened yet. Renamed from
+    `_ack_already_sent()`/its old `attachment_events`-backed check
+    (PR #227 defect #1): that name/table pairing conflated "we decided to
+    send this" with "this was actually transmitted", which is exactly
+    the ambiguity that let this module claim an ACK was sent when it
+    never left the process."""
     row = conn.execute(
-        "SELECT 1 FROM attachment_events WHERE attachment_id = ? AND event_type = ? LIMIT 1",
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ? LIMIT 1",
         (attachment_id, event_type),
     ).fetchone()
     return row is not None
@@ -212,16 +296,296 @@ def _maybe_send_ack(
     workspace_manager: MCAWorkspaceManager,
     now: float,
 ) -> Optional[bytes]:
-    """Send `message_type` at most once per `attachment_id` (ADR-0007
-    decision 5). Returns the encoded frame if this call is the one that
-    sends it, or `None` if it was already sent before."""
+    """Enqueue `message_type` at most once per `attachment_id` (ADR-0007
+    decision 5 - unchanged) into the real `mca_outgoing_replies` outbox
+    (PR #227 defect #1) instead of handing the encoded frame to a caller
+    that (in production) never actually transmitted it. Returns the
+    encoded frame that was newly enqueued this call, or `None` if this
+    event_type was already enqueued before - same observable return
+    contract callers/tests already depend on, so `ReceiveResult.replies`
+    still means "how many ACK types this call newly decided to send",
+    even though *sending* now happens later, out of this call entirely,
+    via AttachmentsService's own dispatch step
+    (`fetch_due_outgoing_replies()`/`mark_reply_sent()`/
+    `mark_reply_attempt_failed()` below).
 
-    if _ack_already_sent(conn, attachment_id, event_type):
+    Deliberately does NOT record any "sent" bookkeeping here - that used
+    to happen via `_record_event()` in this exact spot, before any
+    transmission was attempted at all (the commit-before-send ordering
+    bug this fix closes). The outbox row this inserts starts, and stays,
+    PENDING until the dispatch step's own `mark_reply_sent()` call
+    confirms a real `DeliveryAdapter.send()` succeeded."""
+
+    if _ack_already_enqueued(conn, attachment_id, event_type):
         return None
     signing_key = identity.load_signing_key(workspace_manager, principal)
     ack = codec.encode_simple_ack(message_type, transfer_id, signing_key)
-    _record_event(conn, attachment_id, now, event_type, {})
+    conn.execute(
+        """
+        INSERT INTO mca_outgoing_replies
+            (id, attachment_id, event_type, message, state, attempts, created_at, next_attempt_at)
+        VALUES (?, ?, ?, ?, 'PENDING', 0, ?, ?)
+        """,
+        (uuid.uuid4().hex, attachment_id, event_type, ack, now, now),
+    )
     return ack
+
+
+# ---- outgoing ACK outbox: dispatch-side API (PR #227 defect #1) -----------
+# Called only by AttachmentsService's own dispatch step (service.py owns
+# the DeliveryAdapter this module never imports - module docstring). These
+# functions only ever touch `mca_outgoing_replies`/`attachments` rows, the
+# same persistence boundary every other function in this module keeps.
+
+
+@dataclasses.dataclass(frozen=True)
+class PendingReply:
+    """One row due for a real send attempt. `route_type`/`route_id`/
+    `adapter_id`/`connector_profile_id`/`destination_address` all come
+    from the owning attachment's own `reply_route_type`/`reply_route_id`/
+    `reply_adapter_id`/`reply_connector_profile_id`/
+    `reply_destination_address` (set once, at `handle_offer()` time, from
+    the real `DeliveryEnvelope` that received the OFFER - PR #231
+    review, section 4.2). `route_type`/`route_id` being `None` means no
+    route was ever recorded for this attachment (a caller that ran
+    `handle_offer()` without `source_address`/`reply_route`, e.g. this
+    module's own non-integration tests), which the dispatch step treats
+    as permanently undeliverable rather than retrying forever for no
+    reason. `adapter_id`/`connector_profile_id` can independently be
+    `None` even when a route exists - the pre-hardening-pass
+    `source_address`-only call shape (still accepted by `handle_offer()`
+    for backward compatibility with callers that only need rate-
+    limiting/audit) never recorded them. PR #231 review (3rd pass): the
+    dispatch step now fails closed - permanently undeliverable, never
+    guessed past - on either a *missing* `adapter_id`/
+    `connector_profile_id` or a *mismatched* one against the dispatching
+    service's own adapter. An earlier pass of this fix (2nd pass)
+    treated a missing `adapter_id` as "unknown, trust the currently-
+    configured adapter" - inconsistent with the fail-closed posture
+    applied everywhere else in this review (TOFU binding, inbound-OFFER
+    admission); not knowing which adapter/connector a reply belongs to
+    is exactly the situation where guessing must not happen. In
+    production this never matters: `AttachmentsService.
+    _process_inbound_offer()` always builds a full `ReplyRoute` from the
+    real `DeliveryEnvelope` that received the OFFER."""
+
+    id: str
+    attachment_id: str
+    event_type: str
+    message: bytes
+    attempts: int
+    route_type: Optional[str]
+    route_id: Optional[str]
+    adapter_id: Optional[str]
+    connector_profile_id: Optional[str]
+    destination_address: Optional[str]
+
+
+def fetch_due_outgoing_replies(
+    conn: sqlite3.Connection, workspace_id: str, now: float, limit: int = MAX_OUTGOING_REPLY_SENDS_PER_DISPATCH
+) -> List[PendingReply]:
+    """Up to `limit` PENDING replies whose `next_attempt_at` has arrived,
+    oldest-created first - the rate limit (PR #227 defect #1) that keeps
+    a burst of queued ACKs from being flushed onto the radio all at once
+    in a single dispatch pass; the rest simply wait for the next tick."""
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """
+        SELECT r.id AS id, r.attachment_id AS attachment_id, r.event_type AS event_type, r.message AS message,
+               r.attempts AS attempts, a.reply_route_type AS route_type, a.reply_route_id AS route_id,
+               a.reply_adapter_id AS adapter_id, a.reply_connector_profile_id AS connector_profile_id,
+               a.reply_destination_address AS destination_address
+        FROM mca_outgoing_replies AS r
+        JOIN attachments AS a ON a.id = r.attachment_id
+        WHERE a.workspace_id = ? AND r.state = 'PENDING' AND r.next_attempt_at <= ?
+        ORDER BY r.created_at ASC
+        LIMIT ?
+        """,
+        (workspace_id, now, limit),
+    ).fetchall()
+    return [
+        PendingReply(
+            id=row["id"], attachment_id=row["attachment_id"], event_type=row["event_type"], message=row["message"],
+            attempts=row["attempts"], route_type=row["route_type"], route_id=row["route_id"],
+            adapter_id=row["adapter_id"], connector_profile_id=row["connector_profile_id"],
+            destination_address=row["destination_address"],
+        )
+        for row in rows
+    ]
+
+
+def mark_reply_sent(conn: sqlite3.Connection, reply_id: str, now: float) -> None:
+    """Called only after `DeliveryAdapter.send()` has actually returned
+    successfully - never before (that ordering is the whole point of
+    this fix). Also records the same `attachment_events` entry the old,
+    premature call used to (event_type unchanged), so anything downstream
+    already reading that table for audit/history purposes keeps working,
+    now at the point transmission is truly confirmed instead of merely
+    attempted."""
+    row = conn.execute(
+        "SELECT attachment_id, event_type FROM mca_outgoing_replies WHERE id = ?", (reply_id,)
+    ).fetchone()
+    conn.execute(
+        "UPDATE mca_outgoing_replies SET state = 'SENT', sent_at = ? WHERE id = ?",
+        (now, reply_id),
+    )
+    if row is not None:
+        _record_event(conn, row[0], now, row[1], {})
+    conn.commit()
+
+
+def mark_reply_attempt_failed(conn: sqlite3.Connection, reply_id: str, now: float, *, error_code: str) -> None:
+    """A real send attempt failed (transport/adapter raised). Stays
+    PENDING - retried on a later dispatch, never lost - with `attempts`
+    incremented and `next_attempt_at` pushed out by an exponential
+    backoff capped at `OUTGOING_REPLY_BACKOFF_CEILING_SECONDS`, the same
+    shape ConnectivityMonitor uses for Relay health checks."""
+    row = conn.execute("SELECT attempts FROM mca_outgoing_replies WHERE id = ?", (reply_id,)).fetchone()
+    attempts = (row[0] if row is not None else 0) + 1
+    backoff = min(
+        OUTGOING_REPLY_BACKOFF_BASE_SECONDS * (2 ** (attempts - 1)),
+        OUTGOING_REPLY_BACKOFF_CEILING_SECONDS,
+    )
+    conn.execute(
+        "UPDATE mca_outgoing_replies SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE id = ?",
+        (attempts, now + backoff, error_code[:200], reply_id),
+    )
+    conn.commit()
+
+
+def mark_reply_undeliverable(conn: sqlite3.Connection, reply_id: str, now: float, *, error_code: str) -> None:
+    """No route was ever recorded for this reply's attachment (see
+    `PendingReply`'s own docstring) - there is nothing to retry towards,
+    so this is a terminal outcome for the row, not a backoff case."""
+    conn.execute(
+        "UPDATE mca_outgoing_replies SET state = 'UNDELIVERABLE', last_error = ? WHERE id = ?",
+        (error_code[:200], reply_id),
+    )
+    conn.commit()
+
+
+def _quota_row(conn: sqlite3.Connection, workspace_id: str, scope: str) -> Optional[sqlite3.Row]:
+    conn.row_factory = sqlite3.Row
+    return conn.execute(
+        "SELECT window_start_at, count FROM mca_ack_quota WHERE workspace_id = ? AND scope = ?",
+        (workspace_id, scope),
+    ).fetchone()
+
+
+def _quota_would_exceed(row: Optional[sqlite3.Row], now: float, window_seconds: int, limit: int) -> bool:
+    if row is None:
+        return False
+    if now - row["window_start_at"] >= window_seconds:
+        return False  # window has rolled over - about to be reset, not exceeded
+    return row["count"] >= limit
+
+
+def _quota_bump(conn: sqlite3.Connection, workspace_id: str, scope: str, now: float, window_seconds: int) -> None:
+    row = _quota_row(conn, workspace_id, scope)
+    if row is None or now - row["window_start_at"] >= window_seconds:
+        conn.execute(
+            """
+            INSERT INTO mca_ack_quota (workspace_id, scope, window_start_at, count) VALUES (?, ?, ?, 1)
+            ON CONFLICT(workspace_id, scope) DO UPDATE SET window_start_at = excluded.window_start_at, count = 1
+            """,
+            (workspace_id, scope, now),
+        )
+    else:
+        conn.execute(
+            "UPDATE mca_ack_quota SET count = count + 1 WHERE workspace_id = ? AND scope = ?",
+            (workspace_id, scope),
+        )
+
+
+def check_and_record_reply_quota(conn: sqlite3.Connection, workspace_id: str, source_address: str, now: float) -> bool:
+    """PR #231 review, section 4.3: the real, persisted rate limit
+    `_dispatch_outgoing_replies()` (service.py) checks before every send
+    attempt - not just `MAX_OUTGOING_REPLY_SENDS_PER_DISPATCH` (which only
+    ever bounded one SQL query's row count, not the actual send rate: at
+    the default 5s tick interval that alone still allowed up to 60
+    sends/minute with zero per-source protection). Checks (never records
+    a partial success) both windows before bumping either - a reply that
+    would exceed either the per-source or the global quota is rejected
+    outright, with neither counter incremented, so a caller can safely
+    retry the exact same call later without having already "spent" a slot
+    it never actually got to use. Deliberately does not distinguish
+    "which" quota was hit in its return value - both are visible via
+    `mca_ack_quota` directly (e.g. for a future admin/debug view) if that
+    ever matters; the caller's only decision is retry-later either way.
+
+    Also does the small, bounded cleanup of stale per-source rows the
+    review asks for (`_ACK_QUOTA_CLEANUP_BATCH` per call) - a source
+    address that stops sending eventually has its quota row deleted
+    rather than kept forever, without ever doing an unbounded scan."""
+    conn.execute(
+        """
+        DELETE FROM mca_ack_quota WHERE rowid IN (
+            SELECT rowid FROM mca_ack_quota
+            WHERE workspace_id = ? AND scope != ? AND ? - window_start_at > ?
+            LIMIT ?
+        )
+        """,
+        (workspace_id, _ACK_QUOTA_GLOBAL_SCOPE, now, _ACK_QUOTA_STALE_AFTER_SECONDS, _ACK_QUOTA_CLEANUP_BATCH),
+    )
+
+    per_source_row = _quota_row(conn, workspace_id, source_address)
+    global_row = _quota_row(conn, workspace_id, _ACK_QUOTA_GLOBAL_SCOPE)
+    if _quota_would_exceed(per_source_row, now, ACK_PER_SOURCE_WINDOW_SECONDS, ACK_PER_SOURCE_LIMIT):
+        conn.commit()
+        return False
+    if _quota_would_exceed(global_row, now, ACK_GLOBAL_WINDOW_SECONDS, ACK_GLOBAL_LIMIT):
+        conn.commit()
+        return False
+
+    _quota_bump(conn, workspace_id, source_address, now, ACK_PER_SOURCE_WINDOW_SECONDS)
+    _quota_bump(conn, workspace_id, _ACK_QUOTA_GLOBAL_SCOPE, now, ACK_GLOBAL_WINDOW_SECONDS)
+    conn.commit()
+    return True
+
+
+def _would_exceed_inbound_admission_limit(
+    conn: sqlite3.Connection, workspace_id: str, source_address: Optional[str]
+) -> Optional[str]:
+    """PR #231 review (2nd pass): the admission-control check
+    `handle_offer()` runs before creating a new attachment row for a
+    brand-new (never-before-seen) `transfer_id` - the existing dedup in
+    `handle_offer()` only protects against a *repeated* transfer_id, not
+    against a flood of distinct, attacker-chosen ones, each of which
+    would otherwise become a permanent DB row. Returns an error code
+    string if admission should be refused, `None` if there is room.
+
+    Counts *live* (non-terminal) 'received' rows - a resolved/expired/
+    rejected/failed attachment stops counting against either limit,
+    matching this being a capacity ceiling on outstanding work, not a
+    historical audit constraint. The per-source count only applies when
+    `source_address` is known (the source_address-only/no-route callers
+    this module already treats as a supported, simpler shape elsewhere -
+    PendingReply's own docstring) - such a row still counts toward the
+    global ceiling regardless."""
+    terminal_placeholders = ",".join("?" for _ in TERMINAL_STATES)
+    global_count = conn.execute(
+        f"""
+        SELECT COUNT(*) FROM attachments
+        WHERE workspace_id = ? AND direction = 'received' AND state NOT IN ({terminal_placeholders})
+        """,
+        (workspace_id, *TERMINAL_STATES),
+    ).fetchone()[0]
+    if global_count >= MAX_PENDING_RECEIVED_GLOBAL:
+        return f"pending_received_global_limit_exceeded:{global_count}"
+
+    if source_address is not None:
+        per_source_count = conn.execute(
+            f"""
+            SELECT COUNT(*) FROM attachments
+            WHERE workspace_id = ? AND direction = 'received' AND reply_route_id = ?
+                AND state NOT IN ({terminal_placeholders})
+            """,
+            (workspace_id, source_address, *TERMINAL_STATES),
+        ).fetchone()[0]
+        if per_source_count >= MAX_PENDING_RECEIVED_PER_SOURCE:
+            return f"pending_received_per_source_limit_exceeded:{per_source_count}"
+
+    return None
 
 
 def _resolve_provider_or_wait(
@@ -270,12 +634,33 @@ def handle_offer(
     raw_offer: bytes,
     network_available: bool,
     now: Optional[float] = None,
+    source_address: Optional[str] = None,
+    reply_route: Optional[ReplyRoute] = None,
 ) -> ReceiveResult:
     """Handle one inbound OFFER frame's already-`ingest()`-ed logical
     bytes. `key_exchange` is this workspace/adapter's own
     `KeyExchangeCoordinator` (already constructed by the caller, same
     instance driving KEY_REQUEST/KEY_ANNOUNCE) - used here only for its
     read-only `get_binding_by_key_id()` lookup, never mutated.
+
+    `reply_route` (PR #231 review, section 4.2 - supersedes the bare
+    `source_address`-only version from PR #227 defect #1) is persisted
+    on the new attachment row (`reply_adapter_id`/
+    `reply_connector_profile_id`/`reply_route_type`/`reply_route_id`/
+    `reply_destination_address`) - the only place this module ever
+    learns where a reply for this attachment should go, since
+    receiver.py holds no transport of its own (module docstring) and
+    never will. `source_address` alone is kept as a separate, simpler
+    parameter for callers (mostly this module's own test suite, and any
+    caller that only cares about rate-limiting/audit, not real dispatch)
+    that do not need a full reply route - when only `source_address` is
+    given, `reply_route` is left unset and this attachment's queued ACKs
+    are never picked up by AttachmentsService's dispatch step (nothing
+    to send them through), exactly as before this fix - not a crash,
+    not a wrong send target. When both are given, `reply_route`'s own
+    `route_id` must equal `source_address` (DIRECT-only MVP invariant -
+    see `ReplyRoute`'s own docstring for why the two are still kept as
+    separate fields rather than merged into one).
 
     A repeat OFFER for a `transfer_id` this workspace has already
     recorded is idempotent: if the existing attachment is still
@@ -325,13 +710,29 @@ def handle_offer(
         except codec.CodecError as exc:
             raise ReceiverError(f"OFFER signature verification failed for known key: {exc}") from exc
 
+    if reply_route is not None and source_address is not None and reply_route.route_id != source_address:
+        raise ReceiverError(
+            f"reply_route.route_id ({reply_route.route_id!r}) must match source_address ({source_address!r})"
+        )
+    effective_source_address = source_address if source_address is not None else (
+        reply_route.route_id if reply_route is not None else None
+    )
+
+    admission_rejection = _would_exceed_inbound_admission_limit(
+        conn, principal.workspace_id, effective_source_address
+    )
+    if admission_rejection is not None:
+        raise ReceiverError(f"OFFER rejected: {admission_rejection}")
+
     attachment_id = uuid.uuid4().hex
     conn.execute(
         """
         INSERT INTO attachments
             (id, workspace_id, transfer_id, direction, principal_id, sender_principal_id, provider_id, state,
-             created_at, hard_expires_at, download_grace_seconds, pending_offer_cbor)
-        VALUES (?, ?, ?, 'received', ?, ?, ?, ?, ?, ?, ?, ?)
+             created_at, hard_expires_at, download_grace_seconds, pending_offer_cbor,
+             reply_route_type, reply_route_id,
+             reply_adapter_id, reply_connector_profile_id, reply_destination_address)
+        VALUES (?, ?, ?, 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             attachment_id,
@@ -345,6 +746,19 @@ def handle_offer(
             unverified.hard_expires_at,
             DEFAULT_DOWNLOAD_GRACE_SECONDS,
             (raw_offer if binding is None else None),
+            # "DIRECT" - must match delivery.base.RouteType.DIRECT.value.
+            # Not imported here (this module never imports anything from
+            # delivery.base/DeliveryAdapter, per its own module docstring)
+            # since an OFFER-triggered reply is always a direct reply to
+            # whoever sent the OFFER - there is no other route shape an
+            # inbound OFFER could have arrived over. `None` (not "DIRECT")
+            # when no address is known at all, so the dispatch step can
+            # tell "no route recorded" apart from "recorded, empty".
+            ("DIRECT" if effective_source_address is not None else None),
+            effective_source_address,
+            (reply_route.adapter_id if reply_route is not None else None),
+            (reply_route.connector_profile_id if reply_route is not None else None),
+            (reply_route.destination_address if reply_route is not None else effective_source_address),
         ),
     )
     _record_event(

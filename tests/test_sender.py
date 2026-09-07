@@ -152,6 +152,78 @@ def test_create_draft_starts_in_draft_with_recipient_and_delivery_rows(conn, wsm
     assert sender._delivery_for(conn, attachment_id)["route_id"] == "receiver"
 
 
+def test_create_draft_stores_provider_id_as_base64url_not_hex(conn, wsm, principal, recipient, tmp_path):
+    """Regression test for a reviewer-found, locally-reproduced defect:
+    `attachments.provider_id` used to be stored as hex for 'sent' rows
+    while `ProviderRegistry` (and 'received' rows) key everything by
+    Base64URL text - `ProviderRegistry.remove_or_disable()`'s "is this
+    provider_id still referenced?" check compares against the Base64URL
+    form, so it never matched a 'sent' row and could delete a Relay
+    profile a real outgoing attachment still depended on. This drives the
+    real `sender.create_draft()` entry point (not a raw INSERT standing in
+    for it) and checks the actual stored column."""
+    from meshsrv.attachments.provider_registry import encode_provider_id
+
+    raw_provider_id = b"\x01\x02\x03\x04\x05\x06\x07\x08"
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
+    # _draft()'s own default provider_id (b"\x01" * 8) exercises the same
+    # code path; assert against the real one this test cares about by
+    # creating a second draft with a distinct, easily-recognized value.
+    source_path = tmp_path / "b.txt"
+    source_path.write_bytes(b"second")
+    _, pub, key_id = recipient
+    attachment_id_2 = sender.create_draft(
+        conn, wsm, principal, workspace_id="local", source_path=str(source_path), file_name="b.txt",
+        mime_type="text/plain", recipients=[sender.RecipientTarget(public_identity=pub, key_id=key_id)],
+        adapter_id="fake-text", connector_profile_id="default", route_type="DIRECT", route_id="receiver",
+        provider_id=raw_provider_id,
+    )
+    stored = conn.execute(
+        "SELECT provider_id FROM attachments WHERE id = ?", (attachment_id_2,)
+    ).fetchone()[0]
+    assert stored == encode_provider_id(raw_provider_id)
+    assert stored != raw_provider_id.hex()
+
+
+def test_remove_or_disable_recognizes_a_real_create_draft_attachment_as_in_use(conn, wsm, principal, recipient, tmp_path):
+    """The end-to-end version of the regression above, going through
+    `ProviderRegistry.remove_or_disable()` itself - this is the exact
+    scenario the reviewer reproduced: register a provider, create a real
+    outgoing draft against it via `sender.create_draft()`, then confirm
+    `remove_or_disable()` correctly sees it as in-use (disables rather
+    than deletes) instead of silently missing it due to an encoding
+    mismatch."""
+    from meshsrv.attachments.provider_registry import ProviderRegistry
+
+    registry = ProviderRegistry(conn, "local")
+    profile = registry.register(
+        display_name="Real Relay", base_url="https://real.example.net",
+        service_public_key=b"\xab" * 32, max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    raw_provider_id = base64_decode_provider_id(profile.provider_id)
+    _draft(conn, wsm, principal, recipient, tmp_path)  # unrelated draft, default provider_id
+    source_path = tmp_path / "c.txt"
+    source_path.write_bytes(b"third")
+    _, pub, key_id = recipient
+    sender.create_draft(
+        conn, wsm, principal, workspace_id="local", source_path=str(source_path), file_name="c.txt",
+        mime_type="text/plain", recipients=[sender.RecipientTarget(public_identity=pub, key_id=key_id)],
+        adapter_id="fake-text", connector_profile_id="default", route_type="DIRECT", route_id="receiver",
+        provider_id=raw_provider_id,
+    )
+
+    result = registry.remove_or_disable(profile.provider_id, wsm, principal.principal_id)
+    assert result == "disabled"
+    still_there = registry.resolve(profile.provider_id)
+    assert still_there is not None and still_there.enabled is False
+
+
+def base64_decode_provider_id(provider_id_text: str) -> bytes:
+    from meshsrv.attachments.provider_registry import decode_provider_id
+
+    return decode_provider_id(provider_id_text)
+
+
 def test_create_draft_requires_at_least_one_recipient(conn, wsm, principal, tmp_path):
     source_path = tmp_path / "a.txt"
     source_path.write_bytes(b"x")

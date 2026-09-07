@@ -222,17 +222,69 @@ def git_preflight(project_dir: str) -> dict[str, Any]:
     return result
 
 
+_REQUIREMENTS_FILES = ("requirements.txt", "adapters/meshtastic/requirements.txt")
+
+
 def apply_update(project_dir: str, upstream: str) -> dict[str, Any]:
     """Only call this after git_preflight() reported ok=True for this same
     upstream - it does not re-verify safety itself, so the preflight
     snapshot the user actually confirmed against is exactly what gets
-    applied, not a second, silently different check a few seconds later."""
+    applied, not a second, silently different check a few seconds later.
+
+    PR #231 review (3rd pass): dependency-file changes are now detected
+    BEFORE `git merge --ff-only` ever runs, using a plain `git diff`
+    between the current `HEAD` and `upstream` - computing a diff between
+    two refs needs no merge and touches neither `HEAD` nor the working
+    tree. If `requirements.txt`/`adapters/meshtastic/requirements.txt`
+    changed, this function stops here: it never calls `git merge` at
+    all, so `HEAD` and the working tree are left completely unchanged
+    (confirmed directly by this module's own tests, not just asserted in
+    this comment) - not "merged then detected", which the previous pass
+    of this fix did, and which left a merged-but-possibly-broken
+    (missing dependency) tree behind even though it correctly skipped
+    the auto-restart that would have followed. Never runs pip itself
+    either way - shelling out to pip from inside the live Flask process,
+    against the exact venv that process is currently running out of,
+    with no isolation from in-flight request handling, is its own hazard
+    distinct from (and not fixed by) checking earlier; the safe fix
+    remains surfacing the need for a manual
+    `pip install -r requirements.txt` (see INSTALL.md and
+    scripts/verify-install.sh's own dependency-import checks)."""
     def run(args, timeout=30):
         return subprocess.run(
             args, cwd=project_dir, capture_output=True, text=True, timeout=timeout,
         )
 
     previous_sha = run(["git", "rev-parse", "HEAD"], timeout=10).stdout.strip()
+
+    diff = run(["git", "diff", "--name-only", "HEAD", upstream, "--", *_REQUIREMENTS_FILES], timeout=10)
+    changed_requirements_files = [line for line in diff.stdout.strip().splitlines() if line]
+    if changed_requirements_files:
+        with _lock:
+            cache = _load_cache()
+            cache["previous_version_sha"] = previous_sha
+            cache["last_update_attempt_at"] = int(time.time())
+            cache["last_update_ok"] = False
+            safe_write_json(_cache_path, cache)
+        return {
+            "ok": False,
+            "blocked": True,
+            "reason": "requirements_changed",
+            "previous_sha": previous_sha,
+            "requirements_changed": True,
+            "changed_requirements_files": changed_requirements_files,
+            "output": "",
+            "instructions": (
+                "This update changes dependency file(s): {files}. It was NOT merged - "
+                "HEAD and the working tree are unchanged. To apply it manually: "
+                "1) git merge --ff-only {upstream}  "
+                "2) source venv/bin/activate && pip install -r requirements.txt "
+                "(and, if adapters/meshtastic/requirements.txt is listed above, "
+                "adapters/meshtastic/venv/bin/pip install -r adapters/meshtastic/requirements.txt)  "
+                "3) sudo systemctl restart meshcenter.service"
+            ).format(files=", ".join(changed_requirements_files), upstream=upstream),
+        }
+
     pull = run(["git", "merge", "--ff-only", upstream])
 
     with _lock:
@@ -244,6 +296,9 @@ def apply_update(project_dir: str, upstream: str) -> dict[str, Any]:
 
     return {
         "ok": pull.returncode == 0,
+        "blocked": False,
         "previous_sha": previous_sha,
         "output": (pull.stdout + pull.stderr).strip(),
+        "requirements_changed": False,
+        "changed_requirements_files": [],
     }

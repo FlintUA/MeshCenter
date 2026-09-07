@@ -355,12 +355,19 @@ class PendingReply:
     `None` even when a route exists - the pre-hardening-pass
     `source_address`-only call shape (still accepted by `handle_offer()`
     for backward compatibility with callers that only need rate-
-    limiting/audit) never recorded them; the dispatch step (PR #231
-    review, 2nd pass) treats a missing `adapter_id` as "unknown, trust
-    the currently-configured adapter" (unchanged, permissive behavior),
-    but fails closed - permanently undeliverable, never guessed past -
-    on a *confirmed* mismatch (`adapter_id` was recorded and disagrees
-    with the dispatching service's own adapter)."""
+    limiting/audit) never recorded them. PR #231 review (3rd pass): the
+    dispatch step now fails closed - permanently undeliverable, never
+    guessed past - on either a *missing* `adapter_id`/
+    `connector_profile_id` or a *mismatched* one against the dispatching
+    service's own adapter. An earlier pass of this fix (2nd pass)
+    treated a missing `adapter_id` as "unknown, trust the currently-
+    configured adapter" - inconsistent with the fail-closed posture
+    applied everywhere else in this review (TOFU binding, inbound-OFFER
+    admission); not knowing which adapter/connector a reply belongs to
+    is exactly the situation where guessing must not happen. In
+    production this never matters: `AttachmentsService.
+    _process_inbound_offer()` always builds a full `ReplyRoute` from the
+    real `DeliveryEnvelope` that received the OFFER."""
 
     id: str
     attachment_id: str

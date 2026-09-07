@@ -500,31 +500,50 @@ class AttachmentsService:
                     self._conn, reply.id, self._now(), error_code="no_reply_route_recorded"
                 )
                 continue
-            # PR #231 review (2nd pass), requirement "full persisted ACK
-            # route consumption or strict adapter/connector validation":
-            # the reply route's adapter_id/connector_profile_id (PR #231
-            # review, section 4.2 - persisted from the real DeliveryEnvelope
-            # that received the OFFER) were being persisted but never
-            # actually read here - this dispatch step built a Route from
-            # only route_type/route_id and sent it through whichever
+            # PR #231 review (3rd pass): "do not silently ignore persisted
+            # connector_profile_id" and "fail closed when required route
+            # identity is absent or mismatched". This dispatch step used
+            # to only read route_type/route_id and send through whichever
             # delivery_adapter this service happened to be constructed
-            # with, regardless of whether that adapter is really the one
-            # the reply was recorded against. Fail closed on a CONFIRMED
-            # mismatch (adapter_id was recorded and it disagrees with this
-            # service's own delivery_adapter.adapter_id) - never silently
-            # sent through a wrong adapter. A missing adapter_id (NULL) is
-            # NOT treated as a mismatch: handle_offer()'s source_address-
-            # only call shape (its own docstring: "kept as a separate,
-            # simpler parameter for callers ... that do not need a full
-            # reply route") never records one, and remains a supported,
-            # non-terminal case - the reply still dispatches through
-            # whichever adapter this service was constructed with, the
-            # same behavior as before this fix, since this MVP only ever
-            # runs one adapter per process anyway (module docstring).
-            if reply.adapter_id is not None and reply.adapter_id != self._delivery_adapter.adapter_id:
+            # with - the persisted adapter_id/connector_profile_id
+            # (section 4.2, from the real DeliveryEnvelope that received
+            # the OFFER) were written but never actually consulted. Both
+            # are now required and strictly validated: a reply whose
+            # adapter_id or connector_profile_id is missing (NULL - e.g.
+            # handle_offer()'s source_address-only call shape, which
+            # records route_type/route_id but no full ReplyRoute) or
+            # present-but-mismatched against this service's own
+            # delivery_adapter is marked UNDELIVERABLE, the same terminal
+            # outcome as a wholly-missing route. This is a deliberate
+            # tightening from an earlier pass of this same fix, which
+            # treated a missing adapter_id as "trust the current adapter"
+            # - inconsistent with the fail-closed posture the rest of
+            # this review applies everywhere else (TOFU binding,
+            # inbound-OFFER admission): not knowing which adapter/
+            # connector a reply belongs to is exactly the situation where
+            # guessing must not happen. In production, AttachmentsService.
+            # _process_inbound_offer() always builds a full ReplyRoute
+            # from the real DeliveryEnvelope, so this never affects a
+            # genuine inbound OFFER - only a caller that deliberately
+            # chose the simpler, route-identity-free handle_offer() shape
+            # (this module's own non-integration tests) now correctly
+            # gets an undeliverable reply rather than one silently sent
+            # through a possibly-wrong adapter.
+            adapter_id = getattr(self._delivery_adapter, "adapter_id", None)
+            connector_profile_id = getattr(self._delivery_adapter, "connector_profile_id", None)
+            if reply.adapter_id is None or reply.adapter_id != adapter_id:
                 receiver.mark_reply_undeliverable(
                     self._conn, reply.id, self._now(),
-                    error_code=f"reply_adapter_mismatch:persisted={reply.adapter_id!r}",
+                    error_code=f"reply_adapter_mismatch:persisted={reply.adapter_id!r},configured={adapter_id!r}",
+                )
+                continue
+            if reply.connector_profile_id is None or reply.connector_profile_id != connector_profile_id:
+                receiver.mark_reply_undeliverable(
+                    self._conn, reply.id, self._now(),
+                    error_code=(
+                        f"reply_connector_mismatch:persisted={reply.connector_profile_id!r},"
+                        f"configured={connector_profile_id!r}"
+                    ),
                 )
                 continue
             if not receiver.check_and_record_reply_quota(

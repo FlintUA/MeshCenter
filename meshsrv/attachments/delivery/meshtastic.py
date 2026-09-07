@@ -75,6 +75,19 @@ class MeshtasticTextAdapter(DeliveryAdapter):
 
     adapter_id = "meshtastic"
 
+    # PR #231 review (3rd pass): the single, fixed connector_profile_id
+    # this adapter has ever actually produced - ingest()'s own default
+    # (`transport_event.get("connector_profile_id", "meshtastic")`)
+    # already falls through to this exact literal, since no real or fake
+    # call site anywhere in this codebase ever populates that key in the
+    # transport_event dict it builds (server.py's listener, FakeRadioTransport.
+    # send_text() - neither sets it). Exposed here as a real attribute
+    # (not just an inline string inside ingest()) so AttachmentsService's
+    # ACK-dispatch path can validate a persisted reply route's
+    # connector_profile_id against the adapter it is actually about to
+    # send through, the same way it already validates adapter_id.
+    connector_profile_id = "meshtastic"
+
     def __init__(
         self,
         radio_transport: RadioTransport,
@@ -177,7 +190,7 @@ class MeshtasticTextAdapter(DeliveryAdapter):
             logical_message=logical_message,
             wire_format=WireFormat.MCA1_TEXT,
             adapter_id=self.adapter_id,
-            connector_profile_id=transport_event.get("connector_profile_id", "meshtastic"),
+            connector_profile_id=transport_event.get("connector_profile_id", self.connector_profile_id),
             route_type=RouteType.DIRECT,
             route_id=str(source_address) if source_address else "",
             source_address=source_address,

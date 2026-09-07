@@ -82,6 +82,16 @@ class FakeTextAdapter(DeliveryAdapter):
         self._max_payload_bytes = max_payload_bytes
         ether.register(own_address)
 
+    @property
+    def connector_profile_id(self) -> str:
+        """PR #231 review (3rd pass): exposed publicly so tests can
+        reference the same value `ingest()` already reports in its
+        `DeliveryEnvelope` (`connector_profile_id=self._own_address`
+        below) when building a `receiver.ReplyRoute` for a strict
+        adapter/connector-validation test, rather than reaching into the
+        private `_own_address` attribute directly."""
+        return self._own_address
+
     def capabilities(self) -> DeliveryCapabilities:
         return DeliveryCapabilities(
             wire_formats=frozenset({WireFormat.MCA1_TEXT}),

@@ -691,6 +691,15 @@ def test_tick_dispatches_a_real_ack_received_back_to_the_sender(conn, wsm, princ
         conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
         key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
         source_address="remote-addr",
+        # PR #231 review (3rd pass): the dispatch step now fails closed
+        # on a missing adapter_id/connector_profile_id, not just a
+        # mismatched one - a full ReplyRoute (matching receiver_adapter,
+        # the real adapter this service dispatches through below) is
+        # required for the ACK to actually reach the wire in this test.
+        reply_route=receiver.ReplyRoute(
+            adapter_id=receiver_adapter.adapter_id, connector_profile_id=receiver_adapter.connector_profile_id,
+            route_type="DIRECT", route_id="remote-addr", destination_address="remote-addr",
+        ),
     )
     received_attachment_id = result.attachment_id
 
@@ -782,6 +791,177 @@ def test_dispatch_marks_undeliverable_when_persisted_adapter_id_does_not_match(
     assert ether.drain("remote-addr") == []
 
 
+# ---- PR #231 review (3rd pass): strict adapter/connector/route validation -
+
+
+def _dispatch_one_offer_reply(
+    conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client,
+    remote_recipient, *, receiver_adapter, reply_route,
+):
+    """Shared setup for the strict-validation tests below: binds the
+    remote sender, builds a real signed OFFER, hands it to handle_offer()
+    with the given reply_route, ticks a real AttachmentsService built
+    around receiver_adapter, and returns (attachment_id, mca_outgoing_
+    replies row). One helper rather than duplicating this ~20-line setup
+    per rejection reason."""
+    sender_conn, sender_wsm, sender_principal = remote_recipient
+    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+
+    receiver_service = AttachmentsService(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, connectivity_monitor=connectivity_monitor,
+        delivery_adapter=receiver_adapter, relay_client_factory=lambda provider_id_text: relay_client,
+    )
+
+    sender_signing_key = identity.load_signing_key(sender_wsm, sender_principal)
+    offer_fields = codec.OfferFields(
+        provider_id=_raw_provider_id(registered_provider), transfer_id=uuid.uuid4().bytes,
+        sender_key_id=bytes.fromhex(sender_principal.key_id), kind=0, size_bucket=1,
+        hard_expires_at=int(time.time()) + 3600, flags=0,
+    )
+    raw_offer = codec.encode_offer(offer_fields, sender_signing_key)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+        source_address="remote-addr", reply_route=reply_route,
+    )
+    receiver_service.tick()
+
+    row = conn.execute(
+        "SELECT state, last_error FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = 'ack_received_sent'",
+        (result.attachment_id,),
+    ).fetchone()
+    return result.attachment_id, row
+
+
+def test_dispatch_marks_undeliverable_when_persisted_connector_profile_id_does_not_match(
+    conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """Mirrors the adapter_id-mismatch test above, for connector_profile_id
+    - the field this fix stops silently ignoring."""
+    ether = InMemoryEther()
+    receiver_adapter = FakeTextAdapter(ether, "receiver-addr")
+    _, row = _dispatch_one_offer_reply(
+        conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client,
+        remote_recipient, receiver_adapter=receiver_adapter,
+        reply_route=receiver.ReplyRoute(
+            adapter_id=receiver_adapter.adapter_id, connector_profile_id="a-completely-different-connector",
+            route_type="DIRECT", route_id="remote-addr", destination_address="remote-addr",
+        ),
+    )
+    assert row[0] == "UNDELIVERABLE"
+    assert "reply_connector_mismatch" in row[1]
+    assert ether.drain("remote-addr") == []
+
+
+def test_dispatch_marks_undeliverable_when_reply_route_is_entirely_missing(
+    conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """No reply_route at all AND no source_address - route_type/route_id
+    themselves are NULL, the original (pre-3rd-pass) undeliverable case."""
+    ether = InMemoryEther()
+    receiver_adapter = FakeTextAdapter(ether, "receiver-addr")
+    sender_conn, sender_wsm, sender_principal = remote_recipient
+    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+    receiver_service = AttachmentsService(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, connectivity_monitor=connectivity_monitor,
+        delivery_adapter=receiver_adapter, relay_client_factory=lambda provider_id_text: relay_client,
+    )
+    sender_signing_key = identity.load_signing_key(sender_wsm, sender_principal)
+    offer_fields = codec.OfferFields(
+        provider_id=_raw_provider_id(registered_provider), transfer_id=uuid.uuid4().bytes,
+        sender_key_id=bytes.fromhex(sender_principal.key_id), kind=0, size_bucket=1,
+        hard_expires_at=int(time.time()) + 3600, flags=0,
+    )
+    raw_offer = codec.encode_offer(offer_fields, sender_signing_key)
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+        # No source_address, no reply_route at all.
+    )
+    receiver_service.tick()
+    row = conn.execute(
+        "SELECT state, last_error FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = 'ack_received_sent'",
+        (result.attachment_id,),
+    ).fetchone()
+    assert row[0] == "UNDELIVERABLE"
+    assert row[1] == "no_reply_route_recorded"
+
+
+def test_dispatch_marks_undeliverable_when_route_present_but_adapter_identity_missing(
+    conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR #231 review (3rd pass): a *tightening* from an earlier pass of
+    this fix - route_type/route_id ARE recorded (bare source_address,
+    no reply_route), but adapter_id/connector_profile_id are NOT. This
+    used to dispatch anyway ("trust the currently-configured adapter");
+    it must now fail closed, the same as a confirmed mismatch."""
+    ether = InMemoryEther()
+    receiver_adapter = FakeTextAdapter(ether, "receiver-addr")
+    sender_conn, sender_wsm, sender_principal = remote_recipient
+    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+    receiver_service = AttachmentsService(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, connectivity_monitor=connectivity_monitor,
+        delivery_adapter=receiver_adapter, relay_client_factory=lambda provider_id_text: relay_client,
+    )
+    sender_signing_key = identity.load_signing_key(sender_wsm, sender_principal)
+    offer_fields = codec.OfferFields(
+        provider_id=_raw_provider_id(registered_provider), transfer_id=uuid.uuid4().bytes,
+        sender_key_id=bytes.fromhex(sender_principal.key_id), kind=0, size_bucket=1,
+        hard_expires_at=int(time.time()) + 3600, flags=0,
+    )
+    raw_offer = codec.encode_offer(offer_fields, sender_signing_key)
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+        source_address="remote-addr",  # route recorded, but no reply_route -> no adapter identity
+    )
+    receiver_service.tick()
+    row = conn.execute(
+        "SELECT state, last_error FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = 'ack_received_sent'",
+        (result.attachment_id,),
+    ).fetchone()
+    assert row[0] == "UNDELIVERABLE"
+    assert "reply_adapter_mismatch" in row[1]
+    assert "persisted=None" in row[1]
+    assert ether.drain("remote-addr") == []
+
+
+def test_dispatch_uses_persisted_destination_address_even_when_it_differs_from_route_id(
+    conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """destination_address is a separate persisted field precisely so it
+    can differ from route_id (ReplyRoute's own docstring: a future non-
+    DIRECT route shape) - proves the dispatch step actually sends to
+    destination_address, not silently back to route_id, when the two are
+    deliberately set apart. FakeTextAdapter.send() delivers into the
+    ether keyed by Route.destination_address, so draining the
+    destination_address inbox (not the route_id one) is the real proof."""
+    ether = InMemoryEther()
+    receiver_adapter = FakeTextAdapter(ether, "receiver-addr")
+    # A third inbox, distinct from both "receiver-addr" and "remote-addr" -
+    # registering it up front (ether.register()) means drain() finds a
+    # real (possibly-empty) inbox rather than a KeyError on a name the
+    # ether has never seen.
+    ether.register("remote-addr-real-destination")
+
+    attachment_id, row = _dispatch_one_offer_reply(
+        conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client,
+        remote_recipient, receiver_adapter=receiver_adapter,
+        reply_route=receiver.ReplyRoute(
+            adapter_id=receiver_adapter.adapter_id, connector_profile_id=receiver_adapter.connector_profile_id,
+            route_type="DIRECT", route_id="remote-addr", destination_address="remote-addr-real-destination",
+        ),
+    )
+    assert row[0] == "SENT"
+    assert ether.drain("remote-addr") == []  # nothing delivered to the bare route_id
+    real_events = ether.drain("remote-addr-real-destination")
+    assert len(real_events) == 1  # delivered to destination_address instead
+
+
 def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient):
     """A DeliveryAdapter.send() failure must never be confused with
     success: the queued reply stays PENDING (retried on a later tick,
@@ -814,6 +994,13 @@ def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, pr
         conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
         key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
         source_address="remote-addr",
+        # PR #231 review (3rd pass): required now that a missing adapter_id/
+        # connector_profile_id fails closed - see the sibling dispatch test
+        # above for the same fix.
+        reply_route=receiver.ReplyRoute(
+            adapter_id=failing_adapter.adapter_id, connector_profile_id=failing_adapter.connector_profile_id,
+            route_type="DIRECT", route_id="remote-addr", destination_address="remote-addr",
+        ),
     )
 
     before = conn.execute(

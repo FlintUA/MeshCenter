@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,7 @@ def test_paths_are_transport_neutral_and_under_data_mca(manager, tmp_path):
     assert "profiles" not in expected_root.parts
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file mode bits not meaningful on Windows")
 def test_ensure_workspace_creates_directories_and_locks_keys_dir(manager):
     paths = manager.ensure_workspace(PRINCIPAL_A)
     for directory in (paths.root, paths.spool_outgoing, paths.cache_incoming, paths.files, paths.quarantine, paths.keys):

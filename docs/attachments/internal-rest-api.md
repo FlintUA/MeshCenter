@@ -1,6 +1,6 @@
 # MCAttach Internal REST API Contract
 
-**Status:** Design contract (Step 1.6A), revised (second pass). This document defines the HTTP surface — it does **not** implement it. No endpoint below exists yet; no runtime code, migration, test, JS, HTML or CSS was changed in the Step 1.6A change that added/revised this document.
+**Status:** Design contract (Step 1.6A), revised (second pass). The read-only endpoints of sub-stage 1.6A.2 (§5) are implemented in `api/api_attachments.py`; every mutation endpoint (sub-stages 1.6A.3–1.6A.5) remains design-only and does not exist yet.
 **Canonical source:** the Russian system design spec (section 18 primary, sections 17/19/20 and the state machines also consulted). That spec is reference-only and is not committed to the repository.
 **Audience:** a future implementation task, split into sub-stages (§5).
 

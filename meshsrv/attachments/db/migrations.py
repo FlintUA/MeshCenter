@@ -634,6 +634,48 @@ ALTER TABLE attachments DROP COLUMN reply_route_type;
 """
 
 
+# ADR-0008 / Step 1.6A.1 (docs/attachments/internal-rest-api.md §3.5/§3.6):
+# idempotent job creation by client_request_id. `POST /api/attachments` is a
+# deferred worker command, so two concurrent Flask threads could both observe
+# "this client_request_id is absent" and both enqueue a create before the
+# worker publishes a fresh idempotency snapshot. The in-memory reservation
+# (§3.6) closes that race for the common case; these two columns persist the
+# outcome so an identical replay *after* the command has committed can be
+# answered deterministically (200 + the original attachment_id) rather than
+# re-creating a duplicate - and so the committed idempotency index can be
+# rebuilt from disk after a restart (§3.6 "restart rebuild").
+#
+# - `client_request_id` is the client-chosen idempotency key, validated
+#   `[A-Za-z0-9_-]{1,64}` on the request thread before it ever reaches here.
+# - `canonical_hash` is the versioned SHA-256 over the full semantic field
+#   set (§3.5) - stored so a replay of the *same* client_request_id with
+#   *different* content is distinguishable from a true identical replay and
+#   rejected as 409 idempotency_conflict, not silently deduplicated.
+# - The partial unique index is the final database-level backstop: at most
+#   one non-NULL client_request_id per workspace. NULL (legacy rows created
+#   before this migration, and any future non-idempotent path) is exempt, so
+#   pre-existing rows are not forced to invent a value on upgrade. SQLite
+#   partial indexes (>= 3.8.0) are already well below the >= 3.35 floor
+#   established by migration 2's DROP COLUMN.
+#
+# Both columns are written by sender.create_draft() on the worker thread (the
+# single owner of `conn`) - never by a request thread - so no concurrent-write
+# hazard is introduced; the index only ever defends against a race that
+# slipped past the in-memory reservation, which is exactly its purpose.
+_MIGRATION_0011_UP = """
+ALTER TABLE attachments ADD COLUMN client_request_id TEXT;
+ALTER TABLE attachments ADD COLUMN canonical_hash TEXT;
+CREATE UNIQUE INDEX idx_attachments_client_request_id
+    ON attachments(workspace_id, client_request_id) WHERE client_request_id IS NOT NULL;
+"""
+
+_MIGRATION_0011_DOWN = """
+DROP INDEX IF EXISTS idx_attachments_client_request_id;
+ALTER TABLE attachments DROP COLUMN canonical_hash;
+ALTER TABLE attachments DROP COLUMN client_request_id;
+"""
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -663,6 +705,7 @@ MIGRATIONS: Sequence[Migration] = (
         down_data_fixup=_migration_0009_down_fixup_sent_provider_id_encoding,
     ),
     Migration(10, "receiver_ack_outbox", _MIGRATION_0010_UP, _MIGRATION_0010_DOWN),
+    Migration(11, "attachments_idempotency", _MIGRATION_0011_UP, _MIGRATION_0011_DOWN),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0

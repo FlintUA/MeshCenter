@@ -176,8 +176,19 @@ class ProbeRegistry:
         # it just stored, and a non-finite/non-positive `ttl_seconds` would
         # either cap every record to an already-past expiry (<= 0) or never
         # cap at all (inf) / compare falsely (NaN). Reject them up front.
-        if max_entries <= 0:
-            raise ValueError(f"max_entries must be > 0, got {max_entries!r}")
+        #
+        # Validation is type-strict on purpose (final correction pass):
+        # `max_entries` must be a positive `int` (a float like 1.5, a bool,
+        # or any non-number is a caller bug, not a valid capacity), and
+        # `ttl_seconds` must be a positive `int` or finite `float`. `bool`
+        # is rejected explicitly because it is an `int` subclass in Python,
+        # and every rejection is normalized to `ValueError` - a `TypeError`
+        # from an incidental comparison or `math.isfinite()` must never leak
+        # out as public constructor behavior.
+        if isinstance(max_entries, bool) or not isinstance(max_entries, int) or max_entries <= 0:
+            raise ValueError(f"max_entries must be a positive integer, got {max_entries!r}")
+        if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, (int, float)):
+            raise ValueError(f"ttl_seconds must be a positive number, got {ttl_seconds!r}")
         if not math.isfinite(ttl_seconds) or ttl_seconds <= 0:
             raise ValueError(f"ttl_seconds must be finite and > 0, got {ttl_seconds!r}")
         self._lock = threading.Lock()

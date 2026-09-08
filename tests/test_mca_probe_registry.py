@@ -272,6 +272,51 @@ def test_registry_accepts_positive_boundary_values():
     assert len(reg) == 0
 
 
+@pytest.mark.parametrize("max_entries", [
+    0, -1,                       # non-positive ints
+    1.5, -2.5, 2.0,              # floats (even a whole float) - not an int
+    float("inf"), float("-inf"), float("nan"),
+    True, False,                 # bool is an int subclass in Python
+    "64", "abc", None, [1], {"n": 1},
+])
+def test_registry_rejects_non_integer_max_entries(max_entries):
+    # A capacity must be a strictly positive `int`. Everything else - floats
+    # (even 2.0), bools, strings, None, containers, non-finite floats - is a
+    # caller bug, normalized to ValueError (never a TypeError from an
+    # incidental comparison).
+    with pytest.raises(ValueError):
+        ProbeRegistry(max_entries=max_entries)
+
+
+@pytest.mark.parametrize("ttl_seconds", [
+    0, -1, 0.0, -0.5,            # non-positive int/float
+    float("inf"), float("-inf"), float("nan"),
+    True, False,                 # bool is an int subclass
+    "300", "abc", None, [1], {"n": 1},
+])
+def test_registry_rejects_non_positive_or_non_numeric_ttl_seconds(ttl_seconds):
+    # ttl_seconds must be a positive int or finite float. bool is rejected
+    # explicitly (an int subclass), and every rejection - including what
+    # would otherwise be a TypeError from math.isfinite() on a str - is
+    # normalized to ValueError.
+    with pytest.raises(ValueError):
+        ProbeRegistry(ttl_seconds=ttl_seconds)
+
+
+@pytest.mark.parametrize("ttl_seconds", [1, 300, 1e-9, 0.5, 3600.0])
+def test_registry_accepts_positive_int_or_float_ttl_seconds(ttl_seconds):
+    # Positive ints and finite positive floats are both valid TTLs.
+    reg = ProbeRegistry(ttl_seconds=ttl_seconds)
+    assert len(reg) == 0
+
+
+def test_registry_rejects_whole_float_max_entries_not_truncated():
+    # A float that happens to be integral (2.0) is still not an `int`, and a
+    # capacity must be a whole positive integer - never silently truncated.
+    with pytest.raises(ValueError):
+        ProbeRegistry(max_entries=2.0)
+
+
 # --- restart amnesia --------------------------------------------------------
 
 def test_fresh_registry_is_empty():

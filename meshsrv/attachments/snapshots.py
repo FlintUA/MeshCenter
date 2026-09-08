@@ -41,7 +41,7 @@ the very first publish and the benchmark, but it is not the per-tick path.
 The per-dirty *rebuild* is O(1), but each publish still materializes a
 fresh immutable container — `records` (tuple) plus `by_id`/`idempotency`
 (dicts) — so the complete snapshot stays reference-atomic; that shallow
-reference copy is O(N) in the number of attachments (measured ~16 ms at
+reference copy is O(N) in the number of attachments (measured ~22 ms at
 N=5000 vs ~3.6 s for the full build on a Pi Zero 2 W — the §15.2 benchmark
 reports this residual, which the target hardware's RAM ceiling keeps to tens
 of milliseconds).

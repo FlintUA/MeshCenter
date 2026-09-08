@@ -31,7 +31,7 @@ What it measures, for each N in `--counts` (default 0, 100, 1000, 5000):
    materializes a fresh immutable container — the `records` tuple plus the
    `by_id`/`idempotency` dicts — so the complete snapshot stays
    reference-atomic; that shallow reference copy is O(N). Measured
-   (~16 ms at N=5000 vs ~3.6 s for the full build on a Pi Zero 2 W) the
+   (~22 ms at N=5000 vs ~3.6 s for the full build on a Pi Zero 2 W) the
    residual is a flat O(1) rebuild plus a linear reference copy, not a full
    O(N) rebuild.
 3. **Worker-tick row scan** — the existing `_due_rows()` query (a

@@ -1,0 +1,458 @@
+"""meshsrv/attachments/command_registry.py
+
+The in-memory command-result store (internal-rest-api.md §3.4; Execution
+Plan Step 1.6A.1). MIT-licensed Core code - stdlib only, never
+`meshtastic`, never Flask.
+
+A mutation returns `202` + `command_id`; the client learns the *outcome*
+by polling `GET /api/mca/commands/{command_id}` (§7.9). This registry is
+the thing that poll reads, and it is deliberately **not** a worker-
+published immutable snapshot: the worker has not necessarily run when the
+first `GET` arrives, so the request thread itself must be able to record
+"queued" *before* the command is enqueued (so the worker can never dequeue
+a command whose registry entry does not yet exist, and an immediate `GET`
+sees `queued`, never `404`).
+
+Ownership split (the whole point of the threading model, §3.1/§3.2):
+
+- the **request thread** registers `queued` (via `register()`, called
+  *before* the queue write);
+- the **worker** transitions `running` → `succeeded`/`failed` as it
+  dequeues and executes (`mark_running()` / `mark_succeeded()` /
+  `mark_failed()`);
+- both are guarded by one *short, dedicated* lock - not the tick lock, and
+  with **no SQLite** anywhere in this module.
+
+For the one case where a *normal* transition itself fails (a worker bug or
+an impossible state), `record_internal_failure()` is this registry's own
+invariant-recovery path: it terminalizes a `queued`/`running` entry (or
+materializes a missing one) to `failed` with the fixed
+`command_execution_failed` code, never overwriting an already-terminal
+result, and it does **not** go through the strict transition table. See its
+docstring for the precise contract; the worker (`service.py`) calls it as a
+fail-safe when `mark_running`/`mark_succeeded`/`mark_failed` raises.
+
+Eviction is **terminal-only** (§3.4): `queued`/`running` entries are never
+evicted (a client polling an in-flight command must keep seeing it), and
+their count is naturally bounded by the bounded command queue plus the
+per-tick drain. Terminal entries (`succeeded`/`failed`) are evicted on
+either a TTL (older than `COMMAND_RESULT_TTL_SECONDS`) or, when more than
+`COMMAND_RESULT_MAX_ENTRIES` terminal entries accumulate, least-recently-
+used first. Eviction is *lazy* - it runs on the next registry access
+rather than from a background sweeper - which is the honest, simplest
+correct behavior for an in-memory cache and is documented here rather than
+hidden.
+
+Restart-amnesic (§3.4): nothing is persisted. On restart every
+`command_id` is forgotten and `GET` returns `404 command_not_found`. A
+command still `queued`/`running` at crash never executes, so the client
+must re-issue (or re-run a probe) - safe because each command is either
+idempotent (create) or re-drivable (the action endpoints), and the
+single-owner SQLite transaction model guarantees a crash mid-command
+leaves a consistent on-disk state. `command_not_found` does **not** prove
+a side effect did not occur; a re-issued Relay-facing command must first
+reconcile persisted/remote state (documented in §3.4, and enforced by the
+worker's execution, not by this registry).
+
+The result payload is *caller-produced and caller-validated*: the worker
+sets `result`/`resource_id`/`error_code` and is responsible for ensuring
+`result` carries no secrets, no absolute paths, no ciphertext (§3.4 /
+§7.9). This registry stores what it is given and keeps its own `repr`
+free of the payload, but it does not second-guess the payload's contents -
+with two exceptions: it enforces a hard *size* bound
+(`COMMAND_RESULT_MAX_PAYLOAD_BYTES`) and a strict *JSON-nativeness* check
+(no `default=str`, no `NaN`/`Infinity`), so a misbehaving worker cannot
+retain an unbounded or non-serializable blob per terminal entry and defeat
+the `COMMAND_RESULT_MAX_ENTRIES` memory bound; and it *deep-copies and
+recursively freezes* whatever it accepts, so a later mutation of the
+caller's original object cannot alter an already-published result. Size and
+serializability are mechanical limits, not content judgments, so they do not
+re-open the "caller validates content" split - and they never *raise* out of
+the worker: an oversized or non-serializable result is recorded as a
+terminal `failed` with a bounded `error_code` and no payload, so a command
+can never be left stuck in `running` (§15.2).
+"""
+
+from __future__ import annotations
+
+import collections
+import dataclasses
+import json
+import threading
+import time
+import types
+from typing import Any, Dict, Mapping, Optional
+
+from meshsrv.attachments.commands import Command
+
+# ---- status values (§7.9) ------------------------------------------------
+
+STATUS_QUEUED = "queued"
+STATUS_RUNNING = "running"
+STATUS_SUCCEEDED = "succeeded"
+STATUS_FAILED = "failed"
+
+_TERMINAL_STATUSES = frozenset({STATUS_SUCCEEDED, STATUS_FAILED})
+
+# The one fixed error_code the internal-recovery fail-safe
+# (`record_internal_failure`) assigns. It is the same string as
+# `dispatch.COMMAND_EXECUTION_FAILED` ("command_execution_failed"), kept as a
+# literal here rather than imported so this storage module has no dependency
+# on the worker's dispatch layer (which sits above it in the call graph).
+_INTERNAL_FAILURE_ERROR_CODE = "command_execution_failed"
+
+# ---- eviction constants (§15.2: chosen from the Step 1.6A.1 benchmark
+# on a real Pi Zero 2 W - see scripts/benchmark_mca_snapshots.py) --------
+
+# Upper bound on the number of *terminal* (succeeded/failed) entries kept
+# at once. queued/running entries are outside this budget (never evicted).
+COMMAND_RESULT_MAX_ENTRIES = 256
+
+# A terminal entry older than this (measured from `updated_at`, when it
+# reached its terminal state) is evicted on the next registry access. One
+# hour is a long enough window for a client to poll a completed command's
+# outcome after a burst (§3.4); kept as-is (§15.2).
+COMMAND_RESULT_TTL_SECONDS = 3600
+
+# Hard cap on the serialized size of a single command's `result` payload
+# (JSON bytes, §7.9). Chosen by measuring every §7.9 result shape, not
+# guessed: the largest valid result is a `provider_probe` summary
+# (`serialize_probe_record`'s nine fields - probe_id/provider_id/origin/
+# fingerprint/protocol_version/limits/expires_at), which even with a
+# maximally-long normalized HTTPS origin stays well under 1 KiB; every
+# other shape (an `attachment_id`, a `provider_id`, `{"action": ...}`,
+# `{"mca1_text": ...}`) is far smaller. 4 KiB is therefore a generous
+# ceiling no documented result approaches, and it bounds the *worst-case*
+# retained memory of `COMMAND_RESULT_MAX_ENTRIES` terminal entries to
+# 256 x ~4 KiB ~= 1 MiB of result bytes - well over an order of magnitude
+# under the attachment snapshot's retained Python-object half (~14.5 MiB on
+# a Pi Zero 2 W; re-measured in the Step 1.6A.1 final benchmark as a 1.1 MiB
+# registry vs a ~19 MiB snapshot RSS delta), so the registry is now a
+# negligible contributor to the combined worst-case budget (§15.2). A worker that builds a larger result
+# is a bug; `mark_succeeded` converts an oversized or non-serializable
+# result into a terminal FAILED with a bounded error_code and no payload,
+# rather than raising out of the worker (see `_result_payload_error`).
+COMMAND_RESULT_MAX_PAYLOAD_BYTES = 4 * 1024
+
+
+def _result_payload_error(result: Optional[Mapping[str, Any]], max_payload_bytes: int) -> Optional[str]:
+    """Return a bounded error code if `result` cannot be safely retained as a
+    JSON-serializable, size-bounded payload; `None` if it is fine. Two
+    distinct codes so a poller can tell them apart:
+
+    - `result_payload_not_serializable` - the result cannot be JSON-encoded
+      with the *strict* native set only (a circular structure, a non-JSON
+      value like `bytes`/`pathlib.Path`, or a `NaN`/`Infinity` float). There
+      is deliberately **no `default=str` coercion** and `allow_nan=False`:
+      a worker that produces such a value is a bug, and silently stringifying
+      it would both paper over the bug and leak a wrong-shaped payload to the
+      poller;
+    - `result_payload_too_large` - the result serializes, but its JSON byte
+      length exceeds `max_payload_bytes`.
+
+    JSON is what the facade serves to pollers (§7.9), so the JSON byte length
+    is the honest proxy for both wire and retained cost."""
+    if result is None:
+        return None
+    try:
+        encoded = json.dumps(result, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError):
+        return "result_payload_not_serializable"
+    if len(encoded) > max_payload_bytes:
+        return "result_payload_too_large"
+    return None
+
+
+def _deep_freeze(value: Any) -> Any:
+    """Recursively copy-and-freeze a JSON-native value so a later mutation of
+    the *original* object the caller holds cannot alter an already-published
+    `CommandResult`. The accepted result has already been proven
+    JSON-serializable by `_result_payload_error`'s `json.dumps` pass, so its
+    value graph is exactly the JSON-native set: `dict`, `list`, `tuple`,
+    `str`, `int`, `float`, `bool`, `None`. Each mapping becomes a read-only
+    `MappingProxyType` over a *fresh* dict; each `list`/`tuple` becomes a
+    `tuple` of recursively-frozen elements; scalars are returned as-is
+    (already immutable). This is a deep **copy**, not a view - the frozen
+    result shares no mutable state with the caller's object."""
+    if isinstance(value, types.MappingProxyType):
+        return value  # already frozen
+    if isinstance(value, Mapping):
+        return types.MappingProxyType({key: _deep_freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze(item) for item in value)
+    return value
+
+
+@dataclasses.dataclass(frozen=True)
+class CommandResult:
+    """The immutable read shape `get()` returns - the §7.9 projection,
+    without the JSON envelope (the facade adds `{"ok": true, "command":
+    ...}`). Frozen; `result` (when present) is *deep-copied and recursively
+    frozen* (nested mappings and lists become read-only) so neither a poller
+    nor a later mutation of the caller's original object can alter an
+    already-published result. `repr()` omits `result` - same no-secret-in-
+    logs rule as `Command`."""
+
+    command_id: str
+    kind: str
+    status: str
+    created_at: float
+    updated_at: float
+    resource_id: Optional[str] = None
+    result: Optional[Mapping[str, Any]] = None
+    error_code: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.result is not None:
+            object.__setattr__(self, "result", _deep_freeze(self.result))
+
+    def __repr__(self) -> str:
+        return (
+            f"CommandResult(command_id={self.command_id!r}, kind={self.kind!r}, "
+            f"status={self.status!r}, error_code={self.error_code!r})"
+        )
+
+
+# The only legal status transitions (a strict lifecycle - the worker is the
+# sole transitioner and should never produce anything else; an illegal
+# transition is a bug, so it raises rather than being silently coerced).
+_ALLOWED_TRANSITIONS = {
+    STATUS_QUEUED: frozenset({STATUS_RUNNING}),
+    STATUS_RUNNING: frozenset({STATUS_SUCCEEDED, STATUS_FAILED}),
+}
+
+
+class CommandRegistry:
+    """See the module docstring for the full contract. Thread-safe via a
+    dedicated short lock; injected clock (`now_fn`) so TTL eviction is
+    deterministic under test; restart-amnesic by construction (all state
+    is instance-local)."""
+
+    def __init__(
+        self,
+        *,
+        max_entries: int = COMMAND_RESULT_MAX_ENTRIES,
+        ttl_seconds: float = COMMAND_RESULT_TTL_SECONDS,
+        max_payload_bytes: int = COMMAND_RESULT_MAX_PAYLOAD_BYTES,
+        now_fn=time.time,
+    ):
+        self._lock = threading.Lock()
+        self._entries: Dict[str, CommandResult] = {}
+        # LRU order of *terminal* entries only - least-recently-used at the
+        # front, most-recently-used at the back (OrderedDict.popitem(last=
+        # False) evicts the LRU). Non-terminal entries are tracked only in
+        # `_entries`.
+        self._terminal_lru: "collections.OrderedDict[str, None]" = collections.OrderedDict()
+        self._max_entries = max_entries
+        self._ttl_seconds = ttl_seconds
+        self._max_payload_bytes = max_payload_bytes
+        self._now = now_fn
+
+    # ---- request thread: register queued (before the queue write) -------
+
+    def register(self, command: Command) -> None:
+        """Records a command as `queued`. Called by the request thread
+        *before* `CommandQueue.put_nowait()` (§3.4 / §3.6 step 4), so the
+        worker can never dequeue a command whose entry does not yet exist
+        and an immediate `GET` sees `queued`, never `404`.
+
+        Raises `ValueError` on a duplicate `command_id` - command ids are
+        fresh UUIDs, so a collision here is a caller bug (e.g. re-
+        registering an idempotent-replay id), never a benign event."""
+        now = self._now()
+        with self._lock:
+            self._evict_locked(now)
+            if command.command_id in self._entries:
+                raise ValueError(f"command already registered: {command.command_id!r}")
+            self._entries[command.command_id] = CommandResult(
+                command_id=command.command_id,
+                kind=command.kind,
+                status=STATUS_QUEUED,
+                created_at=command.created_at,
+                updated_at=now,
+            )
+
+    def discard_queued(self, command_id: str) -> None:
+        """Remove a **queued** entry - used only to roll back a registration
+        when the subsequent `CommandQueue.put_nowait()` fails with `queue.Full`
+        (§3.6 step 5). Must **never** remove a `running` or terminal entry:
+        those are worker-owned, and this rollback runs on the request thread,
+        so it must not be able to clobber a command the worker has already
+        dequeued and is executing (even though, in the happy path, a command
+        whose queue write failed was never enqueued and so the worker can
+        never have seen it - the guard is defense-in-depth, not dead code).
+
+        Silent for an unknown `command_id` (an idempotent-replay path may
+        already have removed it, or a bug double-called it) - never raises."""
+        with self._lock:
+            entry = self._entries.get(command_id)
+            if entry is None or entry.status != STATUS_QUEUED:
+                return
+            del self._entries[command_id]
+
+    # ---- worker thread: transition the lifecycle ------------------------
+
+    def mark_running(self, command_id: str) -> None:
+        now = self._now()
+        with self._lock:
+            self._transition_locked(command_id, STATUS_RUNNING, now)
+
+    def mark_succeeded(
+        self,
+        command_id: str,
+        *,
+        resource_id: Optional[str] = None,
+        result: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        # A successful command carries its `result` payload. An oversized or
+        # non-serializable result is a worker bug (every §7.9 shape is tiny),
+        # but it must NOT raise out of the worker and leave the command stuck
+        # in `running` - it becomes a terminal `failed` with a bounded
+        # error_code and no payload (the payload is the thing that was bad, so
+        # nothing sensitive is retained). The result is measured *before*
+        # taking the lock (it is caller-provided and immutable), keeping the
+        # lock hold to the transition itself.
+        error_code = _result_payload_error(result, self._max_payload_bytes)
+        if error_code is not None:
+            now = self._now()
+            with self._lock:
+                self._transition_locked(command_id, STATUS_FAILED, now, error_code=error_code)
+            return
+        now = self._now()
+        with self._lock:
+            self._transition_locked(
+                command_id, STATUS_SUCCEEDED, now,
+                resource_id=resource_id, result=result,
+            )
+
+    def mark_failed(self, command_id: str, *, error_code: str) -> None:
+        now = self._now()
+        with self._lock:
+            self._transition_locked(command_id, STATUS_FAILED, now, error_code=error_code)
+
+    def record_internal_failure(self, command: Command) -> None:
+        """The registry-owned internal-recovery fail-safe (Step 1.6A.1 final
+        correction). Forces a command the worker has dequeued but failed to
+        transition *normally* into a terminal `FAILED` result, so a client
+        polling `GET /api/mca/commands/{command_id}` can never observe a
+        command stuck forever in `running` (or absent) because a terminal
+        transition itself failed.
+
+        This is an **invariant-recovery** path, not an alternative public
+        lifecycle API: it deliberately does **not** use `_transition_locked()`
+        (whose strict transition check is exactly what failed), and it only
+        ever writes the fixed `command_execution_failed` code. Under the
+        registry's own lock it atomically:
+
+        - a `queued`/`running` entry -> terminal `FAILED` with
+          `error_code = "command_execution_failed"` and no `resource_id`/
+          `result`, inserted into the terminal TTL/LRU bookkeeping;
+        - an already-terminal (`succeeded`/`failed`) entry -> left unchanged
+          (never overwriting a valid result);
+        - a *missing* entry (the worker dequeued a command that was never
+          registered, or whose registration was rolled back) -> materialized
+          as a fresh terminal `FAILED` from the immutable `Command` metadata
+          (`command_id`/`kind`/`created_at`), preserving pollability.
+
+        No exception text, payload contents, secrets, tokens, or command input
+        are exposed: the recovered result carries only the fixed error_code
+        and no `result`/`resource_id`. It does not log the command payload."""
+        now = self._now()
+        with self._lock:
+            self._evict_locked(now)
+            entry = self._entries.get(command.command_id)
+            if entry is not None and entry.status in _TERMINAL_STATUSES:
+                # Never replace an already-valid terminal result.
+                return
+            kind = entry.kind if entry is not None else command.kind
+            created_at = entry.created_at if entry is not None else command.created_at
+            self._entries[command.command_id] = CommandResult(
+                command_id=command.command_id,
+                kind=kind,
+                status=STATUS_FAILED,
+                created_at=created_at,
+                updated_at=now,
+                resource_id=None,
+                result=None,
+                error_code=_INTERNAL_FAILURE_ERROR_CODE,
+            )
+            self._terminal_lru[command.command_id] = None
+            self._terminal_lru.move_to_end(command.command_id)
+            self._evict_locked(now)
+
+    def _transition_locked(
+        self,
+        command_id: str,
+        status: str,
+        now: float,
+        *,
+        resource_id: Optional[str] = None,
+        result: Optional[Mapping[str, Any]] = None,
+        error_code: Optional[str] = None,
+    ) -> None:
+        current = self._entries.get(command_id)
+        if current is None:
+            raise ValueError(f"unknown command_id: {command_id!r}")
+        if status not in _ALLOWED_TRANSITIONS.get(current.status, frozenset()):
+            raise ValueError(f"illegal command transition {current.status!r} -> {status!r}")
+        self._entries[command_id] = CommandResult(
+            command_id=command_id,
+            kind=current.kind,
+            status=status,
+            created_at=current.created_at,
+            updated_at=now,
+            resource_id=resource_id if resource_id is not None else current.resource_id,
+            result=result if result is not None else current.result,
+            error_code=error_code if error_code is not None else current.error_code,
+        )
+        if status in _TERMINAL_STATUSES:
+            # Move to MRU position (or insert); a terminal entry's LRU
+            # clock starts ticking at the moment it becomes terminal.
+            self._terminal_lru[command_id] = None
+            self._terminal_lru.move_to_end(command_id)
+            self._evict_locked(now)
+
+    # ---- any thread: read ------------------------------------------------
+
+    def get(self, command_id: str) -> Optional[CommandResult]:
+        """Returns the current result for `command_id`, or `None` if it is
+        unknown or was evicted (terminal and past TTL / LRU). Safe to call
+        from any thread.
+
+        A successful read of a *terminal* entry refreshes its recency in
+        the LRU order (a client actively polling a finished command keeps
+        it from being the LRU-eviction victim) - TTL still bounds it."""
+        now = self._now()
+        with self._lock:
+            self._evict_locked(now)
+            entry = self._entries.get(command_id)
+            if entry is not None and entry.status in _TERMINAL_STATUSES:
+                self._terminal_lru.move_to_end(command_id)
+            return entry
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._entries)
+
+    def terminal_count(self) -> int:
+        """Number of terminal (succeeded/failed) entries - for tests."""
+        with self._lock:
+            return len(self._terminal_lru)
+
+    # ---- eviction (terminal-only) ---------------------------------------
+
+    def _evict_locked(self, now: float) -> None:
+        # TTL: drop terminal entries past their age. Iterate over the LRU
+        # order's keys (a snapshot, since we mutate during the loop).
+        for command_id in list(self._terminal_lru.keys()):
+            entry = self._entries.get(command_id)
+            if entry is None:
+                self._terminal_lru.pop(command_id, None)
+                continue
+            if now - entry.updated_at > self._ttl_seconds:
+                self._entries.pop(command_id, None)
+                self._terminal_lru.pop(command_id, None)
+        # LRU: while over capacity, evict the least-recently-used terminal.
+        while len(self._terminal_lru) > self._max_entries:
+            lru_id, _ = self._terminal_lru.popitem(last=False)
+            self._entries.pop(lru_id, None)

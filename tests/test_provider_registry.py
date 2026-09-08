@@ -448,3 +448,82 @@ def test_get_upload_candidates_requires_enabled_upload_allowed_and_token(registr
 
     candidates = {p.provider_id for p in registry.get_upload_candidates()}
     assert candidates == {with_token.provider_id}
+
+
+# ---- clear_upload_token() (§7.12, Step 1.6A.1) ----------------------------
+
+
+def _token_path(wsm, provider_id):
+    return wsm.paths("a1b2c3d4e5f60718").keys / f"relay_upload_token_{provider_id}.secret"
+
+
+def test_clear_upload_token_removes_file_and_clears_column(registry, wsm):
+    profile = registry.register(
+        display_name="Clearable", base_url="https://clear.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    registry.set_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718", "super-secret-token")
+    token_path = _token_path(wsm, profile.provider_id)
+    assert token_path.exists()
+
+    result = registry.clear_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718")
+    assert result is None  # never returns (or echoes) the token
+    assert not token_path.exists()
+    assert registry.resolve(profile.provider_id).upload_token_configured is False
+    assert registry.get_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718") is None
+
+
+def test_clear_upload_token_is_idempotent(registry, wsm):
+    profile = registry.register(
+        display_name="Idempotent", base_url="https://idem.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    registry.set_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718", "tok")
+    registry.clear_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718")
+    # A second clear - now with no token configured - is a no-op, not an error.
+    registry.clear_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718")
+    assert registry.resolve(profile.provider_id).upload_token_configured is False
+
+
+def test_clear_upload_token_unknown_provider_raises(registry, wsm):
+    with pytest.raises(ProviderRegistryError):
+        registry.clear_upload_token("no-such-id", wsm, "a1b2c3d4e5f60718")
+
+
+def test_clear_upload_token_rejects_traversal_filename(conn, registry, wsm):
+    """Fail-closed on a corrupt DB row: a `upload_token_file` value with a
+    path separator must raise, never silently unlink a file outside keys/."""
+    profile = registry.register(
+        display_name="Corrupt", base_url="https://corrupt.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    registry.set_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718", "tok")
+    conn.execute(
+        "UPDATE mca_provider_profiles SET upload_token_file = ? WHERE workspace_id = ? AND provider_id = ?",
+        ("../../etc/passwd", "ws-1", profile.provider_id),
+    )
+    conn.commit()
+    with pytest.raises(ProviderRegistryError):
+        registry.clear_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlink creation needs privileges on Windows")
+def test_clear_upload_token_rejects_symlink_escape(registry, wsm):
+    """Fail-closed on a symlink planted in keys/ that points outside it:
+    .resolve() follows the link, the containment check fails, and the
+    token is never deleted (nor is the escape target)."""
+    profile = registry.register(
+        display_name="Symlinked", base_url="https://symlink.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    registry.set_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718", "tok")
+    keys = wsm.paths("a1b2c3d4e5f60718").keys
+    outside = keys.parent / "outside.txt"
+    outside.write_text("do not delete me")
+    token_path = _token_path(wsm, profile.provider_id)
+    token_path.unlink()
+    token_path.symlink_to(outside)
+
+    with pytest.raises(ProviderRegistryError):
+        registry.clear_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718")
+    assert outside.exists()  # the escape target was never touched

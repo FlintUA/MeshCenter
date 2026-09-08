@@ -1,0 +1,357 @@
+"""Tests for meshsrv/attachments/probe_registry.py (internal-rest-api.md
+§3.2/§3.4/§7.11; Execution Plan Step 1.6A.1).
+
+Covers the single-use, in-memory provider-onboarding probe store: the
+frozen `ProbeRecord` (rejects a bad status, never prints the raw
+`service_public_key`), `mint_probe_id()`'s unpredictability/shape, the
+safe §7.9 `provider_probe` result serializer (never leaks the raw key or
+`status`), the `add`/`get`/`consume` lifecycle, single-use consume
+semantics, non-consuming `get`, TTL expiry and bounded FIFO eviction
+(with an injected clock), and restart-amnesia. Pure stdlib - no
+Flask/SQLite/network, safe in CI.
+"""
+
+import threading
+
+import pytest
+
+from meshsrv.attachments.probe_registry import (
+    PROBE_MAX_ENTRIES,
+    PROBE_TTL_SECONDS,
+    PROBE_STATUS_FAILED,
+    PROBE_STATUS_PROBED,
+    ProbeRecord,
+    ProbeRegistry,
+    mint_probe_id,
+    serialize_probe_record,
+)
+
+
+class Clock:
+    def __init__(self, start=0.0):
+        self.t = start
+
+    def __call__(self):
+        return self.t
+
+    def advance(self, seconds):
+        self.t += seconds
+
+
+def _record(probe_id="probe-1", *, expires_at=100.0, status=PROBE_STATUS_PROBED, **overrides):
+    base = dict(
+        probe_id=probe_id,
+        origin="https://relay.example.net",
+        provider_id="AbCdEfGhIjK",
+        service_public_key=b"0" * 32,
+        service_key_fingerprint="a" * 64,
+        protocol_version="1",
+        max_ciphertext_bytes=5 * 1024 * 1024,
+        min_ttl_seconds=60,
+        max_ttl_seconds=86400,
+        expires_at=expires_at,
+        status=status,
+    )
+    base.update(overrides)
+    return ProbeRecord(**base)
+
+
+def _registry(max_entries=PROBE_MAX_ENTRIES, ttl_seconds=PROBE_TTL_SECONDS):
+    clock = Clock()
+    return ProbeRegistry(max_entries=max_entries, ttl_seconds=ttl_seconds, now_fn=clock), clock
+
+
+# --- mint_probe_id ----------------------------------------------------------
+
+def test_mint_probe_id_is_32_hex_and_unique():
+    seen = {mint_probe_id() for _ in range(1000)}
+    assert len(seen) == 1000
+    for pid in seen:
+        assert len(pid) == 32
+        assert all(ch in "0123456789abcdef" for ch in pid)
+
+
+# --- ProbeRecord ------------------------------------------------------------
+
+def test_probe_record_is_frozen():
+    record = _record()
+    with pytest.raises(AttributeError):
+        record.origin = "https://evil.example.net"
+
+
+def test_probe_record_repr_omits_service_public_key():
+    record = _record(service_public_key=b"SECRET_KEY_BYTES_1234567890_1234567890")
+    text = repr(record)
+    assert "SECRET_KEY_BYTES" not in text
+    # The fingerprint *is* user-facing (it is what the browser confirms).
+    assert record.provider_id in text
+
+
+def test_probe_record_rejects_bad_status():
+    with pytest.raises(ValueError):
+        _record(status="frobnicated")
+
+
+def test_probe_record_rejects_empty_probe_id():
+    with pytest.raises(ValueError):
+        _record(probe_id="")
+
+
+def test_probe_record_rejects_nonfinite_expires_at():
+    # A NaN/infinity expiry would defeat the store's bounded lifetime (never
+    # expires, or compares falsely against every now) - rejected at
+    # construction rather than stored as an immortal/invisible record.
+    with pytest.raises(ValueError):
+        _record(expires_at=float("nan"))
+    with pytest.raises(ValueError):
+        _record(expires_at=float("inf"))
+    with pytest.raises(ValueError):
+        _record(expires_at=float("-inf"))
+
+
+# --- serialize_probe_record -------------------------------------------------
+
+def test_serialize_probe_record_omits_raw_key_and_status():
+    record = _record()
+    out = serialize_probe_record(record)
+    assert "service_public_key" not in out
+    assert "status" not in out
+    assert out["probe_id"] == "probe-1"
+    assert out["provider_id"] == "AbCdEfGhIjK"
+    assert out["service_key_fingerprint"] == "a" * 64
+
+
+# --- add / get / consume ----------------------------------------------------
+
+def test_get_returns_none_for_unknown_probe():
+    reg, _ = _registry()
+    assert reg.get("never-added") is None
+
+
+def test_add_then_get_returns_the_record():
+    reg, _ = _registry()
+    record = _record()
+    reg.add(record)
+    assert reg.get("probe-1") is record
+
+
+def test_add_duplicate_raises():
+    reg, _ = _registry()
+    reg.add(_record())
+    with pytest.raises(ValueError):
+        reg.add(_record())
+
+
+def test_get_does_not_consume():
+    reg, _ = _registry()
+    record = _record()
+    reg.add(record)
+    # get() is non-destructive: it can be read repeatedly for phase-2
+    # validation, and a later consume() still succeeds.
+    assert reg.get("probe-1") is record
+    assert reg.get("probe-1") is record
+    assert reg.consume("probe-1") is record
+
+
+def test_consume_is_single_use():
+    reg, _ = _registry()
+    reg.add(_record())
+    assert reg.consume("probe-1") is not None
+    assert reg.consume("probe-1") is None  # already consumed
+    assert reg.get("probe-1") is None
+
+
+def test_consume_unknown_returns_none():
+    reg, _ = _registry()
+    assert reg.consume("never-added") is None
+
+
+# --- expiry -----------------------------------------------------------------
+
+def test_expired_record_is_invisible_and_consumable_as_none():
+    reg, clock = _registry()
+    reg.add(_record(expires_at=100.0))
+    clock.advance(101.0)
+    assert reg.get("probe-1") is None
+    assert reg.consume("probe-1") is None
+    assert len(reg) == 0
+
+
+def test_unexpired_record_is_still_visible():
+    reg, clock = _registry()
+    reg.add(_record(expires_at=100.0))
+    clock.advance(99.0)
+    assert reg.get("probe-1") is not None
+
+
+def test_expiry_at_exact_boundary_is_expired():
+    # The expiry comparison is `now >= expires_at`, so reaching the expiry
+    # instant exactly is already expired (a probe is single-use and
+    # short-lived; the boundary is inclusive, not off-by-one).
+    reg, clock = _registry()
+    reg.add(_record(expires_at=50.0))
+    clock.advance(50.0)  # now == expires_at exactly
+    assert reg.get("probe-1") is None
+    assert reg.consume("probe-1") is None
+    assert len(reg) == 0
+
+
+# --- TTL enforced internally (the registry, not its caller) ----------------
+
+def test_add_caps_excessively_long_expiry_to_registry_ttl():
+    # A caller (or a bug) supplies an expiry far beyond the registry's TTL:
+    # the registry caps it to now + ttl_seconds so a probe can never live
+    # longer than the store itself allows.
+    reg, clock = _registry(ttl_seconds=300.0)
+    reg.add(_record(expires_at=10_000_000.0))
+    stored = reg.get("probe-1")
+    assert stored.expires_at == 300.0  # now (0) + ttl (300), not the caller's
+    # And it genuinely expires at that capped time.
+    clock.advance(300.0)
+    assert reg.get("probe-1") is None
+
+
+def test_add_honors_shorter_caller_expiry_unchanged():
+    # Within the TTL bound the caller's expiry is honored verbatim (and the
+    # record is stored as the *same* object - no replace copy), so a caller
+    # bounding a probe to the Relay's own max-TTL keeps that shorter value.
+    reg, _ = _registry(ttl_seconds=300.0)
+    record = _record(expires_at=50.0)
+    reg.add(record)
+    assert reg.get("probe-1") is record
+    assert reg.get("probe-1").expires_at == 50.0
+
+
+# --- bounded FIFO eviction --------------------------------------------------
+
+def test_add_beyond_capacity_evicts_oldest():
+    reg, _ = _registry(max_entries=3)
+    for i in range(3):
+        reg.add(_record(probe_id=f"probe-{i}", expires_at=10000.0))
+    assert len(reg) == 3
+    # A fourth add exceeds capacity -> oldest-inserted (probe-0) is evicted.
+    reg.add(_record(probe_id="probe-3", expires_at=10000.0))
+    assert reg.get("probe-0") is None
+    assert reg.get("probe-1") is not None
+    assert reg.get("probe-2") is not None
+    assert reg.get("probe-3") is not None
+    assert len(reg) == 3
+
+
+def test_failed_probe_record_is_stored_like_any_other():
+    reg, _ = _registry()
+    record = _record(status=PROBE_STATUS_FAILED)
+    reg.add(record)
+    assert reg.get("probe-1").status == PROBE_STATUS_FAILED
+
+
+# --- numeric boundaries (registry construction) ----------------------------
+
+def test_registry_rejects_nonpositive_max_entries():
+    with pytest.raises(ValueError):
+        ProbeRegistry(max_entries=0)
+    with pytest.raises(ValueError):
+        ProbeRegistry(max_entries=-1)
+
+
+def test_registry_rejects_nonpositive_or_nonfinite_ttl_seconds():
+    with pytest.raises(ValueError):
+        ProbeRegistry(ttl_seconds=0)
+    with pytest.raises(ValueError):
+        ProbeRegistry(ttl_seconds=-1)
+    with pytest.raises(ValueError):
+        ProbeRegistry(ttl_seconds=float("nan"))
+    with pytest.raises(ValueError):
+        ProbeRegistry(ttl_seconds=float("inf"))
+
+
+def test_registry_accepts_positive_boundary_values():
+    # Exactly the legal boundaries: max_entries=1 and ttl_seconds just above
+    # zero must be accepted, so the guards are strict-but-not-over-strict.
+    reg = ProbeRegistry(max_entries=1, ttl_seconds=1e-9)
+    assert len(reg) == 0
+
+
+@pytest.mark.parametrize("max_entries", [
+    0, -1,                       # non-positive ints
+    1.5, -2.5, 2.0,              # floats (even a whole float) - not an int
+    float("inf"), float("-inf"), float("nan"),
+    True, False,                 # bool is an int subclass in Python
+    "64", "abc", None, [1], {"n": 1},
+])
+def test_registry_rejects_non_integer_max_entries(max_entries):
+    # A capacity must be a strictly positive `int`. Everything else - floats
+    # (even 2.0), bools, strings, None, containers, non-finite floats - is a
+    # caller bug, normalized to ValueError (never a TypeError from an
+    # incidental comparison).
+    with pytest.raises(ValueError):
+        ProbeRegistry(max_entries=max_entries)
+
+
+@pytest.mark.parametrize("ttl_seconds", [
+    0, -1, 0.0, -0.5,            # non-positive int/float
+    float("inf"), float("-inf"), float("nan"),
+    True, False,                 # bool is an int subclass
+    "300", "abc", None, [1], {"n": 1},
+])
+def test_registry_rejects_non_positive_or_non_numeric_ttl_seconds(ttl_seconds):
+    # ttl_seconds must be a positive int or finite float. bool is rejected
+    # explicitly (an int subclass), and every rejection - including what
+    # would otherwise be a TypeError from math.isfinite() on a str - is
+    # normalized to ValueError.
+    with pytest.raises(ValueError):
+        ProbeRegistry(ttl_seconds=ttl_seconds)
+
+
+@pytest.mark.parametrize("ttl_seconds", [1, 300, 1e-9, 0.5, 3600.0])
+def test_registry_accepts_positive_int_or_float_ttl_seconds(ttl_seconds):
+    # Positive ints and finite positive floats are both valid TTLs.
+    reg = ProbeRegistry(ttl_seconds=ttl_seconds)
+    assert len(reg) == 0
+
+
+def test_registry_rejects_whole_float_max_entries_not_truncated():
+    # A float that happens to be integral (2.0) is still not an `int`, and a
+    # capacity must be a whole positive integer - never silently truncated.
+    with pytest.raises(ValueError):
+        ProbeRegistry(max_entries=2.0)
+
+
+# --- restart amnesia --------------------------------------------------------
+
+def test_fresh_registry_is_empty():
+    reg, _ = _registry()
+    assert len(reg) == 0
+    assert reg.get("anything") is None
+    assert reg.consume("anything") is None
+
+
+# --- thread safety ----------------------------------------------------------
+
+def test_concurrent_add_and_consume_is_consistent():
+    reg, _ = _registry()
+    n = 50
+    barrier = threading.Barrier(n)
+    errors = []
+
+    def worker(i):
+        barrier.wait()
+        try:
+            record = _record(probe_id=f"probe-{i}", expires_at=100.0)
+            reg.add(record)
+            got = reg.get(f"probe-{i}")
+            assert got is record
+            consumed = reg.consume(f"probe-{i}")
+            assert consumed is record
+            assert reg.consume(f"probe-{i}") is None  # single-use under concurrency
+        except Exception as exc:  # pragma: no cover - failure signal
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    assert len(reg) == 0  # every record was consumed

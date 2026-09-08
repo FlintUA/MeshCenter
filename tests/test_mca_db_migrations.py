@@ -524,3 +524,305 @@ def test_migrate_on_up_to_date_db_is_a_true_no_op(conn):
     migrate(conn)  # already at LATEST_VERSION
     assert current_version(conn) == LATEST_VERSION
     assert _table_names(conn) == before
+
+
+# --------------------------------------------------------------------------
+# Migration 11 (idempotency columns + partial unique index; ADR-0008 /
+# Step 1.6A.1, docs/attachments/internal-rest-api.md §3.5/§3.6).
+# --------------------------------------------------------------------------
+
+_MIGRATION_11_ATTACHMENTS_COLUMNS = frozenset({"client_request_id", "canonical_hash"})
+_MIGRATION_11_INDEX = "idx_attachments_client_request_id"
+
+
+def _attachments_indexes(conn) -> dict:
+    """Map index name -> (is_unique, is_partial) for the attachments table."""
+    return {
+        row[1]: (bool(row[2]), bool(row[4]))
+        for row in conn.execute("PRAGMA index_list(attachments)").fetchall()
+    }
+
+
+def test_migration_11_creates_idempotency_columns_and_partial_unique_index(conn):
+    migrate(conn, target_version=10)
+    columns_before = _attachments_columns(conn)
+    assert _MIGRATION_11_ATTACHMENTS_COLUMNS.isdisjoint(columns_before)
+    assert _MIGRATION_11_INDEX not in _attachments_indexes(conn)
+
+    migrate(conn, target_version=11)
+    assert current_version(conn) == 11
+
+    columns_after = _attachments_columns(conn)
+    assert _MIGRATION_11_ATTACHMENTS_COLUMNS.issubset(columns_after)
+
+    index = _attachments_indexes(conn)[_MIGRATION_11_INDEX]
+    # It is a *partial unique* index over (workspace_id, client_request_id) -
+    # the partial predicate is what lets legacy/NULL rows coexist with the
+    # uniqueness guarantee (§3.6).
+    assert index == (True, True)
+
+
+def test_migration_11_downgrade_removes_columns_and_index(conn):
+    migrate(conn, target_version=11)
+    assert _MIGRATION_11_ATTACHMENTS_COLUMNS.issubset(_attachments_columns(conn))
+    assert _MIGRATION_11_INDEX in _attachments_indexes(conn)
+
+    migrate(conn, target_version=10)
+
+    assert _MIGRATION_11_ATTACHMENTS_COLUMNS.isdisjoint(_attachments_columns(conn))
+    assert _MIGRATION_11_INDEX not in _attachments_indexes(conn)
+
+
+def test_migration_11_survives_downgrade_then_re_upgrade_with_data_intact(conn):
+    """A non-idempotency column written at migration 11 must survive the
+    downgrade/re-upgrade round-trip (DROP COLUMN is scoped to the two new
+    columns only); the re-created columns/index must be functional for a
+    fresh write."""
+    migrate(conn, target_version=11)
+    now = int(time.time())
+    conn.execute(
+        """INSERT INTO attachments
+           (id, workspace_id, transfer_id, direction, principal_id, state,
+            created_at, hard_expires_at, download_grace_seconds, file_name)
+           VALUES ('att-11', 'ws-1', 'tx-11', 'sent', '0123456789abcdef',
+                   'DRAFT', ?, ?, 3600, 'a.txt')""",
+        (now, now + 3600),
+    )
+    conn.commit()
+
+    migrate(conn, target_version=10)
+    assert _MIGRATION_11_ATTACHMENTS_COLUMNS.isdisjoint(_attachments_columns(conn))
+
+    migrate(conn)  # re-upgrade to LATEST_VERSION
+    assert _MIGRATION_11_ATTACHMENTS_COLUMNS.issubset(_attachments_columns(conn))
+    assert _MIGRATION_11_INDEX in _attachments_indexes(conn)
+
+    # The original row's unrelated data survived, and a fresh idempotency
+    # write succeeds against the re-created columns/index.
+    row = conn.execute("SELECT file_name FROM attachments WHERE id = 'att-11'").fetchone()
+    assert row[0] == "a.txt"
+    conn.execute(
+        "UPDATE attachments SET client_request_id = 'req-1', canonical_hash = 'a' * 64 WHERE id = 'att-11'"
+    )
+    conn.commit()
+    assert conn.execute(
+        "SELECT client_request_id FROM attachments WHERE id = 'att-11'"
+    ).fetchone()[0] == "req-1"
+
+
+def test_migration_11_unique_index_enforces_one_client_request_id_per_workspace(conn):
+    """The database-level backstop: two rows in the same workspace with the
+    same non-NULL client_request_id must be rejected; a different workspace
+    may reuse the same client_request_id; NULL client_request_id rows are
+    exempt (partial index), so pre-existing/legacy rows never trip it."""
+    migrate(conn, target_version=11)
+    now = int(time.time())
+
+    def insert(attachment_id, workspace_id, client_request_id):
+        conn.execute(
+            """INSERT INTO attachments
+               (id, workspace_id, transfer_id, direction, principal_id, state,
+                created_at, hard_expires_at, download_grace_seconds, client_request_id)
+               VALUES (?, ?, ?, 'sent', '0123456789abcdef', 'DRAFT', ?, ?, 3600, ?)""",
+            (attachment_id, workspace_id, f"tx-{attachment_id}", now, now + 3600, client_request_id),
+        )
+
+    insert("att-a", "ws-1", "req-1")
+    conn.commit()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        insert("att-b", "ws-1", "req-1")  # same workspace + same id -> conflict
+
+    conn.rollback()
+    insert("att-c", "ws-2", "req-1")  # different workspace -> allowed
+    conn.commit()
+
+    # NULL is exempt: any number of rows may leave client_request_id unset.
+    insert("att-d", "ws-1", None)
+    insert("att-e", "ws-1", None)
+    conn.commit()
+
+
+# --------------------------------------------------------------------------
+# Migration 12 (snapshot dirty-tracking: `mca_dirty_attachments` + 12 AFTER
+# triggers on the four projected tables; Step 1.6A.1 - per-attachment dirty
+# ids replacing the earlier `mca_snapshot_revision` counter, so the snapshot
+# publisher can rebuild incrementally rather than O(N) on every relevant
+# write).
+# --------------------------------------------------------------------------
+
+_MIGRATION_12_DIRTY_TABLES = ("attachments", "attachment_recipients", "attachment_deliveries", "attachment_events")
+_MIGRATION_12_TRIGGER_NAMES = frozenset(
+    f"trg_{table}_snapshot_dirty_{event.lower()}"
+    for table in _MIGRATION_12_DIRTY_TABLES
+    for event in ("INSERT", "UPDATE", "DELETE")
+)
+
+
+def _trigger_names(conn) -> set:
+    return {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'").fetchall()
+    }
+
+
+def _dirty_ids(conn) -> set:
+    return {
+        row[0]
+        for row in conn.execute("SELECT attachment_id FROM mca_dirty_attachments").fetchall()
+    }
+
+
+def _insert_attachment(conn, attachment_id, workspace_id="ws-1"):
+    now = int(time.time())
+    conn.execute(
+        """INSERT INTO attachments
+           (id, workspace_id, transfer_id, direction, principal_id, state,
+            created_at, hard_expires_at, download_grace_seconds)
+           VALUES (?, ?, ?, 'sent', '0123456789abcdef', 'DRAFT', ?, ?, 3600)""",
+        (attachment_id, workspace_id, f"tx-{attachment_id}", now, now + 3600),
+    )
+
+
+def test_migration_12_creates_dirty_table_and_twelve_triggers(conn):
+    migrate(conn, target_version=11)
+    assert "mca_dirty_attachments" not in _table_names(conn)
+    assert _MIGRATION_12_TRIGGER_NAMES.isdisjoint(_trigger_names(conn))
+
+    migrate(conn, target_version=12)
+    assert current_version(conn) == 12
+    assert "mca_dirty_attachments" in _table_names(conn)
+    assert _dirty_ids(conn) == set()  # seeded empty
+    assert _MIGRATION_12_TRIGGER_NAMES.issubset(_trigger_names(conn))
+
+
+def test_migration_12_records_dirty_id_only_on_projected_tables(conn):
+    """The whole point of the trigger design: a write to any of the four
+    projected tables records the affected attachment_id, but an unrelated MCA
+    write (mca_ack_quota - no trigger) records nothing, and repeated writes to
+    the same attachment coalesce to one dirty row (INSERT OR IGNORE)."""
+    migrate(conn, target_version=12)
+    assert _dirty_ids(conn) == set()
+
+    _insert_attachment(conn, "att-1")
+    conn.commit()
+    assert _dirty_ids(conn) == {"att-1"}
+
+    # Unrelated write: no trigger on mca_ack_quota -> no dirty id.
+    conn.execute(
+        "INSERT INTO mca_ack_quota (workspace_id, scope, window_start_at, count) "
+        "VALUES ('ws-1', '__global__', 1000, 1)"
+    )
+    conn.commit()
+    assert _dirty_ids(conn) == {"att-1"}
+
+    # Each of the other three projected tables records its attachment_id; a
+    # second write to the same attachment coalesces (still one dirty row).
+    conn.execute(
+        "INSERT INTO attachment_recipients (id, attachment_id, envelope_id, recipient_principal_id) "
+        "VALUES ('rcpt-1', 'att-1', 'env-1', 'rp-1')"
+    )
+    conn.commit()
+    assert _dirty_ids(conn) == {"att-1"}
+
+    conn.execute(
+        """INSERT INTO attachment_deliveries
+           (id, attachment_id, adapter_id, connector_profile_id, route_type, route_id,
+            wire_format, idempotency_key, state)
+           VALUES ('del-1', 'att-1', 'meshtastic', 'dev', 'DIRECT', '!abc12345',
+                   'MCA1_TEXT', 'idem-1', 'queued')"""
+    )
+    conn.commit()
+    assert _dirty_ids(conn) == {"att-1"}
+
+    conn.execute(
+        "INSERT INTO attachment_events (id, attachment_id, occurred_at, event_type, detail_json) "
+        "VALUES ('evt-1', 'att-1', 1, 'created', '{}')"
+    )
+    conn.commit()
+    assert _dirty_ids(conn) == {"att-1"}
+
+    # A second, distinct attachment records a second dirty id.
+    _insert_attachment(conn, "att-2")
+    conn.commit()
+    assert _dirty_ids(conn) == {"att-1", "att-2"}
+
+
+def test_migration_12_update_records_affected_id(conn):
+    """An UPDATE on a projected table records the affected attachment_id (the
+    NEW and OLD inserts coalesce to one when the id is unchanged)."""
+    migrate(conn, target_version=12)
+    _insert_attachment(conn, "att-1")
+    conn.commit()
+    conn.execute("DELETE FROM mca_dirty_attachments")  # reset
+
+    conn.execute("UPDATE attachments SET state = 'SENT' WHERE id = 'att-1'")
+    conn.commit()
+    assert _dirty_ids(conn) == {"att-1"}
+
+
+def test_migration_12_update_of_id_dirties_both_old_and_new(conn):
+    """When the id itself changes on UPDATE, *both* the old and new ids are
+    recorded - neither the old projection (now deleted) nor the new one (now
+    created) may be left stale."""
+    migrate(conn, target_version=12)
+    _insert_attachment(conn, "att-old")
+    conn.commit()
+    conn.execute("DELETE FROM mca_dirty_attachments")
+
+    conn.execute("UPDATE attachments SET id = 'att-new' WHERE id = 'att-old'")
+    conn.commit()
+    assert _dirty_ids(conn) == {"att-old", "att-new"}
+
+
+def test_migration_12_delete_records_old_id(conn):
+    """A DELETE records the removed attachment's id, so the publisher removes
+    its projection."""
+    migrate(conn, target_version=12)
+    _insert_attachment(conn, "att-del")
+    conn.commit()
+    conn.execute("DELETE FROM mca_dirty_attachments")
+
+    conn.execute("DELETE FROM attachments WHERE id = 'att-del'")
+    conn.commit()
+    assert _dirty_ids(conn) == {"att-del"}
+
+
+def test_migration_12_dirty_record_is_transactional(conn):
+    """A rolled-back relevant write must not leave a dirty id (the trigger's
+    INSERT rolls back with it), so a rollback can neither spur a rebuild nor
+    position the set to miss the next real commit."""
+    migrate(conn, target_version=12)
+    _insert_attachment(conn, "att-1")
+    conn.commit()
+    assert _dirty_ids(conn) == {"att-1"}
+
+    conn.execute("BEGIN")
+    _insert_attachment(conn, "att-rolled-back")
+    conn.rollback()
+    assert _dirty_ids(conn) == {"att-1"}  # rollback undid the trigger insert
+
+    _insert_attachment(conn, "att-2")
+    conn.commit()
+    assert _dirty_ids(conn) == {"att-1", "att-2"}  # the next commit still records
+
+
+def test_migration_12_downgrade_then_reupgrade(conn):
+    migrate(conn, target_version=12)
+    assert "mca_dirty_attachments" in _table_names(conn)
+    assert _MIGRATION_12_TRIGGER_NAMES.issubset(_trigger_names(conn))
+
+    migrate(conn, target_version=11)
+    assert "mca_dirty_attachments" not in _table_names(conn)
+    assert _MIGRATION_12_TRIGGER_NAMES.isdisjoint(_trigger_names(conn))
+
+    # Re-upgrade: the dirty table and all twelve triggers come back, seeded
+    # empty, and remain functional (a relevant write records a dirty id again).
+    migrate(conn, target_version=12)
+    assert "mca_dirty_attachments" in _table_names(conn)
+    assert _MIGRATION_12_TRIGGER_NAMES.issubset(_trigger_names(conn))
+    assert _dirty_ids(conn) == set()
+
+    _insert_attachment(conn, "att-after-reupgrade")
+    conn.commit()
+    assert _dirty_ids(conn) == {"att-after-reupgrade"}

@@ -33,8 +33,9 @@ from __future__ import annotations
 import dataclasses
 import enum
 import time
+import types
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 import requests
 
@@ -341,6 +342,23 @@ class ConnectivityMonitor:
 
     def snapshot(self) -> ConnectivitySnapshot:
         return ConnectivitySnapshot(internet=self._internet_status, relays=dict(self._relay_statuses))
+
+    def profile_snapshot(self) -> Mapping[str, ProviderProfile]:
+        """The request-thread-safe provider snapshot accessor (§3.2, the
+        "provider snapshot" read surface). Returns a read-only view of
+        `self._profile_snapshot` - no SQLite, no network, safe for a Step
+        1.6A request thread (or the facade) to enumerate registered
+        profiles for `GET /api/mca/providers` (public projection §7.13).
+
+        The backing dict is **never mutated in place** - `_refresh_profile_
+        snapshot()` builds a whole new dict and swaps it in with one
+        reference assignment (atomic under the GIL) - so the returned view
+        is a consistent, immutable point-in-time snapshot: a concurrent
+        reader sees either the complete old mapping or the complete new
+        one, never a partial update, and the read-only proxy means a
+        caller can't (accidentally or otherwise) mutate the worker's
+        published state."""
+        return types.MappingProxyType(self._profile_snapshot)
 
     def can_attempt_relay(self, provider_id: str) -> bool:
         """Advisory only (module docstring) - a miss (never checked yet)

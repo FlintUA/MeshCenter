@@ -1217,3 +1217,78 @@ def test_identity_check_accepts_the_supported_protocol_version(registry, store):
     monitor = ConnectivityMonitor(registry, session=_ScriptedSession(handler))
     snapshot = monitor.refresh(force=True)
     assert snapshot.relays[profile.provider_id].state == RelayState.ONLINE
+
+
+# ---- profile_snapshot() accessor (§3.2) -----------------------------------
+
+
+def test_profile_snapshot_is_a_read_only_view_of_registered_profiles(registry, store):
+    """The provider snapshot accessor (Step 1.6A.1, §3.2) must expose the
+    atomically-published `_profile_snapshot` as a read-only mapping that
+    request threads (or the facade) can enumerate without SQLite - and
+    which a caller cannot mutate."""
+    profile = _register(registry, store)
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse()))
+
+    snapshot = monitor.profile_snapshot()
+    assert profile.provider_id in snapshot
+    assert snapshot[profile.provider_id].display_name == "Mock Relay"
+    # Read-only: a caller cannot mutate the worker's published state.
+    with pytest.raises(TypeError):
+        snapshot[profile.provider_id] = None
+
+
+def test_profile_snapshot_is_refreshed_when_the_registry_changes(registry, store):
+    """The accessor must reflect a new registration after a refresh()
+    (the worker's single-owner SQLite pass), not a stale construction-time
+    copy."""
+    profile = _register(registry, store)
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse()))
+    assert profile.provider_id in monitor.profile_snapshot()
+
+    # A second provider registered after construction is not visible until
+    # the worker refreshes the snapshot (which refresh() does).
+    second = _register(registry, store, base_url="https://third.example.net")
+    assert second.provider_id not in monitor.profile_snapshot()
+
+    monitor.refresh()
+    assert second.provider_id in monitor.profile_snapshot()
+
+
+def test_profile_snapshot_performs_no_sqlite_call_from_the_reading_thread(registry, store):
+    """Same single-owner SQLite guarantee as evaluate_upload_decision(): the
+    accessor reads the already-published in-memory dict, never `conn`."""
+    profile = _register(registry, store)
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse()))
+
+    sql_call_threads = []
+    real_registry = monitor._provider_registry
+
+    class _TrackingRegistryProxy:
+        def __getattr__(self, name):
+            real_attr = getattr(real_registry, name)
+            if not callable(real_attr):
+                return real_attr
+
+            def _tracked(*args, **kwargs):
+                sql_call_threads.append(threading.current_thread())
+                return real_attr(*args, **kwargs)
+
+            return _tracked
+
+    monitor._provider_registry = _TrackingRegistryProxy()
+
+    result_holder = {}
+
+    def _simulated_rest_call():
+        result_holder["profile"] = monitor.profile_snapshot().get(profile.provider_id)
+
+    rest_thread = threading.Thread(target=_simulated_rest_call)
+    rest_thread.start()
+    rest_thread.join(timeout=5)
+
+    assert not rest_thread.is_alive()
+    assert result_holder["profile"] is not None
+    assert sql_call_threads == [], (
+        f"profile_snapshot() executed SQL from the calling thread: {sql_call_threads}"
+    )

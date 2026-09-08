@@ -24,6 +24,7 @@ rather than racing the daemon thread.
 
 from __future__ import annotations
 
+import logging
 import threading
 
 import pytest
@@ -594,5 +595,37 @@ def test_one_broken_command_does_not_stop_the_drain(tmp_path, monkeypatch):
         second = facade.get_command("cmd-b")
         assert second.status == STATUS_SUCCEEDED
         assert second.resource_id == "cmd-b"
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_handler_exception_text_is_not_logged(tmp_path, caplog):
+    # Step 1.6A.2 safe-logging correction: a handler exception's *text* may
+    # embed file names, Relay tokens, keys, comments or other untrusted
+    # command input, so the worker logs only the safe identifier, kind and
+    # exception class - never the message, and never a traceback.
+    marker = "SENSITIVE-MARKER-DO-NOT-LOG-9f2c"
+
+    def handler(command):
+        raise RuntimeError(f"upload failed for {marker}")
+
+    state = _state_with_handlers(tmp_path, "log", {"attachment_cancel": handler})
+    try:
+        state.facade.submit(
+            Command(command_id="cmd-log", kind="attachment_cancel", payload={}, created_at=0.0)
+        )
+
+        with caplog.at_level(logging.ERROR, logger="meshsrv.attachments.service"):
+            state.service.tick()
+
+        # The command still reaches the correct terminal state.
+        result = state.facade.get_command("cmd-log")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == COMMAND_EXECUTION_FAILED
+
+        logged = caplog.text
+        assert "RuntimeError" in logged   # exception *class* is logged
+        assert "cmd-log" in logged        # command id is logged
+        assert marker not in logged       # sensitive message is not
     finally:
         mca_runtime.reset_state_for_tests()

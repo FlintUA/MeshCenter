@@ -502,14 +502,25 @@ class AttachmentsService:
         the tick continues."""
         try:
             self._command_registry.mark_running(command.command_id)
-        except Exception:  # noqa: BLE001 - an impossible transition must not kill the tick
-            logger.exception("AttachmentsService: could not mark command %s running", command.command_id)
+        except Exception as exc:  # noqa: BLE001 - an impossible transition must not kill the tick
+            # Sanitized: no exception text/traceback (the exception may be
+            # influenced by command input) - log only safe identifiers + class.
+            logger.error(
+                "AttachmentsService: could not mark command %s (%s) running: %s",
+                command.command_id, command.kind, type(exc).__name__,
+            )
             self._recover_internal_failure(command)
             return
         try:
             outcome = self._dispatcher.dispatch(command)
-        except Exception:  # noqa: BLE001 - a raising handler (or an invalid outcome) must not stop the drain
-            logger.exception("AttachmentsService: command handler raised for %s", command.command_id)
+        except Exception as exc:  # noqa: BLE001 - a raising handler (or an invalid outcome) must not stop the drain
+            # Sanitized: a handler exception's text may embed file names,
+            # Relay tokens, keys, comments or other untrusted command input -
+            # log only the safe identifier, kind and exception class.
+            logger.error(
+                "AttachmentsService: command %s (%s) handler raised %s",
+                command.command_id, command.kind, type(exc).__name__,
+            )
             self._record_failed(command, COMMAND_EXECUTION_FAILED)
             return
         if not isinstance(outcome, CommandOutcome):
@@ -539,8 +550,11 @@ class AttachmentsService:
             self._command_registry.mark_succeeded(
                 command.command_id, resource_id=outcome.resource_id, result=outcome.result
             )
-        except Exception:  # noqa: BLE001 - a transition error must not kill the tick
-            logger.exception("AttachmentsService: could not mark command %s succeeded", command.command_id)
+        except Exception as exc:  # noqa: BLE001 - a transition error must not kill the tick
+            logger.error(
+                "AttachmentsService: could not mark command %s (%s) succeeded: %s",
+                command.command_id, command.kind, type(exc).__name__,
+            )
             self._recover_internal_failure(command)
 
     def _record_failed(self, command: Command, error_code: str) -> None:
@@ -553,16 +567,20 @@ class AttachmentsService:
         already-terminal entry."""
         try:
             self._command_registry.mark_failed(command.command_id, error_code=error_code)
-        except Exception:  # noqa: BLE001 - a transition error must not kill the tick
-            logger.exception("AttachmentsService: could not mark command %s failed", command.command_id)
+        except Exception as exc:  # noqa: BLE001 - a transition error must not kill the tick
+            logger.error(
+                "AttachmentsService: could not mark command %s (%s) failed: %s",
+                command.command_id, command.kind, type(exc).__name__,
+            )
             self._recover_internal_failure(command)
 
     def _recover_internal_failure(self, command: Command) -> None:
         """Invoke the registry's internal-recovery fail-safe (final correction
         pass). It terminalizes a `queued`/`running` entry (or materializes a
         missing one) to `command_execution_failed` under the registry's own
-        lock, and never overwrites an already-terminal result. It logs only the
-        safe identifier (command_id) and exception class, never the payload.
+        lock, and never overwrites an already-terminal result. It logs only
+        safe identifiers (command_id and the enumerated kind) and the
+        exception class, never the exception text, traceback, or payload.
 
         A failure *here* means the registry itself is corrupt - there is
         nothing left to record against - so the worker logs it and survives
@@ -571,10 +589,11 @@ class AttachmentsService:
         and that is documented rather than papered over."""
         try:
             self._command_registry.record_internal_failure(command)
-        except Exception:  # noqa: BLE001 - registry corruption; survive, do not raise
-            logger.exception(
-                "AttachmentsService: could not record internal failure for command %s "
-                "(registry corruption)", command.command_id,
+        except Exception as exc:  # noqa: BLE001 - registry corruption; survive, do not raise
+            logger.error(
+                "AttachmentsService: could not record internal failure for command %s (%s) "
+                "(registry corruption): %s",
+                command.command_id, command.kind, type(exc).__name__,
             )
 
     def _refresh_snapshot(self) -> None:

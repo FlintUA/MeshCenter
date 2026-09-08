@@ -34,23 +34,37 @@ No-secret discipline (§11): every response is built by an explicit
 allowlist serializer. No `dataclasses.asdict()`, no `__dict__`, no generic
 encoder. Upload tokens, token filenames, private-key filenames, raw public
 key bytes, filesystem paths, `ContentDescriptor.locator`, ciphertext, and
-internal SQLite fields never reach the wire. `handle_errors` (server.py)
-would otherwise turn an uncaught exception into a 500 envelope that leaks
-`str(e)`, so the readiness-gated reads catch `FacadeNotReady` themselves
-and the id/query validation returns the documented 400/404 codes directly.
+internal SQLite fields never reach the wire.
+
+Error boundary (§11 "no secret logging"): the project-wide `handle_errors`
+(server.py) turns an uncaught exception into a 500 envelope that leaks
+`str(e)` and, in debug mode, a traceback. Every handler here is therefore
+additionally wrapped in a local `_mca_error_boundary` (innermost, beneath
+`handle_errors`) that maps `FacadeNotReady` to the 503 `mca_not_ready`
+envelope and any other unexpected exception to a clean 500 `internal_error`
+envelope - no exception text, class name, traceback, path, or identifier in
+the response, and only the handler name + exception class logged. The
+legacy wrapper never sees an exception, so it cannot re-wrap or leak one.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from collections.abc import Mapping
+from functools import wraps
 
 from flask import jsonify, request
 
 from meshsrv.attachments import mca_runtime, receiver, sender
 from meshsrv.attachments.delivery.meshtastic import MESHTASTIC_TEXT_MAX_PAYLOAD_BYTES
 from meshsrv.attachments.facade import FacadeNotReady
+from meshsrv.attachments.provider_registry import (
+    ProviderRegistryError,
+    decode_provider_id,
+    encode_provider_id,
+)
 from meshsrv.attachments.snapshots import (
     serialize_attachment_public,
     serialize_delivery,
@@ -58,9 +72,16 @@ from meshsrv.attachments.snapshots import (
 )
 from meshsrv.connectivity_monitor import RelayState, evaluate_upload_readiness
 
+_log = logging.getLogger("meshsrv.attachments.api")
+
 # ---- id shapes (§7.9: attachment_id and command_id are both uuid4().hex) --
 
 _HEX32_RE = re.compile(r"^[0-9a-f]{32}$")
+
+# Strict ASCII-decimal shape for the numeric query params (§7.1): digits
+# only, no sign, no whitespace, no leading/trailing junk. `fullmatch` (not
+# `match`) so a trailing newline or space can never sneak past.
+_ASCII_DECIMAL_RE = re.compile(r"[0-9]+")
 
 
 def _is_hex32(value: str) -> bool:
@@ -97,12 +118,17 @@ _FILTER_ERROR_STATES = frozenset(
 _VALID_DIRECTIONS = frozenset({"sent", "received", "all"})
 _VALID_FILTERS = frozenset({"pending", "errors", "saved", "all"})
 
+_LIST_LIMIT_DEFAULT = 100
+_LIST_LIMIT_MIN = 1
+_LIST_LIMIT_MAX = 500
+
 
 # ---- small response helpers ----------------------------------------------
 
 
 def _not_ready():
-    """The one 503 every handler returns before the MCA runtime exists."""
+    """The one 503 every handler returns before the MCA runtime exists (or a
+    snapshot-backed read raises `FacadeNotReady`)."""
     return jsonify({
         "ok": False,
         "error": "MCAttach service is not ready",
@@ -114,50 +140,113 @@ def _json_error(error_code: str, message: str):
     return jsonify({"ok": False, "error": message, "error_code": error_code})
 
 
-def _parse_int(raw, *, default, minimum=None, maximum=None) -> int:
-    """Parse an integer query param, falling back to `default` on anything
-    unparseable and clamping into `[minimum, maximum]`. Pagination bounds
-    are best-effort (§7.1 documents no error code for a malformed
-    limit/offset), so a garbage value degrades to the default rather than
-    inventing a 400."""
-    if raw is None:
-        return default
+def _internal_error_response():
+    """The one sanitized 500 an unexpected exception maps to (§11): a stable
+    public message + `internal_error` - never `str(e)`, a class name, a
+    traceback, a path, or an identifier."""
+    return jsonify({
+        "ok": False,
+        "error": "Internal server error",
+        "error_code": "internal_error",
+    }), 500
+
+
+def _mca_error_boundary(fn):
+    """The local sanitized exception boundary for every MCAttach read
+    handler. It sits *beneath* the project-wide `handle_errors` decorator,
+    so it sees (and fully handles) every exception first: `handle_errors`
+    then only ever returns the clean response, never its own leaky 500.
+
+    `FacadeNotReady` -> 503 `mca_not_ready`; anything else -> 500
+    `internal_error`, logging only the handler name and the exception class
+    (never `str(exc)`, args, `exc_info`, the request body, the query string,
+    or any identifier)."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except FacadeNotReady:
+            return _not_ready()
+        except Exception as exc:  # noqa: BLE001 - this is the sanitized boundary itself
+            _log.error(
+                "MCAttach read endpoint '%s' raised %s", fn.__name__, type(exc).__name__
+            )
+            return _internal_error_response()
+
+    return wrapper
+
+
+def _parse_ascii_int(raw) -> int:
+    """Parse a strict ASCII decimal string. Raises `ValueError` for anything
+    that is not exactly ASCII digits - no `+`/`-` sign, no whitespace, no
+    `.`, no empty string. Callers decide bounds and the error envelope."""
+    if not isinstance(raw, str) or _ASCII_DECIMAL_RE.fullmatch(raw) is None:
+        raise ValueError("not an ASCII decimal integer")
+    return int(raw)
+
+
+def _parse_limit_offset():
+    """Strict pagination for `GET /api/attachments` (§7.1). An absent
+    `limit`/`offset` keeps the documented defaults (100 / 0); a present value
+    must be a strict ASCII decimal integer within bounds (`limit` 1..500,
+    `offset` >= 0), otherwise a 400 `invalid_pagination` - never silently
+    clamped or coerced to a default, and never a partially-executed query.
+
+    Returns `(limit, offset, None)` or `(None, None, (body, status))`."""
+    limit_raw = request.args.get("limit")
+    offset_raw = request.args.get("offset")
     try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return default
-    if minimum is not None and value < minimum:
-        return minimum
-    if maximum is not None and value > maximum:
-        return maximum
-    return value
+        limit = _LIST_LIMIT_DEFAULT if limit_raw is None else _parse_ascii_int(limit_raw)
+        offset = 0 if offset_raw is None else _parse_ascii_int(offset_raw)
+    except ValueError:
+        return None, None, (_json_error("invalid_pagination", "invalid pagination"), 400)
+    if not (_LIST_LIMIT_MIN <= limit <= _LIST_LIMIT_MAX):
+        return None, None, (_json_error("invalid_pagination", "invalid pagination"), 400)
+    return limit, offset, None
 
 
-def _parse_optional_int(raw):
-    """Parse an optional non-negative integer query param. Returns `None`
-    when absent/empty, the int when valid, and raises `ValueError` when
-    present but not a valid non-negative integer (a caller bug worth a
-    400, not a silent skip)."""
-    if raw is None or raw == "":
+def _parse_optional_query_int(raw, *, minimum: int):
+    """Parse an optional, non-negative-by-default integer query param. Returns
+    `None` when absent; the int when a valid strict ASCII decimal >= `minimum`;
+    raises `ValueError` when present but blank/malformed/signed/fractional, or
+    below `minimum` (a caller bug worth a 400, not a silent skip)."""
+    if raw is None:
         return None
-    value = int(raw)
-    if value < 0:
-        raise ValueError("must be non-negative")
+    value = _parse_ascii_int(raw)
+    if value < minimum:
+        raise ValueError(f"must be >= {minimum}")
     return value
+
+
+def _validate_provider_id(value):
+    """Canonical-provider-id validation shared by the two provider routes
+    (§7.1). Decodes with the registry's own `decode_provider_id()` (the one
+    existing encoding implementation - no second, hand-written one) and
+    requires canonical round-trip equality (`encode_provider_id(decode(v))
+    == v`), so padded, wrong-length, wrong-alphabet, and non-canonical
+    spellings are all rejected before any snapshot lookup or readiness
+    evaluation.
+
+    Returns `None` on success, or a `(body, status)` 400 `invalid_provider_id`
+    response on a malformed id."""
+    try:
+        decoded = decode_provider_id(value)
+    except ProviderRegistryError:
+        return _json_error("invalid_provider_id", "invalid provider id"), 400
+    if encode_provider_id(decoded) != value:
+        return _json_error("invalid_provider_id", "invalid provider id"), 400
+    return None
 
 
 def _resolve_attachment(facade, attachment_id):
     """Validate `attachment_id` and look it up in the published snapshot.
     Returns `(record, None)` on success, or `(None, (body, status))` with a
-    fully-built response on a validation/not-found/not-ready error. Catches
-    `FacadeNotReady` itself so `handle_errors` can never leak exception
-    text into a 500 for the normal "service still starting" case."""
+    fully-built response on a validation/not-found error. `FacadeNotReady`
+    is left to propagate to `_mca_error_boundary` (the single 503 mapping),
+    rather than being caught here."""
     if not _is_hex32(attachment_id):
         return None, (_json_error("invalid_attachment_id", "invalid attachment id"), 400)
-    try:
-        record = facade.get_attachment(attachment_id)
-    except FacadeNotReady:
-        return None, (_not_ready()[0], 503)
+    record = facade.get_attachment(attachment_id)
     if record is None:
         return None, (_json_error("attachment_not_found", "attachment not found"), 404)
     return record, None
@@ -275,6 +364,7 @@ def register_attachments_routes(app, handle_errors):
 
     @app.route("/api/attachments", methods=["GET"])
     @handle_errors
+    @_mca_error_boundary
     def list_attachments():
         facade = _facade()
         if facade is None:
@@ -292,13 +382,12 @@ def register_attachments_routes(app, handle_errors):
         if filter_ not in _VALID_FILTERS:
             return _json_error("invalid_filter", "invalid filter"), 400
 
-        limit = _parse_int(request.args.get("limit"), default=100, minimum=1, maximum=500)
-        offset = _parse_int(request.args.get("offset"), default=0, minimum=0)
+        limit, offset, err = _parse_limit_offset()
+        if err is not None:
+            body, status = err
+            return body, status
 
-        try:
-            snapshot = facade.attachments_snapshot()
-        except FacadeNotReady:
-            return _not_ready()
+        snapshot = facade.attachments_snapshot()
 
         matching = []
         for record in snapshot.records:
@@ -324,6 +413,7 @@ def register_attachments_routes(app, handle_errors):
 
     @app.route("/api/attachments/<attachment_id>", methods=["GET"])
     @handle_errors
+    @_mca_error_boundary
     def get_attachment_detail(attachment_id):
         facade = _facade()
         if facade is None:
@@ -342,6 +432,7 @@ def register_attachments_routes(app, handle_errors):
 
     @app.route("/api/attachments/<attachment_id>/deliveries", methods=["GET"])
     @handle_errors
+    @_mca_error_boundary
     def get_attachment_deliveries(attachment_id):
         facade = _facade()
         if facade is None:
@@ -359,16 +450,21 @@ def register_attachments_routes(app, handle_errors):
 
     @app.route("/api/mca/delivery-adapters", methods=["GET"])
     @handle_errors
+    @_mca_error_boundary
     def mca_delivery_adapters():
         facade = _facade()
         if facade is None:
             return _not_ready()
 
-        # Read-only: the one real adapter (delivery/meshtastic.py) reports
-        # `connector_state`/`ack_semantics` from the *live* radio transport,
-        # which a read endpoint must not touch (§7.1 is a static capability
-        # snapshot, not a radio probe). This is the documented §7.1 shape,
-        # with the payload ceiling taken from the adapter's own constant.
+        # Read-only: the real adapter's `connector_state` (READY/DEGRADED/
+        # UNAVAILABLE) is derived from the *live* radio transport's
+        # `get_connection_info()`, which a request thread must not touch.
+        # There is no request-thread-safe, immutable snapshot of the local
+        # radio's connection state (and internet/Relay state must never be
+        # conflated with it), so the read endpoint reports UNKNOWN rather
+        # than fabricating READY. The remaining fields are static
+        # capabilities (§7.1), with the payload ceiling from the adapter's
+        # own constant.
         return jsonify({
             "ok": True,
             "adapters": [{
@@ -381,13 +477,14 @@ def register_attachments_routes(app, handle_errors):
                     "supports_channel": False,
                     "supports_incoming": True,
                     "ack_semantics": "CONFIRMED",
-                    "connector_state": "READY",
+                    "connector_state": "UNKNOWN",
                 },
             }],
         })
 
     @app.route("/api/mca/providers", methods=["GET"])
     @handle_errors
+    @_mca_error_boundary
     def mca_providers():
         facade = _facade()
         if facade is None:
@@ -403,10 +500,16 @@ def register_attachments_routes(app, handle_errors):
 
     @app.route("/api/mca/providers/<provider_id>", methods=["GET"])
     @handle_errors
+    @_mca_error_boundary
     def mca_provider(provider_id):
         facade = _facade()
         if facade is None:
             return _not_ready()
+
+        err = _validate_provider_id(provider_id)
+        if err is not None:
+            body, status = err
+            return body, status
 
         profile = facade.provider_snapshot().get(provider_id)
         if profile is None:
@@ -417,14 +520,24 @@ def register_attachments_routes(app, handle_errors):
 
     @app.route("/api/mca/providers/<provider_id>/upload-readiness", methods=["GET"])
     @handle_errors
+    @_mca_error_boundary
     def mca_provider_upload_readiness(provider_id):
         facade = _facade()
         if facade is None:
             return _not_ready()
 
+        err = _validate_provider_id(provider_id)
+        if err is not None:
+            body, status = err
+            return body, status
+
         try:
-            ciphertext_bytes = _parse_optional_int(request.args.get("ciphertext_bytes"))
-            requested_ttl_seconds = _parse_optional_int(request.args.get("requested_ttl_seconds"))
+            ciphertext_bytes = _parse_optional_query_int(
+                request.args.get("ciphertext_bytes"), minimum=0
+            )
+            requested_ttl_seconds = _parse_optional_query_int(
+                request.args.get("requested_ttl_seconds"), minimum=1
+            )
         except ValueError:
             return _json_error("invalid_query", "invalid upload-readiness query parameter"), 400
 
@@ -442,6 +555,7 @@ def register_attachments_routes(app, handle_errors):
 
     @app.route("/api/mca/connectivity", methods=["GET"])
     @handle_errors
+    @_mca_error_boundary
     def mca_connectivity():
         facade = _facade()
         if facade is None:
@@ -462,6 +576,7 @@ def register_attachments_routes(app, handle_errors):
 
     @app.route("/api/mca/identity", methods=["GET"])
     @handle_errors
+    @_mca_error_boundary
     def mca_identity():
         facade = _facade()
         if facade is None:
@@ -471,6 +586,7 @@ def register_attachments_routes(app, handle_errors):
 
     @app.route("/api/mca/commands/<command_id>", methods=["GET"])
     @handle_errors
+    @_mca_error_boundary
     def mca_command(command_id):
         facade = _facade()
         if facade is None:

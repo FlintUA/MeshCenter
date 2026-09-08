@@ -17,12 +17,21 @@ network/tick (the endpoints only read facade snapshots); the service is
 first snapshot publish; every error uses the documented 400/404 codes; and
 no secret (upload token, private-key filename, raw public key bytes,
 locator/ciphertext/internal fields) reaches the wire.
+
+It also pins the five review corrections to Step 1.6A.2: delivery-adapters
+never fabricates `connector_state: READY` (§ UNKNOWN); pagination is strict
+(`invalid_pagination`, never clamped); provider ids are canonical-validated
+(`invalid_provider_id`); every route has a sanitized exception boundary
+(`internal_error`, no `str(e)`/traceback/marker); and `requested_ttl_seconds`
+must be a positive ASCII decimal (`invalid_query`).
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import threading
+import traceback
 from functools import wraps
 from types import SimpleNamespace
 
@@ -34,6 +43,11 @@ from meshsrv.attachments import mca_runtime
 from meshsrv.attachments.command_registry import CommandResult, STATUS_SUCCEEDED
 from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
 from meshsrv.attachments.facade import FacadeNotReady
+from meshsrv.attachments.provider_registry import (
+    ProviderRegistryError,
+    decode_provider_id,
+    encode_provider_id,
+)
 from meshsrv.attachments.snapshots import (
     AttachmentRecord,
     AttachmentsSnapshot,
@@ -54,31 +68,61 @@ from meshsrv.connectivity_monitor import (
 ATTACHMENT_ID = "0" * 32
 COMMAND_ID = "f" * 32
 
+# Canonical provider ids, derived from the registry's own encoder (the one
+# source of truth for what "canonical Base64URL" means). PROVIDER_ID is
+# registered in the fakes; UNREGISTERED_PROVIDER_ID is canonical but never
+# registered, so it exercises the 404 / profile_not_found paths.
+PROVIDER_ID = encode_provider_id(b"\x00" * 8)
+UNREGISTERED_PROVIDER_ID = encode_provider_id(b"\x01" * 8)
+
+# Malformed / non-canonical provider ids that must all 400
+# `invalid_provider_id` on both provider routes (padded, wrong-length,
+# invalid-alphabet, and non-canonical-trailing-bits spellings).
+MALFORMED_PROVIDER_IDS = [
+    PROVIDER_ID + "=",   # padded (non-canonical spelling)
+    "AAAA",              # wrong length (decodes to 3 bytes, not 8)
+    "AAAAAAAAAAAA",      # wrong length (decodes to 9 bytes, not 8)
+    "AAAAAAAAAAB",       # non-canonical trailing bits
+    "AAAAAAAAAA!",       # invalid alphabet character
+]
+
 
 # ---- minimal handle_errors (mirrors server.py's behaviour) ----------------
 
-def _handle_errors(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        try:
-            return f(*args, **kwargs)
-        except Exception as e:  # pragma: no cover - safety net only
-            return jsonify({"ok": False, "error": str(e), "traceback": None}), 500
+def _make_handle_errors(app):
+    """Mirror server.py's `handle_errors`, including the debug-mode traceback
+    it would emit for an uncaught exception. The local `_mca_error_boundary`
+    must catch everything first, so this leaky safety net is never reached."""
+    def _handle_errors(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            try:
+                return f(*args, **kwargs)
+            except Exception as e:  # pragma: no cover - safety net only
+                return jsonify({
+                    "ok": False,
+                    "error": str(e),
+                    "traceback": traceback.format_exc() if app.debug else None,
+                }), 500
 
-    return decorated
+        return decorated
+
+    return _handle_errors
 
 
-def _build_client():
+def _build_client(debug=False):
     app = Flask(__name__)
     app.config["TESTING"] = True
-    register_attachments_routes(app, _handle_errors)
+    if debug:
+        app.debug = True
+    register_attachments_routes(app, _make_handle_errors(app))
     return app.test_client()
 
 
-def _client(monkeypatch, facade):
+def _client(monkeypatch, facade, debug=False):
     """A Flask test client whose per-request facade lookup returns `facade`."""
     monkeypatch.setattr(mca_runtime, "get_attachments_facade", lambda: facade)
-    return _build_client()
+    return _build_client(debug=debug)
 
 
 # ---- fake facade + record builders ---------------------------------------
@@ -96,7 +140,7 @@ def _attachment(id=ATTACHMENT_ID, direction="sent", state="SENT", **overrides):
         created_at=100.0,
         hard_expires_at=200.0,
         download_grace_seconds=3600,
-        provider_id="AbCdEfGhIjK",
+        provider_id=PROVIDER_ID,
         saved=False,
         primary_delivery_id=None,
         error_code=None,
@@ -167,9 +211,25 @@ class _FakeFacade:
         return self._identity
 
 
+class _RaisingFacade(_FakeFacade):
+    """A fake whose `provider_snapshot()`/`identity_snapshot()` raise with a
+    caller-supplied secret marker, to prove the sanitized boundary never lets
+    the exception text reach the wire or the log."""
+
+    def __init__(self, marker="SECRET_MARKER_x7k3", **kwargs):
+        super().__init__(**kwargs)
+        self._marker = marker
+
+    def provider_snapshot(self):
+        raise RuntimeError(f"boom {self._marker}")
+
+    def identity_snapshot(self):
+        raise ValueError(f"leak {self._marker}")
+
+
 def _provider(**overrides):
     base = dict(
-        provider_id="AbCdEfGhIjK",
+        provider_id=PROVIDER_ID,
         display_name="Example Relay",
         origin="https://relay.example.net",
         service_public_key=b"K" * 32,
@@ -195,7 +255,7 @@ def _provider(**overrides):
 
 def _relay_status(**overrides):
     base = dict(
-        provider_id="AbCdEfGhIjK",
+        provider_id=PROVIDER_ID,
         state=RelayState.ONLINE,
         upload_readiness=UploadReadiness.READY,
         checked_at=300.0,
@@ -252,8 +312,8 @@ _ALL_PATHS = [
     f"/api/attachments/{ATTACHMENT_ID}/deliveries",
     "/api/mca/delivery-adapters",
     "/api/mca/providers",
-    "/api/mca/providers/AbCdEfGhIjK",
-    "/api/mca/providers/AbCdEfGhIjK/upload-readiness",
+    f"/api/mca/providers/{PROVIDER_ID}",
+    f"/api/mca/providers/{PROVIDER_ID}/upload-readiness",
     "/api/mca/connectivity",
     "/api/mca/identity",
     f"/api/mca/commands/{COMMAND_ID}",
@@ -301,7 +361,7 @@ def test_registry_and_connectivity_endpoints_are_not_readiness_gated(monkeypatch
     assert c.get("/api/mca/connectivity").status_code == 200
     assert c.get("/api/mca/delivery-adapters").status_code == 200
     assert c.get(f"/api/mca/commands/{COMMAND_ID}").status_code == 404
-    assert c.get("/api/mca/providers/AbCdEfGhIjK/upload-readiness").status_code == 200
+    assert c.get(f"/api/mca/providers/{PROVIDER_ID}/upload-readiness").status_code == 200
 
 
 def test_real_runtime_serves_empty_reads_after_startup(tmp_path):
@@ -356,7 +416,7 @@ def test_routes_reject_non_get_methods(monkeypatch):
     c = _client(monkeypatch, _FakeFacade())
     assert c.post("/api/attachments").status_code == 405
     assert c.put("/api/mca/identity").status_code == 405
-    assert c.delete("/api/mca/providers/AbCdEfGhIjK").status_code == 405
+    assert c.delete(f"/api/mca/providers/{PROVIDER_ID}").status_code == 405
 
 
 # ---- GET /api/attachments -------------------------------------------------
@@ -459,15 +519,49 @@ def test_list_total_is_before_pagination(monkeypatch):
     assert body["total"] == 5  # total is the full filtered count, not the page
 
 
-def test_list_limit_and_offset_clamping(monkeypatch):
+@pytest.mark.parametrize(
+    "query",
+    [
+        "limit=0",      # below minimum
+        "limit=501",    # above maximum
+        "limit=abc",    # non-numeric
+        "limit=-1",     # signed
+        "limit=5.5",    # fractional
+        "limit=+5",     # signed
+        "limit=",       # blank (present but empty)
+        "offset=-1",    # signed
+        "offset=abc",   # non-numeric
+        "offset=5.5",   # fractional
+        "offset=+1",    # signed
+        "offset=",      # blank
+    ],
+)
+def test_list_invalid_pagination(monkeypatch, query):
+    # A present-but-malformed or out-of-range limit/offset is a hard 400
+    # `invalid_pagination`, never a clamp or a silent default.
     facade = _FakeFacade(snapshot=_snapshot([_attachment(id=f"{i:032x}") for i in range(3)]))
     c = _client(monkeypatch, facade)
-    # limit above 500 clamps to 500; negative offset clamps to 0; garbage
-    # falls back to defaults (100) rather than a 400.
-    body = c.get("/api/attachments?limit=9999&offset=-5").get_json()
+    resp = c.get(f"/api/attachments?{query}")
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_pagination"
+
+
+@pytest.mark.parametrize(
+    "query,expected",
+    [
+        ("", 3),                 # defaults (limit=100, offset=0)
+        ("limit=1", 1),          # lower bound
+        ("limit=500", 3),        # upper bound accepted (only 3 records exist)
+        ("offset=0", 3),         # offset lower bound
+        ("limit=2&offset=1", 2),  # page 2 of 3
+    ],
+)
+def test_list_pagination_valid_boundaries(monkeypatch, query, expected):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(id=f"{i:032x}") for i in range(3)]))
+    c = _client(monkeypatch, facade)
+    body = c.get(f"/api/attachments?{query}" if query else "/api/attachments").get_json()
     assert body["total"] == 3
-    assert len(body["attachments"]) == 3
-    assert c.get("/api/attachments?limit=abc").status_code == 200
+    assert len(body["attachments"]) == expected
 
 
 @pytest.mark.parametrize(
@@ -562,23 +656,37 @@ def test_deliveries_invalid_and_missing(monkeypatch):
 # ---- GET /api/mca/delivery-adapters --------------------------------------
 
 
-def test_delivery_adapters_static_shape(monkeypatch):
+def test_delivery_adapters_reports_unknown_connector_state(monkeypatch):
+    # The read endpoint must NOT fabricate readiness: the real adapter's
+    # connector_state derives from the live radio transport's
+    # `get_connection_info()` (not request-thread-safe), and there is no
+    # immutable snapshot of it. So it reports UNKNOWN, never READY.
     c = _client(monkeypatch, _FakeFacade())
     body = c.get("/api/mca/delivery-adapters").get_json()
     assert body["ok"] is True
-    assert body["adapters"] == [{
-        "adapter_id": "meshtastic",
-        "connector_profile_id": "meshtastic",
-        "capabilities": {
-            "wire_formats": ["MCA1_TEXT"],
-            "max_payload_bytes": 180,
-            "supports_direct": True,
-            "supports_channel": False,
-            "supports_incoming": True,
-            "ack_semantics": "CONFIRMED",
-            "connector_state": "READY",
-        },
-    }]
+    adapter = body["adapters"][0]
+    assert adapter["adapter_id"] == "meshtastic"
+    assert adapter["connector_profile_id"] == "meshtastic"
+    assert adapter["capabilities"]["connector_state"] == "UNKNOWN"
+    # The static capability fields are still present and unchanged.
+    assert adapter["capabilities"]["wire_formats"] == ["MCA1_TEXT"]
+    assert adapter["capabilities"]["max_payload_bytes"] == 180
+    assert adapter["capabilities"]["ack_semantics"] == "CONFIRMED"
+
+
+def test_delivery_adapters_does_not_derive_state_from_connectivity(monkeypatch):
+    # Internet/Relay status must never be conflated with the adapter's
+    # connector_state: even with the relay ONLINE and internet up, the read
+    # endpoint still reports UNKNOWN (no request-thread-safe radio state).
+    relay = _relay_status()
+    facade = _FakeFacade(
+        connectivity=ConnectivitySnapshot(
+            internet=InternetStatus.ONLINE, relays={PROVIDER_ID: relay}
+        )
+    )
+    c = _client(monkeypatch, facade)
+    adapter = c.get("/api/mca/delivery-adapters").get_json()["adapters"][0]
+    assert adapter["capabilities"]["connector_state"] == "UNKNOWN"
 
 
 # ---- GET /api/mca/providers ----------------------------------------------
@@ -593,9 +701,9 @@ def test_providers_list_joins_connectivity_without_raw_key(monkeypatch):
     provider = _provider()
     relay = _relay_status()
     facade = _FakeFacade(
-        providers={"AbCdEfGhIjK": provider},
+        providers={PROVIDER_ID: provider},
         connectivity=ConnectivitySnapshot(
-            internet=InternetStatus.ONLINE, relays={"AbCdEfGhIjK": relay}
+            internet=InternetStatus.ONLINE, relays={PROVIDER_ID: relay}
         ),
     )
     c = _client(monkeypatch, facade)
@@ -604,7 +712,7 @@ def test_providers_list_joins_connectivity_without_raw_key(monkeypatch):
     assert body["ok"] is True
     assert len(body["providers"]) == 1
     item = body["providers"][0]
-    assert item["provider_id"] == "AbCdEfGhIjK"
+    assert item["provider_id"] == PROVIDER_ID
     assert item["display_name"] == "Example Relay"
     assert item["service_key_fingerprint"] == hashlib.sha256(b"K" * 32).hexdigest()
     assert item["state"] == "online"
@@ -620,7 +728,7 @@ def test_providers_list_falls_back_when_no_relay_status(monkeypatch):
     # No RelayStatus yet (monitor never refreshed) -> state "unknown" and
     # upload_readiness derived from config only; latency/error are null.
     provider = _provider(upload_token_configured=False)
-    facade = _FakeFacade(providers={"AbCdEfGhIjK": provider})
+    facade = _FakeFacade(providers={PROVIDER_ID: provider})
     c = _client(monkeypatch, facade)
     item = c.get("/api/mca/providers").get_json()["providers"][0]
     assert item["state"] == "unknown"
@@ -636,17 +744,17 @@ def test_provider_detail_projection_omits_live_latency_fields(monkeypatch):
     provider = _provider()
     relay = _relay_status()
     facade = _FakeFacade(
-        providers={"AbCdEfGhIjK": provider},
+        providers={PROVIDER_ID: provider},
         connectivity=ConnectivitySnapshot(
-            internet=InternetStatus.ONLINE, relays={"AbCdEfGhIjK": relay}
+            internet=InternetStatus.ONLINE, relays={PROVIDER_ID: relay}
         ),
     )
     c = _client(monkeypatch, facade)
-    body = c.get("/api/mca/providers/AbCdEfGhIjK").get_json()
+    body = c.get(f"/api/mca/providers/{PROVIDER_ID}").get_json()
 
     assert body["ok"] is True
     item = body["provider"]
-    assert item["provider_id"] == "AbCdEfGhIjK"
+    assert item["provider_id"] == PROVIDER_ID
     assert item["state"] == "online"
     assert item["upload_readiness"] == "ready"
     # The detail projection is §7.13 only - no live latency/error join.
@@ -655,11 +763,53 @@ def test_provider_detail_projection_omits_live_latency_fields(monkeypatch):
     assert "service_public_key" not in item
 
 
-def test_provider_detail_not_found(monkeypatch):
+# ---- provider id canonical validation (both provider routes) -------------
+
+
+@pytest.mark.parametrize("path", [
+    f"/api/mca/providers/{PROVIDER_ID}",
+    f"/api/mca/providers/{PROVIDER_ID}/upload-readiness",
+])
+def test_provider_id_canonical_known(monkeypatch, path):
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider()},
+        connectivity=ConnectivitySnapshot(internet=InternetStatus.UNKNOWN, relays={}),
+        decisions={PROVIDER_ID: UploadDecision(ready=True, reason=None, detail=None)},
+    )
+    c = _client(monkeypatch, facade)
+    assert c.get(path).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path,status,error_code",
+    [
+        (f"/api/mca/providers/{UNREGISTERED_PROVIDER_ID}", 404, "provider_not_found"),
+        (f"/api/mca/providers/{UNREGISTERED_PROVIDER_ID}/upload-readiness", 200, "profile_not_found"),
+    ],
+)
+def test_provider_id_canonical_unknown(monkeypatch, path, status, error_code):
+    # A canonical-but-unregistered id is a well-formed id that resolves to
+    # nothing: 404 on detail, and a 200 ready:false profile_not_found on
+    # upload-readiness (the readiness eval reports the miss as a rejection).
     c = _client(monkeypatch, _FakeFacade())
-    resp = c.get("/api/mca/providers/never-registered")
-    assert resp.status_code == 404
-    assert resp.get_json()["error_code"] == "provider_not_found"
+    resp = c.get(path)
+    assert resp.status_code == status
+    if status == 404:
+        assert resp.get_json()["error_code"] == error_code
+    else:
+        body = resp.get_json()
+        assert body["ok"] is True
+        assert body["ready"] is False
+        assert body["reason"] == error_code
+
+
+@pytest.mark.parametrize("provider_id", MALFORMED_PROVIDER_IDS)
+@pytest.mark.parametrize("suffix", ["", "/upload-readiness"])
+def test_provider_id_malformed(monkeypatch, provider_id, suffix):
+    c = _client(monkeypatch, _FakeFacade())
+    resp = c.get(f"/api/mca/providers/{provider_id}{suffix}")
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_provider_id"
 
 
 # ---- GET /api/mca/providers/{id}/upload-readiness ------------------------
@@ -667,35 +817,74 @@ def test_provider_detail_not_found(monkeypatch):
 
 def test_upload_readiness_ready(monkeypatch):
     facade = _FakeFacade(
-        decisions={"AbCdEfGhIjK": UploadDecision(ready=True, reason=None, detail=None)}
+        decisions={PROVIDER_ID: UploadDecision(ready=True, reason=None, detail=None)}
     )
     c = _client(monkeypatch, facade)
-    body = c.get("/api/mca/providers/AbCdEfGhIjK/upload-readiness").get_json()
+    body = c.get(f"/api/mca/providers/{PROVIDER_ID}/upload-readiness").get_json()
     assert body == {"ok": True, "ready": True, "reason": None, "detail": None}
 
 
 def test_upload_readiness_rejected_with_reason(monkeypatch):
     facade = _FakeFacade(
         decisions={
-            "AbCdEfGhIjK": UploadDecision(
+            PROVIDER_ID: UploadDecision(
                 ready=False, reason=UploadRejectionReason.CIPHERTEXT_TOO_LARGE, detail=None
             )
         }
     )
     c = _client(monkeypatch, facade)
-    body = c.get("/api/mca/providers/AbCdEfGhIjK/upload-readiness").get_json()
+    body = c.get(f"/api/mca/providers/{PROVIDER_ID}/upload-readiness").get_json()
     assert body["ok"] is True
     assert body["ready"] is False
     assert body["reason"] == "ciphertext_too_large"
 
 
-def test_upload_readiness_malformed_query(monkeypatch):
+@pytest.mark.parametrize(
+    "query",
+    [
+        "requested_ttl_seconds=0",    # zero
+        "requested_ttl_seconds=-3",   # negative (signed)
+        "requested_ttl_seconds=",     # blank
+        "requested_ttl_seconds=abc",  # malformed
+        "requested_ttl_seconds=+5",   # signed
+        "requested_ttl_seconds=5.5",  # fractional
+    ],
+)
+def test_upload_readiness_rejects_invalid_ttl(monkeypatch, query):
     c = _client(monkeypatch, _FakeFacade())
-    resp = c.get("/api/mca/providers/AbCdEfGhIjK/upload-readiness?ciphertext_bytes=abc")
+    resp = c.get(f"/api/mca/providers/{PROVIDER_ID}/upload-readiness?{query}")
     assert resp.status_code == 400
     assert resp.get_json()["error_code"] == "invalid_query"
-    resp2 = c.get("/api/mca/providers/AbCdEfGhIjK/upload-readiness?requested_ttl_seconds=-3")
-    assert resp2.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "ciphertext_bytes=abc",  # malformed
+        "ciphertext_bytes=-1",   # negative (signed)
+        "ciphertext_bytes=5.5",  # fractional
+        "ciphertext_bytes=+5",   # signed
+        "ciphertext_bytes=",     # blank
+    ],
+)
+def test_upload_readiness_rejects_invalid_ciphertext(monkeypatch, query):
+    c = _client(monkeypatch, _FakeFacade())
+    resp = c.get(f"/api/mca/providers/{PROVIDER_ID}/upload-readiness?{query}")
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_query"
+
+
+def test_upload_readiness_accepts_zero_ciphertext_and_positive_ttl(monkeypatch):
+    # ciphertext_bytes may be zero-or-greater; requested_ttl_seconds must be
+    # a positive integer. Both here are valid and pass through.
+    facade = _FakeFacade(
+        decisions={PROVIDER_ID: UploadDecision(ready=True, reason=None, detail=None)}
+    )
+    c = _client(monkeypatch, facade)
+    body = c.get(
+        f"/api/mca/providers/{PROVIDER_ID}/upload-readiness?ciphertext_bytes=0&requested_ttl_seconds=1"
+    ).get_json()
+    assert body == {"ok": True, "ready": True, "reason": None, "detail": None}
 
 
 # ---- GET /api/mca/connectivity -------------------------------------------
@@ -705,7 +894,7 @@ def test_connectivity_separates_internet_and_relays(monkeypatch):
     relay = _relay_status()
     facade = _FakeFacade(
         connectivity=ConnectivitySnapshot(
-            internet=InternetStatus.ONLINE, relays={"AbCdEfGhIjK": relay}
+            internet=InternetStatus.ONLINE, relays={PROVIDER_ID: relay}
         )
     )
     c = _client(monkeypatch, facade)
@@ -713,7 +902,7 @@ def test_connectivity_separates_internet_and_relays(monkeypatch):
     assert body["ok"] is True
     assert body["internet"] == "online"
     assert body["relays"] == {
-        "AbCdEfGhIjK": {
+        PROVIDER_ID: {
             "state": "online",
             "upload_readiness": "ready",
             "checked_at": 300.0,
@@ -753,8 +942,8 @@ def test_command_shape_and_frozen_result_unfrozen(monkeypatch):
         status=STATUS_SUCCEEDED,
         created_at=0.0,
         updated_at=1.0,
-        resource_id="AbCdEfGhIjK",
-        result={"provider_id": "AbCdEfGhIjK", "nested": {"items": [1, 2, 3]}},
+        resource_id=PROVIDER_ID,
+        result={"provider_id": PROVIDER_ID, "nested": {"items": [1, 2, 3]}},
         error_code=None,
     )
     facade = _FakeFacade(commands={COMMAND_ID: result})
@@ -766,8 +955,8 @@ def test_command_shape_and_frozen_result_unfrozen(monkeypatch):
         "command_id": COMMAND_ID,
         "type": "provider_register",
         "status": "succeeded",
-        "resource_id": "AbCdEfGhIjK",
-        "result": {"provider_id": "AbCdEfGhIjK", "nested": {"items": [1, 2, 3]}},
+        "resource_id": PROVIDER_ID,
+        "result": {"provider_id": PROVIDER_ID, "nested": {"items": [1, 2, 3]}},
         "error_code": None,
         "created_at": 0.0,
         "updated_at": 1.0,
@@ -786,3 +975,71 @@ def test_command_not_found(monkeypatch):
     resp = c.get(f"/api/mca/commands/{COMMAND_ID}")
     assert resp.status_code == 404
     assert resp.get_json()["error_code"] == "command_not_found"
+
+
+# ---- sanitized exception boundary (§11 "no secret logging") --------------
+
+
+def test_unexpected_exception_is_sanitized(monkeypatch, caplog):
+    caplog.set_level(logging.ERROR)
+    marker = "SECRET_MARKER_x7k3"
+    c = _client(monkeypatch, _RaisingFacade(marker=marker))
+
+    # Two representative facade reads (provider_snapshot + identity_snapshot)
+    # each raise an exception carrying the marker.
+    resp = c.get("/api/mca/providers")
+    resp2 = c.get("/api/mca/identity")
+
+    for r in (resp, resp2):
+        assert r.status_code == 500
+        assert r.get_json() == {
+            "ok": False,
+            "error": "Internal server error",
+            "error_code": "internal_error",
+        }
+        assert marker not in r.get_data(as_text=True)
+        assert "Traceback" not in r.get_data(as_text=True)
+
+    # The log carries only the safe handler name + exception class.
+    assert "MCAttach read endpoint" in caplog.text
+    assert marker not in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+def test_unexpected_exception_is_sanitized_even_in_debug_mode(monkeypatch, caplog):
+    caplog.set_level(logging.ERROR)
+    marker = "SECRET_MARKER_debug"
+    c = _client(monkeypatch, _RaisingFacade(marker=marker), debug=True)
+
+    resp = c.get("/api/mca/providers")
+    assert resp.status_code == 500
+    assert resp.get_json() == {
+        "ok": False,
+        "error": "Internal server error",
+        "error_code": "internal_error",
+    }
+    # Even with app.debug=True, no traceback and no marker leak (the legacy
+    # handle_errors traceback path is never reached).
+    assert marker not in resp.get_data(as_text=True)
+    assert "Traceback" not in resp.get_data(as_text=True)
+    assert marker not in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+def test_next_request_succeeds_after_injected_failure(monkeypatch):
+    class _FlakyFacade(_FakeFacade):
+        def __init__(self):
+            super().__init__(identity=_identity())
+            self._fail = True
+
+        def identity_snapshot(self):
+            if self._fail:
+                self._fail = False
+                raise RuntimeError("boom SECRET_MARKER_transient")
+            return self._identity
+
+    c = _client(monkeypatch, _FlakyFacade())
+    assert c.get("/api/mca/identity").status_code == 500
+    second = c.get("/api/mca/identity")
+    assert second.status_code == 200
+    assert second.get_json()["ok"] is True

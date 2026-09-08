@@ -53,11 +53,15 @@ import time
 from typing import Callable, Dict, List, Optional
 
 from meshsrv.attachments import codec, receiver, sender
+from meshsrv.attachments.command_registry import CommandRegistry
+from meshsrv.attachments.commands import MAX_COMMANDS_PER_TICK, Command, CommandQueue
 from meshsrv.attachments.delivery.base import DeliveryAdapter, DeliveryEnvelope, DeliveryError, Route, RouteType
+from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispatcher
 from meshsrv.attachments.identity import MCAPrincipal
 from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator, RateLimited
 from meshsrv.attachments.provider_registry import ProviderRegistry
 from meshsrv.attachments.relay_client import RelayClient
+from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
 
@@ -153,6 +157,11 @@ class AttachmentsService:
         now_fn=time.time,
         lock: Optional[threading.Lock] = None,
         inbound_queue: Optional["queue.Queue[InboundEvent]"] = None,
+        command_queue: Optional[CommandQueue] = None,
+        command_registry: Optional[CommandRegistry] = None,
+        dispatcher: Optional[CommandDispatcher] = None,
+        snapshot_publisher: Optional[AttachmentsSnapshotPublisher] = None,
+        wake_event: Optional[threading.Event] = None,
     ):
         self._conn = conn
         self._workspace_manager = workspace_manager
@@ -190,7 +199,23 @@ class AttachmentsService:
         self._inbound_queue: "queue.Queue[InboundEvent]" = (
             inbound_queue if inbound_queue is not None else queue.Queue(maxsize=INBOUND_QUEUE_MAXSIZE)
         )
-        self._wake_event = threading.Event()
+
+        # Step 1.6A.1 (correction #1/#2): the worker-owned command path and
+        # snapshot publisher. Every one of these is *worker-owned* - the
+        # request thread reaches them only through the facade (facade.py),
+        # never directly, and never through `conn`. `mca_runtime.py` passes
+        # its own single instances (so the facade it also constructs shares
+        # the exact same queue/registry/publisher/wake_event); a standalone
+        # caller that constructs its own dedicated `conn` (every test in
+        # this module does) omits them and gets private defaults, the same
+        # "omit `lock` and get a private one" shape as `_lock` above.
+        self._command_queue = command_queue if command_queue is not None else CommandQueue()
+        self._command_registry = command_registry if command_registry is not None else CommandRegistry()
+        self._dispatcher = dispatcher if dispatcher is not None else CommandDispatcher({})
+        self._snapshot_publisher = (
+            snapshot_publisher if snapshot_publisher is not None else AttachmentsSnapshotPublisher()
+        )
+        self._wake_event = wake_event if wake_event is not None else threading.Event()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -331,6 +356,13 @@ class AttachmentsService:
         # and enqueued it (enqueue_inbound() above).
         self._drain_inbound_events()
 
+        # Step 1.6A.1 (correction #1): drain the bounded command queue
+        # *before* the automatic-state row scan - the documented §3.2 tick
+        # order (a queued `attachment_create`/`attachment_cancel`/... must
+        # be applied before this same tick's row-scan sees the rows it
+        # changed, so the scan reflects the command, never a stale state).
+        self._drain_commands()
+
         # The only network I/O this tick performs itself beyond the
         # inbound-event dispatch above - everything after this is either
         # a cheap DB scan or a run_step() call, which does its own I/O
@@ -352,6 +384,12 @@ class AttachmentsService:
                 )
             processed += 1
         self._dispatch_outgoing_replies()
+
+        # Step 1.6A.1 (correction #1): republish the attachment snapshot
+        # *after* this tick's state transitions, so the request-facing read
+        # surface (facade.py) reflects every row this tick advanced.
+        self._refresh_snapshot()
+
         return processed
 
     def _drain_inbound_events(self) -> None:
@@ -372,6 +410,71 @@ class AttachmentsService:
                 logger.exception(
                     "AttachmentsService: failed to process inbound event from %s", event.source_address
                 )
+
+    def _drain_commands(self) -> None:
+        """Step 1.6A.1 (correction #1): drain up to `MAX_COMMANDS_PER_TICK`
+        commands, oldest first, before the automatic-state row scan (§3.2's
+        documented tick order). The rest simply wait for the next tick/wake(),
+        the same bounded-work-per-tick discipline `_due_rows()`'s own
+        `max_per_tick` already uses. One command whose handler raises is
+        caught and marked terminal-failed inside `_execute_command()` - it
+        can never stop the rest of this drain or kill the worker thread."""
+        for _ in range(MAX_COMMANDS_PER_TICK):
+            try:
+                command = self._command_queue.get_nowait()
+            except queue.Empty:
+                return
+            self._execute_command(command)
+
+    def _execute_command(self, command: Command) -> None:
+        """Step 1.6A.1 (correction #2): execute one dequeued command by
+        dispatching to its kind's handler, and record the terminal outcome
+        in the registry. The worker is the sole executor (§3.2), and the
+        dispatcher is the sole kind->work mapping - there is no arbitrary
+        callable command here. Two things can never crash the worker:
+
+        - an enumerated-but-unwired kind: the dispatcher itself returns
+          `CommandOutcome.failed(unsupported_command_kind)` (dispatch.py),
+          so this method just records that stable terminal FAILED;
+        - a handler that *raises* (a bug): caught here and recorded as a
+          terminal FAILED with `COMMAND_EXECUTION_FAILED`, never propagated
+          out of the drain loop.
+
+        Either way the command reaches a terminal state (never stuck in
+        `running`) and the tick continues."""
+        try:
+            self._command_registry.mark_running(command.command_id)
+        except Exception:  # noqa: BLE001 - an impossible transition must not kill the tick
+            logger.exception("AttachmentsService: could not mark command %s running", command.command_id)
+            return
+        try:
+            outcome = self._dispatcher.dispatch(command)
+        except Exception:  # noqa: BLE001 - one bad handler must not stop the drain
+            logger.exception("AttachmentsService: command handler raised for %s", command.command_id)
+            self._command_registry.mark_failed(command.command_id, error_code=COMMAND_EXECUTION_FAILED)
+            return
+        if outcome.error_code is None:
+            self._command_registry.mark_succeeded(
+                command.command_id, resource_id=outcome.resource_id, result=outcome.result
+            )
+        else:
+            self._command_registry.mark_failed(command.command_id, error_code=outcome.error_code)
+
+    def _refresh_snapshot(self) -> None:
+        """Step 1.6A.1 (correction #1): republish the attachment snapshot
+        after this tick's state transitions (§3.3). The worker-owned
+        publisher is the only thing that reads `conn` for the request-facing
+        read surface, and this runs *after* `_dispatch_outgoing_replies()`
+        (and the row-scan before it) so the publish reflects every row this
+        tick advanced. Never raises: the publisher's own `refresh()` retains
+        the last-known-good snapshot on any build failure, so a failed
+        publish cannot kill the worker tick."""
+        self._snapshot_publisher.refresh(
+            self._conn,
+            workspace_id=self._principal.workspace_id,
+            workspace_manager=self._workspace_manager,
+            principal_id=self._principal.principal_id,
+        )
 
     def _process_one_inbound_event(self, event: InboundEvent) -> None:
         """Everything that used to run on the radio listener thread

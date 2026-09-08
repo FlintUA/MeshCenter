@@ -714,10 +714,11 @@ def _bench_memory(counts: Sequence[int], workspace_manager: MCAWorkspaceManager)
 # ---------------------------------------------------------------------------
 
 def _bench_command_registry_memory() -> Dict[str, object]:
-    """Worst-case retained memory of a full command-result registry: 1000
-    terminal entries, each carrying a result payload at (just under) the
-    max-size bound. Measures the Python-object footprint (tracemalloc
-    *current*, not peak) and the RSS delta on Linux - the number that proves
+    """Worst-case retained memory of a full command-result registry:
+    `COMMAND_RESULT_MAX_ENTRIES` terminal entries, each carrying a result
+    payload at (just under) the `COMMAND_RESULT_MAX_PAYLOAD_BYTES` bound.
+    Measures the Python-object footprint (tracemalloc *current*, not peak)
+    and the RSS delta on Linux - the number that proves
     COMMAND_RESULT_MAX_PAYLOAD_BYTES actually bounds the
     COMMAND_RESULT_MAX_ENTRIES worst case."""
     registry = CommandRegistry()
@@ -754,8 +755,9 @@ def _bench_command_registry_memory() -> Dict[str, object]:
 
 def _bench_combined_memory(active_count: int, workspace_manager: MCAWorkspaceManager) -> Dict[str, object]:
     """The single combined memory test the verification brief asks for: hold a
-    full `active_count`-attachment snapshot *and* a worst-case (1000-entry,
-    max-size-payload) command-result registry in memory at the same time, then
+    full `active_count`-attachment snapshot *and* a worst-case
+    (`COMMAND_RESULT_MAX_ENTRIES`-entry, max-size-payload) command-result
+    registry in memory at the same time, then
     run one incremental publication and one defensive full build on top, and
     report whether the whole thing fits in RAM on the target device.
 

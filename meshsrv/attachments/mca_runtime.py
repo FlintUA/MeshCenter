@@ -121,12 +121,19 @@ import time
 from typing import Optional
 
 from meshsrv.attachments import receiver, sender
+from meshsrv.attachments.command_registry import CommandRegistry
+from meshsrv.attachments.commands import CommandQueue
 from meshsrv.attachments.db.migrations import migrate
 from meshsrv.attachments.delivery.meshtastic import MeshtasticTextAdapter
+from meshsrv.attachments.dispatch import CommandDispatcher
+from meshsrv.attachments.facade import AttachmentsFacade
 from meshsrv.attachments.identity import MCAPrincipal, ensure_principal
+from meshsrv.attachments.idempotency import PendingReservations
 from meshsrv.attachments.key_exchange import KeyExchangeCoordinator
+from meshsrv.attachments.probe_registry import ProbeRegistry
 from meshsrv.attachments.provider_registry import ProviderRegistry
 from meshsrv.attachments.service import INBOUND_QUEUE_MAXSIZE, AttachmentsService, InboundEvent
+from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
 from meshsrv.radio_transport import RadioTransport
@@ -228,6 +235,38 @@ class _MCARuntimeState:
         # See the module docstring's "CORRECTION" section for the full
         # account.
         self.tick_lock = threading.Lock()
+
+        # Step 1.6A.1 (correction #1): this state owns the six request-
+        # /worker-facing components of the facade plumbing, constructed
+        # eagerly here (all cheap - in-memory stores and a publisher, no
+        # thread, no SQLite write, no network I/O until the worker tick
+        # runs) so the facade is available as soon as the state exists,
+        # and so the *same* single instances are shared between the
+        # request-facing facade and the worker-facing service below.
+        #
+        # `wake_event` is the one shared wake signal: the facade's
+        # `submit()` sets it (waking the worker to drain the command
+        # queue), and `AttachmentsService` waits on it - one Event object,
+        # not two, so a submit from a request thread wakes the real
+        # worker. `dispatcher` starts with an empty kind->handler table:
+        # a command of any enumerated kind is therefore a stable terminal
+        # `unsupported_command_kind` FAILED (dispatch.py) until a later
+        # sub-stage (1.6A.3+) wires real handlers into it.
+        self.wake_event = threading.Event()
+        self.command_queue = CommandQueue()
+        self.command_registry = CommandRegistry()
+        self.pending_reservations = PendingReservations()
+        self.probe_registry = ProbeRegistry()
+        self.snapshot_publisher = AttachmentsSnapshotPublisher()
+        self.dispatcher = CommandDispatcher({})
+        self.facade = AttachmentsFacade(
+            command_queue=self.command_queue,
+            command_registry=self.command_registry,
+            pending_reservations=self.pending_reservations,
+            probe_registry=self.probe_registry,
+            snapshot_publisher=self.snapshot_publisher,
+            wake_event=self.wake_event,
+        )
         # Unlike the pieces above, the worker thread itself is not
         # started until ensure_service() runs - see that method's own
         # docstring for why it needs radio_transport, which this
@@ -283,6 +322,18 @@ class _MCARuntimeState:
             # lock of its own.
             lock=self.tick_lock,
             inbound_queue=self.inbound_queue,
+            # Step 1.6A.1 (correction #1): hand the worker its *own* copies
+            # of the command queue/registry/dispatcher/snapshot publisher/
+            # wake_event - the exact same single instances this state also
+            # handed the facade (see __init__), so a facade.submit() from a
+            # request thread and this worker's drain both touch the same
+            # queue/registry/Event, and the snapshot the worker publishes
+            # is the snapshot the facade reads.
+            command_queue=self.command_queue,
+            command_registry=self.command_registry,
+            dispatcher=self.dispatcher,
+            snapshot_publisher=self.snapshot_publisher,
+            wake_event=self.wake_event,
         )
         # Deliberately network_available=False and no relay_client/
         # delivery_adapter override for this *synchronous* startup pass:
@@ -328,6 +379,27 @@ def start_attachments_service(data_dir: str, radio_transport: RadioTransport) ->
     self-locking (its own docstring)."""
     state = _get_state(data_dir)
     state.ensure_service(radio_transport)
+
+
+def get_attachments_facade() -> Optional[AttachmentsFacade]:
+    """The request-facing facade, or `None` if the runtime has not been
+    initialized yet (Step 1.6A.1 correction #1's "never lazy-create the
+    SQLite runtime" guarantee). This is the one function Step 1.6A's REST
+    layer calls to reach the attachments read/write surface; a `None` here
+    is the explicit "not ready" signal a handler maps to 503/404 - it
+    never falls back to initializing the database or worker from a request
+    thread (§3.2).
+
+    Reads the module-level `_state` directly (a single reference read,
+    safe without a lock under the GIL - the same reasoning as
+    `handle_incoming_meshtastic_text()`), and returns the facade that
+    state built at construction time. Deliberately does **not** call
+    `_get_state()`, which would create the SQLite runtime (and open
+    `attachments.db`) from whatever thread happened to ask."""
+    state = _state
+    if state is None:
+        return None
+    return state.facade
 
 
 def reset_state_for_tests() -> None:

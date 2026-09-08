@@ -113,10 +113,12 @@ The single `sqlite3.Connection` is touched by exactly two threads over the proce
 - **command-result registry** — **new**: `command_id → CommandResult` (§3.4); a separate thread-safe in-memory registry, **not** a worker-published snapshot (the request thread publishes `queued`, the worker publishes `running`/`succeeded`/`failed`).
 - **probe snapshot** — **new**: `probe_id → ProbeRecord` (§7.10).
 
+The two concrete types: **`AttachmentsFacade`** (`facade.py`) is the request thread's only touchpoint — one write (`submit(command)`) and the read-only accessors `attachments_snapshot()` / `get_attachment()` / `committed_idempotency()` / `get_command()` / `get_probe()`, each a lock-guarded read of an in-memory component (never `conn`, never the tick lock, never filesystem/network — §3.1 held by construction). **`CommandDispatcher`** (`dispatch.py`) is the worker's kind→`CommandHandler` table — the *only* extension point for command execution, so `Command` stays a closed typed enumeration with no arbitrary callables in its payload. `mca_runtime.get_attachments_facade()` returns `None` (an explicit not-ready signal, mapped to `503` by a request handler) until startup has constructed the facade — it never lazy-creates the SQLite runtime from a request thread.
+
 **Writes — a bounded command queue.** Every mutation is an immutable, frozen `Command` dataclass validated on the request thread (using **pure functions only** — no `conn`, no file I/O beyond the create endpoint's spool write, §7.3), then enqueued on a bounded queue the same way the existing inbound queue works:
 
 - `queue.Queue(maxsize=COMMAND_QUEUE_MAXSIZE)`, `put_nowait()`; `queue.Full` → **429** `command_queue_full` (never block the request thread).
-- The worker drains up to `MAX_COMMANDS_PER_TICK` commands per tick (before the row-scan), executing each on its own thread — the single owner — then `wake()`s itself. A command that raises is caught and recorded as a **failed** command result; it never kills the worker.
+- The worker drains up to `MAX_COMMANDS_PER_TICK` commands per tick (before the row-scan) and executes each through the `CommandDispatcher` on its own thread — the single owner. An enumerated kind with no wired handler becomes a terminal **failed** result (`error_code: unsupported_command_kind`); a handler that raises is caught by the drain loop and recorded as **failed** (`error_code: command_execution_failed`). Either way it never kills the worker.
 - Command execution does the real domain work: `sender.create_draft()`, `sender.run_step()` (for retry), `receiver.begin_download()`/`reject()`, the Relay revoke, the workspace file move, `ProviderRegistry.register()`/`update_profile()`/`set_default()`/`set_upload_token()`/`remove_or_disable()`, etc.
 
 The set of commands is enumerated per endpoint in §7. `wake()` remains the handler's only post-action call *after* enqueueing (it flags the worker without touching DB/network).
@@ -135,8 +137,8 @@ and atomically swaps the results in as fresh snapshots. It is this publisher —
 
 **Publication cost is bounded.** A full re-read of 90 days of history, `recipients`, `deliveries` and `events` on every tick would be wasteful on a Pi Zero 2 W. The publisher therefore:
 
-- re-publishes **incrementally**: the four projected tables carry AFTER triggers (migration 12) that transactionally record the affected `attachment_id` in a `mca_dirty_attachments` table; the worker drains and deduplicates those dirty ids each tick and rebuilds **only the affected attachment's projection** (and its bounded timeline), never the whole O(N) snapshot. Deleting an attachment removes its projection. The complete immutable snapshot reference is then swapped atomically, so one relevant change is O(1), not O(N). Unrelated MCA writes (ACK quota, Relay health, reply outbox) record no dirty id and never force a rebuild. The first publish is a full `build_attachments_snapshot()`; a full build is retained only as the first-publish path and the legacy un-migrated-DB fallback, not the per-tick path;
-- keeps the **list** projection compact — no full timeline (a bounded number of `events` per row, or none), with `recipients`/`deliveries` summarized — and loads the **full bounded timeline only for the detail** projection (`GET /api/attachments/{id}`);
+- re-publishes **incrementally**: the four projected tables carry AFTER triggers (migration 12) that transactionally record the affected `attachment_id` in a `mca_dirty_attachments` table; the worker drains and deduplicates those dirty ids each tick and rebuilds **only the affected attachment's projection** (and its bounded timeline), never the whole O(N) snapshot. Deleting an attachment removes its projection. The complete immutable snapshot reference is then swapped atomically, so one relevant *rebuild* is O(1) — with one honest caveat: each publish still materializes a fresh immutable container (`records` tuple + `by_id`/`idempotency` dicts), a residual O(N) shallow reference copy measured ~16 ms at N=5000 on a Pi Zero 2 W (vs ~3.5 s for a full build), never the O(N) full re-read. Unrelated MCA writes (ACK quota, Relay health, reply outbox) record no dirty id and never force a rebuild. The first publish is a full `build_attachments_snapshot()`; a full build is retained only as the first-publish path and the legacy un-migrated-DB fallback, not the per-tick path;
+- keeps the **list** projection compact — no full timeline (a bounded number of `events` per row, or none), with `recipients`/`deliveries` summarized — and loads the **bounded timeline only for the detail** projection (`GET /api/attachments/{id}`), where the per-attachment event history is bounded **in SQL** to `MAX_DETAIL_EVENTS = 200` (most-recent-first, `occurred_at DESC, id DESC`), never the full 90-day history;
 - is covered by a **mandatory benchmark** in sub-stage 1.6A.1 (§5) measuring snapshot build time (full and incremental) and memory on target hardware before the read API ships.
 
 ### 3.4 Sync vs async: the uniform response model, and the command-result endpoint
@@ -252,9 +254,12 @@ All real work lives in `meshsrv/attachments/` and `meshsrv/connectivity_monitor.
 
 ### 4.1 Service and runtime
 
-- `AttachmentsService` (`service.py`): `start()`, `stop()`, `wake()`, `evaluate_upload_readiness()`, `enqueue_inbound()`, `tick()`. `wake()`'s docstring names it "the only method API handlers … are meant to call after a domain-layer action."
-- `_MCARuntimeState` singleton (`mca_runtime.py`): builds and holds `conn`, `principal`, `provider_registry`, `connectivity_monitor`, `coordinator`, `service`; reached via `mca_runtime._get_state(data_dir)`.
-- `start_attachments_service()` (`mca_runtime.py`), called once from `server.py`'s `start_runtime()`.
+- `AttachmentsService` (`service.py`): `start()`, `stop()`, `wake()`, `evaluate_upload_readiness()`, `enqueue_inbound()`, `tick()`. `wake()`'s docstring names it "the only method API handlers … are meant to call after a domain-layer action." The worker's tick drains inbound events, then up to `MAX_COMMANDS_PER_TICK` commands (before the row-scan), then refreshes the snapshot (§3.2).
+- `_MCARuntimeState` singleton (`mca_runtime.py`): builds and holds `conn`, `principal`, `provider_registry`, `connectivity_monitor`, `coordinator`, `service`, and the six facade components (`command_queue`, `command_registry`, `pending_reservations`, `probe_registry`, `snapshot_publisher`, `wake_event`) plus `dispatcher` and `facade`; reached via `mca_runtime._get_state(data_dir)`.
+- `start_attachments_service()` (`mca_runtime.py`), called once from `server.py`'s `start_runtime()`; `get_attachments_facade()` returns the request-facing facade, or `None` before startup (never lazy-creating the SQLite runtime, §3.2).
+- `AttachmentsFacade` (`facade.py`): the request-thread surface — `submit()` plus the read-only accessors over the five in-memory components (§3.2).
+- `CommandDispatcher` / `CommandOutcome` / `CommandHandler` (`dispatch.py`): the worker's kind→handler table; unwired kind → `unsupported_command_kind`, raising handler → `command_execution_failed` (caught by the drain loop, §3.2/§3.4).
+- `Command` / `CommandQueue` (`commands.py`), `CommandRegistry` (`command_registry.py`), `PendingReservations` (`idempotency.py`), `ProbeRegistry` (`probe_registry.py`), `AttachmentsSnapshotPublisher` + projection types (`snapshots.py`): the §3.2–§3.7 in-memory plumbing.
 
 ### 4.2 Sender (`sender.py`)
 
@@ -282,13 +287,13 @@ States: `OFFER_RECEIVED → WAITING_KEY → WAITING_PROVIDER → WAITING_NETWORK
 
 `ProviderProfile` fields: `provider_id` (Base64URL, 11 chars — the table primary key), `display_name`, `origin`, `service_public_key` (32 bytes), `tls_required`, `upload_allowed`, `download_allowed`, `max_ciphertext_bytes`, `is_default`, `added_at`, `kind` (`own`|`third_party`), `enabled`, `min_ttl_seconds`, `max_ttl_seconds`, `protocol_version`, `upload_token_configured`, `last_checked_at`, `last_check_result`, `last_latency_ms`, `last_error_code`.
 
-Methods: `register(...)`, `set_default(provider_id)`, `update_profile(...)` (with a `CLEAR` sentinel for the nullable TTL/`protocol_version` fields), `record_check_result(...)`, `remove_or_disable(provider_id, workspace_manager, principal_id)` (→ `"deleted"`|`"disabled"`), `list_enabled()`, `get_upload_candidates()`, `get_download_profile()`, `set_upload_token(...)`, `get_upload_token(...)`, `resolve(provider_id)` (the SSRF boundary — a miss returns `None`, no DNS/HTTP), `list_providers()`, `get_default()`.
+Methods: `register(...)`, `set_default(provider_id)`, `update_profile(...)` (with a `CLEAR` sentinel for the nullable TTL/`protocol_version` fields), `record_check_result(...)`, `remove_or_disable(provider_id, workspace_manager, principal_id)` (→ `"deleted"`|`"disabled"`), `list_enabled()`, `get_upload_candidates()`, `get_download_profile()`, `set_upload_token(...)`, `get_upload_token(...)`, `clear_upload_token(...)`, `resolve(provider_id)` (the SSRF boundary — a miss returns `None`, no DNS/HTTP), `list_providers()`, `get_default()`.
 
 Key facts for the contract:
 
 - `compute_provider_id(origin, service_public_key)` = Base64URL of the first 8 bytes of `SHA-256(origin + "\n" + raw 32-byte Ed25519 key)`; `normalize_origin(base_url)` enforces HTTPS-only, a hostname, no credentials, and a bare origin (no path/query/fragment). These two are pure functions — safe on the request thread for validation.
 - **There is no separate `profile_id`.** `mca_provider_profiles.provider_id` is the sole primary key and the sole public identifier (§9).
-- **No `clear_upload_token()` method exists** — token removal is only reachable as a side effect of `remove_or_disable()` (`_delete_upload_token_file`, private). §7.11 requires a new public method (gap).
+- **`clear_upload_token()` now exists** (added in Step 1.6A.1) — the public token-removal method §7.11 requires, no longer only reachable as a side effect of `remove_or_disable()`'s private `_delete_upload_token_file`.
 - **No "check now" method** — the health/info probe lives in `ConnectivityMonitor.refresh(force=True)` (worker-thread only). §7.11 exposes it as a worker command.
 
 ### 4.5 Connectivity (`connectivity_monitor.py`)
@@ -653,7 +658,7 @@ Stable, snake_case, additive.
 | 429 | `command_queue_full` | worker command queue at capacity |
 | 503 | `radio_unavailable` / `relay_unreachable` | runtime unavailability at an action's execution |
 
-Command-result `error_code`s reuse this table plus the probe failure codes (`origin_not_routable`, `relay_identity_mismatch`, `relay_incompatible`). `UploadRejectionReason` maps 1:1 to `error_code`s on upload-readiness: `profile_not_found`, `profile_disabled`, `upload_not_allowed`, `upload_token_missing`, `relay_not_yet_checked`, `relay_unreachable`, `relay_identity_mismatch`, `relay_incompatible`, `ciphertext_too_large`, `ttl_below_minimum`, `ttl_above_maximum`.
+Command-result `error_code`s reuse this table plus the probe failure codes (`origin_not_routable`, `relay_identity_mismatch`, `relay_incompatible`) and the two worker-side execution codes `unsupported_command_kind` (an enumerated kind with no wired handler — a terminal `failed`, never a crash) and `command_execution_failed` (a wired handler raised; the drain loop records it as a terminal `failed`). `UploadRejectionReason` maps 1:1 to `error_code`s on upload-readiness: `profile_not_found`, `profile_disabled`, `upload_not_allowed`, `upload_token_missing`, `relay_not_yet_checked`, `relay_unreachable`, `relay_identity_mismatch`, `relay_incompatible`, `ciphertext_too_large`, `ttl_below_minimum`, `ttl_above_maximum`.
 
 ---
 
@@ -717,16 +722,16 @@ The trust is thus **operator-confirmed fingerprint + server-side probe-verified 
 
 ## 13. Implementation gaps (resolve before/with the named sub-stage)
 
-1. **No request-facing facade / queue / snapshots.** `AttachmentsService` has no CRUD methods and no command queue; the §3 model (command queue, `CommandRegistry`, attachments/provider/idempotency/probe snapshots, dedicated snapshot publisher, `ContentDescriptor`, `clear_upload_token()`) must be built first (1.6A.0/1).
-2. **No `client_request_id` / `canonical_hash` columns** on `attachments`, and **no unique index on `(workspace_id, client_request_id)`** — the migration needed for idempotency (§3.5/§3.6).
+1. **Facade / queue / snapshots — built in Step 1.6A.1.** The §3 plumbing now exists: `CommandQueue`, `CommandRegistry`, `PendingReservations`, `ProbeRegistry`, `AttachmentsSnapshotPublisher` (+ `ContentDescriptor`), the `AttachmentsFacade` request surface, and the `CommandDispatcher` handler table — wired into `_MCARuntimeState` and drained by the worker (§3.2/§3.3/§3.4). What remains is the per-command handler *implementations* (the actual `create_draft`/`begin_download`/provider work), which land in sub-stages 1.6A.3–1.6A.5.
+2. **`client_request_id` / `canonical_hash` columns — done (migration 11).** The two columns plus the partial unique index on `(workspace_id, client_request_id) WHERE client_request_id IS NOT NULL` now exist (§3.5/§3.6).
 3. **No multipart staging** — no existing route accepts `multipart/form-data`; spool write, magic-byte sniff, `file_sha256` computation, and the 5 MiB cap are new.
 4. **No cancel orchestration** — `sender.cancel()` does not clear the spool or abort/revoke an in-flight Relay upload session/object; the `CancelAttachmentCommand`'s persisted-remote-state behavior (§7.4) is a new worker command composing the Relay session cleanup + `sender.cancel`.
-5. **No probe store / `probe_id` flow** — the single-use in-memory `ProbeRecord` store and its check-and-consume semantics (§7.11) are new; `register()` currently re-trusts browser-supplied fields, which the `probe_id` flow replaces.
+5. **`ProbeRegistry` built (Step 1.6A.1); `probe_id`→`register()` wiring still open.** The single-use in-memory `ProbeRecord` store with its TTL/check-and-consume semantics (§7.11) is now built and TTL-enforced. What remains is wiring the `probe_id` flow into `register()` so it consumes the probe record instead of re-trusting browser-supplied fields — that lands in 1.6A.4.
 6. **No contact enumeration** — `GET /api/mca/contacts` needs a "list all bindings" method.
-7. **No add-route / save-to-files / revoke / clear-token domain methods** — `deliveries` POST, `save`, `revoke`-via-facade, and `clear_upload_token()` all need new worker-executed methods.
+7. **`clear_upload_token()` done (Step 1.6A.1); add-route / save-to-files / revoke still open.** The remaining domain methods — `deliveries` POST (add-route), `save` (save-to-files), and `revoke`-via-facade — still need new worker-executed methods (sub-stages 1.6A.3/1.6A.5).
 8. **SSRF hardening (§12)** — DNS/IP classification (`is_global` + IPv4-mapped-IPv6), IP pinning with hostname/SNI TLS verification (no independent client-side DNS), redirect pinning (`allow_redirects=False`), async onboarding probe: all absent in `relay_client`/`connectivity_monitor`.
 9. **No connector registry** — `connector_profile_id` is a fixed `"meshtastic"` string; `GET /api/mca/connectors` is a Multi-transport placeholder.
-10. **CSRF mechanism absent project-wide** (§2.3) — a project prerequisite, not MCAttach-specific.
+10. **CSRF mechanism — done (Step 1.6A.0, PR #233).** The project-wide `X-CSRF-Token` + `SameSite=Lax` cookie contract now exists (§2.3); this prerequisite is satisfied, not MCAttach-specific.
 11. **`MAX_CONTENT_LENGTH` absent** — the 5 MiB upload cap must be enforced server-side (Flask `MAX_CONTENT_LENGTH` or an explicit streaming check), not only by the client.
 12. **Signed pointer not persisted for re-read** — `copy-code` (§7.7) needs the canonical `MCA1-TEXT` (or its inputs) persisted at commit.
 
@@ -754,7 +759,7 @@ The trust is thus **operator-confirmed fingerprint + server-side probe-verified 
 ## 15. Unresolved decisions
 
 1. **Whether a separate local `profile_id` is needed** — §9; open for a later re-key/multi-profile stage.
-2. **Command-queue topology constants** — `MAX_COMMANDS_PER_TICK`, `COMMAND_RESULT_MAX_ENTRIES`/`COMMAND_RESULT_TTL_SECONDS`: the §3 model fixes the *shape* (reads use immutable snapshots, not a query queue; ids are minted on the request thread), but the constants should be chosen **after** the 1.6A.1 snapshot-cost benchmark and a measurement of the worker tick's runtime on real hardware. (The snapshot-republish cadence that once fed this list was superseded by incremental dirty-id publication in Step 1.6A.1 — see §3.3 — so it is no longer an open constant.)
+2. **Command-queue topology constants** — `MAX_COMMANDS_PER_TICK`, `COMMAND_RESULT_MAX_ENTRIES`/`COMMAND_RESULT_TTL_SECONDS`/`COMMAND_RESULT_MAX_PAYLOAD_BYTES`: the §3 model fixes the *shape* (reads use immutable snapshots, not a query queue; ids are minted on the request thread). **Chosen in Step 1.6A.1** from the snapshot-cost benchmark: `COMMAND_RESULT_MAX_ENTRIES = 256` terminal entries, `COMMAND_RESULT_TTL_SECONDS = 3600`, and a `COMMAND_RESULT_MAX_PAYLOAD_BYTES = 4 KiB` cap (every documented §7.9 result shape is well under 1 KiB). The final benchmark re-ran the combined memory check on a Pi Zero 2 W at these constants: the worst-case registry (256 near-max-size payloads) retained **~1.1 MiB** of Python objects, and the combined worst case (a 5000-attachment snapshot + the full registry, then one incremental publish and one defensive full build) peaked at **92.3 MiB live RSS** with **~100 MiB MemAvailable remaining, no swap increase, and zero OOM kills** — the registry is now a negligible contributor. The snapshot-republish cadence that once fed this list was superseded by incremental dirty-id publication in Step 1.6A.1 — see §3.3 — so it is no longer an open constant.
 3. **File upload in one request vs. two-step stage-then-create** — §7.2 commits to one multipart request; the stage-then-create alternative is recorded (better resumability, an extra round-trip) and may be revisited if resumable uploads become a requirement.
 4. **Terminal-failure retry state-machine change** — retrying `FAILED_UPLOAD` (and other terminal failures) is deferred to a separate change (§4.2, §7.3); the exact new transition is out of scope for this contract.
 5. **Progress polling cadence / whether list-detail returns a `progress` field** — left to the UI task.

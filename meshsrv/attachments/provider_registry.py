@@ -578,6 +578,70 @@ class ProviderRegistry:
             return None
         return token_path.read_bytes().decode("utf-8")
 
+    def clear_upload_token(
+        self, provider_id: str, workspace_manager: "MCAWorkspaceManager", principal_id: str
+    ) -> None:
+        """Delete an upload token - the `DELETE /api/mca/providers/{id}/
+        upload-token` command (§7.12), the public, worker-only complement to
+        `_delete_upload_token_file()` (which `remove_or_disable()` calls
+        internally when deleting a profile outright).
+
+        Idempotent: clearing a provider that has no token configured is a
+        no-op (no file to remove, the column is already NULL). An unknown
+        `provider_id` is a caller error (`ProviderRegistryError`), not a
+        silent no-op - it means the client is mutating a provider this
+        workspace does not have.
+
+        Order matters (documented crash window, ADR-0008/§13): the file is
+        deleted **before** the DB column is cleared, so a crash between the
+        two steps leaves `upload_token_file` pointing at a file that no
+        longer exists - and `get_upload_token()` already treats a missing
+        file as "no token" (its `token_path.exists()` check), so the token
+        is never served, never read, never returned, never logged. The
+        reverse order (DB-first) would be worse: a crash there would leave
+        an orphaned file on disk that nothing references but that still
+        holds the raw token. The one harmless, self-healing inconsistency a
+        crash can leave (a profile whose `upload_token_configured` briefly
+        reads true while the file is gone) resolves on the next successful
+        clear or profile delete."""
+        if self.resolve(provider_id) is None:
+            raise ProviderRegistryError(f"no such provider_id in this workspace: {provider_id!r}")
+        row = self._conn.execute(
+            "SELECT upload_token_file FROM mca_provider_profiles WHERE workspace_id = ? AND provider_id = ?",
+            (self._workspace_id, provider_id),
+        ).fetchone()
+        if row is not None and row["upload_token_file"] is not None:
+            self._unlink_upload_token_file(workspace_manager, principal_id, row["upload_token_file"])
+        self._conn.execute(
+            "UPDATE mca_provider_profiles SET upload_token_file = NULL WHERE workspace_id = ? AND provider_id = ?",
+            (self._workspace_id, provider_id),
+        )
+        self._conn.commit()
+
+    def _unlink_upload_token_file(
+        self, workspace_manager: "MCAWorkspaceManager", principal_id: str, file_name: str
+    ) -> None:
+        """Fail-closed unlink of one upload-token file, re-validating its
+        filename rather than trusting the DB row (defense in depth - a
+        corrupt `upload_token_file` value must never let a delete escape
+        `keys/`). `file_name` is a bare single-component name (set by
+        `set_upload_token()` to `token_path.name`), so any NUL, path
+        separator, or `.`/`..` name is a hard error, and the resolved path
+        must stay directly inside `keys/` (a symlink planted in `keys/`
+        that points outside it resolves outside and is rejected; one
+        pointing inside is fine to unlink - `Path.unlink()` removes the
+        link, not its target)."""
+        if not file_name or "\x00" in file_name or "/" in file_name or "\\" in file_name:
+            raise ProviderRegistryError(f"unsafe upload_token_file name: {file_name!r}")
+        if file_name in (".", ".."):
+            raise ProviderRegistryError(f"unsafe upload_token_file name: {file_name!r}")
+        paths = workspace_manager.paths(principal_id)
+        token_path = paths.keys / file_name
+        keys_resolved = paths.keys.resolve()
+        if token_path.resolve().parent != keys_resolved:
+            raise ProviderRegistryError("upload token path escaped the keys directory")
+        token_path.unlink(missing_ok=True)
+
     def _delete_upload_token_file(self, provider_id: str, workspace_manager: "MCAWorkspaceManager", principal_id: str) -> None:
         row = self._conn.execute(
             "SELECT upload_token_file FROM mca_provider_profiles WHERE workspace_id = ? AND provider_id = ?",
@@ -585,9 +649,7 @@ class ProviderRegistry:
         ).fetchone()
         if row is None or row["upload_token_file"] is None:
             return
-        paths = workspace_manager.paths(principal_id)
-        token_path = paths.keys / row["upload_token_file"]
-        token_path.unlink(missing_ok=True)
+        self._unlink_upload_token_file(workspace_manager, principal_id, row["upload_token_file"])
 
     def resolve(self, provider_id: str) -> Optional[ProviderProfile]:
         """The only sanctioned provider_id -> profile lookup. Returns

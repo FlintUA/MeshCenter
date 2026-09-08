@@ -29,6 +29,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
+import types
 
 import pytest
 import requests
@@ -1292,3 +1293,102 @@ def test_profile_snapshot_performs_no_sqlite_call_from_the_reading_thread(regist
     assert sql_call_threads == [], (
         f"profile_snapshot() executed SQL from the calling thread: {sql_call_threads}"
     )
+
+
+# --- atomic publication of the connectivity snapshot (correction #3) --------
+
+
+def test_snapshot_returns_the_single_published_immutable_object(registry, store):
+    """`snapshot()` must return the one atomically-published object (never a
+    fresh per-call copy assembled from the worker's live dicts), and its
+    relay mapping must be genuinely immutable (a `MappingProxyType`), so a
+    reader can neither observe a torn state nor mutate the published view."""
+    profile = _register(registry, store)
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse(status_code=200)))
+
+    before = monitor.snapshot()
+    assert before is monitor._published  # noqa: SLF001
+    assert isinstance(before.relays, types.MappingProxyType)
+    assert before.internet == InternetStatus.UNKNOWN
+
+    monitor.refresh()
+    after = monitor.snapshot()
+    assert after is monitor._published  # noqa: SLF001
+    assert isinstance(after.relays, types.MappingProxyType)
+    assert profile.provider_id in after.relays
+
+    # A reader can never mutate the published relay mapping.
+    with pytest.raises(TypeError):
+        after.relays["x"] = None  # type: ignore[index]
+
+
+def test_published_snapshot_is_isolated_from_later_worker_mutation(registry, store):
+    """The published snapshot copies the worker's live relay dict at publish
+    time; mutating the live dict afterwards must not change a snapshot a
+    reader already holds, and `snapshot()` must keep returning that same
+    published object (it is not a live view of `_relay_statuses`)."""
+    profile = _register(registry, store)
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(lambda m, u: _ScriptedResponse(status_code=200)))
+    monitor.refresh()
+    snap = monitor.snapshot()
+    assert profile.provider_id in snap.relays
+
+    # The worker mutates its live dict in place (as a subsequent refresh
+    # would before republishing) - the already-published snapshot is a copy
+    # and must be unaffected.
+    del monitor._relay_statuses[profile.provider_id]  # noqa: SLF001
+    assert profile.provider_id in snap.relays
+    assert monitor.snapshot() is snap
+
+
+def test_concurrent_readers_never_observe_a_partial_or_mutable_snapshot(registry, store):
+    """Deterministic concurrent-reader invariant (correction #3): after the
+    first complete publish, every snapshot a reader observes must carry the
+    *complete* two-provider relay set (never some-providers-updated) as an
+    immutable `MappingProxyType` - because `refresh()` republishes by one
+    whole-object reference assignment and `snapshot()` returns that object.
+    The two profiles are given distinct origins and driven to ONLINE (the
+    `/v1/info` check is made inconclusive, so no fallback internet probe
+    runs) so every refresh republishes a complete 2-relay set."""
+    profile_a = _register(registry, store, display_name="A", base_url="https://relay-a.example.net")
+    profile_b = _register(registry, store, display_name="B", base_url="https://relay-b.example.net")
+
+    def handler(method, url):
+        if "/v1/info" in url:
+            raise requests.ConnectionError("info inconclusive for this test")
+        return _ScriptedResponse(status_code=200)
+
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(handler))
+    monitor.refresh(force=True)  # establish the complete 2-relay published set
+    expected = {profile_a.provider_id, profile_b.provider_id}
+    assert set(monitor.snapshot().relays) == expected
+
+    stop = threading.Event()
+    violations = []
+
+    def reader():
+        while not stop.is_set():
+            snap = monitor.snapshot()
+            if not isinstance(snap.relays, types.MappingProxyType):
+                violations.append("mutable-relay-mapping")
+                return
+            if set(snap.relays) != expected:
+                violations.append(f"partial-relay-set: {sorted(snap.relays)}")
+                return
+
+    reader_thread = threading.Thread(target=reader)
+    reader_thread.start()
+    try:
+        # Each refresh() constructs a fresh ThreadPoolExecutor(max_workers=2),
+        # which is the slow part on Windows (~300ms/iteration for thread
+        # creation). 30 republishes still gives the continuously-running
+        # reader thousands of snapshot() observations to catch any non-atomic
+        # swap, without the ~65s the 200-iteration loop took on Windows.
+        for _ in range(30):
+            monitor.refresh(force=True)
+    finally:
+        stop.set()
+        reader_thread.join(timeout=5)
+        assert not reader_thread.is_alive(), "reader thread did not stop"
+
+    assert violations == [], violations

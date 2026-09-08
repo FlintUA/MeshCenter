@@ -97,6 +97,18 @@ def test_probe_record_rejects_empty_probe_id():
         _record(probe_id="")
 
 
+def test_probe_record_rejects_nonfinite_expires_at():
+    # A NaN/infinity expiry would defeat the store's bounded lifetime (never
+    # expires, or compares falsely against every now) - rejected at
+    # construction rather than stored as an immortal/invisible record.
+    with pytest.raises(ValueError):
+        _record(expires_at=float("nan"))
+    with pytest.raises(ValueError):
+        _record(expires_at=float("inf"))
+    with pytest.raises(ValueError):
+        _record(expires_at=float("-inf"))
+
+
 # --- serialize_probe_record -------------------------------------------------
 
 def test_serialize_probe_record_omits_raw_key_and_status():
@@ -231,6 +243,33 @@ def test_failed_probe_record_is_stored_like_any_other():
     record = _record(status=PROBE_STATUS_FAILED)
     reg.add(record)
     assert reg.get("probe-1").status == PROBE_STATUS_FAILED
+
+
+# --- numeric boundaries (registry construction) ----------------------------
+
+def test_registry_rejects_nonpositive_max_entries():
+    with pytest.raises(ValueError):
+        ProbeRegistry(max_entries=0)
+    with pytest.raises(ValueError):
+        ProbeRegistry(max_entries=-1)
+
+
+def test_registry_rejects_nonpositive_or_nonfinite_ttl_seconds():
+    with pytest.raises(ValueError):
+        ProbeRegistry(ttl_seconds=0)
+    with pytest.raises(ValueError):
+        ProbeRegistry(ttl_seconds=-1)
+    with pytest.raises(ValueError):
+        ProbeRegistry(ttl_seconds=float("nan"))
+    with pytest.raises(ValueError):
+        ProbeRegistry(ttl_seconds=float("inf"))
+
+
+def test_registry_accepts_positive_boundary_values():
+    # Exactly the legal boundaries: max_entries=1 and ttl_seconds just above
+    # zero must be accepted, so the guards are strict-but-not-over-strict.
+    reg = ProbeRegistry(max_entries=1, ttl_seconds=1e-9)
+    assert len(reg) == 0
 
 
 # --- restart amnesia --------------------------------------------------------

@@ -253,6 +253,11 @@ class _MCARuntimeState:
         # `unsupported_command_kind` FAILED (dispatch.py) until a later
         # sub-stage (1.6A.3+) wires real handlers into it.
         self.wake_event = threading.Event()
+        # Step 1.6A.1 (correction #1): the shared runtime-readiness signal,
+        # handed to *both* the facade (which gates on it) and the service
+        # (which sets/clears it) so a request thread and the worker agree on
+        # a single "started and first snapshot published" truth.
+        self.ready_event = threading.Event()
         self.command_queue = CommandQueue()
         self.command_registry = CommandRegistry()
         self.pending_reservations = PendingReservations()
@@ -266,6 +271,9 @@ class _MCARuntimeState:
             probe_registry=self.probe_registry,
             snapshot_publisher=self.snapshot_publisher,
             wake_event=self.wake_event,
+            ready_event=self.ready_event,
+            connectivity_monitor=self.connectivity_monitor,
+            principal=self.principal,
         )
         # Unlike the pieces above, the worker thread itself is not
         # started until ensure_service() runs - see that method's own
@@ -334,6 +342,7 @@ class _MCARuntimeState:
             dispatcher=self.dispatcher,
             snapshot_publisher=self.snapshot_publisher,
             wake_event=self.wake_event,
+            ready_event=self.ready_event,
         )
         # Deliberately network_available=False and no relay_client/
         # delivery_adapter override for this *synchronous* startup pass:

@@ -165,6 +165,15 @@ class ConnectivitySnapshot:
     internet: InternetStatus
     relays: Dict[str, RelayStatus]
 
+    def __post_init__(self) -> None:
+        # Step 1.6A.1 (correction #3): the published snapshot must be
+        # genuinely immutable, not just frozen. A `MappingProxyType` over a
+        # *copy* of the relays dict means a reader can neither mutate the
+        # mapping nor observe later in-place mutations of the worker's live
+        # `_relay_statuses` (the copy is what isolates the published view
+        # from the worker's mutable dict).
+        object.__setattr__(self, "relays", types.MappingProxyType(dict(self.relays)))
+
 
 class UploadRejectionReason(str, enum.Enum):
     """PR #231 review (3rd pass), "contextual upload readiness": every
@@ -294,6 +303,12 @@ class ConnectivityMonitor:
         self._consecutive_failures: Dict[str, int] = {}
         self._last_info_check: Dict[str, float] = {}
         self._last_fallback_check_at: Optional[float] = None
+        # Step 1.6A.1 (correction #3): the atomically-published, immutable
+        # connectivity snapshot. Replaced wholesale (one reference assignment)
+        # at the end of every `refresh()`; `snapshot()` returns this object,
+        # so a concurrent reader sees either the complete old or complete new
+        # snapshot, never a partial one and never a mutable relay mapping.
+        self._published = ConnectivitySnapshot(internet=InternetStatus.UNKNOWN, relays={})
         # PR #231 review (4th pass), "preserve the single-owner SQLite
         # model": an atomically-published snapshot of every registered
         # profile, so `evaluate_upload_decision()`/`can_upload_to()` can
@@ -341,7 +356,12 @@ class ConnectivityMonitor:
     # ---- cheap, non-blocking read -----------------------------------
 
     def snapshot(self) -> ConnectivitySnapshot:
-        return ConnectivitySnapshot(internet=self._internet_status, relays=dict(self._relay_statuses))
+        # Step 1.6A.1 (correction #3): return the single atomically-published
+        # immutable object, never a fresh copy assembled from the worker's
+        # live, in-place-mutated dicts (a per-call copy could expose a
+        # partially-updated relay set or a new internet status alongside old
+        # relay states).
+        return self._published
 
     def profile_snapshot(self) -> Mapping[str, ProviderProfile]:
         """The request-thread-safe provider snapshot accessor (§3.2, the
@@ -367,7 +387,7 @@ class ConnectivityMonitor:
         registered provider unusable until the next tick for no reason;
         the real HTTP attempt inside run_step() is always the ultimate
         authority anyway."""
-        status = self._relay_statuses.get(provider_id)
+        status = self._published.relays.get(provider_id)
         if status is None:
             return True
         return status.state in _ATTEMPTABLE_RELAY_STATES
@@ -454,7 +474,7 @@ class ConnectivityMonitor:
         if not profile.upload_token_configured:
             return UploadDecision(ready=False, reason=UploadRejectionReason.UPLOAD_TOKEN_MISSING)
 
-        relay_status = self._relay_statuses.get(provider_id)
+        relay_status = self._published.relays.get(provider_id)
         relay_state = relay_status.state if relay_status is not None else RelayState.UNKNOWN
         if relay_state == RelayState.UNKNOWN:
             return UploadDecision(ready=False, reason=UploadRejectionReason.RELAY_NOT_YET_CHECKED)
@@ -636,7 +656,17 @@ class ConnectivityMonitor:
         # yet - keep the last computed internet status rather than
         # guessing or hammering the fallback URL every tick.
 
-        return self.snapshot()
+        # Step 1.6A.1 (correction #3): publish one complete, immutable
+        # snapshot from this tick's *final* internet status and the relay map
+        # (ConnectivitySnapshot.__post_init__ copies the relays dict), then
+        # swap the published reference atomically. This is the single point a
+        # concurrent reader observes, so it can never see a partially-updated
+        # relay set or a new internet status paired with old relay states.
+        self._published = ConnectivitySnapshot(
+            internet=self._internet_status,
+            relays=self._relay_statuses,
+        )
+        return self._published
 
     def _due_for_fallback_check(self, now: float) -> bool:
         """Same interval discipline as `_due_for_health_check()`, without

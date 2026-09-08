@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import collections
 import dataclasses
+import math
 import secrets
 import threading
 import time
@@ -115,6 +116,12 @@ class ProbeRecord:
             raise ValueError(f"status must be one of {sorted(_PROBE_STATUSES)}, got {self.status!r}")
         if not self.probe_id:
             raise ValueError("probe_id must not be empty")
+        if not math.isfinite(self.expires_at):
+            # A NaN/infinity expiry would either never expire (inf) or compare
+            # falsely against every `now` (NaN), silently defeating the store's
+            # bounded lifetime - reject it as a caller bug rather than storing
+            # an immortal/invisible record.
+            raise ValueError(f"expires_at must be a finite number, got {self.expires_at!r}")
 
     def __repr__(self) -> str:
         # No service_public_key - the one line of defence that keeps an
@@ -164,6 +171,15 @@ class ProbeRegistry:
         ttl_seconds: float = PROBE_TTL_SECONDS,
         now_fn=time.time,
     ):
+        # Numeric boundaries are construction-time errors, not runtime bugs: a
+        # non-positive `max_entries` would make every `add()` evict everything
+        # it just stored, and a non-finite/non-positive `ttl_seconds` would
+        # either cap every record to an already-past expiry (<= 0) or never
+        # cap at all (inf) / compare falsely (NaN). Reject them up front.
+        if max_entries <= 0:
+            raise ValueError(f"max_entries must be > 0, got {max_entries!r}")
+        if not math.isfinite(ttl_seconds) or ttl_seconds <= 0:
+            raise ValueError(f"ttl_seconds must be finite and > 0, got {ttl_seconds!r}")
         self._lock = threading.Lock()
         # Insertion-ordered map: oldest-inserted at the front, newest at
         # the back (popitem(last=False) evicts the oldest).

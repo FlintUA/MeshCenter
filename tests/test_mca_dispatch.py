@@ -47,6 +47,38 @@ def test_outcome_is_frozen():
         outcome.error_code = "mutated"
 
 
+def test_outcome_rejects_an_empty_or_non_snake_case_error_code():
+    # A failed outcome must carry a non-empty stable snake_case code - an
+    # empty/whitespace/camelCase code is a handler bug, rejected at
+    # construction so it never reaches a poller as an ambiguous error_code.
+    with pytest.raises(ValueError):
+        CommandOutcome.failed("")
+    with pytest.raises(ValueError):
+        CommandOutcome.failed("NotSnakeCase")
+    with pytest.raises(ValueError):
+        CommandOutcome.failed("has-dash")
+    with pytest.raises(ValueError):
+        CommandOutcome.failed("has space")
+
+
+def test_outcome_rejects_a_failed_shape_carrying_resource_id_or_result():
+    # A failed command produces no primary id and no result payload - a
+    # handler building a failed outcome with either is a bug.
+    with pytest.raises(ValueError):
+        CommandOutcome(error_code="some_error", resource_id="att-1")
+    with pytest.raises(ValueError):
+        CommandOutcome(error_code="some_error", result={"action": "nope"})
+    with pytest.raises(ValueError):
+        CommandOutcome(error_code="some_error", resource_id="att-1", result={"x": 1})
+
+
+def test_outcome_accepts_a_valid_snake_case_error_code():
+    outcome = CommandOutcome.failed("provider_id_mismatch")
+    assert outcome.error_code == "provider_id_mismatch"
+    assert outcome.resource_id is None
+    assert outcome.result is None
+
+
 # --- CommandDispatcher: unwired kind ---------------------------------------
 
 def test_unwired_kind_returns_terminal_unsupported_failure():

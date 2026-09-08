@@ -1,12 +1,19 @@
 """Tests for meshsrv/attachments/facade.py (internal-rest-api.md §3.2;
-Execution Plan Step 1.6A.1, correction #1).
+Execution Plan Step 1.6A.1, corrections #1/#2).
 
 Covers the request-facing `AttachmentsFacade`: its read methods resolve to
-the five in-memory worker-owned components (never SQLite/filesystem/
-network/tick lock), and its `submit()` is the §3.4 enqueue with the §3.6
-step-5 registry rollback on a full queue. Constructed directly over fresh
+the in-memory worker-owned components (never SQLite/filesystem/network/
+tick lock), and its `submit()` is the §3.4 enqueue with the §3.6 step-5
+registry rollback on a full queue. Constructed directly over fresh
 in-memory components so no SQLite/filesystem/network is ever touched. Pure
 stdlib - safe in CI.
+
+Correction #1's readiness contract is pinned here too: the snapshot-backed
+reads (`attachments_snapshot()`, `get_attachment()`, `committed_idempotency()`)
+and the write path (`submit()`) raise `FacadeNotReady` (mapping to
+`503 mca_not_ready`) while the shared `ready_event` is unset, rather than
+returning an empty snapshot/mapping or a false "not found"; the pure
+connectivity/provider/identity/registry reads are deliberately *not* gated.
 """
 
 import threading
@@ -15,21 +22,73 @@ import pytest
 
 from meshsrv.attachments.command_registry import STATUS_QUEUED, CommandRegistry
 from meshsrv.attachments.commands import Command, CommandQueue, CommandQueueFull
-from meshsrv.attachments.facade import AttachmentsFacade
+from meshsrv.attachments.facade import AttachmentsFacade, FacadeNotReady
+from meshsrv.attachments.identity import MCAPrincipal
 from meshsrv.attachments.idempotency import PendingReservations
 from meshsrv.attachments.probe_registry import ProbeRegistry
-from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
+from meshsrv.attachments.snapshots import AttachmentsSnapshot, AttachmentsSnapshotPublisher
+from meshsrv.connectivity_monitor import ConnectivitySnapshot, InternetStatus, UploadDecision
 
 
-def _facade(*, maxsize=64):
+class _StubConnectivityMonitor:
+    """A duck-typed connectivity/provider read surface with no network and no
+    SQLite - the three methods the facade's read methods delegate to. Lets
+    the facade test stay stdlib-only while still exercising the read-surface
+    wiring (correction #2)."""
+
+    def __init__(self):
+        self._snapshot = ConnectivitySnapshot(internet=InternetStatus.UNKNOWN, relays={})
+        self._profiles = {}
+
+    def snapshot(self):
+        return self._snapshot
+
+    def profile_snapshot(self):
+        return self._profiles
+
+    def evaluate_upload_decision(self, provider_id, *, ciphertext_bytes=None, requested_ttl_seconds=None):
+        return UploadDecision(ready=True, reason=None)
+
+
+def _principal():
+    return MCAPrincipal(
+        workspace_id="ws-test",
+        principal_id="0" * 16,
+        key_id="1" * 16,
+        epoch=0,
+        public_identity=b"\x02" * 32,
+        public_x25519=b"\x03" * 32,
+        private_key_file="key.pem",
+        created_at=0.0,
+    )
+
+
+def _empty_snapshot():
+    return AttachmentsSnapshot(records=(), by_id={}, idempotency={}, built_at=0.0)
+
+
+def _facade(*, maxsize=64, ready=True):
     wake_event = threading.Event()
+    ready_event = threading.Event()
+    if ready:
+        ready_event.set()
+    snapshot_publisher = AttachmentsSnapshotPublisher()
+    if ready:
+        # Publish an empty snapshot so the gated reads have a real published
+        # projection to reflect (the facade delegates to the publisher; the
+        # "never None when ready" guarantee is the *service*'s job, tested in
+        # test_mca_runtime_wiring.py's readiness lifecycle tests).
+        snapshot_publisher._snapshot = _empty_snapshot()  # noqa: SLF001
     facade = AttachmentsFacade(
         command_queue=CommandQueue(maxsize=maxsize),
         command_registry=CommandRegistry(),
         pending_reservations=PendingReservations(),
         probe_registry=ProbeRegistry(),
-        snapshot_publisher=AttachmentsSnapshotPublisher(),
+        snapshot_publisher=snapshot_publisher,
         wake_event=wake_event,
+        ready_event=ready_event,
+        connectivity_monitor=_StubConnectivityMonitor(),
+        principal=_principal(),
     )
     return facade, wake_event
 
@@ -38,15 +97,71 @@ def _command(command_id="cmd-1", kind="attachment_cancel"):
     return Command(command_id=command_id, kind=kind, payload={}, created_at=0.0)
 
 
-# --- empty reads (before any publish) --------------------------------------
+# --- readiness gating (correction #1) ---------------------------------------
 
-def test_reads_return_empty_before_any_publish():
-    facade, _ = _facade()
-    assert facade.attachments_snapshot() is None
-    assert facade.get_attachment("anything") is None
+def test_gated_reads_and_submit_raise_facade_not_ready_before_readiness():
+    facade, _ = _facade(ready=False)
+    with pytest.raises(FacadeNotReady):
+        facade.attachments_snapshot()
+    with pytest.raises(FacadeNotReady):
+        facade.get_attachment("anything")
+    with pytest.raises(FacadeNotReady):
+        facade.committed_idempotency()
+    with pytest.raises(FacadeNotReady):
+        facade.submit(_command())
+
+
+def test_facade_not_ready_carries_the_503_error_code():
+    # A Step 1.6A REST caller maps this condition to 503 with a stable code;
+    # the exception itself exposes it so no caller has to string-match.
+    assert FacadeNotReady.error_code == "mca_not_ready"
+    assert FacadeNotReady().error_code == "mca_not_ready"
+
+
+def test_submit_rejects_without_registering_or_enqueueing_before_readiness():
+    facade, _ = _facade(ready=False)
+    command = _command()
+    with pytest.raises(FacadeNotReady):
+        facade.submit(command)
+    # The command is neither registered nor enqueued - nothing half-submitted
+    # for a client that retries after the service comes up.
+    assert facade.get_command("cmd-1") is None
+    assert facade._command_queue.qsize() == 0  # noqa: SLF001
+
+
+def test_gated_reads_reflect_the_published_snapshot_once_ready():
+    facade, _ = _facade(ready=True)
+    snapshot = facade.attachments_snapshot()
+    assert snapshot is not None
+    assert snapshot.records == ()
+    assert facade.get_attachment("anything") is None  # a real "not found", not "not ready"
     assert facade.committed_idempotency() == {}
-    assert facade.get_command("anything") is None
-    assert facade.get_probe("anything") is None
+
+
+# --- the non-gated read surface (correction #2) -----------------------------
+
+def test_connectivity_provider_identity_reads_are_not_readiness_gated():
+    # These resolve to components that exist (and are safe to read) from the
+    # moment the facade is constructed - they must work even before readiness.
+    facade, _ = _facade(ready=False)
+    conn = facade.connectivity_snapshot()
+    assert isinstance(conn, ConnectivitySnapshot)
+    assert conn.internet == InternetStatus.UNKNOWN
+    assert facade.provider_snapshot() == {}
+    decision = facade.evaluate_upload_readiness("some-provider")
+    assert decision.ready is True
+    assert facade.identity_snapshot().workspace_id == "ws-test"
+
+
+def test_identity_snapshot_returns_the_injected_principal():
+    facade, _ = _facade()
+    assert facade.identity_snapshot().principal_id == "0" * 16
+    assert facade.identity_snapshot().key_id == "1" * 16
+
+
+def test_connectivity_snapshot_returns_the_monitors_published_view():
+    facade, _ = _facade()
+    assert facade.connectivity_snapshot() is facade._connectivity_monitor._snapshot  # noqa: SLF001
 
 
 # --- submit (the §3.4 enqueue) ---------------------------------------------
@@ -88,14 +203,15 @@ def test_facade_holds_no_sqlite_filesystem_network_or_tick_lock_handle():
 
 def test_reads_complete_without_the_tick_lock():
     # A facade read resolves to the publisher/registry/probe registry's own
-    # short dedicated locks, never the worker's tick lock. Hold an unrelated
-    # lock is not enough to prove it - the honest check is that none of the
-    # facade's read attributes *is* a threading.Lock shared with a tick. We
-    # assert the surface stays lock-free in shape: each read returns without
-    # needing any lock the caller must provide.
+    # short dedicated locks, never the worker's tick lock. The honest check
+    # is that none of the facade's read attributes *is* a threading.Lock
+    # shared with a tick - assert the surface stays lock-free in shape.
     facade, _ = _facade()
-    assert facade.attachments_snapshot() is None
+    assert facade.attachments_snapshot() is not None
     assert facade.get_attachment("x") is None
     assert facade.committed_idempotency() == {}
     assert facade.get_command("x") is None
     assert facade.get_probe("x") is None
+    assert facade.connectivity_snapshot() is not None
+    assert facade.provider_snapshot() == {}
+    assert facade.evaluate_upload_readiness("x").ready is True

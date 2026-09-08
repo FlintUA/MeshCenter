@@ -26,16 +26,19 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from meshsrv.attachments import mca_runtime
 from meshsrv.attachments.command_registry import STATUS_FAILED, STATUS_QUEUED, CommandRegistry
 from meshsrv.attachments.commands import Command, CommandQueue
 from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
-from meshsrv.attachments.dispatch import CommandDispatcher
-from meshsrv.attachments.facade import AttachmentsFacade
+from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispatcher, CommandOutcome
+from meshsrv.attachments.facade import AttachmentsFacade, FacadeNotReady
 from meshsrv.attachments.idempotency import PendingReservations
 from meshsrv.attachments.probe_registry import ProbeRegistry
 from meshsrv.attachments.service import AttachmentsService
-from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
+from meshsrv.attachments.snapshots import AttachmentsSnapshot, AttachmentsSnapshotPublisher
+from meshsrv.connectivity_monitor import ConnectivitySnapshot, UploadRejectionReason
 
 
 class _AlwaysDownSession:
@@ -51,7 +54,16 @@ class _AlwaysDownSession:
 
 def _started_state(tmp_path, tag):
     """Start the runtime and stop its worker thread for deterministic
-    single-threaded `tick()` driving. Returns the `_MCARuntimeState`."""
+    single-threaded `tick()` driving. Returns the `_MCARuntimeState`.
+
+    After `start_attachments_service()`, the worker's first tick has already
+    published the (empty) snapshot - but `stop()` clears runtime readiness
+    (correction #1), so the facade's snapshot-backed reads/`submit()` would
+    raise `FacadeNotReady` until the shared event is re-set. These tests
+    drive `tick()` synchronously rather than racing the daemon thread, so we
+    re-set readiness here; the readiness *lifecycle* itself (startup in
+    progress, first-snapshot failure, successful publication, stop, retry) is
+    covered by the dedicated readiness tests below, not this helper."""
     mca_runtime.reset_state_for_tests()
     mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
     ether = InMemoryEther()
@@ -60,6 +72,7 @@ def _started_state(tmp_path, tag):
     mca_runtime.start_attachments_service(data_dir, transport)
     state = mca_runtime._get_state(data_dir)  # noqa: SLF001
     assert state.service.stop(), "worker did not stop - cannot drive ticks deterministically"
+    state.ready_event.set()
     return state, transport, ether
 
 
@@ -182,6 +195,7 @@ def test_a_raising_handler_is_recorded_as_command_execution_failed(tmp_path):
         state.dispatcher = CommandDispatcher({"attachment_cancel": handler})
         state.ensure_service(transport)
         assert state.service.stop()
+        state.ready_event.set()  # deterministic tick driving (see _started_state)
 
         facade = state.facade
         facade.submit(Command(command_id="cmd-2", kind="attachment_cancel", payload={}, created_at=0.0))
@@ -296,5 +310,157 @@ def test_facade_reads_never_touch_the_tick_lock(tmp_path):
         assert results["idempotency"] == {}
         assert results["command"] is None
         assert results["probe"] is None
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+# --- total command execution (correction #4) -------------------------------
+
+
+def test_handler_returning_a_wrong_type_is_recorded_as_command_execution_failed(tmp_path):
+    mca_runtime.reset_state_for_tests()
+    mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+    try:
+        ether = InMemoryEther()
+        transport = FakeRadioTransport(ether, "!aaaaaaaa")
+        state = mca_runtime._get_state(str(tmp_path / "s"))  # noqa: SLF001
+
+        def handler(command):
+            return "not-a-CommandOutcome"
+
+        state.dispatcher = CommandDispatcher({"attachment_cancel": handler})
+        state.ensure_service(transport)
+        assert state.service.stop()
+        state.ready_event.set()  # deterministic tick driving (see _started_state)
+
+        state.facade.submit(Command(command_id="cmd-4", kind="attachment_cancel", payload={}, created_at=0.0))
+        state.service.tick()
+
+        result = state.facade.get_command("cmd-4")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == COMMAND_EXECUTION_FAILED
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_handler_constructing_an_invalid_outcome_is_recorded_as_command_execution_failed(tmp_path):
+    mca_runtime.reset_state_for_tests()
+    mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+    try:
+        ether = InMemoryEther()
+        transport = FakeRadioTransport(ether, "!aaaaaaaa")
+        state = mca_runtime._get_state(str(tmp_path / "t"))  # noqa: SLF001
+
+        def handler(command):
+            # CommandOutcome.__post_init__ raises (empty error_code), and the
+            # dispatch try/except must convert it to command_execution_failed.
+            return CommandOutcome.failed("")
+
+        state.dispatcher = CommandDispatcher({"attachment_cancel": handler})
+        state.ensure_service(transport)
+        assert state.service.stop()
+        state.ready_event.set()  # deterministic tick driving (see _started_state)
+
+        state.facade.submit(Command(command_id="cmd-5", kind="attachment_cancel", payload={}, created_at=0.0))
+        state.service.tick()
+
+        result = state.facade.get_command("cmd-5")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == COMMAND_EXECUTION_FAILED
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+# --- the completed read facade over the real runtime (correction #2) -------
+
+
+def test_facade_read_surface_resolves_to_the_real_monitor_and_principal(tmp_path):
+    state, _, _ = _started_state(tmp_path, "u")
+    try:
+        facade = state.facade
+        # identity_snapshot() is the state's own principal (no copy).
+        assert facade.identity_snapshot() is state.principal
+        # connectivity_snapshot() is the monitor's own published view (the
+        # same object, not a copy) - a request thread reads in-memory state.
+        conn = facade.connectivity_snapshot()
+        assert isinstance(conn, ConnectivitySnapshot)
+        assert conn is state.connectivity_monitor.snapshot()
+        assert conn.relays == {}  # no providers registered in this test
+        # provider_snapshot() is the (empty) registered-provider view.
+        assert facade.provider_snapshot() == {}
+        # evaluate_upload_readiness() answers for an unknown provider with a
+        # structured rejection, never an exception.
+        decision = facade.evaluate_upload_readiness("never-registered")
+        assert decision.ready is False
+        assert decision.reason == UploadRejectionReason.PROFILE_NOT_FOUND
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+# --- runtime readiness lifecycle (correction #1) ----------------------------
+
+def _empty_snapshot():
+    return AttachmentsSnapshot(records=(), by_id={}, idempotency={}, built_at=0.0)
+
+
+def test_facade_raises_not_ready_before_startup(tmp_path):
+    # Startup in progress: the state exists (facade is constructed) but the
+    # service has not started, so readiness is unset and the snapshot-backed
+    # surface raises - and submit() rejects without registering/enqueueing.
+    mca_runtime.reset_state_for_tests()
+    mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+    try:
+        state = mca_runtime._get_state(str(tmp_path / "v"))  # noqa: SLF001
+        assert not state.ready_event.is_set()
+        with pytest.raises(FacadeNotReady):
+            state.facade.attachments_snapshot()
+        with pytest.raises(FacadeNotReady):
+            state.facade.submit(Command(command_id="c", kind="attachment_cancel", payload={}, created_at=0.0))
+        assert state.facade.get_command("c") is None
+        assert state.command_queue.qsize() == 0
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_publish_readiness_requires_started_and_a_published_snapshot(tmp_path):
+    # The two halves of readiness: started *and* first snapshot published.
+    # Also covers first-snapshot failure (snapshot stays None -> not ready)
+    # and the successful retry.
+    state, _, _ = _started_state(tmp_path, "w")
+    svc = state.service
+    try:
+        # Not started (stop() cleared _started): readiness stays unset even
+        # though the snapshot is already published.
+        state.ready_event.clear()
+        svc._started = False  # noqa: SLF001
+        svc._publish_readiness()
+        assert not state.ready_event.is_set()
+
+        # Started, but the first snapshot publish failed (snapshot() is None):
+        # still not ready - a failed first build must not flip readiness.
+        svc._snapshot_publisher._snapshot = None  # noqa: SLF001
+        svc._started = True  # noqa: SLF001
+        svc._publish_readiness()
+        assert not state.ready_event.is_set()
+
+        # Retry: the snapshot is now published, so readiness flips true.
+        svc._snapshot_publisher._snapshot = _empty_snapshot()  # noqa: SLF001
+        svc._publish_readiness()
+        assert state.ready_event.is_set()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_stop_clears_readiness(tmp_path):
+    # Correction #1: readiness is cleared the moment the service stops, so a
+    # request thread observing a stopped service gets FacadeNotReady, never a
+    # stale "ready" signal. After the deterministic first stop, a further
+    # stop() (idempotent, no worker thread left to race the clear) must still
+    # clear an already-set event.
+    state, _, _ = _started_state(tmp_path, "x")
+    try:
+        assert state.ready_event.is_set()  # set by _started_state
+        assert state.service.stop()
+        assert not state.ready_event.is_set()
     finally:
         mca_runtime.reset_state_for_tests()

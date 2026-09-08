@@ -56,7 +56,7 @@ from meshsrv.attachments import codec, receiver, sender
 from meshsrv.attachments.command_registry import CommandRegistry
 from meshsrv.attachments.commands import MAX_COMMANDS_PER_TICK, Command, CommandQueue
 from meshsrv.attachments.delivery.base import DeliveryAdapter, DeliveryEnvelope, DeliveryError, Route, RouteType
-from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispatcher
+from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispatcher, CommandOutcome
 from meshsrv.attachments.identity import MCAPrincipal
 from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator, RateLimited
 from meshsrv.attachments.provider_registry import ProviderRegistry
@@ -162,6 +162,7 @@ class AttachmentsService:
         dispatcher: Optional[CommandDispatcher] = None,
         snapshot_publisher: Optional[AttachmentsSnapshotPublisher] = None,
         wake_event: Optional[threading.Event] = None,
+        ready_event: Optional[threading.Event] = None,
     ):
         self._conn = conn
         self._workspace_manager = workspace_manager
@@ -216,6 +217,14 @@ class AttachmentsService:
             snapshot_publisher if snapshot_publisher is not None else AttachmentsSnapshotPublisher()
         )
         self._wake_event = wake_event if wake_event is not None else threading.Event()
+        # Step 1.6A.1 (correction #1): the shared runtime-readiness signal.
+        # `mca_runtime` passes the same Event it hands the facade, so the
+        # facade's snapshot-backed reads/write are gated on exactly this
+        # service's started-and-first-snapshot-published state. A standalone
+        # caller that omits it gets a private one (and its own facade, if
+        # any, would need to share it - see _publish_readiness()).
+        self._ready_event = ready_event if ready_event is not None else threading.Event()
+        self._started = False
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -223,10 +232,14 @@ class AttachmentsService:
 
     def start(self) -> None:
         """Idempotent: calling start() on an already-running service is a
-        no-op, not a second thread."""
+        no-op, not a second thread. Marks the service as started (the first
+        half of runtime readiness - the second is the first successful
+        snapshot publish, applied by the worker's first tick via
+        `_publish_readiness()`)."""
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop_event.clear()
+        self._started = True
         self._thread = threading.Thread(target=self._run, name="mca-attachments-worker", daemon=True)
         self._thread.start()
 
@@ -241,6 +254,13 @@ class AttachmentsService:
         reset_state_for_tests()'s own handling."""
         self._stop_event.set()
         self._wake_event.set()
+        # Step 1.6A.1 (correction #1): readiness is cleared the moment the
+        # service stops (or is asked to stop), so a request thread observing
+        # a stopped service gets `FacadeNotReady`, never a stale "ready"
+        # signal or a fabricated empty snapshot. Cleared before the join so
+        # even a still-joining worker can no longer present itself as ready.
+        self._started = False
+        self._ready_event.clear()
         if self._thread is None:
             return True
         self._thread.join(timeout=timeout)
@@ -390,7 +410,24 @@ class AttachmentsService:
         # surface (facade.py) reflects every row this tick advanced.
         self._refresh_snapshot()
 
+        # Step 1.6A.1 (correction #1): flip runtime readiness once this tick
+        # has both a started service and a successfully-published snapshot.
+        self._publish_readiness()
+
         return processed
+
+    def _publish_readiness(self) -> None:
+        """Step 1.6A.1 (correction #1): the second half of runtime readiness.
+        Readiness is true only when the service is *started* (`start()` was
+        called and the worker thread launched - the `_started` flag) *and*
+        the first attachment snapshot has been published successfully (the
+        publisher's `snapshot()` is no longer `None`). A failed first build
+        leaves `snapshot()` as `None`, so readiness stays false and the next
+        tick retries. Called from the end of every tick (and nowhere else),
+        so the ready signal is always re-derived from the two facts, never
+        remembered across a stop/start cycle."""
+        if self._started and self._snapshot_publisher.snapshot() is not None:
+            self._ready_event.set()
 
     def _drain_inbound_events(self) -> None:
         """Up to MAX_INBOUND_EVENTS_PER_TICK events, oldest first - the
@@ -427,18 +464,33 @@ class AttachmentsService:
             self._execute_command(command)
 
     def _execute_command(self, command: Command) -> None:
-        """Step 1.6A.1 (correction #2): execute one dequeued command by
+        """Step 1.6A.1 (correction #2/#4): execute one dequeued command by
         dispatching to its kind's handler, and record the terminal outcome
         in the registry. The worker is the sole executor (§3.2), and the
         dispatcher is the sole kind->work mapping - there is no arbitrary
-        callable command here. Two things can never crash the worker:
+        callable command here. Nothing this method does can crash the worker
+        or leave an entry permanently RUNNING, because every failure mode is
+        caught and turned into a terminal transition (or a logged no-op):
 
         - an enumerated-but-unwired kind: the dispatcher itself returns
           `CommandOutcome.failed(unsupported_command_kind)` (dispatch.py),
           so this method just records that stable terminal FAILED;
         - a handler that *raises* (a bug): caught here and recorded as a
-          terminal FAILED with `COMMAND_EXECUTION_FAILED`, never propagated
-          out of the drain loop.
+          terminal FAILED with `COMMAND_EXECUTION_FAILED`;
+        - a handler that returns the *wrong type* (not a `CommandOutcome`):
+          a bug, recorded as `COMMAND_EXECUTION_FAILED` - never an
+          `AttributeError` escaping the drain loop;
+        - a handler that constructs an *invalid* outcome (empty/non-
+          snake_case error_code, or a failed shape carrying resource_id/
+          result): `CommandOutcome.__post_init__` raises, which the dispatch
+          try/except below converts to `COMMAND_EXECUTION_FAILED`;
+        - an *invalid result payload* (non-serializable / oversized): the
+          registry itself (`mark_succeeded`) records a terminal `failed`
+          with `result_payload_not_serializable`/`result_payload_too_large`
+          rather than raising - the specific payload errors are preserved;
+        - a *registry transition error* (an impossible `running`->terminal
+          transition): caught and logged by `_record_succeeded`/
+          `_record_failed` below, never propagated out of the drain loop.
 
         Either way the command reaches a terminal state (never stuck in
         `running`) and the tick continues."""
@@ -449,16 +501,44 @@ class AttachmentsService:
             return
         try:
             outcome = self._dispatcher.dispatch(command)
-        except Exception:  # noqa: BLE001 - one bad handler must not stop the drain
+        except Exception:  # noqa: BLE001 - a raising handler (or an invalid outcome) must not stop the drain
             logger.exception("AttachmentsService: command handler raised for %s", command.command_id)
-            self._command_registry.mark_failed(command.command_id, error_code=COMMAND_EXECUTION_FAILED)
+            self._record_failed(command.command_id, COMMAND_EXECUTION_FAILED)
+            return
+        if not isinstance(outcome, CommandOutcome):
+            logger.error(
+                "AttachmentsService: command %s handler returned %s, not a CommandOutcome",
+                command.command_id, type(outcome).__name__,
+            )
+            self._record_failed(command.command_id, COMMAND_EXECUTION_FAILED)
             return
         if outcome.error_code is None:
-            self._command_registry.mark_succeeded(
-                command.command_id, resource_id=outcome.resource_id, result=outcome.result
-            )
+            self._record_succeeded(command.command_id, outcome)
         else:
-            self._command_registry.mark_failed(command.command_id, error_code=outcome.error_code)
+            self._record_failed(command.command_id, outcome.error_code)
+
+    def _record_succeeded(self, command_id: str, outcome: CommandOutcome) -> None:
+        """Transition a command to terminal `succeeded`. A registry transition
+        error here (an impossible state) is a worker bug, not a command error,
+        and must not escape the drain loop - logged, never raised. `mark_
+        succeeded` itself also converts an invalid result payload into a
+        terminal `failed` (`result_payload_not_serializable`/`result_payload_
+        too_large`) rather than raising."""
+        try:
+            self._command_registry.mark_succeeded(
+                command_id, resource_id=outcome.resource_id, result=outcome.result
+            )
+        except Exception:  # noqa: BLE001 - a transition error must not kill the tick
+            logger.exception("AttachmentsService: could not mark command %s succeeded", command_id)
+
+    def _record_failed(self, command_id: str, error_code: str) -> None:
+        """Transition a command to terminal `failed`. A registry transition
+        error here is a worker bug, not a command error, and must not escape
+        the drain loop - logged, never raised."""
+        try:
+            self._command_registry.mark_failed(command_id, error_code=error_code)
+        except Exception:  # noqa: BLE001 - a transition error must not kill the tick
+            logger.exception("AttachmentsService: could not mark command %s failed", command_id)
 
     def _refresh_snapshot(self) -> None:
         """Step 1.6A.1 (correction #1): republish the attachment snapshot

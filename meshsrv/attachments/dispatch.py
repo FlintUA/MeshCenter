@@ -36,6 +36,7 @@ worker thread or a test.
 from __future__ import annotations
 
 import dataclasses
+import re
 from typing import Any, Mapping, Optional, Protocol
 
 from meshsrv.attachments.commands import Command
@@ -53,6 +54,14 @@ UNSUPPORTED_COMMAND_KIND = "unsupported_command_kind"
 # a poller can tell "the handler declined this command" apart from "the
 # handler itself broke".
 COMMAND_EXECUTION_FAILED = "command_execution_failed"
+
+# The one legal shape for a `CommandOutcome`'s `error_code`: a non-empty
+# snake_case token. Enforced in `CommandOutcome.__post_init__` so a handler
+# cannot construct a failed outcome with an empty, whitespace, or
+# non-snake_case code - such a shape is a handler bug, caught by the worker
+# (which records `COMMAND_EXECUTION_FAILED`) rather than ever reaching a
+# poller as an ambiguous empty/odd error_code.
+_STABLE_ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -75,6 +84,23 @@ class CommandOutcome:
     resource_id: Optional[str] = None
     result: Optional[Mapping[str, Any]] = None
     error_code: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        # Enforce the two legal shapes at construction (a caller can't build a
+        # mixed/ambiguous one). success: error_code is None (resource_id/result
+        # optional). failed: error_code is a non-empty snake_case token, and
+        # resource_id/result must both be None (a failed command produces no
+        # primary id and no result payload - §7.9). A failed shape violating
+        # any of this is a handler bug: it raises here, which the worker's
+        # dispatch try/except converts to COMMAND_EXECUTION_FAILED.
+        if self.error_code is None:
+            return
+        if not self.error_code or not _STABLE_ERROR_CODE_RE.match(self.error_code):
+            raise ValueError(f"failed error_code must be non-empty snake_case, got {self.error_code!r}")
+        if self.resource_id is not None:
+            raise ValueError("a failed outcome must not carry resource_id")
+        if self.result is not None:
+            raise ValueError("a failed outcome must not carry result")
 
     @classmethod
     def succeeded(cls, *, resource_id: Optional[str] = None, result: Optional[Mapping[str, Any]] = None) -> "CommandOutcome":

@@ -676,6 +676,97 @@ ALTER TABLE attachments DROP COLUMN client_request_id;
 """
 
 
+# Execution Plan Step 1.6A.1 (snapshot-dirty tracking; ADR-0008 §3.3).
+# The attachment snapshot (internal-rest-api.md §3.3) projects exactly four
+# tables - `attachments`, `attachment_recipients`, `attachment_deliveries`,
+# `attachment_events` - and nothing else. The publisher's change-detection
+# originally used `conn.total_changes`, but that is *connection-global* and
+# is advanced every tick by writes the snapshot does NOT project: ACK-quota
+# bookkeeping (`mca_ack_quota`), Relay health (`mca_provider_profiles`),
+# reply outbox (`mca_outgoing_replies`), and sender/receiver mid-flight
+# state (`mca_sender_state`/`mca_receiver_state`/`mca_tombstones`). Under an
+# active-write workload that made `refresh()` rebuild the whole O(N) snapshot
+# on every single tick - the exact cost the incremental design was built to
+# eliminate (see the Step 1.6A.1 active-write benchmark, §15.2).
+#
+# `mca_dirty_attachments` is the explicit, narrowly-scoped snapshot-dirty
+# set: AFTER INSERT/UPDATE/DELETE triggers on the four projected tables
+# *only* record the affected `attachment_id` (with `INSERT OR IGNORE`, so a
+# burst of writes to one attachment coalesces to a single dirty row). The
+# publisher drains and deduplicates those ids and rebuilds *only* the
+# affected projection + bounded timeline (see snapshots.py) - never the
+# whole O(N) snapshot. Because a trigger's INSERT runs inside the same
+# transaction as the statement that fired it, the dirty row is transactional
+# (a rollback rolls it back too - no spurious rebuild, and a committed
+# relevant write can never be missed) and database-global (it survives a
+# connection close/recreate, unlike `conn.total_changes`, which is
+# per-connection and resets to 0).
+#
+# On UPDATE the trigger dirties *both* `NEW` and `OLD` ids: a row's id (or,
+# for a child table, its `attachment_id`) may itself be the thing that
+# changed, so neither the old nor the new attachment's projection may be
+# left stale. On DELETE only `OLD` is dirtied (a deleted attachment's
+# projection is removed, not rebuilt).
+#
+# The triggers are created in `data_fixup` (not `up_sql`) because their
+# bodies use `BEGIN ... END;`, which this module's own
+# `_split_sql_statements()` cannot split (see its docstring) - exactly the
+# "transformation plain SQL can't express" case the data_fixup hook exists
+# for.
+_DIRTY_TABLES = ("attachments", "attachment_recipients", "attachment_deliveries", "attachment_events")
+_DIRTY_EVENTS = ("INSERT", "UPDATE", "DELETE")
+
+
+def _dirty_trigger_names():
+    return tuple(
+        f"trg_{table}_snapshot_dirty_{event.lower()}"
+        for table in _DIRTY_TABLES
+        for event in _DIRTY_EVENTS
+    )
+
+
+def _dirty_id_column(table: str) -> str:
+    """The column carrying the affected attachment's id for a projected
+    table: the `id` primary key on `attachments` itself, the `attachment_id`
+    foreign key on each child table."""
+    return "id" if table == "attachments" else "attachment_id"
+
+
+def _migration_0012_create_dirty_triggers(conn: sqlite3.Connection) -> None:
+    """Create one AFTER trigger per (table, event) that records the affected
+    `attachment_id` in `mca_dirty_attachments`. Runs inside migration 12's own
+    transaction (via `migrate()`'s data_fixup hook), so the triggers and the
+    table commit atomically - a failure here rolls the whole migration back."""
+    for table in _DIRTY_TABLES:
+        column = _dirty_id_column(table)
+        for event in _DIRTY_EVENTS:
+            if event == "INSERT":
+                refs = (f"NEW.{column}",)
+            elif event == "UPDATE":
+                refs = (f"NEW.{column}", f"OLD.{column}")
+            else:  # DELETE
+                refs = (f"OLD.{column}",)
+            body = " ".join(
+                f"INSERT OR IGNORE INTO mca_dirty_attachments (attachment_id) VALUES ({ref});"
+                for ref in refs
+            )
+            conn.execute(
+                f"CREATE TRIGGER trg_{table}_snapshot_dirty_{event.lower()} "
+                f"AFTER {event} ON {table} BEGIN {body} END"
+            )
+
+
+_MIGRATION_0012_UP = """
+CREATE TABLE mca_dirty_attachments (
+    attachment_id TEXT PRIMARY KEY
+);
+"""
+
+_MIGRATION_0012_DOWN = "\n".join(
+    f"DROP TRIGGER IF EXISTS {name};" for name in _dirty_trigger_names()
+) + "\nDROP TABLE IF EXISTS mca_dirty_attachments;"
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -706,6 +797,10 @@ MIGRATIONS: Sequence[Migration] = (
     ),
     Migration(10, "receiver_ack_outbox", _MIGRATION_0010_UP, _MIGRATION_0010_DOWN),
     Migration(11, "attachments_idempotency", _MIGRATION_0011_UP, _MIGRATION_0011_DOWN),
+    Migration(
+        12, "snapshot_dirty_tracking", _MIGRATION_0012_UP, _MIGRATION_0012_DOWN,
+        data_fixup=_migration_0012_create_dirty_triggers,
+    ),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0
@@ -734,6 +829,10 @@ ALL_TABLE_NAMES = frozenset(
         # ALL_TABLE_NAMES.issubset(...) test silently never verified this
         # table's presence after a full migration run.
         "mca_ack_quota",
+        # Migration 12 (Step 1.6A.1): the snapshot-dirty set, populated by
+        # AFTER triggers on the four projected tables (one row per affected
+        # attachment_id, deduplicated by INSERT OR IGNORE).
+        "mca_dirty_attachments",
     }
 )
 

@@ -40,6 +40,7 @@ from meshsrv.attachments.snapshots import (
     RecipientRecord,
     TimelineEvent,
     build_attachments_snapshot,
+    clear_dirty_attachment_ids,
     disposition_for_mime_type,
     list_dirty_attachment_ids,
     make_locator,
@@ -368,7 +369,7 @@ CREATE TABLE attachment_deliveries (
     sent_at REAL
 );
 CREATE TABLE attachment_events (
-    id INTEGER, attachment_id TEXT, occurred_at REAL, event_type TEXT,
+    id INTEGER PRIMARY KEY, attachment_id TEXT, occurred_at REAL, event_type TEXT,
     detail_json TEXT
 );
 """
@@ -542,6 +543,90 @@ def test_build_tolerates_malformed_detail_json(paths, conn, workspace_manager):
     )
     snap = _build(conn, workspace_manager)
     assert snap.by_id["att-6"].timeline[0].detail == {}
+
+
+def test_build_timeline_bounds_many_events_and_keeps_most_recent(paths, conn, workspace_manager):
+    conn.execute(
+        "INSERT INTO attachments (id, workspace_id, direction, state, created_at, "
+        "hard_expires_at, download_grace_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("att-many", "local", "sent", "queued", 0.0, 999.0, 300),
+    )
+    total = MAX_DETAIL_EVENTS * 2 + 7
+    for i in range(total):
+        conn.execute(
+            "INSERT INTO attachment_events (attachment_id, occurred_at, event_type, detail_json) "
+            "VALUES (?, ?, ?, ?)",
+            ("att-many", float(i), "state_changed", '{"n": %d}' % i),
+        )
+    snap = _build(conn, workspace_manager, max_detail_events=MAX_DETAIL_EVENTS)
+    timeline = snap.by_id["att-many"].timeline
+    # Bounded to MAX_DETAIL_EVENTS, keeping the most recent, in chronological
+    # order - the unbounded event history was never loaded (§7.1).
+    assert len(timeline) == MAX_DETAIL_EVENTS
+    assert [e.created_at for e in timeline] == [
+        float(i) for i in range(total - MAX_DETAIL_EVENTS, total)
+    ]
+
+
+def test_build_timeline_equal_occurred_at_ties_broken_by_id_desc(paths, conn, workspace_manager):
+    conn.execute(
+        "INSERT INTO attachments (id, workspace_id, direction, state, created_at, "
+        "hard_expires_at, download_grace_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("att-tie", "local", "sent", "queued", 0.0, 999.0, 300),
+    )
+    # Four events sharing one occurred_at; `id` auto-assigns 1..4 in insertion
+    # order. The deterministic `ORDER BY occurred_at DESC, id DESC` tie-break
+    # retains the highest ids (d, c), presented chronologically (id ASC).
+    for etype in ("a", "b", "c", "d"):
+        conn.execute(
+            "INSERT INTO attachment_events (attachment_id, occurred_at, event_type, detail_json) "
+            "VALUES (?, ?, ?, ?)",
+            ("att-tie", 5.0, etype, "{}"),
+        )
+    snap = _build(conn, workspace_manager, max_detail_events=2)
+    assert [e.event_type for e in snap.by_id["att-tie"].timeline] == ["c", "d"]
+
+
+def test_build_timeline_malformed_old_event_outside_window_is_excluded(paths, conn, workspace_manager):
+    conn.execute(
+        "INSERT INTO attachments (id, workspace_id, direction, state, created_at, "
+        "hard_expires_at, download_grace_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("att-old", "local", "sent", "queued", 0.0, 999.0, 300),
+    )
+    # A malformed event far older than the retained window: it is excluded by
+    # the SQL bound before `_parse_detail` ever sees it - never parsed, never
+    # in the timeline, never raised.
+    conn.execute(
+        "INSERT INTO attachment_events (attachment_id, occurred_at, event_type, detail_json) "
+        "VALUES (?, ?, ?, ?)",
+        ("att-old", -1000.0, "state_changed", "{malformed json"),
+    )
+    for i in range(5):
+        conn.execute(
+            "INSERT INTO attachment_events (attachment_id, occurred_at, event_type, detail_json) "
+            "VALUES (?, ?, ?, ?)",
+            ("att-old", float(i), "state_changed", '{"n": %d}' % i),
+        )
+    snap = _build(conn, workspace_manager, max_detail_events=3)
+    timeline = snap.by_id["att-old"].timeline
+    assert len(timeline) == 3
+    assert [e.created_at for e in timeline] == [2.0, 3.0, 4.0]
+
+
+def test_build_timeline_max_detail_events_zero_is_empty(paths, conn, workspace_manager):
+    conn.execute(
+        "INSERT INTO attachments (id, workspace_id, direction, state, created_at, "
+        "hard_expires_at, download_grace_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("att-zero", "local", "sent", "queued", 0.0, 999.0, 300),
+    )
+    for i in range(5):
+        conn.execute(
+            "INSERT INTO attachment_events (attachment_id, occurred_at, event_type, detail_json) "
+            "VALUES (?, ?, ?, ?)",
+            ("att-zero", float(i), "state_changed", "{}"),
+        )
+    snap = _build(conn, workspace_manager, max_detail_events=0)
+    assert snap.by_id["att-zero"].timeline == ()
 
 
 def test_build_assembles_recipients_and_deliveries(paths, conn, workspace_manager):
@@ -883,6 +968,34 @@ def test_incremental_bounded_timeline(paths, conn, workspace_manager, clock):
     assert len(snap.by_id["att-1"].timeline) == 3  # incremental rebuild bounds the timeline too
 
 
+def test_incremental_timeline_keeps_most_recent_and_breaks_ties(paths, conn, workspace_manager, clock):
+    """The incremental read uses the same deterministic `ORDER BY occurred_at
+    DESC, id DESC LIMIT ?` as the full build: most-recent retained, equal
+    occurred_at broken by id DESC, then reversed to chronological order."""
+    pub = _publisher(clock, max_detail_events=3)
+    _insert_attachment(conn, "att-1")
+    pub.refresh(conn, workspace_id="local", workspace_manager=workspace_manager, principal_id=PRINCIPAL_ID)
+
+    for i in range(4):
+        conn.execute(
+            "INSERT INTO attachment_events (attachment_id, occurred_at, event_type, detail_json) "
+            "VALUES (?, ?, ?, ?)",
+            ("att-1", float(i), "state_changed", '{"n": %d}' % i),
+        )
+    # A second event at occurred_at=3.0 (id auto-assigns 5, later than the
+    # id=4 event also at 3.0) - the tie goes to the higher id.
+    conn.execute(
+        "INSERT INTO attachment_events (attachment_id, occurred_at, event_type, detail_json) "
+        "VALUES (?, ?, ?, ?)",
+        ("att-1", 3.0, "state_changed", '{"n": 99}'),
+    )
+    snap = pub.refresh(conn, workspace_id="local", workspace_manager=workspace_manager, principal_id=PRINCIPAL_ID)
+    timeline = snap.by_id["att-1"].timeline
+    assert len(timeline) == 3
+    assert [e.created_at for e in timeline] == [2.0, 3.0, 3.0]
+    assert timeline[-1].detail["n"] == 99  # the higher-id tie is the last one kept
+
+
 def test_incremental_idempotency_index_updates(paths, conn, workspace_manager, clock):
     pub = _publisher(clock)
     _insert_attachment(conn, "att-1")
@@ -994,3 +1107,75 @@ def test_publisher_first_build_failure_returns_none(workspace_manager, clock):
     result = pub.refresh(empty, workspace_id="local", workspace_manager=workspace_manager, principal_id=PRINCIPAL_ID)
     assert result is None
     assert pub.snapshot() is None
+
+
+# --- correction #5: build-then-publish-then-ack, never lose a change --------
+
+def test_construction_failure_keeps_old_snapshot_and_dirty_ids(monkeypatch, paths, conn, workspace_manager, clock):
+    """A snapshot-construction failure (here MemoryError, raised after the
+    per-dirty fetch succeeds) must keep the last-known-good snapshot AND every
+    dirty id - the dirty ids are acknowledged only *after* the complete
+    snapshot is built and published, so a failure before that point leaves
+    them in place for the next tick to retry."""
+    pub = _publisher(clock)
+    _insert_attachment(conn, "att-1", state="queued")
+    good = pub.refresh(conn, workspace_id="local", workspace_manager=workspace_manager, principal_id=PRINCIPAL_ID)
+    assert good is not None
+
+    conn.execute("UPDATE attachments SET state = 'sending' WHERE id = 'att-1'")
+    assert list_dirty_attachment_ids(conn) == ["att-1"]
+
+    def _oom(*_args, **_kwargs):
+        raise MemoryError("snapshot construction failed")
+
+    monkeypatch.setattr("meshsrv.attachments.snapshots.AttachmentsSnapshot", _oom)
+    still_good = pub.refresh(conn, workspace_id="local", workspace_manager=workspace_manager, principal_id=PRINCIPAL_ID)
+    assert still_good is good
+    assert pub.snapshot() is good
+    assert list_dirty_attachment_ids(conn) == ["att-1"]  # never acked
+
+
+def test_dirty_ack_failure_keeps_snapshot_and_cleans_transaction(monkeypatch, tmp_path, workspace_manager, clock):
+    """A dirty-id delete that fails after opening an implicit transaction
+    (default isolation_level, a real `conn.in_transaction`) must leave the
+    already-published snapshot correct, roll the connection back out of the
+    failed transaction, and keep the dirty id for a harmless retry."""
+    conn = sqlite3.connect(":memory:")  # legacy implicit-transaction mode
+    _create_schema(conn)
+    pub = _publisher(clock)
+    _insert_attachment(conn, "att-1", state="queued")
+    conn.commit()
+    good = pub.refresh(conn, workspace_id="local", workspace_manager=workspace_manager, principal_id=PRINCIPAL_ID)
+    assert good is not None
+    assert conn.in_transaction is False  # first publish's clear+commit cleaned up
+
+    conn.execute("UPDATE attachments SET state = 'sending' WHERE id = 'att-1'")
+    conn.commit()
+    assert list_dirty_attachment_ids(conn) == ["att-1"]
+
+    # A clear that performs the real DELETE (opening an implicit transaction)
+    # but then fails before the commit - simulating a commit-time error.
+    real_clear = clear_dirty_attachment_ids
+
+    def _failing_clear(c, ids):
+        real_clear(c, ids)
+        raise sqlite3.OperationalError("commit failed")
+
+    monkeypatch.setattr("meshsrv.attachments.snapshots.clear_dirty_attachment_ids", _failing_clear)
+    published = pub.refresh(conn, workspace_id="local", workspace_manager=workspace_manager, principal_id=PRINCIPAL_ID)
+
+    # The change was published (publish precedes the ack)...
+    assert published is not good
+    assert published.by_id["att-1"].state == "sending"
+    # ...the failed ack rolled the connection back out of its transaction...
+    assert conn.in_transaction is False
+    # ...and the dirty id survives (the DELETE was rolled back) for a retry.
+    assert list_dirty_attachment_ids(conn) == ["att-1"]
+
+    # Retry: un-patch, the next refresh re-drains the dirty id and publishes
+    # the same final state (a harmless retry - no change lost, no stuck txn).
+    monkeypatch.undo()
+    retried = pub.refresh(conn, workspace_id="local", workspace_manager=workspace_manager, principal_id=PRINCIPAL_ID)
+    assert retried.by_id["att-1"].state == "sending"
+    assert list_dirty_attachment_ids(conn) == []
+    assert conn.in_transaction is False

@@ -19,6 +19,7 @@ import threading
 import pytest
 
 from meshsrv.attachments.idempotency import (
+    IdempotencyEntry,
     PendingReservation,
     PendingReservations,
     ReservationOutcome,
@@ -186,44 +187,70 @@ def _res(client_request_id="req-1", canonical="a" * 64, attachment="att-1", comm
     )
 
 
+def _committed(attachment="att-1", canonical="a" * 64, created_at=1.0):
+    return IdempotencyEntry(attachment_id=attachment, canonical_hash=canonical, created_at=created_at)
+
+
 def test_reserve_fresh_then_replay_pending_then_replay_committed():
     r = PendingReservations()
-    outcome = r.reserve("req-1", _res(), committed_hashes={})
+    outcome = r.reserve("req-1", _res(), committed_entries={})
     assert outcome.kind == "fresh"
     assert outcome.reservation.attachment_id == "att-1"
 
     # Same id + same hash while still pending -> replay_pending, same ids.
-    replay = r.reserve("req-1", _res(), committed_hashes={})
+    replay = r.reserve("req-1", _res(), committed_entries={})
     assert replay.kind == "replay_pending"
     assert replay.reservation.attachment_id == "att-1"
 
     # After the worker commits (reservation removed, id now in the
-    # committed index), same id + same hash -> replay_committed.
+    # committed index), same id + same hash -> replay_committed, carrying
+    # the *original* attachment_id and canonical_hash (not just the hash).
     r.remove("req-1")
-    committed = r.reserve("req-1", _res(), committed_hashes={"req-1": "a" * 64})
+    committed = r.reserve("req-1", _res(), committed_entries={"req-1": _committed(attachment="att-original")})
     assert committed.kind == "replay_committed"
     assert committed.existing_hash == "a" * 64
+    assert committed.committed_entry.attachment_id == "att-original"
+    assert committed.committed_entry.canonical_hash == "a" * 64
+
+
+def test_replay_committed_returns_original_attachment_not_the_new_one():
+    # The whole point of consuming the immutable IdempotencyEntry mapping:
+    # a committed replay must hand back the *already-created* attachment id
+    # (the one the client originally got), never the fresh ids the replayed
+    # request just minted.
+    r = PendingReservations()
+    outcome = r.reserve(
+        "req-1",
+        _res(attachment="att-FRESH-MUST-NOT-BE-USED"),
+        committed_entries={"req-1": _committed(attachment="att-original")},
+    )
+    assert outcome.kind == "replay_committed"
+    assert outcome.committed_entry.attachment_id == "att-original"
+    assert outcome.committed_entry.canonical_hash == "a" * 64
 
 
 def test_reserve_conflict_when_same_id_but_different_hash():
     r = PendingReservations()
-    r.reserve("req-1", _res(canonical="a" * 64), committed_hashes={})
+    r.reserve("req-1", _res(canonical="a" * 64), committed_entries={})
 
     # Different canonical content, same id, still pending -> conflict.
-    outcome = r.reserve("req-1", _res(canonical="b" * 64), committed_hashes={})
+    outcome = r.reserve("req-1", _res(canonical="b" * 64), committed_entries={})
     assert outcome.kind == "conflict"
     assert outcome.existing_hash == "a" * 64
 
-    # Same id, different hash against a *committed* entry -> conflict too.
+    # Same id, different hash against a *committed* entry -> conflict too
+    # (idempotency_conflict, no committed_entry retained - there is no
+    # attachment to return, the content genuinely differed).
     r.remove("req-1")
-    outcome = r.reserve("req-1", _res(canonical="b" * 64), committed_hashes={"req-1": "a" * 64})
+    outcome = r.reserve("req-1", _res(canonical="b" * 64), committed_entries={"req-1": _committed(canonical="a" * 64)})
     assert outcome.kind == "conflict"
+    assert outcome.committed_entry is None
 
 
 def test_remove_drops_only_the_named_reservation():
     r = PendingReservations()
-    r.reserve("req-1", _res(), committed_hashes={})
-    r.reserve("req-2", _res(), committed_hashes={})
+    r.reserve("req-1", _res(), committed_entries={})
+    r.reserve("req-2", _res(), committed_entries={})
     r.remove("req-1")
     assert r.get("req-1") is None
     assert r.get("req-2") is not None
@@ -232,7 +259,7 @@ def test_remove_drops_only_the_named_reservation():
 
 def test_snapshot_ids_is_a_copy():
     r = PendingReservations()
-    r.reserve("req-1", _res(), committed_hashes={})
+    r.reserve("req-1", _res(), committed_entries={})
     snap = r.snapshot_ids()
     snap.clear()
     assert r.get("req-1") is not None  # original unaffected
@@ -250,7 +277,7 @@ def test_concurrent_same_id_same_hash_exactly_one_fresh():
 
     def worker():
         barrier.wait()
-        out = r.reserve("req-1", _res(), committed_hashes={})
+        out = r.reserve("req-1", _res(), committed_entries={})
         with lock:
             outcomes.append(out)
 
@@ -287,7 +314,7 @@ def test_concurrent_same_id_different_hash_one_fresh_rest_not_fresh():
     def worker(idx):
         barrier.wait()
         canonical = "a" * 64 if idx < half else "b" * 64
-        out = r.reserve("req-1", _res(canonical=canonical), committed_hashes={})
+        out = r.reserve("req-1", _res(canonical=canonical), committed_entries={})
         with lock:
             outcomes.append(out)
 

@@ -50,14 +50,18 @@ sets `result`/`resource_id`/`error_code` and is responsible for ensuring
 `result` carries no secrets, no absolute paths, no ciphertext (§3.4 /
 §7.9). This registry stores what it is given and keeps its own `repr`
 free of the payload, but it does not second-guess the payload's contents -
-with one exception: it enforces a hard *size* bound
-(`COMMAND_RESULT_MAX_PAYLOAD_BYTES`) so a misbehaving worker cannot retain
-an unbounded blob per terminal entry and defeat the `COMMAND_RESULT_MAX_
-ENTRIES` memory bound. Size is a mechanical limit, not a content judgment,
-so it does not re-open the "caller validates content" split - and it never
-*raises* out of the worker: an oversized or non-serializable result is
-recorded as a terminal `failed` with a bounded `error_code` and no payload,
-so a command can never be left stuck in `running` (§15.2).
+with two exceptions: it enforces a hard *size* bound
+(`COMMAND_RESULT_MAX_PAYLOAD_BYTES`) and a strict *JSON-nativeness* check
+(no `default=str`, no `NaN`/`Infinity`), so a misbehaving worker cannot
+retain an unbounded or non-serializable blob per terminal entry and defeat
+the `COMMAND_RESULT_MAX_ENTRIES` memory bound; and it *deep-copies and
+recursively freezes* whatever it accepts, so a later mutation of the
+caller's original object cannot alter an already-published result. Size and
+serializability are mechanical limits, not content judgments, so they do not
+re-open the "caller validates content" split - and they never *raise* out of
+the worker: an oversized or non-serializable result is recorded as a
+terminal `failed` with a bounded `error_code` and no payload, so a command
+can never be left stuck in `running` (§15.2).
 """
 
 from __future__ import annotations
@@ -86,7 +90,7 @@ _TERMINAL_STATUSES = frozenset({STATUS_SUCCEEDED, STATUS_FAILED})
 
 # Upper bound on the number of *terminal* (succeeded/failed) entries kept
 # at once. queued/running entries are outside this budget (never evicted).
-COMMAND_RESULT_MAX_ENTRIES = 1000
+COMMAND_RESULT_MAX_ENTRIES = 256
 
 # A terminal entry older than this (measured from `updated_at`, when it
 # reached its terminal state) is evicted on the next registry access. One
@@ -95,22 +99,24 @@ COMMAND_RESULT_MAX_ENTRIES = 1000
 COMMAND_RESULT_TTL_SECONDS = 3600
 
 # Hard cap on the serialized size of a single command's `result` payload
-# (JSON bytes, §7.9). This is what bounds the *worst-case* memory of
-# `COMMAND_RESULT_MAX_ENTRIES` terminal entries: 1000 entries x at most
-# ~16 KiB of payload ~= 16 MiB of retained result bytes, plus the small
-# frozen-dataclass overhead per entry and the two index dicts. That is NOT
-# negligible next to the attachment snapshot: the Step 1.6A.1 benchmark
-# measured the retained attachment snapshot's Python-object half at
-# ~14.5 MiB, so a fully-loaded command registry (~16 MiB) is actually the
-# *larger* of the two retained structures. The honest worst case is their
-# *sum* (~30 MiB of retained state) - a real budget line that still fits the
-# 415 MiB of a Pi Zero 2 W, but not "memory-trivial". A worker that builds a
-# larger result is a bug (every §7.9 shape is tiny: an `attachment_id`, a
-# `provider_id`, a probe summary); `mark_succeeded` converts an oversized or
-# non-serializable result into a terminal FAILED with a bounded error_code
-# and no payload, rather than raising out of the worker (see
-# `_result_payload_error`).
-COMMAND_RESULT_MAX_PAYLOAD_BYTES = 16 * 1024
+# (JSON bytes, §7.9). Chosen by measuring every §7.9 result shape, not
+# guessed: the largest valid result is a `provider_probe` summary
+# (`serialize_probe_record`'s nine fields - probe_id/provider_id/origin/
+# fingerprint/protocol_version/limits/expires_at), which even with a
+# maximally-long normalized HTTPS origin stays well under 1 KiB; every
+# other shape (an `attachment_id`, a `provider_id`, `{"action": ...}`,
+# `{"mca1_text": ...}`) is far smaller. 4 KiB is therefore a generous
+# ceiling no documented result approaches, and it bounds the *worst-case*
+# retained memory of `COMMAND_RESULT_MAX_ENTRIES` terminal entries to
+# 256 x ~4 KiB ~= 1 MiB of result bytes - well over an order of magnitude
+# under the attachment snapshot's retained Python-object half (~14.5 MiB on
+# a Pi Zero 2 W; re-measured in the Step 1.6A.1 final benchmark as a 1.1 MiB
+# registry vs a ~19 MiB snapshot RSS delta), so the registry is now a
+# negligible contributor to the combined worst-case budget (§15.2). A worker that builds a larger result
+# is a bug; `mark_succeeded` converts an oversized or non-serializable
+# result into a terminal FAILED with a bounded error_code and no payload,
+# rather than raising out of the worker (see `_result_payload_error`).
+COMMAND_RESULT_MAX_PAYLOAD_BYTES = 4 * 1024
 
 
 def _result_payload_error(result: Optional[Mapping[str, Any]], max_payload_bytes: int) -> Optional[str]:
@@ -119,8 +125,12 @@ def _result_payload_error(result: Optional[Mapping[str, Any]], max_payload_bytes
     distinct codes so a poller can tell them apart:
 
     - `result_payload_not_serializable` - the result cannot be JSON-encoded
-      (a circular structure is the realistic case; `json.dumps` raises
-      `ValueError` for those, and `default=str` cannot rescue them);
+      with the *strict* native set only (a circular structure, a non-JSON
+      value like `bytes`/`pathlib.Path`, or a `NaN`/`Infinity` float). There
+      is deliberately **no `default=str` coercion** and `allow_nan=False`:
+      a worker that produces such a value is a bug, and silently stringifying
+      it would both paper over the bug and leak a wrong-shaped payload to the
+      poller;
     - `result_payload_too_large` - the result serializes, but its JSON byte
       length exceeds `max_payload_bytes`.
 
@@ -129,7 +139,7 @@ def _result_payload_error(result: Optional[Mapping[str, Any]], max_payload_bytes
     if result is None:
         return None
     try:
-        encoded = json.dumps(result, default=str, separators=(",", ":")).encode("utf-8")
+        encoded = json.dumps(result, separators=(",", ":"), allow_nan=False).encode("utf-8")
     except (TypeError, ValueError):
         return "result_payload_not_serializable"
     if len(encoded) > max_payload_bytes:
@@ -137,14 +147,35 @@ def _result_payload_error(result: Optional[Mapping[str, Any]], max_payload_bytes
     return None
 
 
+def _deep_freeze(value: Any) -> Any:
+    """Recursively copy-and-freeze a JSON-native value so a later mutation of
+    the *original* object the caller holds cannot alter an already-published
+    `CommandResult`. The accepted result has already been proven
+    JSON-serializable by `_result_payload_error`'s `json.dumps` pass, so its
+    value graph is exactly the JSON-native set: `dict`, `list`, `tuple`,
+    `str`, `int`, `float`, `bool`, `None`. Each mapping becomes a read-only
+    `MappingProxyType` over a *fresh* dict; each `list`/`tuple` becomes a
+    `tuple` of recursively-frozen elements; scalars are returned as-is
+    (already immutable). This is a deep **copy**, not a view - the frozen
+    result shares no mutable state with the caller's object."""
+    if isinstance(value, types.MappingProxyType):
+        return value  # already frozen
+    if isinstance(value, Mapping):
+        return types.MappingProxyType({key: _deep_freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze(item) for item in value)
+    return value
+
+
 @dataclasses.dataclass(frozen=True)
 class CommandResult:
     """The immutable read shape `get()` returns - the §7.9 projection,
     without the JSON envelope (the facade adds `{"ok": true, "command":
-    ...}`). Frozen; `result` (when present) is frozen to a read-only
-    mapping so neither a poller nor a later mutation can alter an already-
-    published result. `repr()` omits `result` - same no-secret-in-logs
-    rule as `Command`."""
+    ...}`). Frozen; `result` (when present) is *deep-copied and recursively
+    frozen* (nested mappings and lists become read-only) so neither a poller
+    nor a later mutation of the caller's original object can alter an
+    already-published result. `repr()` omits `result` - same no-secret-in-
+    logs rule as `Command`."""
 
     command_id: str
     kind: str
@@ -157,7 +188,7 @@ class CommandResult:
 
     def __post_init__(self) -> None:
         if self.result is not None:
-            object.__setattr__(self, "result", types.MappingProxyType(dict(self.result)))
+            object.__setattr__(self, "result", _deep_freeze(self.result))
 
     def __repr__(self) -> str:
         return (
@@ -224,6 +255,24 @@ class CommandRegistry:
                 created_at=command.created_at,
                 updated_at=now,
             )
+
+    def discard_queued(self, command_id: str) -> None:
+        """Remove a **queued** entry - used only to roll back a registration
+        when the subsequent `CommandQueue.put_nowait()` fails with `queue.Full`
+        (§3.6 step 5). Must **never** remove a `running` or terminal entry:
+        those are worker-owned, and this rollback runs on the request thread,
+        so it must not be able to clobber a command the worker has already
+        dequeued and is executing (even though, in the happy path, a command
+        whose queue write failed was never enqueued and so the worker can
+        never have seen it - the guard is defense-in-depth, not dead code).
+
+        Silent for an unknown `command_id` (an idempotent-replay path may
+        already have removed it, or a bug double-called it) - never raises."""
+        with self._lock:
+            entry = self._entries.get(command_id)
+            if entry is None or entry.status != STATUS_QUEUED:
+                return
+            del self._entries[command_id]
 
     # ---- worker thread: transition the lifecycle ------------------------
 

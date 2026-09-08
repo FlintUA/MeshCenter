@@ -63,7 +63,7 @@ import json
 import re
 import threading
 import time
-from typing import Dict, Optional
+from typing import Dict, Mapping, Optional
 
 # §3.5: the domain-separation/version label, terminated by a NUL so the
 # variable-length inputs on either side can never be ambiguous at the
@@ -179,6 +179,24 @@ class PendingReservation:
     command_id: str
 
 
+@dataclasses.dataclass(frozen=True)
+class IdempotencyEntry:
+    """One committed idempotency index row (§3.5/§3.6): the immutable
+    `client_request_id -> {attachment_id, canonical_hash, created_at}` entry
+    the worker rebuilds from the `attachments` table at startup and
+    republishes in the snapshot. The canonical home for this type is *here*
+    (the idempotency concern), not `snapshots.py` - that module only
+    projects it, it does not define it - so `PendingReservations.reserve()`
+    can consume a committed index as a `Mapping[str, IdempotencyEntry]`
+    without `idempotency.py` having to import the snapshot module (which
+    would drag `sqlite3`/`workspace` into this otherwise stdlib-only
+    module's import graph)."""
+
+    attachment_id: str
+    canonical_hash: str
+    created_at: float
+
+
 class PendingReservations:
     """The §3.6 transient reservation map - the in-memory half of
     idempotency that closes the "two concurrent Flask threads both see
@@ -220,12 +238,20 @@ class PendingReservations:
         client_request_id: str,
         reservation: PendingReservation,
         *,
-        committed_hashes: Dict[str, str],
+        committed_entries: Mapping[str, "IdempotencyEntry"],
     ) -> "ReservationOutcome":
         """The §3.6 step-3 decision, made atomically under this map's lock
         against *both* the pending map and the committed index
-        (`committed_hashes`: `client_request_id -> canonical_hash`, read
+        (`committed_entries`: `client_request_id -> IdempotencyEntry`, read
         from the worker-published idempotency snapshot by the caller).
+
+        Consuming the full immutable `IdempotencyEntry` mapping - not just a
+        `client_request_id -> canonical_hash` string map - is what lets a
+        `replay_committed` outcome hand back the *original* `attachment_id`
+        (the thing the caller must return to the client as the already-created
+        attachment), not merely the matching hash. The entry is immutable
+        (`IdempotencyEntry` is frozen), so reading it under this map's lock
+        carries no aliasing risk.
 
         Returns a `ReservationOutcome` telling the caller exactly which of
         the four §3.5 cases applies, without releasing the lock between
@@ -237,11 +263,11 @@ class PendingReservations:
                 if existing.canonical_hash == reservation.canonical_hash:
                     return ReservationOutcome.replay_pending(existing)
                 return ReservationOutcome.conflict(existing.canonical_hash)
-            committed = committed_hashes.get(client_request_id)
+            committed = committed_entries.get(client_request_id)
             if committed is not None:
-                if committed == reservation.canonical_hash:
+                if committed.canonical_hash == reservation.canonical_hash:
                     return ReservationOutcome.replay_committed(committed)
-                return ReservationOutcome.conflict(committed)
+                return ReservationOutcome.conflict(committed.canonical_hash)
             self._pending[client_request_id] = reservation
             return ReservationOutcome.reserved(reservation)
 
@@ -280,6 +306,11 @@ class ReservationOutcome:
     # The canonical_hash already on file when this conflicted (for a
     # diagnostic-only comparison; never an error message with secrets).
     existing_hash: Optional[str] = None
+    # For replay_committed: the full immutable committed entry, so the
+    # caller can return the *original* `attachment_id` (and its
+    # `canonical_hash`) rather than having to re-derive them. `None` for
+    # every other outcome.
+    committed_entry: Optional["IdempotencyEntry"] = None
 
     @classmethod
     def reserved(cls, reservation: PendingReservation) -> "ReservationOutcome":
@@ -290,8 +321,12 @@ class ReservationOutcome:
         return cls(kind="replay_pending", reservation=reservation)
 
     @classmethod
-    def replay_committed(cls, committed_hash: str) -> "ReservationOutcome":
-        return cls(kind="replay_committed", existing_hash=committed_hash)
+    def replay_committed(cls, entry: "IdempotencyEntry") -> "ReservationOutcome":
+        return cls(
+            kind="replay_committed",
+            existing_hash=entry.canonical_hash,
+            committed_entry=entry,
+        )
 
     @classmethod
     def conflict(cls, existing_hash: str) -> "ReservationOutcome":

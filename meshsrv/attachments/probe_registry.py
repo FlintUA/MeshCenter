@@ -179,8 +179,18 @@ class ProbeRegistry:
         `probe_id` (probe ids are fresh, unpredictable nonces - a
         collision is a caller bug, never a benign event). Bounded: expires
         old records and, if still over `PROBE_MAX_ENTRIES`, evicts the
-        oldest-inserted."""
+        oldest-inserted.
+
+        The TTL is enforced *here, internally*: the registry - not its
+        caller - caps `expires_at` at `now + ttl_seconds`, so a
+        caller-supplied expiry (even one far in the future) can never
+        extend a probe's lifetime beyond the registry's own bound. A caller
+        may still set a *shorter* `expires_at` (e.g. bounded by the Relay's
+        own max-TTL), which is honored as-is."""
         now = self._now()
+        capped = now + self._ttl_seconds
+        if record.expires_at > capped:
+            record = dataclasses.replace(record, expires_at=capped)
         with self._lock:
             self._evict_locked(now)
             if record.probe_id in self._records:
@@ -206,8 +216,15 @@ class ProbeRegistry:
         """The request thread's pure, non-consuming read for phase-2
         synchronous validation. Returns the record if present and
         unexpired, else `None` (`probe_id_not_found` / `probe_id_expired`).
-        Does **not** remove it - the request thread must never mutate
-        worker-owned state."""
+
+        Does **not** consume a *valid* (unexpired) record - a successful
+        `get()` leaves the probe in place for a later `consume()`, because
+        the request thread must never mutate worker-owned state. The one
+        mutation it does perform, stated honestly: under its own short lock
+        it lazily evicts *already-expired* entries (`_evict_locked`), so an
+        expired probe is dropped by housekeeping, not by `get()` itself -
+        the caller observes `None` either way, but the store's size is kept
+        honest by that housekeeping rather than by a background sweeper."""
         now = self._now()
         with self._lock:
             self._evict_locked(now)

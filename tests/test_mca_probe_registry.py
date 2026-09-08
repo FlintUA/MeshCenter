@@ -38,7 +38,7 @@ class Clock:
         self.t += seconds
 
 
-def _record(probe_id="probe-1", *, expires_at=1000.0, status=PROBE_STATUS_PROBED, **overrides):
+def _record(probe_id="probe-1", *, expires_at=100.0, status=PROBE_STATUS_PROBED, **overrides):
     base = dict(
         probe_id=probe_id,
         origin="https://relay.example.net",
@@ -172,6 +172,44 @@ def test_unexpired_record_is_still_visible():
     assert reg.get("probe-1") is not None
 
 
+def test_expiry_at_exact_boundary_is_expired():
+    # The expiry comparison is `now >= expires_at`, so reaching the expiry
+    # instant exactly is already expired (a probe is single-use and
+    # short-lived; the boundary is inclusive, not off-by-one).
+    reg, clock = _registry()
+    reg.add(_record(expires_at=50.0))
+    clock.advance(50.0)  # now == expires_at exactly
+    assert reg.get("probe-1") is None
+    assert reg.consume("probe-1") is None
+    assert len(reg) == 0
+
+
+# --- TTL enforced internally (the registry, not its caller) ----------------
+
+def test_add_caps_excessively_long_expiry_to_registry_ttl():
+    # A caller (or a bug) supplies an expiry far beyond the registry's TTL:
+    # the registry caps it to now + ttl_seconds so a probe can never live
+    # longer than the store itself allows.
+    reg, clock = _registry(ttl_seconds=300.0)
+    reg.add(_record(expires_at=10_000_000.0))
+    stored = reg.get("probe-1")
+    assert stored.expires_at == 300.0  # now (0) + ttl (300), not the caller's
+    # And it genuinely expires at that capped time.
+    clock.advance(300.0)
+    assert reg.get("probe-1") is None
+
+
+def test_add_honors_shorter_caller_expiry_unchanged():
+    # Within the TTL bound the caller's expiry is honored verbatim (and the
+    # record is stored as the *same* object - no replace copy), so a caller
+    # bounding a probe to the Relay's own max-TTL keeps that shorter value.
+    reg, _ = _registry(ttl_seconds=300.0)
+    record = _record(expires_at=50.0)
+    reg.add(record)
+    assert reg.get("probe-1") is record
+    assert reg.get("probe-1").expires_at == 50.0
+
+
 # --- bounded FIFO eviction --------------------------------------------------
 
 def test_add_beyond_capacity_evicts_oldest():
@@ -215,7 +253,7 @@ def test_concurrent_add_and_consume_is_consistent():
     def worker(i):
         barrier.wait()
         try:
-            record = _record(probe_id=f"probe-{i}", expires_at=10000.0)
+            record = _record(probe_id=f"probe-{i}", expires_at=100.0)
             reg.add(record)
             got = reg.get(f"probe-{i}")
             assert got is record

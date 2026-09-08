@@ -9,9 +9,12 @@ restart-amnesia (a fresh registry is empty), and the no-secret-in-repr
 rule on `CommandResult`. Pure stdlib - no Flask/SQLite/network, safe in CI.
 """
 
+import pathlib
+
 import pytest
 
 from meshsrv.attachments.command_registry import (
+    COMMAND_RESULT_MAX_ENTRIES,
     COMMAND_RESULT_MAX_PAYLOAD_BYTES,
     STATUS_FAILED,
     STATUS_QUEUED,
@@ -38,7 +41,7 @@ def _command(command_id="cmd-1", kind="attachment_create"):
     return Command(command_id=command_id, kind=kind, payload={}, created_at=0.0)
 
 
-def _registry(max_entries=1000, ttl_seconds=3600.0):
+def _registry(max_entries=COMMAND_RESULT_MAX_ENTRIES, ttl_seconds=3600.0):
     clock = Clock()
     return CommandRegistry(max_entries=max_entries, ttl_seconds=ttl_seconds, now_fn=clock), clock
 
@@ -323,3 +326,97 @@ def test_payload_bound_is_configurable():
     result = tiny.get("cmd-1")
     assert result.status == STATUS_FAILED
     assert result.error_code == "result_payload_too_large"
+
+
+# --- discard_queued (rollback of a failed queue write, §3.6 step 5) --------
+
+def test_discard_queued_removes_a_queued_entry():
+    reg, _ = _registry()
+    _queued(reg, "cmd-1")
+    reg.discard_queued("cmd-1")
+    assert reg.get("cmd-1") is None
+    assert len(reg) == 0
+
+
+def test_discard_queued_never_removes_a_running_entry():
+    reg, _ = _registry()
+    _queued(reg, "cmd-1")
+    reg.mark_running("cmd-1")
+    reg.discard_queued("cmd-1")  # must be a no-op - worker-owned now
+    assert reg.get("cmd-1").status == STATUS_RUNNING
+
+
+def test_discard_queued_never_removes_a_terminal_entry():
+    reg, _ = _registry()
+    _queued(reg, "cmd-1")
+    reg.mark_running("cmd-1")
+    reg.mark_succeeded("cmd-1")
+    reg.discard_queued("cmd-1")  # must be a no-op - worker-owned now
+    assert reg.get("cmd-1").status == STATUS_SUCCEEDED
+
+
+def test_discard_queued_unknown_id_is_silent():
+    reg, _ = _registry()
+    reg.discard_queued("never-registered")  # must not raise
+
+
+def test_register_before_enqueue_then_full_rollback_race():
+    # §3.6 step 4/5: register first (so the worker can never dequeue a
+    # command whose registry entry does not yet exist, and an immediate get()
+    # sees `queued`, never 404), then if the queue write fails, discard_queued
+    # removes the entry - leaving no stuck "queued" ghost behind.
+    reg, _ = _registry()
+    reg.register(_command("cmd-1"))
+    assert reg.get("cmd-1").status == STATUS_QUEUED
+    # Simulate the queue.Full rollback: the command was never enqueued.
+    reg.discard_queued("cmd-1")
+    assert reg.get("cmd-1") is None
+
+
+# --- detached / strictly-JSON-safe results (§7.9, no default=str) ----------
+
+def test_mark_succeeded_deep_copies_result_against_later_mutation():
+    reg, _ = _registry()
+    _queued(reg, "cmd-1")
+    reg.mark_running("cmd-1")
+    original = {"nested": {"items": [1, 2, 3]}, "flag": True}
+    reg.mark_succeeded("cmd-1", result=original)
+    # Mutating the caller's original object must not alter the published result.
+    original["nested"]["items"].append(999)
+    original["nested"]["extra"] = "leak"
+    original["flag"] = False
+    result = reg.get("cmd-1")
+    assert dict(result.result) == {"nested": {"items": (1, 2, 3)}, "flag": True}
+
+
+def test_mark_succeeded_nested_result_is_recursively_frozen():
+    reg, _ = _registry()
+    _queued(reg, "cmd-1")
+    reg.mark_running("cmd-1")
+    reg.mark_succeeded("cmd-1", result={"outer": {"inner": [1, 2]}})
+    result = reg.get("cmd-1")
+    with pytest.raises(TypeError):
+        result.result["outer"]["inner"] = [9]  # nested mapping is read-only
+    with pytest.raises(TypeError):
+        result.result["outer"] = {}
+
+
+@pytest.mark.parametrize("bad", [
+    {"data": b"bytes-are-not-json"},
+    {"p": pathlib.Path("/etc/passwd")},
+    {"v": float("nan")},
+    {"v": float("inf")},
+    {"v": float("-inf")},
+])
+def test_mark_succeeded_non_json_native_result_becomes_terminal_failed(bad):
+    # bytes / pathlib.Path / NaN / Infinity are not JSON-native: without
+    # default=str (and with allow_nan=False) they must become a terminal
+    # FAILED with a bounded error_code and no payload - never raise.
+    reg, _ = _registry()
+    _queued(reg, "cmd-1")
+    reg.mark_running("cmd-1")
+    reg.mark_succeeded("cmd-1", result=bad)  # must not raise
+    result = reg.get("cmd-1")
+    assert result.status == STATUS_FAILED
+    assert result.error_code == "result_payload_not_serializable"
+    assert result.result is None

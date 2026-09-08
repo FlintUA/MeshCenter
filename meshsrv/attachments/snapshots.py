@@ -81,6 +81,7 @@ import types
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from meshsrv.attachments.idempotency import IdempotencyEntry
 from meshsrv.attachments.workspace import MCAWorkspaceManager, WorkspacePaths
 
 logger = logging.getLogger(__name__)
@@ -348,17 +349,6 @@ class AttachmentRecord:
 
 
 @dataclasses.dataclass(frozen=True)
-class IdempotencyEntry:
-    """One committed idempotency index row (§3.5/§3.6):
-    `client_request_id -> {attachment_id, canonical_hash, created_at}`,
-    rebuilt from disk at startup and republished in the snapshot."""
-
-    attachment_id: str
-    canonical_hash: str
-    created_at: float
-
-
-@dataclasses.dataclass(frozen=True)
 class AttachmentsSnapshot:
     """The whole immutable snapshot: the compact list of records (each with
     recipients/deliveries/descriptor, bounded timeline), a by-id lookup, and
@@ -527,12 +517,17 @@ def _record_from_row(
     recipients: Sequence[RecipientRecord],
     deliveries: Sequence[DeliveryRecord],
     events: Sequence[TimelineEvent],
-    max_detail_events: int,
 ) -> AttachmentRecord:
     """Convert one `attachments` row plus its already-fetched children into a
     frozen `AttachmentRecord`. Shared by the full build and the incremental
     rebuild so both project a row *identically* (a partial rebuild must never
-    disagree with a full one on any field)."""
+    disagree with a full one on any field).
+
+    `events` must already be *bounded and chronological* (oldest-first): the
+    SQL query that fetched them - not this projection helper - owns the
+    `MAX_DETAIL_EVENTS` bound, so an unbounded read can never reach this far
+    into memory (§7.1). Both callers supply exactly the retained window, in
+    `occurred_at`/`id` ascending order."""
     attachment_id = row["id"]
     saved_path = row["saved_path"]
     saved = make_locator(paths, saved_path) is not None and _is_inside_files(paths, saved_path)
@@ -546,7 +541,7 @@ def _record_from_row(
         plain_size=row["plain_size"],
         saved=saved,
     )
-    timeline = tuple(events[-max_detail_events:])
+    timeline = tuple(events)
     return AttachmentRecord(
         id=attachment_id,
         direction=row["direction"],
@@ -585,10 +580,13 @@ def build_attachments_snapshot(
 
     Batched queries (no N+1): one query per table, grouped in Python, rather
     than a per-attachment query fan-out. The event timeline is bounded per
-    attachment to `max_detail_events`. A single malformed row (bad
-    `detail_json`, a non-servable `saved_path`) is tolerated - redacted to
-    `{}` / no descriptor - never raised, so one corrupt row cannot take down
-    the whole snapshot."""
+    attachment *in SQL* to `max_detail_events` - a window function
+    (`ROW_NUMBER() ... PARTITION BY attachment_id ORDER BY occurred_at DESC,
+    id DESC`) keeps only the most-recent events per attachment, so an
+    attachment's unbounded event history is never loaded into memory (§7.1).
+    A single malformed row (bad `detail_json`, a non-servable `saved_path`)
+    is tolerated - redacted to `{}` / no descriptor - never raised, so one
+    corrupt row cannot take down the whole snapshot."""
     conn.row_factory = sqlite3.Row
     paths = workspace_manager.paths(principal_id)
 
@@ -607,9 +605,21 @@ def build_attachments_snapshot(
         (workspace_id,),
     ).fetchall()
     event_rows = conn.execute(
-        "SELECT attachment_id, occurred_at, event_type, detail_json FROM attachment_events "
-        "WHERE attachment_id IN (SELECT id FROM attachments WHERE workspace_id = ?) ORDER BY occurred_at",
-        (workspace_id,),
+        """
+        SELECT attachment_id, occurred_at, event_type, detail_json
+        FROM (
+            SELECT attachment_id, occurred_at, event_type, detail_json, id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY attachment_id
+                       ORDER BY occurred_at DESC, id DESC
+                   ) AS rn
+            FROM attachment_events
+            WHERE attachment_id IN (SELECT id FROM attachments WHERE workspace_id = ?)
+        )
+        WHERE rn <= ?
+        ORDER BY attachment_id, occurred_at, id
+        """,
+        (workspace_id, max_detail_events),
     ).fetchall()
     idempotency_rows = conn.execute(
         "SELECT id, client_request_id, canonical_hash, created_at FROM attachments "
@@ -639,7 +649,6 @@ def build_attachments_snapshot(
             recipients_by_attachment.get(attachment_id, ()),
             deliveries_by_attachment.get(attachment_id, ()),
             events_by_attachment.get(attachment_id, ()),
-            max_detail_events,
         )
         records.append(record)
         by_id[attachment_id] = record
@@ -725,16 +734,21 @@ def _fetch_attachment_projection(
     ).fetchall()
     event_rows = conn.execute(
         "SELECT attachment_id, occurred_at, event_type, detail_json FROM attachment_events "
-        "WHERE attachment_id = ? ORDER BY occurred_at",
-        (attachment_id,),
+        "WHERE attachment_id = ? ORDER BY occurred_at DESC, id DESC LIMIT ?",
+        (attachment_id, max_detail_events),
     ).fetchall()
+    # The SQL read is bounded and most-recent-first (the deterministic
+    # `occurred_at DESC, id DESC` tie-break, §7.1); reverse it so the
+    # projection's timeline is chronological (occurred_at/id ascending),
+    # identical to the full build's presentation order.
+    events = [_event_from_row(r) for r in event_rows]
+    events.reverse()
     record = _record_from_row(
         paths,
         row,
         [_recipient_from_row(r) for r in recipient_rows],
         [_delivery_from_row(r) for r in delivery_rows],
-        [_event_from_row(r) for r in event_rows],
-        max_detail_events,
+        events,
     )
     return _AttachmentProjection(
         record=record,
@@ -860,6 +874,13 @@ class AttachmentsSnapshotPublisher:
         affected projections; with no dirty ids (and no un-migrated legacy
         table) the current snapshot is returned unchanged - the O(N) build
         never runs per-tick.
+
+        The rebuild is built into *local copies* and the complete immutable
+        snapshot is constructed *before* any dirty id is acknowledged; only
+        then is the reference atomically swapped and the processed dirty ids
+        deleted-and-committed. So a failed build/construction keeps the old
+        snapshot and every dirty id, and a failed ack commit leaves the
+        already-correct snapshot published and just retries next tick.
         """
         now = self._now()
 
@@ -891,6 +912,15 @@ class AttachmentsSnapshotPublisher:
             return prev
 
         paths = workspace_manager.paths(principal_id)
+
+        # Build the changes into *local copies* of the four worker-owned
+        # containers, so a failed build leaves the published state untouched
+        # (last-known-good retention) and the dirty ids in place.
+        new_by_id = dict(self._by_id)
+        new_order = list(self._order)
+        new_idempotency = dict(self._idempotency)
+        new_idempotency_by_attachment = dict(self._idempotency_by_attachment)
+
         order_dirty = False
         try:
             for attachment_id in dirty:
@@ -902,27 +932,54 @@ class AttachmentsSnapshotPublisher:
                     max_detail_events=self._max_detail_events,
                 )
                 if projection is None:
-                    order_dirty = self._remove_projection(attachment_id) or order_dirty
+                    order_dirty = self._remove_projection(
+                        new_by_id, new_order, new_idempotency,
+                        new_idempotency_by_attachment, attachment_id,
+                    ) or order_dirty
                 else:
-                    order_dirty = self._upsert_projection(attachment_id, projection) or order_dirty
+                    order_dirty = self._upsert_projection(
+                        new_by_id, new_order, new_idempotency,
+                        new_idempotency_by_attachment, attachment_id, projection,
+                    ) or order_dirty
+            if order_dirty:
+                new_order.sort(key=lambda aid: (-new_by_id[aid].created_at, aid))
+            # Construct the *complete* immutable snapshot before any dirty id
+            # is acknowledged - a construction failure (e.g. MemoryError) must
+            # keep the old snapshot and all dirty ids.
+            fresh = AttachmentsSnapshot(
+                records=tuple(new_by_id[aid] for aid in new_order),
+                by_id=dict(new_by_id),
+                idempotency=dict(new_idempotency),
+                built_at=now,
+            )
         except Exception:  # noqa: BLE001 - a failed publish must not kill the worker tick
             logger.exception("AttachmentsSnapshotPublisher: incremental rebuild failed - keeping last-known-good")
             with self._lock:
                 return self._snapshot
             # (dirty ids are intentionally NOT cleared: the next tick retries.)
 
-        clear_dirty_attachment_ids(conn, dirty)
-
-        if order_dirty:
-            self._order.sort(key=lambda aid: (-self._by_id[aid].created_at, aid))
-        fresh = AttachmentsSnapshot(
-            records=tuple(self._by_id[aid] for aid in self._order),
-            by_id=dict(self._by_id),
-            idempotency=dict(self._idempotency),
-            built_at=now,
-        )
+        # Atomically publish the complete snapshot, then acknowledge exactly
+        # the processed dirty ids (and commit that deletion). The order
+        # matters: a reader can only ever see the complete new snapshot, and
+        # the dirty-id delete happens *after* the swap - a failed ack leaves
+        # the already-published snapshot correct and is just a harmless retry
+        # next tick.
         with self._lock:
             self._snapshot = fresh
+            self._by_id = new_by_id
+            self._order = new_order
+            self._idempotency = new_idempotency
+            self._idempotency_by_attachment = new_idempotency_by_attachment
+
+        try:
+            clear_dirty_attachment_ids(conn, dirty)
+            conn.commit()
+        except Exception:  # noqa: BLE001 - a failed ack is a harmless retry, never a lost change
+            logger.exception("AttachmentsSnapshotPublisher: dirty-id ack/commit failed - will retry next tick")
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                logger.exception("AttachmentsSnapshotPublisher: rollback after failed ack also failed")
         return fresh
 
     # ---- helpers (worker-only) ------------------------------------------
@@ -962,32 +1019,43 @@ class AttachmentsSnapshotPublisher:
             self._snapshot = fresh
             self._initialized = True
         # A full build incorporated every committed projected row, so any
-        # dirty ids accrued before it are now stale.
-        clear_all_dirty_attachment_ids(conn)
+        # dirty ids accrued before it are now stale. Delete them and commit;
+        # a failure here is a harmless retry (the next drain/full build
+        # re-covers them) and must not leave the connection mid-transaction.
+        try:
+            clear_all_dirty_attachment_ids(conn)
+            conn.commit()
+        except Exception:  # noqa: BLE001 - a failed ack is a harmless retry, never a lost change
+            logger.exception("AttachmentsSnapshotPublisher: full-build dirty clear/commit failed - will retry")
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                logger.exception("AttachmentsSnapshotPublisher: rollback after full-build clear also failed")
         return fresh
 
-    def _remove_projection(self, attachment_id: str) -> bool:
+    def _remove_projection(self, by_id, order, idempotency, idempotency_by_attachment, attachment_id) -> bool:
         """Remove a deleted attachment's projection, order entry, and idempotency
-        index entry. Returns True if the order membership changed (a re-sort is
-        needed before publishing)."""
-        order_changed = attachment_id in self._order
-        self._by_id.pop(attachment_id, None)
+        index entry from the *local copies* being built. Returns True if the
+        order membership changed (a re-sort is needed before publishing)."""
+        order_changed = attachment_id in order
+        by_id.pop(attachment_id, None)
         if order_changed:
-            self._order.remove(attachment_id)
-        old_key = self._idempotency_by_attachment.pop(attachment_id, None)
+            order.remove(attachment_id)
+        old_key = idempotency_by_attachment.pop(attachment_id, None)
         if old_key is not None:
-            self._idempotency.pop(old_key, None)
+            idempotency.pop(old_key, None)
         return order_changed
 
-    def _upsert_projection(self, attachment_id: str, projection: _AttachmentProjection) -> bool:
+    def _upsert_projection(self, by_id, order, idempotency, idempotency_by_attachment, attachment_id, projection) -> bool:
         """Insert or update one attachment's projection and its idempotency
-        index entry. Returns True if the order membership/created_at changed (a
-        re-sort is needed before publishing)."""
-        old = self._by_id.get(attachment_id)
-        self._by_id[attachment_id] = projection.record
+        index entry in the *local copies* being built. Returns True if the
+        order membership/created_at changed (a re-sort is needed before
+        publishing)."""
+        old = by_id.get(attachment_id)
+        by_id[attachment_id] = projection.record
         order_changed = False
         if old is None:
-            self._order.append(attachment_id)
+            order.append(attachment_id)
             order_changed = True
         elif old.created_at != projection.record.created_at:
             order_changed = True
@@ -995,14 +1063,14 @@ class AttachmentsSnapshotPublisher:
         # Idempotency index: remove the old entry (if any), then add the fresh
         # one only when both client_request_id and canonical_hash are present
         # (matching the full build's own NULL-canonical_hash skip).
-        old_key = self._idempotency_by_attachment.pop(attachment_id, None)
+        old_key = idempotency_by_attachment.pop(attachment_id, None)
         if old_key is not None:
-            self._idempotency.pop(old_key, None)
+            idempotency.pop(old_key, None)
         if projection.canonical_hash is not None and projection.client_request_id is not None:
-            self._idempotency[projection.client_request_id] = IdempotencyEntry(
+            idempotency[projection.client_request_id] = IdempotencyEntry(
                 attachment_id=attachment_id,
                 canonical_hash=projection.canonical_hash,
                 created_at=projection.record.created_at,
             )
-            self._idempotency_by_attachment[attachment_id] = projection.client_request_id
+            idempotency_by_attachment[attachment_id] = projection.client_request_id
         return order_changed

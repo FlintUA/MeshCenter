@@ -135,9 +135,9 @@ and atomically swaps the results in as fresh snapshots. It is this publisher —
 
 **Publication cost is bounded.** A full re-read of 90 days of history, `recipients`, `deliveries` and `events` on every tick would be wasteful on a Pi Zero 2 W. The publisher therefore:
 
-- re-publishes **only when data changed** (a command executed, a state transition ran, or an inbound event was ingested) **or** on a limited cadence (`SNAPSHOT_REPUBLISH_INTERVAL_SECONDS` fallback), never unconditionally every tick;
+- re-publishes **incrementally**: the four projected tables carry AFTER triggers (migration 12) that transactionally record the affected `attachment_id` in a `mca_dirty_attachments` table; the worker drains and deduplicates those dirty ids each tick and rebuilds **only the affected attachment's projection** (and its bounded timeline), never the whole O(N) snapshot. Deleting an attachment removes its projection. The complete immutable snapshot reference is then swapped atomically, so one relevant change is O(1), not O(N). Unrelated MCA writes (ACK quota, Relay health, reply outbox) record no dirty id and never force a rebuild. The first publish is a full `build_attachments_snapshot()`; a full build is retained only as the first-publish path and the legacy un-migrated-DB fallback, not the per-tick path;
 - keeps the **list** projection compact — no full timeline (a bounded number of `events` per row, or none), with `recipients`/`deliveries` summarized — and loads the **full bounded timeline only for the detail** projection (`GET /api/attachments/{id}`);
-- is covered by a **mandatory benchmark** in sub-stage 1.6A.1 (§5) measuring snapshot build time and memory on target hardware before the read API ships.
+- is covered by a **mandatory benchmark** in sub-stage 1.6A.1 (§5) measuring snapshot build time (full and incremental) and memory on target hardware before the read API ships.
 
 ### 3.4 Sync vs async: the uniform response model, and the command-result endpoint
 
@@ -754,7 +754,7 @@ The trust is thus **operator-confirmed fingerprint + server-side probe-verified 
 ## 15. Unresolved decisions
 
 1. **Whether a separate local `profile_id` is needed** — §9; open for a later re-key/multi-profile stage.
-2. **Command-queue topology constants** — `MAX_COMMANDS_PER_TICK`, `COMMAND_RESULT_MAX_ENTRIES`/`COMMAND_RESULT_TTL_SECONDS`, and the snapshot-republish cadence (`SNAPSHOT_REPUBLISH_INTERVAL_SECONDS`): the §3 model fixes the *shape* (reads use immutable snapshots, not a query queue; ids are minted on the request thread), but the constants should be chosen **after** the 1.6A.1 snapshot-cost benchmark and a measurement of the worker tick's runtime on real hardware.
+2. **Command-queue topology constants** — `MAX_COMMANDS_PER_TICK`, `COMMAND_RESULT_MAX_ENTRIES`/`COMMAND_RESULT_TTL_SECONDS`: the §3 model fixes the *shape* (reads use immutable snapshots, not a query queue; ids are minted on the request thread), but the constants should be chosen **after** the 1.6A.1 snapshot-cost benchmark and a measurement of the worker tick's runtime on real hardware. (The snapshot-republish cadence that once fed this list was superseded by incremental dirty-id publication in Step 1.6A.1 — see §3.3 — so it is no longer an open constant.)
 3. **File upload in one request vs. two-step stage-then-create** — §7.2 commits to one multipart request; the stage-then-create alternative is recorded (better resumability, an extra round-trip) and may be revisited if resumable uploads become a requirement.
 4. **Terminal-failure retry state-machine change** — retrying `FAILED_UPLOAD` (and other terminal failures) is deferred to a separate change (§4.2, §7.3); the exact new transition is out of scope for this contract.
 5. **Progress polling cadence / whether list-detail returns a `progress` field** — left to the UI task.

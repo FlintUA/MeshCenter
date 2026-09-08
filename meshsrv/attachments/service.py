@@ -468,9 +468,8 @@ class AttachmentsService:
         dispatching to its kind's handler, and record the terminal outcome
         in the registry. The worker is the sole executor (§3.2), and the
         dispatcher is the sole kind->work mapping - there is no arbitrary
-        callable command here. Nothing this method does can crash the worker
-        or leave an entry permanently RUNNING, because every failure mode is
-        caught and turned into a terminal transition (or a logged no-op):
+        callable command here. Every failure mode is caught and turned into
+        a terminal transition:
 
         - an enumerated-but-unwired kind: the dispatcher itself returns
           `CommandOutcome.failed(unsupported_command_kind)` (dispatch.py),
@@ -489,56 +488,94 @@ class AttachmentsService:
           with `result_payload_not_serializable`/`result_payload_too_large`
           rather than raising - the specific payload errors are preserved;
         - a *registry transition error* (an impossible `running`->terminal
-          transition): caught and logged by `_record_succeeded`/
-          `_record_failed` below, never propagated out of the drain loop.
+          transition, or a `mark_running` that fails): `_record_succeeded`/
+          `_record_failed`/this method fall back to the registry's
+          internal-recovery fail-safe (`CommandRegistry.record_internal_
+          failure`), which terminalizes the entry to `command_execution_
+          failed` instead of leaving it stuck in `running` (see that method's
+          docstring). Only if the fail-safe itself raises - registry
+          corruption, an unrecoverable internal exception - is the command
+          left without a terminal result, and that is logged, never
+          propagated out of the drain loop.
 
-        Either way the command reaches a terminal state (never stuck in
-        `running`) and the tick continues."""
+        Either way one broken command never stops the rest of the drain and
+        the tick continues."""
         try:
             self._command_registry.mark_running(command.command_id)
         except Exception:  # noqa: BLE001 - an impossible transition must not kill the tick
             logger.exception("AttachmentsService: could not mark command %s running", command.command_id)
+            self._recover_internal_failure(command)
             return
         try:
             outcome = self._dispatcher.dispatch(command)
         except Exception:  # noqa: BLE001 - a raising handler (or an invalid outcome) must not stop the drain
             logger.exception("AttachmentsService: command handler raised for %s", command.command_id)
-            self._record_failed(command.command_id, COMMAND_EXECUTION_FAILED)
+            self._record_failed(command, COMMAND_EXECUTION_FAILED)
             return
         if not isinstance(outcome, CommandOutcome):
             logger.error(
                 "AttachmentsService: command %s handler returned %s, not a CommandOutcome",
                 command.command_id, type(outcome).__name__,
             )
-            self._record_failed(command.command_id, COMMAND_EXECUTION_FAILED)
+            self._record_failed(command, COMMAND_EXECUTION_FAILED)
             return
         if outcome.error_code is None:
-            self._record_succeeded(command.command_id, outcome)
+            self._record_succeeded(command, outcome)
         else:
-            self._record_failed(command.command_id, outcome.error_code)
+            self._record_failed(command, outcome.error_code)
 
-    def _record_succeeded(self, command_id: str, outcome: CommandOutcome) -> None:
+    def _record_succeeded(self, command: Command, outcome: CommandOutcome) -> None:
         """Transition a command to terminal `succeeded`. A registry transition
         error here (an impossible state) is a worker bug, not a command error,
-        and must not escape the drain loop - logged, never raised. `mark_
-        succeeded` itself also converts an invalid result payload into a
-        terminal `failed` (`result_payload_not_serializable`/`result_payload_
-        too_large`) rather than raising."""
+        and must not escape the drain loop. On such a failure the command is
+        recovered through the registry's internal-recovery fail-safe
+        (`CommandRegistry.record_internal_failure`) so it still reaches a
+        terminal result instead of staying stuck in `running`; the fail-safe
+        is a no-op against an already-terminal entry. `mark_succeeded` itself
+        also converts an invalid result payload into a terminal `failed`
+        (`result_payload_not_serializable`/`result_payload_too_large`) rather
+        than raising."""
         try:
             self._command_registry.mark_succeeded(
-                command_id, resource_id=outcome.resource_id, result=outcome.result
+                command.command_id, resource_id=outcome.resource_id, result=outcome.result
             )
         except Exception:  # noqa: BLE001 - a transition error must not kill the tick
-            logger.exception("AttachmentsService: could not mark command %s succeeded", command_id)
+            logger.exception("AttachmentsService: could not mark command %s succeeded", command.command_id)
+            self._recover_internal_failure(command)
 
-    def _record_failed(self, command_id: str, error_code: str) -> None:
+    def _record_failed(self, command: Command, error_code: str) -> None:
         """Transition a command to terminal `failed`. A registry transition
         error here is a worker bug, not a command error, and must not escape
-        the drain loop - logged, never raised."""
+        the drain loop. On such a failure the command is recovered through the
+        registry's internal-recovery fail-safe (`CommandRegistry.record_
+        internal_failure`) so it still reaches a terminal result instead of
+        staying stuck in `running`; the fail-safe is a no-op against an
+        already-terminal entry."""
         try:
-            self._command_registry.mark_failed(command_id, error_code=error_code)
+            self._command_registry.mark_failed(command.command_id, error_code=error_code)
         except Exception:  # noqa: BLE001 - a transition error must not kill the tick
-            logger.exception("AttachmentsService: could not mark command %s failed", command_id)
+            logger.exception("AttachmentsService: could not mark command %s failed", command.command_id)
+            self._recover_internal_failure(command)
+
+    def _recover_internal_failure(self, command: Command) -> None:
+        """Invoke the registry's internal-recovery fail-safe (final correction
+        pass). It terminalizes a `queued`/`running` entry (or materializes a
+        missing one) to `command_execution_failed` under the registry's own
+        lock, and never overwrites an already-terminal result. It logs only the
+        safe identifier (command_id) and exception class, never the payload.
+
+        A failure *here* means the registry itself is corrupt - there is
+        nothing left to record against - so the worker logs it and survives
+        rather than raising. This is the one honest limit: a completely
+        corrupted registry cannot be made to produce a terminal polling result,
+        and that is documented rather than papered over."""
+        try:
+            self._command_registry.record_internal_failure(command)
+        except Exception:  # noqa: BLE001 - registry corruption; survive, do not raise
+            logger.exception(
+                "AttachmentsService: could not record internal failure for command %s "
+                "(registry corruption)", command.command_id,
+            )
 
     def _refresh_snapshot(self) -> None:
         """Step 1.6A.1 (correction #1): republish the attachment snapshot

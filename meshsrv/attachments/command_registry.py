@@ -23,6 +23,15 @@ Ownership split (the whole point of the threading model, §3.1/§3.2):
 - both are guarded by one *short, dedicated* lock - not the tick lock, and
   with **no SQLite** anywhere in this module.
 
+For the one case where a *normal* transition itself fails (a worker bug or
+an impossible state), `record_internal_failure()` is this registry's own
+invariant-recovery path: it terminalizes a `queued`/`running` entry (or
+materializes a missing one) to `failed` with the fixed
+`command_execution_failed` code, never overwriting an already-terminal
+result, and it does **not** go through the strict transition table. See its
+docstring for the precise contract; the worker (`service.py`) calls it as a
+fail-safe when `mark_running`/`mark_succeeded`/`mark_failed` raises.
+
 Eviction is **terminal-only** (§3.4): `queued`/`running` entries are never
 evicted (a client polling an in-flight command must keep seeing it), and
 their count is naturally bounded by the bounded command queue plus the
@@ -84,6 +93,13 @@ STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 
 _TERMINAL_STATUSES = frozenset({STATUS_SUCCEEDED, STATUS_FAILED})
+
+# The one fixed error_code the internal-recovery fail-safe
+# (`record_internal_failure`) assigns. It is the same string as
+# `dispatch.COMMAND_EXECUTION_FAILED` ("command_execution_failed"), kept as a
+# literal here rather than imported so this storage module has no dependency
+# on the worker's dispatch layer (which sits above it in the call graph).
+_INTERNAL_FAILURE_ERROR_CODE = "command_execution_failed"
 
 # ---- eviction constants (§15.2: chosen from the Step 1.6A.1 benchmark
 # on a real Pi Zero 2 W - see scripts/benchmark_mca_snapshots.py) --------
@@ -313,6 +329,56 @@ class CommandRegistry:
         now = self._now()
         with self._lock:
             self._transition_locked(command_id, STATUS_FAILED, now, error_code=error_code)
+
+    def record_internal_failure(self, command: Command) -> None:
+        """The registry-owned internal-recovery fail-safe (Step 1.6A.1 final
+        correction). Forces a command the worker has dequeued but failed to
+        transition *normally* into a terminal `FAILED` result, so a client
+        polling `GET /api/mca/commands/{command_id}` can never observe a
+        command stuck forever in `running` (or absent) because a terminal
+        transition itself failed.
+
+        This is an **invariant-recovery** path, not an alternative public
+        lifecycle API: it deliberately does **not** use `_transition_locked()`
+        (whose strict transition check is exactly what failed), and it only
+        ever writes the fixed `command_execution_failed` code. Under the
+        registry's own lock it atomically:
+
+        - a `queued`/`running` entry -> terminal `FAILED` with
+          `error_code = "command_execution_failed"` and no `resource_id`/
+          `result`, inserted into the terminal TTL/LRU bookkeeping;
+        - an already-terminal (`succeeded`/`failed`) entry -> left unchanged
+          (never overwriting a valid result);
+        - a *missing* entry (the worker dequeued a command that was never
+          registered, or whose registration was rolled back) -> materialized
+          as a fresh terminal `FAILED` from the immutable `Command` metadata
+          (`command_id`/`kind`/`created_at`), preserving pollability.
+
+        No exception text, payload contents, secrets, tokens, or command input
+        are exposed: the recovered result carries only the fixed error_code
+        and no `result`/`resource_id`. It does not log the command payload."""
+        now = self._now()
+        with self._lock:
+            self._evict_locked(now)
+            entry = self._entries.get(command.command_id)
+            if entry is not None and entry.status in _TERMINAL_STATUSES:
+                # Never replace an already-valid terminal result.
+                return
+            kind = entry.kind if entry is not None else command.kind
+            created_at = entry.created_at if entry is not None else command.created_at
+            self._entries[command.command_id] = CommandResult(
+                command_id=command.command_id,
+                kind=kind,
+                status=STATUS_FAILED,
+                created_at=created_at,
+                updated_at=now,
+                resource_id=None,
+                result=None,
+                error_code=_INTERNAL_FAILURE_ERROR_CODE,
+            )
+            self._terminal_lru[command.command_id] = None
+            self._terminal_lru.move_to_end(command.command_id)
+            self._evict_locked(now)
 
     def _transition_locked(
         self,

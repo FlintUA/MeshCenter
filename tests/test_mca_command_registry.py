@@ -420,3 +420,100 @@ def test_mark_succeeded_non_json_native_result_becomes_terminal_failed(bad):
     assert result.status == STATUS_FAILED
     assert result.error_code == "result_payload_not_serializable"
     assert result.result is None
+
+
+# --- internal-recovery fail-safe (Step 1.6A.1 final correction) ------------
+
+def test_record_internal_failure_terminalizes_a_queued_entry():
+    reg, _ = _registry()
+    _queued(reg, "cmd-1")
+    reg.record_internal_failure(_command("cmd-1"))
+    result = reg.get("cmd-1")
+    assert result.status == STATUS_FAILED
+    assert result.error_code == "command_execution_failed"
+    assert result.resource_id is None
+    assert result.result is None
+    assert reg.terminal_count() == 1
+
+
+def test_record_internal_failure_terminalizes_a_running_entry():
+    reg, _ = _registry()
+    _queued(reg, "cmd-1")
+    reg.mark_running("cmd-1")
+    reg.record_internal_failure(_command("cmd-1"))
+    result = reg.get("cmd-1")
+    assert result.status == STATUS_FAILED
+    assert result.error_code == "command_execution_failed"
+    assert result.resource_id is None
+    assert result.result is None
+
+
+def test_record_internal_failure_materializes_a_missing_entry():
+    # The worker dequeued a command that was never registered (or whose
+    # registration was rolled back). The fail-safe materializes a pollable
+    # terminal FAILED from the immutable Command metadata - never a 404.
+    reg, _ = _registry()
+    cmd = _command("cmd-9", kind="provider_probe")
+    assert reg.get("cmd-9") is None
+    reg.record_internal_failure(cmd)
+    result = reg.get("cmd-9")
+    assert result.status == STATUS_FAILED
+    assert result.error_code == "command_execution_failed"
+    assert result.kind == "provider_probe"
+    assert result.created_at == 0.0
+    assert result.resource_id is None
+    assert result.result is None
+    assert reg.terminal_count() == 1
+
+
+def test_record_internal_failure_never_overwrites_a_terminal_entry():
+    # An already-valid terminal result must be preserved verbatim - the
+    # fail-safe is a no-op against SUCCEEDED and FAILED entries.
+    reg, _ = _registry()
+    _queued(reg, "succeeded")
+    reg.mark_running("succeeded")
+    reg.mark_succeeded("succeeded", resource_id="AbCdEf", result={"attachment_id": "AbCdEf"})
+
+    _queued(reg, "failed")
+    reg.mark_running("failed")
+    reg.mark_failed("failed", error_code="relay_unreachable")
+
+    reg.record_internal_failure(_command("succeeded"))
+    reg.record_internal_failure(_command("failed"))
+
+    succeeded = reg.get("succeeded")
+    assert succeeded.status == STATUS_SUCCEEDED
+    assert succeeded.resource_id == "AbCdEf"
+    assert dict(succeeded.result) == {"attachment_id": "AbCdEf"}
+    assert succeeded.error_code is None
+
+    failed = reg.get("failed")
+    assert failed.status == STATUS_FAILED
+    assert failed.error_code == "relay_unreachable"  # NOT overwritten
+
+
+def test_record_internal_failure_participates_in_terminal_ttl_eviction():
+    # A recovered entry is a real terminal entry: it counts toward the
+    # terminal budget and is TTL-evicted like any other.
+    reg, clock = _registry(ttl_seconds=10.0)
+    _queued(reg, "recovered")
+    reg.record_internal_failure(_command("recovered"))
+    assert reg.terminal_count() == 1
+    assert reg.get("recovered") is not None
+    clock.advance(11.0)
+    assert reg.get("recovered") is None  # TTL eviction applies
+    assert reg.terminal_count() == 0
+
+
+def test_record_internal_failure_recovered_entry_is_evicted_lru_beyond_capacity():
+    reg, _ = _registry(max_entries=1, ttl_seconds=3600.0)
+    _queued(reg, "first")
+    reg.mark_running("first")
+    reg.mark_succeeded("first")
+    # Recover a second terminal entry - it exceeds the capacity budget and
+    # evicts the LRU "first", proving the recovered entry is real bookkeeping.
+    _queued(reg, "second")
+    reg.record_internal_failure(_command("second"))
+    assert reg.terminal_count() == 1
+    assert reg.get("second") is not None
+    assert reg.get("first") is None

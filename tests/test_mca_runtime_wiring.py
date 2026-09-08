@@ -29,7 +29,12 @@ import threading
 import pytest
 
 from meshsrv.attachments import mca_runtime
-from meshsrv.attachments.command_registry import STATUS_FAILED, STATUS_QUEUED, CommandRegistry
+from meshsrv.attachments.command_registry import (
+    STATUS_FAILED,
+    STATUS_QUEUED,
+    STATUS_SUCCEEDED,
+    CommandRegistry,
+)
 from meshsrv.attachments.commands import Command, CommandQueue
 from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
 from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispatcher, CommandOutcome
@@ -462,5 +467,132 @@ def test_stop_clears_readiness(tmp_path):
         assert state.ready_event.is_set()  # set by _started_state
         assert state.service.stop()
         assert not state.ready_event.is_set()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+# --- terminalization recovery (final correction pass) ----------------------
+#
+# The worker must never leave a dequeued command stuck in `running` (or
+# silently dropped) just because a *registry transition itself* failed. These
+# tests force `mark_running`/`mark_succeeded`/`mark_failed` to raise and assert
+# the registry's internal-recovery fail-safe produces a pollable terminal
+# FAILED with `command_execution_failed`, and that one broken command never
+# stops the drain.
+
+
+def _state_with_handlers(tmp_path, tag, handlers):
+    """Build the runtime with a *custom* dispatcher (so a handler can return a
+    success/failure outcome), stop the worker for deterministic tick driving,
+    and re-set readiness - mirroring the setup inside the raising-handler tests
+    above but for arbitrary kind->handler tables."""
+    mca_runtime.reset_state_for_tests()
+    mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+    ether = InMemoryEther()
+    transport = FakeRadioTransport(ether, "!aaaaaaaa")
+    state = mca_runtime._get_state(str(tmp_path / tag))  # noqa: SLF001
+    state.dispatcher = CommandDispatcher(handlers)
+    state.ensure_service(transport)
+    assert state.service.stop()
+    state.ready_event.set()
+    return state
+
+
+def test_mark_succeeded_failure_recovers_to_command_execution_failed(tmp_path, monkeypatch):
+    state = _state_with_handlers(
+        tmp_path, "rec-ok",
+        {"attachment_cancel": lambda c: CommandOutcome.succeeded(resource_id="att-1", result={"attachment_id": "att-1"})},
+    )
+    try:
+        monkeypatch.setattr(
+            state.command_registry, "mark_succeeded",
+            lambda command_id, **kwargs: (_ for _ in ()).throw(RuntimeError("registry transition failed")),
+        )
+
+        state.facade.submit(Command(command_id="cmd-1", kind="attachment_cancel", payload={}, created_at=0.0))
+        state.service.tick()  # must not raise
+
+        result = state.facade.get_command("cmd-1")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == COMMAND_EXECUTION_FAILED
+        assert result.resource_id is None  # the failed transition carried no domain id
+        assert result.result is None       # nor any payload
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_mark_failed_failure_recovers_to_command_execution_failed(tmp_path, monkeypatch):
+    def handler(command):
+        raise RuntimeError("handler bug")
+
+    state = _state_with_handlers(tmp_path, "rec-fail", {"attachment_cancel": handler})
+    try:
+        monkeypatch.setattr(
+            state.command_registry, "mark_failed",
+            lambda command_id, **kwargs: (_ for _ in ()).throw(RuntimeError("registry transition failed")),
+        )
+
+        state.facade.submit(Command(command_id="cmd-2", kind="attachment_cancel", payload={}, created_at=0.0))
+        state.service.tick()  # must not raise
+
+        result = state.facade.get_command("cmd-2")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == COMMAND_EXECUTION_FAILED
+        assert result.resource_id is None
+        assert result.result is None
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_missing_registry_entry_before_execution_recovers_to_terminal_failure(tmp_path):
+    state, _, _ = _started_state(tmp_path, "rec-missing")
+    try:
+        facade = state.facade
+        facade.submit(Command(command_id="cmd-3", kind="attachment_cancel", payload={}, created_at=0.0))
+        assert facade.get_command("cmd-3").status == STATUS_QUEUED
+        # Invalidate the entry before the worker drains it (as if the queue
+        # write had raced/rolled back): mark_running now finds no entry and
+        # raises, and the fail-safe materializes a pollable terminal FAILED.
+        state.command_registry.discard_queued("cmd-3")
+        assert facade.get_command("cmd-3") is None
+
+        state.service.tick()  # must not raise
+
+        result = facade.get_command("cmd-3")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == COMMAND_EXECUTION_FAILED
+        assert result.kind == "attachment_cancel"
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_one_broken_command_does_not_stop_the_drain(tmp_path, monkeypatch):
+    def ok_handler(command):
+        return CommandOutcome.succeeded(resource_id=command.command_id, result={})
+
+    state = _state_with_handlers(tmp_path, "rec-drain", {"attachment_cancel": ok_handler})
+    try:
+        original = state.command_registry.mark_succeeded
+
+        def flaky_mark_succeeded(command_id, **kwargs):
+            if command_id == "cmd-a":
+                raise RuntimeError("registry transition failed")
+            return original(command_id, **kwargs)
+
+        monkeypatch.setattr(state.command_registry, "mark_succeeded", flaky_mark_succeeded)
+
+        facade = state.facade
+        facade.submit(Command(command_id="cmd-a", kind="attachment_cancel", payload={}, created_at=0.0))
+        facade.submit(Command(command_id="cmd-b", kind="attachment_cancel", payload={}, created_at=0.0))
+
+        state.service.tick()  # drains both; the first failure must not stop cmd-b
+
+        first = facade.get_command("cmd-a")
+        assert first.status == STATUS_FAILED
+        assert first.error_code == COMMAND_EXECUTION_FAILED
+
+        second = facade.get_command("cmd-b")
+        assert second.status == STATUS_SUCCEEDED
+        assert second.resource_id == "cmd-b"
     finally:
         mca_runtime.reset_state_for_tests()

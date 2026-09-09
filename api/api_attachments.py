@@ -142,6 +142,20 @@ def _json_error(error_code: str, message: str):
     return jsonify({"ok": False, "error": message, "error_code": error_code})
 
 
+def _invalid_state_transition(record):
+    """The §7.3 synchronous 409 for a violated state precondition: the stable
+    `invalid_state_transition` envelope plus the single safe `state` value
+    from the published snapshot. Only `state` is added - never direction,
+    identifiers, paths, comments, filenames, keys, tokens, exception text, or
+    raw database values."""
+    return jsonify({
+        "ok": False,
+        "error": "invalid state transition",
+        "error_code": "invalid_state_transition",
+        "state": record.state,
+    }), 409
+
+
 def _internal_error_response():
     """The one sanitized 500 an unexpected exception maps to (§11): a stable
     public message + `internal_error` - never `str(e)`, a class name, a
@@ -620,7 +634,8 @@ def register_attachments_routes(app, handle_errors):
         -> enqueue the frozen `Command` -> 202 {ok, command_id}. `precondition`
         is a `record -> bool` declaring this endpoint's allowed
         direction/state; a `False` returns 409 `invalid_state_transition`
-        before anything is enqueued. `CommandQueueFull` maps to 429
+        carrying the snapshot's current `state` (and nothing else) before
+        anything is enqueued. `CommandQueueFull` maps to 429
         `command_queue_full` (§3.4) - deliberately caught here, not left to
         `_mca_error_boundary`, which would mis-map it to a 500."""
         facade = _facade()
@@ -631,7 +646,7 @@ def register_attachments_routes(app, handle_errors):
             body, status = err
             return body, status
         if not precondition(record):
-            return _json_error("invalid_state_transition", "invalid state transition"), 409
+            return _invalid_state_transition(record)
         command = Command(
             command_id=mint_command_id(),
             kind=kind,

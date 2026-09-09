@@ -446,7 +446,7 @@ Every mutation returns `202` + `command_id` (§3.4) unless a synchronous validat
 
 - **Implementation status (Step 1.6A.3A):** only `/retry`, `/download`, and `/reject` are implemented — as worker commands `attachment_retry` / `attachment_download` / `attachment_reject` in `meshsrv/attachments/service.py`, enqueued from `api/api_attachments.py`. The remaining rows of this table (`/save`, `/revoke`, `DELETE .../local-content`) remain design-only.
 - **`/retry` is limited to `AUTOMATIC_STATES`.** Retrying a terminal `FAILED_*` (e.g. `FAILED_UPLOAD`) is a **future** state-machine change and is **not** promised by this contract (§4.2, §13, §15). The endpoint returns `409 invalid_state_transition` for any non-`AUTOMATIC_STATES` state.
-- Common errors: `404 attachment_not_found`; `409 invalid_state_transition` (with the current state) for any violated precondition; `503 relay_unreachable` (revoke at runtime, observed via the command result); `409 not_saved` (local-content when `saved=false`).
+- Common errors: `404 attachment_not_found`; `409 invalid_state_transition` for any violated precondition — the synchronous 409 body carries the single safe `state` field with the current state: `{"ok": false, "error": "invalid state transition", "error_code": "invalid_state_transition", "state": "<current state>"}` (only `state` is added — never direction, ids, paths, comments, filenames, keys, tokens, or exception text); `503 relay_unreachable` (revoke at runtime, observed via the command result); `409 not_saved` (local-content when `saved=false`).
 - **`/save` is genuinely idempotent, not merely deduplicated.** `unique_file_name()` only resolves a name collision at **first** save — it is **not** an idempotency mechanism (a second save would otherwise create a second copy under a new name). The command instead: if `saved=true` and the file exists → return the prior result (`saved=true`, same `file_name`) **without copying**; if `saved=true` but the file is missing → `content_missing` (or a separately-specified re-save recovery), never a silent duplicate; `unique_file_name()` is applied **only** on the first save to resolve a name conflict.
 
 ### 7.4 `POST /api/attachments/{id}/cancel` — cancel an outgoing send (1.6A.3)
@@ -653,7 +653,7 @@ Stable, snake_case, additive.
 | 401 | `auth_required` | inherited (existing) |
 | 403 | `csrf_invalid` | CSRF token missing/mismatch (§2.3) |
 | 404 | `attachment_not_found` / `contact_not_found` / `provider_not_found` / `command_not_found` | — |
-| 409 | `invalid_state_transition` | action not valid in current state |
+| 409 | `invalid_state_transition` | action not valid in current state — the synchronous 409 body adds a `state` field with the current safe public state (§7.3) |
 | 409 | `idempotency_conflict` | same `client_request_id`, different canonical content |
 | 409 | `duplicate_transfer` | `transfer_id` already known |
 | 409 | `key_already_known` | request-key for an already-trusted address |

@@ -1155,6 +1155,7 @@ def test_retry_rejected_outside_the_rows_automatic_states(monkeypatch, direction
     resp = c.post(f"/api/attachments/{ATTACHMENT_ID}/retry")
     assert resp.status_code == 409
     assert resp.get_json()["error_code"] == "invalid_state_transition"
+    assert resp.get_json()["state"] == state  # the 409 carries the exact current state
     assert facade.submitted == []  # nothing was enqueued
 
 
@@ -1184,7 +1185,35 @@ def test_consent_action_rejected_unless_received_and_waiting_consent(monkeypatch
     resp = c.post(f"/api/attachments/{ATTACHMENT_ID}/{action}")
     assert resp.status_code == 409
     assert resp.get_json()["error_code"] == "invalid_state_transition"
+    assert resp.get_json()["state"] == state
     assert facade.submitted == []
+
+
+@pytest.mark.parametrize("path,direction,state", [
+    (f"/api/attachments/{ATTACHMENT_ID}/retry", "sent", sender.DOWNLOADED),   # terminal, not automatic
+    (f"/api/attachments/{ATTACHMENT_ID}/download", "sent", sender.DRAFT),     # wrong direction
+    (f"/api/attachments/{ATTACHMENT_ID}/reject", "received", receiver.DOWNLOADING),  # not WAITING_CONSENT
+])
+def test_409_state_transition_envelope_is_exact(monkeypatch, path, direction, state):
+    # The synchronous 409 must be exactly {ok, error, error_code, state} - the
+    # safe public state value, and nothing else (no direction, ids, paths,
+    # comments, filenames, keys, tokens, or exception text).
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(
+        direction=direction,
+        state=state,
+        file_name="SECRET_file_name.txt",   # must not leak into the 409 body
+        provider_id="SECRET_provider",      # must not leak into the 409 body
+    )]))
+    c = _client(monkeypatch, facade)
+    resp = c.post(path)
+    assert resp.status_code == 409
+    assert resp.get_json() == {
+        "ok": False,
+        "error": "invalid state transition",
+        "error_code": "invalid_state_transition",
+        "state": state,
+    }
+    assert facade.submitted == []  # the precondition failed before any enqueue
 
 
 def test_post_lifecycle_queue_full_is_429(monkeypatch):

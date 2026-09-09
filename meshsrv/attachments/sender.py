@@ -212,12 +212,24 @@ def create_draft(
     hard_ttl_seconds: int = DEFAULT_HARD_TTL_SECONDS,
     download_grace_seconds: int = DEFAULT_DOWNLOAD_GRACE_SECONDS,
     now: Optional[float] = None,
+    attachment_id: Optional[str] = None,
+    client_request_id: Optional[str] = None,
+    canonical_hash: Optional[str] = None,
 ) -> str:
     """Create a new outgoing attachment in state DRAFT. Does no I/O on
     `source_path` beyond what's needed to record it - `run_step()`'s
     VALIDATING handler is what actually opens/measures/checks the file, so
     a draft can be created even for a file that doesn't exist yet (e.g. a
-    UI that lets the user pick recipients before finishing a capture)."""
+    UI that lets the user pick recipients before finishing a capture).
+
+    Step 1.6A.3B (idempotent create): the three optional trailing params
+    let the create *command* supply the ids/columns the request thread
+    already minted/computed during staging (§3.5/§3.6) - `attachment_id`
+    (so the staged spool filename and the row id agree), and the two
+    Migration-11 idempotency columns `client_request_id`/`canonical_hash`.
+    Omitted (a plain `create_draft` call from anywhere else) they default
+    to a freshly-minted id and NULL idempotency columns, exactly as before
+    this sub-stage."""
 
     if not recipients:
         raise SenderError("a draft must have at least one recipient")
@@ -226,7 +238,7 @@ def create_draft(
     comment = _normalize_comment(comment)
 
     now = _now() if now is None else now
-    attachment_id = uuid.uuid4().hex
+    attachment_id = uuid.uuid4().hex if attachment_id is None else attachment_id
     transfer_id = os.urandom(16)
 
     conn.execute(
@@ -234,8 +246,8 @@ def create_draft(
         INSERT INTO attachments
             (id, workspace_id, transfer_id, direction, principal_id, provider_id, state,
              file_name, mime_type, created_at, hard_expires_at, download_grace_seconds, saved_path,
-             draft_comment)
-        VALUES (?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             draft_comment, client_request_id, canonical_hash)
+        VALUES (?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             attachment_id,
@@ -261,6 +273,8 @@ def create_draft(
             download_grace_seconds,
             source_path,
             comment,
+            client_request_id,
+            canonical_hash,
         ),
     )
     for recipient in recipients:

@@ -29,10 +29,12 @@ must be a positive ASCII decimal (`invalid_query`).
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import threading
 import traceback
 from functools import wraps
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
@@ -45,6 +47,7 @@ from meshsrv.attachments.command_registry import CommandResult, STATUS_SUCCEEDED
 from meshsrv.attachments.commands import CommandQueueFull
 from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
 from meshsrv.attachments.facade import FacadeNotReady
+from meshsrv.attachments.idempotency import IdempotencyEntry, PendingReservations
 from meshsrv.attachments.provider_registry import (
     ProviderRegistryError,
     decode_provider_id,
@@ -175,6 +178,8 @@ class _FakeFacade:
         commands=None,
         decisions=None,
         queue_full=False,
+        spool_dir=None,
+        committed=None,
     ):
         self._snapshot = snapshot or _snapshot([])
         self._providers = providers or {}
@@ -187,6 +192,12 @@ class _FakeFacade:
         self.not_ready = False
         self.queue_full = queue_full
         self.submitted = []  # commands the POST endpoints handed to submit()
+        self.spool_dir = spool_dir
+        # A real reservation store + committed index, so the create endpoint's
+        # idempotency paths (fresh/replay_pending/replay_committed/conflict)
+        # are exercised against the same logic the facade actually runs.
+        self._pending = PendingReservations()
+        self._committed = committed or {}
 
     def attachments_snapshot(self):
         if self.not_ready:
@@ -211,6 +222,25 @@ class _FakeFacade:
             raise CommandQueueFull()
         self.submitted.append(command)
         return command.command_id
+
+    def spool_outgoing_dir(self):
+        return self.spool_dir
+
+    def submit_create(self, command, *, client_request_id, reservation):
+        # Mirrors the real facade's §3.6 reservation-aware create enqueue: gated
+        # on readiness, backpressured on a full queue, otherwise reserves +
+        # records + returns the ReservationOutcome (never touches SQLite/FS).
+        if self.not_ready:
+            raise FacadeNotReady()
+        if self.queue_full:
+            raise CommandQueueFull()
+        outcome = self._pending.reserve(
+            client_request_id, reservation, committed_entries=self._committed
+        )
+        if outcome.kind != "fresh":
+            return outcome
+        self.submitted.append(command)
+        return outcome
 
     def provider_snapshot(self):
         return self._providers
@@ -430,7 +460,7 @@ def test_endpoint_reads_do_not_block_on_the_tick_lock(tmp_path):
 
 def test_routes_reject_non_get_methods(monkeypatch):
     c = _client(monkeypatch, _FakeFacade())
-    assert c.post("/api/attachments").status_code == 405
+    assert c.put("/api/attachments").status_code == 405
     assert c.put("/api/mca/identity").status_code == 405
     assert c.delete(f"/api/mca/providers/{PROVIDER_ID}").status_code == 405
 
@@ -1321,3 +1351,258 @@ def test_post_lifecycle_valid_csrf_token_reaches_submission(monkeypatch, path, d
     resp = c.post(path, headers={"X-CSRF-Token": "session-token"})
     assert resp.status_code == 202
     _assert_202_accepted(resp.get_json(), facade, kind)
+
+
+# ---- Step 1.6A.3B: idempotent multipart create (POST /api/attachments) -----
+
+# A minimal JPEG (SOI marker) so `sniff_mime_type` deterministically yields
+# `image/jpeg` for the success/fresh paths.
+_JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 32
+
+
+def _make_meta(**overrides):
+    meta = {
+        "client_request_id": "req-1",
+        "recipient": {"source_address": "!aaaaaaaa"},
+        "hard_ttl_seconds": 3600,       # within the fake provider's [60, 86400]
+        "download_grace_seconds": 3600,
+    }
+    meta.update(overrides)
+    return meta
+
+
+def _post_create(c, *, data=_JPEG, filename="photo.jpg", meta=None, headers=None):
+    return c.post(
+        "/api/attachments",
+        data={
+            "file": (BytesIO(data), filename),
+            "metadata": json.dumps(meta if meta is not None else _make_meta()),
+        },
+        content_type="multipart/form-data",
+        headers=headers,
+    )
+
+
+def test_create_503_when_facade_missing(monkeypatch):
+    c = _client(monkeypatch, None)
+    resp = _post_create(c)
+    assert resp.status_code == 503
+    assert resp.get_json()["error_code"] == "mca_not_ready"
+
+
+def test_create_503_when_not_ready(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    facade.not_ready = True
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 503
+    assert resp.get_json()["error_code"] == "mca_not_ready"
+    assert facade.submitted == []
+
+
+def test_create_missing_metadata_part_is_invalid_metadata(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = c.post(
+        "/api/attachments",
+        data={"file": (BytesIO(_JPEG), "photo.jpg")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_metadata"
+
+
+@pytest.mark.parametrize("metadata_raw", [
+    "not-json",                                              # invalid JSON
+    "[1,2,3]",                                               # valid JSON, not an object
+    "{}",                                                    # missing client_request_id
+    json.dumps({"client_request_id": 123, "recipient": {"source_address": "!aaaaaaaa"}}),
+    json.dumps({"client_request_id": "req-1"}),              # missing recipient
+    json.dumps({"client_request_id": "req-1", "recipient": {}}),
+    json.dumps({"client_request_id": "req-1", "recipient": {"source_address": ""}}),
+    json.dumps({"client_request_id": "req-1", "recipient": {"source_address": "!aaaaaaaa"}, "route": []}),
+    json.dumps({"client_request_id": "req-1", "recipient": {"source_address": "!aaaaaaaa"}, "route": {"route_type": "INDIRECT"}}),
+    json.dumps({"client_request_id": "req-1", "recipient": {"source_address": "!aaaaaaaa"}, "route": {"route_id": "!bbbbbbbb"}}),
+    json.dumps({"client_request_id": "req-1", "recipient": {"source_address": "!aaaaaaaa"}, "comment": 5}),
+    json.dumps({"client_request_id": "req-1", "recipient": {"source_address": "!aaaaaaaa"}, "hard_ttl_seconds": "3600"}),
+])
+def test_create_invalid_metadata_is_400(monkeypatch, tmp_path, metadata_raw):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = c.post(
+        "/api/attachments",
+        data={"file": (BytesIO(_JPEG), "photo.jpg"), "metadata": metadata_raw},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_metadata"
+    assert facade.submitted == []
+
+
+def test_create_file_too_large(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    big = b"\xff\xd8\xff" + b"x" * (5 * 1024 * 1024)  # 3 bytes over the 5 MiB cap
+    resp = _post_create(c, data=big)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "file_too_large"
+    assert facade.submitted == []
+
+
+def test_create_mime_not_allowed(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=b"\x00\x01\x02\x03\x04")
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "mime_not_allowed"
+    assert facade.submitted == []
+
+
+def test_create_explicit_provider_not_found(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, meta=_make_meta(provider_id=UNREGISTERED_PROVIDER_ID))
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "provider_not_found"
+
+
+def test_create_no_default_provider(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)  # no provider_id, and no default is configured
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "provider_not_found"
+
+
+def test_create_ttl_out_of_range(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, meta=_make_meta(hard_ttl_seconds=999999))
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "ttl_out_of_range"
+
+
+def test_create_fresh_returns_202_with_minted_ids(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 202
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert set(body) == {"ok", "command_id", "attachment_id"}
+    assert len(body["command_id"]) == 32 and all(ch in "0123456789abcdef" for ch in body["command_id"])
+    assert len(body["attachment_id"]) == 32 and all(ch in "0123456789abcdef" for ch in body["attachment_id"])
+
+    assert len(facade.submitted) == 1
+    cmd = facade.submitted[0]
+    assert cmd.kind == "attachment_create"
+    payload = dict(cmd.payload)
+    assert payload["attachment_id"] == body["attachment_id"]
+    assert payload["client_request_id"] == "req-1"
+    assert payload["source_address"] == "!aaaaaaaa"
+    assert payload["provider_id"] == PROVIDER_ID
+    assert payload["mime_type"] == "image/jpeg"
+    assert payload["source_name"] == "photo.jpg"
+    assert payload["comment"] is None
+    assert payload["hard_ttl_seconds"] == 3600
+    assert payload["download_grace_seconds"] == 3600
+    assert len(payload["canonical_hash"]) == 64
+    assert all(ch in "0123456789abcdef" for ch in payload["canonical_hash"])
+
+    # The staged spool file exists for the worker to reference.
+    assert (tmp_path / "spool" / body["attachment_id"]).exists()
+
+
+def test_create_sanitizes_a_path_traversal_filename(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, filename="../../etc/passwd")
+    assert resp.status_code == 202
+    cmd = facade.submitted[0]
+    assert cmd.payload["source_name"] == "passwd"  # basename, never a path
+
+
+def test_create_replay_pending_returns_the_same_ids(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    first = _post_create(c).get_json()
+    second = _post_create(c).get_json()
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert second["command_id"] == first["command_id"]
+    assert second["attachment_id"] == first["attachment_id"]
+    assert second["replayed"] is True
+    assert len(facade.submitted) == 1  # only one command was ever enqueued
+    # The replay's freshly-staged file was discarded: exactly one spool file.
+    assert [p.name for p in (tmp_path / "spool").iterdir()] == [first["attachment_id"]]
+
+
+def test_create_replay_committed_returns_the_original_row(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    first = _post_create(c).get_json()
+    cmd = facade.submitted[0]
+    # Simulate the worker committing: clear the pending reservation and publish
+    # it into the committed index + snapshot with the same canonical hash.
+    facade._pending.remove("req-1")
+    facade._committed["req-1"] = IdempotencyEntry(
+        attachment_id=first["attachment_id"],
+        canonical_hash=cmd.payload["canonical_hash"],
+        created_at=0.0,
+    )
+    facade._snapshot = _snapshot([_attachment(id=first["attachment_id"], state=sender.DRAFT)])
+
+    second = _post_create(c).get_json()
+    assert second["ok"] is True
+    assert second["attachment_id"] == first["attachment_id"]
+    assert second["state"] == sender.DRAFT
+    assert "command_id" not in second
+    assert len(facade.submitted) == 1  # no second enqueue
+
+
+def test_create_idempotency_conflict_is_409(monkeypatch, tmp_path):
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider()},
+        spool_dir=tmp_path / "spool",
+        committed={
+            "req-1": IdempotencyEntry(
+                attachment_id="c" * 32, canonical_hash="0" * 64, created_at=0.0
+            )
+        },
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 409
+    assert resp.get_json()["error_code"] == "idempotency_conflict"
+    assert facade.submitted == []
+    # The freshly-staged file was discarded.
+    assert list((tmp_path / "spool").iterdir()) == []
+
+
+def test_create_queue_full_is_429(monkeypatch, tmp_path):
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool", queue_full=True
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 429
+    assert resp.get_json()["error_code"] == "command_queue_full"
+    assert facade.submitted == []
+
+
+def test_create_missing_csrf_token_is_403(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _csrf_client(monkeypatch, facade)
+    resp = _post_create(c)  # no X-CSRF-Token header, no session token
+    assert resp.status_code == 403
+    assert resp.get_json()["error_code"] == "csrf_invalid"
+    assert facade.submitted == []
+
+
+def test_create_valid_csrf_token_reaches_submission(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _csrf_client(monkeypatch, facade)
+    _set_csrf_token(c, "session-token")
+    resp = _post_create(c, headers={"X-CSRF-Token": "session-token"})
+    assert resp.status_code == 202
+    assert len(facade.submitted) == 1

@@ -280,6 +280,7 @@ class _MCARuntimeState:
             ready_event=self.ready_event,
             connectivity_monitor=self.connectivity_monitor,
             principal=self.principal,
+            workspace_manager=self.workspace_manager,
         )
         # Unlike the pieces above, the worker thread itself is not
         # started until ensure_service() runs - see that method's own
@@ -359,6 +360,7 @@ class _MCARuntimeState:
             snapshot_publisher=self.snapshot_publisher,
             wake_event=self.wake_event,
             ready_event=self.ready_event,
+            pending_reservations=self.pending_reservations,
         )
         if self.dispatcher is self._dispatcher_placeholder:
             # The service built its real lifecycle-command dispatcher (we

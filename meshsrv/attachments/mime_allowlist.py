@@ -34,6 +34,57 @@ ALLOWED_MIME_TYPES = frozenset(
 ALLOWED_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".pdf", ".txt", ".log", ".csv", ".json"})
 
 
+def sniff_mime_type(head_bytes: bytes) -> Optional[str]:
+    """Derive a MIME type from the leading bytes of a file by content
+    inspection (magic bytes for the binary formats; a decode/NUL heuristic
+    for the text formats), never from a client-supplied Content-Type or
+    filename extension (design spec section 20.1 "MIME spoofing": the
+    extension is not a source of trust). Returns a string in
+    `ALLOWED_MIME_TYPES` on a positive match, or `None` for anything not
+    recognized as one of the allowlisted types - the caller must treat
+    `None` as "not allowed", never as "trust the client's claim".
+
+    The binary signatures are the canonical ones:
+
+    - ``image/jpeg``: ``FF D8 FF`` (SOI marker);
+    - ``image/png``: the 8-byte PNG signature ``89 50 4E 47 0D 0A 1A 0A``;
+    - ``image/webp``: ``RIFF`` ... ``WEBP`` (the first 4 bytes are the
+      ASCII ``RIFF`` chunk id and bytes 8-11 the ASCII ``WEBP`` fourCC);
+    - ``application/pdf``: the ``%PDF-`` magic prefix.
+
+    The text formats have no magic byte, so they fall through to a
+    deterministic heuristic over the supplied head bytes: a leading NUL or
+    a UTF-8 decode failure means "binary, not a known safe text type"
+    (``None``); a leading ``{``/``[`` means ``application/json``; a comma
+    in the first line means ``text/csv``; anything else that decoded
+    cleanly is ``text/plain`` (which also covers ``.log``). The heuristic
+    is best-effort *between* allowlisted text types, not a security
+    boundary in itself - the boundary is the allowlist check that follows.
+    It is deterministic (same bytes -> same result), which is what the
+    canonical-hash idempotency computation depends on.
+    """
+    if head_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if len(head_bytes) >= 12 and head_bytes[0:4] == b"RIFF" and head_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    if head_bytes.startswith(b"%PDF-"):
+        return "application/pdf"
+    if b"\x00" in head_bytes:
+        return None
+    try:
+        head_bytes.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return None
+    stripped = head_bytes.lstrip()
+    if stripped[:1] in (b"{", b"["):
+        return "application/json"
+    if b"," in head_bytes.split(b"\n", 1)[0]:
+        return "text/csv"
+    return "text/plain"
+
+
 def is_allowed_mime_type(mime_type: str) -> bool:
     """`mime_type` must already be the result of magic-byte sniffing, not
     a client-supplied Content-Type header or a guess from the file

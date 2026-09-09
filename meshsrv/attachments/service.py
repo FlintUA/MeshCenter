@@ -58,8 +58,9 @@ from meshsrv.attachments.commands import MAX_COMMANDS_PER_TICK, Command, Command
 from meshsrv.attachments.delivery.base import DeliveryAdapter, DeliveryEnvelope, DeliveryError, Route, RouteType
 from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispatcher, CommandOutcome
 from meshsrv.attachments.identity import MCAPrincipal
+from meshsrv.attachments.idempotency import PendingReservations
 from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator, RateLimited
-from meshsrv.attachments.provider_registry import ProviderRegistry
+from meshsrv.attachments.provider_registry import ProviderRegistry, decode_provider_id
 from meshsrv.attachments.relay_client import RelayClient
 from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
 from meshsrv.attachments.workspace import MCAWorkspaceManager
@@ -163,6 +164,7 @@ class AttachmentsService:
         snapshot_publisher: Optional[AttachmentsSnapshotPublisher] = None,
         wake_event: Optional[threading.Event] = None,
         ready_event: Optional[threading.Event] = None,
+        pending_reservations: Optional[PendingReservations] = None,
     ):
         self._conn = conn
         self._workspace_manager = workspace_manager
@@ -175,6 +177,7 @@ class AttachmentsService:
         self._tick_seconds = tick_seconds
         self._max_per_tick = max_per_tick
         self._now = now_fn
+        self._pending_reservations = pending_reservations
 
         # PR #231 review, section 2: this service's own worker thread is
         # now the SOLE owner of `conn` at runtime - the radio listener no
@@ -616,16 +619,142 @@ class AttachmentsService:
 
     def _build_dispatcher(self) -> CommandDispatcher:
         """The real kind->handler table the worker runs (replaces the empty
-        placeholder this service would otherwise default to). Exactly the three
-        lifecycle-command handlers this sub-stage wires - every other
-        enumerated kind stays `unsupported_command_kind` until its own future
-        sub-stage wires it. Built once at construction (the dispatcher
-        snapshots its mapping), never mutated afterwards."""
+        placeholder this service would otherwise default to). Exactly the four
+        command handlers this sub-stage wires - the idempotent create
+        (`attachment_create`, Step 1.6A.3B) plus the three Step 1.6A.3A
+        lifecycle commands - every other enumerated kind stays
+        `unsupported_command_kind` until its own future sub-stage wires it.
+        Built once at construction (the dispatcher snapshots its mapping),
+        never mutated afterwards."""
         return CommandDispatcher({
+            "attachment_create": self._command_create,
             "attachment_retry": self._command_retry,
             "attachment_download": self._command_download,
             "attachment_reject": self._command_reject,
         })
+
+    def _command_create(self, command: Command) -> CommandOutcome:
+        """`attachment_create` (Step 1.6A.3B, §7.2): materialize the outgoing
+        draft the request thread already staged, minted ids for, and reserved
+        (§3.5/§3.6). The request thread wrote the plaintext to
+        `spool/outgoing/<attachment_id>` and handed over `attachment_id`/
+        `command_id`/`canonical_hash` plus the validated metadata; this is the
+        worker-side half that (a) resolves the recipient's *trusted* binding
+        and (b) calls `sender.create_draft()` with the already-minted ids and
+        the precomputed idempotency columns.
+
+        Recipient trust is resolved here, on the worker, because
+        `key_exchange.get_binding()` reads SQLite (worker-owned, §3.1) - it
+        cannot be checked synchronously on the request thread. §7.2's
+        "recipient binding must be trusted" is therefore enforced at this
+        stage, failing with `recipient_not_found` (no binding) /
+        `recipient_not_trusted` (binding present but not `MCA_READY`),
+        observed via the command result. Every other §7.2 check was already
+        validated pure on the request thread (id shape, comment bound,
+        provider resolution, TTL range, file size, MIME sniff).
+
+        `adapter_id`/`connector_profile_id` are the MVP single-transport
+        `"meshtastic"` literal (matching `mca_runtime.ADAPTER_ID` and the
+        request thread's own canonical-hash inputs), and `route_type`/
+        `route_id` are the DIRECT route to `source_address` - all four are
+        derived deterministically here rather than trusted from the payload,
+        so they cannot disagree with the hash the request thread computed.
+
+        The pending reservation is dropped on every terminal path (the
+        success path's committed row becomes visible to the next snapshot
+        republish, which moves it into the committed idempotency index). The
+        partial unique index on `(workspace_id, client_request_id)` is the
+        final backstop (§3.6) for a duplicate that slipped past the
+        reservation - e.g. a replay that landed between this command's
+        commit and the snapshot republish - recovered here as an idempotent
+        success against the already-committed row, never a failure. A staged
+        file that ends up unreferenced (recipient checks failed, duplicate
+        recovered) is discarded."""
+        payload = command.payload
+        attachment_id = payload.get("attachment_id")
+        client_request_id = payload.get("client_request_id")
+        canonical_hash = payload.get("canonical_hash")
+        source_address = payload.get("source_address")
+        source_name = payload.get("source_name")
+        mime_type = payload.get("mime_type")
+        provider_id_text = payload.get("provider_id")
+        comment = payload.get("comment")
+        hard_ttl_seconds = payload.get("hard_ttl_seconds")
+        download_grace_seconds = payload.get("download_grace_seconds")
+
+        spool_path = (
+            self._workspace_manager.paths(self._principal.principal_id).spool_outgoing / attachment_id
+        )
+
+        try:
+            binding = self._key_exchange.get_binding(source_address)
+            if binding is None:
+                self._discard_spool(spool_path)
+                return CommandOutcome.failed("recipient_not_found")
+            if binding.status != AddressStatus.MCA_READY:
+                self._discard_spool(spool_path)
+                return CommandOutcome.failed("recipient_not_trusted")
+
+            target = sender.RecipientTarget(
+                public_identity=binding.public_identity,
+                key_id=binding.sender_key_id,
+            )
+            sender.create_draft(
+                self._conn,
+                self._workspace_manager,
+                self._principal,
+                workspace_id=self._principal.workspace_id,
+                source_path=str(spool_path),
+                file_name=source_name,
+                mime_type=mime_type,
+                recipients=[target],
+                adapter_id="meshtastic",
+                connector_profile_id="meshtastic",
+                route_type=RouteType.DIRECT.value,
+                route_id=source_address,
+                provider_id=decode_provider_id(provider_id_text),
+                comment=comment,
+                hard_ttl_seconds=hard_ttl_seconds,
+                download_grace_seconds=download_grace_seconds,
+                attachment_id=attachment_id,
+                client_request_id=client_request_id,
+                canonical_hash=canonical_hash,
+                now=self._now(),
+            )
+        except sqlite3.IntegrityError:
+            self._conn.row_factory = sqlite3.Row
+            row = self._conn.execute(
+                "SELECT id, state FROM attachments "
+                "WHERE workspace_id = ? AND client_request_id = ?",
+                (self._principal.workspace_id, client_request_id),
+            ).fetchone()
+            if row is None:
+                raise
+            self._discard_spool(spool_path)
+            return CommandOutcome.succeeded(
+                resource_id=row["id"],
+                result={"attachment_id": row["id"], "state": row["state"]},
+            )
+        finally:
+            if self._pending_reservations is not None:
+                self._pending_reservations.remove(client_request_id)
+
+        return CommandOutcome.succeeded(
+            resource_id=attachment_id,
+            result={"attachment_id": attachment_id, "state": sender.DRAFT},
+        )
+
+    def _discard_spool(self, spool_path) -> None:
+        """Best-effort removal of a staged-but-unreferenced outgoing spool
+        file (a `recipient_not_found`/`recipient_not_trusted`/duplicate
+        `attachment_create` never commits a row that references it). Never
+        raises: an unlink failure is a disk-hygiene issue, not a command
+        correctness issue - logged without the path or any identifier and
+        swallowed."""
+        try:
+            spool_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("AttachmentsService: could not remove a staged-but-unused spool file")
 
     def _attachment_row(self, attachment_id: str) -> Optional[sqlite3.Row]:
         """The single persisted row a lifecycle command re-validates against,

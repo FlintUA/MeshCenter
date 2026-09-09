@@ -56,15 +56,22 @@ of snapshot publication and are deliberately *not* gated.
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from typing import Mapping, Optional
 
 from meshsrv.attachments.command_registry import CommandRegistry, CommandResult
 from meshsrv.attachments.commands import Command, CommandQueue, CommandQueueFull
-from meshsrv.attachments.idempotency import IdempotencyEntry, PendingReservations
+from meshsrv.attachments.idempotency import (
+    IdempotencyEntry,
+    PendingReservation,
+    PendingReservations,
+    ReservationOutcome,
+)
 from meshsrv.attachments.identity import MCAPrincipal
 from meshsrv.attachments.probe_registry import ProbeRecord, ProbeRegistry
 from meshsrv.attachments.provider_registry import ProviderProfile
 from meshsrv.attachments.snapshots import AttachmentRecord, AttachmentsSnapshot, AttachmentsSnapshotPublisher
+from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor, ConnectivitySnapshot, UploadDecision
 
 
@@ -108,6 +115,7 @@ class AttachmentsFacade:
         ready_event: threading.Event,
         connectivity_monitor: ConnectivityMonitor,
         principal: MCAPrincipal,
+        workspace_manager: MCAWorkspaceManager,
     ):
         self._command_queue = command_queue
         self._command_registry = command_registry
@@ -118,6 +126,7 @@ class AttachmentsFacade:
         self._ready_event = ready_event
         self._connectivity_monitor = connectivity_monitor
         self._principal = principal
+        self._workspace_manager = workspace_manager
 
     def _require_ready(self) -> None:
         """Gate the snapshot-backed read/write methods: raise `FacadeNotReady`
@@ -234,3 +243,51 @@ class AttachmentsFacade:
             raise
         self._wake_event.set()
         return command.command_id
+
+    # ---- request-thread write: idempotent create (§3.5/§3.6) ---------------
+
+    def spool_outgoing_dir(self) -> Path:
+        """The workspace's outgoing spool directory path. This is a pure path
+        computation (`workspace_manager.paths()`) - it performs no filesystem
+        write or open; the create endpoint (§7.2) does the actual staging
+        write under this directory, which is the one filesystem operation the
+        request thread is permitted by design."""
+        return self._workspace_manager.paths(self._principal.principal_id).spool_outgoing
+
+    def submit_create(
+        self,
+        command: Command,
+        *,
+        client_request_id: str,
+        reservation: PendingReservation,
+    ) -> "ReservationOutcome":
+        """The §3.6 idempotent-create enqueue, distinct from `submit()` only in
+        that it performs the atomic reservation *before* registering/enqueueing
+        (and rolls the reservation back alongside the registry entry on a full
+        queue). Returns the `ReservationOutcome` so the caller can translate the
+        four §3.5 cases (`fresh`/`replay_pending`/`replay_committed`/`conflict`)
+        into the correct HTTP response.
+
+        On `fresh` the command is registered (`queued`) and enqueued exactly as
+        `submit()` does; on any non-fresh outcome nothing is registered/enqueued
+        (the reservation map already decided the request is a replay or a
+        conflict). Raises `FacadeNotReady` before the runtime is ready, and
+        re-raises `CommandQueueFull` (after rolling back both the registry entry
+        and the reservation, §3.6 step 5) on a full queue. Never blocks, and
+        never touches `conn`/filesystem/network/tick lock."""
+        self._require_ready()
+        committed = self.committed_idempotency()
+        outcome = self._pending_reservations.reserve(
+            client_request_id, reservation, committed_entries=committed
+        )
+        if outcome.kind != "fresh":
+            return outcome
+        self._command_registry.register(command)
+        try:
+            self._command_queue.put_nowait(command)
+        except CommandQueueFull:
+            self._command_registry.discard_queued(command.command_id)
+            self._pending_reservations.remove(client_request_id)
+            raise
+        self._wake_event.set()
+        return outcome

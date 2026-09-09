@@ -17,6 +17,8 @@ connectivity/provider/identity/registry reads are deliberately *not* gated.
 """
 
 import threading
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,7 +26,11 @@ from meshsrv.attachments.command_registry import STATUS_QUEUED, CommandRegistry
 from meshsrv.attachments.commands import Command, CommandQueue, CommandQueueFull
 from meshsrv.attachments.facade import AttachmentsFacade, FacadeNotReady
 from meshsrv.attachments.identity import MCAPrincipal
-from meshsrv.attachments.idempotency import PendingReservations
+from meshsrv.attachments.idempotency import (
+    IdempotencyEntry,
+    PendingReservation,
+    PendingReservations,
+)
 from meshsrv.attachments.probe_registry import ProbeRegistry
 from meshsrv.attachments.snapshots import AttachmentsSnapshot, AttachmentsSnapshotPublisher
 from meshsrv.connectivity_monitor import ConnectivitySnapshot, InternetStatus, UploadDecision
@@ -63,11 +69,22 @@ def _principal():
     )
 
 
-def _empty_snapshot():
-    return AttachmentsSnapshot(records=(), by_id={}, idempotency={}, built_at=0.0)
+class _StubWorkspaceManager:
+    """Duck-typed workspace path surface for `spool_outgoing_dir()`: `paths()`
+    returns a namespace whose `spool_outgoing` is a plain `Path` (never
+    created, never written - the facade only computes and returns it)."""
+
+    def paths(self, principal_id):
+        return SimpleNamespace(spool_outgoing=Path("spool") / "outgoing")
 
 
-def _facade(*, maxsize=64, ready=True):
+def _empty_snapshot(idempotency=None):
+    return AttachmentsSnapshot(
+        records=(), by_id={}, idempotency=idempotency or {}, built_at=0.0
+    )
+
+
+def _facade(*, maxsize=64, ready=True, committed=None):
     wake_event = threading.Event()
     ready_event = threading.Event()
     if ready:
@@ -78,7 +95,7 @@ def _facade(*, maxsize=64, ready=True):
         # projection to reflect (the facade delegates to the publisher; the
         # "never None when ready" guarantee is the *service*'s job, tested in
         # test_mca_runtime_wiring.py's readiness lifecycle tests).
-        snapshot_publisher._snapshot = _empty_snapshot()  # noqa: SLF001
+        snapshot_publisher._snapshot = _empty_snapshot(idempotency=committed)  # noqa: SLF001
     facade = AttachmentsFacade(
         command_queue=CommandQueue(maxsize=maxsize),
         command_registry=CommandRegistry(),
@@ -89,12 +106,23 @@ def _facade(*, maxsize=64, ready=True):
         ready_event=ready_event,
         connectivity_monitor=_StubConnectivityMonitor(),
         principal=_principal(),
+        workspace_manager=_StubWorkspaceManager(),
     )
     return facade, wake_event
 
 
 def _command(command_id="cmd-1", kind="attachment_cancel"):
     return Command(command_id=command_id, kind=kind, payload={}, created_at=0.0)
+
+
+def _reservation(canonical_hash="a" * 64, attachment_id="b" * 32, command_id="c" * 32):
+    return PendingReservation(
+        canonical_hash=canonical_hash, attachment_id=attachment_id, command_id=command_id
+    )
+
+
+def _create_command(command_id="c" * 32):
+    return Command(command_id=command_id, kind="attachment_create", payload={}, created_at=0.0)
 
 
 # --- readiness gating (correction #1) ---------------------------------------
@@ -215,3 +243,81 @@ def test_reads_complete_without_the_tick_lock():
     assert facade.connectivity_snapshot() is not None
     assert facade.provider_snapshot() == {}
     assert facade.evaluate_upload_readiness("x").ready is True
+
+
+# --- the idempotent create write surface (submit_create, §3.5/§3.6) ---------
+
+def test_spool_outgoing_dir_is_a_pure_path_computation():
+    facade, _ = _facade()
+    spool = facade.spool_outgoing_dir()
+    assert spool == Path("spool") / "outgoing"  # derived from the stub, never touched
+
+
+def test_submit_create_fresh_registers_enqueues_and_reserves():
+    facade, wake_event = _facade()
+    reservation = _reservation()
+    outcome = facade.submit_create(
+        _create_command(), client_request_id="req-1", reservation=reservation
+    )
+    assert outcome.kind == "fresh"
+    assert outcome.reservation is reservation
+    assert facade.get_command("c" * 32).status == STATUS_QUEUED
+    assert facade._command_queue.qsize() == 1  # noqa: SLF001
+    assert wake_event.is_set()
+
+
+def test_submit_create_replay_pending_does_not_enqueue():
+    facade, _ = _facade()
+    facade.submit_create(_create_command(), client_request_id="req-1", reservation=_reservation())
+    second = facade.submit_create(
+        _create_command(command_id="d" * 32),
+        client_request_id="req-1",
+        reservation=_reservation(command_id="d" * 32),
+    )
+    assert second.kind == "replay_pending"
+    assert second.reservation.attachment_id == "b" * 32
+    assert facade._command_queue.qsize() == 1  # noqa: SLF001
+
+
+def test_submit_create_conflict_does_not_enqueue():
+    facade, _ = _facade()
+    facade.submit_create(_create_command(), client_request_id="req-1", reservation=_reservation())
+    conflicting = facade.submit_create(
+        _create_command(command_id="d" * 32),
+        client_request_id="req-1",
+        reservation=_reservation(canonical_hash="e" * 64, command_id="d" * 32),
+    )
+    assert conflicting.kind == "conflict"
+    assert facade._command_queue.qsize() == 1  # noqa: SLF001
+
+
+def test_submit_create_replay_committed_returns_the_committed_entry():
+    committed = {
+        "req-1": IdempotencyEntry(attachment_id="b" * 32, canonical_hash="a" * 64, created_at=0.0),
+    }
+    facade, _ = _facade(committed=committed)
+    outcome = facade.submit_create(
+        _create_command(), client_request_id="req-1", reservation=_reservation()
+    )
+    assert outcome.kind == "replay_committed"
+    assert outcome.committed_entry.attachment_id == "b" * 32
+    assert facade._command_queue.qsize() == 0  # noqa: SLF001
+
+
+def test_submit_create_full_queue_rolls_back_registry_and_reservation():
+    facade, _ = _facade(maxsize=1)
+    facade.submit(_command(command_id="cmd-a"))
+    with pytest.raises(CommandQueueFull):
+        facade.submit_create(
+            _create_command(), client_request_id="req-1", reservation=_reservation()
+        )
+    assert facade.get_command("c" * 32) is None
+    assert facade._pending_reservations.get("req-1") is None  # noqa: SLF001
+
+
+def test_submit_create_raises_facade_not_ready_before_readiness():
+    facade, _ = _facade(ready=False)
+    with pytest.raises(FacadeNotReady):
+        facade.submit_create(
+            _create_command(), client_request_id="req-1", reservation=_reservation()
+        )

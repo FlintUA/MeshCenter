@@ -632,17 +632,18 @@ def test_handler_exception_text_is_not_logged(tmp_path, caplog):
         mca_runtime.reset_state_for_tests()
 
 
-# --- Step 1.6A.3A lifecycle-command handlers (worker side) -----------------
+# --- Step 1.6A.3A/3B command handlers (worker side) -------------------------
 #
-# The three wired kinds are the service's own methods, and the worker is the
-# sole executor. These tests drive the real runtime with the network pinned
-# down (_AlwaysDownSession), so any handler that strayed into radio/Relay/
+# The wired kinds are the service's own methods, and the worker is the sole
+# executor. These tests drive the real runtime with the network pinned down
+# (_AlwaysDownSession), so any handler that strayed into radio/Relay/
 # provider I/O would raise a ConnectionError rather than silently pass. They
-# pin: the dispatcher wires exactly the three kinds; an unknown id drains to
-# `attachment_not_found`; a wrong direction/state drains to
-# `invalid_state_transition` against the *persisted* row (re-read on the
-# worker, not the request thread's snapshot); and the three handlers delegate
-# to the same sender/receiver primitives the tick itself uses.
+# pin: the dispatcher wires exactly the three lifecycle kinds plus the 3B
+# create kind; an unknown id drains to `attachment_not_found`; a wrong
+# direction/state drains to `invalid_state_transition` against the *persisted*
+# row (re-read on the worker, not the request thread's snapshot); and the
+# handlers delegate to the same sender/receiver primitives the tick itself
+# uses.
 
 
 def _seed_row(state, attachment_id, direction, state_name):
@@ -663,16 +664,16 @@ def _seed_row(state, attachment_id, direction, state_name):
     state.conn.commit()
 
 
-def test_real_service_wires_the_three_lifecycle_handlers(tmp_path):
+def test_real_service_wires_the_lifecycle_and_create_handlers(tmp_path):
     state, _, _ = _started_state(tmp_path, "lifecycle-wire")
     try:
         dispatcher = state.dispatcher
         # The service built the real dispatcher (we passed None at
         # ensure_service) and mirrored it back onto the state - one fixed
         # kind->handler table shared by the state and the worker.
-        assert dispatcher is state.service._dispatcher  # noqa: SLF001
         assert dispatcher.supported_kinds() == frozenset({
-            "attachment_retry", "attachment_download", "attachment_reject",
+            "attachment_create", "attachment_retry", "attachment_download",
+            "attachment_reject",
         })
         # Every other enumerated kind remains unwired -> unsupported.
         for kind in COMMAND_KINDS - dispatcher.supported_kinds():

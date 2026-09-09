@@ -18,10 +18,11 @@ The ten read-only `GET` endpoints §7.1 defines:
 
 plus the mutation endpoints implemented so far: the three Step 1.6A.3A
 lifecycle actions — `POST /api/attachments/{id}/retry`, `/download`,
-`/reject` (§7.3) — and the Step 1.6A.3B idempotent multipart create
-`POST /api/attachments` (§7.2). Everything else (`GET
-/api/attachments/{id}/content`, cancel, save, revoke, local-content,
-contacts/connectors, provider onboarding) remains out of scope (1.6A.3+).
+`/reject` (§7.3) — the Step 1.6A.3B idempotent multipart create
+`POST /api/attachments` (§7.2), and the Step 1.6A.3C cancel mutation
+`POST /api/attachments/{id}/cancel` (§7.4). Everything else
+(`GET /api/attachments/{id}/content`, save, revoke, local-content,
+connector enumeration, provider onboarding) remains out of scope (1.6A.3+).
 
 Threading boundary (the point of Step 1.6A.1's facade - §3.1/§3.2): these
 handlers read the worker-published in-memory snapshots and registries
@@ -894,6 +895,12 @@ def register_attachments_routes(app, handle_errors):
         # §7.3 download/reject: a received attachment awaiting consent only.
         return record.direction == "received" and record.state == receiver.WAITING_CONSENT
 
+    def _cancel_precondition(record):
+        # §7.4 cancel: an outgoing attachment still in an automatic (pre-SENT)
+        # state only - received rows and SENT/RECEIVED/DOWNLOADED/terminal/
+        # failed/rejected/expired/revoked/cancelled rows are never cancellable.
+        return record.direction == "sent" and record.state in sender.AUTOMATIC_STATES
+
     @app.route("/api/attachments/<attachment_id>/retry", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
@@ -911,6 +918,12 @@ def register_attachments_routes(app, handle_errors):
     @_mca_error_boundary
     def reject_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_reject", _consent_precondition)
+
+    @app.route("/api/attachments/<attachment_id>/cancel", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def cancel_attachment(attachment_id):
+        return _submit_lifecycle_command(attachment_id, "attachment_cancel", _cancel_precondition)
 
     # ---- Step 1.6A.3B: idempotent multipart create (§7.2) -------------------
 

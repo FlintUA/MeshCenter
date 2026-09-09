@@ -65,7 +65,7 @@ from meshsrv.attachments.idempotency import PendingReservation, PendingReservati
 from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator, RateLimited
 from meshsrv.attachments.provider_registry import ProviderRegistry, ProviderRegistryError, decode_provider_id, encode_provider_id
 from meshsrv.attachments.recipient_snapshot import RecipientSnapshotPublisher
-from meshsrv.attachments.relay_client import RelayClient
+from meshsrv.attachments.relay_client import RelayClient, RelayError, RelayHTTPError
 from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
@@ -775,11 +775,12 @@ class AttachmentsService:
 
     def _build_dispatcher(self) -> CommandDispatcher:
         """The real kind->handler table the worker runs (replaces the empty
-        placeholder this service would otherwise default to). Exactly the four
-        command handlers this sub-stage wires - the idempotent create
-        (`attachment_create`, Step 1.6A.3B) plus the three Step 1.6A.3A
-        lifecycle commands - every other enumerated kind stays
-        `unsupported_command_kind` until its own future sub-stage wires it.
+        placeholder this service would otherwise default to). The five command
+        handlers wired so far - the idempotent create (`attachment_create`,
+        Step 1.6A.3B), the three Step 1.6A.3A lifecycle commands
+        (retry/download/reject), and the Step 1.6A.3C cancel mutation - every
+        other enumerated kind stays `unsupported_command_kind` until its own
+        future sub-stage wires it.
         Built once at construction (the dispatcher snapshots its mapping),
         never mutated afterwards."""
         return CommandDispatcher({
@@ -787,6 +788,7 @@ class AttachmentsService:
             "attachment_retry": self._command_retry,
             "attachment_download": self._command_download,
             "attachment_reject": self._command_reject,
+            "attachment_cancel": self._command_cancel,
         })
 
     def _command_create(self, command: Command) -> CommandOutcome:
@@ -1398,6 +1400,107 @@ class AttachmentsService:
         return CommandOutcome.succeeded(
             resource_id=attachment_id,
             result={"attachment_id": attachment_id, "state": receiver.REJECTED},
+        )
+
+    def _cancel_row(self, attachment_id: str) -> Optional[sqlite3.Row]:
+        """The wider persisted row a cancel needs beyond `_attachment_row`:
+        `transfer_id` (the Relay object to revoke) and `saved_path` (cleared,
+        never used as a filesystem component). Re-read from the worker-owned
+        `conn` (§3.1). Returns `None` for an unknown id or a row in another
+        workspace."""
+        self._conn.row_factory = sqlite3.Row
+        return self._conn.execute(
+            "SELECT id, direction, provider_id, state, transfer_id, saved_path FROM attachments "
+            "WHERE id = ? AND workspace_id = ?",
+            (attachment_id, self._principal.workspace_id),
+        ).fetchone()
+
+    def _sender_state_row(self, attachment_id: str) -> Optional[sqlite3.Row]:
+        """The sender-state columns a cancel consults to decide whether a
+        Relay object exists to revoke (`upload_id`/`revoke_token`). Only the
+        two remote-cleanup signals are projected - the data key / nonce /
+        upload token stay out of a handler that must never touch key material
+        it has no use for."""
+        self._conn.row_factory = sqlite3.Row
+        return self._conn.execute(
+            "SELECT upload_id, revoke_token FROM mca_sender_state WHERE attachment_id = ?",
+            (attachment_id,),
+        ).fetchone()
+
+    def _command_cancel(self, command: Command) -> CommandOutcome:
+        """`attachment_cancel` (§7.4): the explicit user action that cancels
+        an outgoing attachment still in an automatic (pre-SENT) state. The
+        cancel has a remote half and a local half, and they run strictly in
+        that order:
+
+        - **remote first**: if a Relay upload session was ever created
+          (`upload_id` or `revoke_token` persisted), `RelayClient.revoke()` is
+          called against the provider pinned on the row (never a default). A
+          Relay **404 is confirmed absence** - the object no longer exists
+          remotely, so the remote half is already satisfied - whereas every
+          other failure (`RelayUnavailableError`/`RelayHTTPError`/missing or
+          disabled provider) is `relay_unreachable`, leaving the row, its
+          sender state, and its spool file all *preserved* for a manual retry
+          (no auto retry - a committed-but-unreachable object must never be
+          silently abandoned).
+        - **local second, only after the remote half is resolved**: delete the
+          staged spool (`spool/outgoing/<attachment_id>`, derived from the
+          validated id only - never `saved_path`, which is cleared to NULL,
+          never handed to the filesystem), then `sender.cancel()` in the same
+          transaction. An unlink failure is `spool_cleanup_failed` with the
+          row unchanged.
+
+        Result (state=CANCELLED, saved_path NULL, no sender-state row, no
+        spool file, history preserved) is only reached when both halves
+        completed."""
+        attachment_id = command.payload.get("attachment_id")
+        row = self._cancel_row(attachment_id)
+        if row is None:
+            return CommandOutcome.failed("attachment_not_found")
+        if row["direction"] != "sent" or row["state"] not in sender.AUTOMATIC_STATES:
+            return CommandOutcome.failed("invalid_state_transition")
+
+        sender_state = self._sender_state_row(attachment_id)
+        upload_id = sender_state["upload_id"] if sender_state is not None else None
+        revoke_token = sender_state["revoke_token"] if sender_state is not None else None
+        needs_remote = upload_id is not None or revoke_token is not None
+        if needs_remote:
+            if revoke_token is None:
+                # A remote session exists but its revoke token was never
+                # persisted - we cannot revoke it, so we cannot complete a
+                # safe cancel. Preserve everything for a manual retry.
+                return CommandOutcome.failed("relay_unreachable")
+            provider_id_text = _provider_id_text(row["direction"], row["provider_id"])
+            profile = self._provider_registry.resolve(provider_id_text) if provider_id_text else None
+            if profile is None or not profile.enabled:
+                return CommandOutcome.failed("relay_unreachable")
+            relay_client = self._relay_client_factory(provider_id_text) if provider_id_text else None
+            if relay_client is None:
+                return CommandOutcome.failed("relay_unreachable")
+            try:
+                relay_client.revoke(bytes.fromhex(row["transfer_id"]), revoke_token)
+            except RelayHTTPError as exc:
+                if exc.status_code != 404:
+                    return CommandOutcome.failed("relay_unreachable")
+                # 404 = confirmed absence: the remote half is already done.
+            except RelayError:
+                return CommandOutcome.failed("relay_unreachable")
+
+        spool_path = self._spool_path_for(attachment_id)
+        if spool_path is not None:
+            try:
+                spool_path.unlink(missing_ok=True)
+            except OSError:
+                return CommandOutcome.failed("spool_cleanup_failed")
+        self._conn.execute("UPDATE attachments SET saved_path = NULL WHERE id = ?", (attachment_id,))
+        try:
+            sender.cancel(self._conn, attachment_id, now=self._now())
+        except sender.SenderError:
+            self._rollback_silently()
+            return CommandOutcome.failed("invalid_state_transition")
+        return CommandOutcome.succeeded(
+            resource_id=attachment_id,
+            result={"attachment_id": attachment_id, "state": sender.CANCELLED},
         )
 
     def _refresh_snapshot(self) -> None:

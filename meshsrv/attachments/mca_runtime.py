@@ -248,10 +248,15 @@ class _MCARuntimeState:
         # `submit()` sets it (waking the worker to drain the command
         # queue), and `AttachmentsService` waits on it - one Event object,
         # not two, so a submit from a request thread wakes the real
-        # worker. `dispatcher` starts with an empty kind->handler table:
-        # a command of any enumerated kind is therefore a stable terminal
-        # `unsupported_command_kind` FAILED (dispatch.py) until a later
-        # sub-stage (1.6A.3+) wires real handlers into it.
+        # worker. `dispatcher` starts as a placeholder empty table - a
+        # command of any enumerated kind through it is therefore a stable
+        # terminal `unsupported_command_kind` FAILED (dispatch.py). The real
+        # kind->handler table is built when the service is (see
+        # `_ensure_service_locked`): the handlers are the service's own
+        # methods, so they can only exist once the service (and its
+        # worker-owned collaborators) does. `_dispatcher_placeholder` is the
+        # sentinel that distinguishes "still the placeholder" from "a test
+        # injected a custom dispatcher" at service-construction time.
         self.wake_event = threading.Event()
         # Step 1.6A.1 (correction #1): the shared runtime-readiness signal,
         # handed to *both* the facade (which gates on it) and the service
@@ -263,7 +268,8 @@ class _MCARuntimeState:
         self.pending_reservations = PendingReservations()
         self.probe_registry = ProbeRegistry()
         self.snapshot_publisher = AttachmentsSnapshotPublisher()
-        self.dispatcher = CommandDispatcher({})
+        self._dispatcher_placeholder = CommandDispatcher({})
+        self.dispatcher = self._dispatcher_placeholder
         self.facade = AttachmentsFacade(
             command_queue=self.command_queue,
             command_registry=self.command_registry,
@@ -339,11 +345,28 @@ class _MCARuntimeState:
             # is the snapshot the facade reads.
             command_queue=self.command_queue,
             command_registry=self.command_registry,
-            dispatcher=self.dispatcher,
+            # Step 1.6A.3A: hand the service the real lifecycle-command
+            # dispatcher unless a test already replaced the placeholder with
+            # a custom table (then honor that). Passing None makes the
+            # service build its own from its handler methods - the handlers
+            # are bound methods, so they can only be built here, once the
+            # service and its worker-owned collaborators exist.
+            dispatcher=(
+                self.dispatcher
+                if self.dispatcher is not self._dispatcher_placeholder
+                else None
+            ),
             snapshot_publisher=self.snapshot_publisher,
             wake_event=self.wake_event,
             ready_event=self.ready_event,
         )
+        if self.dispatcher is self._dispatcher_placeholder:
+            # The service built its real lifecycle-command dispatcher (we
+            # passed None, so it fell back to _build_dispatcher()). Mirror it
+            # back here so this state and the worker share the one fixed
+            # kind->handler table - the invariant the runtime-wiring tests
+            # assert (`svc._dispatcher is state.dispatcher`).
+            self.dispatcher = self.service._dispatcher
         # Deliberately network_available=False and no relay_client/
         # delivery_adapter override for this *synchronous* startup pass:
         # this runs before the worker thread (and its Lock-held tick

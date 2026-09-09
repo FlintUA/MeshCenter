@@ -212,7 +212,12 @@ class AttachmentsService:
         # "omit `lock` and get a private one" shape as `_lock` above.
         self._command_queue = command_queue if command_queue is not None else CommandQueue()
         self._command_registry = command_registry if command_registry is not None else CommandRegistry()
-        self._dispatcher = dispatcher if dispatcher is not None else CommandDispatcher({})
+        # Step 1.6A.3A: when no dispatcher is injected, build the real one
+        # from this service's own lifecycle-command handlers (the worker-owned
+        # collaborators live on this instance, so the handlers are its methods).
+        # A caller that passes an explicit dispatcher (mca_runtime, or a test
+        # injecting a custom table) keeps it unchanged.
+        self._dispatcher = dispatcher if dispatcher is not None else self._build_dispatcher()
         self._snapshot_publisher = (
             snapshot_publisher if snapshot_publisher is not None else AttachmentsSnapshotPublisher()
         )
@@ -595,6 +600,124 @@ class AttachmentsService:
                 "(registry corruption): %s",
                 command.command_id, command.kind, type(exc).__name__,
             )
+
+    # ---- lifecycle-command handlers (Step 1.6A.3A) -------------------------
+    #
+    # The three wired command kinds for the first mutation sub-stage. Each is a
+    # plain `CommandHandler` (a `Callable[[Command], CommandOutcome]`) bound to
+    # this service, so the worker-owned collaborators (conn, workspace_manager,
+    # principal, provider_registry, key_exchange, connectivity_monitor,
+    # delivery_adapter, relay_client_factory, now_fn) stay on the worker side
+    # and the dispatcher remains a fixed kind->callable table (§3.2). None of
+    # these is ever invoked on a request thread. They re-validate the persisted
+    # row rather than trusting the request thread's snapshot, so a row that
+    # advanced between the synchronous precondition check and this command's
+    # execution is caught here, not silently acted on.
+
+    def _build_dispatcher(self) -> CommandDispatcher:
+        """The real kind->handler table the worker runs (replaces the empty
+        placeholder this service would otherwise default to). Exactly the three
+        lifecycle-command handlers this sub-stage wires - every other
+        enumerated kind stays `unsupported_command_kind` until its own future
+        sub-stage wires it. Built once at construction (the dispatcher
+        snapshots its mapping), never mutated afterwards."""
+        return CommandDispatcher({
+            "attachment_retry": self._command_retry,
+            "attachment_download": self._command_download,
+            "attachment_reject": self._command_reject,
+        })
+
+    def _attachment_row(self, attachment_id: str) -> Optional[sqlite3.Row]:
+        """The single persisted row a lifecycle command re-validates against,
+        re-read from the worker-owned `conn` (its sole owner, §3.1). Returns
+        `None` for an unknown id or a row in another workspace."""
+        self._conn.row_factory = sqlite3.Row
+        return self._conn.execute(
+            "SELECT id, direction, provider_id, state FROM attachments "
+            "WHERE id = ? AND workspace_id = ?",
+            (attachment_id, self._principal.workspace_id),
+        ).fetchone()
+
+    def _command_retry(self, command: Command) -> CommandOutcome:
+        """`attachment_retry`: re-drive the same per-row step path the tick
+        runs, for one attachment the client wants advanced immediately (§7.3).
+        Valid only in the row's own direction's `AUTOMATIC_STATES`; terminal
+        `FAILED_*`/`REJECTED`/`EXPIRED`/`CANCELLED`/`REVOKED` are never
+        retryable here (terminal-failure recovery is a future state-machine
+        change, not this endpoint). Does not mint/replace `transfer_id` and
+        does not bypass per-row provider selection - it calls the same
+        `_step_sent`/`_step_received` the tick does, which absorb an
+        unavailable radio/Relay into a retryable persisted state rather than
+        raising."""
+        attachment_id = command.payload.get("attachment_id")
+        row = self._attachment_row(attachment_id)
+        if row is None:
+            return CommandOutcome.failed("attachment_not_found")
+        direction = row["direction"]
+        state = row["state"]
+        if direction == "sent":
+            if state not in sender.AUTOMATIC_STATES:
+                return CommandOutcome.failed("invalid_state_transition")
+            self._step_sent(row)
+        elif direction == "received":
+            if state not in receiver.AUTOMATIC_STATES:
+                return CommandOutcome.failed("invalid_state_transition")
+            self._step_received(row)
+        else:
+            return CommandOutcome.failed("invalid_state_transition")
+        new_state = (
+            sender.get_state(self._conn, attachment_id)
+            if direction == "sent"
+            else receiver.get_state(self._conn, attachment_id)
+        )
+        return CommandOutcome.succeeded(
+            resource_id=attachment_id,
+            result={"attachment_id": attachment_id, "state": new_state},
+        )
+
+    def _command_download(self, command: Command) -> CommandOutcome:
+        """`attachment_download`: the explicit user action that moves a
+        received `WAITING_CONSENT` row to `DOWNLOADING` (§7.3). Consent is
+        never weakened: both this worker-side re-check and
+        `receiver.begin_download()`'s own guard require `WAITING_CONSENT`, so
+        an attachment that already left consent (or was never received) cannot
+        be force-downloaded here. Runs on the worker, not a request thread."""
+        attachment_id = command.payload.get("attachment_id")
+        row = self._attachment_row(attachment_id)
+        if row is None:
+            return CommandOutcome.failed("attachment_not_found")
+        if row["direction"] != "received" or row["state"] != receiver.WAITING_CONSENT:
+            return CommandOutcome.failed("invalid_state_transition")
+        try:
+            receiver.begin_download(self._conn, attachment_id, now=self._now())
+        except receiver.ReceiverError:
+            # The row moved off WAITING_CONSENT between our read and the call.
+            return CommandOutcome.failed("invalid_state_transition")
+        return CommandOutcome.succeeded(
+            resource_id=attachment_id,
+            result={"attachment_id": attachment_id, "state": receiver.DOWNLOADING},
+        )
+
+    def _command_reject(self, command: Command) -> CommandOutcome:
+        """`attachment_reject`: the explicit user action that moves a received
+        `WAITING_CONSENT` row to `REJECTED` (§7.3). Delegates to
+        `receiver.reject()` unchanged, so reply/outbox behavior is preserved -
+        nothing is sent directly from any thread here; the tick's
+        `_dispatch_outgoing_replies()` remains the only sender."""
+        attachment_id = command.payload.get("attachment_id")
+        row = self._attachment_row(attachment_id)
+        if row is None:
+            return CommandOutcome.failed("attachment_not_found")
+        if row["direction"] != "received" or row["state"] != receiver.WAITING_CONSENT:
+            return CommandOutcome.failed("invalid_state_transition")
+        try:
+            receiver.reject(self._conn, attachment_id, now=self._now())
+        except receiver.ReceiverError:
+            return CommandOutcome.failed("invalid_state_transition")
+        return CommandOutcome.succeeded(
+            resource_id=attachment_id,
+            result={"attachment_id": attachment_id, "state": receiver.REJECTED},
+        )
 
     def _refresh_snapshot(self) -> None:
         """Step 1.6A.1 (correction #1): republish the attachment snapshot

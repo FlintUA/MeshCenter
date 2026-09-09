@@ -278,6 +278,41 @@ class PendingReservations:
         with self._lock:
             self._pending.pop(client_request_id, None)
 
+    def remove_if_matches(
+        self, client_request_id: str, reservation: PendingReservation
+    ) -> bool:
+        """Remove the pending reservation for `client_request_id` only if it
+        still holds the *same* reservation the caller inserted (matched by
+        `command_id`, the unique id of the one command that minted the
+        reservation) - never another command's reservation that happens to
+        share the key (§3.6, Finding 2). The request-thread rollback paths in
+        the facade use this instead of `remove()` so a rollback can never
+        drop a reservation the worker has since promoted (via `replace()`) to
+        a different command's ids. Returns `True` if it removed, `False` if
+        the key was absent or already owned by a different command."""
+        with self._lock:
+            current = self._pending.get(client_request_id)
+            if current is not None and current.command_id == reservation.command_id:
+                self._pending.pop(client_request_id, None)
+                return True
+            return False
+
+    def replace(self, client_request_id: str, reservation: PendingReservation) -> None:
+        """Atomically replace the pending reservation for `client_request_id`
+        (§3.6, Finding 1). Used by the worker when a create's IntegrityError
+        recovery finds a matching-hash committed row: the reservation's
+        `attachment_id` is corrected to the *original* row's id (not the
+        colliding request's), so a concurrent replay of the same
+        `client_request_id` returns the original attachment rather than the
+        would-be second one, until the committed snapshot publishes that exact
+        id. Setting unconditionally (not only when present) is safe - the
+        worker is correcting its own command's reservation, and a request
+        thread can never have inserted a *different* reservation for the same
+        id while this one was pending (any concurrent caller observed it and
+        got `replay_pending`/`conflict`, neither of which inserts)."""
+        with self._lock:
+            self._pending[client_request_id] = reservation
+
     def snapshot_ids(self) -> Dict[str, PendingReservation]:
         """A copy of the pending map, for tests/inspection. Not part of
         the hot path - the facade never needs to read the whole map, only

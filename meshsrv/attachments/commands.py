@@ -178,3 +178,13 @@ class CommandQueue:
 
     def empty(self) -> bool:
         return self._queue.empty()
+
+    def iter_commands(self):
+        """A best-effort snapshot of the currently-queued commands, returned
+        in place without dequeueing - the one read the worker's orphan-staging
+        recovery (Finding 5) needs to consult a queued command as a reference
+        source before deleting a staged file. Same approximate semantics as
+        `qsize()`: the request thread may `put_nowait()` concurrently, so the
+        snapshot is a point-in-time view, never a guarantee. Read-only - never
+        mutates the queue, never blocks, never touches the network."""
+        return list(self._queue.queue)

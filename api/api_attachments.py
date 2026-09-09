@@ -1,10 +1,9 @@
 """api/api_attachments.py
 
-Step 1.6A.2: the read-only MCAttach REST surface (internal-rest-api.md
-§7.1). MIT-licensed Core code - never `meshtastic`, never anything under
-`adapters/meshtastic/`.
+The MCAttach REST surface (internal-rest-api.md §7). MIT-licensed Core
+code - never `meshtastic`, never anything under `adapters/meshtastic/`.
 
-Exactly the ten `GET` endpoints §7.1 defines, and nothing else:
+The ten read-only `GET` endpoints §7.1 defines:
 
     GET /api/attachments
     GET /api/attachments/{attachment_id}
@@ -17,18 +16,26 @@ Exactly the ten `GET` endpoints §7.1 defines, and nothing else:
     GET /api/mca/identity
     GET /api/mca/commands/{command_id}
 
-Every mutation, `GET /api/attachments/{id}/content`, contacts/connectors,
-multipart upload, and provider onboarding is deliberately out of scope
-here (1.6A.3+).
+plus the mutation endpoints implemented so far: the three Step 1.6A.3A
+lifecycle actions — `POST /api/attachments/{id}/retry`, `/download`,
+`/reject` (§7.3) — and the Step 1.6A.3B idempotent multipart create
+`POST /api/attachments` (§7.2). Everything else (`GET
+/api/attachments/{id}/content`, cancel, save, revoke, local-content,
+contacts/connectors, provider onboarding) remains out of scope (1.6A.3+).
 
 Threading boundary (the point of Step 1.6A.1's facade - §3.1/§3.2): these
-handlers only ever read the worker-published in-memory snapshots and
-registries through `AttachmentsFacade`. They never touch SQLite, the
-filesystem, the network, the radio, or the worker's tick lock, and they
-never create/lazily-initialize the MCA runtime - `mca_runtime.
-get_attachments_facade()` returns `None` until the runtime has actually
-been constructed (an explicit "not ready" signal, mapped to 503 here,
-never a fallback that would open `attachments.db` from a request thread).
+handlers read the worker-published in-memory snapshots and registries
+through `AttachmentsFacade` and submit mutations through its command
+queue. They never touch SQLite, the network, the radio, or the worker's
+tick lock, and they never create/lazily-initialize the MCA runtime -
+`mca_runtime.get_attachments_facade()` returns `None` until the runtime
+has actually been constructed (an explicit "not ready" signal, mapped to
+503 here, never a fallback that would open `attachments.db` from a
+request thread). The one deliberate filesystem exception is `POST
+/api/attachments` (§7.2), which writes the staged plaintext to
+`spool/outgoing/<attachment_id>` and removes it again on any non-fresh/
+failed path - the only request-thread filesystem operation the design
+permits.
 
 No-secret discipline (§11): every response is built by an explicit
 allowlist serializer. No `dataclasses.asdict()`, no `__dict__`, no generic
@@ -50,23 +57,38 @@ legacy wrapper never sees an exception, so it cannot re-wrap or leak one.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import os
 import re
+import tempfile
 import time
+import uuid
 from collections.abc import Mapping
 from functools import wraps
+from pathlib import Path
 
 from flask import jsonify, request
+from werkzeug.exceptions import RequestEntityTooLarge
 
-from meshsrv.attachments import mca_runtime, receiver, sender
+from meshsrv.attachments import mca_runtime, mime_allowlist, receiver, sender
 from meshsrv.attachments.commands import Command, CommandQueueFull, mint_command_id
+from meshsrv.attachments.crypto import ciphertext_size
+from meshsrv.attachments.delivery.base import RouteType
 from meshsrv.attachments.delivery.meshtastic import MESHTASTIC_TEXT_MAX_PAYLOAD_BYTES
 from meshsrv.attachments.facade import FacadeNotReady
+from meshsrv.attachments.idempotency import (
+    PendingReservation,
+    build_canonical_json,
+    compute_canonical_hash,
+    validate_client_request_id,
+)
 from meshsrv.attachments.provider_registry import (
     ProviderRegistryError,
     decode_provider_id,
     encode_provider_id,
 )
+from meshsrv.attachments.recipient_snapshot import RecipientRejectionReason, evaluate_recipient_trust
 from meshsrv.attachments.snapshots import (
     serialize_attachment_public,
     serialize_delivery,
@@ -124,6 +146,33 @@ _LIST_LIMIT_DEFAULT = 100
 _LIST_LIMIT_MIN = 1
 _LIST_LIMIT_MAX = 500
 
+# §7.2: the create endpoint's 5 MiB plaintext cap, enforced server-side
+# (not only client-side - §13 gap 11).
+_MAX_FILE_BYTES = 5 * 1024 * 1024
+
+# Finding 4 (bounded + atomic multipart staging): the file cap above is the
+# *plaintext* bound; the total multipart body is additionally capped a little
+# above it so Werkzeug stops parsing (and spooling) an over-large request
+# *before* this route's own file-size check runs. That cap is set per-request
+# (`request.max_content_length`, supported since Flask 3.1), never via the
+# global `MAX_CONTENT_LENGTH` config, so no other endpoint's upload limit is
+# affected. The non-file `metadata` part is bounded separately with an explicit
+# UTF-8 byte-length check before `json.loads` runs - *not* via Werkzeug's
+# `max_form_memory_size`, which applies to the raw multipart chunk buffer and
+# would reject any file part larger than the (64 KiB) chunk size.
+_MAX_METADATA_BYTES = 16 * 1024
+_MULTIPART_OVERHEAD_BYTES = 8 * 1024
+_MAX_REQUEST_BYTES = _MAX_FILE_BYTES + _MAX_METADATA_BYTES + _MULTIPART_OVERHEAD_BYTES
+
+# Fixed-size staging chunk (streamed, never whole-file buffered) and the head
+# window retained in memory for MIME sniffing (Finding 4/8).
+_STAGING_CHUNK_BYTES = 64 * 1024
+_SNIFF_HEAD_BYTES = 512
+# Temporary staging files are dot-prefixed and `.tmp`-suffixed, distinct from a
+# committed spool file (a bare 32-hex `attachment_id`) - the convention
+# Finding 5's bounded orphan-staging recovery keys off.
+_TEMP_SUFFIX = ".tmp"
+
 
 # ---- small response helpers ----------------------------------------------
 
@@ -167,22 +216,38 @@ def _internal_error_response():
     }), 500
 
 
+def _request_too_large():
+    """The 413 for a multipart body that exceeds the create endpoint's
+    per-request cap (Finding 4). Werkzeug raises `RequestEntityTooLarge`
+    during form parsing - before the route's own file-size check runs; this
+    maps it to a clean JSON envelope so the sanitized boundary never leaks a
+    Werkzeug HTML page, `str(e)`, or a traceback."""
+    return jsonify({
+        "ok": False,
+        "error": "request body too large",
+        "error_code": "request_too_large",
+    }), 413
+
+
 def _mca_error_boundary(fn):
     """The local sanitized exception boundary for every MCAttach read
     handler. It sits *beneath* the project-wide `handle_errors` decorator,
     so it sees (and fully handles) every exception first: `handle_errors`
     then only ever returns the clean response, never its own leaky 500.
 
-    `FacadeNotReady` -> 503 `mca_not_ready`; anything else -> 500
-    `internal_error`, logging only the handler name and the exception class
-    (never `str(exc)`, args, `exc_info`, the request body, the query string,
-    or any identifier)."""
+    `FacadeNotReady` -> 503 `mca_not_ready`; a Werkzeug `RequestEntityTooLarge`
+    (the create endpoint's per-request multipart cap, Finding 4) -> 413
+    `request_too_large`; anything else -> 500 `internal_error`, logging only the
+    handler name and the exception class (never `str(exc)`, args, `exc_info`,
+    the request body, the query string, or any identifier)."""
     @wraps(fn)
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
         except FacadeNotReady:
             return _not_ready()
+        except RequestEntityTooLarge:
+            return _request_too_large()
         except Exception as exc:  # noqa: BLE001 - this is the sanitized boundary itself
             _log.error(
                 "MCAttach read endpoint '%s' raised %s", fn.__name__, type(exc).__name__
@@ -266,6 +331,162 @@ def _resolve_attachment(facade, attachment_id):
     if record is None:
         return None, (_json_error("attachment_not_found", "attachment not found"), 404)
     return record, None
+
+
+# ---- create-endpoint helpers (Step 1.6A.3B, §7.2) -------------------------
+
+
+def _sanitize_source_name(raw_filename):
+    """Derive the safe, single-component `source_name` recorded for a new
+    outgoing attachment (§3.5/§7.2). The client filename is never trusted as
+    a path - the staged spool file is named by the minted `attachment_id`,
+    not this string; `source_name` is only the human-readable `file_name`
+    folded into the canonical hash. Fail closed to a neutral name rather than
+    rejecting the upload: take the basename (so a hostile `../../etc/passwd`
+    cannot survive even as a display name), drop control characters, and fall
+    back to `"attachment"` when nothing safe remains. Length is deliberately
+    *not* capped here - the caller normalizes the extension first
+    (`normalize_file_name_for_mime(..., max_code_points=255)`), which must
+    truncate the stem with the extension already in place; truncating here
+    would let the later extension append push the name past the bound."""
+    if not isinstance(raw_filename, str):
+        return "attachment"
+    base = raw_filename.replace("\\", "/").rsplit("/", 1)[-1]
+    base = "".join(ch for ch in base if ch.isprintable())
+    base = base.strip().strip(".")
+    if not base:
+        return "attachment"
+    return base
+
+
+def _discard_spool(spool_path):
+    """Best-effort removal of a staged-but-unused spool file (a temp file or a
+    published final file) - the one filesystem write the create endpoint does,
+    matched by this one cleanup on every non-fresh/failed path (a
+    replay/conflict stages a file the worker will never reference, and a
+    full-queue/not-ready submit leaves it orphaned). Never raises: an unlink
+    failure is a disk-hygiene issue, not a correctness issue, and is logged
+    without the path or any identifier."""
+    try:
+        spool_path.unlink(missing_ok=True)
+    except OSError:
+        _log.warning("MCAttach create endpoint: could not remove a staged-but-unused spool file")
+
+
+class _FileTooLarge(Exception):
+    """Internal signal from `_stage_spool_file`: the staged file exceeded
+    `_MAX_FILE_BYTES` (read at most one chunk beyond). Mapped to the 400
+    `file_too_large` envelope by the caller; never propagates to the sanitized
+    boundary."""
+
+
+def _stage_spool_file(file_storage, spool_dir, attachment_id):
+    """Stream `file_storage` to a server-generated exclusive temporary file in
+    fixed-size chunks, computing SHA-256, the total plaintext size, and the
+    full-stream text-validity result incrementally (Findings 4/8) - the whole
+    file is never buffered, only the first `_SNIFF_HEAD_BYTES` retained in
+    memory for MIME sniffing.
+
+    The temp file is created with `tempfile.mkstemp`: exclusive creation
+    (O_CREAT|O_EXCL), mode 0600, and a dot-prefixed name derived from the
+    minted `attachment_id` - never the browser filename - so an ID collision
+    can never overwrite an existing spool file, and the final publish stays a
+    same-directory `os.replace` (atomic). Returns
+    `(temp_path, file_sha256, head, size, text_clean)`, where `text_clean` is
+    `TextStreamValidator`'s whole-stream UTF-8/NUL verdict (only meaningful -
+    and only enforced - for text-family MIME types; binary formats are
+    identified by magic bytes and may legitimately contain NUL bytes). Raises
+    `_FileTooLarge` after reading at most one chunk beyond `_MAX_FILE_BYTES`;
+    on any other error the temp file is removed before re-raising."""
+    spool_dir.mkdir(parents=True, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(
+        dir=spool_dir, prefix=f".{attachment_id}.", suffix=_TEMP_SUFFIX
+    )
+    hasher = hashlib.sha256()
+    size = 0
+    head = bytearray()
+    text_validator = mime_allowlist.TextStreamValidator()
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            stream = file_storage.stream
+            while True:
+                chunk = stream.read(_STAGING_CHUNK_BYTES)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > _MAX_FILE_BYTES:
+                    # One chunk beyond the cap - stop and reject, never read
+                    # the rest of an oversized file into memory or disk.
+                    raise _FileTooLarge()
+                hasher.update(chunk)
+                fh.write(chunk)
+                text_validator.feed(chunk)
+                if len(head) < _SNIFF_HEAD_BYTES:
+                    head.extend(chunk[:_SNIFF_HEAD_BYTES - len(head)])
+    except Exception:
+        _discard_spool(Path(temp_path))
+        raise
+    return Path(temp_path), hasher.hexdigest(), bytes(head), size, text_validator.finish()
+
+
+def _resolve_create_provider(profiles, provider_id_arg):
+    """Resolve the create request's `provider_id` (§7.2) to a canonical
+    Base64URL id from the published provider snapshot. An explicit
+    `provider_id` must be present in the snapshot; an absent one falls back to
+    the `is_default` profile. Returns `(provider_id, profile, None)` on
+    success, or `(None, None, (body, status))` on a miss - a `400
+    provider_not_found`, never `invalid_provider_id` (a malformed id simply
+    does not resolve to a profile)."""
+    if provider_id_arg is not None:
+        profile = profiles.get(provider_id_arg)
+        if profile is None:
+            return None, None, (_json_error("provider_not_found", "provider not found"), 400)
+        return provider_id_arg, profile, None
+    for pid, profile in profiles.items():
+        if profile.is_default:
+            return pid, profile, None
+    return None, None, (_json_error("provider_not_found", "no default provider configured"), 400)
+
+
+def _validate_ttl(profile, hard_ttl_seconds):
+    """Validate `hard_ttl_seconds` against the resolved provider's configured
+    `[min_ttl_seconds, max_ttl_seconds]` bounds (§7.2). A `None` bound is
+    unconstrained. Returns `None` on success, or a `(body, status)` 400
+    `ttl_out_of_range`."""
+    if profile.min_ttl_seconds is not None and hard_ttl_seconds < profile.min_ttl_seconds:
+        return _json_error("ttl_out_of_range", "hard_ttl_seconds below the provider minimum"), 400
+    if profile.max_ttl_seconds is not None and hard_ttl_seconds > profile.max_ttl_seconds:
+        return _json_error("ttl_out_of_range", "hard_ttl_seconds above the provider maximum"), 400
+    return None
+
+
+def _provider_policy_error(profile):
+    """Finding 6: enforce the create endpoint's *local* provider-policy
+    preconditions on the request thread, from the immutable published
+    snapshot. Only local configuration is checked - `enabled`,
+    `upload_allowed`, `upload_token_configured`, in the same order
+    `ConnectivityMonitor.evaluate_upload_decision()` applies them - so the
+    error codes are the stable readiness reasons a caller can rely on.
+
+    Deliberately NOT checked here (and never a create precondition):
+    current Relay/Internet reachability (offline creation and queuing must
+    remain possible - a Relay can be upload-READY while currently
+    unreachable), and radio availability. The Relay-state branches of
+    `evaluate_upload_decision()` are therefore skipped entirely.
+
+    Returns `None` when the profile passes, or a `(body, status)` 400 for
+    the first failing policy. `provider_disabled` follows the create
+    endpoint's existing `provider_not_found` naming (a *profile* level
+    property, not the `UploadRejectionReason.PROFILE_DISABLED` value);
+    `upload_not_allowed`/`upload_token_missing` match their
+    `UploadRejectionReason` values verbatim."""
+    if not profile.enabled:
+        return _json_error("provider_disabled", "provider is disabled"), 400
+    if not profile.upload_allowed:
+        return _json_error("upload_not_allowed", "uploads are not allowed for this provider"), 400
+    if not profile.upload_token_configured:
+        return _json_error("upload_token_missing", "provider has no upload token configured"), 400
+    return None
 
 
 # ---- serializers (explicit allowlists, no dataclasses.asdict) ------------
@@ -690,3 +911,335 @@ def register_attachments_routes(app, handle_errors):
     @_mca_error_boundary
     def reject_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_reject", _consent_precondition)
+
+    # ---- Step 1.6A.3B: idempotent multipart create (§7.2) -------------------
+
+    @app.route("/api/attachments", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def create_attachment():
+        """The §7.2 idempotent multipart create. Splits its work across the two
+        threads exactly as §3.5/§3.6/§7.2 prescribe:
+
+        On this request thread - a framework-level multipart body cap plus pure
+        validation (id shape, comment bound, provider resolution, TTL range),
+        then stream the plaintext in fixed-size chunks to an exclusive temp
+        file while computing `file_sha256`/size (never whole-file buffered),
+        sniff the MIME type, and publish it atomically to
+        `spool/outgoing/<attachment_id>` only after size/MIME/metadata all
+        pass - then mint `command_id`, compute `canonical_hash`, and hand the
+        whole thing to `facade.submit_create()` for the atomic reservation +
+        enqueue. The temp and final spool names are server-generated (never the
+        browser filename), and both are removed on every rejected/replay/
+        conflict/not-ready/queue-full/internal-error path.
+
+        On the worker thread - `AttachmentsService._command_create` resolves the
+        recipient's *trusted* binding (a SQLite read that cannot run here) and
+        calls `sender.create_draft()` with the already-minted ids/hash, so the
+        recipient-not-found / recipient-not-trusted outcomes are observed via
+        the command result rather than synchronously.
+
+        The `route` field is accepted for forward-compatibility but only the
+        DIRECT route to `source_address` is supported; the actual route is
+        derived here (never trusted from the payload) so it cannot disagree
+        with the hash the worker and this thread both compute."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+
+        # Finding 4: bound the whole multipart body *before* Werkzeug parses
+        # it. Per-request (never the global MAX_CONTENT_LENGTH), so no other
+        # endpoint's upload limit is affected. An over-large body is rejected
+        # here - during form parsing - rather than being spooled to disk and
+        # only caught by this route's own file-size check.
+        request.max_content_length = _MAX_REQUEST_BYTES
+
+        # --- metadata (JSON string part): pure validation only --------------
+        metadata_raw = request.form.get("metadata")
+        if metadata_raw is None:
+            return _json_error("invalid_metadata", "missing metadata part"), 400
+        # Bound the metadata part separately (Finding 4): reject an oversized
+        # metadata string before `json.loads` ever parses it. Measured in UTF-8
+        # bytes so the bound is tight regardless of multi-byte characters.
+        if len(metadata_raw.encode("utf-8")) > _MAX_METADATA_BYTES:
+            return _json_error("metadata_too_large", "metadata part is too large"), 400
+        try:
+            metadata = json.loads(metadata_raw)
+        except ValueError:
+            return _json_error("invalid_metadata", "metadata is not valid JSON"), 400
+        if not isinstance(metadata, dict):
+            return _json_error("invalid_metadata", "metadata must be a JSON object"), 400
+
+        client_request_id = metadata.get("client_request_id")
+        if not isinstance(client_request_id, str):
+            return _json_error("invalid_metadata", "client_request_id is required"), 400
+        try:
+            validate_client_request_id(client_request_id)
+        except ValueError:
+            return _json_error("invalid_metadata", "invalid client_request_id"), 400
+
+        recipient = metadata.get("recipient")
+        if (
+            not isinstance(recipient, dict)
+            or not isinstance(recipient.get("source_address"), str)
+            or not recipient["source_address"]
+        ):
+            return _json_error("invalid_metadata", "recipient.source_address is required"), 400
+        source_address = recipient["source_address"]
+
+        # Finding 7: reject an unknown / not-yet-trusted recipient
+        # *synchronously*, from the worker-published immutable binding snapshot
+        # (no SQLite on this request thread). This is fast feedback only - the
+        # worker re-validates against the live binding at commit time
+        # (`AttachmentsService._command_create`), which remains the authority.
+        # A binding that became trusted (or revoked) between this read and the
+        # worker's re-check is decided there, never here.
+        reason = evaluate_recipient_trust(facade.recipient_snapshot(), source_address)
+        if reason is RecipientRejectionReason.RECIPIENT_NOT_FOUND:
+            return _json_error("recipient_not_found", "no known recipient binding for the address"), 400
+        if reason is RecipientRejectionReason.RECIPIENT_NOT_TRUSTED:
+            return _json_error("recipient_not_trusted", "recipient binding is not trusted"), 400
+
+        route = metadata.get("route")
+        if route is not None:
+            if not isinstance(route, dict):
+                return _json_error("invalid_metadata", "route must be an object"), 400
+            if route.get("route_type") not in (None, RouteType.DIRECT.value):
+                return _json_error("invalid_metadata", "only DIRECT route_type is supported"), 400
+            if route.get("route_id") not in (None, source_address):
+                return _json_error("invalid_metadata", "route_id must equal the recipient address"), 400
+
+        comment = metadata.get("comment")
+        if comment is not None and not isinstance(comment, str):
+            return _json_error("invalid_metadata", "comment must be a string"), 400
+        try:
+            comment = sender.normalize_comment(comment)
+        except sender.SenderError:
+            return _json_error("invalid_metadata", "comment is not valid"), 400
+
+        # --- provider resolution + TTL bounds (pure, from the snapshot) ------
+        profiles = facade.provider_snapshot()
+        provider_id_text, profile, err = _resolve_create_provider(
+            profiles, metadata.get("provider_id")
+        )
+        if err is not None:
+            body, status = err
+            return body, status
+
+        # Finding 6: reject a disabled profile / upload-disabled policy /
+        # missing upload token *synchronously* from the immutable snapshot,
+        # before any staging. Never a reachability check - offline creation
+        # stays possible.
+        err = _provider_policy_error(profile)
+        if err is not None:
+            body, status = err
+            return body, status
+
+        hard_ttl = metadata.get("hard_ttl_seconds", sender.DEFAULT_HARD_TTL_SECONDS)
+        if not isinstance(hard_ttl, int) or isinstance(hard_ttl, bool) or hard_ttl <= 0:
+            return _json_error("invalid_metadata", "hard_ttl_seconds must be a positive integer"), 400
+        err = _validate_ttl(profile, hard_ttl)
+        if err is not None:
+            body, status = err
+            return body, status
+
+        download_grace = metadata.get(
+            "download_grace_seconds", sender.DEFAULT_DOWNLOAD_GRACE_SECONDS
+        )
+        if (
+            not isinstance(download_grace, int)
+            or isinstance(download_grace, bool)
+            or download_grace <= 0
+        ):
+            return _json_error("invalid_metadata", "download_grace_seconds must be a positive integer"), 400
+
+        # --- file part: bounded, chunked, atomic staging (Finding 4) ---------
+        file_storage = request.files.get("file")
+        if file_storage is None or file_storage.filename == "":
+            return _json_error("invalid_metadata", "missing file part"), 400
+
+        # Mint the ids up front so the server-generated temp/spool names are
+        # derived from them, never from the browser filename.
+        attachment_id = uuid.uuid4().hex
+        command_id = mint_command_id()
+        spool_dir = facade.spool_outgoing_dir()
+        spool_path = spool_dir / attachment_id
+
+        try:
+            temp_path, file_sha256, head, size, text_clean = _stage_spool_file(
+                file_storage, spool_dir, attachment_id
+            )
+        except _FileTooLarge:
+            return _json_error("file_too_large", "file exceeds the 5 MiB cap"), 400
+        except OSError as exc:
+            _log.error(
+                "MCAttach create endpoint: spool staging failed (%s)", type(exc).__name__
+            )
+            return _internal_error_response()
+
+        # Finding 8: MIME is established from content, and only then does the
+        # rest of the validation run. Zero-byte policy first: an empty file has
+        # no content to establish a MIME from, so it is `mime_not_allowed`
+        # rather than defaulting to `text/plain`.
+        if size == 0:
+            _discard_spool(temp_path)
+            return _json_error("mime_not_allowed", "empty file has no detectable content type"), 400
+
+        mime_type = mime_allowlist.sniff_mime_type(head)
+        if mime_type is None:
+            _discard_spool(temp_path)
+            return _json_error("mime_not_allowed", "file content is not an allowed type"), 400
+
+        # Finding 8: for text-family MIME the *whole* stream must be clean
+        # UTF-8 with no NUL byte - the head alone is not enough (binary/
+        # invalid content appearing after byte 512 must still be rejected).
+        # Binary formats are exempt: they are identified by magic bytes and
+        # legitimately contain NUL/non-UTF-8 bytes.
+        if mime_type in mime_allowlist.TEXT_FAMILY_MIME_TYPES and not text_clean:
+            _discard_spool(temp_path)
+            return _json_error(
+                "mime_not_allowed", "text content contains binary or invalid UTF-8 bytes"
+            ), 400
+
+        # Finding 8: a leading `{`/`[` is not enough to claim JSON - the whole
+        # document must parse (bounded by the 5 MiB cap, only for JSON).
+        if mime_type == "application/json":
+            try:
+                mime_allowlist.validate_json_document(temp_path)
+            except ValueError:
+                _discard_spool(temp_path)
+                return _json_error("mime_not_allowed", "file content is not valid JSON"), 400
+
+        # Finding 8: the filename's extension is normalized to be consistent
+        # with the *sniffed* MIME (never the reverse), so the worker's later
+        # `is_allowed_extension` re-check in `_step_validating` cannot reject
+        # a request accepted here.
+        source_name = mime_allowlist.normalize_file_name_for_mime(
+            _sanitize_source_name(file_storage.filename),
+            mime_type,
+            max_code_points=mime_allowlist.MAX_SOURCE_NAME_CODE_POINTS,
+        )
+
+        # Finding 6: provider size policy - reject *synchronously* when the
+        # deterministic ciphertext upper bound for this plaintext already
+        # exceeds the snapshot's `max_ciphertext_bytes`, before publishing.
+        # This is a conservative pre-encryption check only; the authoritative
+        # post-encryption limit (the Relay's own `total_size` check at
+        # `create_upload`) still runs unchanged before upload.
+        if ciphertext_size(size) > profile.max_ciphertext_bytes:
+            _discard_spool(temp_path)
+            return _json_error(
+                "ciphertext_too_large",
+                "file ciphertext would exceed the provider maximum",
+            ), 400
+
+        # --- compute canonical hash (§3.5) -----------------------------------
+        canonical_hash = compute_canonical_hash(
+            file_sha256,
+            build_canonical_json(
+                source_address=source_address,
+                adapter_id=mca_runtime.ADAPTER_ID,
+                connector_profile_id=mca_runtime.ADAPTER_ID,
+                route_type=RouteType.DIRECT.value,
+                route_id=source_address,
+                provider_id=provider_id_text,
+                comment=comment,
+                hard_ttl_seconds=hard_ttl,
+                download_grace_seconds=download_grace,
+                source_name=source_name,
+                mime_type=mime_type,
+            ),
+        )
+
+        # --- atomic publish (§7.2: spool/outgoing/<attachment_id>, Finding 4) -
+        # Only after size, MIME, and metadata validation have all passed. The
+        # temp file was created exclusively (mkstemp); the final name is a
+        # freshly-minted uuid4 hex, so a collision cannot overwrite an existing
+        # spool file - the exists() guard below fails closed rather than ever
+        # clobbering one, and `os.replace` is the same-directory atomic rename.
+        try:
+            if spool_path.exists():
+                _log.error(
+                    "MCAttach create endpoint: spool id collision for a minted attachment id"
+                )
+                _discard_spool(temp_path)
+                return _internal_error_response()
+            os.replace(temp_path, spool_path)
+        except OSError as exc:
+            _log.error(
+                "MCAttach create endpoint: spool publish failed (%s)", type(exc).__name__
+            )
+            _discard_spool(temp_path)
+            return _internal_error_response()
+
+        # --- reserve + enqueue (§3.6) ---------------------------------------
+        reservation = PendingReservation(
+            canonical_hash=canonical_hash,
+            attachment_id=attachment_id,
+            command_id=command_id,
+        )
+        command = Command(
+            command_id=command_id,
+            kind="attachment_create",
+            payload={
+                "attachment_id": attachment_id,
+                "client_request_id": client_request_id,
+                "canonical_hash": canonical_hash,
+                "source_address": source_address,
+                "source_name": source_name,
+                "mime_type": mime_type,
+                "provider_id": provider_id_text,
+                "comment": comment,
+                "hard_ttl_seconds": hard_ttl,
+                "download_grace_seconds": download_grace,
+            },
+            created_at=time.time(),
+        )
+        try:
+            outcome = facade.submit_create(
+                command, client_request_id=client_request_id, reservation=reservation
+            )
+        except CommandQueueFull:
+            _discard_spool(spool_path)
+            return _json_error("command_queue_full", "command queue is full"), 429
+        except FacadeNotReady:
+            _discard_spool(spool_path)
+            return _not_ready()
+        except Exception as exc:  # noqa: BLE001 - total rollback before the boundary
+            # Finding 2: the staged-and-published spool file must never outlive
+            # a failed submit. CommandQueueFull and FacadeNotReady are handled
+            # above; any other exception (e.g. a duplicate command_id from
+            # registration) still removes the spool before returning the
+            # sanitized 500 - no exception text/class/path in the response.
+            _discard_spool(spool_path)
+            _log.error(
+                "MCAttach create endpoint: submit failed (%s)", type(exc).__name__
+            )
+            return _internal_error_response()
+
+        if outcome.kind == "fresh":
+            return jsonify({
+                "ok": True,
+                "command_id": command_id,
+                "attachment_id": attachment_id,
+            }), 202
+
+        # Non-fresh: this request's freshly-staged file is unused (the worker
+        # will not create a row for it), so discard it before returning.
+        _discard_spool(spool_path)
+        if outcome.kind == "replay_pending":
+            existing = outcome.reservation
+            return jsonify({
+                "ok": True,
+                "command_id": existing.command_id,
+                "attachment_id": existing.attachment_id,
+                "replayed": True,
+            }), 202
+        if outcome.kind == "replay_committed":
+            entry = outcome.committed_entry
+            record = facade.get_attachment(entry.attachment_id)
+            body = {"ok": True, "attachment_id": entry.attachment_id}
+            if record is not None:
+                body["state"] = record.state
+            return jsonify(body), 200
+        return _json_error("idempotency_conflict", "idempotency conflict"), 409

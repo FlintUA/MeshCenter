@@ -8,7 +8,15 @@
 # lock file), but not left fully unbounded either. Live-verified versions
 # on dev (!756f9960) at the time of this pin: Flask 3.1.3, Pillow 11.1.0,
 # requests 2.32.3, psutil 7.2.2.
-Flask>=3.0.0,<4.0.0
+# Flask's floor is 3.1 (not 3.0) because the MCAttach create endpoint
+# (`POST /api/attachments`, api/api_attachments.py) sets a *per-request*
+# `request.max_content_length` to bound the multipart body before Werkzeug
+# spools it - mutating that attribute on the request object is only
+# supported since Flask 3.1 (the 3.0 request object did not expose it), so
+# 3.0 would silently skip the bound and fall through to the endpoint's own
+# chunked file-size check instead. See docs/attachments/internal-rest-api.md
+# §7.2. The live-verified 3.1.3 above already satisfies this floor.
+Flask>=3.1.0,<4.0.0
 Pillow>=10.0.0,<12.0.0
 requests>=2.31.0,<3.0.0
 psutil>=5.9.0,<8.0.0

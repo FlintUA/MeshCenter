@@ -56,15 +56,23 @@ of snapshot publication and are deliberately *not* gated.
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from typing import Mapping, Optional
 
 from meshsrv.attachments.command_registry import CommandRegistry, CommandResult
 from meshsrv.attachments.commands import Command, CommandQueue, CommandQueueFull
-from meshsrv.attachments.idempotency import IdempotencyEntry, PendingReservations
+from meshsrv.attachments.idempotency import (
+    IdempotencyEntry,
+    PendingReservation,
+    PendingReservations,
+    ReservationOutcome,
+)
 from meshsrv.attachments.identity import MCAPrincipal
 from meshsrv.attachments.probe_registry import ProbeRecord, ProbeRegistry
 from meshsrv.attachments.provider_registry import ProviderProfile
+from meshsrv.attachments.recipient_snapshot import RecipientSnapshot, RecipientSnapshotPublisher
 from meshsrv.attachments.snapshots import AttachmentRecord, AttachmentsSnapshot, AttachmentsSnapshotPublisher
+from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor, ConnectivitySnapshot, UploadDecision
 
 
@@ -108,6 +116,8 @@ class AttachmentsFacade:
         ready_event: threading.Event,
         connectivity_monitor: ConnectivityMonitor,
         principal: MCAPrincipal,
+        workspace_manager: MCAWorkspaceManager,
+        recipient_snapshot_publisher: RecipientSnapshotPublisher,
     ):
         self._command_queue = command_queue
         self._command_registry = command_registry
@@ -118,6 +128,8 @@ class AttachmentsFacade:
         self._ready_event = ready_event
         self._connectivity_monitor = connectivity_monitor
         self._principal = principal
+        self._workspace_manager = workspace_manager
+        self._recipient_snapshot_publisher = recipient_snapshot_publisher
 
     def _require_ready(self) -> None:
         """Gate the snapshot-backed read/write methods: raise `FacadeNotReady`
@@ -183,6 +195,16 @@ class AttachmentsFacade:
         filesystem, network, or tick lock. Not readiness-gated."""
         return self._connectivity_monitor.profile_snapshot()
 
+    def recipient_snapshot(self) -> RecipientSnapshot:
+        """The worker-published immutable TOFU recipient-binding snapshot
+        (Finding 7) - the request thread's SQLite-free view of which transport
+        addresses have a known, trusted binding. A pure in-memory read of the
+        publisher's atomically-swapped snapshot, never `conn`. Not
+        readiness-gated: the publisher publishes an (empty, fail-closed)
+        snapshot from construction, so an unknown recipient is a 400
+        `recipient_not_found`, never a `FacadeNotReady`, at any point."""
+        return self._recipient_snapshot_publisher.snapshot()
+
     def evaluate_upload_readiness(
         self,
         provider_id: str,
@@ -234,3 +256,79 @@ class AttachmentsFacade:
             raise
         self._wake_event.set()
         return command.command_id
+
+    # ---- request-thread write: idempotent create (§3.5/§3.6) ---------------
+
+    def spool_outgoing_dir(self) -> Path:
+        """The workspace's outgoing spool directory path. This is a pure path
+        computation (`workspace_manager.paths()`) - it performs no filesystem
+        write or open; the create endpoint (§7.2) does the actual staging
+        write under this directory, which is the one filesystem operation the
+        request thread is permitted by design."""
+        return self._workspace_manager.paths(self._principal.principal_id).spool_outgoing
+
+    def submit_create(
+        self,
+        command: Command,
+        *,
+        client_request_id: str,
+        reservation: PendingReservation,
+    ) -> "ReservationOutcome":
+        """The §3.6 idempotent-create enqueue, distinct from `submit()` only in
+        that it performs the atomic reservation *before* registering/enqueueing
+        (and rolls the reservation back alongside the registry entry on any
+        failed enqueue). Returns the `ReservationOutcome` so the caller can
+        translate the four §3.5 cases (`fresh`/`replay_pending`/`replay_committed`
+        /`conflict`) into the correct HTTP response.
+
+        On `fresh` the command is registered (`queued`) and enqueued exactly as
+        `submit()` does; on any non-fresh outcome nothing is registered/enqueued
+        (the reservation map already decided the request is a replay or a
+        conflict). The fresh half treats reservation + registration + enqueue as
+        **one submission transaction** (Finding 2): a registration failure removes
+        the fresh reservation; any enqueue failure discards the registry entry and
+        removes the reservation (compare-and-remove, so a reservation another
+        command now owns is never dropped); the wake is best-effort, so a wake
+        failure can never turn an accepted enqueue into a failure. Raises
+        `FacadeNotReady` before the runtime is ready, and re-raises
+        `CommandQueueFull` (after rolling back both the registry entry and the
+        reservation, §3.6 step 5) on a full queue. Never blocks, and never touches
+        `conn`/filesystem/network/tick lock."""
+        self._require_ready()
+        committed = self.committed_idempotency()
+        outcome = self._pending_reservations.reserve(
+            client_request_id, reservation, committed_entries=committed
+        )
+        if outcome.kind != "fresh":
+            return outcome
+        # §3.6 step 4-5 as one submission transaction. Each rollback uses
+        # `remove_if_matches` so it can never drop a reservation the worker has
+        # since promoted to a different command's ids.
+        try:
+            self._command_registry.register(command)
+        except Exception:
+            # Registration failed (e.g. a duplicate command_id): the command was
+            # not registered or enqueued, so the fresh reservation just inserted
+            # is the only thing to roll back, then re-raise for the caller.
+            self._pending_reservations.remove_if_matches(client_request_id, reservation)
+            raise
+        try:
+            self._command_queue.put_nowait(command)
+        except CommandQueueFull:
+            self._command_registry.discard_queued(command.command_id)
+            self._pending_reservations.remove_if_matches(client_request_id, reservation)
+            raise
+        except Exception:
+            # Any other enqueue failure (a queue bug): the command must not be
+            # left half-submitted. `discard_queued` only removes a `queued` entry,
+            # so it is safe even in the unlikely case the worker already began.
+            self._command_registry.discard_queued(command.command_id)
+            self._pending_reservations.remove_if_matches(client_request_id, reservation)
+            raise
+        # Wake best-effort: the enqueue has succeeded, so a wake error must never
+        # turn an accepted create into a failure.
+        try:
+            self._wake_event.set()
+        except Exception:
+            pass
+        return outcome

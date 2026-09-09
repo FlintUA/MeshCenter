@@ -29,14 +29,19 @@ must be a positive ASCII decimal (`invalid_query`).
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import threading
 import traceback
 from functools import wraps
+from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from flask import Flask, jsonify
+
+import api.api_attachments as api_attachments
 
 from api.api_attachments import register_attachments_routes
 from api.api_auth import register_auth_routes
@@ -45,10 +50,16 @@ from meshsrv.attachments.command_registry import CommandResult, STATUS_SUCCEEDED
 from meshsrv.attachments.commands import CommandQueueFull
 from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
 from meshsrv.attachments.facade import FacadeNotReady
+from meshsrv.attachments.idempotency import IdempotencyEntry, PendingReservations
 from meshsrv.attachments.provider_registry import (
     ProviderRegistryError,
     decode_provider_id,
     encode_provider_id,
+)
+from meshsrv.attachments.key_exchange import AddressStatus
+from meshsrv.attachments.recipient_snapshot import (
+    RecipientBindingSnapshot,
+    RecipientSnapshot,
 )
 from meshsrv.attachments.snapshots import (
     AttachmentRecord,
@@ -164,6 +175,24 @@ def _snapshot(records):
     )
 
 
+def _trusted_recipient_snapshot(source_address="!aaaaaaaa"):
+    """The default recipient snapshot for the fake facade: `!aaaaaaaa` is a
+    known, `MCA_READY` binding, so the pre-existing create tests (which all
+    post that source_address) pass the Finding 7 synchronous check without
+    each having to stand up a binding. The `public_identity` bytes are
+    deliberately *not* modelled here - the projection never carries them."""
+    return RecipientSnapshot(
+        by_address={
+            source_address: RecipientBindingSnapshot(
+                adapter_id="meshtastic",
+                transport_address=source_address,
+                key_id="1" * 16,
+                status=AddressStatus.MCA_READY,
+            )
+        }
+    )
+
+
 class _FakeFacade:
     def __init__(
         self,
@@ -175,6 +204,9 @@ class _FakeFacade:
         commands=None,
         decisions=None,
         queue_full=False,
+        spool_dir=None,
+        committed=None,
+        recipient=None,
     ):
         self._snapshot = snapshot or _snapshot([])
         self._providers = providers or {}
@@ -184,9 +216,16 @@ class _FakeFacade:
         self._identity = identity
         self._commands = commands or {}
         self._decisions = decisions or {}
+        self._recipient = recipient if recipient is not None else _trusted_recipient_snapshot()
         self.not_ready = False
         self.queue_full = queue_full
         self.submitted = []  # commands the POST endpoints handed to submit()
+        self.spool_dir = spool_dir
+        # A real reservation store + committed index, so the create endpoint's
+        # idempotency paths (fresh/replay_pending/replay_committed/conflict)
+        # are exercised against the same logic the facade actually runs.
+        self._pending = PendingReservations()
+        self._committed = committed or {}
 
     def attachments_snapshot(self):
         if self.not_ready:
@@ -212,8 +251,30 @@ class _FakeFacade:
         self.submitted.append(command)
         return command.command_id
 
+    def spool_outgoing_dir(self):
+        return self.spool_dir
+
+    def submit_create(self, command, *, client_request_id, reservation):
+        # Mirrors the real facade's §3.6 reservation-aware create enqueue: gated
+        # on readiness, backpressured on a full queue, otherwise reserves +
+        # records + returns the ReservationOutcome (never touches SQLite/FS).
+        if self.not_ready:
+            raise FacadeNotReady()
+        if self.queue_full:
+            raise CommandQueueFull()
+        outcome = self._pending.reserve(
+            client_request_id, reservation, committed_entries=self._committed
+        )
+        if outcome.kind != "fresh":
+            return outcome
+        self.submitted.append(command)
+        return outcome
+
     def provider_snapshot(self):
         return self._providers
+
+    def recipient_snapshot(self):
+        return self._recipient
 
     def connectivity_snapshot(self):
         return self._connectivity
@@ -253,7 +314,10 @@ def _provider(**overrides):
         tls_required=True,
         upload_allowed=True,
         download_allowed=True,
-        max_ciphertext_bytes=5 * 1024 * 1024,
+        # Enough headroom that the 5 MiB plaintext cap (not the provider's
+        # ciphertext limit) is the binding constraint for the success paths:
+        # ciphertext_size(5 MiB) = 5 MiB + 20*16 bytes of tag = 5,243,200.
+        max_ciphertext_bytes=5 * 1024 * 1024 + 1024,
         is_default=True,
         enabled=True,
         min_ttl_seconds=60,
@@ -430,7 +494,7 @@ def test_endpoint_reads_do_not_block_on_the_tick_lock(tmp_path):
 
 def test_routes_reject_non_get_methods(monkeypatch):
     c = _client(monkeypatch, _FakeFacade())
-    assert c.post("/api/attachments").status_code == 405
+    assert c.put("/api/attachments").status_code == 405
     assert c.put("/api/mca/identity").status_code == 405
     assert c.delete(f"/api/mca/providers/{PROVIDER_ID}").status_code == 405
 
@@ -1321,3 +1385,956 @@ def test_post_lifecycle_valid_csrf_token_reaches_submission(monkeypatch, path, d
     resp = c.post(path, headers={"X-CSRF-Token": "session-token"})
     assert resp.status_code == 202
     _assert_202_accepted(resp.get_json(), facade, kind)
+
+
+# ---- Step 1.6A.3B: idempotent multipart create (POST /api/attachments) -----
+
+# A minimal JPEG (SOI marker) so `sniff_mime_type` deterministically yields
+# `image/jpeg` for the success/fresh paths.
+_JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 32
+
+
+def _make_meta(**overrides):
+    meta = {
+        "client_request_id": "req-1",
+        "recipient": {"source_address": "!aaaaaaaa"},
+        "hard_ttl_seconds": 3600,       # within the fake provider's [60, 86400]
+        "download_grace_seconds": 3600,
+    }
+    meta.update(overrides)
+    return meta
+
+
+def _post_create(c, *, data=_JPEG, filename="photo.jpg", meta=None, headers=None):
+    return c.post(
+        "/api/attachments",
+        data={
+            "file": (BytesIO(data), filename),
+            "metadata": json.dumps(meta if meta is not None else _make_meta()),
+        },
+        content_type="multipart/form-data",
+        headers=headers,
+    )
+
+
+def test_create_503_when_facade_missing(monkeypatch):
+    c = _client(monkeypatch, None)
+    resp = _post_create(c)
+    assert resp.status_code == 503
+    assert resp.get_json()["error_code"] == "mca_not_ready"
+
+
+def test_create_503_when_not_ready(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    facade.not_ready = True
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 503
+    assert resp.get_json()["error_code"] == "mca_not_ready"
+    assert facade.submitted == []
+
+
+def test_create_missing_metadata_part_is_invalid_metadata(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = c.post(
+        "/api/attachments",
+        data={"file": (BytesIO(_JPEG), "photo.jpg")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_metadata"
+
+
+@pytest.mark.parametrize("metadata_raw", [
+    "not-json",                                              # invalid JSON
+    "[1,2,3]",                                               # valid JSON, not an object
+    "{}",                                                    # missing client_request_id
+    json.dumps({"client_request_id": 123, "recipient": {"source_address": "!aaaaaaaa"}}),
+    json.dumps({"client_request_id": "req-1"}),              # missing recipient
+    json.dumps({"client_request_id": "req-1", "recipient": {}}),
+    json.dumps({"client_request_id": "req-1", "recipient": {"source_address": ""}}),
+    json.dumps({"client_request_id": "req-1", "recipient": {"source_address": "!aaaaaaaa"}, "route": []}),
+    json.dumps({"client_request_id": "req-1", "recipient": {"source_address": "!aaaaaaaa"}, "route": {"route_type": "INDIRECT"}}),
+    json.dumps({"client_request_id": "req-1", "recipient": {"source_address": "!aaaaaaaa"}, "route": {"route_id": "!bbbbbbbb"}}),
+    json.dumps({"client_request_id": "req-1", "recipient": {"source_address": "!aaaaaaaa"}, "comment": 5}),
+    json.dumps({"client_request_id": "req-1", "recipient": {"source_address": "!aaaaaaaa"}, "hard_ttl_seconds": "3600"}),
+])
+def test_create_invalid_metadata_is_400(monkeypatch, tmp_path, metadata_raw):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = c.post(
+        "/api/attachments",
+        data={"file": (BytesIO(_JPEG), "photo.jpg"), "metadata": metadata_raw},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_metadata"
+    assert facade.submitted == []
+
+
+def test_create_file_too_large(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    big = b"\xff\xd8\xff" + b"x" * (5 * 1024 * 1024)  # 3 bytes over the 5 MiB cap
+    resp = _post_create(c, data=big)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "file_too_large"
+    assert facade.submitted == []
+
+
+# ---- Finding 4: bounded + atomic multipart staging -------------------------
+
+def test_create_request_body_over_cap_is_413(monkeypatch, tmp_path):
+    # The framework-level *total* multipart cap: a body whose content-length
+    # exceeds _MAX_REQUEST_BYTES must be rejected with 413 by Werkzeug during
+    # form parsing - before any form field is read or any staging I/O runs.
+    # The file part stays tiny; the oversized *metadata* part is what pushes the
+    # total over the cap, proving the 413 is the request cap, not the 5 MiB
+    # file cap (which would be 400 file_too_large).
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    meta = _make_meta()
+    meta["padding"] = "x" * (6 * 1024 * 1024)
+    resp = _post_create(c, meta=meta)
+    assert resp.status_code == 413
+    assert resp.get_json()["error_code"] == "request_too_large"
+    assert facade.submitted == []
+    # Rejected before any staging: the spool directory was never even created.
+    assert not (tmp_path / "spool").exists()
+
+
+def test_create_metadata_too_large_is_400(monkeypatch, tmp_path):
+    # The metadata part is bounded separately: an oversized (but still
+    # parseable) metadata string is rejected with 400 *before* json.loads, and
+    # before the file part is even read - no staging I/O happens.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    meta = _make_meta()
+    meta["padding"] = "x" * (17 * 1024)  # ~17 KiB, just over the 16 KiB cap
+    resp = _post_create(c, meta=meta)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "metadata_too_large"
+    assert facade.submitted == []
+    assert not (tmp_path / "spool").exists()
+
+
+def test_create_exact_5mib_file_boundary_is_accepted(monkeypatch, tmp_path):
+    # Exactly _MAX_FILE_BYTES plaintext must be accepted (the cap is exclusive:
+    # `size > _MAX_FILE_BYTES`, not `>=`).
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    exact = b"\xff\xd8\xff\xe0" + b"\x00" * (5 * 1024 * 1024 - 4)
+    resp = _post_create(c, data=exact)
+    assert resp.status_code == 202
+    body = resp.get_json()
+    # The staged file is the full 5 MiB plaintext, atomically published to its
+    # final server-generated name with no temp file left behind.
+    staged = tmp_path / "spool" / body["attachment_id"]
+    assert staged.exists()
+    assert staged.stat().st_size == 5 * 1024 * 1024
+    assert [p.name for p in (tmp_path / "spool").iterdir()] == [body["attachment_id"]]
+
+
+def test_create_atomic_publish_leaves_no_temp_file(monkeypatch, tmp_path):
+    # After a fresh create the spool directory holds exactly the committed
+    # file (a bare 32-hex attachment_id) - never a dot-prefixed `.tmp` staging
+    # file, because the temp name was atomically renamed to the final name.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    body = _post_create(c).get_json()
+    names = [p.name for p in (tmp_path / "spool").iterdir()]
+    assert names == [body["attachment_id"]]
+    assert not any(n.startswith(".") or n.endswith(".tmp") for n in names)
+
+
+def test_create_spool_collision_is_500_and_never_overwrites(monkeypatch, tmp_path):
+    # The final spool name is a freshly-minted uuid4 hex, but if that name is
+    # somehow already present the route must fail closed (500) and never
+    # overwrite the existing file, and must remove its own temp file.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    spool_dir = tmp_path / "spool"
+    spool_dir.mkdir(parents=True, exist_ok=True)
+    fixed_id = "a" * 32
+    collision = spool_dir / fixed_id
+    collision.write_bytes(b"pre-existing-do-not-overwrite")
+    # Force the minted attachment_id to collide with the pre-created file, but
+    # only for the *api* module's uuid lookup (mint_command_id keeps the real
+    # uuid module, so its id stays random).
+    monkeypatch.setattr(
+        api_attachments, "uuid", SimpleNamespace(uuid4=lambda: SimpleNamespace(hex=fixed_id))
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 500
+    assert resp.get_json()["error_code"] == "internal_error"
+    assert collision.read_bytes() == b"pre-existing-do-not-overwrite"
+    assert facade.submitted == []
+    # The temp file was removed; only the pre-existing file remains.
+    assert [p.name for p in spool_dir.iterdir()] == [fixed_id]
+
+
+def test_create_queue_full_discards_the_staged_file(monkeypatch, tmp_path):
+    # A queue-full submit (429) must remove the already-staged final spool file.
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool", queue_full=True
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 429
+    assert resp.get_json()["error_code"] == "command_queue_full"
+    assert facade.submitted == []
+    assert list((tmp_path / "spool").iterdir()) == []
+
+
+def test_create_not_ready_discards_the_staged_file(monkeypatch, tmp_path):
+    # A not-ready submit (503) must remove the already-staged final spool file.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    facade.not_ready = True
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 503
+    assert resp.get_json()["error_code"] == "mca_not_ready"
+    assert facade.submitted == []
+    assert list((tmp_path / "spool").iterdir()) == []
+
+
+def test_create_submit_exception_discards_the_staged_file_and_is_sanitized(
+    monkeypatch, tmp_path, caplog
+):
+    # Finding 2: any other submit failure (not queue-full, not not-ready) must
+    # remove the already-staged-and-published spool file and return the
+    # sanitized 500 - no exception text/class/path in the response or the log.
+    caplog.set_level(logging.ERROR)
+    marker = "SECRET_MARKER_submit_x4"
+
+    class _RaisingSubmitFacade(_FakeFacade):
+        def submit_create(self, command, *, client_request_id, reservation):
+            raise RuntimeError(f"submit-leak {marker}")
+
+    facade = _RaisingSubmitFacade(
+        providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 500
+    assert resp.get_json() == {
+        "ok": False,
+        "error": "Internal server error",
+        "error_code": "internal_error",
+    }
+    assert marker not in resp.get_data(as_text=True)
+    assert "Traceback" not in resp.get_data(as_text=True)
+    assert marker not in caplog.text
+    assert "Traceback" not in caplog.text
+    # The staged-and-published spool file was removed, not left orphaned.
+    assert list((tmp_path / "spool").iterdir()) == []
+
+
+def test_create_mime_not_allowed(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=b"\x00\x01\x02\x03\x04")
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "mime_not_allowed"
+    assert facade.submitted == []
+
+
+def test_create_explicit_provider_not_found(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, meta=_make_meta(provider_id=UNREGISTERED_PROVIDER_ID))
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "provider_not_found"
+
+
+def test_create_no_default_provider(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)  # no provider_id, and no default is configured
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "provider_not_found"
+
+
+def test_create_ttl_out_of_range(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, meta=_make_meta(hard_ttl_seconds=999999))
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "ttl_out_of_range"
+
+
+# ---- Finding 6: provider policy checks (request thread) ---------------------
+
+
+def test_create_provider_disabled(monkeypatch, tmp_path):
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider(enabled=False)}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "provider_disabled"
+    assert facade.submitted == []
+    # Rejected before any staging I/O.
+    assert not (tmp_path / "spool").exists()
+
+
+def test_create_upload_not_allowed(monkeypatch, tmp_path):
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider(upload_allowed=False)}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "upload_not_allowed"
+    assert facade.submitted == []
+    assert not (tmp_path / "spool").exists()
+
+
+def test_create_upload_token_missing(monkeypatch, tmp_path):
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider(upload_token_configured=False)}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "upload_token_missing"
+    assert facade.submitted == []
+    assert not (tmp_path / "spool").exists()
+
+
+def test_create_ciphertext_too_large(monkeypatch, tmp_path):
+    # The deterministic ciphertext upper bound for the 36-byte _JPEG is
+    # 36 + 1*16 = 52 bytes; a provider whose max_ciphertext_bytes is below
+    # that must be rejected synchronously, after staging but before publish.
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider(max_ciphertext_bytes=51)}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "ciphertext_too_large"
+    assert facade.submitted == []
+    # The temp file was discarded; no committed spool file was published.
+    assert list((tmp_path / "spool").iterdir()) == []
+
+
+def test_create_ciphertext_exact_boundary_is_accepted(monkeypatch, tmp_path):
+    # The upper bound check is strictly `>`, so exactly 52 == max_ciphertext_bytes
+    # is accepted.
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider(max_ciphertext_bytes=52)}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 202
+    assert len(facade.submitted) == 1
+
+
+def test_create_does_not_require_relay_reachability(monkeypatch, tmp_path):
+    # Finding 6: Relay/Internet reachability is NOT a create precondition. A
+    # provider whose Relay is currently UNREACHABLE (and the fallback internet
+    # OFFLINE) must still accept the create and queue it - offline creation
+    # stays possible; relay state only gates the later upload, never the draft.
+    relay = _relay_status(state=RelayState.UNREACHABLE)
+    connectivity = ConnectivitySnapshot(
+        internet=InternetStatus.OFFLINE, relays={PROVIDER_ID: relay}
+    )
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider()},
+        connectivity=connectivity,
+        spool_dir=tmp_path / "spool",
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 202
+    assert len(facade.submitted) == 1
+
+
+def test_create_fresh_returns_202_with_minted_ids(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 202
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert set(body) == {"ok", "command_id", "attachment_id"}
+    assert len(body["command_id"]) == 32 and all(ch in "0123456789abcdef" for ch in body["command_id"])
+    assert len(body["attachment_id"]) == 32 and all(ch in "0123456789abcdef" for ch in body["attachment_id"])
+
+    assert len(facade.submitted) == 1
+    cmd = facade.submitted[0]
+    assert cmd.kind == "attachment_create"
+    payload = dict(cmd.payload)
+    assert payload["attachment_id"] == body["attachment_id"]
+    assert payload["client_request_id"] == "req-1"
+    assert payload["source_address"] == "!aaaaaaaa"
+    assert payload["provider_id"] == PROVIDER_ID
+    assert payload["mime_type"] == "image/jpeg"
+    assert payload["source_name"] == "photo.jpg"
+    assert payload["comment"] is None
+    assert payload["hard_ttl_seconds"] == 3600
+    assert payload["download_grace_seconds"] == 3600
+    assert len(payload["canonical_hash"]) == 64
+    assert all(ch in "0123456789abcdef" for ch in payload["canonical_hash"])
+
+    # The staged spool file exists for the worker to reference.
+    assert (tmp_path / "spool" / body["attachment_id"]).exists()
+
+
+def test_create_sanitizes_a_path_traversal_filename(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, filename="../../etc/passwd")
+    assert resp.status_code == 202
+    cmd = facade.submitted[0]
+    # basename (never a path), then normalized to a `.jpg` extension consistent
+    # with the sniffed image/jpeg content (Finding 8).
+    assert cmd.payload["source_name"] == "passwd.jpg"
+
+
+def test_create_replay_pending_returns_the_same_ids(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    first = _post_create(c).get_json()
+    second = _post_create(c).get_json()
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert second["command_id"] == first["command_id"]
+    assert second["attachment_id"] == first["attachment_id"]
+    assert second["replayed"] is True
+    assert len(facade.submitted) == 1  # only one command was ever enqueued
+    # The replay's freshly-staged file was discarded: exactly one spool file.
+    assert [p.name for p in (tmp_path / "spool").iterdir()] == [first["attachment_id"]]
+
+
+def test_create_replay_committed_returns_the_original_row(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    first = _post_create(c).get_json()
+    cmd = facade.submitted[0]
+    # Simulate the worker committing: clear the pending reservation and publish
+    # it into the committed index + snapshot with the same canonical hash.
+    facade._pending.remove("req-1")
+    facade._committed["req-1"] = IdempotencyEntry(
+        attachment_id=first["attachment_id"],
+        canonical_hash=cmd.payload["canonical_hash"],
+        created_at=0.0,
+    )
+    facade._snapshot = _snapshot([_attachment(id=first["attachment_id"], state=sender.DRAFT)])
+
+    second = _post_create(c).get_json()
+    assert second["ok"] is True
+    assert second["attachment_id"] == first["attachment_id"]
+    assert second["state"] == sender.DRAFT
+    assert "command_id" not in second
+    assert len(facade.submitted) == 1  # no second enqueue
+
+
+def test_create_idempotency_conflict_is_409(monkeypatch, tmp_path):
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider()},
+        spool_dir=tmp_path / "spool",
+        committed={
+            "req-1": IdempotencyEntry(
+                attachment_id="c" * 32, canonical_hash="0" * 64, created_at=0.0
+            )
+        },
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 409
+    assert resp.get_json()["error_code"] == "idempotency_conflict"
+    assert facade.submitted == []
+    # The freshly-staged file was discarded.
+    assert list((tmp_path / "spool").iterdir()) == []
+
+
+def test_create_queue_full_is_429(monkeypatch, tmp_path):
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool", queue_full=True
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 429
+    assert resp.get_json()["error_code"] == "command_queue_full"
+    assert facade.submitted == []
+
+
+# ---- Finding 7: synchronous recipient-trust check --------------------------
+
+
+def test_create_unknown_recipient_is_400_recipient_not_found(monkeypatch, tmp_path):
+    # The recipient check runs *before* provider resolution and staging: with
+    # no providers registered either, the unknown recipient is the error that
+    # wins, proving the recipient check is a synchronous, pre-staging gate.
+    facade = _FakeFacade(
+        providers={},
+        spool_dir=tmp_path / "spool",
+        recipient=RecipientSnapshot(by_address={}),
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "recipient_not_found"
+    assert facade.submitted == []
+    assert not (tmp_path / "spool").exists()  # nothing was ever staged
+
+
+@pytest.mark.parametrize("status", [AddressStatus.KEY_UNVERIFIED, AddressStatus.KEY_CHANGED])
+def test_create_untrusted_recipient_is_400_recipient_not_trusted(monkeypatch, tmp_path, status):
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider()},
+        spool_dir=tmp_path / "spool",
+        recipient=RecipientSnapshot(
+            by_address={
+                "!aaaaaaaa": RecipientBindingSnapshot(
+                    adapter_id="meshtastic",
+                    transport_address="!aaaaaaaa",
+                    key_id="1" * 16,
+                    status=status,
+                )
+            }
+        ),
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "recipient_not_trusted"
+    assert facade.submitted == []
+
+
+def test_create_rejects_unknown_recipient_synchronously_on_the_real_runtime(tmp_path):
+    state = _started(tmp_path, "recipient-notfound")
+    try:
+        c = _build_client()
+        resp = _post_create(c)
+        # The real runtime has no binding for `!aaaaaaaa`, and the synchronous
+        # check reads the worker-published snapshot (not SQLite) - so this is
+        # a 400 before provider resolution/staging, on a stopped worker.
+        assert resp.status_code == 400
+        assert resp.get_json()["error_code"] == "recipient_not_found"
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_create_missing_csrf_token_is_403(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _csrf_client(monkeypatch, facade)
+    resp = _post_create(c)  # no X-CSRF-Token header, no session token
+    assert resp.status_code == 403
+    assert resp.get_json()["error_code"] == "csrf_invalid"
+    assert facade.submitted == []
+
+
+def test_create_valid_csrf_token_reaches_submission(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _csrf_client(monkeypatch, facade)
+    _set_csrf_token(c, "session-token")
+    resp = _post_create(c, headers={"X-CSRF-Token": "session-token"})
+    assert resp.status_code == 202
+    assert len(facade.submitted) == 1
+
+
+# ---- Finding 8: MIME + filename validation ---------------------------------
+
+
+@pytest.mark.parametrize(
+    "data,filename,mime_type",
+    [
+        (_JPEG, "photo.jpg", "image/jpeg"),
+        (b"\x89PNG\r\n\x1a\n" + b"\x00" * 8, "diagram.png", "image/png"),
+        (b"RIFF" + b"\x00" * 4 + b"WEBP" + b"\x00" * 8, "image.webp", "image/webp"),
+        (b"%PDF-1.4\n" + b"document", "doc.pdf", "application/pdf"),
+        (b"hello world\nline two\n", "notes.txt", "text/plain"),
+        (b"2026-01-01 INFO something happened\n", "app.log", "text/plain"),
+        (b"a,b,c\n1,2,3\n", "data.csv", "text/csv"),
+        (b'{"key": "value"}', "manifest.json", "application/json"),
+    ],
+)
+def test_create_accepts_each_allowed_format(monkeypatch, tmp_path, data, filename, mime_type):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=data, filename=filename)
+    assert resp.status_code == 202, resp.get_json()
+    cmd = facade.submitted[0]
+    assert cmd.payload["mime_type"] == mime_type
+
+
+def test_create_normalizes_a_mismatched_extension_to_the_sniffed_mime(monkeypatch, tmp_path):
+    # Content is a JPEG, but the browser named it `photo.png` - the MIME is
+    # established from content, and the extension is rewritten to be consistent
+    # (so the worker's later `is_allowed_extension` check cannot fail it).
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=_JPEG, filename="photo.png")
+    assert resp.status_code == 202
+    cmd = facade.submitted[0]
+    assert cmd.payload["mime_type"] == "image/jpeg"
+    assert cmd.payload["source_name"] == "photo.jpg"
+
+
+def test_create_ignores_a_misleading_browser_content_type(monkeypatch, tmp_path):
+    # The browser claims `image/png` on the part, but the bytes are a JPEG:
+    # content wins over the browser's Content-Type and over the extension.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = c.post(
+        "/api/attachments",
+        data={
+            "file": (BytesIO(_JPEG), "photo.png", "image/png"),
+            "metadata": json.dumps(_make_meta()),
+        },
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 202
+    cmd = facade.submitted[0]
+    assert cmd.payload["mime_type"] == "image/jpeg"
+    assert cmd.payload["source_name"] == "photo.jpg"
+
+
+def test_create_rejects_nul_after_the_sniffed_head(monkeypatch, tmp_path):
+    # A text file whose first 512 bytes are clean ASCII but which turns binary
+    # after the sniff window must be rejected (full-stream NUL detection).
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    data = b"a" * 512 + b"tail\x00tail"
+    resp = _post_create(c, data=data, filename="notes.txt")
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "mime_not_allowed"
+    assert facade.submitted == []
+
+
+def test_create_rejects_invalid_utf8_after_the_sniffed_head(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    data = b"a" * 512 + b"\xff\xfe"
+    resp = _post_create(c, data=data, filename="notes.txt")
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "mime_not_allowed"
+    assert facade.submitted == []
+
+
+@pytest.mark.parametrize("data", [b'{"broken": ', b"[1, 2,", b'{"a": 1} trailing'])
+def test_create_rejects_invalid_json_document(monkeypatch, tmp_path, data):
+    # A leading {/[ sniffs as JSON, but the whole document must parse.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=data, filename="manifest.json")
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "mime_not_allowed"
+    assert facade.submitted == []
+
+
+def test_create_rejects_an_empty_file(monkeypatch, tmp_path):
+    # Zero-byte policy: no content means no MIME can be established, so an
+    # empty file is `mime_not_allowed`, not a silent `text/plain`.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=b"", filename="empty.txt")
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "mime_not_allowed"
+    assert facade.submitted == []
+
+
+def test_create_comment_at_exactly_1000_bytes_is_accepted(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, meta=_make_meta(comment="a" * 1000))
+    assert resp.status_code == 202
+    assert facade.submitted[0].payload["comment"] == "a" * 1000
+
+
+def test_create_comment_at_1001_bytes_is_rejected(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, meta=_make_meta(comment="a" * 1001))
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_metadata"
+    assert facade.submitted == []
+
+
+def test_create_truncates_an_overlong_extensionless_filename_to_255(monkeypatch, tmp_path):
+    # The cap is applied to the *final* name (extension included): a 300-char
+    # extensionless name is truncated only in its stem, so the result is
+    # exactly 255 code points long and still carries the canonical `.txt`
+    # (never 259, the pre-fix 255-then-`.txt` outcome).
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=b"hello", filename="x" * 300)
+    assert resp.status_code == 202
+    source_name = facade.submitted[0].payload["source_name"]
+    assert source_name == "x" * 251 + ".txt"
+    assert len(source_name) == 255
+
+
+def test_create_255_extensionless_filename_is_shortened_before_ext(monkeypatch, tmp_path):
+    # A 255-char extensionless name cannot fit the `.txt` suffix; the stem is
+    # shortened to 251 so the final name is 255, not 259.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=b"hello", filename="x" * 255)
+    assert resp.status_code == 202
+    source_name = facade.submitted[0].payload["source_name"]
+    assert source_name == "x" * 251 + ".txt"
+    assert len(source_name) == 255
+
+
+def test_create_overlong_filename_keeps_a_correct_extension(monkeypatch, tmp_path):
+    # A 304-char name already ending in the *correct* extension keeps it: the
+    # stem is truncated, the `.txt` is retained, and the whole stays ≤ 255.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=b"hello", filename="x" * 300 + ".txt")
+    assert resp.status_code == 202
+    source_name = facade.submitted[0].payload["source_name"]
+    assert source_name == "x" * 251 + ".txt"
+    assert len(source_name) == 255
+
+
+def test_create_filename_cap_is_code_points_not_bytes(monkeypatch, tmp_path):
+    # 300 code points of a 2-byte character (600 bytes) are truncated to 251
+    # *code points* (502 bytes) — pinning that the cap measures characters,
+    # not UTF-8 bytes (a byte-measured cap would stop around 127 characters).
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=b"hello", filename="é" * 300)
+    assert resp.status_code == 202
+    source_name = facade.submitted[0].payload["source_name"]
+    assert source_name == "é" * 251 + ".txt"
+    assert len(source_name) == 255
+
+
+# ---- Finding 9: missing regression coverage --------------------------------
+#
+# The create path's remaining acceptance requirements that Step 1.6A.3B's first
+# test pass left untested: the exact 5 MiB + 1 rejection, the chunked/no-whole-
+# file-buffer staging property, the two concurrent idempotency races at the HTTP
+# layer, the invalid-CSRF token for create (missing/valid already covered), the
+# create path's own sanitized exception boundary with an injected secret marker,
+# and that a create POST never blocks on the worker tick lock.
+
+
+class _ChunkTrackingStream:
+    """Wraps a byte stream to record how `_stage_spool_file` reads it, proving
+    the staging loop streams in fixed-size chunks and never issues an unbounded
+    whole-file `read()` (Finding 4: "never whole-file buffered")."""
+
+    def __init__(self, data):
+        self._io = BytesIO(data)
+        self.requested_sizes = []
+        self.saw_unbounded_read = False
+        self.total_read = 0
+
+    def read(self, size=-1):
+        if size is None or size < 0:
+            self.saw_unbounded_read = True
+            self.requested_sizes.append(-1)
+        else:
+            self.requested_sizes.append(size)
+        chunk = self._io.read(size)
+        self.total_read += len(chunk)
+        return chunk
+
+
+def test_create_file_one_byte_over_cap_is_rejected(monkeypatch, tmp_path):
+    # Exactly one byte past the 5 MiB cap (the cap is exclusive: `size > cap`,
+    # not `>=`), distinct from the existing 5 MiB + 3 test.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    over = b"\xff\xd8\xff\xe0" + b"\x00" * (api_attachments._MAX_FILE_BYTES - 3)
+    resp = _post_create(c, data=over)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "file_too_large"
+    assert facade.submitted == []
+    assert list((tmp_path / "spool").iterdir()) == []
+
+
+def test_create_staging_streams_in_bounded_chunks_without_whole_file_buffering(tmp_path):
+    # Finding 4: the staging loop reads the file in fixed-size chunks and never
+    # calls an unbounded whole-file read (which would buffer it in memory).
+    spool_dir = tmp_path / "spool"
+    data = b"\xff\xd8\xff\xe0" + b"x" * (2 * 1024 * 1024)
+    stream = _ChunkTrackingStream(data)
+    path, _digest, head, size, _clean = api_attachments._stage_spool_file(
+        SimpleNamespace(stream=stream), spool_dir, "a" * 32
+    )
+    assert stream.saw_unbounded_read is False
+    assert stream.requested_sizes and all(
+        s == api_attachments._STAGING_CHUNK_BYTES for s in stream.requested_sizes
+    )
+    assert stream.total_read == len(data)
+    assert size == len(data)
+    assert head == b"\xff\xd8\xff\xe0" + b"x" * (api_attachments._SNIFF_HEAD_BYTES - 4)
+    path.unlink()  # the successful stage leaves its temp file; clean it up.
+
+
+def test_create_staging_stops_one_chunk_past_the_cap(tmp_path):
+    # Finding 4: an oversized file is rejected after reading at most one chunk
+    # beyond the 5 MiB cap - the loop never drains the whole file.
+    spool_dir = tmp_path / "spool"
+    stream = _ChunkTrackingStream(b"\xff\xd8\xff\xe0" + b"x" * (6 * 1024 * 1024))
+    with pytest.raises(api_attachments._FileTooLarge):
+        api_attachments._stage_spool_file(SimpleNamespace(stream=stream), spool_dir, "b" * 32)
+    assert stream.total_read <= api_attachments._MAX_FILE_BYTES + api_attachments._STAGING_CHUNK_BYTES
+    assert stream.total_read < 6 * 1024 * 1024 + 4  # did not drain the whole file
+    assert list(spool_dir.iterdir()) == []  # the discarded temp file was removed
+
+
+def test_create_concurrent_identical_requests_enqueue_exactly_one_command(monkeypatch, tmp_path):
+    # Two identical requests racing through the reservation lock: exactly one
+    # command is enqueued, and both responses carry the same ids (the second is
+    # a replay_pending with `replayed: True`).
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    barrier = threading.Barrier(2)
+    results = []
+
+    def post():
+        barrier.wait()
+        results.append(_post_create(c))
+
+    threads = [threading.Thread(target=post) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5.0)
+        assert not t.is_alive(), "concurrent create hung on the reservation lock"
+
+    assert sorted(r.status_code for r in results) == [202, 202]
+    bodies = [r.get_json() for r in results]
+    assert bodies[0]["attachment_id"] == bodies[1]["attachment_id"]
+    assert bodies[0]["command_id"] == bodies[1]["command_id"]
+    assert len(facade.submitted) == 1
+
+
+def test_create_concurrent_same_id_different_content_one_fresh_one_conflict(monkeypatch, tmp_path):
+    # Same client_request_id, different content: one fresh (202) and one
+    # conflict (409) - never two enqueues - and the conflict's staged file is
+    # discarded, leaving exactly the fresh request's spool file.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    barrier = threading.Barrier(2)
+    results = []
+
+    def post(data):
+        barrier.wait()
+        results.append(_post_create(c, data=data))
+
+    threads = [
+        threading.Thread(target=post, args=(_JPEG,)),
+        threading.Thread(target=post, args=(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32,)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5.0)
+        assert not t.is_alive(), "concurrent create hung on the reservation lock"
+
+    assert sorted(r.status_code for r in results) == [202, 409]
+    conflict = next(r for r in results if r.status_code == 409)
+    assert conflict.get_json()["error_code"] == "idempotency_conflict"
+    assert len(facade.submitted) == 1
+    assert len(list((tmp_path / "spool").iterdir())) == 1
+
+
+def test_create_invalid_csrf_token_is_403(monkeypatch, tmp_path):
+    # Missing and valid tokens are covered; this pins the invalid-token branch
+    # for the create endpoint specifically (a wrong X-CSRF-Token never reaches
+    # submission or staging).
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _csrf_client(monkeypatch, facade)
+    _set_csrf_token(c, "real-token")
+    resp = _post_create(c, headers={"X-CSRF-Token": "wrong-token"})
+    assert resp.status_code == 403
+    assert resp.get_json()["error_code"] == "csrf_invalid"
+    assert facade.submitted == []
+    assert not (tmp_path / "spool").exists()
+
+
+def test_create_unexpected_exception_is_sanitized(monkeypatch, tmp_path, caplog):
+    # The create route has its own sanitized boundary (same `_mca_error_boundary`
+    # as the GET routes): an injected facade exception carrying a secret marker
+    # must map to the stable 500 and never leak the marker to the wire or log.
+    caplog.set_level(logging.ERROR)
+    marker = "SECRET_MARKER_create_x9"
+
+    class _RaisingRecipientFacade(_FakeFacade):
+        def recipient_snapshot(self):
+            raise RuntimeError(f"create-leak {marker}")
+
+    facade = _RaisingRecipientFacade(
+        providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 500
+    assert resp.get_json() == {
+        "ok": False,
+        "error": "Internal server error",
+        "error_code": "internal_error",
+    }
+    assert marker not in resp.get_data(as_text=True)
+    assert "Traceback" not in resp.get_data(as_text=True)
+    assert marker not in caplog.text
+    assert "Traceback" not in caplog.text
+    assert not (tmp_path / "spool").exists()  # the exception fired before staging
+
+
+def test_create_does_not_block_on_the_tick_lock(tmp_path):
+    # A create POST must read only the worker-published snapshot and submit
+    # through the in-memory facade - never the worker's tick lock. An empty
+    # runtime means no recipient binding -> synchronous 400, not a hang.
+    state = _started(tmp_path, "create-thread")
+    try:
+        c = _build_client()
+        state.tick_lock.acquire()
+        try:
+            result = {}
+
+            def post():
+                result["resp"] = _post_create(c)
+
+            poster = threading.Thread(target=post, name="create-request-thread")
+            poster.start()
+            poster.join(timeout=2.0)
+            assert not poster.is_alive(), "create POST blocked on the worker tick lock"
+        finally:
+            state.tick_lock.release()
+
+        assert result["resp"].status_code == 400
+        assert result["resp"].get_json()["error_code"] == "recipient_not_found"
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+# ---- Correction 1: Flask floor + per-request multipart limit ----------------
+#
+# The create endpoint sets a per-request `request.max_content_length`, which
+# Flask only exposes from 3.1 - so the requirements floor must reject 3.0.
+# This test parses the *actual* requirements.txt (never a hardcoded copy), so
+# a silent floor regression fails here rather than on a real Pi node.
+
+
+def test_requirements_pin_flask_floor_above_30():
+    from packaging.requirements import Requirement
+
+    requirements = (
+        Path(__file__).resolve().parents[1] / "requirements.txt"
+    ).read_text(encoding="utf-8")
+    flask_lines = [
+        ln for ln in requirements.splitlines() if ln.strip().startswith("Flask")
+    ]
+    assert len(flask_lines) == 1, "expected exactly one Flask pin in requirements.txt"
+    req = Requirement(flask_lines[0].strip())
+
+    # Flask 3.0 does not expose `request.max_content_length` - it must be
+    # excluded by the floor.
+    assert not req.specifier.contains("3.0.0")
+    assert not req.specifier.contains("3.0.5")
+    # The supported range starts at 3.1 (the live-verified version is 3.1.3).
+    assert req.specifier.contains("3.1.0")
+    assert req.specifier.contains("3.1.3")
+    # And it is still bounded below 4.0 (the next, untested major).
+    assert not req.specifier.contains("4.0.0")

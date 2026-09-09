@@ -257,6 +257,29 @@ def test_remove_drops_only_the_named_reservation():
     assert len(r) == 1
 
 
+def test_remove_if_matches_removes_only_when_the_same_command_owns_it():
+    # §3.6 Finding 2: compare-and-remove. A rollback must drop the reservation
+    # only when it still holds the *same* command's ids the caller inserted -
+    # never a reservation the worker has since replaced (e.g. promoted to the
+    # original attachment id on a duplicate).
+    r = PendingReservations()
+    r.reserve("req-1", _res(command="cmd-1"), committed_entries={})
+
+    # The inserting command's own rollback matches -> removed.
+    assert r.remove_if_matches("req-1", _res(command="cmd-1")) is True
+    assert r.get("req-1") is None
+
+    # Re-reserve, then a *different* command's rollback must not remove it.
+    r.reserve("req-1", _res(command="cmd-1"), committed_entries={})
+    r.replace("req-1", _res(command="cmd-2"))
+    assert r.remove_if_matches("req-1", _res(command="cmd-1")) is False
+    assert r.get("req-1") is not None
+    assert r.get("req-1").command_id == "cmd-2"
+
+    # A missing key is a silent False, never an error.
+    assert r.remove_if_matches("absent", _res(command="cmd-1")) is False
+
+
 def test_snapshot_ids_is_a_copy():
     r = PendingReservations()
     r.reserve("req-1", _res(), committed_entries={})

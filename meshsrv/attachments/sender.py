@@ -105,12 +105,14 @@ KIND_GENERIC = 0
 MAX_COMMENT_BYTES = 1000
 
 
-def _normalize_comment(comment: Optional[str]) -> Optional[str]:
-    """None and the empty/whitespace-only string are treated identically
-    (both mean "no comment") - a UI text field that the user left empty
-    must not round-trip as a comment=="" manifest header down the line.
-    Rejects an embedded NUL (would truncate as a C string in some
-    consumers) and anything over MAX_COMMENT_BYTES once UTF-8 encoded."""
+def normalize_comment(comment: Optional[str]) -> Optional[str]:
+    """The one public comment validation/normalization helper (Finding 8) -
+    used by both `create_draft()` and the API create endpoint, so the two can
+    never drift. None and the empty/whitespace-only string are treated
+    identically (both mean "no comment") - a UI text field that the user left
+    empty must not round-trip as a comment=="" manifest header down the line.
+    Rejects an embedded NUL (would truncate as a C string in some consumers)
+    and anything over MAX_COMMENT_BYTES once UTF-8 encoded."""
 
     if comment is None:
         return None
@@ -212,21 +214,33 @@ def create_draft(
     hard_ttl_seconds: int = DEFAULT_HARD_TTL_SECONDS,
     download_grace_seconds: int = DEFAULT_DOWNLOAD_GRACE_SECONDS,
     now: Optional[float] = None,
+    attachment_id: Optional[str] = None,
+    client_request_id: Optional[str] = None,
+    canonical_hash: Optional[str] = None,
 ) -> str:
     """Create a new outgoing attachment in state DRAFT. Does no I/O on
     `source_path` beyond what's needed to record it - `run_step()`'s
     VALIDATING handler is what actually opens/measures/checks the file, so
     a draft can be created even for a file that doesn't exist yet (e.g. a
-    UI that lets the user pick recipients before finishing a capture)."""
+    UI that lets the user pick recipients before finishing a capture).
+
+    Step 1.6A.3B (idempotent create): the three optional trailing params
+    let the create *command* supply the ids/columns the request thread
+    already minted/computed during staging (§3.5/§3.6) - `attachment_id`
+    (so the staged spool filename and the row id agree), and the two
+    Migration-11 idempotency columns `client_request_id`/`canonical_hash`.
+    Omitted (a plain `create_draft` call from anywhere else) they default
+    to a freshly-minted id and NULL idempotency columns, exactly as before
+    this sub-stage."""
 
     if not recipients:
         raise SenderError("a draft must have at least one recipient")
     if len(provider_id) != 8:
         raise SenderError(f"provider_id must be 8 raw bytes, got {len(provider_id)}")
-    comment = _normalize_comment(comment)
+    comment = normalize_comment(comment)
 
     now = _now() if now is None else now
-    attachment_id = uuid.uuid4().hex
+    attachment_id = uuid.uuid4().hex if attachment_id is None else attachment_id
     transfer_id = os.urandom(16)
 
     conn.execute(
@@ -234,8 +248,8 @@ def create_draft(
         INSERT INTO attachments
             (id, workspace_id, transfer_id, direction, principal_id, provider_id, state,
              file_name, mime_type, created_at, hard_expires_at, download_grace_seconds, saved_path,
-             draft_comment)
-        VALUES (?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             draft_comment, client_request_id, canonical_hash)
+        VALUES (?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             attachment_id,
@@ -261,6 +275,8 @@ def create_draft(
             download_grace_seconds,
             source_path,
             comment,
+            client_request_id,
+            canonical_hash,
         ),
     )
     for recipient in recipients:

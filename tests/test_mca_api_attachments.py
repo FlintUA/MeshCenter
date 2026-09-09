@@ -39,6 +39,7 @@ import pytest
 from flask import Flask, jsonify
 
 from api.api_attachments import register_attachments_routes
+from api.api_auth import register_auth_routes
 from meshsrv.attachments import mca_runtime, receiver, sender
 from meshsrv.attachments.command_registry import CommandResult, STATUS_SUCCEEDED
 from meshsrv.attachments.commands import CommandQueueFull
@@ -1243,3 +1244,80 @@ def test_post_lifecycle_does_not_block_on_the_tick_lock(tmp_path):
         assert resp.status_code == 404
     finally:
         mca_runtime.reset_state_for_tests()
+
+
+# ---- Step 1.6A.3A: CSRF integration (the global hook, not endpoint-local) --
+
+# The three POST routes are protected by the *already-shipped* project-wide
+# CSRF hook (api_auth.register_auth_routes' before_request), exactly like
+# every other unsafe /api/ route. api_attachments.py adds no endpoint-local
+# CSRF code of its own; these tests prove the global boundary holds for the
+# new routes by driving them through a real Flask app that registers BOTH
+# register_auth_routes() (for _enforce_csrf) and register_attachments_routes().
+
+
+def _csrf_client(monkeypatch, facade):
+    """A Flask test client running the three POST routes behind the real
+    project-wide CSRF hook. Auth is disabled (enabled=False) so _enforce_auth
+    passes through and _enforce_csrf is the sole gate - the exact global
+    boundary that protects every unsafe /api/ request in production."""
+    app = Flask(__name__)
+    app.secret_key = "test-secret-key"
+    app.config["TESTING"] = True
+    state_lock = threading.RLock()
+    auth_state = {"enabled": False, "password_hash": ""}
+    register_auth_routes(app, state_lock, auth_state, "/nonexistent/auth.json", _make_handle_errors(app))
+    register_attachments_routes(app, _make_handle_errors(app))
+    monkeypatch.setattr(mca_runtime, "get_attachments_facade", lambda: facade)
+    return app.test_client()
+
+
+def _set_csrf_token(client, token="session-token"):
+    with client.session_transaction() as sess:
+        sess["csrf_token"] = token
+
+
+_CSRF_LIFECYCLE_CASES = [
+    (f"/api/attachments/{ATTACHMENT_ID}/retry", "sent", sender.DRAFT),
+    (f"/api/attachments/{ATTACHMENT_ID}/download", "received", receiver.WAITING_CONSENT),
+    (f"/api/attachments/{ATTACHMENT_ID}/reject", "received", receiver.WAITING_CONSENT),
+]
+
+
+@pytest.mark.parametrize("path,direction,state", _CSRF_LIFECYCLE_CASES)
+def test_post_lifecycle_missing_csrf_token_is_403(monkeypatch, path, direction, state):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction=direction, state=state)]))
+    c = _csrf_client(monkeypatch, facade)
+    resp = c.post(path)  # no X-CSRF-Token header, no session token
+    assert resp.status_code == 403
+    assert resp.get_json() == {
+        "ok": False,
+        "error": "CSRF token missing or invalid",
+        "error_code": "csrf_invalid",
+    }
+    assert facade.submitted == []  # the route never ran, so nothing was submitted
+
+
+@pytest.mark.parametrize("path,direction,state", _CSRF_LIFECYCLE_CASES)
+def test_post_lifecycle_invalid_csrf_token_is_403(monkeypatch, path, direction, state):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction=direction, state=state)]))
+    c = _csrf_client(monkeypatch, facade)
+    _set_csrf_token(c, "real-token")
+    resp = c.post(path, headers={"X-CSRF-Token": "wrong-token"})
+    assert resp.status_code == 403
+    assert resp.get_json()["error_code"] == "csrf_invalid"
+    assert facade.submitted == []
+
+
+@pytest.mark.parametrize("path,direction,state,kind", [
+    (f"/api/attachments/{ATTACHMENT_ID}/retry", "sent", sender.DRAFT, "attachment_retry"),
+    (f"/api/attachments/{ATTACHMENT_ID}/download", "received", receiver.WAITING_CONSENT, "attachment_download"),
+    (f"/api/attachments/{ATTACHMENT_ID}/reject", "received", receiver.WAITING_CONSENT, "attachment_reject"),
+])
+def test_post_lifecycle_valid_csrf_token_reaches_submission(monkeypatch, path, direction, state, kind):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction=direction, state=state)]))
+    c = _csrf_client(monkeypatch, facade)
+    _set_csrf_token(c, "session-token")
+    resp = c.post(path, headers={"X-CSRF-Token": "session-token"})
+    assert resp.status_code == 202
+    _assert_202_accepted(resp.get_json(), facade, kind)

@@ -27,12 +27,14 @@ import pytest
 from nacl.signing import VerifyKey
 
 from meshsrv.attachments import codec, identity, receiver, sender
+from meshsrv.attachments.commands import Command
 from meshsrv.attachments.db import migrations
+from meshsrv.attachments.delivery.base import DeliveryError, DeliveryReceipt
 from meshsrv.attachments.delivery.fakes import FakeTextAdapter, InMemoryEther
 from meshsrv.attachments.key_exchange import KeyExchangeCoordinator
 from meshsrv.attachments.provider_registry import ProviderRegistry
 from meshsrv.attachments.relay.mock_server import MockRelayStore, create_mock_relay_app
-from meshsrv.attachments.relay_client import RelayClient
+from meshsrv.attachments.relay_client import RelayClient, RelayHTTPError
 from meshsrv.attachments.service import AttachmentsService, _provider_id_text
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
@@ -1428,3 +1430,348 @@ def test_wake_causes_a_tick_promptly_instead_of_waiting_for_the_full_interval(co
         assert sender.get_state(conn, attachment_id) != sender.DRAFT
     finally:
         service.stop()
+
+
+# ---- Step 1.6A.3C worker commands: attachment_cancel + contact_request_key -
+
+
+def _cancel_command(attachment_id):
+    return Command(
+        command_id=uuid.uuid4().hex,
+        kind="attachment_cancel",
+        payload={"attachment_id": attachment_id},
+        created_at=time.time(),
+    )
+
+
+def _request_key_command(contact_id, *, adapter_id="meshtastic", route_id=None):
+    return Command(
+        command_id=uuid.uuid4().hex,
+        kind="contact_request_key",
+        payload={
+            "contact_id": contact_id,
+            "adapter_id": adapter_id,
+            "route_id": route_id if route_id is not None else contact_id,
+        },
+        created_at=time.time(),
+    )
+
+
+def _insert_sender_state(conn, attachment_id, *, upload_id=None, revoke_token=None):
+    """Manually stage an `mca_sender_state` row (the two remote-cleanup
+    signals `_command_cancel` reads; the key/nonce columns are never touched
+    by the handler, so dummy values suffice)."""
+    conn.execute(
+        """
+        INSERT INTO mca_sender_state
+            (attachment_id, data_key, nonce_prefix, upload_id, revoke_token, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (attachment_id, "aa" * 16, "bb" * 12, upload_id, revoke_token, int(time.time()), int(time.time())),
+    )
+    conn.commit()
+
+
+def _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, delivery_adapter, relay_client_factory=None):
+    """A service built around a caller-supplied delivery adapter / relay
+    factory, so a single command's edge case can be driven against a
+    deliberately broken or instrumented collaborator."""
+    return AttachmentsService(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, connectivity_monitor=connectivity_monitor,
+        delivery_adapter=delivery_adapter, relay_client_factory=relay_client_factory,
+        max_per_tick=8,
+    )
+
+
+class _StubRelayClient:
+    """A RelayClient-shaped object whose `revoke()` records its arguments and
+    either succeeds ("ok") or raises the configured exception - for pinning
+    the remote-revoke half of cancel without the full mock Relay's session
+    bookkeeping."""
+
+    def __init__(self, revoke_result="ok"):
+        self.revoke_calls = []
+        self._revoke_result = revoke_result
+
+    def revoke(self, transfer_id, revoke_token):
+        self.revoke_calls.append((transfer_id, revoke_token))
+        if isinstance(self._revoke_result, Exception):
+            raise self._revoke_result
+        return None
+
+
+class _SentFalseAdapter(FakeTextAdapter):
+    def send(self, wire_payload, route, idempotency_key):
+        return DeliveryReceipt(sent=False, idempotency_key=idempotency_key, external_message_id=None, sent_at=None)
+
+
+class _RaisingSendAdapter(FakeTextAdapter):
+    def send(self, wire_payload, route, idempotency_key):
+        raise DeliveryError("simulated send failure")
+
+
+# ---- attachment_cancel -----------------------------------------------------
+
+
+def test_command_cancel_local_only_marks_cancelled_and_clears_saved_path(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    """No `mca_sender_state` row -> no remote half; the worker clears
+    `saved_path` and calls `sender.cancel()` to CANCELLED, leaving no
+    sender-state row and preserving history."""
+    _, _, recipient_principal = remote_recipient
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+
+    outcome = service._dispatcher.dispatch(_cancel_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert outcome.resource_id == attachment_id
+    assert dict(outcome.result) == {"attachment_id": attachment_id, "state": sender.CANCELLED}
+    assert sender.get_state(conn, attachment_id) == sender.CANCELLED
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT saved_path FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+    assert row["saved_path"] is None
+    assert conn.execute("SELECT 1 FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone() is None
+
+
+def test_command_cancel_unknown_id_is_not_found(service):
+    outcome = service._dispatcher.dispatch(_cancel_command("0" * 32))
+    assert outcome.error_code == "attachment_not_found"
+    assert outcome.resource_id is None and outcome.result is None
+
+
+def test_command_cancel_revalidates_state_from_the_row_not_the_snapshot(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    """The worker re-reads the row and re-applies the precondition - a row
+    that has since moved to SENT (e.g. between the request thread's snapshot
+    read and execution) must fail with `invalid_state_transition`, leaving
+    the row and its saved_path untouched."""
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal)
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+    conn.execute("UPDATE attachments SET state = ? WHERE id = ?", (sender.SENT, attachment_id))
+    conn.commit()
+
+    outcome = service._dispatcher.dispatch(_cancel_command(attachment_id))
+
+    assert outcome.error_code == "invalid_state_transition"
+    assert sender.get_state(conn, attachment_id) == sender.SENT
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT saved_path FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+    assert row["saved_path"] is not None
+
+
+def test_command_cancel_remote_revoke_404_is_confirmed_absence(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    """A remote session exists (`upload_id` + `revoke_token` persisted), but
+    the mock Relay has no object for the transfer_id -> `revoke()` raises
+    `RelayHTTPError(404)`, which the handler treats as the object already
+    gone, so the local half still completes to CANCELLED."""
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal)
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+    _insert_sender_state(conn, attachment_id, upload_id="upload-1", revoke_token="revoke-1")
+
+    outcome = service._dispatcher.dispatch(_cancel_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert sender.get_state(conn, attachment_id) == sender.CANCELLED
+    assert conn.execute("SELECT 1 FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone() is None
+
+
+def test_command_cancel_remote_revoke_success_revokes_then_cleans_up(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, registered_provider, remote_recipient, tmp_path
+):
+    """The remote half resolves *before* the local half: `revoke()` is called
+    with the row's own transfer_id (hex-decoded) and revoke token, and only
+    after it returns does the row become CANCELLED."""
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal)
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+    transfer_id_hex = conn.execute("SELECT transfer_id FROM attachments WHERE id = ?", (attachment_id,)).fetchone()[0]
+    _insert_sender_state(conn, attachment_id, upload_id="upload-1", revoke_token="revoke-1")
+
+    stub = _StubRelayClient(revoke_result="ok")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"), relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_cancel_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert stub.revoke_calls == [(bytes.fromhex(transfer_id_hex), "revoke-1")]
+    assert sender.get_state(conn, attachment_id) == sender.CANCELLED
+
+
+def test_command_cancel_remote_revoke_non_404_is_relay_unreachable_and_preserves_row(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, registered_provider, remote_recipient, tmp_path
+):
+    """A non-404 Relay failure must NOT be treated as absence: the command
+    fails `relay_unreachable` and the row, its saved_path, and its sender
+    state are all preserved for a manual retry."""
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal)
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+    _insert_sender_state(conn, attachment_id, upload_id="upload-1", revoke_token="revoke-1")
+
+    stub = _StubRelayClient(revoke_result=RelayHTTPError(500, "relay_down", "down"))
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"), relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_cancel_command(attachment_id))
+
+    assert outcome.error_code == "relay_unreachable"
+    assert sender.get_state(conn, attachment_id) == sender.DRAFT
+    assert conn.execute("SELECT 1 FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone() is not None
+
+
+def test_command_cancel_remote_session_without_a_revoke_token_is_relay_unreachable(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    """`upload_id` persisted but `revoke_token` missing -> the worker cannot
+    revoke the remote object, so it must fail `relay_unreachable` and
+    preserve everything, rather than complete a cancel it cannot finish
+    remotely."""
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal)
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+    _insert_sender_state(conn, attachment_id, upload_id="upload-1", revoke_token=None)
+
+    outcome = service._dispatcher.dispatch(_cancel_command(attachment_id))
+
+    assert outcome.error_code == "relay_unreachable"
+    assert sender.get_state(conn, attachment_id) == sender.DRAFT
+    assert conn.execute("SELECT 1 FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone() is not None
+
+
+def test_command_cancel_spool_unlink_failure_is_spool_cleanup_failed(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    """A spool path that cannot be unlinked (here: a directory at the spool
+    path, which `Path.unlink()` refuses) fails `spool_cleanup_failed` with
+    the row unchanged - the cancel does not silently proceed past a spool it
+    could not delete."""
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal)
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
+
+    spool_path = service._spool_path_for(attachment_id)
+    spool_path.parent.mkdir(parents=True, exist_ok=True)
+    spool_path.mkdir()  # a directory, not a file -> unlink() raises IsADirectoryError
+
+    outcome = service._dispatcher.dispatch(_cancel_command(attachment_id))
+
+    assert outcome.error_code == "spool_cleanup_failed"
+    assert sender.get_state(conn, attachment_id) == sender.DRAFT
+
+
+# ---- contact_request_key ---------------------------------------------------
+
+
+def test_command_request_key_sends_direct_and_persists_the_quota(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
+):
+    """The full happy path: revalidate -> rate-limit check (never asked ->
+    allowed) -> build_key_request -> encode/send over the fixed DIRECT route
+    (route_id == destination_address == the contact) -> `sent == True` ->
+    persist the quota timestamp -> succeeded with `{"contact_id", "status":
+    "requested"}`. The message actually reaches the contact's inbox."""
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+    contact = "!756f9960"
+
+    outcome = svc._dispatcher.dispatch(_request_key_command(contact))
+
+    assert outcome.error_code is None
+    assert outcome.resource_id == contact
+    assert dict(outcome.result) == {"contact_id": contact, "status": "requested"}
+
+    events = ether.drain(contact)
+    assert len(events) == 1
+    assert events[0]["from"] == "local-addr"
+    assert events[0]["idempotency_key"]  # the command id, used as the send idempotency key
+
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT last_request_sent_at FROM mca_key_exchange_contact_state WHERE workspace_id = ? AND adapter_id = ? AND source_address = ?",
+        (principal.workspace_id, ADAPTER_ID, contact),
+    ).fetchone()
+    assert row is not None and row["last_request_sent_at"] is not None
+
+
+def test_command_request_key_revalidates_and_rejects_an_already_ready_contact(
+    conn, remote_recipient, service
+):
+    """The worker re-reads the live binding, so a contact that became
+    `MCA_READY` since the request thread's snapshot read fails with
+    `key_already_known` and sends nothing."""
+    _, _, recipient_principal = remote_recipient
+    contact = "!756f9960"
+    _bind_recipient(conn, recipient_principal, transport_address=contact)
+
+    outcome = service._dispatcher.dispatch(_request_key_command(contact))
+
+    assert outcome.error_code == "key_already_known"
+
+
+def test_command_request_key_is_rate_limited(service, key_exchange):
+    contact = "!756f9960"
+    key_exchange.record_key_request_sent(contact, time.time())
+
+    outcome = service._dispatcher.dispatch(_request_key_command(contact))
+
+    assert outcome.error_code == "rate_limited"
+
+
+def test_command_request_key_radio_unavailable_without_a_delivery_adapter(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor
+):
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, None)
+    outcome = svc._dispatcher.dispatch(_request_key_command("!756f9960"))
+    assert outcome.error_code == "radio_unavailable"
+
+
+def test_command_request_key_radio_unavailable_when_the_receipt_is_not_sent(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
+):
+    """`send()` returning `sent=False` consumes no quota and fails
+    `radio_unavailable`."""
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, _SentFalseAdapter(InMemoryEther(), "local-addr"), relay_client_factory=lambda _: relay_client)
+    contact = "!756f9960"
+
+    outcome = svc._dispatcher.dispatch(_request_key_command(contact))
+
+    assert outcome.error_code == "radio_unavailable"
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT last_request_sent_at FROM mca_key_exchange_contact_state WHERE workspace_id = ? AND adapter_id = ? AND source_address = ?",
+        (principal.workspace_id, ADAPTER_ID, contact),
+    ).fetchone()
+    assert row is None or row["last_request_sent_at"] is None  # no quota consumed
+
+
+def test_command_request_key_radio_unavailable_when_send_raises(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
+):
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, _RaisingSendAdapter(InMemoryEther(), "local-addr"), relay_client_factory=lambda _: relay_client)
+    outcome = svc._dispatcher.dispatch(_request_key_command("!756f9960"))
+    assert outcome.error_code == "radio_unavailable"
+
+
+def test_command_request_key_revalidates_contact_id_and_route(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
+):
+    """The worker never trusts the queue's payload: a malformed contact id,
+    a non-`meshtastic` adapter, or a route that disagrees with the contact
+    all fail `invalid_contact_id` before any send."""
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"), relay_client_factory=lambda _: relay_client)
+
+    cases = [
+        _request_key_command("not-hex"),
+        _request_key_command("!756f9960", adapter_id="not-meshtastic"),
+        _request_key_command("!756f9960", route_id="!aaaaaaaa"),
+    ]
+    for command in cases:
+        outcome = svc._dispatcher.dispatch(command)
+        assert outcome.error_code == "invalid_contact_id"

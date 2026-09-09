@@ -826,3 +826,47 @@ def test_migration_12_downgrade_then_reupgrade(conn):
     _insert_attachment(conn, "att-after-reupgrade")
     conn.commit()
     assert _dirty_ids(conn) == {"att-after-reupgrade"}
+
+
+# --------------------------------------------------------------------------
+# Migration 13 (Step 1.6A.3C): nullable `last_request_sent_at` on
+# `mca_key_exchange_contact_state` - a per-contact outgoing key-request
+# throttle, deliberately independent of the existing `last_announce_sent_at`
+# (announcing your own key vs. requesting a contact's key are different
+# actions and never share a quota window).
+# --------------------------------------------------------------------------
+
+def _contact_state_columns(conn) -> set:
+    return {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(mca_key_exchange_contact_state)").fetchall()
+    }
+
+
+def test_migration_13_adds_last_request_sent_at(conn):
+    migrate(conn, target_version=12)
+    assert "last_request_sent_at" not in _contact_state_columns(conn)
+
+    migrate(conn, target_version=13)
+    assert current_version(conn) == 13
+    assert "last_request_sent_at" in _contact_state_columns(conn)
+
+
+def test_migration_13_downgrade_then_reupgrade(conn):
+    migrate(conn, target_version=13)
+    assert "last_request_sent_at" in _contact_state_columns(conn)
+
+    migrate(conn, target_version=12)
+    assert "last_request_sent_at" not in _contact_state_columns(conn)
+
+    migrate(conn, target_version=13)
+    assert "last_request_sent_at" in _contact_state_columns(conn)
+
+
+def test_migration_13_is_a_noop_for_an_already_migrated_db(conn):
+    """Idempotency for the column migration: upgrading straight to LATEST and
+    calling migrate() again must not raise or duplicate the column."""
+    migrate(conn)
+    migrate(conn)  # idempotent, no "duplicate column" error
+    assert current_version(conn) == LATEST_VERSION
+    assert "last_request_sent_at" in _contact_state_columns(conn)

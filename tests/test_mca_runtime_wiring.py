@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -41,8 +42,10 @@ from meshsrv.attachments.commands import COMMAND_KINDS, Command, CommandQueue
 from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
 from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispatcher, CommandOutcome
 from meshsrv.attachments.facade import AttachmentsFacade, FacadeNotReady
-from meshsrv.attachments.idempotency import PendingReservations
+from meshsrv.attachments.idempotency import PendingReservation, PendingReservations
+from meshsrv.attachments.key_exchange import AddressStatus
 from meshsrv.attachments.probe_registry import ProbeRegistry
+from meshsrv.attachments.provider_registry import encode_provider_id
 from meshsrv.attachments.service import AttachmentsService
 from meshsrv.attachments.snapshots import AttachmentsSnapshot, AttachmentsSnapshotPublisher
 from meshsrv.connectivity_monitor import ConnectivitySnapshot, UploadRejectionReason
@@ -816,5 +819,264 @@ def test_retry_command_delegates_to_the_same_step_path(tmp_path, monkeypatch):
         result = state.facade.get_command("cmd-retry")
         assert result.status == STATUS_SUCCEEDED
         assert calls == [aid]
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+# --- create-worker failure injection (Finding 3) ----------------------------
+#
+# The worker-side `_command_create` re-validates the complete payload and, on
+# every failure before a successful commit, must roll back any partial row,
+# remove the pending reservation, and remove the staged plaintext - never
+# reporting success while the newly-unused plaintext is known to still exist.
+# These tests inject failures to pin each guarantee: no partial rows, no stale
+# reservation, no orphaned plaintext, a terminal command result, and a
+# subsequent command that still drains normally.
+
+
+def _valid_create_payload(*, attachment_id="a" * 32, client_request_id="req-create-1"):
+    return {
+        "attachment_id": attachment_id,
+        "client_request_id": client_request_id,
+        "canonical_hash": "f" * 64,
+        "source_address": "!aaaaaaaa",
+        "source_name": "file.bin",
+        "mime_type": "application/octet-stream",
+        "provider_id": encode_provider_id(b"\x01" * 8),
+        "comment": None,
+        "hard_ttl_seconds": 3600,
+        "download_grace_seconds": 3600,
+    }
+
+
+def _stage_spool(state, attachment_id, data=b"staged-plaintext"):
+    spool_dir = state.workspace_manager.paths(state.principal.principal_id).spool_outgoing
+    spool_dir.mkdir(parents=True, exist_ok=True)
+    path = spool_dir / attachment_id
+    path.write_bytes(data)
+    return path
+
+
+def _spool_path(state, attachment_id):
+    return state.workspace_manager.paths(state.principal.principal_id).spool_outgoing / attachment_id
+
+
+def _trusted_binding():
+    return SimpleNamespace(
+        status=AddressStatus.MCA_READY,
+        public_identity=b"\x02" * 32,
+        sender_key_id="1" * 16,
+    )
+
+
+def _reserve(state, client_request_id, attachment_id, command_id):
+    state.pending_reservations.reserve(
+        client_request_id,
+        PendingReservation(
+            canonical_hash="f" * 64, attachment_id=attachment_id, command_id=command_id
+        ),
+        committed_entries={},
+    )
+
+
+def _seed_committed_create_row(state, attachment_id, client_request_id, canonical_hash):
+    """Insert a committed row carrying the idempotency columns, so a duplicate
+    create collides on the Migration-11 unique index."""
+    state.conn.execute(
+        """
+        INSERT INTO attachments
+            (id, workspace_id, transfer_id, direction, principal_id, state,
+             created_at, hard_expires_at, download_grace_seconds,
+             client_request_id, canonical_hash)
+        VALUES (?, ?, ?, 'sent', ?, 'DRAFT', 0, 0, 3600, ?, ?)
+        """,
+        (attachment_id, state.principal.workspace_id, uuid.uuid4().hex,
+         state.principal.principal_id, client_request_id, canonical_hash),
+    )
+    state.conn.commit()
+
+
+def test_spool_path_for_rejects_non_hex_attachment_ids(tmp_path):
+    # The spool path must be derivable only from a strictly-validated 32-hex id
+    # (Finding 3/4) - a path-traversal, wrong-case, wrong-length, or
+    # newline-terminated id must never produce a filesystem path.
+    state, _, _ = _started_state(tmp_path, "spool-path-safety")
+    try:
+        svc = state.service
+        assert svc._spool_path_for("a" * 32) is not None
+        for bad in ("../../evil", "A" * 32, "a" * 31, "a" * 33, "a" * 32 + "\n", "", None, 123):
+            assert svc._spool_path_for(bad) is None
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_create_invalid_payload_cleans_reservation_and_spool(tmp_path):
+    state, _, _ = _started_state(tmp_path, "create-invalid-cleanup")
+    try:
+        attachment_id = "a" * 32
+        client_request_id = "req-invalid"
+        _stage_spool(state, attachment_id)
+        _reserve(state, client_request_id, attachment_id, "cmd-invalid")
+        payload = _valid_create_payload(
+            attachment_id=attachment_id, client_request_id=client_request_id
+        )
+        payload["canonical_hash"] = "not-hex"  # invalid -> the worker must reject
+        state.facade.submit(Command(
+            command_id="cmd-invalid", kind="attachment_create",
+            payload=payload, created_at=0.0,
+        ))
+        state.service.tick()
+        result = state.facade.get_command("cmd-invalid")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == "invalid_payload"
+        # no stale reservation, no orphaned spool, no partial row.
+        assert len(state.pending_reservations) == 0
+        assert not _spool_path(state, attachment_id).exists()
+        assert state.conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0] == 0
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_create_invalid_attachment_id_builds_no_spool_path(tmp_path):
+    state, _, _ = _started_state(tmp_path, "create-invalid-id")
+    try:
+        payload = _valid_create_payload()
+        payload["attachment_id"] = "../../evil"
+        state.facade.submit(Command(
+            command_id="cmd-evil", kind="attachment_create",
+            payload=payload, created_at=0.0,
+        ))
+        state.service.tick()
+        result = state.facade.get_command("cmd-evil")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == "invalid_payload"
+        # Nothing was committed, and no path was ever derived from the hostile id.
+        assert state.conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0] == 0
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_create_failure_rolls_back_partial_row_and_removes_reservation_and_spool(tmp_path, monkeypatch):
+    state, _, _ = _started_state(tmp_path, "create-partial-rollback")
+    try:
+        attachment_id = "b" * 32
+        client_request_id = "req-partial"
+        _stage_spool(state, attachment_id)
+        _reserve(state, client_request_id, attachment_id, "cmd-partial")
+        monkeypatch.setattr(state.service._key_exchange, "get_binding", lambda addr: _trusted_binding())
+        monkeypatch.setattr(state.service, "_due_rows", lambda: [])
+
+        def _partial_then_raise(conn, *args, **kwargs):
+            # Write one row inside the open transaction, then raise - the worker
+            # must roll it back so no partial row survives the failure.
+            conn.execute(
+                "INSERT INTO attachments "
+                "(id, workspace_id, transfer_id, direction, principal_id, state, "
+                "created_at, hard_expires_at, download_grace_seconds) "
+                "VALUES (?, ?, ?, 'sent', ?, 'DRAFT', 0, 0, 3600)",
+                ("cc" * 16, "ws-partial", "00" * 16, "p" * 16),
+            )
+            raise RuntimeError("injected pre-commit failure")
+
+        monkeypatch.setattr(sender, "create_draft", _partial_then_raise)
+
+        state.facade.submit(Command(
+            command_id="cmd-partial", kind="attachment_create",
+            payload=_valid_create_payload(
+                attachment_id=attachment_id, client_request_id=client_request_id
+            ),
+            created_at=0.0,
+        ))
+        state.service.tick()
+
+        result = state.facade.get_command("cmd-partial")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == COMMAND_EXECUTION_FAILED
+        # No partial row (the injected INSERT was rolled back), no stale
+        # reservation, no orphaned staged plaintext.
+        assert state.conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0] == 0
+        assert len(state.pending_reservations) == 0
+        assert not _spool_path(state, attachment_id).exists()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_failed_create_does_not_block_the_next_command(tmp_path, monkeypatch):
+    state, _, _ = _started_state(tmp_path, "create-next-drains")
+    try:
+        monkeypatch.setattr(state.service._key_exchange, "get_binding", lambda addr: None)
+        monkeypatch.setattr(state.service, "_due_rows", lambda: [])
+
+        attachment_id = "d" * 32
+        _stage_spool(state, attachment_id)
+        _reserve(state, "req-a", attachment_id, "cmd-a")
+        state.facade.submit(Command(
+            command_id="cmd-a", kind="attachment_create",
+            payload=_valid_create_payload(attachment_id=attachment_id, client_request_id="req-a"),
+            created_at=0.0,
+        ))
+        # A second command queued in the same tick must still drain to its own
+        # terminal result after the failed create.
+        state.facade.submit(Command(
+            command_id="cmd-b", kind="attachment_reject",
+            payload={"attachment_id": "e" * 32}, created_at=0.0,
+        ))
+
+        state.service.tick()
+
+        assert state.facade.get_command("cmd-a").status == STATUS_FAILED
+        assert state.facade.get_command("cmd-a").error_code == "recipient_not_found"
+        assert state.facade.get_command("cmd-b").status == STATUS_FAILED
+        assert state.facade.get_command("cmd-b").error_code == "attachment_not_found"
+        # The failed create cleaned up its own reservation and staged file.
+        assert len(state.pending_reservations) == 0
+        assert not _spool_path(state, attachment_id).exists()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_duplicate_create_reports_spool_cleanup_failed_and_retries(tmp_path, monkeypatch):
+    import pathlib
+
+    state, _, _ = _started_state(tmp_path, "create-dup-cleanup-fail")
+    try:
+        client_request_id = "req-dup"
+        existing_id = "aa" + "0" * 30
+        new_id = "bb" + "0" * 30
+        canonical_hash = "f" * 64
+        _seed_committed_create_row(state, existing_id, client_request_id, canonical_hash)
+        _stage_spool(state, new_id)
+        _reserve(state, client_request_id, new_id, "cmd-dup")
+        monkeypatch.setattr(state.service._key_exchange, "get_binding", lambda addr: _trusted_binding())
+        monkeypatch.setattr(state.service, "_due_rows", lambda: [])
+
+        real_unlink = pathlib.Path.unlink
+
+        def _failing_unlink(self, *args, **kwargs):
+            raise OSError("injected unlink failure")
+
+        monkeypatch.setattr(pathlib.Path, "unlink", _failing_unlink)
+
+        state.facade.submit(Command(
+            command_id="cmd-dup", kind="attachment_create",
+            payload=_valid_create_payload(attachment_id=new_id, client_request_id=client_request_id),
+            created_at=0.0,
+        ))
+        state.service.tick()
+
+        result = state.facade.get_command("cmd-dup")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == "spool_cleanup_failed"
+        # The reservation is gone, but the duplicate staged file still exists
+        # and its id is retained for a bounded retry.
+        assert len(state.pending_reservations) == 0
+        assert new_id in state.service._spool_cleanup_backlog
+        assert _spool_path(state, new_id).exists()
+
+        # Once unlink works again, the bounded drain removes the orphan.
+        monkeypatch.setattr(pathlib.Path, "unlink", real_unlink)
+        state.service._drain_spool_cleanup()
+        assert not _spool_path(state, new_id).exists()
+        assert len(state.service._spool_cleanup_backlog) == 0
     finally:
         mca_runtime.reset_state_for_tests()

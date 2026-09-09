@@ -47,9 +47,11 @@ from __future__ import annotations
 import dataclasses
 import logging
 import queue
+import re
 import sqlite3
 import threading
 import time
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from meshsrv.attachments import codec, receiver, sender
@@ -58,9 +60,9 @@ from meshsrv.attachments.commands import MAX_COMMANDS_PER_TICK, Command, Command
 from meshsrv.attachments.delivery.base import DeliveryAdapter, DeliveryEnvelope, DeliveryError, Route, RouteType
 from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispatcher, CommandOutcome
 from meshsrv.attachments.identity import MCAPrincipal
-from meshsrv.attachments.idempotency import PendingReservations
+from meshsrv.attachments.idempotency import PendingReservations, validate_canonical_hash, validate_client_request_id
 from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator, RateLimited
-from meshsrv.attachments.provider_registry import ProviderRegistry, decode_provider_id
+from meshsrv.attachments.provider_registry import ProviderRegistry, ProviderRegistryError, decode_provider_id, encode_provider_id
 from meshsrv.attachments.relay_client import RelayClient
 from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
 from meshsrv.attachments.workspace import MCAWorkspaceManager
@@ -96,6 +98,24 @@ INBOUND_QUEUE_MAXSIZE = 256
 # same way MAX_ATTACHMENTS_PER_TICK already bounds the row-scan; the
 # rest simply wait for the next tick/wake(), never blocking anything.
 MAX_INBOUND_EVENTS_PER_TICK = 16
+
+# Finding 3: a bounded retry backlog for staged spool files whose removal
+# failed on the worker. When a create does not commit a row that references
+# its staged file (invalid payload, recipient failure, duplicate, conflict,
+# or an exception before commit), the worker must not report success while
+# the newly-unused plaintext still exists on disk. The id is retained here
+# (bounded) and re-attempted a few per tick, rather than either blocking the
+# tick or letting an unbounded in-memory set grow. Any file that survives
+# this backlog (e.g. the process restarted) is reclaimed by Finding 5's
+# bounded orphan-staging recovery.
+SPOOL_CLEANUP_BACKLOG_MAXSIZE = 256
+
+# How many backlogged spool-cleanup attempts one tick makes before moving on.
+MAX_SPOOL_CLEANUP_PER_TICK = 8
+
+# Attachment/command ids are uuid4().hex: exactly 32 lowercase hex chars.
+# Anchored with \Z (not $) so a trailing newline cannot sneak through.
+_HEX32_RE = re.compile(r"[0-9a-f]{32}\Z")
 
 RelayClientFactory = Callable[[str], Optional[RelayClient]]
 
@@ -134,6 +154,22 @@ def _provider_id_text(direction: str, provider_id_column: Optional[str]) -> Opti
     unchanged: a draft can reach VALIDATING/ENCRYPTING before a relay
     lookup is ever needed."""
     return provider_id_column or None
+
+
+def _bounded_text(value, *, max_len: int, allow_empty: bool) -> Optional[str]:
+    """Finding 3: a bounded, NUL-free string. Returns the string unchanged, or
+    None if it is not a `str`, exceeds `max_len`, is empty when
+    `allow_empty=False`, or contains an embedded NUL (which would truncate as a
+    C string in some downstream consumers)."""
+    if not isinstance(value, str):
+        return None
+    if len(value) > max_len:
+        return None
+    if not allow_empty and not value:
+        return None
+    if "\x00" in value:
+        return None
+    return value
 
 
 class AttachmentsService:
@@ -178,6 +214,13 @@ class AttachmentsService:
         self._max_per_tick = max_per_tick
         self._now = now_fn
         self._pending_reservations = pending_reservations
+        # Finding 1: track reservations that have been committed but not yet
+        # published in the snapshot. These are cleaned up after _refresh_snapshot()
+        # confirms the idempotency entry is visible in the published snapshot.
+        self._committed_reservations: set[str] = set()
+        # Finding 3: ids of staged spool files whose removal failed on the
+        # worker, for a bounded per-tick retry (see _drain_spool_cleanup).
+        self._spool_cleanup_backlog: set[str] = set()
 
         # PR #231 review, section 2: this service's own worker thread is
         # now the SOLE owner of `conn` at runtime - the radio listener no
@@ -418,6 +461,15 @@ class AttachmentsService:
         # surface (facade.py) reflects every row this tick advanced.
         self._refresh_snapshot()
 
+        # Finding 1: clean up committed reservations now that the snapshot
+        # has been published. The published snapshot's idempotency index
+        # contains the committed entries, so we can safely remove the
+        # in-memory pending reservations for those client_request_ids.
+        self._cleanup_committed_reservations()
+
+        # Finding 3: retry any backlogged spool-file removals, bounded per tick.
+        self._drain_spool_cleanup()
+
         # Step 1.6A.1 (correction #1): flip runtime readiness once this tick
         # has both a started service and a successfully-published snapshot.
         self._publish_readiness()
@@ -639,9 +691,10 @@ class AttachmentsService:
         (§3.5/§3.6). The request thread wrote the plaintext to
         `spool/outgoing/<attachment_id>` and handed over `attachment_id`/
         `command_id`/`canonical_hash` plus the validated metadata; this is the
-        worker-side half that (a) resolves the recipient's *trusted* binding
-        and (b) calls `sender.create_draft()` with the already-minted ids and
-        the precomputed idempotency columns.
+        worker-side half that (a) re-validates the complete payload (Finding 3,
+        below), (b) resolves the recipient's *trusted* binding, and (c) calls
+        `sender.create_draft()` with the already-minted ids and the precomputed
+        idempotency columns.
 
         Recipient trust is resolved here, on the worker, because
         `key_exchange.get_binding()` reads SQLite (worker-owned, §3.1) - it
@@ -651,7 +704,9 @@ class AttachmentsService:
         `recipient_not_trusted` (binding present but not `MCA_READY`),
         observed via the command result. Every other §7.2 check was already
         validated pure on the request thread (id shape, comment bound,
-        provider resolution, TTL range, file size, MIME sniff).
+        provider resolution, TTL range, file size, MIME sniff) - and is
+        re-validated here defensively (Finding 3), since the worker is the
+        sole executor and must not trust the queue.
 
         `adapter_id`/`connector_profile_id` are the MVP single-transport
         `"meshtastic"` literal (matching `mca_runtime.ADAPTER_ID` and the
@@ -660,39 +715,29 @@ class AttachmentsService:
         derived deterministically here rather than trusted from the payload,
         so they cannot disagree with the hash the request thread computed.
 
-        The pending reservation is dropped on every terminal path (the
-        success path's committed row becomes visible to the next snapshot
-        republish, which moves it into the committed idempotency index). The
-        partial unique index on `(workspace_id, client_request_id)` is the
-        final backstop (§3.6) for a duplicate that slipped past the
-        reservation - e.g. a replay that landed between this command's
-        commit and the snapshot republish - recovered here as an idempotent
-        success against the already-committed row, never a failure. A staged
-        file that ends up unreferenced (recipient checks failed, duplicate
-        recovered) is discarded."""
-        payload = command.payload
-        attachment_id = payload.get("attachment_id")
-        client_request_id = payload.get("client_request_id")
-        canonical_hash = payload.get("canonical_hash")
-        source_address = payload.get("source_address")
-        source_name = payload.get("source_name")
-        mime_type = payload.get("mime_type")
-        provider_id_text = payload.get("provider_id")
-        comment = payload.get("comment")
-        hard_ttl_seconds = payload.get("hard_ttl_seconds")
-        download_grace_seconds = payload.get("download_grace_seconds")
+        The pending reservation is kept until AFTER the snapshot publisher
+        has published the committed idempotency entry (Finding 1: publish-
+        before-release). On every failure before a successful commit, the
+        transaction is rolled back, the reservation removed, and the staged
+        file removed via the bounded cleanup path (Finding 3) - no partial
+        rows, no stale reservation, no orphaned plaintext, and never a success
+        result while the newly-unused plaintext is known to still exist."""
+        payload = self._validated_create_payload(command)
+        if payload is None:
+            self._create_failure_cleanup(command)
+            return CommandOutcome.failed("invalid_payload")
 
-        spool_path = (
-            self._workspace_manager.paths(self._principal.principal_id).spool_outgoing / attachment_id
-        )
+        attachment_id = payload["attachment_id"]
+        client_request_id = payload["client_request_id"]
+        source_address = payload["source_address"]
 
         try:
             binding = self._key_exchange.get_binding(source_address)
             if binding is None:
-                self._discard_spool(spool_path)
+                self._create_failure_cleanup(command)
                 return CommandOutcome.failed("recipient_not_found")
             if binding.status != AddressStatus.MCA_READY:
-                self._discard_spool(spool_path)
+                self._create_failure_cleanup(command)
                 return CommandOutcome.failed("recipient_not_trusted")
 
             target = sender.RecipientTarget(
@@ -704,57 +749,267 @@ class AttachmentsService:
                 self._workspace_manager,
                 self._principal,
                 workspace_id=self._principal.workspace_id,
-                source_path=str(spool_path),
-                file_name=source_name,
-                mime_type=mime_type,
+                source_path=str(self._spool_path_for(attachment_id)),
+                file_name=payload["source_name"],
+                mime_type=payload["mime_type"],
                 recipients=[target],
                 adapter_id="meshtastic",
                 connector_profile_id="meshtastic",
                 route_type=RouteType.DIRECT.value,
                 route_id=source_address,
-                provider_id=decode_provider_id(provider_id_text),
-                comment=comment,
-                hard_ttl_seconds=hard_ttl_seconds,
-                download_grace_seconds=download_grace_seconds,
+                provider_id=decode_provider_id(payload["provider_id"]),
+                comment=payload["comment"],
+                hard_ttl_seconds=payload["hard_ttl_seconds"],
+                download_grace_seconds=payload["download_grace_seconds"],
                 attachment_id=attachment_id,
                 client_request_id=client_request_id,
-                canonical_hash=canonical_hash,
+                canonical_hash=payload["canonical_hash"],
                 now=self._now(),
             )
-        except sqlite3.IntegrityError:
+        except sqlite3.IntegrityError as exc:
+            # The INSERT failed - could be the idempotency index or another
+            # constraint. Roll back the failed transaction first, then determine
+            # the cause by loading the existing row (Finding 2), never leaking
+            # the SQLite exception text or class.
+            self._rollback_silently()
+            self._remove_reservation(client_request_id)
+            removed = self._remove_unreferenced_spool(attachment_id)
             self._conn.row_factory = sqlite3.Row
             row = self._conn.execute(
-                "SELECT id, state FROM attachments "
+                "SELECT id, state, canonical_hash FROM attachments "
                 "WHERE workspace_id = ? AND client_request_id = ?",
                 (self._principal.workspace_id, client_request_id),
             ).fetchone()
             if row is None:
-                raise
-            self._discard_spool(spool_path)
-            return CommandOutcome.succeeded(
-                resource_id=row["id"],
-                result={"attachment_id": row["id"], "state": row["state"]},
-            )
-        finally:
-            if self._pending_reservations is not None:
-                self._pending_reservations.remove(client_request_id)
+                # Not the idempotency constraint - some other unique violation
+                # (e.g. a primary key collision, which should be astronomically
+                # unlikely). Re-raise as a generic internal error; never leak
+                # the SQLite exception text or class.
+                logger.error(
+                    "AttachmentsService: unexpected IntegrityError on create_draft "
+                    "(not the idempotency index): %s", type(exc).__name__
+                )
+                raise RuntimeError("attachment_create: database constraint violation")
+            # Found the existing row - this IS the idempotency constraint.
+            # Only return idempotent success if the canonical_hash matches
+            # exactly; otherwise it's a genuine content conflict.
+            existing_hash = row["canonical_hash"]
+            if existing_hash is not None and existing_hash == payload["canonical_hash"]:
+                if not removed:
+                    # Finding 3: do not report success while the newly-unused
+                    # duplicate plaintext is known to still exist.
+                    return CommandOutcome.failed("spool_cleanup_failed")
+                return CommandOutcome.succeeded(
+                    resource_id=row["id"],
+                    result={"attachment_id": row["id"], "state": row["state"]},
+                )
+            # Hash mismatch - terminal idempotency_conflict. The staged file
+            # is discarded; no row is created for this request.
+            return CommandOutcome.failed("idempotency_conflict")
+        except Exception:
+            # Finding 3: any other exception before a successful commit - roll
+            # back, remove the reservation, and remove the staged file.
+            self._create_failure_cleanup(command)
+            raise
 
+        # Finding 1: successful commit - track for cleanup after snapshot publish
+        self._committed_reservations.add(client_request_id)
         return CommandOutcome.succeeded(
             resource_id=attachment_id,
             result={"attachment_id": attachment_id, "state": sender.DRAFT},
         )
 
-    def _discard_spool(self, spool_path) -> None:
-        """Best-effort removal of a staged-but-unreferenced outgoing spool
-        file (a `recipient_not_found`/`recipient_not_trusted`/duplicate
-        `attachment_create` never commits a row that references it). Never
-        raises: an unlink failure is a disk-hygiene issue, not a command
-        correctness issue - logged without the path or any identifier and
-        swallowed."""
+    # ---- create failure/cleanup helpers (Finding 3) ------------------------
+
+    def _validated_create_payload(self, command: Command) -> Optional[dict]:
+        """Finding 3: re-validate the complete `attachment_create` payload on
+        the worker before it is trusted for any filesystem path or database
+        write. The request thread already validated every field; this is the
+        worker-side backstop so a malformed command (never expected, but the
+        worker must not trust the queue) fails cleanly with `invalid_payload`
+        rather than touching the spool dir or writing a partial row.
+
+        Returns a normalized dict of validated values, or None if any field is
+        invalid. The command kind is checked first, so an
+        `attachment_create`-routed command that is not actually an
+        `attachment_create` (a dispatcher bug) is also rejected here."""
+        if command.kind != "attachment_create":
+            return None
+        payload = command.payload
+
+        attachment_id = payload.get("attachment_id")
+        if not isinstance(attachment_id, str) or _HEX32_RE.match(attachment_id) is None:
+            return None
+
+        client_request_id = payload.get("client_request_id")
+        try:
+            validate_client_request_id(client_request_id)
+        except ValueError:
+            return None
+
+        canonical_hash = payload.get("canonical_hash")
+        try:
+            validate_canonical_hash(canonical_hash)
+        except ValueError:
+            return None
+
+        source_address = _bounded_text(
+            payload.get("source_address"), max_len=64, allow_empty=False
+        )
+        if source_address is None:
+            return None
+        source_name = _bounded_text(
+            payload.get("source_name"), max_len=255, allow_empty=False
+        )
+        if source_name is None:
+            return None
+        mime_type = _bounded_text(
+            payload.get("mime_type"), max_len=128, allow_empty=False
+        )
+        if mime_type is None:
+            return None
+
+        provider_id_text = payload.get("provider_id")
+        if not isinstance(provider_id_text, str):
+            return None
+        try:
+            # Decode to 8 raw bytes and require canonical round-trip equality,
+            # mirroring api_attachments._validate_provider_id - a padded,
+            # wrong-length, or wrong-alphabet spelling is rejected, not coerced.
+            if encode_provider_id(decode_provider_id(provider_id_text)) != provider_id_text:
+                return None
+        except ProviderRegistryError:
+            return None
+
+        comment = payload.get("comment")
+        if comment is not None:
+            if not isinstance(comment, str) or "\x00" in comment:
+                return None
+            try:
+                comment_bytes = len(comment.encode("utf-8", errors="strict"))
+            except UnicodeEncodeError:
+                return None
+            if comment_bytes > sender.MAX_COMMENT_BYTES:
+                return None
+
+        hard_ttl_seconds = payload.get("hard_ttl_seconds")
+        if (
+            not isinstance(hard_ttl_seconds, int)
+            or isinstance(hard_ttl_seconds, bool)
+            or hard_ttl_seconds <= 0
+        ):
+            return None
+        download_grace_seconds = payload.get("download_grace_seconds")
+        if (
+            not isinstance(download_grace_seconds, int)
+            or isinstance(download_grace_seconds, bool)
+            or download_grace_seconds <= 0
+        ):
+            return None
+
+        return {
+            "attachment_id": attachment_id,
+            "client_request_id": client_request_id,
+            "canonical_hash": canonical_hash,
+            "source_address": source_address,
+            "source_name": source_name,
+            "mime_type": mime_type,
+            "provider_id": provider_id_text,
+            "comment": comment,
+            "hard_ttl_seconds": hard_ttl_seconds,
+            "download_grace_seconds": download_grace_seconds,
+        }
+
+    def _spool_path_for(self, attachment_id) -> Optional[Path]:
+        """The spool path for a staged `attachment_id`, derived *only* from a
+        strictly-validated 32-hex id - never from any browser-supplied
+        filename or other untrusted component (Finding 3/4). Returns None for a
+        non-32-hex id, so a malformed id can never be used to build a path that
+        escapes `spool/outgoing/`."""
+        if not isinstance(attachment_id, str) or _HEX32_RE.match(attachment_id) is None:
+            return None
+        return self._workspace_manager.paths(self._principal.principal_id).spool_outgoing / attachment_id
+
+    def _rollback_silently(self) -> None:
+        """Roll back the worker's SQLite connection, swallowing any error (the
+        connection may already be in an unusable state). Called on every create
+        failure before a successful commit so no partial row from a failed
+        `create_draft` leaks into the next statement on this connection."""
+        try:
+            self._conn.rollback()
+        except Exception:
+            pass
+
+    def _remove_reservation(self, client_request_id) -> None:
+        """Drop the pending reservation for a create that will not commit a row
+        (or whose row already exists). Guarded: a malformed/non-string key is
+        skipped rather than raising, and the reservation map is optional."""
+        if isinstance(client_request_id, str) and self._pending_reservations is not None:
+            self._pending_reservations.remove(client_request_id)
+
+    def _remove_unreferenced_spool(self, attachment_id) -> bool:
+        """Attempt to remove the staged spool file for a create that did not
+        commit a row referencing it (invalid payload, recipient failure,
+        duplicate, or conflict). Returns True if the file no longer exists
+        (removed or already gone); False if the unlink failed and the file is
+        still present. Never raises. On failure the id is retained in the
+        bounded cleanup backlog for a per-tick retry (Finding 3)."""
+        spool_path = self._spool_path_for(attachment_id)
+        if spool_path is None:
+            # No valid path to clean - nothing was staged under a valid id.
+            return True
         try:
             spool_path.unlink(missing_ok=True)
+            return True
         except OSError:
-            logger.warning("AttachmentsService: could not remove a staged-but-unused spool file")
+            logger.warning(
+                "AttachmentsService: could not remove a staged-but-unused spool file"
+            )
+            self._request_spool_cleanup(attachment_id)
+            return False
+
+    def _request_spool_cleanup(self, attachment_id) -> None:
+        """Retain a staged id whose unlink failed, for a bounded per-tick retry
+        (Finding 3). Bounded so a burst of un-unlinkable files cannot grow an
+        unbounded in-memory set; a full backlog is logged and dropped (the
+        orphan is then reclaimed by Finding 5's bounded orphan-staging
+        recovery)."""
+        if len(self._spool_cleanup_backlog) < SPOOL_CLEANUP_BACKLOG_MAXSIZE:
+            self._spool_cleanup_backlog.add(attachment_id)
+        else:
+            logger.warning(
+                "AttachmentsService: spool cleanup backlog full; "
+                "staged file left for orphan-staging recovery"
+            )
+
+    def _drain_spool_cleanup(self) -> None:
+        """Retry up to `MAX_SPOOL_CLEANUP_PER_TICK` backlogged spool removals,
+        bounded so one tick never stalls retrying the same un-unlinkable file
+        indefinitely (Finding 3). A still-failing removal is put back (up to the
+        backlog cap) for the next tick; a now-absent file simply drops off."""
+        for _ in range(MAX_SPOOL_CLEANUP_PER_TICK):
+            try:
+                attachment_id = self._spool_cleanup_backlog.pop()
+            except KeyError:
+                return
+            spool_path = self._spool_path_for(attachment_id)
+            if spool_path is None:
+                continue
+            try:
+                spool_path.unlink(missing_ok=True)
+            except OSError:
+                if len(self._spool_cleanup_backlog) < SPOOL_CLEANUP_BACKLOG_MAXSIZE:
+                    self._spool_cleanup_backlog.add(attachment_id)
+
+    def _create_failure_cleanup(self, command: Command) -> None:
+        """The total failure cleanup for a create that will not commit a row
+        (Finding 3): roll back any in-flight transaction, drop the pending
+        reservation, and request removal of the staged file. Never raises and
+        never trusts payload values as filesystem components - the spool path is
+        derived only from a validated 32-hex id."""
+        self._rollback_silently()
+        self._remove_reservation(command.payload.get("client_request_id"))
+        self._remove_unreferenced_spool(command.payload.get("attachment_id"))
 
     def _attachment_row(self, attachment_id: str) -> Optional[sqlite3.Row]:
         """The single persisted row a lifecycle command re-validates against,
@@ -868,6 +1123,28 @@ class AttachmentsService:
             workspace_manager=self._workspace_manager,
             principal_id=self._principal.principal_id,
         )
+
+    def _cleanup_committed_reservations(self) -> None:
+        """Finding 1: remove pending reservations for client_request_ids that
+        have been committed and are now visible in the published snapshot's
+        idempotency index. This implements the publish-before-release handoff:
+        the reservation is kept until the snapshot publish confirms the
+        idempotency entry is visible, then it is released.
+
+        If the snapshot publish failed (snapshot() returns None), the
+        reservations are kept and will be retried on the next tick."""
+        snapshot = self._snapshot_publisher.snapshot()
+        if snapshot is None:
+            # Publish failed - keep reservations for retry on next tick
+            return
+        # The published snapshot's idempotency index contains the committed
+        # entries. Remove any committed_reservations that are now visible.
+        published_ids = set(snapshot.idempotency.keys())
+        to_remove = self._committed_reservations & published_ids
+        for client_request_id in to_remove:
+            self._committed_reservations.discard(client_request_id)
+            if self._pending_reservations is not None:
+                self._pending_reservations.remove(client_request_id)
 
     def _process_one_inbound_event(self, event: InboundEvent) -> None:
         """Everything that used to run on the radio listener thread

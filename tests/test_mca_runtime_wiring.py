@@ -25,13 +25,15 @@ rather than racing the daemon thread.
 from __future__ import annotations
 
 import logging
+import os
 import threading
+import time
 import uuid
 from types import SimpleNamespace
 
 import pytest
 
-from meshsrv.attachments import mca_runtime, receiver, sender
+from meshsrv.attachments import mca_runtime, receiver, sender, service as service_module
 from meshsrv.attachments.command_registry import (
     STATUS_FAILED,
     STATUS_QUEUED,
@@ -1078,5 +1080,316 @@ def test_duplicate_create_reports_spool_cleanup_failed_and_retries(tmp_path, mon
         state.service._drain_spool_cleanup()
         assert not _spool_path(state, new_id).exists()
         assert len(state.service._spool_cleanup_backlog) == 0
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+# --- orphan-staging recovery (Finding 5) ------------------------------------
+#
+# The create endpoint stages a temp file (`.{id}.<rand>.tmp`) then atomically
+# publishes it as a committed spool file (`spool/outgoing/<32-hex id>`); a
+# process crash between staging and enqueue/commit can leave either kind
+# behind with no persisted row, reservation, or command referencing it.
+# `_recover_orphaned_spool()` reclaims exactly those, and only those:
+# old-enough, unreferenced, name-conforming files inside this workspace's
+# spool/outgoing/ directory. It must preserve a referenced file (even across
+# restart), an active request's fresh temp file, anything that does not match
+# the two known name conventions, non-file entries, and symlinks - and it must
+# stay bounded and never leak a path/identifier into a log line.
+
+
+def _spool_dir(state):
+    return state.workspace_manager.paths(state.principal.principal_id).spool_outgoing
+
+
+def _set_old_mtime(path, now):
+    """Backdate a spool file so it is unambiguously past the orphan age
+    threshold (relative to the monkeypatched `service._now`)."""
+    os.utime(path, (now - 7200, now - 7200))
+
+
+def _old_orphan_committed(state, attachment_id, now):
+    _stage_spool(state, attachment_id)
+    _set_old_mtime(_spool_path(state, attachment_id), now)
+
+
+def test_recovery_deletes_old_unreferenced_committed_orphan(tmp_path, monkeypatch):
+    # Crash leftover: a committed spool file whose request died after
+    # publish but before reserve/enqueue - no row, reservation, or command -
+    # and which is now old. It must be reclaimed.
+    state, _, _ = _started_state(tmp_path, "orphan-committed")
+    try:
+        now = 1_700_000_000.0
+        monkeypatch.setattr(state.service, "_now", lambda: now)
+        aid = "a" * 32
+        _old_orphan_committed(state, aid, now)
+
+        state.service._recover_orphaned_spool()
+
+        assert not _spool_path(state, aid).exists()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_recovery_preserves_referenced_committed_file(tmp_path, monkeypatch):
+    # A committed spool file referenced by a persisted `attachments` row must
+    # be preserved no matter how old it is - it is a real, committed spool.
+    state, _, _ = _started_state(tmp_path, "orphan-referenced")
+    try:
+        now = 1_700_000_000.0
+        monkeypatch.setattr(state.service, "_now", lambda: now)
+        aid = "b" * 32
+        _seed_row(state, aid, "sent", sender.DRAFT)
+        _old_orphan_committed(state, aid, now)
+
+        state.service._recover_orphaned_spool()
+
+        assert _spool_path(state, aid).exists()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_recovery_preserves_referenced_file_across_restart(tmp_path):
+    # A committed spool file referenced by a persisted row survives a full
+    # process restart: reset_state_for_tests() closes the connection and drops
+    # the in-memory singleton, but the DB row (and the spool dir) persist on
+    # disk, so a freshly-reopened runtime must still treat the file as
+    # referenced - the reference check is DB-backed, not in-memory.
+    data_dir = str(tmp_path / "orphan-restart")
+    aid = "c" * 32
+    try:
+        mca_runtime.reset_state_for_tests()
+        mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+        ether = InMemoryEther()
+        transport = FakeRadioTransport(ether, "!aaaaaaaa")
+        mca_runtime.start_attachments_service(data_dir, transport)
+        state = mca_runtime._get_state(data_dir)  # noqa: SLF001
+        assert state.service.stop()
+        state.ready_event.set()
+        _seed_row(state, aid, "received", receiver.WAITING_CONSENT)
+        _stage_spool(state, aid)
+        _set_old_mtime(_spool_path(state, aid), time.time())
+        state.service._recover_orphaned_spool()
+        assert _spool_path(state, aid).exists()
+
+        # "Restart": drop the singleton (closes conn), then re-init the same
+        # data_dir - the row is re-read from disk.
+        mca_runtime.reset_state_for_tests()
+        mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+        ether2 = InMemoryEther()
+        transport2 = FakeRadioTransport(ether2, "!aaaaaaaa")
+        mca_runtime.start_attachments_service(data_dir, transport2)
+        state2 = mca_runtime._get_state(data_dir)  # noqa: SLF001
+        assert state2.service.stop()
+        state2.ready_event.set()
+        state2.service._recover_orphaned_spool()
+        assert _spool_path(state2, aid).exists()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_recovery_preserves_fresh_temp_file(tmp_path, monkeypatch):
+    # An active request's freshly-staged temp file (`.{id}.<rand>.tmp`) is far
+    # younger than the age threshold and must never be deleted, even though it
+    # has no row/reservation/command yet (the stage -> reserve window).
+    state, _, _ = _started_state(tmp_path, "orphan-fresh-temp")
+    try:
+        now = 1_700_000_000.0
+        monkeypatch.setattr(state.service, "_now", lambda: now)
+        spool_dir = _spool_dir(state)
+        spool_dir.mkdir(parents=True, exist_ok=True)
+        temp_path = spool_dir / ".deadbeef.1234.tmp"
+        temp_path.write_bytes(b"staged")
+        os.utime(temp_path, (now - 10, now - 10))  # 10s old - fresh
+
+        state.service._recover_orphaned_spool()
+
+        assert temp_path.exists()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_recovery_deletes_old_temp_orphan(tmp_path, monkeypatch):
+    # A temp file older than the threshold is a crash leftover (staging began
+    # but never completed the atomic publish) - it must be reclaimed.
+    state, _, _ = _started_state(tmp_path, "orphan-old-temp")
+    try:
+        now = 1_700_000_000.0
+        monkeypatch.setattr(state.service, "_now", lambda: now)
+        spool_dir = _spool_dir(state)
+        spool_dir.mkdir(parents=True, exist_ok=True)
+        temp_path = spool_dir / ".deadbeef.5678.tmp"
+        temp_path.write_bytes(b"staged")
+        os.utime(temp_path, (now - 7200, now - 7200))
+
+        state.service._recover_orphaned_spool()
+
+        assert not temp_path.exists()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_recovery_preserves_reservation_and_queued_command_references(tmp_path, monkeypatch):
+    # A committed spool file that is referenced only in-memory - by a pending
+    # §3.6 reservation or a queued command (before the worker has committed the
+    # row) - must be preserved. These are in-flight requests, not orphans.
+    state, _, _ = _started_state(tmp_path, "orphan-inflight")
+    try:
+        now = 1_700_000_000.0
+        monkeypatch.setattr(state.service, "_now", lambda: now)
+
+        reserved_id = "d" * 32
+        _reserve(state, "req-reserved", reserved_id, "cmd-reserved")
+        _old_orphan_committed(state, reserved_id, now)
+
+        queued_id = "e" * 32
+        _old_orphan_committed(state, queued_id, now)
+        state.command_queue.put_nowait(Command(
+            command_id="cmd-queued", kind="attachment_create",
+            payload={"attachment_id": queued_id}, created_at=0.0,
+        ))
+
+        state.service._recover_orphaned_spool()
+
+        assert _spool_path(state, reserved_id).exists()
+        assert _spool_path(state, queued_id).exists()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_recovery_bounds_deletions_per_tick(tmp_path, monkeypatch):
+    # At most MAX_ORPHAN_DELETE_PER_TICK files are deleted per tick, so a burst
+    # of orphans is drained gradually rather than one tick doing unbounded work.
+    state, _, _ = _started_state(tmp_path, "orphan-bounded-delete")
+    try:
+        now = 1_700_000_000.0
+        monkeypatch.setattr(state.service, "_now", lambda: now)
+        monkeypatch.setattr(service_module, "MAX_ORPHAN_DELETE_PER_TICK", 2)
+        monkeypatch.setattr(service_module, "MAX_ORPHAN_SCAN_PER_TICK", 100)
+        ids = [f"{i:032x}" for i in range(5)]
+        for aid in ids:
+            _old_orphan_committed(state, aid, now)
+
+        state.service._recover_orphaned_spool()
+
+        remaining = [aid for aid in ids if _spool_path(state, aid).exists()]
+        assert len(remaining) == 3  # exactly 2 deleted, 3 left for later ticks
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_recovery_bounds_scans_per_tick(tmp_path, monkeypatch):
+    # At most MAX_ORPHAN_SCAN_PER_TICK entries are examined per tick, so a huge
+    # spool directory cannot make one tick scan past the bound (even when every
+    # entry is a deletable old orphan, the scan cap limits deletions).
+    state, _, _ = _started_state(tmp_path, "orphan-bounded-scan")
+    try:
+        now = 1_700_000_000.0
+        monkeypatch.setattr(state.service, "_now", lambda: now)
+        monkeypatch.setattr(service_module, "MAX_ORPHAN_SCAN_PER_TICK", 2)
+        monkeypatch.setattr(service_module, "MAX_ORPHAN_DELETE_PER_TICK", 100)
+        ids = [f"{i:032x}" for i in range(3)]
+        for aid in ids:
+            _old_orphan_committed(state, aid, now)
+
+        state.service._recover_orphaned_spool()
+
+        remaining = [aid for aid in ids if _spool_path(state, aid).exists()]
+        assert len(remaining) >= 1  # at most 2 examined -> at most 2 deleted
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_recovery_deletion_failure_is_swallowed_and_logged_sanitized(tmp_path, monkeypatch, caplog):
+    # A failed unlink must not raise (best-effort sweep) and the logged warning
+    # must be sanitized - no filesystem path and no attachment identifier.
+    state, _, _ = _started_state(tmp_path, "orphan-unlink-fail")
+    try:
+        now = 1_700_000_000.0
+        monkeypatch.setattr(state.service, "_now", lambda: now)
+        aid = "f" * 32
+        _old_orphan_committed(state, aid, now)
+        spool_dir = _spool_dir(state)
+
+        def _failing_unlink(path, *args, **kwargs):
+            raise OSError("injected unlink failure")
+
+        monkeypatch.setattr(os, "unlink", _failing_unlink)
+
+        with caplog.at_level(logging.WARNING, logger="meshsrv.attachments.service"):
+            state.service._recover_orphaned_spool()  # must not raise
+
+        assert _spool_path(state, aid).exists()  # file is left for a later pass
+        logged = caplog.text
+        assert "could not remove an orphaned spool file" in logged
+        assert str(spool_dir) not in logged  # no path leaked
+        assert aid not in logged              # no identifier leaked
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_recovery_never_touches_non_conforming_or_non_file_entries(tmp_path, monkeypatch):
+    # Path containment: only a name matching one of the two known conventions,
+    # and only a regular file (never a directory or a symlink), is ever
+    # deleted. A subdirectory, a stray non-conforming file, and a symlink
+    # pointing outside the spool dir are all left untouched, while a conforming
+    # old orphan beside them is still reclaimed.
+    state, _, _ = _started_state(tmp_path, "orphan-containment")
+    try:
+        now = 1_700_000_000.0
+        monkeypatch.setattr(state.service, "_now", lambda: now)
+        spool_dir = _spool_dir(state)
+        spool_dir.mkdir(parents=True, exist_ok=True)
+
+        # A stray non-conforming file (not 32-hex, not .*.tmp) - never deleted.
+        stray = spool_dir / "README.txt"
+        stray.write_bytes(b"keep me")
+        os.utime(stray, (now - 7200, now - 7200))
+
+        # A subdirectory - never deleted (is_file() is False).
+        subdir = spool_dir / "subdir"
+        subdir.mkdir()
+
+        # A symlink pointing outside the spool dir - never followed/deleted.
+        outside = tmp_path / "outside-target"
+        outside.write_bytes(b"outside")
+        link = spool_dir / ("1" * 32)  # looks like a committed 32-hex name
+        if hasattr(os, "symlink"):
+            try:
+                os.symlink(outside, link)
+            except (OSError, NotImplementedError):
+                link = None
+        else:
+            link = None
+
+        # A conforming old orphan - the only entry that must be deleted.
+        aid = "a" * 32
+        _old_orphan_committed(state, aid, now)
+
+        state.service._recover_orphaned_spool()
+
+        assert stray.exists()
+        assert subdir.is_dir()
+        if link is not None:
+            assert link.is_symlink()
+        assert outside.exists()
+        assert not _spool_path(state, aid).exists()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_recovery_skips_missing_spool_directory(tmp_path, monkeypatch):
+    # The spool directory may not exist yet (no create has ever run) - recovery
+    # must be a no-op, not a crash.
+    state, _, _ = _started_state(tmp_path, "orphan-missing-dir")
+    try:
+        spool_dir = _spool_dir(state)
+        # Ensure it does not exist (fresh workspace), then recover.
+        if spool_dir.exists():
+            import shutil
+
+            shutil.rmtree(spool_dir)
+        monkeypatch.setattr(state.service, "_now", lambda: 1_700_000_000.0)
+        state.service._recover_orphaned_spool()  # must not raise
     finally:
         mca_runtime.reset_state_for_tests()

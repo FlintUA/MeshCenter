@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 import queue
 import re
 import sqlite3
@@ -113,6 +114,25 @@ SPOOL_CLEANUP_BACKLOG_MAXSIZE = 256
 # How many backlogged spool-cleanup attempts one tick makes before moving on.
 MAX_SPOOL_CLEANUP_PER_TICK = 8
 
+# Finding 5: bounded orphan-staging recovery. A staged file older than this
+# many seconds is treated as abandoned - the request thread crashed (or the
+# process died) between staging and enqueue/commit - and is eligible for
+# deletion. Conservative: an active request's staged file is at most a few
+# seconds old, so the threshold can never mistake it for an orphan.
+ORPHAN_SPOOL_MIN_AGE_SECONDS = 3600.0
+
+# How many spool-directory entries one tick examines, and how many files one
+# tick actually deletes, before yielding back to the wake-driven loop - the
+# same bounded-work-per-tick discipline as MAX_ATTACHMENTS_PER_TICK.
+MAX_ORPHAN_SCAN_PER_TICK = 100
+MAX_ORPHAN_DELETE_PER_TICK = 20
+
+# Finding 4 stages a temp file as a dot-prefixed, `.tmp`-suffixed name
+# (`api/api_attachments.py` `_TEMP_SUFFIX`), distinct from a committed spool
+# file (a bare 32-hex attachment_id). The recovery only ever deletes entries
+# matching one of these two known conventions - never anything else.
+_TEMP_SPOOL_SUFFIX = ".tmp"
+
 # Attachment/command ids are uuid4().hex: exactly 32 lowercase hex chars.
 # Anchored with \Z (not $) so a trailing newline cannot sneak through.
 _HEX32_RE = re.compile(r"[0-9a-f]{32}\Z")
@@ -139,6 +159,21 @@ class InboundEvent:
 
 class AttachmentsServiceError(RuntimeError):
     """Base class for this module's errors."""
+
+
+def _classify_spool_name(name: str) -> Optional[str]:
+    """Finding 5: classify one `spool/outgoing/` entry name into the two known
+    conventions the create endpoint writes (Finding 4) - `"committed"` for a
+    bare 32-hex `attachment_id`, `"temp"` for a dot-prefixed `.tmp`-suffixed
+    staging file - or `None` for anything else, which the recovery never
+    deletes. Pure, and deliberately conservative: an unexpected name (a stray
+    file, a subdirectory name, or anything a future stage might introduce)
+    is left untouched rather than guessed at."""
+    if _HEX32_RE.match(name):
+        return "committed"
+    if name.startswith(".") and name.endswith(_TEMP_SPOOL_SUFFIX):
+        return "temp"
+    return None
 
 
 def _provider_id_text(direction: str, provider_id_column: Optional[str]) -> Optional[str]:
@@ -469,6 +504,11 @@ class AttachmentsService:
 
         # Finding 3: retry any backlogged spool-file removals, bounded per tick.
         self._drain_spool_cleanup()
+
+        # Finding 5: bounded orphan-staging recovery - delete only old,
+        # unreferenced staged files left behind by a crash, never an active
+        # request's fresh file or a committed attachment's spool.
+        self._recover_orphaned_spool()
 
         # Step 1.6A.1 (correction #1): flip runtime readiness once this tick
         # has both a started service and a successfully-published snapshot.
@@ -1010,6 +1050,91 @@ class AttachmentsService:
         self._rollback_silently()
         self._remove_reservation(command.payload.get("client_request_id"))
         self._remove_unreferenced_spool(command.payload.get("attachment_id"))
+
+    # ---- orphan-staging recovery (Finding 5) --------------------------------
+
+    def _referenced_attachment_ids(self) -> set:
+        """The complete set of attachment ids this worker must *not* treat as
+        orphaned spool files: every persisted `attachments` row in this
+        workspace (survives restart), every pending §3.6 reservation
+        (in-memory), and every queued command's `attachment_id` (in-memory).
+        A staged file whose name is in this set is referenced and preserved,
+        no matter its age. Pure reads only - no filesystem writes, no
+        network."""
+        referenced = set()
+        self._conn.row_factory = sqlite3.Row
+        rows = self._conn.execute(
+            "SELECT id FROM attachments WHERE workspace_id = ?",
+            (self._principal.workspace_id,),
+        ).fetchall()
+        referenced.update(row["id"] for row in rows)
+        if self._pending_reservations is not None:
+            referenced.update(
+                r.attachment_id for r in self._pending_reservations.snapshot_ids().values()
+            )
+        for command in self._command_queue.iter_commands():
+            attachment_id = command.payload.get("attachment_id")
+            if isinstance(attachment_id, str):
+                referenced.add(attachment_id)
+        return referenced
+
+    def _recover_orphaned_spool(self) -> None:
+        """Finding 5: bounded orphan-staging recovery. Scans *only* this
+        workspace's `spool/outgoing/` directory for staged files left behind
+        by a process crash after staging but before enqueue/commit, and
+        deletes only the ones that are (a) old enough to be unambiguously
+        abandoned (`ORPHAN_SPOOL_MIN_AGE_SECONDS`) and (b) unreferenced by any
+        persisted row, pending reservation, or queued command - so an active
+        request's fresh file and a committed attachment's file are both
+        preserved, even across restart.
+
+        Bounded: at most `MAX_ORPHAN_SCAN_PER_TICK` entries are examined and
+        at most `MAX_ORPHAN_DELETE_PER_TICK` files deleted per tick. Never
+        recurses or follows symlinks (so it cannot be led to an arbitrary
+        path), and only ever deletes a name matching the two known
+        conventions (`_classify_spool_name`). All logging is sanitized - no
+        path, no identifier. Never raises: the whole pass is a best-effort
+        disk-hygiene sweep, and one bad entry or failed unlink is logged and
+        skipped, not allowed to stop the tick."""
+        spool_dir = self._workspace_manager.paths(self._principal.principal_id).spool_outgoing
+        referenced = self._referenced_attachment_ids()
+        now = self._now()
+        examined = 0
+        deleted = 0
+        try:
+            with os.scandir(spool_dir) as entries:
+                for entry in entries:
+                    if examined >= MAX_ORPHAN_SCAN_PER_TICK or deleted >= MAX_ORPHAN_DELETE_PER_TICK:
+                        break
+                    examined += 1
+                    try:
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                    except OSError:
+                        continue
+                    kind = _classify_spool_name(entry.name)
+                    if kind is None:
+                        # Not a name this endpoint ever writes - leave it alone.
+                        continue
+                    try:
+                        mtime = entry.stat(follow_symlinks=False).st_mtime
+                    except OSError:
+                        continue
+                    if now - mtime < ORPHAN_SPOOL_MIN_AGE_SECONDS:
+                        continue  # active request - too fresh to be an orphan
+                    if kind == "committed" and entry.name in referenced:
+                        continue  # referenced by a row/reservation/command
+                    try:
+                        os.unlink(entry.path)
+                    except OSError:
+                        logger.warning(
+                            "AttachmentsService: could not remove an orphaned spool file"
+                        )
+                        continue
+                    deleted += 1
+        except OSError:
+            # Spool directory missing or unreadable - nothing to recover.
+            return
 
     def _attachment_row(self, attachment_id: str) -> Optional[sqlite3.Row]:
         """The single persisted row a lifecycle command re-validates against,

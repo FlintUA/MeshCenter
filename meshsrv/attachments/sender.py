@@ -105,12 +105,14 @@ KIND_GENERIC = 0
 MAX_COMMENT_BYTES = 1000
 
 
-def _normalize_comment(comment: Optional[str]) -> Optional[str]:
-    """None and the empty/whitespace-only string are treated identically
-    (both mean "no comment") - a UI text field that the user left empty
-    must not round-trip as a comment=="" manifest header down the line.
-    Rejects an embedded NUL (would truncate as a C string in some
-    consumers) and anything over MAX_COMMENT_BYTES once UTF-8 encoded."""
+def normalize_comment(comment: Optional[str]) -> Optional[str]:
+    """The one public comment validation/normalization helper (Finding 8) -
+    used by both `create_draft()` and the API create endpoint, so the two can
+    never drift. None and the empty/whitespace-only string are treated
+    identically (both mean "no comment") - a UI text field that the user left
+    empty must not round-trip as a comment=="" manifest header down the line.
+    Rejects an embedded NUL (would truncate as a C string in some consumers)
+    and anything over MAX_COMMENT_BYTES once UTF-8 encoded."""
 
     if comment is None:
         return None
@@ -235,7 +237,7 @@ def create_draft(
         raise SenderError("a draft must have at least one recipient")
     if len(provider_id) != 8:
         raise SenderError(f"provider_id must be 8 raw bytes, got {len(provider_id)}")
-    comment = _normalize_comment(comment)
+    comment = normalize_comment(comment)
 
     now = _now() if now is None else now
     attachment_id = uuid.uuid4().hex if attachment_id is None else attachment_id

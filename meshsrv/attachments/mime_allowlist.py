@@ -16,6 +16,10 @@ extension-supplied claim alone.
 
 from __future__ import annotations
 
+import codecs
+import json
+from typing import Optional
+
 ALLOWED_MIME_TYPES = frozenset(
     {
         "image/jpeg",
@@ -97,3 +101,124 @@ def is_allowed_extension(file_name: str) -> bool:
     `is_allowed_mime_type` on sniffed content before the file is trusted."""
     lowered = file_name.lower()
     return any(lowered.endswith(ext) for ext in ALLOWED_EXTENSIONS)
+
+
+# ---- Finding 8: content-first filename normalization ----------------------
+#
+# The create endpoint establishes MIME from content (magic bytes), never from
+# a browser Content-Type or a filename extension, and must then make the
+# recorded filename's extension *consistent* with that content MIME so the
+# worker's later independent `is_allowed_extension` check can never reject an
+# already-accepted request (`sender._step_validating` applies the allowlist a
+# second time, with an `extension_not_allowed` failure). The extension is only
+# ever checked/normalized *after* content MIME is established, per design spec
+# section 20.1 - never used to choose the MIME in the first place.
+
+# MIME types whose content is text and must therefore survive the full-stream
+# UTF-8/NUL validation (Finding 8). Binary formats (JPEG/PNG/WebP/PDF) are
+# excluded: they are identified by magic bytes and legitimately contain NUL
+# and non-UTF-8 bytes.
+TEXT_FAMILY_MIME_TYPES = frozenset({"text/plain", "text/csv", "application/json"})
+
+# MIME type -> the filename extensions that are consistent with it, canonical
+# (first) extension first. `.log` has no distinct MIME type, so it shares
+# `text/plain`'s entry.
+_MIME_EXTENSIONS = {
+    "image/jpeg": (".jpg", ".jpeg"),
+    "image/png": (".png",),
+    "image/webp": (".webp",),
+    "application/pdf": (".pdf",),
+    "text/plain": (".txt", ".log"),
+    "text/csv": (".csv",),
+    "application/json": (".json",),
+}
+
+
+def allowed_extensions_for_mime(mime_type: str) -> "tuple[str, ...]":
+    """The filename extensions consistent with `mime_type`, canonical-first,
+    or `()` for an unknown/non-allowlisted type."""
+    return _MIME_EXTENSIONS.get(mime_type, ())
+
+
+def canonical_extension(mime_type: str) -> Optional[str]:
+    """The canonical (first) extension for `mime_type`, or `None` for an
+    unknown type."""
+    extensions = _MIME_EXTENSIONS.get(mime_type)
+    return extensions[0] if extensions else None
+
+
+def normalize_file_name_for_mime(file_name: str, mime_type: str) -> str:
+    """Make `file_name`'s extension consistent with `mime_type`, preserving an
+    already-consistent extension and otherwise replacing/appending the
+    canonical one. `mime_type` is already established from content by the
+    caller; the extension is checked case-insensitively but never used to
+    *choose* the MIME.
+
+    Examples: ``app.log`` + ``text/plain`` -> ``app.log`` (kept);
+    ``photo.jpg`` + ``image/jpeg`` -> ``photo.jpg`` (kept); ``report.exe`` +
+    ``text/plain`` -> ``report.txt`` (replaced); ``notes`` + ``text/plain`` ->
+    ``notes.txt`` (appended). This guarantees the worker's later
+    `is_allowed_extension(file_name)` always passes for an accepted request,
+    closing the Finding 8 gap where a request accepted here could otherwise
+    fail later in `sender._step_validating` on an independent extension rule.
+    """
+    extensions = _MIME_EXTENSIONS.get(mime_type)
+    if extensions is None:
+        return file_name
+    lowered = file_name.lower()
+    for ext in extensions:
+        if lowered.endswith(ext):
+            return file_name
+    canonical = extensions[0]
+    if "." in file_name:
+        stem, _ = file_name.rsplit(".", 1)
+        return stem + canonical
+    return file_name + canonical
+
+
+class TextStreamValidator:
+    """Incremental full-stream text validation (Finding 8): fed each staging
+    chunk, it detects a NUL byte anywhere in the stream and any invalid UTF-8
+    sequence - including a multi-byte sequence split across chunk boundaries -
+    so a text candidate whose binary/invalid content only appears *after* the
+    sniffed 512-byte head is still rejected. Cheap enough to run on every file
+    during staging; the caller only enforces the result for
+    `TEXT_FAMILY_MIME_TYPES` (binary formats legitimately contain NUL and
+    non-UTF-8 bytes, so their result is ignored)."""
+
+    def __init__(self) -> None:
+        self._decoder = codecs.getincrementaldecoder("utf-8")()
+        self._clean = True
+
+    def feed(self, chunk: bytes) -> None:
+        if not self._clean:
+            return
+        if b"\x00" in chunk:
+            self._clean = False
+            return
+        try:
+            self._decoder.decode(chunk, final=False)
+        except UnicodeDecodeError:
+            self._clean = False
+
+    def finish(self) -> bool:
+        """Flush any trailing partial sequence and report whether the whole
+        stream was clean UTF-8 with no NUL byte. Idempotent."""
+        if not self._clean:
+            return False
+        try:
+            self._decoder.decode(b"", final=True)
+        except UnicodeDecodeError:
+            self._clean = False
+            return False
+        return True
+
+
+def validate_json_document(path) -> None:
+    """Validate that the already-staged file at `path` (a `str`/path-like) is
+    one complete JSON document (Finding 8: a leading `{`/`[` in the head is
+    not enough - the whole document must parse). Raises `ValueError` (incl.
+    `json.JSONDecodeError`) on invalid JSON. Bounded by the create endpoint's
+    5 MiB cap and only called for `application/json`."""
+    with open(path, "r", encoding="utf-8") as fh:
+        json.load(fh)

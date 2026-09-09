@@ -378,18 +378,22 @@ class _FileTooLarge(Exception):
 
 def _stage_spool_file(file_storage, spool_dir, attachment_id):
     """Stream `file_storage` to a server-generated exclusive temporary file in
-    fixed-size chunks, computing SHA-256 and the total plaintext size
-    incrementally (Finding 4) - the whole file is never buffered, only the
-    first `_SNIFF_HEAD_BYTES` retained in memory for MIME sniffing.
+    fixed-size chunks, computing SHA-256, the total plaintext size, and the
+    full-stream text-validity result incrementally (Findings 4/8) - the whole
+    file is never buffered, only the first `_SNIFF_HEAD_BYTES` retained in
+    memory for MIME sniffing.
 
     The temp file is created with `tempfile.mkstemp`: exclusive creation
     (O_CREAT|O_EXCL), mode 0600, and a dot-prefixed name derived from the
     minted `attachment_id` - never the browser filename - so an ID collision
     can never overwrite an existing spool file, and the final publish stays a
     same-directory `os.replace` (atomic). Returns
-    `(temp_path, file_sha256, head, size)`. Raises `_FileTooLarge` after
-    reading at most one chunk beyond `_MAX_FILE_BYTES`; on any other error the
-    temp file is removed before re-raising."""
+    `(temp_path, file_sha256, head, size, text_clean)`, where `text_clean` is
+    `TextStreamValidator`'s whole-stream UTF-8/NUL verdict (only meaningful -
+    and only enforced - for text-family MIME types; binary formats are
+    identified by magic bytes and may legitimately contain NUL bytes). Raises
+    `_FileTooLarge` after reading at most one chunk beyond `_MAX_FILE_BYTES`;
+    on any other error the temp file is removed before re-raising."""
     spool_dir.mkdir(parents=True, exist_ok=True)
     fd, temp_path = tempfile.mkstemp(
         dir=spool_dir, prefix=f".{attachment_id}.", suffix=_TEMP_SUFFIX
@@ -397,6 +401,7 @@ def _stage_spool_file(file_storage, spool_dir, attachment_id):
     hasher = hashlib.sha256()
     size = 0
     head = bytearray()
+    text_validator = mime_allowlist.TextStreamValidator()
     try:
         with os.fdopen(fd, "wb") as fh:
             stream = file_storage.stream
@@ -411,12 +416,13 @@ def _stage_spool_file(file_storage, spool_dir, attachment_id):
                     raise _FileTooLarge()
                 hasher.update(chunk)
                 fh.write(chunk)
+                text_validator.feed(chunk)
                 if len(head) < _SNIFF_HEAD_BYTES:
                     head.extend(chunk[:_SNIFF_HEAD_BYTES - len(head)])
     except Exception:
         _discard_spool(Path(temp_path))
         raise
-    return Path(temp_path), hasher.hexdigest(), bytes(head), size
+    return Path(temp_path), hasher.hexdigest(), bytes(head), size, text_validator.finish()
 
 
 def _resolve_create_provider(profiles, provider_id_arg):
@@ -1003,7 +1009,7 @@ def register_attachments_routes(app, handle_errors):
         if comment is not None and not isinstance(comment, str):
             return _json_error("invalid_metadata", "comment must be a string"), 400
         try:
-            comment = sender._normalize_comment(comment)
+            comment = sender.normalize_comment(comment)
         except sender.SenderError:
             return _json_error("invalid_metadata", "comment is not valid"), 400
 
@@ -1056,7 +1062,7 @@ def register_attachments_routes(app, handle_errors):
         spool_path = spool_dir / attachment_id
 
         try:
-            temp_path, file_sha256, head, size = _stage_spool_file(
+            temp_path, file_sha256, head, size, text_clean = _stage_spool_file(
                 file_storage, spool_dir, attachment_id
             )
         except _FileTooLarge:
@@ -1067,11 +1073,46 @@ def register_attachments_routes(app, handle_errors):
             )
             return _internal_error_response()
 
+        # Finding 8: MIME is established from content, and only then does the
+        # rest of the validation run. Zero-byte policy first: an empty file has
+        # no content to establish a MIME from, so it is `mime_not_allowed`
+        # rather than defaulting to `text/plain`.
+        if size == 0:
+            _discard_spool(temp_path)
+            return _json_error("mime_not_allowed", "empty file has no detectable content type"), 400
+
         mime_type = mime_allowlist.sniff_mime_type(head)
         if mime_type is None:
             _discard_spool(temp_path)
             return _json_error("mime_not_allowed", "file content is not an allowed type"), 400
-        source_name = _sanitize_source_name(file_storage.filename)
+
+        # Finding 8: for text-family MIME the *whole* stream must be clean
+        # UTF-8 with no NUL byte - the head alone is not enough (binary/
+        # invalid content appearing after byte 512 must still be rejected).
+        # Binary formats are exempt: they are identified by magic bytes and
+        # legitimately contain NUL/non-UTF-8 bytes.
+        if mime_type in mime_allowlist.TEXT_FAMILY_MIME_TYPES and not text_clean:
+            _discard_spool(temp_path)
+            return _json_error(
+                "mime_not_allowed", "text content contains binary or invalid UTF-8 bytes"
+            ), 400
+
+        # Finding 8: a leading `{`/`[` is not enough to claim JSON - the whole
+        # document must parse (bounded by the 5 MiB cap, only for JSON).
+        if mime_type == "application/json":
+            try:
+                mime_allowlist.validate_json_document(temp_path)
+            except ValueError:
+                _discard_spool(temp_path)
+                return _json_error("mime_not_allowed", "file content is not valid JSON"), 400
+
+        # Finding 8: the filename's extension is normalized to be consistent
+        # with the *sniffed* MIME (never the reverse), so the worker's later
+        # `is_allowed_extension` re-check in `_step_validating` cannot reject
+        # a request accepted here.
+        source_name = mime_allowlist.normalize_file_name_for_mime(
+            _sanitize_source_name(file_storage.filename), mime_type
+        )
 
         # Finding 6: provider size policy - reject *synchronously* when the
         # deterministic ciphertext upper bound for this plaintext already

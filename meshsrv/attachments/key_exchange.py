@@ -53,6 +53,7 @@ from meshsrv.attachments.workspace import MCAWorkspaceManager
 
 DEFAULT_MAX_ANNOUNCES_PER_HOUR = 12
 MIN_SECONDS_BETWEEN_ANNOUNCES_TO_SAME_ADDRESS = 10 * 60
+MIN_SECONDS_BETWEEN_KEY_REQUESTS_TO_SAME_ADDRESS = 10 * 60
 _QUOTA_WINDOW_SECONDS = 3600
 
 
@@ -148,6 +149,7 @@ class KeyExchangeCoordinator:
         *,
         max_announces_per_hour: int = DEFAULT_MAX_ANNOUNCES_PER_HOUR,
         min_seconds_between_announces: int = MIN_SECONDS_BETWEEN_ANNOUNCES_TO_SAME_ADDRESS,
+        min_seconds_between_key_requests: int = MIN_SECONDS_BETWEEN_KEY_REQUESTS_TO_SAME_ADDRESS,
         now_fn=time.time,
     ):
         conn.row_factory = sqlite3.Row
@@ -157,6 +159,7 @@ class KeyExchangeCoordinator:
         self._adapter_id = adapter_id
         self._max_per_hour = max_announces_per_hour
         self._min_interval = min_seconds_between_announces
+        self._min_key_request_interval = min_seconds_between_key_requests
         self._now = now_fn
 
     # ---- incoming message dispatch --------------------------------------
@@ -266,6 +269,49 @@ class KeyExchangeCoordinator:
                 "UPDATE mca_key_exchange_quota SET announces_sent = announces_sent + 1 WHERE workspace_id = ?",
                 (self._principal.workspace_id,),
             )
+        self._conn.commit()
+
+    # ---- outgoing KEY_REQUEST throttle (Step 1.6A.3C) -------------------
+
+    def check_key_request_rate_limit(self, source_address: str, now: float) -> None:
+        """Gate an outgoing KEY_REQUEST to `source_address` behind the
+        per-contact interval (spec: one accepted key request per contact
+        address every `MIN_SECONDS_BETWEEN_KEY_REQUESTS_TO_SAME_ADDRESS`).
+        Raises `RateLimited` when a request was already sent within the
+        window; a NULL `last_request_sent_at` (never asked) is allowed.
+        Deliberately independent of `_check_rate_limits()` - announcing
+        one's own key and requesting a contact's key are different actions
+        and never share a quota window."""
+        state = self._conn.execute(
+            "SELECT last_request_sent_at FROM mca_key_exchange_contact_state "
+            "WHERE workspace_id = ? AND adapter_id = ? AND source_address = ?",
+            (self._principal.workspace_id, self._adapter_id, source_address),
+        ).fetchone()
+        if state is not None and state["last_request_sent_at"] is not None:
+            elapsed = now - state["last_request_sent_at"]
+            if elapsed < self._min_key_request_interval:
+                raise RateLimited(
+                    f"already requested {source_address!r}'s key {elapsed:.0f}s ago "
+                    f"(minimum interval is {self._min_key_request_interval}s)"
+                )
+
+    def record_key_request_sent(self, source_address: str, now: float) -> None:
+        """Persist the quota timestamp only after a request has actually
+        been accepted for send (worker checks the delivery receipt's
+        `sent` flag before calling this - a failed send never consumes the
+        quota). Mirrors `_record_announce_sent()`'s UPSERT shape but writes
+        `last_request_sent_at`, not `last_announce_sent_at`, so the two
+        throttles stay independent."""
+        self._conn.execute(
+            """
+            INSERT INTO mca_key_exchange_contact_state
+                (workspace_id, adapter_id, source_address, last_request_sent_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(workspace_id, adapter_id, source_address)
+            DO UPDATE SET last_request_sent_at = excluded.last_request_sent_at
+            """,
+            (self._principal.workspace_id, self._adapter_id, source_address, now),
+        )
         self._conn.commit()
 
     # ---- KEY_ANNOUNCE handling (someone else's identity arriving) -------

@@ -145,6 +145,19 @@ _TEMP_SPOOL_SUFFIX = ".tmp"
 # Anchored with \Z (not $) so a trailing newline cannot sneak through.
 _HEX32_RE = re.compile(r"[0-9a-f]{32}\Z")
 
+# Stage 1 contact id (Step 1.6A.3C §7.10): the canonical Meshtastic
+# transport address - a `!` prefix followed by exactly 8 lowercase hex chars
+# (e.g. `!756f9960`). Anchored with \Z so a trailing newline cannot sneak
+# through; used by both the request thread's route validation and the
+# worker's defensive re-validation.
+_CONTACT_ID_RE = re.compile(r"![0-9a-f]{8}\Z")
+
+
+def _is_contact_id(value) -> bool:
+    """True iff `value` is a Stage 1 contact transport address (`!` + 8
+    lowercase hex). Pure - no conn, no filesystem, no lock."""
+    return isinstance(value, str) and _CONTACT_ID_RE.match(value) is not None
+
 RelayClientFactory = Callable[[str], Optional[RelayClient]]
 
 
@@ -775,12 +788,12 @@ class AttachmentsService:
 
     def _build_dispatcher(self) -> CommandDispatcher:
         """The real kind->handler table the worker runs (replaces the empty
-        placeholder this service would otherwise default to). The five command
+        placeholder this service would otherwise default to). The six command
         handlers wired so far - the idempotent create (`attachment_create`,
         Step 1.6A.3B), the three Step 1.6A.3A lifecycle commands
-        (retry/download/reject), and the Step 1.6A.3C cancel mutation - every
-        other enumerated kind stays `unsupported_command_kind` until its own
-        future sub-stage wires it.
+        (retry/download/reject), and the two Step 1.6A.3C mutations (cancel
+        and contact key request) - every other enumerated kind stays
+        `unsupported_command_kind` until its own future sub-stage wires it.
         Built once at construction (the dispatcher snapshots its mapping),
         never mutated afterwards."""
         return CommandDispatcher({
@@ -789,6 +802,7 @@ class AttachmentsService:
             "attachment_download": self._command_download,
             "attachment_reject": self._command_reject,
             "attachment_cancel": self._command_cancel,
+            "contact_request_key": self._command_request_key,
         })
 
     def _command_create(self, command: Command) -> CommandOutcome:
@@ -1501,6 +1515,52 @@ class AttachmentsService:
         return CommandOutcome.succeeded(
             resource_id=attachment_id,
             result={"attachment_id": attachment_id, "state": sender.CANCELLED},
+        )
+
+    def _command_request_key(self, command: Command) -> CommandOutcome:
+        """`contact_request_key` (§7.10): send a signed KEY_REQUEST to a
+        contact whose key is unknown/unverified/changed, over the fixed
+        DIRECT route (route_id == destination_address == the contact
+        transport address). Re-validates contact id/adapter/route (never
+        trusts the queue), re-reads the live binding (a contact that became
+        `MCA_READY` since the request thread's snapshot read fails with
+        `key_already_known`), checks the persisted outgoing key-request rate
+        limit, then encodes and sends. The rate-limit timestamp is persisted
+        *only* after the delivery receipt reports `sent == True` - a failed
+        send never consumes the quota. Any delivery failure (DeliveryError,
+        a false receipt, or a missing delivery adapter) is `radio_unavailable`
+        and consumes no quota."""
+        contact_id = command.payload.get("contact_id")
+        adapter_id = command.payload.get("adapter_id")
+        route_id = command.payload.get("route_id")
+        if not _is_contact_id(contact_id):
+            return CommandOutcome.failed("invalid_contact_id")
+        if adapter_id != "meshtastic" or route_id != contact_id:
+            return CommandOutcome.failed("invalid_contact_id")
+
+        if self._key_exchange.get_status(contact_id) is AddressStatus.MCA_READY:
+            return CommandOutcome.failed("key_already_known")
+        try:
+            self._key_exchange.check_key_request_rate_limit(contact_id, self._now())
+        except RateLimited:
+            return CommandOutcome.failed("rate_limited")
+
+        if self._delivery_adapter is None:
+            return CommandOutcome.failed("radio_unavailable")
+        key_request = self._key_exchange.build_key_request()
+        route = Route(route_type=RouteType.DIRECT, route_id=contact_id, destination_address=contact_id)
+        try:
+            wire_payload = self._delivery_adapter.encode(key_request, route)
+            receipt = self._delivery_adapter.send(wire_payload, route, idempotency_key=command.command_id)
+        except DeliveryError:
+            return CommandOutcome.failed("radio_unavailable")
+        if not receipt.sent:
+            return CommandOutcome.failed("radio_unavailable")
+
+        self._key_exchange.record_key_request_sent(contact_id, self._now())
+        return CommandOutcome.succeeded(
+            resource_id=contact_id,
+            result={"contact_id": contact_id, "status": "requested"},
         )
 
     def _refresh_snapshot(self) -> None:

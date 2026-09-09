@@ -2042,3 +2042,206 @@ def test_create_filename_cap_is_code_points_not_bytes(monkeypatch, tmp_path):
     assert resp.status_code == 202
     source_name = facade.submitted[0].payload["source_name"]
     assert source_name == "é" * 200 + ".txt"
+
+
+# ---- Finding 9: missing regression coverage --------------------------------
+#
+# The create path's remaining acceptance requirements that Step 1.6A.3B's first
+# test pass left untested: the exact 5 MiB + 1 rejection, the chunked/no-whole-
+# file-buffer staging property, the two concurrent idempotency races at the HTTP
+# layer, the invalid-CSRF token for create (missing/valid already covered), the
+# create path's own sanitized exception boundary with an injected secret marker,
+# and that a create POST never blocks on the worker tick lock.
+
+
+class _ChunkTrackingStream:
+    """Wraps a byte stream to record how `_stage_spool_file` reads it, proving
+    the staging loop streams in fixed-size chunks and never issues an unbounded
+    whole-file `read()` (Finding 4: "never whole-file buffered")."""
+
+    def __init__(self, data):
+        self._io = BytesIO(data)
+        self.requested_sizes = []
+        self.saw_unbounded_read = False
+        self.total_read = 0
+
+    def read(self, size=-1):
+        if size is None or size < 0:
+            self.saw_unbounded_read = True
+            self.requested_sizes.append(-1)
+        else:
+            self.requested_sizes.append(size)
+        chunk = self._io.read(size)
+        self.total_read += len(chunk)
+        return chunk
+
+
+def test_create_file_one_byte_over_cap_is_rejected(monkeypatch, tmp_path):
+    # Exactly one byte past the 5 MiB cap (the cap is exclusive: `size > cap`,
+    # not `>=`), distinct from the existing 5 MiB + 3 test.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    over = b"\xff\xd8\xff\xe0" + b"\x00" * (api_attachments._MAX_FILE_BYTES - 3)
+    resp = _post_create(c, data=over)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "file_too_large"
+    assert facade.submitted == []
+    assert list((tmp_path / "spool").iterdir()) == []
+
+
+def test_create_staging_streams_in_bounded_chunks_without_whole_file_buffering(tmp_path):
+    # Finding 4: the staging loop reads the file in fixed-size chunks and never
+    # calls an unbounded whole-file read (which would buffer it in memory).
+    spool_dir = tmp_path / "spool"
+    data = b"\xff\xd8\xff\xe0" + b"x" * (2 * 1024 * 1024)
+    stream = _ChunkTrackingStream(data)
+    path, _digest, head, size, _clean = api_attachments._stage_spool_file(
+        SimpleNamespace(stream=stream), spool_dir, "a" * 32
+    )
+    assert stream.saw_unbounded_read is False
+    assert stream.requested_sizes and all(
+        s == api_attachments._STAGING_CHUNK_BYTES for s in stream.requested_sizes
+    )
+    assert stream.total_read == len(data)
+    assert size == len(data)
+    assert head == b"\xff\xd8\xff\xe0" + b"x" * (api_attachments._SNIFF_HEAD_BYTES - 4)
+    path.unlink()  # the successful stage leaves its temp file; clean it up.
+
+
+def test_create_staging_stops_one_chunk_past_the_cap(tmp_path):
+    # Finding 4: an oversized file is rejected after reading at most one chunk
+    # beyond the 5 MiB cap - the loop never drains the whole file.
+    spool_dir = tmp_path / "spool"
+    stream = _ChunkTrackingStream(b"\xff\xd8\xff\xe0" + b"x" * (6 * 1024 * 1024))
+    with pytest.raises(api_attachments._FileTooLarge):
+        api_attachments._stage_spool_file(SimpleNamespace(stream=stream), spool_dir, "b" * 32)
+    assert stream.total_read <= api_attachments._MAX_FILE_BYTES + api_attachments._STAGING_CHUNK_BYTES
+    assert stream.total_read < 6 * 1024 * 1024 + 4  # did not drain the whole file
+    assert list(spool_dir.iterdir()) == []  # the discarded temp file was removed
+
+
+def test_create_concurrent_identical_requests_enqueue_exactly_one_command(monkeypatch, tmp_path):
+    # Two identical requests racing through the reservation lock: exactly one
+    # command is enqueued, and both responses carry the same ids (the second is
+    # a replay_pending with `replayed: True`).
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    barrier = threading.Barrier(2)
+    results = []
+
+    def post():
+        barrier.wait()
+        results.append(_post_create(c))
+
+    threads = [threading.Thread(target=post) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5.0)
+        assert not t.is_alive(), "concurrent create hung on the reservation lock"
+
+    assert sorted(r.status_code for r in results) == [202, 202]
+    bodies = [r.get_json() for r in results]
+    assert bodies[0]["attachment_id"] == bodies[1]["attachment_id"]
+    assert bodies[0]["command_id"] == bodies[1]["command_id"]
+    assert len(facade.submitted) == 1
+
+
+def test_create_concurrent_same_id_different_content_one_fresh_one_conflict(monkeypatch, tmp_path):
+    # Same client_request_id, different content: one fresh (202) and one
+    # conflict (409) - never two enqueues - and the conflict's staged file is
+    # discarded, leaving exactly the fresh request's spool file.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    barrier = threading.Barrier(2)
+    results = []
+
+    def post(data):
+        barrier.wait()
+        results.append(_post_create(c, data=data))
+
+    threads = [
+        threading.Thread(target=post, args=(_JPEG,)),
+        threading.Thread(target=post, args=(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32,)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5.0)
+        assert not t.is_alive(), "concurrent create hung on the reservation lock"
+
+    assert sorted(r.status_code for r in results) == [202, 409]
+    conflict = next(r for r in results if r.status_code == 409)
+    assert conflict.get_json()["error_code"] == "idempotency_conflict"
+    assert len(facade.submitted) == 1
+    assert len(list((tmp_path / "spool").iterdir())) == 1
+
+
+def test_create_invalid_csrf_token_is_403(monkeypatch, tmp_path):
+    # Missing and valid tokens are covered; this pins the invalid-token branch
+    # for the create endpoint specifically (a wrong X-CSRF-Token never reaches
+    # submission or staging).
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _csrf_client(monkeypatch, facade)
+    _set_csrf_token(c, "real-token")
+    resp = _post_create(c, headers={"X-CSRF-Token": "wrong-token"})
+    assert resp.status_code == 403
+    assert resp.get_json()["error_code"] == "csrf_invalid"
+    assert facade.submitted == []
+    assert not (tmp_path / "spool").exists()
+
+
+def test_create_unexpected_exception_is_sanitized(monkeypatch, tmp_path, caplog):
+    # The create route has its own sanitized boundary (same `_mca_error_boundary`
+    # as the GET routes): an injected facade exception carrying a secret marker
+    # must map to the stable 500 and never leak the marker to the wire or log.
+    caplog.set_level(logging.ERROR)
+    marker = "SECRET_MARKER_create_x9"
+
+    class _RaisingRecipientFacade(_FakeFacade):
+        def recipient_snapshot(self):
+            raise RuntimeError(f"create-leak {marker}")
+
+    facade = _RaisingRecipientFacade(
+        providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 500
+    assert resp.get_json() == {
+        "ok": False,
+        "error": "Internal server error",
+        "error_code": "internal_error",
+    }
+    assert marker not in resp.get_data(as_text=True)
+    assert "Traceback" not in resp.get_data(as_text=True)
+    assert marker not in caplog.text
+    assert "Traceback" not in caplog.text
+    assert not (tmp_path / "spool").exists()  # the exception fired before staging
+
+
+def test_create_does_not_block_on_the_tick_lock(tmp_path):
+    # A create POST must read only the worker-published snapshot and submit
+    # through the in-memory facade - never the worker's tick lock. An empty
+    # runtime means no recipient binding -> synchronous 400, not a hang.
+    state = _started(tmp_path, "create-thread")
+    try:
+        c = _build_client()
+        state.tick_lock.acquire()
+        try:
+            result = {}
+
+            def post():
+                result["resp"] = _post_create(c)
+
+            poster = threading.Thread(target=post, name="create-request-thread")
+            poster.start()
+            poster.join(timeout=2.0)
+            assert not poster.is_alive(), "create POST blocked on the worker tick lock"
+        finally:
+            state.tick_lock.release()
+
+        assert result["resp"].status_code == 400
+        assert result["resp"].get_json()["error_code"] == "recipient_not_found"
+    finally:
+        mca_runtime.reset_state_for_tests()

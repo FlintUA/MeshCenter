@@ -1320,6 +1320,161 @@ def test_create_worker_rechecks_ciphertext_size(tmp_path):
         mca_runtime.reset_state_for_tests()
 
 
+# --- Finding 9: worker-side regression coverage ------------------------------
+#
+# The worker-side create half's remaining acceptance requirements: it must
+# re-validate the *recipient* (not just the provider) against the live SQLite
+# binding at commit time (KEY_CHANGED / removed drift), and its DB-level
+# idempotency backstop (Migration-11 unique index -> IntegrityError fallback)
+# must return the original attachment for a matching hash and a terminal
+# conflict for a differing hash - never a second logical attachment.
+
+
+def test_create_worker_rechecks_recipient_key_changed_after_snapshot(tmp_path):
+    # The stale-snapshot race for the recipient: the request thread saw an
+    # MCA_READY binding; the binding then gained a pending key change
+    # (KEY_CHANGED) before the worker committed. The worker re-resolves from
+    # SQLite and must reject with recipient_not_trusted - it never trusts the
+    # queue's snapshot.
+    state, _, _ = _started_state(tmp_path, "create-recipient-key-changed")
+    try:
+        provider_id = _register_ready_provider(state)
+        _seed_trusted_binding(state)
+        state.conn.execute(
+            "UPDATE mca_recipient_bindings SET pending_public_identity = ? WHERE transport_address = ?",
+            ("03" * 32, "!aaaaaaaa"),
+        )
+        state.conn.commit()
+        attachment_id = "7a" + "0" * 30
+        _stage_reserve_enqueue(
+            state, "cmd-key-changed", attachment_id, "req-key-changed", provider_id
+        )
+        state.service.tick()
+        _assert_create_failed_and_cleaned(
+            state, "cmd-key-changed", attachment_id, "recipient_not_trusted"
+        )
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_create_worker_rechecks_recipient_removed_after_snapshot(tmp_path):
+    # Same race, other direction: the binding the request thread saw is gone by
+    # commit time, so the worker re-resolves to None -> recipient_not_found.
+    state, _, _ = _started_state(tmp_path, "create-recipient-removed")
+    try:
+        provider_id = _register_ready_provider(state)
+        _seed_trusted_binding(state)
+        state.conn.execute(
+            "DELETE FROM mca_recipient_bindings WHERE transport_address = ?", ("!aaaaaaaa",)
+        )
+        state.conn.commit()
+        attachment_id = "8b" + "0" * 30
+        _stage_reserve_enqueue(
+            state, "cmd-recipient-removed", attachment_id, "req-recipient-removed", provider_id
+        )
+        state.service.tick()
+        _assert_create_failed_and_cleaned(
+            state, "cmd-recipient-removed", attachment_id, "recipient_not_found"
+        )
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_create_duplicate_matching_hash_returns_the_original_not_a_second_row(tmp_path, monkeypatch):
+    # The DB-level idempotency backstop fires when a duplicate create collides on
+    # the (workspace_id, client_request_id) unique index: the IntegrityError
+    # fallback must return idempotent success with the ORIGINAL attachment_id -
+    # never a second logical attachment, never a phantom command failure.
+    state, _, _ = _started_state(tmp_path, "create-dup-match")
+    try:
+        client_request_id = "req-dup-match"
+        existing_id = "aa" + "0" * 30
+        new_id = "bb" + "0" * 30
+        _seed_committed_create_row(state, existing_id, client_request_id, "f" * 64)
+        provider_id = _register_ready_provider(state)
+        monkeypatch.setattr(state.service._key_exchange, "get_binding", lambda addr: _trusted_binding())
+        monkeypatch.setattr(state.service, "_due_rows", lambda: [])
+        _stage_reserve_enqueue(state, "cmd-dup-match", new_id, client_request_id, provider_id)
+
+        state.service.tick()
+
+        result = state.facade.get_command("cmd-dup-match")
+        assert result.status == STATUS_SUCCEEDED
+        assert result.resource_id == existing_id
+        assert result.result == {"attachment_id": existing_id, "state": sender.DRAFT}
+        assert state.conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0] == 1
+        assert len(state.pending_reservations) == 0
+        assert not _spool_path(state, new_id).exists()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_create_duplicate_different_hash_is_conflict_without_a_second_row(tmp_path, monkeypatch):
+    # Same client_request_id, different canonical_hash: the fallback must be a
+    # terminal idempotency_conflict - no success, no second row, staged file
+    # discarded.
+    state, _, _ = _started_state(tmp_path, "create-dup-conflict")
+    try:
+        client_request_id = "req-dup-conflict"
+        existing_id = "aa" + "0" * 30
+        new_id = "bb" + "0" * 30
+        _seed_committed_create_row(state, existing_id, client_request_id, "0" * 64)
+        provider_id = _register_ready_provider(state)
+        monkeypatch.setattr(state.service._key_exchange, "get_binding", lambda addr: _trusted_binding())
+        monkeypatch.setattr(state.service, "_due_rows", lambda: [])
+        _stage_reserve_enqueue(state, "cmd-dup-conflict", new_id, client_request_id, provider_id)
+
+        state.service.tick()
+
+        result = state.facade.get_command("cmd-dup-conflict")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == "idempotency_conflict"
+        assert state.conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0] == 1
+        assert len(state.pending_reservations) == 0
+        assert not _spool_path(state, new_id).exists()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_committed_replay_index_survives_restart(tmp_path, monkeypatch):
+    # The idempotency index is rebuilt from the persisted `attachments` rows
+    # (client_request_id + canonical_hash), not from in-memory state - so a
+    # committed create is still replayed as "the original attachment" after a
+    # full process restart (the Migration-11 index's whole point).
+    data_dir = str(tmp_path / "idempotency-restart")
+    client_request_id = "req-survives-restart"
+    attachment_id = "cc" + "0" * 30
+    try:
+        mca_runtime.reset_state_for_tests()
+        mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+        ether = InMemoryEther()
+        transport = FakeRadioTransport(ether, "!aaaaaaaa")
+        mca_runtime.start_attachments_service(data_dir, transport)
+        state = mca_runtime._get_state(data_dir)  # noqa: SLF001
+        assert state.service.stop()
+        state.ready_event.set()
+        monkeypatch.setattr(state.service, "_due_rows", lambda: [])
+        _seed_committed_create_row(state, attachment_id, client_request_id, "f" * 64)
+        state.service.tick()
+        assert state.facade.committed_idempotency()[client_request_id].attachment_id == attachment_id
+
+        # "Restart": drop the singleton (closes conn), then re-init the same
+        # data_dir - the idempotency entry is re-read from disk, not memory.
+        mca_runtime.reset_state_for_tests()
+        mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+        ether2 = InMemoryEther()
+        transport2 = FakeRadioTransport(ether2, "!aaaaaaaa")
+        mca_runtime.start_attachments_service(data_dir, transport2)
+        state2 = mca_runtime._get_state(data_dir)  # noqa: SLF001
+        assert state2.service.stop()
+        state2.ready_event.set()
+        monkeypatch.setattr(state2.service, "_due_rows", lambda: [])
+        state2.service.tick()
+        assert state2.facade.committed_idempotency()[client_request_id].attachment_id == attachment_id
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
 # --- orphan-staging recovery (Finding 5) ------------------------------------
 #
 # The create endpoint stages a temp file (`.{id}.<rand>.tmp`) then atomically

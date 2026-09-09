@@ -55,6 +55,11 @@ from meshsrv.attachments.provider_registry import (
     decode_provider_id,
     encode_provider_id,
 )
+from meshsrv.attachments.key_exchange import AddressStatus
+from meshsrv.attachments.recipient_snapshot import (
+    RecipientBindingSnapshot,
+    RecipientSnapshot,
+)
 from meshsrv.attachments.snapshots import (
     AttachmentRecord,
     AttachmentsSnapshot,
@@ -169,6 +174,24 @@ def _snapshot(records):
     )
 
 
+def _trusted_recipient_snapshot(source_address="!aaaaaaaa"):
+    """The default recipient snapshot for the fake facade: `!aaaaaaaa` is a
+    known, `MCA_READY` binding, so the pre-existing create tests (which all
+    post that source_address) pass the Finding 7 synchronous check without
+    each having to stand up a binding. The `public_identity` bytes are
+    deliberately *not* modelled here - the projection never carries them."""
+    return RecipientSnapshot(
+        by_address={
+            source_address: RecipientBindingSnapshot(
+                adapter_id="meshtastic",
+                transport_address=source_address,
+                key_id="1" * 16,
+                status=AddressStatus.MCA_READY,
+            )
+        }
+    )
+
+
 class _FakeFacade:
     def __init__(
         self,
@@ -182,6 +205,7 @@ class _FakeFacade:
         queue_full=False,
         spool_dir=None,
         committed=None,
+        recipient=None,
     ):
         self._snapshot = snapshot or _snapshot([])
         self._providers = providers or {}
@@ -191,6 +215,7 @@ class _FakeFacade:
         self._identity = identity
         self._commands = commands or {}
         self._decisions = decisions or {}
+        self._recipient = recipient if recipient is not None else _trusted_recipient_snapshot()
         self.not_ready = False
         self.queue_full = queue_full
         self.submitted = []  # commands the POST endpoints handed to submit()
@@ -246,6 +271,9 @@ class _FakeFacade:
 
     def provider_snapshot(self):
         return self._providers
+
+    def recipient_snapshot(self):
+        return self._recipient
 
     def connectivity_snapshot(self):
         return self._connectivity
@@ -1797,6 +1825,63 @@ def test_create_queue_full_is_429(monkeypatch, tmp_path):
     assert resp.status_code == 429
     assert resp.get_json()["error_code"] == "command_queue_full"
     assert facade.submitted == []
+
+
+# ---- Finding 7: synchronous recipient-trust check --------------------------
+
+
+def test_create_unknown_recipient_is_400_recipient_not_found(monkeypatch, tmp_path):
+    # The recipient check runs *before* provider resolution and staging: with
+    # no providers registered either, the unknown recipient is the error that
+    # wins, proving the recipient check is a synchronous, pre-staging gate.
+    facade = _FakeFacade(
+        providers={},
+        spool_dir=tmp_path / "spool",
+        recipient=RecipientSnapshot(by_address={}),
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "recipient_not_found"
+    assert facade.submitted == []
+    assert not (tmp_path / "spool").exists()  # nothing was ever staged
+
+
+@pytest.mark.parametrize("status", [AddressStatus.KEY_UNVERIFIED, AddressStatus.KEY_CHANGED])
+def test_create_untrusted_recipient_is_400_recipient_not_trusted(monkeypatch, tmp_path, status):
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider()},
+        spool_dir=tmp_path / "spool",
+        recipient=RecipientSnapshot(
+            by_address={
+                "!aaaaaaaa": RecipientBindingSnapshot(
+                    adapter_id="meshtastic",
+                    transport_address="!aaaaaaaa",
+                    key_id="1" * 16,
+                    status=status,
+                )
+            }
+        ),
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "recipient_not_trusted"
+    assert facade.submitted == []
+
+
+def test_create_rejects_unknown_recipient_synchronously_on_the_real_runtime(tmp_path):
+    state = _started(tmp_path, "recipient-notfound")
+    try:
+        c = _build_client()
+        resp = _post_create(c)
+        # The real runtime has no binding for `!aaaaaaaa`, and the synchronous
+        # check reads the worker-published snapshot (not SQLite) - so this is
+        # a 400 before provider resolution/staging, on a stopped worker.
+        assert resp.status_code == 400
+        assert resp.get_json()["error_code"] == "recipient_not_found"
+    finally:
+        mca_runtime.reset_state_for_tests()
 
 
 def test_create_missing_csrf_token_is_403(monkeypatch, tmp_path):

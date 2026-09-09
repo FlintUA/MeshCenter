@@ -70,6 +70,7 @@ from meshsrv.attachments.idempotency import (
 from meshsrv.attachments.identity import MCAPrincipal
 from meshsrv.attachments.probe_registry import ProbeRecord, ProbeRegistry
 from meshsrv.attachments.provider_registry import ProviderProfile
+from meshsrv.attachments.recipient_snapshot import RecipientSnapshot, RecipientSnapshotPublisher
 from meshsrv.attachments.snapshots import AttachmentRecord, AttachmentsSnapshot, AttachmentsSnapshotPublisher
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor, ConnectivitySnapshot, UploadDecision
@@ -116,6 +117,7 @@ class AttachmentsFacade:
         connectivity_monitor: ConnectivityMonitor,
         principal: MCAPrincipal,
         workspace_manager: MCAWorkspaceManager,
+        recipient_snapshot_publisher: RecipientSnapshotPublisher,
     ):
         self._command_queue = command_queue
         self._command_registry = command_registry
@@ -127,6 +129,7 @@ class AttachmentsFacade:
         self._connectivity_monitor = connectivity_monitor
         self._principal = principal
         self._workspace_manager = workspace_manager
+        self._recipient_snapshot_publisher = recipient_snapshot_publisher
 
     def _require_ready(self) -> None:
         """Gate the snapshot-backed read/write methods: raise `FacadeNotReady`
@@ -191,6 +194,16 @@ class AttachmentsFacade:
         read-only view of the monitor's `_profile_snapshot`. No SQLite,
         filesystem, network, or tick lock. Not readiness-gated."""
         return self._connectivity_monitor.profile_snapshot()
+
+    def recipient_snapshot(self) -> RecipientSnapshot:
+        """The worker-published immutable TOFU recipient-binding snapshot
+        (Finding 7) - the request thread's SQLite-free view of which transport
+        addresses have a known, trusted binding. A pure in-memory read of the
+        publisher's atomically-swapped snapshot, never `conn`. Not
+        readiness-gated: the publisher publishes an (empty, fail-closed)
+        snapshot from construction, so an unknown recipient is a 400
+        `recipient_not_found`, never a `FacadeNotReady`, at any point."""
+        return self._recipient_snapshot_publisher.snapshot()
 
     def evaluate_upload_readiness(
         self,

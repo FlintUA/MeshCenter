@@ -132,6 +132,7 @@ from meshsrv.attachments.idempotency import PendingReservations
 from meshsrv.attachments.key_exchange import KeyExchangeCoordinator
 from meshsrv.attachments.probe_registry import ProbeRegistry
 from meshsrv.attachments.provider_registry import ProviderRegistry
+from meshsrv.attachments.recipient_snapshot import RecipientSnapshotPublisher
 from meshsrv.attachments.service import INBOUND_QUEUE_MAXSIZE, AttachmentsService, InboundEvent
 from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
 from meshsrv.attachments.workspace import MCAWorkspaceManager
@@ -202,6 +203,16 @@ class _MCARuntimeState:
         self.principal: MCAPrincipal = ensure_principal(self.conn, self.workspace_manager, WORKSPACE_ID)
         self.coordinator = KeyExchangeCoordinator(
             self.conn, self.workspace_manager, self.principal, ADAPTER_ID
+        )
+        # Finding 7 (Step 1.6A.3B review): the worker-published immutable
+        # recipient-binding snapshot. Constructed eagerly (its own __init__
+        # does an eager `refresh()`, a SQLite read via `coordinator.
+        # list_bindings()` on this startup thread - safe, same reasoning as
+        # ConnectivityMonitor's eager `_refresh_profile_snapshot()` below) and
+        # handed to *both* the facade (request thread reads it) and the
+        # service (worker refreshes it each tick), so they share one instance.
+        self.recipient_snapshot_publisher = RecipientSnapshotPublisher(
+            self.coordinator, adapter_id=ADAPTER_ID
         )
         # ADR-0008 decision 2/3: both are cheap to construct (plain SQL
         # wrappers - no thread, no network I/O happens until refresh()
@@ -281,6 +292,7 @@ class _MCARuntimeState:
             connectivity_monitor=self.connectivity_monitor,
             principal=self.principal,
             workspace_manager=self.workspace_manager,
+            recipient_snapshot_publisher=self.recipient_snapshot_publisher,
         )
         # Unlike the pieces above, the worker thread itself is not
         # started until ensure_service() runs - see that method's own
@@ -361,6 +373,7 @@ class _MCARuntimeState:
             wake_event=self.wake_event,
             ready_event=self.ready_event,
             pending_reservations=self.pending_reservations,
+            recipient_snapshot_publisher=self.recipient_snapshot_publisher,
         )
         if self.dispatcher is self._dispatcher_placeholder:
             # The service built its real lifecycle-command dispatcher (we

@@ -32,6 +32,7 @@ from meshsrv.attachments.idempotency import (
     PendingReservations,
 )
 from meshsrv.attachments.probe_registry import ProbeRegistry
+from meshsrv.attachments.recipient_snapshot import RecipientSnapshot
 from meshsrv.attachments.snapshots import AttachmentsSnapshot, AttachmentsSnapshotPublisher
 from meshsrv.connectivity_monitor import ConnectivitySnapshot, InternetStatus, UploadDecision
 
@@ -67,6 +68,19 @@ def _principal():
         private_key_file="key.pem",
         created_at=0.0,
     )
+
+
+class _StubRecipientPublisher:
+    """Duck-typed recipient-snapshot surface (Finding 7) with no SQLite - the
+    one method the facade's `recipient_snapshot()` delegates to. Publishes an
+    empty, fail-closed snapshot from construction, matching the real
+    publisher's "never None, fail-closed before first publish" contract."""
+
+    def __init__(self):
+        self._snapshot = RecipientSnapshot(by_address={})
+
+    def snapshot(self):
+        return self._snapshot
 
 
 class _StubWorkspaceManager:
@@ -107,6 +121,7 @@ def _facade(*, maxsize=64, ready=True, committed=None):
         connectivity_monitor=_StubConnectivityMonitor(),
         principal=_principal(),
         workspace_manager=_StubWorkspaceManager(),
+        recipient_snapshot_publisher=_StubRecipientPublisher(),
     )
     return facade, wake_event
 
@@ -181,6 +196,16 @@ def test_connectivity_provider_identity_reads_are_not_readiness_gated():
     assert facade.identity_snapshot().workspace_id == "ws-test"
 
 
+def test_recipient_snapshot_is_not_readiness_gated_and_fail_closed():
+    # Finding 7: the recipient snapshot is a request-thread read that must
+    # never raise `FacadeNotReady` (an unknown recipient is a 400, not a 503)
+    # and must be fail-closed (empty) before the runtime is ready.
+    facade, _ = _facade(ready=False)
+    snapshot = facade.recipient_snapshot()
+    assert isinstance(snapshot, RecipientSnapshot)
+    assert snapshot.by_address == {}
+
+
 def test_identity_snapshot_returns_the_injected_principal():
     facade, _ = _facade()
     assert facade.identity_snapshot().principal_id == "0" * 16
@@ -190,6 +215,11 @@ def test_identity_snapshot_returns_the_injected_principal():
 def test_connectivity_snapshot_returns_the_monitors_published_view():
     facade, _ = _facade()
     assert facade.connectivity_snapshot() is facade._connectivity_monitor._snapshot  # noqa: SLF001
+
+
+def test_recipient_snapshot_returns_the_publishers_published_view():
+    facade, _ = _facade()
+    assert facade.recipient_snapshot() is facade._recipient_snapshot_publisher.snapshot()  # noqa: SLF001
 
 
 # --- submit (the §3.4 enqueue) ---------------------------------------------

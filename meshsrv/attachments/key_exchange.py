@@ -462,6 +462,20 @@ class KeyExchangeCoordinator:
         ).fetchone()
         return _row_to_binding(row) if row is not None else None
 
+    def list_bindings(self) -> "list[RecipientBinding]":
+        """All TOFU recipient bindings for this coordinator's (workspace,
+        adapter), in a deterministic (`transport_address`-ascending) order.
+        Worker/startup-thread only - it reads `conn`, so the request thread
+        must reach this data only through `recipient_snapshot.py`'s immutable
+        `RecipientSnapshotPublisher` projection (Finding 7), never this method
+        directly."""
+        rows = self._conn.execute(
+            "SELECT * FROM mca_recipient_bindings "
+            "WHERE workspace_id = ? AND adapter_id = ? ORDER BY transport_address",
+            (self._principal.workspace_id, self._adapter_id),
+        ).fetchall()
+        return [_row_to_binding(row) for row in rows]
+
     def get_status(self, source_address: str) -> AddressStatus:
         binding = self.get_binding(source_address)
         return AddressStatus.KEY_UNKNOWN if binding is None else binding.status

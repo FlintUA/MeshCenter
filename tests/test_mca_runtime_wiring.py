@@ -139,6 +139,79 @@ def test_service_is_a_real_attachments_service(tmp_path):
         mca_runtime.reset_state_for_tests()
 
 
+# --- Finding 7: recipient-binding snapshot (worker-published, request-read) ---
+
+
+def _seed_trusted_binding(state, source_address="!aaaaaaaa", *, confirmed=True):
+    """Insert a TOFU recipient binding row directly into the worker-owned
+    connection, mirroring the columns `KeyExchangeCoordinator._handle_key_
+    announce` writes (with `tofu_confirmed_at` set only when `confirmed`, so a
+    test can seed either an MCA_READY or a KEY_UNVERIFIED binding)."""
+    state.conn.execute(
+        """
+        INSERT INTO mca_recipient_bindings
+            (id, workspace_id, adapter_id, transport_address, principal_id,
+             sender_key_id, public_identity, key_epoch, bound_at, tofu_confirmed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            f"meshtastic:{source_address}",
+            "local",
+            "meshtastic",
+            source_address,
+            "1" * 16,
+            "1" * 16,
+            "02" * 32,
+            0,
+            0.0,
+            1.0 if confirmed else None,
+        ),
+    )
+    state.conn.commit()
+
+
+def test_facade_and_service_share_the_same_recipient_snapshot_publisher(tmp_path):
+    state, _, _ = _started_state(tmp_path, "recipient-owner")
+    try:
+        # Finding 7: one publisher, shared between the request-facing facade
+        # (which reads it) and the worker-facing service (which refreshes it).
+        assert state.facade._recipient_snapshot_publisher is state.recipient_snapshot_publisher  # noqa: SLF001
+        assert state.service._recipient_publisher is state.recipient_snapshot_publisher  # noqa: SLF001
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_tick_refreshes_the_recipient_snapshot_from_the_binding_table(tmp_path):
+    state, _, _ = _started_state(tmp_path, "recipient-refresh")
+    try:
+        # Before any binding exists the published snapshot is empty (fail-closed).
+        assert state.facade.recipient_snapshot().by_address == {}
+
+        _seed_trusted_binding(state)
+        state.service.tick()
+
+        binding = state.facade.recipient_snapshot().by_address["!aaaaaaaa"]
+        assert binding.status is AddressStatus.MCA_READY
+        assert binding.key_id == "1" * 16
+        # No-secret discipline: the projection carries the public identifiers
+        # only - never the recipient's `public_identity` bytes.
+        assert not hasattr(binding, "public_identity")
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_unconfirmed_binding_projects_as_key_unverified(tmp_path):
+    state, _, _ = _started_state(tmp_path, "recipient-unverified")
+    try:
+        _seed_trusted_binding(state, confirmed=False)
+        state.service.tick()
+
+        binding = state.facade.recipient_snapshot().by_address["!aaaaaaaa"]
+        assert binding.status is AddressStatus.KEY_UNVERIFIED
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
 # --- get_attachments_facade: never lazy-create the SQLite runtime ----------
 
 

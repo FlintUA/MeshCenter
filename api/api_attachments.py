@@ -88,6 +88,7 @@ from meshsrv.attachments.provider_registry import (
     decode_provider_id,
     encode_provider_id,
 )
+from meshsrv.attachments.recipient_snapshot import RecipientRejectionReason, evaluate_recipient_trust
 from meshsrv.attachments.snapshots import (
     serialize_attachment_public,
     serialize_delivery,
@@ -975,6 +976,19 @@ def register_attachments_routes(app, handle_errors):
         ):
             return _json_error("invalid_metadata", "recipient.source_address is required"), 400
         source_address = recipient["source_address"]
+
+        # Finding 7: reject an unknown / not-yet-trusted recipient
+        # *synchronously*, from the worker-published immutable binding snapshot
+        # (no SQLite on this request thread). This is fast feedback only - the
+        # worker re-validates against the live binding at commit time
+        # (`AttachmentsService._command_create`), which remains the authority.
+        # A binding that became trusted (or revoked) between this read and the
+        # worker's re-check is decided there, never here.
+        reason = evaluate_recipient_trust(facade.recipient_snapshot(), source_address)
+        if reason is RecipientRejectionReason.RECIPIENT_NOT_FOUND:
+            return _json_error("recipient_not_found", "no known recipient binding for the address"), 400
+        if reason is RecipientRejectionReason.RECIPIENT_NOT_TRUSTED:
+            return _json_error("recipient_not_trusted", "recipient binding is not trusted"), 400
 
         route = metadata.get("route")
         if route is not None:

@@ -64,6 +64,7 @@ from meshsrv.attachments.identity import MCAPrincipal
 from meshsrv.attachments.idempotency import PendingReservations, validate_canonical_hash, validate_client_request_id
 from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator, RateLimited
 from meshsrv.attachments.provider_registry import ProviderRegistry, ProviderRegistryError, decode_provider_id, encode_provider_id
+from meshsrv.attachments.recipient_snapshot import RecipientSnapshotPublisher
 from meshsrv.attachments.relay_client import RelayClient
 from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
 from meshsrv.attachments.workspace import MCAWorkspaceManager
@@ -236,6 +237,7 @@ class AttachmentsService:
         wake_event: Optional[threading.Event] = None,
         ready_event: Optional[threading.Event] = None,
         pending_reservations: Optional[PendingReservations] = None,
+        recipient_snapshot_publisher: Optional[RecipientSnapshotPublisher] = None,
     ):
         self._conn = conn
         self._workspace_manager = workspace_manager
@@ -303,6 +305,14 @@ class AttachmentsService:
             snapshot_publisher if snapshot_publisher is not None else AttachmentsSnapshotPublisher()
         )
         self._wake_event = wake_event if wake_event is not None else threading.Event()
+        # Finding 7 (Step 1.6A.3B review): the worker-refreshed recipient
+        # snapshot publisher. `mca_runtime` passes the *same* instance it
+        # handed the facade, so a request thread's synchronous recipient check
+        # reads exactly the snapshot this worker refreshes. A standalone caller
+        # that constructs its own dedicated `conn` (every test in this module
+        # does) omits it; `None` means the per-tick recipient refresh is a
+        # no-op (there is no request-facing facade to feed in that case).
+        self._recipient_publisher = recipient_snapshot_publisher
         # Step 1.6A.1 (correction #1): the shared runtime-readiness signal.
         # `mca_runtime` passes the same Event it hands the facade, so the
         # facade's snapshot-backed reads/write are gated on exactly this
@@ -462,6 +472,15 @@ class AttachmentsService:
         # and enqueued it (enqueue_inbound() above).
         self._drain_inbound_events()
 
+        # Finding 7 (Step 1.6A.3B review): republish the recipient-binding
+        # snapshot after this tick's inbound events (a KEY_ANNOUNCE can create
+        # or update a binding via KeyExchangeCoordinator) so a request thread's
+        # synchronous recipient check reads a current view. Placed before the
+        # command drain deliberately: a `attachment_create` drained this tick
+        # does its own authoritative `get_binding()` re-check against the live
+        # row, never against this snapshot.
+        self._refresh_recipient_snapshot()
+
         # Step 1.6A.1 (correction #1): drain the bounded command queue
         # *before* the automatic-state row scan - the documented §3.2 tick
         # order (a queued `attachment_create`/`attachment_cancel`/... must
@@ -528,6 +547,19 @@ class AttachmentsService:
         remembered across a stop/start cycle."""
         if self._started and self._snapshot_publisher.snapshot() is not None:
             self._ready_event.set()
+
+    def _refresh_recipient_snapshot(self) -> None:
+        """Finding 7 (Step 1.6A.3B review): refresh the worker-published
+        recipient-binding snapshot from the live binding table (via
+        `KeyExchangeCoordinator.list_bindings()`, a worker-thread SQLite
+        read). A no-op when no publisher was injected (a standalone service
+        with its own dedicated `conn` and no request-facing facade to feed).
+        Never raises - a transient read failure must not kill the tick; the
+        request thread's synchronous check simply keeps the last-known-good
+        snapshot, and the worker's authoritative `get_binding()` re-check
+        still enforces the trust rule at commit time."""
+        if self._recipient_publisher is not None:
+            self._recipient_publisher.refresh()
 
     def _drain_inbound_events(self) -> None:
         """Up to MAX_INBOUND_EVENTS_PER_TICK events, oldest first - the

@@ -18,10 +18,12 @@ The ten read-only `GET` endpoints §7.1 defines:
 
 plus the mutation endpoints implemented so far: the three Step 1.6A.3A
 lifecycle actions — `POST /api/attachments/{id}/retry`, `/download`,
-`/reject` (§7.3) — and the Step 1.6A.3B idempotent multipart create
-`POST /api/attachments` (§7.2). Everything else (`GET
-/api/attachments/{id}/content`, cancel, save, revoke, local-content,
-contacts/connectors, provider onboarding) remains out of scope (1.6A.3+).
+`/reject` (§7.3) — the Step 1.6A.3B idempotent multipart create
+`POST /api/attachments` (§7.2), and the two Step 1.6A.3C mutations —
+`POST /api/attachments/{id}/cancel` (§7.4) and
+`POST /api/mca/contacts/{contact_id}/request-key` (§7.10). Everything else
+(`GET /api/attachments/{id}/content`, save, revoke, local-content,
+connector enumeration, provider onboarding) remains out of scope (1.6A.3+).
 
 Threading boundary (the point of Step 1.6A.1's facade - §3.1/§3.2): these
 handlers read the worker-published in-memory snapshots and registries
@@ -83,6 +85,7 @@ from meshsrv.attachments.idempotency import (
     compute_canonical_hash,
     validate_client_request_id,
 )
+from meshsrv.attachments.key_exchange import AddressStatus
 from meshsrv.attachments.provider_registry import (
     ProviderRegistryError,
     decode_provider_id,
@@ -110,6 +113,16 @@ _ASCII_DECIMAL_RE = re.compile(r"[0-9]+")
 
 def _is_hex32(value: str) -> bool:
     return isinstance(value, str) and _HEX32_RE.match(value) is not None
+
+
+# Stage 1 contact id (§7.10): a canonical Meshtastic transport address - `!`
+# plus exactly 8 lowercase hex chars (e.g. `!756f9960`). `fullmatch` so a
+# trailing newline/space can never sneak past.
+_CONTACT_ID_RE = re.compile(r"^![0-9a-f]{8}$")
+
+
+def _is_contact_id(value) -> bool:
+    return isinstance(value, str) and _CONTACT_ID_RE.match(value) is not None
 
 
 # ---- list-filter state sets ----------------------------------------------
@@ -894,6 +907,12 @@ def register_attachments_routes(app, handle_errors):
         # §7.3 download/reject: a received attachment awaiting consent only.
         return record.direction == "received" and record.state == receiver.WAITING_CONSENT
 
+    def _cancel_precondition(record):
+        # §7.4 cancel: an outgoing attachment still in an automatic (pre-SENT)
+        # state only - received rows and SENT/RECEIVED/DOWNLOADED/terminal/
+        # failed/rejected/expired/revoked/cancelled rows are never cancellable.
+        return record.direction == "sent" and record.state in sender.AUTOMATIC_STATES
+
     @app.route("/api/attachments/<attachment_id>/retry", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
@@ -911,6 +930,64 @@ def register_attachments_routes(app, handle_errors):
     @_mca_error_boundary
     def reject_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_reject", _consent_precondition)
+
+    @app.route("/api/attachments/<attachment_id>/cancel", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def cancel_attachment(attachment_id):
+        return _submit_lifecycle_command(attachment_id, "attachment_cancel", _cancel_precondition)
+
+    # ---- Step 1.6A.3C: contact key request (§7.10) --------------------------
+
+    @app.route("/api/mca/contacts/<contact_id>/request-key", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def request_contact_key(contact_id):
+        """§7.10: ask a contact to announce its MCA key. Synchronous checks are
+        limited to pure validation (contact id shape, an optional DIRECT
+        route that must match) plus a snapshot read of the recipient's status
+        (already `MCA_READY` -> 409 `key_already_known`); the real
+        re-validation, rate limit, and send all happen on the worker via the
+        `contact_request_key` command. An empty body is accepted (DIRECT route
+        is the only supported route); a supplied route must name `meshtastic`
+        and the contact itself."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        if not _is_contact_id(contact_id):
+            return _json_error("invalid_contact_id", "invalid contact id"), 400
+        body = request.get_json(silent=True)
+        if body is not None:
+            if not isinstance(body, dict):
+                return _json_error("invalid_contact_id", "invalid contact id"), 400
+            route = body.get("route")
+            if route is not None:
+                if not isinstance(route, dict):
+                    return _json_error("invalid_contact_id", "invalid contact id"), 400
+                if (
+                    route.get("adapter_id") != mca_runtime.ADAPTER_ID
+                    or route.get("route_id") != contact_id
+                ):
+                    return _json_error("invalid_contact_id", "invalid contact id"), 400
+        snapshot = facade.recipient_snapshot()
+        binding = snapshot.by_address.get(contact_id)
+        if binding is not None and binding.status is AddressStatus.MCA_READY:
+            return _json_error("key_already_known", "key already known"), 409
+        command = Command(
+            command_id=mint_command_id(),
+            kind="contact_request_key",
+            payload={
+                "contact_id": contact_id,
+                "adapter_id": mca_runtime.ADAPTER_ID,
+                "route_id": contact_id,
+            },
+            created_at=time.time(),
+        )
+        try:
+            command_id = facade.submit(command)
+        except CommandQueueFull:
+            return _json_error("command_queue_full", "command queue is full"), 429
+        return jsonify({"ok": True, "command_id": command_id}), 202
 
     # ---- Step 1.6A.3B: idempotent multipart create (§7.2) -------------------
 

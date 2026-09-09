@@ -246,16 +246,19 @@ def test_command_submitted_through_the_facade_is_drained_to_a_terminal_result(tm
     state, _, _ = _started_state(tmp_path, "e")
     try:
         facade = state.facade
-        command = Command(command_id="cmd-1", kind="attachment_cancel", payload={}, created_at=0.0)
+        # `attachment_save` is still enumerated-but-unwired (its own future
+        # sub-stage will add the handler), so it exercises the "kind has no
+        # handler" path regardless of how many handlers later steps wire.
+        command = Command(command_id="cmd-1", kind="attachment_save", payload={}, created_at=0.0)
         facade.submit(command)
         # Before any tick: registered queued (an immediate poll sees queued).
         assert facade.get_command("cmd-1").status == STATUS_QUEUED
 
         state.service.tick()
 
-        # The empty dispatcher means the enumerated kind has no handler, so
-        # the worker drains it to a terminal unsupported_command_kind FAILED
-        # - never a crash, never left stuck in running.
+        # An enumerated kind with no registered handler drains to a terminal
+        # unsupported_command_kind FAILED - never a crash, never left stuck in
+        # running.
         result = facade.get_command("cmd-1")
         assert result.status == STATUS_FAILED
         assert result.error_code == "unsupported_command_kind"
@@ -751,7 +754,7 @@ def test_real_service_wires_the_lifecycle_and_create_handlers(tmp_path):
         # kind->handler table shared by the state and the worker.
         assert dispatcher.supported_kinds() == frozenset({
             "attachment_create", "attachment_retry", "attachment_download",
-            "attachment_reject",
+            "attachment_reject", "attachment_cancel", "contact_request_key",
         })
         # Every other enumerated kind remains unwired -> unsupported.
         for kind in COMMAND_KINDS - dispatcher.supported_kinds():

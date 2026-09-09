@@ -1131,6 +1131,7 @@ _LIFECYCLE_PATHS = [
     f"/api/attachments/{ATTACHMENT_ID}/retry",
     f"/api/attachments/{ATTACHMENT_ID}/download",
     f"/api/attachments/{ATTACHMENT_ID}/reject",
+    f"/api/attachments/{ATTACHMENT_ID}/cancel",
 ]
 
 
@@ -1169,6 +1170,7 @@ def test_post_lifecycle_rejects_a_malformed_id(monkeypatch):
         "/api/attachments/not-hex/retry",
         "/api/attachments/ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ/download",
         "/api/attachments/abc/reject",
+        "/api/attachments/abc/cancel",
     ]:
         resp = c.post(path)
         assert resp.status_code == 400, path
@@ -1254,10 +1256,48 @@ def test_consent_action_rejected_unless_received_and_waiting_consent(monkeypatch
     assert facade.submitted == []
 
 
+@pytest.mark.parametrize("state", sorted(sender.AUTOMATIC_STATES))
+def test_cancel_accepted_in_sent_automatic_states(monkeypatch, state):
+    # §7.4 cancel: an outgoing attachment in any automatic (pre-SENT) state is
+    # cancellable - same sent-side AUTOMATIC_STATES as retry, but *without* a
+    # received branch (a received row is never cancellable).
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction="sent", state=state)]))
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/attachments/{ATTACHMENT_ID}/cancel")
+    assert resp.status_code == 202
+    _assert_202_accepted(resp.get_json(), facade, "attachment_cancel")
+
+
+@pytest.mark.parametrize("direction,state", [
+    ("sent", sender.SENT),              # awaiting download ACK, not automatic
+    ("sent", sender.RECEIVED),
+    ("sent", sender.DOWNLOADED),        # terminal
+    ("sent", sender.EXPIRED),
+    ("sent", sender.REVOKED),
+    ("sent", sender.CANCELLED),
+    ("sent", sender.FAILED_VALIDATION),
+    ("sent", sender.FAILED_UPLOAD),
+    ("sent", sender.FAILED_RADIO),
+    ("received", receiver.WAITING_CONSENT),
+    ("received", receiver.DOWNLOADING),  # a received *automatic* state is still not cancellable
+    ("received", receiver.AVAILABLE),
+    ("received", receiver.REJECTED),
+])
+def test_cancel_rejected_outside_sent_automatic_states(monkeypatch, direction, state):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction=direction, state=state)]))
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/attachments/{ATTACHMENT_ID}/cancel")
+    assert resp.status_code == 409
+    assert resp.get_json()["error_code"] == "invalid_state_transition"
+    assert resp.get_json()["state"] == state
+    assert facade.submitted == []
+
+
 @pytest.mark.parametrize("path,direction,state", [
     (f"/api/attachments/{ATTACHMENT_ID}/retry", "sent", sender.DOWNLOADED),   # terminal, not automatic
     (f"/api/attachments/{ATTACHMENT_ID}/download", "sent", sender.DRAFT),     # wrong direction
     (f"/api/attachments/{ATTACHMENT_ID}/reject", "received", receiver.DOWNLOADING),  # not WAITING_CONSENT
+    (f"/api/attachments/{ATTACHMENT_ID}/cancel", "received", receiver.WAITING_CONSENT),  # received, not cancellable
 ])
 def test_409_state_transition_envelope_is_exact(monkeypatch, path, direction, state):
     # The synchronous 409 must be exactly {ok, error, error_code, state} - the
@@ -1345,6 +1385,7 @@ _CSRF_LIFECYCLE_CASES = [
     (f"/api/attachments/{ATTACHMENT_ID}/retry", "sent", sender.DRAFT),
     (f"/api/attachments/{ATTACHMENT_ID}/download", "received", receiver.WAITING_CONSENT),
     (f"/api/attachments/{ATTACHMENT_ID}/reject", "received", receiver.WAITING_CONSENT),
+    (f"/api/attachments/{ATTACHMENT_ID}/cancel", "sent", sender.DRAFT),
 ]
 
 
@@ -1385,6 +1426,156 @@ def test_post_lifecycle_valid_csrf_token_reaches_submission(monkeypatch, path, d
     resp = c.post(path, headers={"X-CSRF-Token": "session-token"})
     assert resp.status_code == 202
     _assert_202_accepted(resp.get_json(), facade, kind)
+
+
+# ---- Step 1.6A.3C: contact key request (§7.10) ------------------------------
+
+CONTACT_ID = "!756f9960"
+
+
+def _recipient_at(address, status):
+    """A recipient snapshot with exactly one binding: `address` at `status`
+    (`None` status == an empty snapshot, i.e. KEY_UNKNOWN for every address)."""
+    if status is None:
+        return RecipientSnapshot(by_address={})
+    return RecipientSnapshot(
+        by_address={
+            address: RecipientBindingSnapshot(
+                adapter_id="meshtastic",
+                transport_address=address,
+                key_id="2" * 16,
+                status=status,
+            )
+        }
+    )
+
+
+def _assert_request_key_202(body, facade, contact_id):
+    assert body["ok"] is True
+    assert set(body) == {"ok", "command_id"}
+    cid = body["command_id"]
+    assert len(cid) == 32 and all(ch in "0123456789abcdef" for ch in cid)
+    assert len(facade.submitted) == 1
+    cmd = facade.submitted[0]
+    assert cmd.kind == "contact_request_key"
+    assert dict(cmd.payload) == {
+        "contact_id": contact_id,
+        "adapter_id": mca_runtime.ADAPTER_ID,
+        "route_id": contact_id,
+    }
+
+
+def test_request_key_is_503_when_facade_missing(monkeypatch):
+    c = _client(monkeypatch, None)
+    resp = c.post(f"/api/mca/contacts/{CONTACT_ID}/request-key")
+    assert resp.status_code == 503
+    assert resp.get_json()["error_code"] == "mca_not_ready"
+
+
+def test_request_key_is_503_when_not_ready(monkeypatch):
+    facade = _FakeFacade()
+    facade.not_ready = True
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/mca/contacts/{CONTACT_ID}/request-key")
+    assert resp.status_code == 503
+    assert resp.get_json()["error_code"] == "mca_not_ready"
+    assert facade.submitted == []
+
+
+@pytest.mark.parametrize("contact_id", [
+    "not-hex",       # no leading bang
+    "!756f996",      # 7 hex chars
+    "!756f99600",    # 9 hex chars
+    "!756F9960",     # uppercase hex
+    "756f9960",      # missing bang
+    "!gggggggg",     # non-hex alphabet
+])
+def test_request_key_rejects_a_malformed_contact_id(monkeypatch, contact_id):
+    c = _client(monkeypatch, _FakeFacade())
+    resp = c.post(f"/api/mca/contacts/{contact_id}/request-key")
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_contact_id"
+    assert resp.get_json()["ok"] is False
+
+
+@pytest.mark.parametrize("body", [
+    {"route": {"adapter_id": "meshtastic", "route_id": "!aaaaaaaa"}},   # route_id != contact_id
+    {"route": {"adapter_id": "not-meshtastic", "route_id": CONTACT_ID}},  # wrong adapter
+    {"route": "not-a-dict"},
+    [1, 2, 3],                                                          # body not an object
+])
+def test_request_key_rejects_a_bad_route_or_body(monkeypatch, body):
+    c = _client(monkeypatch, _FakeFacade(recipient=_recipient_at(CONTACT_ID, None)))
+    resp = c.post(f"/api/mca/contacts/{CONTACT_ID}/request-key", json=body)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_contact_id"
+
+
+def test_request_key_rejects_an_already_ready_contact(monkeypatch):
+    facade = _FakeFacade(recipient=_recipient_at(CONTACT_ID, AddressStatus.MCA_READY))
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/mca/contacts/{CONTACT_ID}/request-key")
+    assert resp.status_code == 409
+    assert resp.get_json()["error_code"] == "key_already_known"
+    assert facade.submitted == []
+
+
+@pytest.mark.parametrize("status", [
+    None,                             # KEY_UNKNOWN (absent binding)
+    AddressStatus.KEY_UNVERIFIED,
+    AddressStatus.KEY_CHANGED,
+])
+def test_request_key_accepted_for_a_non_ready_contact(monkeypatch, status):
+    facade = _FakeFacade(recipient=_recipient_at(CONTACT_ID, status))
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/mca/contacts/{CONTACT_ID}/request-key")
+    assert resp.status_code == 202
+    _assert_request_key_202(resp.get_json(), facade, CONTACT_ID)
+
+
+def test_request_key_accepts_an_empty_body_and_a_matching_route(monkeypatch):
+    # An empty body (DIRECT route default) and an explicit matching DIRECT
+    # route are both accepted, and produce the same command payload.
+    facade = _FakeFacade(recipient=_recipient_at(CONTACT_ID, None))
+    c = _client(monkeypatch, facade)
+
+    empty = c.post(f"/api/mca/contacts/{CONTACT_ID}/request-key")
+    assert empty.status_code == 202
+
+    matching = c.post(
+        f"/api/mca/contacts/{CONTACT_ID}/request-key",
+        json={"route": {"adapter_id": "meshtastic", "route_id": CONTACT_ID}},
+    )
+    assert matching.status_code == 202
+    assert len(facade.submitted) == 2
+    assert facade.submitted[0].payload == facade.submitted[1].payload
+
+
+def test_request_key_queue_full_is_429(monkeypatch):
+    facade = _FakeFacade(recipient=_recipient_at(CONTACT_ID, None), queue_full=True)
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/mca/contacts/{CONTACT_ID}/request-key")
+    assert resp.status_code == 429
+    assert resp.get_json()["error_code"] == "command_queue_full"
+    assert facade.submitted == []
+
+
+def test_request_key_missing_csrf_token_is_403(monkeypatch):
+    facade = _FakeFacade(recipient=_recipient_at(CONTACT_ID, None))
+    c = _csrf_client(monkeypatch, facade)
+    resp = c.post(f"/api/mca/contacts/{CONTACT_ID}/request-key")
+    assert resp.status_code == 403
+    assert resp.get_json()["error_code"] == "csrf_invalid"
+    assert facade.submitted == []
+
+
+def test_request_key_valid_csrf_token_reaches_submission(monkeypatch):
+    facade = _FakeFacade(recipient=_recipient_at(CONTACT_ID, None))
+    c = _csrf_client(monkeypatch, facade)
+    _set_csrf_token(c, "session-token")
+    resp = c.post(f"/api/mca/contacts/{CONTACT_ID}/request-key", headers={"X-CSRF-Token": "session-token"})
+    assert resp.status_code == 202
+    _assert_request_key_202(resp.get_json(), facade, CONTACT_ID)
 
 
 # ---- Step 1.6A.3B: idempotent multipart create (POST /api/attachments) -----

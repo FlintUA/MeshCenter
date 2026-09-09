@@ -348,6 +348,67 @@ def test_reject_pending_key_change_without_a_pending_change_raises(tmp_path, clo
         coordinator.reject_pending_key_change("!nobody")
 
 
+# ---- outgoing KEY_REQUEST throttle (Step 1.6A.3C) -------------------------
+
+
+def test_key_request_rate_limit_blocks_a_second_request_within_ten_minutes(tmp_path, clock):
+    _, _, _, coordinator = _make_node(tmp_path, "a", clock)
+    coordinator.check_key_request_rate_limit("!contact", clock())  # never sent -> allowed
+    coordinator.record_key_request_sent("!contact", clock())
+    clock.advance(60)
+    with pytest.raises(RateLimited):
+        coordinator.check_key_request_rate_limit("!contact", clock())
+
+
+def test_key_request_rate_limit_allows_after_ten_minutes(tmp_path, clock):
+    _, _, _, coordinator = _make_node(tmp_path, "a", clock)
+    coordinator.check_key_request_rate_limit("!contact", clock())
+    coordinator.record_key_request_sent("!contact", clock())
+    clock.advance(10 * 60 + 1)
+    coordinator.check_key_request_rate_limit("!contact", clock())  # no raise
+
+
+def test_key_request_rate_limit_survives_a_new_coordinator_instance(tmp_path, clock):
+    """The outgoing key-request quota is persisted (`last_request_sent_at`,
+    migration 13), so a process restart - modelled as a fresh coordinator over
+    the same connection - still enforces the interval."""
+    conn, workspace_manager, principal, coordinator = _make_node(tmp_path, "a", clock)
+    coordinator.check_key_request_rate_limit("!contact", clock())
+    coordinator.record_key_request_sent("!contact", clock())
+
+    restarted = KeyExchangeCoordinator(conn, workspace_manager, principal, "fake-text", now_fn=clock)
+    clock.advance(60)
+    with pytest.raises(RateLimited):
+        restarted.check_key_request_rate_limit("!contact", clock())
+
+
+def test_recording_a_key_request_does_not_block_an_announce(tmp_path, clock):
+    """The two throttles are independent: recording an outgoing key request
+    must not consume the KEY_ANNOUNCE gate (a subsequent inbound KEY_REQUEST
+    is still answered)."""
+    from nacl.signing import SigningKey
+
+    _, _, _, coordinator = _make_node(tmp_path, "a", clock)
+    coordinator.check_key_request_rate_limit("!contact", clock())
+    coordinator.record_key_request_sent("!contact", clock())
+
+    request = codec.encode_key_request(codec.KeyRequestFields(sender_key_id=b"\x02" * 8), SigningKey.generate())
+    reply = coordinator.handle_incoming(_direct_envelope(request, "!contact", clock()))
+    assert reply is not None
+
+
+def test_an_announce_does_not_block_a_key_request(tmp_path, clock):
+    """The two throttles are independent: recording an automatic KEY_ANNOUNCE
+    must not consume the outgoing key-request gate."""
+    from nacl.signing import SigningKey
+
+    _, _, _, coordinator = _make_node(tmp_path, "a", clock)
+    request = codec.encode_key_request(codec.KeyRequestFields(sender_key_id=b"\x02" * 8), SigningKey.generate())
+    coordinator.handle_incoming(_direct_envelope(request, "!contact", clock()))  # records announce
+
+    coordinator.check_key_request_rate_limit("!contact", clock())  # no raise
+
+
 # ---- full two-node round trip over the fake transport contract ---------
 
 

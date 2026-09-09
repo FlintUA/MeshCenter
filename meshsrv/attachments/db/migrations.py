@@ -767,6 +767,24 @@ _MIGRATION_0012_DOWN = "\n".join(
 ) + "\nDROP TABLE IF EXISTS mca_dirty_attachments;"
 
 
+# Step 1.6A.3C (contact key request): a per-contact outgoing key-request
+# throttle, distinct from the KEY_ANNOUNCE throttle already tracked in
+# `last_announce_sent_at`. The two limits are deliberately independent -
+# announcing your own key and requesting a contact's key are different
+# actions with different abuse surfaces, and recording one must never
+# consume the other's quota window. `last_request_sent_at` is NULL until the
+# first accepted request send, so a contact that has never been asked simply
+# has no row-timestamp to compare against (the rate-limit check treats NULL
+# as "never sent", i.e. allowed).
+_MIGRATION_0013_UP = """
+ALTER TABLE mca_key_exchange_contact_state ADD COLUMN last_request_sent_at INTEGER;
+"""
+
+_MIGRATION_0013_DOWN = """
+ALTER TABLE mca_key_exchange_contact_state DROP COLUMN last_request_sent_at;
+"""
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -801,6 +819,7 @@ MIGRATIONS: Sequence[Migration] = (
         12, "snapshot_dirty_tracking", _MIGRATION_0012_UP, _MIGRATION_0012_DOWN,
         data_fixup=_migration_0012_create_dirty_triggers,
     ),
+    Migration(13, "contact_key_request_rate_limit", _MIGRATION_0013_UP, _MIGRATION_0013_DOWN),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0

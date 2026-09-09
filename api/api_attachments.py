@@ -52,12 +52,14 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import time
 from collections.abc import Mapping
 from functools import wraps
 
 from flask import jsonify, request
 
 from meshsrv.attachments import mca_runtime, receiver, sender
+from meshsrv.attachments.commands import Command, CommandQueueFull, mint_command_id
 from meshsrv.attachments.delivery.meshtastic import MESHTASTIC_TEXT_MAX_PAYLOAD_BYTES
 from meshsrv.attachments.facade import FacadeNotReady
 from meshsrv.attachments.provider_registry import (
@@ -138,6 +140,20 @@ def _not_ready():
 
 def _json_error(error_code: str, message: str):
     return jsonify({"ok": False, "error": message, "error_code": error_code})
+
+
+def _invalid_state_transition(record):
+    """The §7.3 synchronous 409 for a violated state precondition: the stable
+    `invalid_state_transition` envelope plus the single safe `state` value
+    from the published snapshot. Only `state` is added - never direction,
+    identifiers, paths, comments, filenames, keys, tokens, exception text, or
+    raw database values."""
+    return jsonify({
+        "ok": False,
+        "error": "invalid state transition",
+        "error_code": "invalid_state_transition",
+        "state": record.state,
+    }), 409
 
 
 def _internal_error_response():
@@ -600,3 +616,77 @@ def register_attachments_routes(app, handle_errors):
             return _json_error("command_not_found", "command not found"), 404
 
         return jsonify({"ok": True, "command": _serialize_command(result)})
+
+    # ---- Step 1.6A.3A lifecycle mutations (POST) ---------------------------
+    #
+    # retry/download/reject are the first three *mutating* endpoints (§7.3),
+    # still going through the same single-owner command queue as every other
+    # mutation: the request thread validates the id, does a cheap synchronous
+    # state check against the published snapshot (fast 409 feedback), then
+    # enqueues a frozen `Command` and returns 202 with the command_id - the
+    # worker executes it and the client polls GET /api/mca/commands/
+    # {command_id} for the real result (§3.4). The worker re-checks the
+    # persisted row, so the snapshot check here is defense-in-depth, not the
+    # authority. A success 202 means "accepted", never "already executed".
+
+    def _submit_lifecycle_command(attachment_id, kind, precondition):
+        """Validate id -> resolve snapshot -> synchronous state precondition
+        -> enqueue the frozen `Command` -> 202 {ok, command_id}. `precondition`
+        is a `record -> bool` declaring this endpoint's allowed
+        direction/state; a `False` returns 409 `invalid_state_transition`
+        carrying the snapshot's current `state` (and nothing else) before
+        anything is enqueued. `CommandQueueFull` maps to 429
+        `command_queue_full` (§3.4) - deliberately caught here, not left to
+        `_mca_error_boundary`, which would mis-map it to a 500."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        record, err = _resolve_attachment(facade, attachment_id)
+        if err is not None:
+            body, status = err
+            return body, status
+        if not precondition(record):
+            return _invalid_state_transition(record)
+        command = Command(
+            command_id=mint_command_id(),
+            kind=kind,
+            payload={"attachment_id": attachment_id},
+            created_at=time.time(),
+        )
+        try:
+            command_id = facade.submit(command)
+        except CommandQueueFull:
+            return _json_error("command_queue_full", "command queue is full"), 429
+        return jsonify({"ok": True, "command_id": command_id}), 202
+
+    def _retry_precondition(record):
+        # §7.3 retry: only the row's own direction's AUTOMATIC_STATES - a
+        # terminal FAILED_*/REJECTED/EXPIRED/CANCELLED/REVOKED row is not
+        # retryable here (terminal-failure recovery is a future change).
+        if record.direction == "sent":
+            return record.state in sender.AUTOMATIC_STATES
+        if record.direction == "received":
+            return record.state in receiver.AUTOMATIC_STATES
+        return False
+
+    def _consent_precondition(record):
+        # §7.3 download/reject: a received attachment awaiting consent only.
+        return record.direction == "received" and record.state == receiver.WAITING_CONSENT
+
+    @app.route("/api/attachments/<attachment_id>/retry", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def retry_attachment(attachment_id):
+        return _submit_lifecycle_command(attachment_id, "attachment_retry", _retry_precondition)
+
+    @app.route("/api/attachments/<attachment_id>/download", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def download_attachment(attachment_id):
+        return _submit_lifecycle_command(attachment_id, "attachment_download", _consent_precondition)
+
+    @app.route("/api/attachments/<attachment_id>/reject", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def reject_attachment(attachment_id):
+        return _submit_lifecycle_command(attachment_id, "attachment_reject", _consent_precondition)

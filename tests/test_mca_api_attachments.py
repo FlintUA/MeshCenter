@@ -39,8 +39,10 @@ import pytest
 from flask import Flask, jsonify
 
 from api.api_attachments import register_attachments_routes
-from meshsrv.attachments import mca_runtime
+from api.api_auth import register_auth_routes
+from meshsrv.attachments import mca_runtime, receiver, sender
 from meshsrv.attachments.command_registry import CommandResult, STATUS_SUCCEEDED
+from meshsrv.attachments.commands import CommandQueueFull
 from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
 from meshsrv.attachments.facade import FacadeNotReady
 from meshsrv.attachments.provider_registry import (
@@ -172,6 +174,7 @@ class _FakeFacade:
         identity=None,
         commands=None,
         decisions=None,
+        queue_full=False,
     ):
         self._snapshot = snapshot or _snapshot([])
         self._providers = providers or {}
@@ -182,6 +185,8 @@ class _FakeFacade:
         self._commands = commands or {}
         self._decisions = decisions or {}
         self.not_ready = False
+        self.queue_full = queue_full
+        self.submitted = []  # commands the POST endpoints handed to submit()
 
     def attachments_snapshot(self):
         if self.not_ready:
@@ -195,6 +200,17 @@ class _FakeFacade:
 
     def get_command(self, command_id):
         return self._commands.get(command_id)
+
+    def submit(self, command):
+        # Mirrors the real facade's request-thread write surface: gated on
+        # readiness, backpressured on a full queue, otherwise records the
+        # command and returns its id (never touches SQLite/FS/network here).
+        if self.not_ready:
+            raise FacadeNotReady()
+        if self.queue_full:
+            raise CommandQueueFull()
+        self.submitted.append(command)
+        return command.command_id
 
     def provider_snapshot(self):
         return self._providers
@@ -1043,3 +1059,265 @@ def test_next_request_succeeds_after_injected_failure(monkeypatch):
     second = c.get("/api/mca/identity")
     assert second.status_code == 200
     assert second.get_json()["ok"] is True
+
+
+# ---- Step 1.6A.3A lifecycle mutations (POST) ------------------------------
+
+_LIFECYCLE_PATHS = [
+    f"/api/attachments/{ATTACHMENT_ID}/retry",
+    f"/api/attachments/{ATTACHMENT_ID}/download",
+    f"/api/attachments/{ATTACHMENT_ID}/reject",
+]
+
+
+def _assert_202_accepted(body, facade, kind):
+    assert body["ok"] is True
+    assert set(body) == {"ok", "command_id"}
+    # mint_command_id() -> uuid4().hex: 32 lowercase hex chars.
+    cid = body["command_id"]
+    assert len(cid) == 32 and all(ch in "0123456789abcdef" for ch in cid)
+    assert len(facade.submitted) == 1
+    assert facade.submitted[0].kind == kind
+    assert dict(facade.submitted[0].payload) == {"attachment_id": ATTACHMENT_ID}
+
+
+def test_post_lifecycle_is_503_when_facade_missing(monkeypatch):
+    c = _client(monkeypatch, None)
+    for path in _LIFECYCLE_PATHS:
+        resp = c.post(path)
+        assert resp.status_code == 503, path
+        assert resp.get_json()["error_code"] == "mca_not_ready"
+
+
+def test_post_lifecycle_is_503_when_not_ready(monkeypatch):
+    facade = _FakeFacade()
+    facade.not_ready = True
+    c = _client(monkeypatch, facade)
+    for path in _LIFECYCLE_PATHS:
+        resp = c.post(path)
+        assert resp.status_code == 503, path
+        assert resp.get_json()["error_code"] == "mca_not_ready"
+
+
+def test_post_lifecycle_rejects_a_malformed_id(monkeypatch):
+    c = _client(monkeypatch, _FakeFacade())
+    for path in [
+        "/api/attachments/not-hex/retry",
+        "/api/attachments/ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ/download",
+        "/api/attachments/abc/reject",
+    ]:
+        resp = c.post(path)
+        assert resp.status_code == 400, path
+        assert resp.get_json()["error_code"] == "invalid_attachment_id"
+
+
+def test_post_lifecycle_unknown_id_is_404(monkeypatch):
+    c = _client(monkeypatch, _FakeFacade())
+    for path in _LIFECYCLE_PATHS:
+        resp = c.post(path)
+        assert resp.status_code == 404, path
+        assert resp.get_json()["error_code"] == "attachment_not_found"
+
+
+@pytest.mark.parametrize("direction,state", [
+    ("sent", s) for s in sorted(sender.AUTOMATIC_STATES)
+] + [
+    ("received", s) for s in sorted(receiver.AUTOMATIC_STATES)
+])
+def test_retry_accepted_in_the_rows_own_automatic_states(monkeypatch, direction, state):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction=direction, state=state)]))
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/attachments/{ATTACHMENT_ID}/retry")
+    assert resp.status_code == 202
+    _assert_202_accepted(resp.get_json(), facade, "attachment_retry")
+
+
+@pytest.mark.parametrize("direction,state", [
+    ("sent", sender.SENT),             # awaiting download ACK, not automatic
+    ("sent", sender.RECEIVED),
+    ("sent", sender.DOWNLOADED),       # terminal - not retryable here
+    ("sent", sender.EXPIRED),
+    ("sent", sender.REVOKED),
+    ("sent", sender.CANCELLED),
+    ("sent", sender.FAILED_VALIDATION),
+    ("sent", sender.FAILED_UPLOAD),
+    ("sent", sender.FAILED_RADIO),
+    ("received", receiver.WAITING_CONSENT),  # manual consent, not automatic
+    ("received", receiver.OFFER_RECEIVED),
+    ("received", receiver.VERIFYING),
+    ("received", receiver.AVAILABLE),        # terminal
+    ("received", receiver.EXPIRED),
+    ("received", receiver.REJECTED),
+    ("received", receiver.FAILED),
+])
+def test_retry_rejected_outside_the_rows_automatic_states(monkeypatch, direction, state):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction=direction, state=state)]))
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/attachments/{ATTACHMENT_ID}/retry")
+    assert resp.status_code == 409
+    assert resp.get_json()["error_code"] == "invalid_state_transition"
+    assert resp.get_json()["state"] == state  # the 409 carries the exact current state
+    assert facade.submitted == []  # nothing was enqueued
+
+
+@pytest.mark.parametrize("action", ["download", "reject"])
+def test_consent_action_accepted_for_a_received_waiting_consent_row(monkeypatch, action):
+    facade = _FakeFacade(
+        snapshot=_snapshot([_attachment(direction="received", state=receiver.WAITING_CONSENT)])
+    )
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/attachments/{ATTACHMENT_ID}/{action}")
+    assert resp.status_code == 202
+    _assert_202_accepted(resp.get_json(), facade, f"attachment_{action}")
+
+
+@pytest.mark.parametrize("action", ["download", "reject"])
+@pytest.mark.parametrize("direction,state", [
+    ("sent", sender.DRAFT),            # wrong direction, regardless of state
+    ("sent", sender.READY_TO_SEND),
+    ("received", receiver.WAITING_KEY),
+    ("received", receiver.DOWNLOADING),
+    ("received", receiver.AVAILABLE),
+    ("received", receiver.REJECTED),
+])
+def test_consent_action_rejected_unless_received_and_waiting_consent(monkeypatch, action, direction, state):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction=direction, state=state)]))
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/attachments/{ATTACHMENT_ID}/{action}")
+    assert resp.status_code == 409
+    assert resp.get_json()["error_code"] == "invalid_state_transition"
+    assert resp.get_json()["state"] == state
+    assert facade.submitted == []
+
+
+@pytest.mark.parametrize("path,direction,state", [
+    (f"/api/attachments/{ATTACHMENT_ID}/retry", "sent", sender.DOWNLOADED),   # terminal, not automatic
+    (f"/api/attachments/{ATTACHMENT_ID}/download", "sent", sender.DRAFT),     # wrong direction
+    (f"/api/attachments/{ATTACHMENT_ID}/reject", "received", receiver.DOWNLOADING),  # not WAITING_CONSENT
+])
+def test_409_state_transition_envelope_is_exact(monkeypatch, path, direction, state):
+    # The synchronous 409 must be exactly {ok, error, error_code, state} - the
+    # safe public state value, and nothing else (no direction, ids, paths,
+    # comments, filenames, keys, tokens, or exception text).
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(
+        direction=direction,
+        state=state,
+        file_name="SECRET_file_name.txt",   # must not leak into the 409 body
+        provider_id="SECRET_provider",      # must not leak into the 409 body
+    )]))
+    c = _client(monkeypatch, facade)
+    resp = c.post(path)
+    assert resp.status_code == 409
+    assert resp.get_json() == {
+        "ok": False,
+        "error": "invalid state transition",
+        "error_code": "invalid_state_transition",
+        "state": state,
+    }
+    assert facade.submitted == []  # the precondition failed before any enqueue
+
+
+def test_post_lifecycle_queue_full_is_429(monkeypatch):
+    facade = _FakeFacade(
+        snapshot=_snapshot([_attachment(direction="received", state=receiver.WAITING_CONSENT)]),
+        queue_full=True,
+    )
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/attachments/{ATTACHMENT_ID}/download")
+    assert resp.status_code == 429
+    assert resp.get_json()["error_code"] == "command_queue_full"
+    assert facade.submitted == []
+
+
+def test_post_lifecycle_does_not_block_on_the_tick_lock(tmp_path):
+    # The request-thread POST path must read only the published snapshot (and
+    # submit through the in-memory facade) - never the worker's tick lock. An
+    # empty DB means the canonical id is unknown -> 404, not a hang.
+    state = _started(tmp_path, "post-thread")
+    try:
+        c = _build_client()
+        state.tick_lock.acquire()
+        try:
+            resp = c.post(f"/api/attachments/{ATTACHMENT_ID}/retry")
+        finally:
+            state.tick_lock.release()
+        assert resp.status_code == 404
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+# ---- Step 1.6A.3A: CSRF integration (the global hook, not endpoint-local) --
+
+# The three POST routes are protected by the *already-shipped* project-wide
+# CSRF hook (api_auth.register_auth_routes' before_request), exactly like
+# every other unsafe /api/ route. api_attachments.py adds no endpoint-local
+# CSRF code of its own; these tests prove the global boundary holds for the
+# new routes by driving them through a real Flask app that registers BOTH
+# register_auth_routes() (for _enforce_csrf) and register_attachments_routes().
+
+
+def _csrf_client(monkeypatch, facade):
+    """A Flask test client running the three POST routes behind the real
+    project-wide CSRF hook. Auth is disabled (enabled=False) so _enforce_auth
+    passes through and _enforce_csrf is the sole gate - the exact global
+    boundary that protects every unsafe /api/ request in production."""
+    app = Flask(__name__)
+    app.secret_key = "test-secret-key"
+    app.config["TESTING"] = True
+    state_lock = threading.RLock()
+    auth_state = {"enabled": False, "password_hash": ""}
+    register_auth_routes(app, state_lock, auth_state, "/nonexistent/auth.json", _make_handle_errors(app))
+    register_attachments_routes(app, _make_handle_errors(app))
+    monkeypatch.setattr(mca_runtime, "get_attachments_facade", lambda: facade)
+    return app.test_client()
+
+
+def _set_csrf_token(client, token="session-token"):
+    with client.session_transaction() as sess:
+        sess["csrf_token"] = token
+
+
+_CSRF_LIFECYCLE_CASES = [
+    (f"/api/attachments/{ATTACHMENT_ID}/retry", "sent", sender.DRAFT),
+    (f"/api/attachments/{ATTACHMENT_ID}/download", "received", receiver.WAITING_CONSENT),
+    (f"/api/attachments/{ATTACHMENT_ID}/reject", "received", receiver.WAITING_CONSENT),
+]
+
+
+@pytest.mark.parametrize("path,direction,state", _CSRF_LIFECYCLE_CASES)
+def test_post_lifecycle_missing_csrf_token_is_403(monkeypatch, path, direction, state):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction=direction, state=state)]))
+    c = _csrf_client(monkeypatch, facade)
+    resp = c.post(path)  # no X-CSRF-Token header, no session token
+    assert resp.status_code == 403
+    assert resp.get_json() == {
+        "ok": False,
+        "error": "CSRF token missing or invalid",
+        "error_code": "csrf_invalid",
+    }
+    assert facade.submitted == []  # the route never ran, so nothing was submitted
+
+
+@pytest.mark.parametrize("path,direction,state", _CSRF_LIFECYCLE_CASES)
+def test_post_lifecycle_invalid_csrf_token_is_403(monkeypatch, path, direction, state):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction=direction, state=state)]))
+    c = _csrf_client(monkeypatch, facade)
+    _set_csrf_token(c, "real-token")
+    resp = c.post(path, headers={"X-CSRF-Token": "wrong-token"})
+    assert resp.status_code == 403
+    assert resp.get_json()["error_code"] == "csrf_invalid"
+    assert facade.submitted == []
+
+
+@pytest.mark.parametrize("path,direction,state,kind", [
+    (f"/api/attachments/{ATTACHMENT_ID}/retry", "sent", sender.DRAFT, "attachment_retry"),
+    (f"/api/attachments/{ATTACHMENT_ID}/download", "received", receiver.WAITING_CONSENT, "attachment_download"),
+    (f"/api/attachments/{ATTACHMENT_ID}/reject", "received", receiver.WAITING_CONSENT, "attachment_reject"),
+])
+def test_post_lifecycle_valid_csrf_token_reaches_submission(monkeypatch, path, direction, state, kind):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction=direction, state=state)]))
+    c = _csrf_client(monkeypatch, facade)
+    _set_csrf_token(c, "session-token")
+    resp = c.post(path, headers={"X-CSRF-Token": "session-token"})
+    assert resp.status_code == 202
+    _assert_202_accepted(resp.get_json(), facade, kind)

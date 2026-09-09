@@ -26,17 +26,18 @@ from __future__ import annotations
 
 import logging
 import threading
+import uuid
 
 import pytest
 
-from meshsrv.attachments import mca_runtime
+from meshsrv.attachments import mca_runtime, receiver, sender
 from meshsrv.attachments.command_registry import (
     STATUS_FAILED,
     STATUS_QUEUED,
     STATUS_SUCCEEDED,
     CommandRegistry,
 )
-from meshsrv.attachments.commands import Command, CommandQueue
+from meshsrv.attachments.commands import COMMAND_KINDS, Command, CommandQueue
 from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
 from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispatcher, CommandOutcome
 from meshsrv.attachments.facade import AttachmentsFacade, FacadeNotReady
@@ -627,5 +628,192 @@ def test_handler_exception_text_is_not_logged(tmp_path, caplog):
         assert "RuntimeError" in logged   # exception *class* is logged
         assert "cmd-log" in logged        # command id is logged
         assert marker not in logged       # sensitive message is not
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+# --- Step 1.6A.3A lifecycle-command handlers (worker side) -----------------
+#
+# The three wired kinds are the service's own methods, and the worker is the
+# sole executor. These tests drive the real runtime with the network pinned
+# down (_AlwaysDownSession), so any handler that strayed into radio/Relay/
+# provider I/O would raise a ConnectionError rather than silently pass. They
+# pin: the dispatcher wires exactly the three kinds; an unknown id drains to
+# `attachment_not_found`; a wrong direction/state drains to
+# `invalid_state_transition` against the *persisted* row (re-read on the
+# worker, not the request thread's snapshot); and the three handlers delegate
+# to the same sender/receiver primitives the tick itself uses.
+
+
+def _seed_row(state, attachment_id, direction, state_name):
+    """Insert one minimal `attachments` row directly into the worker-owned
+    connection (the sole owner of `conn`), so a lifecycle-command handler has
+    a persisted row to re-validate against. Only the NOT-NULL columns are set;
+    every nullable field stays NULL."""
+    state.conn.execute(
+        """
+        INSERT INTO attachments
+            (id, workspace_id, transfer_id, direction, principal_id, state,
+             created_at, hard_expires_at, download_grace_seconds)
+        VALUES (?, ?, ?, ?, ?, ?, 0, 0, 3600)
+        """,
+        (attachment_id, state.principal.workspace_id, uuid.uuid4().hex,
+         direction, state.principal.principal_id, state_name),
+    )
+    state.conn.commit()
+
+
+def test_real_service_wires_the_three_lifecycle_handlers(tmp_path):
+    state, _, _ = _started_state(tmp_path, "lifecycle-wire")
+    try:
+        dispatcher = state.dispatcher
+        # The service built the real dispatcher (we passed None at
+        # ensure_service) and mirrored it back onto the state - one fixed
+        # kind->handler table shared by the state and the worker.
+        assert dispatcher is state.service._dispatcher  # noqa: SLF001
+        assert dispatcher.supported_kinds() == frozenset({
+            "attachment_retry", "attachment_download", "attachment_reject",
+        })
+        # Every other enumerated kind remains unwired -> unsupported.
+        for kind in COMMAND_KINDS - dispatcher.supported_kinds():
+            assert dispatcher.handler_for(kind) is None
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_lifecycle_commands_drain_to_attachment_not_found_on_unknown_id(tmp_path):
+    state, _, _ = _started_state(tmp_path, "lifecycle-unknown")
+    try:
+        facade = state.facade
+        unknown = "a" * 32
+        for kind in ("attachment_retry", "attachment_download", "attachment_reject"):
+            facade.submit(Command(
+                command_id=f"cmd-{kind}", kind=kind,
+                payload={"attachment_id": unknown}, created_at=0.0,
+            ))
+        state.service.tick()
+        for kind in ("attachment_retry", "attachment_download", "attachment_reject"):
+            result = facade.get_command(f"cmd-{kind}")
+            assert result.status == STATUS_FAILED
+            assert result.error_code == "attachment_not_found"
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_retry_on_terminal_sent_row_is_invalid_state_transition(tmp_path):
+    state, _, _ = _started_state(tmp_path, "lifecycle-retry-term")
+    try:
+        aid = "b" * 32
+        _seed_row(state, aid, "sent", sender.FAILED_UPLOAD)
+        state.facade.submit(Command(
+            command_id="cmd-r", kind="attachment_retry",
+            payload={"attachment_id": aid}, created_at=0.0,
+        ))
+        state.service.tick()
+        result = state.facade.get_command("cmd-r")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == "invalid_state_transition"
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_retry_on_waiting_consent_received_row_is_not_retryable(tmp_path):
+    # WAITING_CONSENT is a manual-action state, not in
+    # receiver.AUTOMATIC_STATES - retry must never bypass consent.
+    state, _, _ = _started_state(tmp_path, "lifecycle-retry-consent")
+    try:
+        aid = "c" * 32
+        _seed_row(state, aid, "received", receiver.WAITING_CONSENT)
+        state.facade.submit(Command(
+            command_id="cmd-r", kind="attachment_retry",
+            payload={"attachment_id": aid}, created_at=0.0,
+        ))
+        state.service.tick()
+        result = state.facade.get_command("cmd-r")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == "invalid_state_transition"
+        assert receiver.get_state(state.conn, aid) == receiver.WAITING_CONSENT
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_download_on_a_sent_row_is_invalid_state_transition(tmp_path):
+    state, _, _ = _started_state(tmp_path, "lifecycle-dl-dir")
+    try:
+        aid = "d" * 32
+        _seed_row(state, aid, "sent", sender.DRAFT)
+        state.facade.submit(Command(
+            command_id="cmd-dl", kind="attachment_download",
+            payload={"attachment_id": aid}, created_at=0.0,
+        ))
+        state.service.tick()
+        result = state.facade.get_command("cmd-dl")
+        assert result.status == STATUS_FAILED
+        assert result.error_code == "invalid_state_transition"
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_download_command_drives_begin_download(tmp_path, monkeypatch):
+    # DOWNLOADING is in receiver.AUTOMATIC_STATES, so the tick's own row-scan
+    # would legitimately advance it (to FAILED, with no provider/network) in
+    # the same tick. Pin _due_rows to [] to isolate the command handler's
+    # effect: begin_download() moves WAITING_CONSENT -> DOWNLOADING, nothing else.
+    state, _, _ = _started_state(tmp_path, "lifecycle-download")
+    try:
+        aid = "e" * 32
+        _seed_row(state, aid, "received", receiver.WAITING_CONSENT)
+        monkeypatch.setattr(state.service, "_due_rows", lambda: [])
+        state.facade.submit(Command(
+            command_id="cmd-dl", kind="attachment_download",
+            payload={"attachment_id": aid}, created_at=0.0,
+        ))
+        state.service.tick()
+        result = state.facade.get_command("cmd-dl")
+        assert result.status == STATUS_SUCCEEDED
+        assert result.result == {"attachment_id": aid, "state": receiver.DOWNLOADING}
+        assert receiver.get_state(state.conn, aid) == receiver.DOWNLOADING
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_reject_command_drives_reject(tmp_path):
+    state, _, _ = _started_state(tmp_path, "lifecycle-reject")
+    try:
+        aid = "f" * 32
+        _seed_row(state, aid, "received", receiver.WAITING_CONSENT)
+        state.facade.submit(Command(
+            command_id="cmd-rj", kind="attachment_reject",
+            payload={"attachment_id": aid}, created_at=0.0,
+        ))
+        state.service.tick()
+        result = state.facade.get_command("cmd-rj")
+        assert result.status == STATUS_SUCCEEDED
+        assert result.result == {"attachment_id": aid, "state": receiver.REJECTED}
+        assert receiver.get_state(state.conn, aid) == receiver.REJECTED
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_retry_command_delegates_to_the_same_step_path(tmp_path, monkeypatch):
+    # retry re-drives the tick's own _step_sent/_step_received - it neither
+    # mints a new transfer_id nor bypasses per-row provider selection. Stub the
+    # step to record the delegated row id, and pin _due_rows to [] so the
+    # command handler is the *only* thing driving it this tick.
+    state, _, _ = _started_state(tmp_path, "lifecycle-retry-delegate")
+    try:
+        aid = "ab" + "0" * 30
+        _seed_row(state, aid, "sent", sender.DRAFT)
+        calls = []
+        monkeypatch.setattr(state.service, "_step_sent", lambda row: calls.append(row["id"]))
+        monkeypatch.setattr(state.service, "_due_rows", lambda: [])
+        state.facade.submit(Command(
+            command_id="cmd-retry", kind="attachment_retry",
+            payload={"attachment_id": aid}, created_at=0.0,
+        ))
+        state.service.tick()
+        result = state.facade.get_command("cmd-retry")
+        assert result.status == STATUS_SUCCEEDED
+        assert calls == [aid]
     finally:
         mca_runtime.reset_state_for_tests()

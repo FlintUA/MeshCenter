@@ -59,13 +59,17 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
+import tempfile
 import time
 import uuid
 from collections.abc import Mapping
 from functools import wraps
+from pathlib import Path
 
 from flask import jsonify, request
+from werkzeug.exceptions import RequestEntityTooLarge
 
 from meshsrv.attachments import mca_runtime, mime_allowlist, receiver, sender
 from meshsrv.attachments.commands import Command, CommandQueueFull, mint_command_id
@@ -141,9 +145,31 @@ _LIST_LIMIT_MIN = 1
 _LIST_LIMIT_MAX = 500
 
 # §7.2: the create endpoint's 5 MiB plaintext cap, enforced server-side
-# (not only client-side - §13 gap 11). Read cap+1 bytes so an oversize file
-# is detected rather than silently truncated.
+# (not only client-side - §13 gap 11).
 _MAX_FILE_BYTES = 5 * 1024 * 1024
+
+# Finding 4 (bounded + atomic multipart staging): the file cap above is the
+# *plaintext* bound; the total multipart body is additionally capped a little
+# above it so Werkzeug stops parsing (and spooling) an over-large request
+# *before* this route's own file-size check runs. That cap is set per-request
+# (`request.max_content_length`, supported since Flask 3.1), never via the
+# global `MAX_CONTENT_LENGTH` config, so no other endpoint's upload limit is
+# affected. The non-file `metadata` part is bounded separately with an explicit
+# UTF-8 byte-length check before `json.loads` runs - *not* via Werkzeug's
+# `max_form_memory_size`, which applies to the raw multipart chunk buffer and
+# would reject any file part larger than the (64 KiB) chunk size.
+_MAX_METADATA_BYTES = 16 * 1024
+_MULTIPART_OVERHEAD_BYTES = 8 * 1024
+_MAX_REQUEST_BYTES = _MAX_FILE_BYTES + _MAX_METADATA_BYTES + _MULTIPART_OVERHEAD_BYTES
+
+# Fixed-size staging chunk (streamed, never whole-file buffered) and the head
+# window retained in memory for MIME sniffing (Finding 4/8).
+_STAGING_CHUNK_BYTES = 64 * 1024
+_SNIFF_HEAD_BYTES = 512
+# Temporary staging files are dot-prefixed and `.tmp`-suffixed, distinct from a
+# committed spool file (a bare 32-hex `attachment_id`) - the convention
+# Finding 5's bounded orphan-staging recovery keys off.
+_TEMP_SUFFIX = ".tmp"
 
 
 # ---- small response helpers ----------------------------------------------
@@ -188,22 +214,38 @@ def _internal_error_response():
     }), 500
 
 
+def _request_too_large():
+    """The 413 for a multipart body that exceeds the create endpoint's
+    per-request cap (Finding 4). Werkzeug raises `RequestEntityTooLarge`
+    during form parsing - before the route's own file-size check runs; this
+    maps it to a clean JSON envelope so the sanitized boundary never leaks a
+    Werkzeug HTML page, `str(e)`, or a traceback."""
+    return jsonify({
+        "ok": False,
+        "error": "request body too large",
+        "error_code": "request_too_large",
+    }), 413
+
+
 def _mca_error_boundary(fn):
     """The local sanitized exception boundary for every MCAttach read
     handler. It sits *beneath* the project-wide `handle_errors` decorator,
     so it sees (and fully handles) every exception first: `handle_errors`
     then only ever returns the clean response, never its own leaky 500.
 
-    `FacadeNotReady` -> 503 `mca_not_ready`; anything else -> 500
-    `internal_error`, logging only the handler name and the exception class
-    (never `str(exc)`, args, `exc_info`, the request body, the query string,
-    or any identifier)."""
+    `FacadeNotReady` -> 503 `mca_not_ready`; a Werkzeug `RequestEntityTooLarge`
+    (the create endpoint's per-request multipart cap, Finding 4) -> 413
+    `request_too_large`; anything else -> 500 `internal_error`, logging only the
+    handler name and the exception class (never `str(exc)`, args, `exc_info`,
+    the request body, the query string, or any identifier)."""
     @wraps(fn)
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
         except FacadeNotReady:
             return _not_ready()
+        except RequestEntityTooLarge:
+            return _request_too_large()
         except Exception as exc:  # noqa: BLE001 - this is the sanitized boundary itself
             _log.error(
                 "MCAttach read endpoint '%s' raised %s", fn.__name__, type(exc).__name__
@@ -312,16 +354,67 @@ def _sanitize_source_name(raw_filename):
 
 
 def _discard_spool(spool_path):
-    """Best-effort removal of a staged-but-unused spool file - the one
-    filesystem write the create endpoint does, matched by this one cleanup on
-    every non-fresh/failed path (a replay/conflict stages a file the worker
-    will never reference, and a full-queue/not-ready submit leaves it
-    orphaned). Never raises: an unlink failure is a disk-hygiene issue, not a
-    correctness issue, and is logged without the path or any identifier."""
+    """Best-effort removal of a staged-but-unused spool file (a temp file or a
+    published final file) - the one filesystem write the create endpoint does,
+    matched by this one cleanup on every non-fresh/failed path (a
+    replay/conflict stages a file the worker will never reference, and a
+    full-queue/not-ready submit leaves it orphaned). Never raises: an unlink
+    failure is a disk-hygiene issue, not a correctness issue, and is logged
+    without the path or any identifier."""
     try:
         spool_path.unlink(missing_ok=True)
     except OSError:
         _log.warning("MCAttach create endpoint: could not remove a staged-but-unused spool file")
+
+
+class _FileTooLarge(Exception):
+    """Internal signal from `_stage_spool_file`: the staged file exceeded
+    `_MAX_FILE_BYTES` (read at most one chunk beyond). Mapped to the 400
+    `file_too_large` envelope by the caller; never propagates to the sanitized
+    boundary."""
+
+
+def _stage_spool_file(file_storage, spool_dir, attachment_id):
+    """Stream `file_storage` to a server-generated exclusive temporary file in
+    fixed-size chunks, computing SHA-256 and the total plaintext size
+    incrementally (Finding 4) - the whole file is never buffered, only the
+    first `_SNIFF_HEAD_BYTES` retained in memory for MIME sniffing.
+
+    The temp file is created with `tempfile.mkstemp`: exclusive creation
+    (O_CREAT|O_EXCL), mode 0600, and a dot-prefixed name derived from the
+    minted `attachment_id` - never the browser filename - so an ID collision
+    can never overwrite an existing spool file, and the final publish stays a
+    same-directory `os.replace` (atomic). Returns
+    `(temp_path, file_sha256, head, size)`. Raises `_FileTooLarge` after
+    reading at most one chunk beyond `_MAX_FILE_BYTES`; on any other error the
+    temp file is removed before re-raising."""
+    spool_dir.mkdir(parents=True, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(
+        dir=spool_dir, prefix=f".{attachment_id}.", suffix=_TEMP_SUFFIX
+    )
+    hasher = hashlib.sha256()
+    size = 0
+    head = bytearray()
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            stream = file_storage.stream
+            while True:
+                chunk = stream.read(_STAGING_CHUNK_BYTES)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > _MAX_FILE_BYTES:
+                    # One chunk beyond the cap - stop and reject, never read
+                    # the rest of an oversized file into memory or disk.
+                    raise _FileTooLarge()
+                hasher.update(chunk)
+                fh.write(chunk)
+                if len(head) < _SNIFF_HEAD_BYTES:
+                    head.extend(chunk[:_SNIFF_HEAD_BYTES - len(head)])
+    except Exception:
+        _discard_spool(Path(temp_path))
+        raise
+    return Path(temp_path), hasher.hexdigest(), bytes(head), size
 
 
 def _resolve_create_provider(profiles, provider_id_arg):
@@ -787,11 +880,17 @@ def register_attachments_routes(app, handle_errors):
         """The §7.2 idempotent multipart create. Splits its work across the two
         threads exactly as §3.5/§3.6/§7.2 prescribe:
 
-        On this request thread - pure validation only (id shape, comment bound,
-        provider resolution, TTL range), then stage the plaintext to
-        `spool/outgoing/<attachment_id>`, mint `attachment_id`/`command_id`,
-        compute `file_sha256` + `canonical_hash`, and hand the whole thing to
-        `facade.submit_create()` for the atomic reservation + enqueue.
+        On this request thread - a framework-level multipart body cap plus pure
+        validation (id shape, comment bound, provider resolution, TTL range),
+        then stream the plaintext in fixed-size chunks to an exclusive temp
+        file while computing `file_sha256`/size (never whole-file buffered),
+        sniff the MIME type, and publish it atomically to
+        `spool/outgoing/<attachment_id>` only after size/MIME/metadata all
+        pass - then mint `command_id`, compute `canonical_hash`, and hand the
+        whole thing to `facade.submit_create()` for the atomic reservation +
+        enqueue. The temp and final spool names are server-generated (never the
+        browser filename), and both are removed on every rejected/replay/
+        conflict/not-ready/queue-full/internal-error path.
 
         On the worker thread - `AttachmentsService._command_create` resolves the
         recipient's *trusted* binding (a SQLite read that cannot run here) and
@@ -807,10 +906,22 @@ def register_attachments_routes(app, handle_errors):
         if facade is None:
             return _not_ready()
 
+        # Finding 4: bound the whole multipart body *before* Werkzeug parses
+        # it. Per-request (never the global MAX_CONTENT_LENGTH), so no other
+        # endpoint's upload limit is affected. An over-large body is rejected
+        # here - during form parsing - rather than being spooled to disk and
+        # only caught by this route's own file-size check.
+        request.max_content_length = _MAX_REQUEST_BYTES
+
         # --- metadata (JSON string part): pure validation only --------------
         metadata_raw = request.form.get("metadata")
         if metadata_raw is None:
             return _json_error("invalid_metadata", "missing metadata part"), 400
+        # Bound the metadata part separately (Finding 4): reject an oversized
+        # metadata string before `json.loads` ever parses it. Measured in UTF-8
+        # bytes so the bound is tight regardless of multi-byte characters.
+        if len(metadata_raw.encode("utf-8")) > _MAX_METADATA_BYTES:
+            return _json_error("metadata_too_large", "metadata part is too large"), 400
         try:
             metadata = json.loads(metadata_raw)
         except ValueError:
@@ -879,22 +990,37 @@ def register_attachments_routes(app, handle_errors):
         ):
             return _json_error("invalid_metadata", "download_grace_seconds must be a positive integer"), 400
 
-        # --- file part: cap, sniff, hash ------------------------------------
+        # --- file part: bounded, chunked, atomic staging (Finding 4) ---------
         file_storage = request.files.get("file")
         if file_storage is None or file_storage.filename == "":
             return _json_error("invalid_metadata", "missing file part"), 400
-        data = file_storage.read(_MAX_FILE_BYTES + 1)
-        if len(data) > _MAX_FILE_BYTES:
-            return _json_error("file_too_large", "file exceeds the 5 MiB cap"), 400
-        mime_type = mime_allowlist.sniff_mime_type(data[:512])
-        if mime_type is None:
-            return _json_error("mime_not_allowed", "file content is not an allowed type"), 400
-        file_sha256 = hashlib.sha256(data).hexdigest()
-        source_name = _sanitize_source_name(file_storage.filename)
 
-        # --- mint ids, compute canonical hash (§3.5) -------------------------
+        # Mint the ids up front so the server-generated temp/spool names are
+        # derived from them, never from the browser filename.
         attachment_id = uuid.uuid4().hex
         command_id = mint_command_id()
+        spool_dir = facade.spool_outgoing_dir()
+        spool_path = spool_dir / attachment_id
+
+        try:
+            temp_path, file_sha256, head, _size = _stage_spool_file(
+                file_storage, spool_dir, attachment_id
+            )
+        except _FileTooLarge:
+            return _json_error("file_too_large", "file exceeds the 5 MiB cap"), 400
+        except OSError as exc:
+            _log.error(
+                "MCAttach create endpoint: spool staging failed (%s)", type(exc).__name__
+            )
+            return _internal_error_response()
+
+        mime_type = mime_allowlist.sniff_mime_type(head)
+        if mime_type is None:
+            _discard_spool(temp_path)
+            return _json_error("mime_not_allowed", "file content is not an allowed type"), 400
+        source_name = _sanitize_source_name(file_storage.filename)
+
+        # --- compute canonical hash (§3.5) -----------------------------------
         canonical_hash = compute_canonical_hash(
             file_sha256,
             build_canonical_json(
@@ -912,18 +1038,25 @@ def register_attachments_routes(app, handle_errors):
             ),
         )
 
-        # --- stage the plaintext (§7.2: spool/outgoing/<attachment_id>) ------
-        spool_dir = facade.spool_outgoing_dir()
-        spool_path = spool_dir / attachment_id
+        # --- atomic publish (§7.2: spool/outgoing/<attachment_id>, Finding 4) -
+        # Only after size, MIME, and metadata validation have all passed. The
+        # temp file was created exclusively (mkstemp); the final name is a
+        # freshly-minted uuid4 hex, so a collision cannot overwrite an existing
+        # spool file - the exists() guard below fails closed rather than ever
+        # clobbering one, and `os.replace` is the same-directory atomic rename.
         try:
-            spool_dir.mkdir(parents=True, exist_ok=True)
-            with open(spool_path, "wb") as fh:
-                fh.write(data)
+            if spool_path.exists():
+                _log.error(
+                    "MCAttach create endpoint: spool id collision for a minted attachment id"
+                )
+                _discard_spool(temp_path)
+                return _internal_error_response()
+            os.replace(temp_path, spool_path)
         except OSError as exc:
             _log.error(
-                "MCAttach create endpoint: spool staging failed (%s)", type(exc).__name__
+                "MCAttach create endpoint: spool publish failed (%s)", type(exc).__name__
             )
-            _discard_spool(spool_path)
+            _discard_spool(temp_path)
             return _internal_error_response()
 
         # --- reserve + enqueue (§3.6) ---------------------------------------

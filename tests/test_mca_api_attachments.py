@@ -40,6 +40,8 @@ from types import SimpleNamespace
 import pytest
 from flask import Flask, jsonify
 
+import api.api_attachments as api_attachments
+
 from api.api_attachments import register_attachments_routes
 from api.api_auth import register_auth_routes
 from meshsrv.attachments import mca_runtime, receiver, sender
@@ -1447,6 +1449,122 @@ def test_create_file_too_large(monkeypatch, tmp_path):
     assert resp.status_code == 400
     assert resp.get_json()["error_code"] == "file_too_large"
     assert facade.submitted == []
+
+
+# ---- Finding 4: bounded + atomic multipart staging -------------------------
+
+def test_create_request_body_over_cap_is_413(monkeypatch, tmp_path):
+    # The framework-level *total* multipart cap: a body whose content-length
+    # exceeds _MAX_REQUEST_BYTES must be rejected with 413 by Werkzeug during
+    # form parsing - before any form field is read or any staging I/O runs.
+    # The file part stays tiny; the oversized *metadata* part is what pushes the
+    # total over the cap, proving the 413 is the request cap, not the 5 MiB
+    # file cap (which would be 400 file_too_large).
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    meta = _make_meta()
+    meta["padding"] = "x" * (6 * 1024 * 1024)
+    resp = _post_create(c, meta=meta)
+    assert resp.status_code == 413
+    assert resp.get_json()["error_code"] == "request_too_large"
+    assert facade.submitted == []
+    # Rejected before any staging: the spool directory was never even created.
+    assert not (tmp_path / "spool").exists()
+
+
+def test_create_metadata_too_large_is_400(monkeypatch, tmp_path):
+    # The metadata part is bounded separately: an oversized (but still
+    # parseable) metadata string is rejected with 400 *before* json.loads, and
+    # before the file part is even read - no staging I/O happens.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    meta = _make_meta()
+    meta["padding"] = "x" * (17 * 1024)  # ~17 KiB, just over the 16 KiB cap
+    resp = _post_create(c, meta=meta)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "metadata_too_large"
+    assert facade.submitted == []
+    assert not (tmp_path / "spool").exists()
+
+
+def test_create_exact_5mib_file_boundary_is_accepted(monkeypatch, tmp_path):
+    # Exactly _MAX_FILE_BYTES plaintext must be accepted (the cap is exclusive:
+    # `size > _MAX_FILE_BYTES`, not `>=`).
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    exact = b"\xff\xd8\xff\xe0" + b"\x00" * (5 * 1024 * 1024 - 4)
+    resp = _post_create(c, data=exact)
+    assert resp.status_code == 202
+    body = resp.get_json()
+    # The staged file is the full 5 MiB plaintext, atomically published to its
+    # final server-generated name with no temp file left behind.
+    staged = tmp_path / "spool" / body["attachment_id"]
+    assert staged.exists()
+    assert staged.stat().st_size == 5 * 1024 * 1024
+    assert [p.name for p in (tmp_path / "spool").iterdir()] == [body["attachment_id"]]
+
+
+def test_create_atomic_publish_leaves_no_temp_file(monkeypatch, tmp_path):
+    # After a fresh create the spool directory holds exactly the committed
+    # file (a bare 32-hex attachment_id) - never a dot-prefixed `.tmp` staging
+    # file, because the temp name was atomically renamed to the final name.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    body = _post_create(c).get_json()
+    names = [p.name for p in (tmp_path / "spool").iterdir()]
+    assert names == [body["attachment_id"]]
+    assert not any(n.startswith(".") or n.endswith(".tmp") for n in names)
+
+
+def test_create_spool_collision_is_500_and_never_overwrites(monkeypatch, tmp_path):
+    # The final spool name is a freshly-minted uuid4 hex, but if that name is
+    # somehow already present the route must fail closed (500) and never
+    # overwrite the existing file, and must remove its own temp file.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    spool_dir = tmp_path / "spool"
+    spool_dir.mkdir(parents=True, exist_ok=True)
+    fixed_id = "a" * 32
+    collision = spool_dir / fixed_id
+    collision.write_bytes(b"pre-existing-do-not-overwrite")
+    # Force the minted attachment_id to collide with the pre-created file, but
+    # only for the *api* module's uuid lookup (mint_command_id keeps the real
+    # uuid module, so its id stays random).
+    monkeypatch.setattr(
+        api_attachments, "uuid", SimpleNamespace(uuid4=lambda: SimpleNamespace(hex=fixed_id))
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 500
+    assert resp.get_json()["error_code"] == "internal_error"
+    assert collision.read_bytes() == b"pre-existing-do-not-overwrite"
+    assert facade.submitted == []
+    # The temp file was removed; only the pre-existing file remains.
+    assert [p.name for p in spool_dir.iterdir()] == [fixed_id]
+
+
+def test_create_queue_full_discards_the_staged_file(monkeypatch, tmp_path):
+    # A queue-full submit (429) must remove the already-staged final spool file.
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool", queue_full=True
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 429
+    assert resp.get_json()["error_code"] == "command_queue_full"
+    assert facade.submitted == []
+    assert list((tmp_path / "spool").iterdir()) == []
+
+
+def test_create_not_ready_discards_the_staged_file(monkeypatch, tmp_path):
+    # A not-ready submit (503) must remove the already-staged final spool file.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    facade.not_ready = True
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 503
+    assert resp.get_json()["error_code"] == "mca_not_ready"
+    assert facade.submitted == []
+    assert list((tmp_path / "spool").iterdir()) == []
 
 
 def test_create_mime_not_allowed(monkeypatch, tmp_path):

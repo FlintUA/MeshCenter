@@ -701,9 +701,14 @@ class AttachmentsService:
     def _command_reject(self, command: Command) -> CommandOutcome:
         """`attachment_reject`: the explicit user action that moves a received
         `WAITING_CONSENT` row to `REJECTED` (§7.3). Delegates to
-        `receiver.reject()` unchanged, so reply/outbox behavior is preserved -
-        nothing is sent directly from any thread here; the tick's
-        `_dispatch_outgoing_replies()` remains the only sender."""
+        `receiver.reject()` unchanged, which only transitions the local row to
+        `REJECTED` and commits - it does **not** enqueue or send a signed
+        `MessageType.REJECTED` frame back to the sender. A real wire-level
+        rejection (signed REJECTED generation, durable outbox delivery,
+        sender-side source/key verification, and sender-state handling) is
+        deliberately deferred to the still-pending inbound control-message /
+        ADR-0009 work, so a rejection round trip to the sender is *not*
+        complete after this command."""
         attachment_id = command.payload.get("attachment_id")
         row = self._attachment_row(attachment_id)
         if row is None:

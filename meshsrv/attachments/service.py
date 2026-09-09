@@ -55,7 +55,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from meshsrv.attachments import codec, receiver, sender
+from meshsrv.attachments import codec, crypto, receiver, sender
 from meshsrv.attachments.command_registry import CommandRegistry
 from meshsrv.attachments.commands import MAX_COMMANDS_PER_TICK, Command, CommandQueue
 from meshsrv.attachments.delivery.base import DeliveryAdapter, DeliveryEnvelope, DeliveryError, Route, RouteType
@@ -770,6 +770,44 @@ class AttachmentsService:
         attachment_id = payload["attachment_id"]
         client_request_id = payload["client_request_id"]
         source_address = payload["source_address"]
+
+        # Finding 6: the request thread validated provider policy from its own
+        # immutable snapshot; the profile may have been removed/disabled, or its
+        # upload policy/token changed, in the window since. Re-resolve from the
+        # worker-owned registry and recheck the *same* local configuration
+        # immediately before committing the draft - a worker must not trust the
+        # queue, and must not commit a draft to a provider that is no longer
+        # uploadable. On any drift, fail safely and clean the stage (the same
+        # total cleanup as every other pre-commit failure, Finding 3).
+        provider = self._provider_registry.resolve(payload["provider_id"])
+        if provider is None:
+            self._create_failure_cleanup(command)
+            return CommandOutcome.failed("provider_not_found")
+        if not provider.enabled:
+            self._create_failure_cleanup(command)
+            return CommandOutcome.failed("provider_disabled")
+        if not provider.upload_allowed:
+            self._create_failure_cleanup(command)
+            return CommandOutcome.failed("upload_not_allowed")
+        if not provider.upload_token_configured:
+            self._create_failure_cleanup(command)
+            return CommandOutcome.failed("upload_token_missing")
+        # Provider size policy, from the worker's fresh profile: reject when the
+        # deterministic ciphertext upper bound for the staged plaintext already
+        # exceeds `max_ciphertext_bytes`. "When possible" - if the staged file
+        # is unexpectedly gone the check is skipped here and the authoritative
+        # post-encryption limit (`create_upload`'s `total_size`) still runs
+        # before upload; a missing source also fails VALIDATING independently.
+        spool_path = self._spool_path_for(attachment_id)
+        plain_size = None
+        if spool_path is not None:
+            try:
+                plain_size = spool_path.stat().st_size
+            except OSError:
+                plain_size = None
+        if plain_size is not None and crypto.ciphertext_size(plain_size) > provider.max_ciphertext_bytes:
+            self._create_failure_cleanup(command)
+            return CommandOutcome.failed("ciphertext_too_large")
 
         try:
             binding = self._key_exchange.get_binding(source_address)

@@ -73,6 +73,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 from meshsrv.attachments import mca_runtime, mime_allowlist, receiver, sender
 from meshsrv.attachments.commands import Command, CommandQueueFull, mint_command_id
+from meshsrv.attachments.crypto import ciphertext_size
 from meshsrv.attachments.delivery.base import RouteType
 from meshsrv.attachments.delivery.meshtastic import MESHTASTIC_TEXT_MAX_PAYLOAD_BYTES
 from meshsrv.attachments.facade import FacadeNotReady
@@ -445,6 +446,35 @@ def _validate_ttl(profile, hard_ttl_seconds):
         return _json_error("ttl_out_of_range", "hard_ttl_seconds below the provider minimum"), 400
     if profile.max_ttl_seconds is not None and hard_ttl_seconds > profile.max_ttl_seconds:
         return _json_error("ttl_out_of_range", "hard_ttl_seconds above the provider maximum"), 400
+    return None
+
+
+def _provider_policy_error(profile):
+    """Finding 6: enforce the create endpoint's *local* provider-policy
+    preconditions on the request thread, from the immutable published
+    snapshot. Only local configuration is checked - `enabled`,
+    `upload_allowed`, `upload_token_configured`, in the same order
+    `ConnectivityMonitor.evaluate_upload_decision()` applies them - so the
+    error codes are the stable readiness reasons a caller can rely on.
+
+    Deliberately NOT checked here (and never a create precondition):
+    current Relay/Internet reachability (offline creation and queuing must
+    remain possible - a Relay can be upload-READY while currently
+    unreachable), and radio availability. The Relay-state branches of
+    `evaluate_upload_decision()` are therefore skipped entirely.
+
+    Returns `None` when the profile passes, or a `(body, status)` 400 for
+    the first failing policy. `provider_disabled` follows the create
+    endpoint's existing `provider_not_found` naming (a *profile* level
+    property, not the `UploadRejectionReason.PROFILE_DISABLED` value);
+    `upload_not_allowed`/`upload_token_missing` match their
+    `UploadRejectionReason` values verbatim."""
+    if not profile.enabled:
+        return _json_error("provider_disabled", "provider is disabled"), 400
+    if not profile.upload_allowed:
+        return _json_error("upload_not_allowed", "uploads are not allowed for this provider"), 400
+    if not profile.upload_token_configured:
+        return _json_error("upload_token_missing", "provider has no upload token configured"), 400
     return None
 
 
@@ -972,6 +1002,15 @@ def register_attachments_routes(app, handle_errors):
             body, status = err
             return body, status
 
+        # Finding 6: reject a disabled profile / upload-disabled policy /
+        # missing upload token *synchronously* from the immutable snapshot,
+        # before any staging. Never a reachability check - offline creation
+        # stays possible.
+        err = _provider_policy_error(profile)
+        if err is not None:
+            body, status = err
+            return body, status
+
         hard_ttl = metadata.get("hard_ttl_seconds", sender.DEFAULT_HARD_TTL_SECONDS)
         if not isinstance(hard_ttl, int) or isinstance(hard_ttl, bool) or hard_ttl <= 0:
             return _json_error("invalid_metadata", "hard_ttl_seconds must be a positive integer"), 400
@@ -1003,7 +1042,7 @@ def register_attachments_routes(app, handle_errors):
         spool_path = spool_dir / attachment_id
 
         try:
-            temp_path, file_sha256, head, _size = _stage_spool_file(
+            temp_path, file_sha256, head, size = _stage_spool_file(
                 file_storage, spool_dir, attachment_id
             )
         except _FileTooLarge:
@@ -1019,6 +1058,19 @@ def register_attachments_routes(app, handle_errors):
             _discard_spool(temp_path)
             return _json_error("mime_not_allowed", "file content is not an allowed type"), 400
         source_name = _sanitize_source_name(file_storage.filename)
+
+        # Finding 6: provider size policy - reject *synchronously* when the
+        # deterministic ciphertext upper bound for this plaintext already
+        # exceeds the snapshot's `max_ciphertext_bytes`, before publishing.
+        # This is a conservative pre-encryption check only; the authoritative
+        # post-encryption limit (the Relay's own `total_size` check at
+        # `create_upload`) still runs unchanged before upload.
+        if ciphertext_size(size) > profile.max_ciphertext_bytes:
+            _discard_spool(temp_path)
+            return _json_error(
+                "ciphertext_too_large",
+                "file ciphertext would exceed the provider maximum",
+            ), 400
 
         # --- compute canonical hash (§3.5) -----------------------------------
         canonical_hash = compute_canonical_hash(

@@ -47,7 +47,7 @@ from meshsrv.attachments.facade import AttachmentsFacade, FacadeNotReady
 from meshsrv.attachments.idempotency import PendingReservation, PendingReservations
 from meshsrv.attachments.key_exchange import AddressStatus
 from meshsrv.attachments.probe_registry import ProbeRegistry
-from meshsrv.attachments.provider_registry import encode_provider_id
+from meshsrv.attachments.provider_registry import compute_provider_id, encode_provider_id
 from meshsrv.attachments.service import AttachmentsService
 from meshsrv.attachments.snapshots import AttachmentsSnapshot, AttachmentsSnapshotPublisher
 from meshsrv.connectivity_monitor import ConnectivitySnapshot, UploadRejectionReason
@@ -836,7 +836,7 @@ def test_retry_command_delegates_to_the_same_step_path(tmp_path, monkeypatch):
 # subsequent command that still drains normally.
 
 
-def _valid_create_payload(*, attachment_id="a" * 32, client_request_id="req-create-1"):
+def _valid_create_payload(*, attachment_id="a" * 32, client_request_id="req-create-1", provider_id=None):
     return {
         "attachment_id": attachment_id,
         "client_request_id": client_request_id,
@@ -844,11 +844,34 @@ def _valid_create_payload(*, attachment_id="a" * 32, client_request_id="req-crea
         "source_address": "!aaaaaaaa",
         "source_name": "file.bin",
         "mime_type": "application/octet-stream",
-        "provider_id": encode_provider_id(b"\x01" * 8),
+        "provider_id": provider_id if provider_id is not None else encode_provider_id(b"\x01" * 8),
         "comment": None,
         "hard_ttl_seconds": 3600,
         "download_grace_seconds": 3600,
     }
+
+
+def _register_ready_provider(state, *, enabled=True, upload_allowed=True, token=True, max_ciphertext_bytes=5 * 1024 * 1024):
+    """Register a provider in the worker's registry and return its canonical
+    `provider_id`. Ready by default (`enabled`, `upload_allowed`, and an
+    upload token on file), so the worker-side create recheck (Finding 6)
+    passes; individual tests flip one flag to exercise a specific rejection."""
+    registry = state.service._provider_registry  # noqa: SLF001
+    provider_id = compute_provider_id("https://relay.example.net", b"K" * 32)
+    registry.register(
+        display_name="Example Relay",
+        base_url="https://relay.example.net",
+        service_public_key=b"K" * 32,
+        max_ciphertext_bytes=max_ciphertext_bytes,
+        upload_allowed=upload_allowed,
+    )
+    if token:
+        registry.set_upload_token(
+            provider_id, state.workspace_manager, state.principal.principal_id, "test-upload-token"
+        )
+    if not enabled:
+        registry.update_profile(provider_id, enabled=False)
+    return provider_id
 
 
 def _stage_spool(state, attachment_id, data=b"staged-plaintext"):
@@ -965,6 +988,7 @@ def test_create_failure_rolls_back_partial_row_and_removes_reservation_and_spool
         client_request_id = "req-partial"
         _stage_spool(state, attachment_id)
         _reserve(state, client_request_id, attachment_id, "cmd-partial")
+        provider_id = _register_ready_provider(state)
         monkeypatch.setattr(state.service._key_exchange, "get_binding", lambda addr: _trusted_binding())
         monkeypatch.setattr(state.service, "_due_rows", lambda: [])
 
@@ -985,7 +1009,7 @@ def test_create_failure_rolls_back_partial_row_and_removes_reservation_and_spool
         state.facade.submit(Command(
             command_id="cmd-partial", kind="attachment_create",
             payload=_valid_create_payload(
-                attachment_id=attachment_id, client_request_id=client_request_id
+                attachment_id=attachment_id, client_request_id=client_request_id, provider_id=provider_id
             ),
             created_at=0.0,
         ))
@@ -1010,11 +1034,12 @@ def test_failed_create_does_not_block_the_next_command(tmp_path, monkeypatch):
         monkeypatch.setattr(state.service, "_due_rows", lambda: [])
 
         attachment_id = "d" * 32
+        provider_id = _register_ready_provider(state)
         _stage_spool(state, attachment_id)
         _reserve(state, "req-a", attachment_id, "cmd-a")
         state.facade.submit(Command(
             command_id="cmd-a", kind="attachment_create",
-            payload=_valid_create_payload(attachment_id=attachment_id, client_request_id="req-a"),
+            payload=_valid_create_payload(attachment_id=attachment_id, client_request_id="req-a", provider_id=provider_id),
             created_at=0.0,
         ))
         # A second command queued in the same tick must still drain to its own
@@ -1049,6 +1074,7 @@ def test_duplicate_create_reports_spool_cleanup_failed_and_retries(tmp_path, mon
         _seed_committed_create_row(state, existing_id, client_request_id, canonical_hash)
         _stage_spool(state, new_id)
         _reserve(state, client_request_id, new_id, "cmd-dup")
+        provider_id = _register_ready_provider(state)
         monkeypatch.setattr(state.service._key_exchange, "get_binding", lambda addr: _trusted_binding())
         monkeypatch.setattr(state.service, "_due_rows", lambda: [])
 
@@ -1061,7 +1087,7 @@ def test_duplicate_create_reports_spool_cleanup_failed_and_retries(tmp_path, mon
 
         state.facade.submit(Command(
             command_id="cmd-dup", kind="attachment_create",
-            payload=_valid_create_payload(attachment_id=new_id, client_request_id=client_request_id),
+            payload=_valid_create_payload(attachment_id=new_id, client_request_id=client_request_id, provider_id=provider_id),
             created_at=0.0,
         ))
         state.service.tick()
@@ -1080,6 +1106,143 @@ def test_duplicate_create_reports_spool_cleanup_failed_and_retries(tmp_path, mon
         state.service._drain_spool_cleanup()
         assert not _spool_path(state, new_id).exists()
         assert len(state.service._spool_cleanup_backlog) == 0
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+# --- Finding 6: worker-side provider recheck ---------------------------------
+#
+# The request thread validates provider policy from its immutable snapshot; the
+# worker must re-resolve from its own registry and recheck the same local
+# configuration immediately before committing the draft, because the profile
+# may have been removed/disabled or its policy/token changed in the window
+# between the request snapshot and execution. Each rejection must fail the
+# command safely (terminal result, no row, no stale reservation, no orphaned
+# staged plaintext).
+
+
+def _stage_reserve_enqueue(state, command_id, attachment_id, client_request_id, provider_id):
+    """Simulate a request thread that was *accepted* against a valid snapshot:
+    stage the plaintext, add the pending reservation, and enqueue the create."""
+    _stage_spool(state, attachment_id)
+    _reserve(state, client_request_id, attachment_id, command_id)
+    state.facade.submit(Command(
+        command_id=command_id, kind="attachment_create",
+        payload=_valid_create_payload(
+            attachment_id=attachment_id, client_request_id=client_request_id, provider_id=provider_id
+        ),
+        created_at=0.0,
+    ))
+
+
+def _assert_create_failed_and_cleaned(state, command_id, attachment_id, error_code):
+    result = state.facade.get_command(command_id)
+    assert result.status == STATUS_FAILED
+    assert result.error_code == error_code
+    assert state.conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0] == 0
+    assert len(state.pending_reservations) == 0
+    assert not _spool_path(state, attachment_id).exists()
+
+
+def test_create_worker_rejects_unregistered_provider(tmp_path):
+    # A create whose provider_id resolves to nothing (never registered) must
+    # fail cleanly before any draft is committed.
+    state, _, _ = _started_state(tmp_path, "create-provider-missing")
+    try:
+        attachment_id = "1a" + "0" * 30
+        _stage_reserve_enqueue(
+            state, "cmd-provider-missing", attachment_id, "req-provider-missing",
+            encode_provider_id(b"\x01" * 8),
+        )
+        state.service.tick()
+        _assert_create_failed_and_cleaned(
+            state, "cmd-provider-missing", attachment_id, "provider_not_found"
+        )
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_create_worker_rechecks_provider_disabled_after_snapshot(tmp_path):
+    # The stale-snapshot race: the request thread saw an enabled provider and
+    # staged+enqueued; the provider is then disabled before the worker commits.
+    # The worker's fresh resolve must reject with provider_disabled.
+    state, _, _ = _started_state(tmp_path, "create-provider-disabled-drift")
+    try:
+        provider_id = _register_ready_provider(state)
+        attachment_id = "2b" + "0" * 30
+        _stage_reserve_enqueue(state, "cmd-provider-disabled", attachment_id, "req-disabled", provider_id)
+        state.service._provider_registry.update_profile(provider_id, enabled=False)  # noqa: SLF001
+        state.service.tick()
+        _assert_create_failed_and_cleaned(state, "cmd-provider-disabled", attachment_id, "provider_disabled")
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_create_worker_rechecks_upload_not_allowed_after_snapshot(tmp_path):
+    state, _, _ = _started_state(tmp_path, "create-upload-disallowed-drift")
+    try:
+        provider_id = _register_ready_provider(state)
+        attachment_id = "3c" + "0" * 30
+        _stage_reserve_enqueue(state, "cmd-upload-disallowed", attachment_id, "req-disallowed", provider_id)
+        state.service._provider_registry.update_profile(provider_id, upload_allowed=False)  # noqa: SLF001
+        state.service.tick()
+        _assert_create_failed_and_cleaned(state, "cmd-upload-disallowed", attachment_id, "upload_not_allowed")
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_create_worker_rechecks_upload_token_missing_after_snapshot(tmp_path):
+    state, _, _ = _started_state(tmp_path, "create-token-missing-drift")
+    try:
+        provider_id = _register_ready_provider(state)
+        attachment_id = "4d" + "0" * 30
+        _stage_reserve_enqueue(state, "cmd-token-missing", attachment_id, "req-token-missing", provider_id)
+        state.service._provider_registry.clear_upload_token(  # noqa: SLF001
+            provider_id, state.workspace_manager, state.principal.principal_id
+        )
+        state.service.tick()
+        _assert_create_failed_and_cleaned(state, "cmd-token-missing", attachment_id, "upload_token_missing")
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_create_worker_rechecks_provider_removed_after_snapshot(tmp_path):
+    # Removed (not just disabled): remove_or_disable deletes the row when no
+    # attachment references it, so the worker's resolve returns None.
+    state, _, _ = _started_state(tmp_path, "create-provider-removed-drift")
+    try:
+        provider_id = _register_ready_provider(state)
+        attachment_id = "5e" + "0" * 30
+        _stage_reserve_enqueue(state, "cmd-provider-removed", attachment_id, "req-removed", provider_id)
+        assert state.service._provider_registry.remove_or_disable(  # noqa: SLF001
+            provider_id, state.workspace_manager, state.principal.principal_id
+        ) == "deleted"
+        state.service.tick()
+        _assert_create_failed_and_cleaned(state, "cmd-provider-removed", attachment_id, "provider_not_found")
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_create_worker_rechecks_ciphertext_size(tmp_path):
+    # Provider size policy: the deterministic ciphertext upper bound for the
+    # staged plaintext must be checked against the worker's fresh profile. The
+    # staged plaintext is 16 bytes, so its bound is 16 + 1*16 = 32; a provider
+    # with max_ciphertext_bytes=31 must reject it as ciphertext_too_large.
+    state, _, _ = _started_state(tmp_path, "create-ciphertext-too-large")
+    try:
+        provider_id = _register_ready_provider(state, max_ciphertext_bytes=31)
+        attachment_id = "6f" + "0" * 30
+        _stage_spool(state, attachment_id, data=b"x" * 16)
+        _reserve(state, "req-ciphertext", attachment_id, "cmd-ciphertext")
+        state.facade.submit(Command(
+            command_id="cmd-ciphertext", kind="attachment_create",
+            payload=_valid_create_payload(
+                attachment_id=attachment_id, client_request_id="req-ciphertext", provider_id=provider_id
+            ),
+            created_at=0.0,
+        ))
+        state.service.tick()
+        _assert_create_failed_and_cleaned(state, "cmd-ciphertext", attachment_id, "ciphertext_too_large")
     finally:
         mca_runtime.reset_state_for_tests()
 

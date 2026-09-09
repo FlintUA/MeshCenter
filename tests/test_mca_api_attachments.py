@@ -285,7 +285,10 @@ def _provider(**overrides):
         tls_required=True,
         upload_allowed=True,
         download_allowed=True,
-        max_ciphertext_bytes=5 * 1024 * 1024,
+        # Enough headroom that the 5 MiB plaintext cap (not the provider's
+        # ciphertext limit) is the binding constraint for the success paths:
+        # ciphertext_size(5 MiB) = 5 MiB + 20*16 bytes of tag = 5,243,200.
+        max_ciphertext_bytes=5 * 1024 * 1024 + 1024,
         is_default=True,
         enabled=True,
         min_ttl_seconds=60,
@@ -1598,6 +1601,94 @@ def test_create_ttl_out_of_range(monkeypatch, tmp_path):
     resp = _post_create(c, meta=_make_meta(hard_ttl_seconds=999999))
     assert resp.status_code == 400
     assert resp.get_json()["error_code"] == "ttl_out_of_range"
+
+
+# ---- Finding 6: provider policy checks (request thread) ---------------------
+
+
+def test_create_provider_disabled(monkeypatch, tmp_path):
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider(enabled=False)}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "provider_disabled"
+    assert facade.submitted == []
+    # Rejected before any staging I/O.
+    assert not (tmp_path / "spool").exists()
+
+
+def test_create_upload_not_allowed(monkeypatch, tmp_path):
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider(upload_allowed=False)}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "upload_not_allowed"
+    assert facade.submitted == []
+    assert not (tmp_path / "spool").exists()
+
+
+def test_create_upload_token_missing(monkeypatch, tmp_path):
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider(upload_token_configured=False)}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "upload_token_missing"
+    assert facade.submitted == []
+    assert not (tmp_path / "spool").exists()
+
+
+def test_create_ciphertext_too_large(monkeypatch, tmp_path):
+    # The deterministic ciphertext upper bound for the 36-byte _JPEG is
+    # 36 + 1*16 = 52 bytes; a provider whose max_ciphertext_bytes is below
+    # that must be rejected synchronously, after staging but before publish.
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider(max_ciphertext_bytes=51)}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "ciphertext_too_large"
+    assert facade.submitted == []
+    # The temp file was discarded; no committed spool file was published.
+    assert list((tmp_path / "spool").iterdir()) == []
+
+
+def test_create_ciphertext_exact_boundary_is_accepted(monkeypatch, tmp_path):
+    # The upper bound check is strictly `>`, so exactly 52 == max_ciphertext_bytes
+    # is accepted.
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider(max_ciphertext_bytes=52)}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 202
+    assert len(facade.submitted) == 1
+
+
+def test_create_does_not_require_relay_reachability(monkeypatch, tmp_path):
+    # Finding 6: Relay/Internet reachability is NOT a create precondition. A
+    # provider whose Relay is currently UNREACHABLE (and the fallback internet
+    # OFFLINE) must still accept the create and queue it - offline creation
+    # stays possible; relay state only gates the later upload, never the draft.
+    relay = _relay_status(state=RelayState.UNREACHABLE)
+    connectivity = ConnectivitySnapshot(
+        internet=InternetStatus.OFFLINE, relays={PROVIDER_ID: relay}
+    )
+    facade = _FakeFacade(
+        providers={PROVIDER_ID: _provider()},
+        connectivity=connectivity,
+        spool_dir=tmp_path / "spool",
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 202
+    assert len(facade.submitted) == 1
 
 
 def test_create_fresh_returns_202_with_minted_ids(monkeypatch, tmp_path):

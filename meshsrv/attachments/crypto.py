@@ -136,6 +136,29 @@ class ChunkPlan:
         return start, end
 
 
+def ciphertext_size(plain_size: int) -> int:
+    """The exact, deterministic data-ciphertext size for a plaintext of
+    `plain_size` bytes under this module's chunk AEAD construction. Every
+    chunk's ciphertext is its plaintext plus `TAG_BYTES` (16) of Poly1305
+    tag, so the total data-ciphertext size is exactly
+    ``plain_size + chunk_count * TAG_BYTES``.
+
+    This is the value the `cipher_size` column (`sender._step_encrypting`/
+    `_step_uploading`) persists and the value a Relay's
+    `max_ciphertext_bytes` limit is measured against (`relay_client`
+    `create_upload`'s `total_size`). The manifest header ciphertext is a
+    *separate* object sent under `manifest_size`, never folded into
+    `cipher_size`, so it is correctly excluded here.
+
+    It is exact, not an estimate - chunking overhead is fully deterministic
+    - which makes it the conservative deterministic *upper bound* a caller
+    can check before encrypting to reject a file that would exceed a
+    provider's `max_ciphertext_bytes`, without doing the encryption work
+    first (Finding 6's pre-commit size policy check)."""
+    plan = ChunkPlan.for_size(plain_size)
+    return plain_size + plan.chunk_count * TAG_BYTES
+
+
 def encrypt_chunk(
     *,
     data_key: bytes,

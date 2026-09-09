@@ -1,6 +1,6 @@
 # MCAttach Internal REST API Contract
 
-**Status:** Design contract (Step 1.6A), revised (second pass). The read-only endpoints of sub-stage 1.6A.2 (§5) are implemented in `api/api_attachments.py`. Of the mutation endpoints, the three Step 1.6A.3A lifecycle actions — `POST /api/attachments/{id}/retry`, `/download`, and `/reject` (§7.3) — and the Step 1.6A.3B idempotent multipart create — `POST /api/attachments` (§7.2) — are implemented (worker handlers in `meshsrv/attachments/service.py`); every other mutation endpoint (cancel, request-key, save, revoke, local-content, and the remaining sub-stages 1.6A.3–1.6A.5) remains design-only and does not exist yet.
+**Status:** Design contract (Step 1.6A), revised (second pass). The read-only endpoints of sub-stage 1.6A.2 (§5) are implemented in `api/api_attachments.py`. Of the mutation endpoints, the following are implemented (worker handlers in `meshsrv/attachments/service.py`, enqueued from `api/api_attachments.py`): the three Step 1.6A.3A lifecycle actions — `POST /api/attachments/{id}/retry`, `/download`, and `/reject` (§7.3); the Step 1.6A.3B idempotent multipart create — `POST /api/attachments` (§7.2); and the two Step 1.6A.3C mutations — `POST /api/attachments/{id}/cancel` (§7.4) and `POST /api/mca/contacts/{contact_id}/request-key` (§7.10). Every other mutation endpoint (save, revoke, local-content, and the remaining sub-stages 1.6A.4–1.6A.5) remains design-only and does not exist yet.
 **Canonical source:** the Russian system design spec (section 18 primary, sections 17/19/20 and the state machines also consulted). That spec is reference-only and is not committed to the repository.
 **Audience:** a future implementation task, split into sub-stages (§5).
 
@@ -456,18 +456,18 @@ Every mutation returns `202` + `command_id` (§3.4) unless a synchronous validat
 - Common errors: `404 attachment_not_found`; `409 invalid_state_transition` for any violated precondition — the synchronous 409 body carries the single safe `state` field with the current state: `{"ok": false, "error": "invalid state transition", "error_code": "invalid_state_transition", "state": "<current state>"}` (only `state` is added — never direction, ids, paths, comments, filenames, keys, tokens, or exception text); `503 relay_unreachable` (revoke at runtime, observed via the command result); `409 not_saved` (local-content when `saved=false`).
 - **`/save` is genuinely idempotent, not merely deduplicated.** `unique_file_name()` only resolves a name collision at **first** save — it is **not** an idempotency mechanism (a second save would otherwise create a second copy under a new name). The command instead: if `saved=true` and the file exists → return the prior result (`saved=true`, same `file_name`) **without copying**; if `saved=true` but the file is missing → `content_missing` (or a separately-specified re-save recovery), never a silent duplicate; `unique_file_name()` is applied **only** on the first save to resolve a name conflict.
 
-### 7.4 `POST /api/attachments/{id}/cancel` — cancel an outgoing send (1.6A.3)
+### 7.4 `POST /api/attachments/{id}/cancel` — cancel an outgoing send (1.6A.3C, implemented)
 
-Cancel the send before it is `SENT`. Cleanup is decided by **persisted remote state** (a Relay upload session and/or revoke token), not by the attachment state *name* alone — `UPLOADING` does not imply "committed", and `READY_TO_SEND` implies commit but the revoke token is the authoritative signal:
+Cancel the send before it is `SENT`. **Implementation status:** implemented as the worker command `attachment_cancel` (§4.2, `meshsrv/attachments/service.py`), enqueued from `api/api_attachments.py` with the same synchronous-validation-then-202 model as §7.3.
 
-- **No persisted remote session / revoke token** (nothing was ever uploaded): cancel the local operation and **clear the spool** (`spool/outgoing/<uuid>`), then → `CANCELLED`.
-- **Upload session created but not yet committed** (no revoke token yet): **abort or revoke the session**, then cancel locally → `CANCELLED`.
-- **Committed Relay object, OFFER not yet sent** (a revoke token exists, still in `READY_TO_SEND`): **revoke the object**, then → `CANCELLED`.
-- **Remote cleanup not confirmed:** if the revoke/abort fails, the command **fails** (`error_code: relay_unreachable`) and the attachment is **not** marked `CANCELLED` — the state stays `READY_TO_SEND` so the user can retry or revoke.
-- **After `SENT`** (`SENT`/`RECEIVED`/`DOWNLOADED`): `cancel` is **not** valid — use `/revoke`. → `409 invalid_state_transition`.
-- **Terminal states:** `409 invalid_state_transition`.
+**Synchronous (request thread):** `503 mca_not_ready` when the facade is missing/not ready; `400 invalid_attachment_id` for a non-canonical id (32 lowercase hex); `404 attachment_not_found` when absent from the published snapshot; `409 invalid_state_transition` (with the safe `state` field) unless the row is **outgoing** (`direction == "sent"`) and in `sender.AUTOMATIC_STATES` (`DRAFT`/`VALIDATING`/`ENCRYPTING`/`QUEUED_UPLOAD`/`UPLOADING`/`READY_TO_SEND`) — received rows and terminal / `SENT` / `RECEIVED` / `DOWNLOADED` / `REJECTED` / `EXPIRED` / `REVOKED` / `CANCELLED` rows are never cancellable. Otherwise `202 {"ok": true, "command_id"}`.
 
-Responses: `202 {"ok": true, "command_id"}`; `404 attachment_not_found`; `409 invalid_state_transition`. Success/failure is observed via the command result (§7.9). The "revoke/abort then CANCELLED" orchestration is a **new** worker command composing the Relay session cleanup + `sender.cancel` (§13); it keys off persisted upload-session/revoke-token state.
+**Worker (`_command_cancel`)** re-reads the persisted row (never trusts the snapshot) and runs two halves strictly in order:
+
+1. **Remote first** — decided by persisted `mca_sender_state` (`upload_id`/`revoke_token`), not by the state name: if neither was ever persisted → local-only cancel; if a session exists but `revoke_token` is missing → `relay_unreachable` (cannot safely revoke; the row, sender state, and spool are all preserved); otherwise resolve the Relay client from the row's persisted `provider_id` (never a default) and call `RelayClient.revoke(bytes.fromhex(transfer_id), revoke_token)`. A Relay **404 is confirmed absence** (the object is already gone → the remote half is satisfied); any other `RelayHTTPError`/`RelayError`, or a missing/disabled provider → `relay_unreachable` with the row, sender state, and spool all **preserved** for a manual retry (a committed-but-unreachable object is never silently abandoned).
+2. **Local second**, only after the remote half resolves: unlink **only** `spool/outgoing/<attachment_id>` (derived from the validated id, never `saved_path`; a missing spool is clean; an unlink `OSError` → `spool_cleanup_failed` with the row unchanged), clear `saved_path` to `NULL`, then `sender.cancel()` in the same transaction (a `SenderError` from a state that raced out of `AUTOMATIC_STATES` rolls back → `invalid_state_transition`).
+
+Success result (only when both halves completed): state `CANCELLED`, `saved_path` NULL, no `mca_sender_state` row, no spool file, history preserved — `result: {"attachment_id": ..., "state": "CANCELLED"}`.
 
 ### 7.5 Public attachment projection (all read endpoints)
 
@@ -525,11 +525,16 @@ Responses: `202 {"ok": true, "command_id"}`; `404 attachment_not_found`; `409 in
 - **Errors:** `400 invalid_command_id`; `404 command_not_found` (unknown id, expired, or lost to restart). After a restart the client falls back to polling the domain snapshots (§3.4).
 - **Bounded/immutable/restart behavior:** §3.4.
 
-### 7.10 `POST /api/mca/contacts/{contact_id}/request-key` (1.6A.3)
+### 7.10 `POST /api/mca/contacts/{contact_id}/request-key` (1.6A.3C, implemented)
 
-- **CSRF:** required. **Body:** `{"route": {"adapter_id", "route_id"}}` (optional; defaults to the binding's route).
-- **Flow:** `RequestKeyCommand` → `key_exchange.build_key_request()` → send via the adapter. Rate-limited by `key_exchange`'s per-address gate.
-- **Responses:** `202`; `429 rate_limited`; `409 key_already_known`; `503 radio_unavailable` (observed via the command result).
+Ask a contact to announce its MCA key over the fixed DIRECT route. **Implementation status:** implemented as the worker command `contact_request_key` (§4.2, `meshsrv/attachments/service.py`), enqueued from `api/api_attachments.py`.
+
+- **Contact id (Stage 1):** the canonical Meshtastic transport address — `!` followed by exactly 8 lowercase hex digits (e.g. `!756f9960`). Any other shape → `400 {"ok": false, "error": "invalid contact id", "error_code": "invalid_contact_id"}`.
+- **CSRF:** required. **Body:** empty, or `{"route": {"adapter_id": "meshtastic", "route_id": "<contact_id>"}}`. A missing `route` defaults to DIRECT (the only supported route); a supplied `route` must name `adapter_id == "meshtastic"` and `route_id == contact_id` — anything else → `400 invalid_contact_id`.
+- **Synchronous (request thread):** `503 mca_not_ready`; `400 invalid_contact_id`; `409 key_already_known` when the snapshot binding is already `MCA_READY`; otherwise `202 {"ok": true, "command_id"}`. `KEY_UNKNOWN`/`KEY_UNVERIFIED`/`KEY_CHANGED` may request.
+- **Worker (`_command_request_key`)** re-validates id/adapter/route (never trusts the queue), re-reads the live binding (a contact that became `MCA_READY` since the snapshot read → `key_already_known`), checks the persisted outgoing rate limit, then `build_key_request()` + `encode()` + `send()` over a fixed DIRECT `Route(route_type=DIRECT, route_id=contact_id, destination_address=contact_id)` with `command.command_id` as the idempotency key. A missing delivery adapter, a `DeliveryError`, or a receipt with `sent != True` → `radio_unavailable` (no quota consumed). On `sent == True`, the quota timestamp is persisted and the result is `{"contact_id": ..., "status": "requested"}`.
+- **Rate limit:** one accepted outgoing key request per `(workspace_id, adapter_id, source_address)` per 600 s, persisted in `mca_key_exchange_contact_state.last_request_sent_at` (migration 13) so it survives a restart; the timestamp is recorded **only after** `DeliveryReceipt.sent == True`, so a failed send never consumes the quota. A second request inside the window → `rate_limited` (command result).
+- **Responses:** `202`; `400 invalid_contact_id`; `409 key_already_known`; `429 command_queue_full`; command-result failures `rate_limited` / `radio_unavailable`.
 
 ### 7.11 Provider onboarding — two-phase via `probe_id` (1.6A.4)
 
@@ -617,7 +622,7 @@ Allowed actions per state. `retry` is valid **only** for `AUTOMATIC_STATES` — 
 | State | retry | download | save | reject | revoke | cancel | copy-code | local-content |
 |---|---|---|---|---|---|---|---|---|
 | DRAFT / VALIDATING / ENCRYPTING / QUEUED_UPLOAD | ✓ | — | — | — | — | ✓ (no remote session: local + spool) | — | — |
-| UPLOADING | ✓ | — | — | — | — | ✓ (session uncommitted: abort/revoke session) | — | — |
+| UPLOADING | ✓ | — | — | — | — | ✓ (persisted session: revoke object) | — | — |
 | READY_TO_SEND | ✓ | — | — | — | — | ✓ (committed: revoke object) | — | — |
 | SENT / RECEIVED / DOWNLOADED | — | — | — | — | ✓ | — (use revoke) | ✓ | ✓(if saved) |
 | FAILED_VALIDATION / FAILED_UPLOAD / FAILED_RADIO | — | — | — | — | — | — | — | — |
@@ -629,7 +634,7 @@ Allowed actions per state. `retry` is valid **only** for `AUTOMATIC_STATES` — 
 | AVAILABLE | — | — | ✓ | — | — | — | ✓ | ✓ |
 | REJECTED / FAILED / EXPIRED (receiver) | — | — | — | — | — | — | — | — |
 
-`cancel` semantics (keyed off persisted remote state, §7.4): no remote session/revoke token → local cancel + clear spool → `CANCELLED`; upload session uncommitted → abort/revoke session → `CANCELLED`; committed object not yet sent → revoke object → `CANCELLED` (any remote-cleanup failure ⇒ not `CANCELLED`, `error_code: relay_unreachable`); `SENT/RECEIVED/DOWNLOADED` → use `/revoke`, not `/cancel`.
+`cancel` semantics (keyed off persisted remote state, §7.4): no persisted `upload_id`/`revoke_token` → local cancel + clear spool → `CANCELLED`; a persisted session without a `revoke_token` → `relay_unreachable` (cannot safely revoke — row preserved for manual retry); a persisted `revoke_token` → revoke the object (a Relay 404 is confirmed absence) then local cancel → `CANCELLED` (any other remote-cleanup failure ⇒ not `CANCELLED`, `error_code: relay_unreachable`; an unlink `OSError` ⇒ `spool_cleanup_failed`); `SENT/RECEIVED/DOWNLOADED` → use `/revoke`, not `/cancel`.
 
 `retry` never mutates state directly — it re-dispatches `run_step`/`reconcile_pending` for a state the tick already drives, forcing immediacy (e.g. `READY_TO_SEND` after the radio returns, `QUEUED_UPLOAD` after the network returns). It never mints a new `transfer_id`, and it does **not** recover a terminal `FAILED_*` (that is a future state-machine change).
 
@@ -651,7 +656,7 @@ Stable, snake_case, additive.
 
 | Status | `error_code` | Meaning |
 |---|---|---|
-| 400 | `invalid_metadata` / `invalid_attachment_id` / `invalid_direction` / `invalid_state` / `invalid_filter` / `invalid_command_id` / `invalid_origin` / `invalid_pagination` / `invalid_provider_id` / `invalid_query` | malformed input |
+| 400 | `invalid_metadata` / `invalid_attachment_id` / `invalid_direction` / `invalid_state` / `invalid_filter` / `invalid_command_id` / `invalid_origin` / `invalid_pagination` / `invalid_provider_id` / `invalid_query` / `invalid_contact_id` | malformed input |
 | 400 | `mime_not_allowed` / `file_too_large` / `metadata_too_large` / `ciphertext_too_large` | file/size validation |
 | 400 | `recipient_not_found` / `recipient_not_trusted` | binding missing or not `trusted` |
 | 400 | `provider_not_found` / `provider_disabled` / `upload_not_allowed` / `upload_token_missing` / `ttl_out_of_range` / `provider_id_mismatch` | provider/registration |
@@ -674,7 +679,7 @@ Stable, snake_case, additive.
 | 503 | `mca_not_ready` | the attachments facade exists but readiness is unset (service not yet started, or the first snapshot publish failed); snapshot-backed reads and `submit()` reject until readiness (§3.2) |
 | 500 | `internal_error` | an unexpected exception was sanitized by the MCAttach read endpoint's local error boundary — a stable envelope with no exception text, class, traceback, or path (§11) |
 
-Command-result `error_code`s reuse this table plus the probe failure codes (`origin_not_routable`, `relay_identity_mismatch`, `relay_incompatible`) and the two worker-side execution codes `unsupported_command_kind` (an enumerated kind with no wired handler — a terminal `failed`, never a crash) and `command_execution_failed` (a wired handler raised; the drain loop records it as a terminal `failed`). `UploadRejectionReason` maps 1:1 to `error_code`s on upload-readiness: `profile_not_found`, `profile_disabled`, `upload_not_allowed`, `upload_token_missing`, `relay_not_yet_checked`, `relay_unreachable`, `relay_identity_mismatch`, `relay_incompatible`, `ciphertext_too_large`, `ttl_below_minimum`, `ttl_above_maximum`.
+Command-result `error_code`s reuse this table plus the probe failure codes (`origin_not_routable`, `relay_identity_mismatch`, `relay_incompatible`), the two worker-side execution codes `unsupported_command_kind` (an enumerated kind with no wired handler — a terminal `failed`, never a crash) and `command_execution_failed` (a wired handler raised; the drain loop records it as a terminal `failed`), and the cancel-specific worker code `spool_cleanup_failed` (an unlink `OSError` on `spool/outgoing/<attachment_id>` — §7.4). `UploadRejectionReason` maps 1:1 to `error_code`s on upload-readiness: `profile_not_found`, `profile_disabled`, `upload_not_allowed`, `upload_token_missing`, `relay_not_yet_checked`, `relay_unreachable`, `relay_identity_mismatch`, `relay_incompatible`, `ciphertext_too_large`, `ttl_below_minimum`, `ttl_above_maximum`.
 
 ---
 
@@ -738,10 +743,10 @@ The trust is thus **operator-confirmed fingerprint + server-side probe-verified 
 
 ## 13. Implementation gaps (resolve before/with the named sub-stage)
 
-1. **Facade / queue / snapshots — built in Step 1.6A.1.** The §3 plumbing now exists: `CommandQueue`, `CommandRegistry`, `PendingReservations`, `ProbeRegistry`, `AttachmentsSnapshotPublisher` (+ `ContentDescriptor`), the `AttachmentsFacade` request surface, and the `CommandDispatcher` handler table — wired into `_MCARuntimeState` and drained by the worker (§3.2/§3.3/§3.4). The Step 1.6A.3A lifecycle handlers (`attachment_retry` / `attachment_download` / `attachment_reject`) and the Step 1.6A.3B create handler (`attachment_create` → `sender.create_draft`) are now implemented. What remains is the rest of the per-command handler *implementations* (the actual `save`/`revoke`/provider work), which land in sub-stages 1.6A.3–1.6A.5.
+1. **Facade / queue / snapshots — built in Step 1.6A.1.** The §3 plumbing now exists: `CommandQueue`, `CommandRegistry`, `PendingReservations`, `ProbeRegistry`, `AttachmentsSnapshotPublisher` (+ `ContentDescriptor`), the `AttachmentsFacade` request surface, and the `CommandDispatcher` handler table — wired into `_MCARuntimeState` and drained by the worker (§3.2/§3.3/§3.4). Six command handlers are now implemented: the Step 1.6A.3A lifecycle handlers (`attachment_retry` / `attachment_download` / `attachment_reject`), the Step 1.6A.3B create handler (`attachment_create` → `sender.create_draft`), and the two Step 1.6A.3C handlers (`attachment_cancel` → remote-revoke-then-`sender.cancel`, §7.4; `contact_request_key` → rate-limited KEY_REQUEST send, §7.10). What remains is the rest of the per-command handler *implementations* (the actual `save`/`revoke`/provider work), which land in sub-stages 1.6A.4–1.6A.5.
 2. **`client_request_id` / `canonical_hash` columns — done (migration 11).** The two columns plus the partial unique index on `(workspace_id, client_request_id) WHERE client_request_id IS NOT NULL` now exist (§3.5/§3.6).
 3. **Multipart staging — done (Step 1.6A.3B).** `POST /api/attachments` now accepts `multipart/form-data`, stages the plaintext to `spool/outgoing/<uuid>` in bounded 64 KiB chunks (never whole-file buffered), sniffs MIME from magic bytes plus full-stream text/JSON validation and filename normalization, computes `file_sha256` + `canonical_hash`, and enforces the 5 MiB cap with a per-request total-body cap (`413 request_too_large`) (§7.2).
-4. **No cancel orchestration** — `sender.cancel()` does not clear the spool or abort/revoke an in-flight Relay upload session/object; the `CancelAttachmentCommand`'s persisted-remote-state behavior (§7.4) is a new worker command composing the Relay session cleanup + `sender.cancel`.
+4. **Cancel orchestration — done (Step 1.6A.3C).** `sender.cancel()` still does not itself clear the spool or revoke an in-flight Relay object; the `attachment_cancel` worker command now composes both halves — the persisted-remote-state Relay revoke (with 404-as-confirmed-absence) followed by the spool unlink + `saved_path` clear + `sender.cancel()` (§7.4).
 5. **`ProbeRegistry` built (Step 1.6A.1); `probe_id`→`register()` wiring still open.** The single-use in-memory `ProbeRecord` store with its TTL/check-and-consume semantics (§7.11) is now built and TTL-enforced. What remains is wiring the `probe_id` flow into `register()` so it consumes the probe record instead of re-trusting browser-supplied fields — that lands in 1.6A.4.
 6. **No contact enumeration** — `GET /api/mca/contacts` needs a "list all bindings" method.
 7. **`clear_upload_token()` done (Step 1.6A.1); add-route / save-to-files / revoke still open.** The remaining domain methods — `deliveries` POST (add-route), `save` (save-to-files), and `revoke`-via-facade — still need new worker-executed methods (sub-stages 1.6A.3/1.6A.5).

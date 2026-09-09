@@ -147,7 +147,28 @@ def canonical_extension(mime_type: str) -> Optional[str]:
     return extensions[0] if extensions else None
 
 
-def normalize_file_name_for_mime(file_name: str, mime_type: str) -> str:
+# The worker re-validates `source_name` with `_bounded_text(..., max_len=255)`,
+# so the *final* normalized name (extension included) must never exceed this
+# many Unicode code points or the route would accept a name the worker rejects
+# as `invalid_payload` (§7.2, Finding 8).
+MAX_SOURCE_NAME_CODE_POINTS = 255
+
+
+def _truncate_code_points(text: str, max_code_points: Optional[int]) -> str:
+    """Truncate `text` to at most `max_code_points` Unicode code points, or
+    return it unchanged when the cap is `None`. Python `str` slicing is
+    code-point-safe (never splits a multi-byte character), so multibyte names
+    are measured by character count, not UTF-8 byte length."""
+    if max_code_points is None:
+        return text
+    if max_code_points <= 0:
+        return ""
+    return text[:max_code_points]
+
+
+def normalize_file_name_for_mime(
+    file_name: str, mime_type: str, max_code_points: Optional[int] = None
+) -> str:
     """Make `file_name`'s extension consistent with `mime_type`, preserving an
     already-consistent extension and otherwise replacing/appending the
     canonical one. `mime_type` is already established from content by the
@@ -161,19 +182,34 @@ def normalize_file_name_for_mime(file_name: str, mime_type: str) -> str:
     `is_allowed_extension(file_name)` always passes for an accepted request,
     closing the Finding 8 gap where a request accepted here could otherwise
     fail later in `sender._step_validating` on an independent extension rule.
+
+    When `max_code_points` is set, the *final* name (extension included) is
+    capped to that many code points by truncating only the stem, never the
+    extension - so an overlong name keeps its (existing or canonical)
+    extension and the result always stays within the worker's 255-code-point
+    `source_name` bound rather than being truncated *then* extended (which
+    could exceed the bound).
     """
     extensions = _MIME_EXTENSIONS.get(mime_type)
     if extensions is None:
-        return file_name
+        return _truncate_code_points(file_name, max_code_points)
     lowered = file_name.lower()
     for ext in extensions:
         if lowered.endswith(ext):
-            return file_name
+            # Already consistent: keep the name and its exact (case-preserved)
+            # extension, capping only the stem.
+            stem = file_name[: -len(ext)]
+            tail = file_name[-len(ext):]
+            stem_cap = None if max_code_points is None else max_code_points - len(ext)
+            return _truncate_code_points(stem, stem_cap) + tail
     canonical = extensions[0]
     if "." in file_name:
         stem, _ = file_name.rsplit(".", 1)
-        return stem + canonical
-    return file_name + canonical
+    else:
+        stem = file_name
+    stem_cap = None if max_code_points is None else max_code_points - len(canonical)
+    stem = _truncate_code_points(stem, stem_cap)
+    return stem + canonical
 
 
 class TextStreamValidator:

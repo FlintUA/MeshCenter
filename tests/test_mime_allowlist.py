@@ -93,6 +93,33 @@ def test_normalize_file_name_for_unknown_mime_is_identity():
     assert normalize_file_name_for_mime("weird.bin", "application/x-unknown") == "weird.bin"
 
 
+@pytest.mark.parametrize(
+    "file_name,mime_type,expected",
+    [
+        # extensionless: only the stem is truncated, the canonical extension is
+        # appended *after* capping, so the final name is exactly 255.
+        ("x" * 300, "text/plain", "x" * 251 + ".txt"),
+        ("x" * 255, "text/plain", "x" * 251 + ".txt"),
+        # already-consistent extension: the extension is preserved (including
+        # its exact case) and only the stem is truncated.
+        ("x" * 300 + ".txt", "text/plain", "x" * 251 + ".txt"),
+        ("X" * 300 + ".TXT", "text/plain", "X" * 251 + ".TXT"),
+        # multi-byte is measured in code points: 300 two-byte characters are
+        # truncated to 251 characters (not ~127), then `.txt` appended.
+        ("é" * 300, "text/plain", "é" * 251 + ".txt"),
+        # an inconsistent extension is replaced with the canonical one, capped
+        # the same way.
+        ("x" * 300 + ".exe", "text/plain", "x" * 251 + ".txt"),
+    ],
+)
+def test_normalize_file_name_for_mime_respects_max_code_points(file_name, mime_type, expected):
+    assert (
+        normalize_file_name_for_mime(file_name, mime_type, max_code_points=255)
+        == expected
+    )
+    assert len(expected) <= 255
+
+
 # ---- Finding 8: incremental full-stream text validation -------------------
 
 

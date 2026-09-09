@@ -351,3 +351,80 @@ def test_submit_create_raises_facade_not_ready_before_readiness():
         facade.submit_create(
             _create_command(), client_request_id="req-1", reservation=_reservation()
         )
+
+
+def test_submit_create_registration_failure_removes_the_fresh_reservation(monkeypatch):
+    # Finding 2: reservation + registration + enqueue are one submission
+    # transaction. A registration failure (e.g. a duplicate command_id) must
+    # remove the fresh reservation just inserted - the command is neither
+    # registered nor enqueued, so nothing is left half-submitted.
+    facade, _ = _facade()
+
+    def boom(command):
+        raise ValueError("command already registered")
+
+    monkeypatch.setattr(facade._command_registry, "register", boom)
+    with pytest.raises(ValueError):
+        facade.submit_create(
+            _create_command(), client_request_id="req-1", reservation=_reservation()
+        )
+    assert facade._pending_reservations.get("req-1") is None  # noqa: SLF001
+    assert facade._command_queue.qsize() == 0  # noqa: SLF001
+
+
+def test_submit_create_generic_enqueue_failure_discards_registry_and_reservation(monkeypatch):
+    # Finding 2: any enqueue failure - not just CommandQueueFull - discards the
+    # registry entry and removes the reservation, so a queue bug can never leave
+    # a phantom `queued` entry or a dangling reservation.
+    facade, _ = _facade()
+
+    def boom(command):
+        raise RuntimeError("queue exploded")
+
+    monkeypatch.setattr(facade._command_queue, "put_nowait", boom)
+    with pytest.raises(RuntimeError):
+        facade.submit_create(
+            _create_command(), client_request_id="req-1", reservation=_reservation()
+        )
+    assert facade.get_command("c" * 32) is None
+    assert facade._pending_reservations.get("req-1") is None  # noqa: SLF001
+
+
+def test_submit_create_wake_is_best_effort(monkeypatch):
+    # Finding 2: the enqueue has already succeeded, so a wake failure must
+    # never turn an accepted create into a failure (the worker is woken by the
+    # next tick anyway).
+    facade, wake_event = _facade()
+
+    def boom():
+        raise RuntimeError("wake failed")
+
+    monkeypatch.setattr(wake_event, "set", boom)
+    outcome = facade.submit_create(
+        _create_command(), client_request_id="req-1", reservation=_reservation()
+    )
+    assert outcome.kind == "fresh"
+    assert facade.get_command("c" * 32).status == STATUS_QUEUED
+    assert facade._command_queue.qsize() == 1  # noqa: SLF001
+    assert facade._pending_reservations.get("req-1") is not None  # noqa: SLF001
+
+
+def test_submit_create_rollback_does_not_remove_a_promoted_reservation(monkeypatch):
+    # Finding 2: compare-and-remove. If the worker promoted the reservation to
+    # a different command's ids before this request's enqueue failed, the
+    # rollback must NOT drop the promoted reservation.
+    facade, _ = _facade()
+    promoted = _reservation(command_id="d" * 32)
+
+    def promote_then_fail(command):
+        facade._pending_reservations.replace("req-1", promoted)  # noqa: SLF001
+        raise CommandQueueFull()
+
+    monkeypatch.setattr(facade._command_queue, "put_nowait", promote_then_fail)
+    with pytest.raises(CommandQueueFull):
+        facade.submit_create(
+            _create_command(), client_request_id="req-1", reservation=_reservation()
+        )
+    # The promoted reservation survives; the request thread's rollback did not
+    # remove another command's reservation.
+    assert facade._pending_reservations.get("req-1") is promoted  # noqa: SLF001

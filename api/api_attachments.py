@@ -344,7 +344,11 @@ def _sanitize_source_name(raw_filename):
     folded into the canonical hash. Fail closed to a neutral name rather than
     rejecting the upload: take the basename (so a hostile `../../etc/passwd`
     cannot survive even as a display name), drop control characters, and fall
-    back to `"attachment"` when nothing safe remains."""
+    back to `"attachment"` when nothing safe remains. Length is deliberately
+    *not* capped here - the caller normalizes the extension first
+    (`normalize_file_name_for_mime(..., max_code_points=255)`), which must
+    truncate the stem with the extension already in place; truncating here
+    would let the later extension append push the name past the bound."""
     if not isinstance(raw_filename, str):
         return "attachment"
     base = raw_filename.replace("\\", "/").rsplit("/", 1)[-1]
@@ -352,7 +356,7 @@ def _sanitize_source_name(raw_filename):
     base = base.strip().strip(".")
     if not base:
         return "attachment"
-    return base[:255]
+    return base
 
 
 def _discard_spool(spool_path):
@@ -1111,7 +1115,9 @@ def register_attachments_routes(app, handle_errors):
         # `is_allowed_extension` re-check in `_step_validating` cannot reject
         # a request accepted here.
         source_name = mime_allowlist.normalize_file_name_for_mime(
-            _sanitize_source_name(file_storage.filename), mime_type
+            _sanitize_source_name(file_storage.filename),
+            mime_type,
+            max_code_points=mime_allowlist.MAX_SOURCE_NAME_CODE_POINTS,
         )
 
         # Finding 6: provider size policy - reject *synchronously* when the
@@ -1198,7 +1204,18 @@ def register_attachments_routes(app, handle_errors):
             return _json_error("command_queue_full", "command queue is full"), 429
         except FacadeNotReady:
             _discard_spool(spool_path)
-            raise
+            return _not_ready()
+        except Exception as exc:  # noqa: BLE001 - total rollback before the boundary
+            # Finding 2: the staged-and-published spool file must never outlive
+            # a failed submit. CommandQueueFull and FacadeNotReady are handled
+            # above; any other exception (e.g. a duplicate command_id from
+            # registration) still removes the spool before returning the
+            # sanitized 500 - no exception text/class/path in the response.
+            _discard_spool(spool_path)
+            _log.error(
+                "MCAttach create endpoint: submit failed (%s)", type(exc).__name__
+            )
+            return _internal_error_response()
 
         if outcome.kind == "fresh":
             return jsonify({

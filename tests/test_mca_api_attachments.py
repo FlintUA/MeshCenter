@@ -35,6 +35,7 @@ import threading
 import traceback
 from functools import wraps
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -1598,6 +1599,38 @@ def test_create_not_ready_discards_the_staged_file(monkeypatch, tmp_path):
     assert list((tmp_path / "spool").iterdir()) == []
 
 
+def test_create_submit_exception_discards_the_staged_file_and_is_sanitized(
+    monkeypatch, tmp_path, caplog
+):
+    # Finding 2: any other submit failure (not queue-full, not not-ready) must
+    # remove the already-staged-and-published spool file and return the
+    # sanitized 500 - no exception text/class/path in the response or the log.
+    caplog.set_level(logging.ERROR)
+    marker = "SECRET_MARKER_submit_x4"
+
+    class _RaisingSubmitFacade(_FakeFacade):
+        def submit_create(self, command, *, client_request_id, reservation):
+            raise RuntimeError(f"submit-leak {marker}")
+
+    facade = _RaisingSubmitFacade(
+        providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool"
+    )
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 500
+    assert resp.get_json() == {
+        "ok": False,
+        "error": "Internal server error",
+        "error_code": "internal_error",
+    }
+    assert marker not in resp.get_data(as_text=True)
+    assert "Traceback" not in resp.get_data(as_text=True)
+    assert marker not in caplog.text
+    assert "Traceback" not in caplog.text
+    # The staged-and-published spool file was removed, not left orphaned.
+    assert list((tmp_path / "spool").iterdir()) == []
+
+
 def test_create_mime_not_allowed(monkeypatch, tmp_path):
     facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
     c = _client(monkeypatch, facade)
@@ -2022,26 +2055,55 @@ def test_create_comment_at_1001_bytes_is_rejected(monkeypatch, tmp_path):
     assert facade.submitted == []
 
 
-def test_create_truncates_an_overlong_filename_to_255_code_points(monkeypatch, tmp_path):
-    # The sanitize policy is an explicit 255-*code-point* (Python str slice)
-    # cap, applied before the extension is normalized back on.
+def test_create_truncates_an_overlong_extensionless_filename_to_255(monkeypatch, tmp_path):
+    # The cap is applied to the *final* name (extension included): a 300-char
+    # extensionless name is truncated only in its stem, so the result is
+    # exactly 255 code points long and still carries the canonical `.txt`
+    # (never 259, the pre-fix 255-then-`.txt` outcome).
     facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
     c = _client(monkeypatch, facade)
     resp = _post_create(c, data=b"hello", filename="x" * 300)
     assert resp.status_code == 202
     source_name = facade.submitted[0].payload["source_name"]
-    assert source_name == "x" * 255 + ".txt"
+    assert source_name == "x" * 251 + ".txt"
+    assert len(source_name) == 255
+
+
+def test_create_255_extensionless_filename_is_shortened_before_ext(monkeypatch, tmp_path):
+    # A 255-char extensionless name cannot fit the `.txt` suffix; the stem is
+    # shortened to 251 so the final name is 255, not 259.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=b"hello", filename="x" * 255)
+    assert resp.status_code == 202
+    source_name = facade.submitted[0].payload["source_name"]
+    assert source_name == "x" * 251 + ".txt"
+    assert len(source_name) == 255
+
+
+def test_create_overlong_filename_keeps_a_correct_extension(monkeypatch, tmp_path):
+    # A 304-char name already ending in the *correct* extension keeps it: the
+    # stem is truncated, the `.txt` is retained, and the whole stays ≤ 255.
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=b"hello", filename="x" * 300 + ".txt")
+    assert resp.status_code == 202
+    source_name = facade.submitted[0].payload["source_name"]
+    assert source_name == "x" * 251 + ".txt"
+    assert len(source_name) == 255
 
 
 def test_create_filename_cap_is_code_points_not_bytes(monkeypatch, tmp_path):
-    # 200 code points of a 2-byte character (400 bytes) are *not* truncated,
-    # pinning that the cap measures code points, not UTF-8 bytes.
+    # 300 code points of a 2-byte character (600 bytes) are truncated to 251
+    # *code points* (502 bytes) — pinning that the cap measures characters,
+    # not UTF-8 bytes (a byte-measured cap would stop around 127 characters).
     facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
     c = _client(monkeypatch, facade)
-    resp = _post_create(c, data=b"hello", filename="é" * 200)
+    resp = _post_create(c, data=b"hello", filename="é" * 300)
     assert resp.status_code == 202
     source_name = facade.submitted[0].payload["source_name"]
-    assert source_name == "é" * 200 + ".txt"
+    assert source_name == "é" * 251 + ".txt"
+    assert len(source_name) == 255
 
 
 # ---- Finding 9: missing regression coverage --------------------------------
@@ -2245,3 +2307,34 @@ def test_create_does_not_block_on_the_tick_lock(tmp_path):
         assert result["resp"].get_json()["error_code"] == "recipient_not_found"
     finally:
         mca_runtime.reset_state_for_tests()
+
+
+# ---- Correction 1: Flask floor + per-request multipart limit ----------------
+#
+# The create endpoint sets a per-request `request.max_content_length`, which
+# Flask only exposes from 3.1 - so the requirements floor must reject 3.0.
+# This test parses the *actual* requirements.txt (never a hardcoded copy), so
+# a silent floor regression fails here rather than on a real Pi node.
+
+
+def test_requirements_pin_flask_floor_above_30():
+    from packaging.requirements import Requirement
+
+    requirements = (
+        Path(__file__).resolve().parents[1] / "requirements.txt"
+    ).read_text(encoding="utf-8")
+    flask_lines = [
+        ln for ln in requirements.splitlines() if ln.strip().startswith("Flask")
+    ]
+    assert len(flask_lines) == 1, "expected exactly one Flask pin in requirements.txt"
+    req = Requirement(flask_lines[0].strip())
+
+    # Flask 3.0 does not expose `request.max_content_length` - it must be
+    # excluded by the floor.
+    assert not req.specifier.contains("3.0.0")
+    assert not req.specifier.contains("3.0.5")
+    # The supported range starts at 3.1 (the live-verified version is 3.1.3).
+    assert req.specifier.contains("3.1.0")
+    assert req.specifier.contains("3.1.3")
+    # And it is still bounded below 4.0 (the next, untested major).
+    assert not req.specifier.contains("4.0.0")

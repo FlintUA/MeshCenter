@@ -61,7 +61,7 @@ from meshsrv.attachments.commands import MAX_COMMANDS_PER_TICK, Command, Command
 from meshsrv.attachments.delivery.base import DeliveryAdapter, DeliveryEnvelope, DeliveryError, Route, RouteType
 from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispatcher, CommandOutcome
 from meshsrv.attachments.identity import MCAPrincipal
-from meshsrv.attachments.idempotency import PendingReservations, validate_canonical_hash, validate_client_request_id
+from meshsrv.attachments.idempotency import PendingReservation, PendingReservations, validate_canonical_hash, validate_client_request_id
 from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator, RateLimited
 from meshsrv.attachments.provider_registry import ProviderRegistry, ProviderRegistryError, decode_provider_id, encode_provider_id
 from meshsrv.attachments.recipient_snapshot import RecipientSnapshotPublisher
@@ -127,6 +127,13 @@ ORPHAN_SPOOL_MIN_AGE_SECONDS = 3600.0
 # same bounded-work-per-tick discipline as MAX_ATTACHMENTS_PER_TICK.
 MAX_ORPHAN_SCAN_PER_TICK = 100
 MAX_ORPHAN_DELETE_PER_TICK = 20
+
+# Finding 5, cadence gate: the orphan sweep runs on the first tick after
+# startup (so a fresh process reclaims the previous process's crash orphans),
+# then at most once per this many seconds. The sweep is O(N) over the spool
+# directory, so gating it keeps the steady-state tick cheap on a Pi Zero 2 W
+# rather than rescanning the whole directory every wake-driven tick.
+ORPHAN_RECOVERY_CADENCE_SECONDS = 300.0
 
 # Finding 4 stages a temp file as a dot-prefixed, `.tmp`-suffixed name
 # (`api/api_attachments.py` `_TEMP_SUFFIX`), distinct from a committed spool
@@ -208,6 +215,21 @@ def _bounded_text(value, *, max_len: int, allow_empty: bool) -> Optional[str]:
     return value
 
 
+@dataclasses.dataclass(frozen=True)
+class _CommittedHandoff:
+    """A committed create awaiting publish-before-release (Finding 1,
+    Correction 3): the three values that must all appear in the published
+    snapshot's idempotency index before the pending reservation is released.
+    Tracking all three (not just `client_request_id`) is what lets the cleanup
+    distinguish "the committed entry is visible" from "some entry for this id
+    is visible" - a duplicate promote that has not yet been reflected in the
+    snapshot must not release the reservation early."""
+
+    client_request_id: str
+    attachment_id: str
+    canonical_hash: str
+
+
 class AttachmentsService:
     """See module docstring. Construct once per workspace with its
     already-constructed collaborators (this module builds none of them
@@ -251,13 +273,21 @@ class AttachmentsService:
         self._max_per_tick = max_per_tick
         self._now = now_fn
         self._pending_reservations = pending_reservations
-        # Finding 1: track reservations that have been committed but not yet
-        # published in the snapshot. These are cleaned up after _refresh_snapshot()
-        # confirms the idempotency entry is visible in the published snapshot.
-        self._committed_reservations: set[str] = set()
+        # Finding 1 (Correction 3): track committed creates that have not yet
+        # been published in the snapshot as *records* (client_request_id ->
+        # attachment_id + canonical_hash), not a set of ids. These are cleaned
+        # up after _refresh_snapshot() confirms the idempotency entry for that
+        # exact (attachment_id, canonical_hash) pair is visible in the
+        # published snapshot - covering both a newly-inserted row and a
+        # matching-hash duplicate recovered via the IntegrityError path.
+        self._committed_reservations: Dict[str, _CommittedHandoff] = {}
         # Finding 3: ids of staged spool files whose removal failed on the
         # worker, for a bounded per-tick retry (see _drain_spool_cleanup).
         self._spool_cleanup_backlog: set[str] = set()
+        # Finding 5, cadence gate: the `_now()` timestamp of the last orphan
+        # sweep, or `None` before the first tick (which always runs the sweep).
+        # See `_should_run_orphan_recovery()`.
+        self._last_orphan_recovery_at: Optional[float] = None
 
         # PR #231 review, section 2: this service's own worker thread is
         # now the SOLE owner of `conn` at runtime - the radio listener no
@@ -526,8 +556,10 @@ class AttachmentsService:
 
         # Finding 5: bounded orphan-staging recovery - delete only old,
         # unreferenced staged files left behind by a crash, never an active
-        # request's fresh file or a committed attachment's spool.
-        self._recover_orphaned_spool()
+        # request's fresh file or a committed attachment's spool. Cadence-
+        # gated: first tick, then at most once per ORPHAN_RECOVERY_CADENCE_SECONDS.
+        if self._should_run_orphan_recovery():
+            self._recover_orphaned_spool()
 
         # Step 1.6A.1 (correction #1): flip runtime readiness once this tick
         # has both a started service and a successfully-published snapshot.
@@ -882,7 +914,6 @@ class AttachmentsService:
             # the cause by loading the existing row (Finding 2), never leaking
             # the SQLite exception text or class.
             self._rollback_silently()
-            self._remove_reservation(client_request_id)
             removed = self._remove_unreferenced_spool(attachment_id)
             self._conn.row_factory = sqlite3.Row
             row = self._conn.execute(
@@ -895,6 +926,7 @@ class AttachmentsService:
                 # (e.g. a primary key collision, which should be astronomically
                 # unlikely). Re-raise as a generic internal error; never leak
                 # the SQLite exception text or class.
+                self._remove_reservation(client_request_id)
                 logger.error(
                     "AttachmentsService: unexpected IntegrityError on create_draft "
                     "(not the idempotency index): %s", type(exc).__name__
@@ -908,13 +940,24 @@ class AttachmentsService:
                 if not removed:
                     # Finding 3: do not report success while the newly-unused
                     # duplicate plaintext is known to still exist.
+                    self._remove_reservation(client_request_id)
                     return CommandOutcome.failed("spool_cleanup_failed")
+                # Finding 1 (Correction 3): a matching-hash duplicate. Promote
+                # the reservation to the *original* row's id and record a
+                # committed handoff, so a concurrent replay returns the original
+                # attachment (not the colliding request's id) until the
+                # committed snapshot publishes that exact (id, hash) pair.
+                self._promote_duplicate_reservation(
+                    command, client_request_id, row["id"], existing_hash
+                )
                 return CommandOutcome.succeeded(
                     resource_id=row["id"],
                     result={"attachment_id": row["id"], "state": row["state"]},
                 )
             # Hash mismatch - terminal idempotency_conflict. The staged file
-            # is discarded; no row is created for this request.
+            # is discarded; no row is created for this request, so the
+            # reservation is dropped (the request is terminal, not a replay).
+            self._remove_reservation(client_request_id)
             return CommandOutcome.failed("idempotency_conflict")
         except Exception:
             # Finding 3: any other exception before a successful commit - roll
@@ -922,8 +965,10 @@ class AttachmentsService:
             self._create_failure_cleanup(command)
             raise
 
-        # Finding 1: successful commit - track for cleanup after snapshot publish
-        self._committed_reservations.add(client_request_id)
+        # Finding 1 (Correction 3): successful commit - record the handoff
+        # (client_request_id + attachment_id + canonical_hash) for cleanup
+        # after the snapshot publishes that exact triple.
+        self._record_committed_handoff(client_request_id, attachment_id, payload["canonical_hash"])
         return CommandOutcome.succeeded(
             resource_id=attachment_id,
             result={"attachment_id": attachment_id, "state": sender.DRAFT},
@@ -1121,6 +1166,40 @@ class AttachmentsService:
         self._remove_reservation(command.payload.get("client_request_id"))
         self._remove_unreferenced_spool(command.payload.get("attachment_id"))
 
+    def _record_committed_handoff(self, client_request_id: str, attachment_id: str, canonical_hash: str) -> None:
+        """Finding 1 (Correction 3): record a committed create as a
+        `(client_request_id, attachment_id, canonical_hash)` handoff, so its
+        pending reservation is released only after the published snapshot's
+        idempotency index shows that exact triple. Covers both a
+        newly-inserted row and a matching-hash duplicate recovered via the
+        IntegrityError path."""
+        self._committed_reservations[client_request_id] = _CommittedHandoff(
+            client_request_id=client_request_id,
+            attachment_id=attachment_id,
+            canonical_hash=canonical_hash,
+        )
+
+    def _promote_duplicate_reservation(
+        self, command: Command, client_request_id: str, original_id: str, canonical_hash: str
+    ) -> None:
+        """Finding 1 (Correction 3): a matching-hash duplicate was found via the
+        IntegrityError path. Correct the pending reservation in place so its
+        `attachment_id` becomes the *original* row's id (not the colliding
+        request's), then record a committed handoff - so a concurrent replay of
+        the same `client_request_id` returns the original attachment and matching
+        hash, with a valid command id, until the committed snapshot publishes the
+        same `(attachment_id, canonical_hash)` pair and releases the reservation."""
+        if self._pending_reservations is not None:
+            self._pending_reservations.replace(
+                client_request_id,
+                PendingReservation(
+                    canonical_hash=canonical_hash,
+                    attachment_id=original_id,
+                    command_id=command.command_id,
+                ),
+            )
+        self._record_committed_handoff(client_request_id, original_id, canonical_hash)
+
     # ---- orphan-staging recovery (Finding 5) --------------------------------
 
     def _referenced_attachment_ids(self) -> set:
@@ -1147,6 +1226,24 @@ class AttachmentsService:
             if isinstance(attachment_id, str):
                 referenced.add(attachment_id)
         return referenced
+
+    def _should_run_orphan_recovery(self) -> bool:
+        """Finding 5, cadence gate: decide whether *this* tick should run the
+        orphan sweep. The sweep is O(N) over the spool directory, so it must
+        not run on every wake-driven tick - it runs on the first tick after
+        startup (so a fresh process reclaims the previous process's crash
+        orphans), then at most once per `ORPHAN_RECOVERY_CADENCE_SECONDS`.
+        Returns `True` (and records the attempt via `self._now()`) when the
+        sweep should run, `False` otherwise. Pure bookkeeping - never raises,
+        never touches the filesystem."""
+        now = self._now()
+        if (
+            self._last_orphan_recovery_at is not None
+            and now - self._last_orphan_recovery_at < ORPHAN_RECOVERY_CADENCE_SECONDS
+        ):
+            return False
+        self._last_orphan_recovery_at = now
+        return True
 
     def _recover_orphaned_spool(self) -> None:
         """Finding 5: bounded orphan-staging recovery. Scans *only* this
@@ -1320,26 +1417,32 @@ class AttachmentsService:
         )
 
     def _cleanup_committed_reservations(self) -> None:
-        """Finding 1: remove pending reservations for client_request_ids that
-        have been committed and are now visible in the published snapshot's
-        idempotency index. This implements the publish-before-release handoff:
-        the reservation is kept until the snapshot publish confirms the
-        idempotency entry is visible, then it is released.
+        """Finding 1 (Correction 3): release a committed create's pending
+        reservation only once the published snapshot's idempotency index
+        contains the *exact* `(attachment_id, canonical_hash)` pair this
+        command committed - not merely a `client_request_id` key (which would
+        release early when the id is present but the row's id/hash does not
+        match, e.g. a duplicate promote not yet reflected). This closes the
+        publish-before-release handoff for both the newly-inserted row and the
+        matching-hash IntegrityError recovery path.
 
-        If the snapshot publish failed (snapshot() returns None), the
-        reservations are kept and will be retried on the next tick."""
+        If the snapshot publish failed (snapshot() returns None), every
+        handoff is kept and retried on the next tick - a stale/failed publish
+        never releases a reservation early."""
         snapshot = self._snapshot_publisher.snapshot()
         if snapshot is None:
-            # Publish failed - keep reservations for retry on next tick
+            # Publish failed - keep handoffs for retry on next tick
             return
-        # The published snapshot's idempotency index contains the committed
-        # entries. Remove any committed_reservations that are now visible.
-        published_ids = set(snapshot.idempotency.keys())
-        to_remove = self._committed_reservations & published_ids
-        for client_request_id in to_remove:
-            self._committed_reservations.discard(client_request_id)
-            if self._pending_reservations is not None:
-                self._pending_reservations.remove(client_request_id)
+        for client_request_id, handoff in list(self._committed_reservations.items()):
+            entry = snapshot.idempotency.get(client_request_id)
+            if (
+                entry is not None
+                and entry.attachment_id == handoff.attachment_id
+                and entry.canonical_hash == handoff.canonical_hash
+            ):
+                del self._committed_reservations[client_request_id]
+                if self._pending_reservations is not None:
+                    self._pending_reservations.remove(client_request_id)
 
     def _process_one_inbound_event(self, event: InboundEvent) -> None:
         """Everything that used to run on the radio listener thread

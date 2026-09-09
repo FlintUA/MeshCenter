@@ -276,18 +276,24 @@ class AttachmentsFacade:
     ) -> "ReservationOutcome":
         """The §3.6 idempotent-create enqueue, distinct from `submit()` only in
         that it performs the atomic reservation *before* registering/enqueueing
-        (and rolls the reservation back alongside the registry entry on a full
-        queue). Returns the `ReservationOutcome` so the caller can translate the
-        four §3.5 cases (`fresh`/`replay_pending`/`replay_committed`/`conflict`)
-        into the correct HTTP response.
+        (and rolls the reservation back alongside the registry entry on any
+        failed enqueue). Returns the `ReservationOutcome` so the caller can
+        translate the four §3.5 cases (`fresh`/`replay_pending`/`replay_committed`
+        /`conflict`) into the correct HTTP response.
 
         On `fresh` the command is registered (`queued`) and enqueued exactly as
         `submit()` does; on any non-fresh outcome nothing is registered/enqueued
         (the reservation map already decided the request is a replay or a
-        conflict). Raises `FacadeNotReady` before the runtime is ready, and
-        re-raises `CommandQueueFull` (after rolling back both the registry entry
-        and the reservation, §3.6 step 5) on a full queue. Never blocks, and
-        never touches `conn`/filesystem/network/tick lock."""
+        conflict). The fresh half treats reservation + registration + enqueue as
+        **one submission transaction** (Finding 2): a registration failure removes
+        the fresh reservation; any enqueue failure discards the registry entry and
+        removes the reservation (compare-and-remove, so a reservation another
+        command now owns is never dropped); the wake is best-effort, so a wake
+        failure can never turn an accepted enqueue into a failure. Raises
+        `FacadeNotReady` before the runtime is ready, and re-raises
+        `CommandQueueFull` (after rolling back both the registry entry and the
+        reservation, §3.6 step 5) on a full queue. Never blocks, and never touches
+        `conn`/filesystem/network/tick lock."""
         self._require_ready()
         committed = self.committed_idempotency()
         outcome = self._pending_reservations.reserve(
@@ -295,12 +301,34 @@ class AttachmentsFacade:
         )
         if outcome.kind != "fresh":
             return outcome
-        self._command_registry.register(command)
+        # §3.6 step 4-5 as one submission transaction. Each rollback uses
+        # `remove_if_matches` so it can never drop a reservation the worker has
+        # since promoted to a different command's ids.
+        try:
+            self._command_registry.register(command)
+        except Exception:
+            # Registration failed (e.g. a duplicate command_id): the command was
+            # not registered or enqueued, so the fresh reservation just inserted
+            # is the only thing to roll back, then re-raise for the caller.
+            self._pending_reservations.remove_if_matches(client_request_id, reservation)
+            raise
         try:
             self._command_queue.put_nowait(command)
         except CommandQueueFull:
             self._command_registry.discard_queued(command.command_id)
-            self._pending_reservations.remove(client_request_id)
+            self._pending_reservations.remove_if_matches(client_request_id, reservation)
             raise
-        self._wake_event.set()
+        except Exception:
+            # Any other enqueue failure (a queue bug): the command must not be
+            # left half-submitted. `discard_queued` only removes a `queued` entry,
+            # so it is safe even in the unlikely case the worker already began.
+            self._command_registry.discard_queued(command.command_id)
+            self._pending_reservations.remove_if_matches(client_request_id, reservation)
+            raise
+        # Wake best-effort: the enqueue has succeeded, so a wake error must never
+        # turn an accepted create into a failure.
+        try:
+            self._wake_event.set()
+        except Exception:
+            pass
         return outcome

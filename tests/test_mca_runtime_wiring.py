@@ -1035,6 +1035,48 @@ def test_create_invalid_payload_cleans_reservation_and_spool(tmp_path):
         mca_runtime.reset_state_for_tests()
 
 
+def test_create_route_normalized_255_code_point_name_survives_worker(tmp_path, monkeypatch):
+    # Correction 2 (route -> worker round trip): the route normalizes an
+    # overlong extensionless `text/plain` name to exactly 255 code points
+    # *with* the `.txt` extension (`normalize_file_name_for_mime(..., max_code_points=255)`).
+    # The worker re-validates `source_name` via `_bounded_text(max_len=255)`,
+    # so the pre-fix 259-char result would be rejected `invalid_payload`. This
+    # pins that the route's actual output reaches DRAFT, not a phantom failure.
+    from meshsrv.attachments.mime_allowlist import normalize_file_name_for_mime
+
+    state, _, _ = _started_state(tmp_path, "create-route-name-roundtrip")
+    try:
+        provider_id = _register_ready_provider(state)
+        monkeypatch.setattr(state.service._key_exchange, "get_binding", lambda addr: _trusted_binding())
+        monkeypatch.setattr(state.service, "_due_rows", lambda: [])
+
+        source_name = normalize_file_name_for_mime("x" * 300, "text/plain", max_code_points=255)
+        assert source_name == "x" * 251 + ".txt"
+        assert len(source_name) == 255
+
+        attachment_id = "3c" + "0" * 30
+        client_request_id = "req-route-name"
+        _stage_spool(state, attachment_id)
+        _reserve(state, client_request_id, attachment_id, "cmd-route-name")
+        payload = _valid_create_payload(
+            attachment_id=attachment_id, client_request_id=client_request_id, provider_id=provider_id
+        )
+        payload["source_name"] = source_name
+        payload["mime_type"] = "text/plain"
+        state.facade.submit(Command(
+            command_id="cmd-route-name", kind="attachment_create",
+            payload=payload, created_at=0.0,
+        ))
+        state.service.tick()
+
+        result = state.facade.get_command("cmd-route-name")
+        assert result.status == STATUS_SUCCEEDED
+        assert result.error_code is None
+        assert result.result["state"] == sender.DRAFT
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
 def test_create_invalid_attachment_id_builds_no_spool_path(tmp_path):
     state, _, _ = _started_state(tmp_path, "create-invalid-id")
     try:
@@ -1436,6 +1478,101 @@ def test_create_duplicate_different_hash_is_conflict_without_a_second_row(tmp_pa
         mca_runtime.reset_state_for_tests()
 
 
+def test_matching_hash_duplicate_promotes_reservation_before_publish(tmp_path, monkeypatch):
+    # Correction 3: the matching-hash IntegrityError recovery must NOT release
+    # the reservation merely because a matching row was found. It must instead
+    # promote the reservation to the *original* row's id and release it only
+    # after the committed snapshot publishes that exact (id, hash) pair - so a
+    # third concurrent request arriving in the window after the worker commits
+    # but before the snapshot publish is still handed the original attachment
+    # (not the colliding request's id, and not a fresh enqueue).
+    state, _, _ = _started_state(tmp_path, "create-dup-promote")
+    try:
+        client_request_id = "req-dup-promote"
+        existing_id = "aa" + "0" * 30
+        new_id = "bb" + "0" * 30
+        _seed_committed_create_row(state, existing_id, client_request_id, "f" * 64)
+        provider_id = _register_ready_provider(state)
+        monkeypatch.setattr(state.service._key_exchange, "get_binding", lambda addr: _trusted_binding())
+        monkeypatch.setattr(state.service, "_due_rows", lambda: [])
+        _stage_reserve_enqueue(state, "cmd-dup-promote", new_id, client_request_id, provider_id)
+
+        # Worker-pause: keep the snapshot from republishing, so the committed
+        # idempotency entry stays invisible - the handoff window this test
+        # pins.
+        real_refresh = state.service._refresh_snapshot
+        monkeypatch.setattr(state.service, "_refresh_snapshot", lambda: None)
+
+        state.service.tick()
+
+        # The command succeeded against the original row...
+        result = state.facade.get_command("cmd-dup-promote")
+        assert result.status == STATUS_SUCCEEDED
+        assert result.resource_id == existing_id
+
+        # ...and the reservation was *promoted* to the original id, not removed.
+        assert len(state.pending_reservations) == 1
+        reservation = state.pending_reservations.get(client_request_id)
+        assert reservation.attachment_id == existing_id
+        assert reservation.canonical_hash == "f" * 64
+
+        # A third concurrent request (same id + hash) gets replay_pending with
+        # the ORIGINAL attachment id, not the colliding new_id.
+        outcome = state.pending_reservations.reserve(
+            client_request_id,
+            PendingReservation(
+                canonical_hash="f" * 64, attachment_id="cc" + "0" * 30, command_id="cmd-third"
+            ),
+            committed_entries={},
+        )
+        assert outcome.kind == "replay_pending"
+        assert outcome.reservation.attachment_id == existing_id
+
+        # Once the snapshot is allowed to publish the matching triple, the
+        # handoff releases the reservation.
+        state.service._refresh_snapshot = real_refresh
+        state.service.tick()
+        assert len(state.pending_reservations) == 0
+        assert state.facade.committed_idempotency()[client_request_id].attachment_id == existing_id
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_fresh_create_holds_reservation_until_snapshot_publishes(tmp_path, monkeypatch):
+    # Correction 3, newly-inserted half: a fresh create that commits a row must
+    # hold its reservation until the snapshot publishes the exact
+    # (attachment_id, canonical_hash) triple - a stale/failed publish never
+    # releases it early.
+    state, _, _ = _started_state(tmp_path, "create-fresh-handoff")
+    try:
+        provider_id = _register_ready_provider(state)
+        monkeypatch.setattr(state.service._key_exchange, "get_binding", lambda addr: _trusted_binding())
+        monkeypatch.setattr(state.service, "_due_rows", lambda: [])
+        attachment_id = "dd" + "0" * 30
+        client_request_id = "req-fresh-handoff"
+        _stage_reserve_enqueue(state, "cmd-fresh", attachment_id, client_request_id, provider_id)
+
+        real_refresh = state.service._refresh_snapshot
+        monkeypatch.setattr(state.service, "_refresh_snapshot", lambda: None)
+
+        state.service.tick()
+
+        result = state.facade.get_command("cmd-fresh")
+        assert result.status == STATUS_SUCCEEDED
+        assert result.result == {"attachment_id": attachment_id, "state": sender.DRAFT}
+        # The row committed, but the reservation is held because the snapshot
+        # has not yet published it.
+        assert len(state.pending_reservations) == 1
+        assert state.pending_reservations.get(client_request_id).attachment_id == attachment_id
+
+        state.service._refresh_snapshot = real_refresh
+        state.service.tick()
+        assert len(state.pending_reservations) == 0
+        assert state.facade.committed_idempotency()[client_request_id].attachment_id == attachment_id
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
 def test_committed_replay_index_survives_restart(tmp_path, monkeypatch):
     # The idempotency index is rebuilt from the persisted `attachments` rows
     # (client_request_id + canonical_hash), not from in-memory state - so a
@@ -1782,5 +1919,53 @@ def test_recovery_skips_missing_spool_directory(tmp_path, monkeypatch):
             shutil.rmtree(spool_dir)
         monkeypatch.setattr(state.service, "_now", lambda: 1_700_000_000.0)
         state.service._recover_orphaned_spool()  # must not raise
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_orphan_recovery_cadence_first_tick_then_300s(tmp_path, monkeypatch):
+    # Finding 5 cadence gate: the sweep opens on the first tick after startup,
+    # stays closed within ORPHAN_RECOVERY_CADENCE_SECONDS, and reopens once the
+    # window has elapsed. Pinned on the gate helper itself with a controlled
+    # clock, independent of the sweep's own file I/O.
+    state, _, _ = _started_state(tmp_path, "orphan-cadence")
+    try:
+        clock = {"now": 1_700_000_000.0}
+        monkeypatch.setattr(state.service, "_now", lambda: clock["now"])
+        state.service._last_orphan_recovery_at = None  # noqa: SLF001
+
+        # First tick after startup: always run.
+        assert state.service._should_run_orphan_recovery() is True
+        # Immediately after (and up to 299s later): gated off.
+        assert state.service._should_run_orphan_recovery() is False
+        clock["now"] += 299.0
+        assert state.service._should_run_orphan_recovery() is False
+        # At exactly 300s since the last sweep: the gate reopens.
+        clock["now"] += 1.0
+        assert state.service._should_run_orphan_recovery() is True
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_tick_gates_orphan_recovery_to_the_cadence(tmp_path, monkeypatch):
+    # Finding 5 cadence gate, wired into the tick: the first tick runs the
+    # sweep, the immediately-following tick does not, and a tick after 300s does.
+    state, _, _ = _started_state(tmp_path, "orphan-tick-cadence")
+    try:
+        clock = {"now": 1_700_000_000.0}
+        monkeypatch.setattr(state.service, "_now", lambda: clock["now"])
+        state.service._last_orphan_recovery_at = None  # noqa: SLF001
+        calls = []
+        monkeypatch.setattr(
+            state.service, "_recover_orphaned_spool", lambda: calls.append(1)
+        )
+
+        state.service.tick()  # first tick: sweep runs
+        assert calls == [1]
+        state.service.tick()  # immediately after: gated off
+        assert calls == [1]
+        clock["now"] += 300.0
+        state.service.tick()  # 300s later: sweep runs again
+        assert calls == [1, 1]
     finally:
         mca_runtime.reset_state_for_tests()

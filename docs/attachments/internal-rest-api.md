@@ -1,6 +1,6 @@
 # MCAttach Internal REST API Contract
 
-**Status:** Design contract (Step 1.6A), revised (second pass). This document defines the HTTP surface — it does **not** implement it. No endpoint below exists yet; no runtime code, migration, test, JS, HTML or CSS was changed in the Step 1.6A change that added/revised this document.
+**Status:** Design contract (Step 1.6A), revised (second pass). The read-only endpoints of sub-stage 1.6A.2 (§5) are implemented in `api/api_attachments.py`; every mutation endpoint (sub-stages 1.6A.3–1.6A.5) remains design-only and does not exist yet.
 **Canonical source:** the Russian system design spec (section 18 primary, sections 17/19/20 and the state machines also consulted). That spec is reference-only and is not committed to the repository.
 **Audience:** a future implementation task, split into sub-stages (§5).
 
@@ -387,9 +387,9 @@ Every mutation returns `202` + `command_id` (§3.4) unless a synchronous validat
 ### 7.1 Reads (1.6A.2)
 
 **`GET /api/attachments`** — list.
-- Query: `direction` (`sent`|`received`|`all`, default `all`); `state` (one state or `all`); `filter` (`pending`|`errors`|`saved`|`all`); `limit` (default 100, max 500); `offset` (default 0).
+- Query: `direction` (`sent`|`received`|`all`, default `all`); `state` (one state or `all`); `filter` (`pending`|`errors`|`saved`|`all`); `limit` (default 100, range 1–500); `offset` (default 0, ≥ 0). A present `limit`/`offset` must be a strict ASCII decimal integer within bounds — malformed or out-of-range values are a hard `400 invalid_pagination`, never silently clamped or coerced to a default.
 - Response: `{"ok": true, "attachments": [<public projection §7.5>], "total": <int>}`.
-- Errors: `400 invalid_direction` / `invalid_state` / `invalid_filter`.
+- Errors: `400 invalid_direction` / `invalid_state` / `invalid_filter` / `invalid_pagination`.
 
 **`GET /api/attachments/{id}`** — detail + timeline.
 - Response: `{"ok": true, "attachment": {…§7.5…}, "timeline": [{"event_type", "detail", "created_at"}]}` (timeline from `attachment_events`, redacted per §11).
@@ -403,17 +403,19 @@ Every mutation returns `202` + `command_id` (§3.4) unless a synchronous validat
 - Response: `{"ok": true, "contacts": [{"source_address", "key_id", "status": "trusted|confirmation_required|key_unknown|key_changed"}]}`.
 
 **`GET /api/mca/delivery-adapters`** — capabilities/state of the one adapter.
-- Response: `{"ok": true, "adapters": [{"adapter_id": "meshtastic", "connector_profile_id": "meshtastic", "capabilities": {"wire_formats": ["MCA1_TEXT"], "max_payload_bytes": 180, "supports_direct": true, "supports_channel": false, "supports_incoming": true, "ack_semantics": "CONFIRMED", "connector_state": "READY"}}]}`.
+- Response: `{"ok": true, "adapters": [{"adapter_id": "meshtastic", "connector_profile_id": "meshtastic", "capabilities": {"wire_formats": ["MCA1_TEXT"], "max_payload_bytes": 180, "supports_direct": true, "supports_channel": false, "supports_incoming": true, "ack_semantics": "CONFIRMED", "connector_state": "UNKNOWN"}}]}`.
+- `connector_state` is always `"UNKNOWN"` on this read endpoint: the real adapter's `ConnectorState` (`READY`/`DEGRADED`/`UNAVAILABLE`) is derived from the live radio transport's `get_connection_info()` (§4.6), which a request thread must not touch (§3.1), and there is no request-thread-safe immutable snapshot of it. It must never be conflated with internet/Relay status (those live in `connectivity` above), and it is never fabricated as `READY`.
 
 **`GET /api/mca/connectors`** — Multi-transport placeholder; MVP returns the single Meshtastic connector plus its BLE receive-blindness flag.
 
 **`GET /api/mca/providers`** — registry.
 - Response: `{"ok": true, "providers": [<public provider projection §7.12>]}` — includes `state`/`upload_readiness`/`latency_ms`/`error_code` joined from the connectivity snapshot by `provider_id`.
 
-**`GET /api/mca/providers/{id}`** — one profile (public projection §7.12). `404 provider_not_found`.
+**`GET /api/mca/providers/{id}`** — one profile (public projection §7.12). The `{id}` is canonical-validated via the registry's own `decode_provider_id`/`encode_provider_id` (round-trip equality), so a padded/wrong-length/wrong-alphabet/non-canonical id is `400 invalid_provider_id`. A canonical-but-unregistered id is `404 provider_not_found`.
 
 **`GET /api/mca/providers/{id}/upload-readiness`** — delegates to `AttachmentsService.evaluate_upload_readiness()`.
-- Query (optional): `ciphertext_bytes`, `requested_ttl_seconds`.
+- `{id}` is canonical-validated as in the provider detail endpoint (`400 invalid_provider_id`); a canonical-but-unregistered id returns `200` `{"ready": false, "reason": "profile_not_found"}`.
+- Query (optional): `ciphertext_bytes` (ASCII decimal, ≥ 0); `requested_ttl_seconds` (ASCII decimal, > 0). A present value that is blank/malformed/signed/fractional/out-of-range — including a zero or negative `requested_ttl_seconds` — is a `400 invalid_query`. `ciphertext_bytes: 0` is valid.
 - Response: `{"ok": true, "ready": bool, "reason": "<UploadRejectionReason|null>", "detail": null}`.
 
 **`GET /api/mca/connectivity`** — `{"ok": true, "internet": "...", "relays": {provider_id: {"state","upload_readiness","checked_at","latency_ms","error_code"}}}`.
@@ -641,7 +643,7 @@ Stable, snake_case, additive.
 
 | Status | `error_code` | Meaning |
 |---|---|---|
-| 400 | `invalid_metadata` / `invalid_attachment_id` / `invalid_direction` / `invalid_state` / `invalid_filter` / `invalid_command_id` / `invalid_origin` | malformed input |
+| 400 | `invalid_metadata` / `invalid_attachment_id` / `invalid_direction` / `invalid_state` / `invalid_filter` / `invalid_command_id` / `invalid_origin` / `invalid_pagination` / `invalid_provider_id` / `invalid_query` | malformed input |
 | 400 | `mime_not_allowed` / `file_too_large` | file validation |
 | 400 | `recipient_not_found` / `recipient_not_trusted` | binding missing or not `trusted` |
 | 400 | `provider_not_found` / `ttl_out_of_range` / `provider_id_mismatch` | provider/registration |
@@ -661,6 +663,7 @@ Stable, snake_case, additive.
 | 429 | `command_queue_full` | worker command queue at capacity |
 | 503 | `radio_unavailable` / `relay_unreachable` | runtime unavailability at an action's execution |
 | 503 | `mca_not_ready` | the attachments facade exists but readiness is unset (service not yet started, or the first snapshot publish failed); snapshot-backed reads and `submit()` reject until readiness (§3.2) |
+| 500 | `internal_error` | an unexpected exception was sanitized by the MCAttach read endpoint's local error boundary — a stable envelope with no exception text, class, traceback, or path (§11) |
 
 Command-result `error_code`s reuse this table plus the probe failure codes (`origin_not_routable`, `relay_identity_mismatch`, `relay_incompatible`) and the two worker-side execution codes `unsupported_command_kind` (an enumerated kind with no wired handler — a terminal `failed`, never a crash) and `command_execution_failed` (a wired handler raised; the drain loop records it as a terminal `failed`). `UploadRejectionReason` maps 1:1 to `error_code`s on upload-readiness: `profile_not_found`, `profile_disabled`, `upload_not_allowed`, `upload_token_missing`, `relay_not_yet_checked`, `relay_unreachable`, `relay_identity_mismatch`, `relay_incompatible`, `ciphertext_too_large`, `ttl_below_minimum`, `ttl_above_maximum`.
 

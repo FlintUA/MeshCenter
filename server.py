@@ -60,6 +60,7 @@ from api.api_settings import register_settings_routes, normalize_settings, SUPPO
 from api.api_meshtastic import register_meshtastic_routes
 from api.api_system import register_system_routes
 from api.api_updates import register_updates_routes
+from api.api_attachments import register_attachments_routes
 from system.cpu_history import (
     get_current_usage as get_cpu_current_usage,
     read_cpu_temperature,
@@ -537,6 +538,7 @@ register_camera_manager_routes(app, device_manager, handle_errors, camera_manage
 register_system_routes(app, get_cpu_temperature=lambda: read_cpu_temperature(), get_app_version=lambda: APP_VERSION)
 register_cpu_history_routes(app, CPU_HISTORY_FILE)
 register_updates_routes(app, resolve_version=lambda: APP_VERSION, project_dir=PROJECT_DIR, handle_errors=handle_errors)
+register_attachments_routes(app, handle_errors)
 
 # Constructing DisplayManager (and the driver it wraps) never touches
 # SPI/GPIO by itself - only display_manager.start(), called later from the

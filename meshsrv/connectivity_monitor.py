@@ -40,6 +40,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 import requests
 
 from meshsrv.attachments.provider_registry import ProviderProfile, ProviderRegistry, b64url_encode
+from meshsrv.attachments.relay_http import SecureSession
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
@@ -294,7 +295,13 @@ class ConnectivityMonitor:
         elif session is not None:
             self._session_factory = lambda: session
         else:
-            self._session_factory = requests.Session
+            # Production default: an unbound §12 SecureSession (relay_http) -
+            # each probe's session enforces HTTPS-only + cert verification +
+            # global-routability validation + IP pinning + redirects-disabled
+            # for whatever origin that probe actually hits. Test-injected
+            # `session`/`session_factory` above bypass this wrapping, so the
+            # fake session doubles in the test suite never go through DNS.
+            self._session_factory = lambda: SecureSession()
         self._provider_registry = provider_registry
         self._timeout = timeout
         self._now = now_fn

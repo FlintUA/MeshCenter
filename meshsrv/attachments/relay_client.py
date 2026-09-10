@@ -44,9 +44,10 @@ import json
 import time
 from typing import Any, Dict, List, Optional
 
-import requests
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
+
+from meshsrv.attachments.relay_http import build_secure_session
 
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DEFAULT_MAX_RETRIES = 3
@@ -214,7 +215,12 @@ class RelayClient:
     ):
         self._base_url = base_url.rstrip("/")
         self._upload_access_token = upload_access_token
-        self._session = session if session is not None else requests.Session()
+        # Production default transport is a §12 SSRF-pinned SecureSession
+        # (relay_http.build_secure_session) - HTTPS-only, cert-verified,
+        # DNS-validated and IP-pinned with redirects disabled. A caller that
+        # supplies its own `session` (tests, or a custom transport) opts out
+        # of that wrapping knowingly.
+        self._session = session if session is not None else build_secure_session(base_url)
         self._timeout = timeout
         self._max_retries = max_retries
         self._retry_backoff_seconds = retry_backoff_seconds

@@ -34,6 +34,7 @@ You choose which Relay(s) to use, the same deliberate, explicit way you choose w
 This is an early stage of the feature (Stage 1 of the project's execution plan), so a few things are deliberately not built yet:
 
 - **No file-transfer screen in the app yet.** The underlying machinery (encrypting, uploading, downloading, tracking delivery) works and is thoroughly tested, but there is no button in the MeshCenter web interface to actually pick a file and send it yet - that is planned as the next stage.
+- **No Relay-management screen either.** Registering, removing, disabling, or checking a Relay is now built into the backend (so it can be driven programmatically), but there is no screen in the web interface to do any of it yet - same as the file-transfer screen.
 - **No automatic "delivered"/"downloaded" confirmation back to the sender.** The receiving side already tracks whether it downloaded a file, but that confirmation does not yet travel back over the mesh to update the sender's own view.
 - **No automatic switching between Relays** if your usual one goes down - you would need to register and pick a different one yourself.
 - **No group/broadcast file sharing to multiple people at once** in this version - it is one sender, one recipient.

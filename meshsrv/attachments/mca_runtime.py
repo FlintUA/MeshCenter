@@ -336,6 +336,12 @@ class _MCARuntimeState:
             provider_registry=self.provider_registry,
             key_exchange=self.coordinator,
             connectivity_monitor=self.connectivity_monitor,
+            # Step 1.6A.4: the worker needs the *same* single-use probe
+            # store the facade already hands the request thread (see
+            # __init__), so a probe recorded by the worker is visible to
+            # the request thread's synchronous phase-2 validation and vice
+            # versa - one shared in-memory store, never two divergent ones.
+            probe_registry=self.probe_registry,
             delivery_adapter=adapter,
             # PR #231 review (2nd pass), requirement 4: this service's OWN
             # dedicated lock (self.tick_lock, constructed in __init__

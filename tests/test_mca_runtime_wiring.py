@@ -755,6 +755,10 @@ def test_real_service_wires_the_lifecycle_and_create_handlers(tmp_path):
         assert dispatcher.supported_kinds() == frozenset({
             "attachment_create", "attachment_retry", "attachment_download",
             "attachment_reject", "attachment_cancel", "contact_request_key",
+            "provider_probe", "provider_register", "provider_update",
+            "provider_set_default", "provider_remove",
+            "provider_set_upload_token", "provider_clear_upload_token",
+            "provider_check",
         })
         # Every other enumerated kind remains unwired -> unsupported.
         for kind in COMMAND_KINDS - dispatcher.supported_kinds():

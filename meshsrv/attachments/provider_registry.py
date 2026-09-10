@@ -52,6 +52,18 @@ _UPLOAD_TOKEN_FILE_MODE = 0o600
 
 _VALID_KINDS = frozenset({"own", "third_party"})
 
+# Step 1.6A.4: authoritative cap on the number of distinct Relay profiles a
+# workspace may register. Enforced worker-side in the same transaction as the
+# INSERT (see register()), and only for a *new* identity - re-registering an
+# already-registered (origin, key) pair is idempotent by design and never
+# consumes a slot.
+MAX_PROVIDER_PROFILES = 8
+
+# Step 1.6A.4: upload tokens are capped at 4096 UTF-8 bytes. Enforced in
+# set_upload_token() (authoritative, worker-side) and mirrored synchronously
+# at the API layer, so a token this long is never written to disk.
+MAX_UPLOAD_TOKEN_BYTES = 4096
+
 
 class _ClearSentinel:
     """A distinct sentinel type (not just `object()`) so `repr()` on an
@@ -75,7 +87,15 @@ CLEAR = _ClearSentinel()
 
 class ProviderRegistryError(ValueError):
     """Raised for a malformed provider registration - never silently
-    corrected (e.g. a non-HTTPS base_url is rejected, not upgraded)."""
+    corrected (e.g. a non-HTTPS base_url is rejected, not upgraded).
+    `error_code`, when set, is the stable snake_case code a worker command
+    handler should surface to the client (e.g. `provider_limit_reached`); it
+    is `None` for the plain validation errors a handler maps to a generic
+    code itself."""
+
+    def __init__(self, message: str, *, error_code: Optional[str] = None):
+        super().__init__(message)
+        self.error_code = error_code
 
 
 @dataclasses.dataclass(frozen=True)
@@ -317,42 +337,64 @@ class ProviderRegistry:
         _validate_protocol_version(protocol_version)
         provider_id = compute_provider_id(origin, service_public_key)
         now = time.time() if now is None else now
-        self._conn.execute(
-            """
-            INSERT INTO mca_provider_profiles
-                (provider_id, workspace_id, origin, service_public_key_b64url,
-                 max_ciphertext_bytes, hard_expiry_default_seconds, is_default, added_at,
-                 display_name, tls_required, upload_allowed, download_allowed,
-                 kind, min_ttl_seconds, max_ttl_seconds, protocol_version)
-            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(provider_id) DO UPDATE SET
-                display_name = excluded.display_name,
-                max_ciphertext_bytes = excluded.max_ciphertext_bytes,
-                upload_allowed = excluded.upload_allowed,
-                download_allowed = excluded.download_allowed,
-                kind = excluded.kind,
-                min_ttl_seconds = excluded.min_ttl_seconds,
-                max_ttl_seconds = excluded.max_ttl_seconds,
-                protocol_version = excluded.protocol_version
-            """,
-            (
-                provider_id,
-                self._workspace_id,
-                origin,
-                _b64url_encode(service_public_key),
-                max_ciphertext_bytes,
-                72 * 3600,
-                now,
-                display_name,
-                int(upload_allowed),
-                int(download_allowed),
-                kind,
-                min_ttl_seconds,
-                max_ttl_seconds,
-                protocol_version,
-            ),
-        )
-        self._conn.commit()
+
+        # Step 1.6A.4: enforce MAX_PROVIDER_PROFILES in the *same* transaction
+        # as the INSERT, so the count-check and the write can never be observed
+        # separately. The check applies only to a NEW identity - an idempotent
+        # re-registration of an already-present (origin, key) pair must not
+        # consume a slot (its row is updated in place by the ON CONFLICT
+        # clause, so the count is unchanged either way).
+        with self._conn:
+            existing = self._conn.execute(
+                "SELECT 1 FROM mca_provider_profiles WHERE workspace_id = ? AND provider_id = ?",
+                (self._workspace_id, provider_id),
+            ).fetchone()
+            if existing is None:
+                count = self._conn.execute(
+                    "SELECT COUNT(*) FROM mca_provider_profiles WHERE workspace_id = ?",
+                    (self._workspace_id,),
+                ).fetchone()[0]
+                if count >= MAX_PROVIDER_PROFILES:
+                    raise ProviderRegistryError(
+                        f"provider limit reached: a workspace can register at most "
+                        f"{MAX_PROVIDER_PROFILES} Relay profiles",
+                        error_code="provider_limit_reached",
+                    )
+            self._conn.execute(
+                """
+                INSERT INTO mca_provider_profiles
+                    (provider_id, workspace_id, origin, service_public_key_b64url,
+                     max_ciphertext_bytes, hard_expiry_default_seconds, is_default, added_at,
+                     display_name, tls_required, upload_allowed, download_allowed,
+                     kind, min_ttl_seconds, max_ttl_seconds, protocol_version)
+                VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider_id) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    max_ciphertext_bytes = excluded.max_ciphertext_bytes,
+                    upload_allowed = excluded.upload_allowed,
+                    download_allowed = excluded.download_allowed,
+                    kind = excluded.kind,
+                    min_ttl_seconds = excluded.min_ttl_seconds,
+                    max_ttl_seconds = excluded.max_ttl_seconds,
+                    protocol_version = excluded.protocol_version
+                """,
+                (
+                    provider_id,
+                    self._workspace_id,
+                    origin,
+                    _b64url_encode(service_public_key),
+                    max_ciphertext_bytes,
+                    72 * 3600,
+                    now,
+                    display_name,
+                    int(upload_allowed),
+                    int(download_allowed),
+                    kind,
+                    min_ttl_seconds,
+                    max_ttl_seconds,
+                    protocol_version,
+                ),
+            )
         if is_default:
             return self.set_default(provider_id)
         return self.resolve(provider_id)  # type: ignore[return-value]
@@ -545,6 +587,14 @@ class ProviderRegistry:
             raise ProviderRegistryError(f"no such provider_id in this workspace: {provider_id!r}")
         if not token or not token.strip():
             raise ProviderRegistryError("upload token must not be empty")
+        if len(token.encode("utf-8")) > MAX_UPLOAD_TOKEN_BYTES:
+            # Step 1.6A.4: authoritative cap (the API layer mirrors this
+            # synchronously) - an over-long token is rejected before any
+            # bytes touch disk, never truncated silently.
+            raise ProviderRegistryError(
+                f"upload token must be at most {MAX_UPLOAD_TOKEN_BYTES} UTF-8 bytes",
+                error_code="upload_token_too_long",
+            )
         token_path = self._upload_token_path(provider_id, workspace_manager, principal_id)
         fd = os.open(str(token_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), _UPLOAD_TOKEN_FILE_MODE)
         try:

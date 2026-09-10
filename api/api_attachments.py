@@ -15,13 +15,18 @@ The ten read-only `GET` endpoints §7.1 defines:
     GET /api/mca/connectivity
     GET /api/mca/identity
     GET /api/mca/commands/{command_id}
+    GET /api/mca/contacts
 
 plus the mutation endpoints implemented so far: the three Step 1.6A.3A
 lifecycle actions — `POST /api/attachments/{id}/retry`, `/download`,
 `/reject` (§7.3) — the Step 1.6A.3B idempotent multipart create
 `POST /api/attachments` (§7.2), and the two Step 1.6A.3C mutations —
 `POST /api/attachments/{id}/cancel` (§7.4) and
-`POST /api/mca/contacts/{contact_id}/request-key` (§7.10). Everything else
+`POST /api/mca/contacts/{contact_id}/request-key` (§7.10) — and the three
+Step 1.7 Files-workspace trust mutations
+`POST /api/mca/contacts/{contact_id}/confirm`,
+`POST /api/mca/contacts/{contact_id}/key-change/accept`, and
+`POST /api/mca/contacts/{contact_id}/key-change/reject`. Everything else
 (`GET /api/attachments/{id}/content`, save, revoke, local-content,
 connector enumeration, provider onboarding) remains out of scope (1.6A.3+).
 
@@ -85,6 +90,7 @@ from meshsrv.attachments.idempotency import (
     compute_canonical_hash,
     validate_client_request_id,
 )
+from meshsrv.attachments.contacts import status_to_public
 from meshsrv.attachments.key_exchange import AddressStatus
 from meshsrv.attachments.provider_registry import (
     CLEAR,
@@ -220,6 +226,40 @@ def _invalid_state_transition(record):
         "error": "invalid state transition",
         "error_code": "invalid_state_transition",
         "state": record.state,
+    }), 409
+
+
+def _serialize_contact(binding):
+    """Step 1.7: the single allowlist serializer for one recipient binding on
+    the `GET /api/mca/contacts` wire. Public identifiers and non-secret
+    digests only - never the raw `public_identity` bytes (§11). `status` is
+    the public `ContactStatus` string mapped from the binding's
+    `AddressStatus` via `status_to_public()`."""
+    return {
+        "contact_id": binding.transport_address,
+        "adapter_id": binding.adapter_id,
+        "key_id": binding.key_id,
+        "status": status_to_public(binding.status).value,
+        "fingerprint": binding.fingerprint,
+        "key_epoch": binding.key_epoch,
+        "pending_fingerprint": binding.pending_fingerprint,
+        "pending_key_epoch": binding.pending_key_epoch,
+    }
+
+
+def _contact_not_found():
+    return _json_error("contact_not_found", "contact not found"), 404
+
+
+def _contact_state_conflict(binding):
+    """The Step 1.7 synchronous 409 for a trust mutation whose precondition
+    the published snapshot fails: the stable `invalid_state_transition`
+    envelope plus the single safe `status` string (and nothing else - §11)."""
+    return jsonify({
+        "ok": False,
+        "error": "invalid state transition",
+        "error_code": "invalid_state_transition",
+        "status": status_to_public(binding.status).value,
     }), 409
 
 
@@ -1100,6 +1140,95 @@ def register_attachments_routes(app, handle_errors):
         except CommandQueueFull:
             return _json_error("command_queue_full", "command queue is full"), 429
         return jsonify({"ok": True, "command_id": command_id}), 202
+
+    # ---- Step 1.7: Files-workspace contact trust ---------------------------
+
+    def _submit_contact_trust_command(contact_id, kind, precondition):
+        """Validate contact id -> snapshot status precondition -> enqueue the
+        frozen `Command` -> 202 {ok, command_id}. `precondition` is a
+        `binding -> bool` declaring this endpoint's allowed status; a missing
+        binding returns 404 `contact_not_found`, a `False` returns 409
+        `invalid_state_transition` carrying the safe `status` (and nothing
+        else), before anything is enqueued. The worker re-validates the live
+        binding (§3.1) - this snapshot check is defense-in-depth, not the
+        authority. An empty body is the only accepted request body."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        if not _is_contact_id(contact_id):
+            return _json_error("invalid_contact_id", "invalid contact id"), 400
+        body = request.get_json(silent=True)
+        if body:
+            return _json_error("invalid_metadata", "this endpoint accepts no request body"), 400
+        binding = facade.recipient_snapshot().by_address.get(contact_id)
+        if binding is None:
+            return _contact_not_found()
+        if not precondition(binding):
+            return _contact_state_conflict(binding)
+        command = Command(
+            command_id=mint_command_id(),
+            kind=kind,
+            payload={"contact_id": contact_id, "adapter_id": mca_runtime.ADAPTER_ID},
+            created_at=time.time(),
+        )
+        try:
+            command_id = facade.submit(command)
+        except CommandQueueFull:
+            return _json_error("command_queue_full", "command queue is full"), 429
+        return jsonify({"ok": True, "command_id": command_id}), 202
+
+    @app.route("/api/mca/contacts", methods=["GET"])
+    @handle_errors
+    @_mca_error_boundary
+    def list_contacts():
+        """Step 1.7: every TOFU recipient binding, in a deterministic
+        (`contact_id`-ascending) order, allowlist-serialized (§11). Read-only -
+        the request thread reads the worker-published snapshot, never `conn`."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        snapshot = facade.recipient_snapshot()
+        contacts_out = [
+            _serialize_contact(b)
+            for b in sorted(snapshot.by_address.values(), key=lambda b: b.transport_address)
+        ]
+        return jsonify({"ok": True, "contacts": contacts_out})
+
+    @app.route("/api/mca/contacts/<contact_id>/confirm", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def confirm_contact_key(contact_id):
+        """Step 1.7: "trust this MCA key" — the explicit `confirm_tofu()`.
+        Valid only while the binding is `KEY_UNVERIFIED` (announced, never
+        confirmed). The worker re-reads the live binding and applies the
+        transition via `contacts.confirm_binding()`."""
+        return _submit_contact_trust_command(
+            contact_id, "contact_confirm",
+            lambda b: b.status is AddressStatus.KEY_UNVERIFIED,
+        )
+
+    @app.route("/api/mca/contacts/<contact_id>/key-change/accept", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def accept_contact_key_change(contact_id):
+        """Step 1.7: promote a parked key change into the trusted binding (the
+        new key still needs its own, separate confirm afterwards — accepting
+        resets `tofu_confirmed_at`). Valid only while `KEY_CHANGED`."""
+        return _submit_contact_trust_command(
+            contact_id, "contact_accept_key_change",
+            lambda b: b.status is AddressStatus.KEY_CHANGED,
+        )
+
+    @app.route("/api/mca/contacts/<contact_id>/key-change/reject", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def reject_contact_key_change(contact_id):
+        """Step 1.7: dismiss a parked key change, leaving the existing trusted
+        binding untouched (not a blacklist). Valid only while `KEY_CHANGED`."""
+        return _submit_contact_trust_command(
+            contact_id, "contact_reject_key_change",
+            lambda b: b.status is AddressStatus.KEY_CHANGED,
+        )
 
     # ---- Step 1.6A.3B: idempotent multipart create (§7.2) -------------------
 

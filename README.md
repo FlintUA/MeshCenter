@@ -1147,6 +1147,7 @@ MeshCenter includes the underlying infrastructure for a multi-language interface
 - Language switching (Auto / English / Deutsch / Русский / Українська) from the Settings panel
 - The page's `<html lang>` attribute and the loaded translation catalog follow the selected language (or the browser's language when set to Auto)
 - Part of the static interface text, a first slice of error and toast messages, and the Weather module's response language (mapped to whichever provider is active) all follow the selected language
+- The Files workspace (MCAttach) — every label, state, contact-status and action string, plus the primary error codes, is translated in all four locales (en/de/ru/uk), wired through the same `I18N.t()` / `tOrFallback()` runtime (rarer server error codes degrade to the server's English message rather than a raw `[[key]]`)
 - Verified end-to-end for all four locales (en/de/ru/uk)
 
 **What's not translated yet:**
@@ -1452,6 +1453,37 @@ POST   /api/updates/apply
 
 GET    /api/weather/current
 
+GET    /api/mca/contacts
+POST   /api/mca/contacts/<contact_id>/request-key
+POST   /api/mca/contacts/<contact_id>/confirm
+POST   /api/mca/contacts/<contact_id>/key-change/accept
+POST   /api/mca/contacts/<contact_id>/key-change/reject
+
+GET    /api/mca/providers
+POST   /api/mca/providers/probe
+POST   /api/mca/providers
+PATCH  /api/mca/providers/<provider_id>
+POST   /api/mca/providers/<provider_id>/default
+POST   /api/mca/providers/<provider_id>/check
+PUT    /api/mca/providers/<provider_id>/upload-token
+DELETE /api/mca/providers/<provider_id>/upload-token
+DELETE /api/mca/providers/<provider_id>
+
+GET    /api/mca/commands/<command_id>
+
+GET    /api/attachments
+POST   /api/attachments
+GET    /api/attachments/<id>
+GET    /api/attachments/<id>/deliveries
+GET    /api/attachments/<id>/content
+POST   /api/attachments/<id>/download
+POST   /api/attachments/<id>/reject
+POST   /api/attachments/<id>/cancel
+POST   /api/attachments/<id>/save
+POST   /api/attachments/<id>/revoke
+POST   /api/attachments/<id>/retry
+DELETE /api/attachments/<id>/local-content
+
 GET    /api/security
 POST   /api/security
 GET    /login
@@ -1531,6 +1563,7 @@ Every state-changing `/api/` request (`POST`/`PUT`/`PATCH`/`DELETE`) additionall
 - **Media Gallery** – Thumbnails, download, delete, storage info
 - **Export/Import** – Node database export/import in CSV and JSON
 - **Wi‑Fi Manager** – Scan, connect, forget with saved networks indicator
+- **Files Workspace (MCAttach)** – End-to-end encrypted file transfer with trusted contacts via a configurable Relay provider; contact key trust (request/confirm/accept/reject), an archive of transfers with full lifecycle actions (send, download, reject, save, cancel, revoke, retry, delete-local), and Relay provider management from Settings
 
 ---
 

@@ -239,6 +239,9 @@
                 <button class="main-content-tab active" id="mainTabChats" onclick="switchMainTab('chats')">
                     💬 <span data-i18n="nav.chats">Chats</span>
                 </button>
+                <button class="main-content-tab" id="mainTabFiles" onclick="switchMainTab('files')">
+                    📁 <span data-i18n="nav.files">Files</span>
+                </button>
                 <button class="main-content-tab" id="mainTabVideo" onclick="switchMainTab('video')">
                     🎥 <span data-i18n="nav.camera">Camera</span>
                 </button>
@@ -696,6 +699,49 @@
 
                     <div class="devices-dashboard" id="devicesDashboard">
                         <div class="device-dashboard-loading" data-i18n="devices.loading">Loading peripheral devices...</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== FILES WORKSPACE ===== -->
+            <section class="files-view workspace-view" id="filesView" style="display: none;" aria-labelledby="filesWorkspaceTitle">
+                <div class="files-panel mc-workspace-panel">
+                    <header class="files-header mc-workspace-header">
+                        <div>
+                            <h2 class="workspace-page-title" id="filesWorkspaceTitle">📁 <span data-i18n="nav.files">Files</span></h2>
+                            <p class="workspace-page-subtitle" data-i18n="files.subtitle">End-to-end encrypted file transfers with your Meshtastic contacts</p>
+                        </div>
+                        <div class="workspace-page-actions">
+                            <button type="button" class="mc-refresh-btn" onclick="openFilesSendDialog()">📤 <span data-i18n="files.send_file">Send file</span></button>
+                            <button type="button" class="mc-refresh-btn" onclick="openFilesProviderSettings()">⚙️ <span data-i18n="files.providers">Relay providers</span></button>
+                            <button type="button" class="mc-refresh-btn" onclick="loadFilesWorkspace(true)">↻ <span data-i18n="common.refresh">Refresh</span></button>
+                        </div>
+                    </header>
+                    <div class="files-layout" id="filesLayout">
+                        <aside class="files-contacts" id="filesContactsPane" aria-label="Files contacts">
+                            <div class="files-pane-title">👥 <span data-i18n="files.contacts_title">Contacts</span></div>
+                            <div class="files-contacts-list" id="filesContactsList">
+                                <div class="device-dashboard-loading" data-i18n="files.loading_contacts">Loading contacts...</div>
+                            </div>
+                        </aside>
+                        <section class="files-archive" id="filesArchivePane" aria-label="Files transfers">
+                            <div class="files-pane-title">🗂️ <span data-i18n="files.archive_title">Transfers</span></div>
+                            <div class="files-filter-tabs" id="filesFilterTabs">
+                                <button class="files-filter-tab active" data-filter="all" onclick="setFilesFilter('all')" data-i18n="files.filter_all">All</button>
+                                <button class="files-filter-tab" data-filter="pending" onclick="setFilesFilter('pending')" data-i18n="files.filter_pending">Pending</button>
+                                <button class="files-filter-tab" data-filter="saved" onclick="setFilesFilter('saved')" data-i18n="files.filter_saved">Saved</button>
+                                <button class="files-filter-tab" data-filter="errors" onclick="setFilesFilter('errors')" data-i18n="files.filter_errors">Errors</button>
+                            </div>
+                            <div class="files-archive-list" id="filesArchiveList">
+                                <div class="device-dashboard-loading" data-i18n="files.loading_transfers">Loading transfers...</div>
+                            </div>
+                        </section>
+                        <section class="files-detail" id="filesDetailPane" aria-label="Files details">
+                            <div class="files-pane-title">ℹ️ <span data-i18n="files.detail_title">Details</span></div>
+                            <div class="files-detail-body" id="filesDetailBody">
+                                <div class="files-detail-empty" data-i18n="files.select_transfer_hint">Select a transfer to view its progress and details.</div>
+                            </div>
+                        </section>
                     </div>
                 </div>
             </section>
@@ -2292,6 +2338,7 @@
 <script src="{{ url_for('static', filename='chat-camera.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-map.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20260821-domain-split"></script>
+<script src="/static/files.js?v=20260910-files-workspace"></script>
 <script src="/static/chat.js?v=20260904-theme-stage8-2"></script>
 <script src="/static/media.js?v=20260818-xss-fix-delete-onclick"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>

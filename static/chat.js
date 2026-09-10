@@ -9947,7 +9947,7 @@ function setChatWorkspaceChromeVisible(visible) {
 
 function switchMainTab(tab) {
     const transitionSequence = ++mainTabTransitionSequence;
-    const operationalTabs = new Set(['chats', 'video', 'media', 'devices']);
+    const operationalTabs = new Set(['chats', 'video', 'media', 'devices', 'files']);
 
     if (operationalTabs.has(tab)) {
         lastOperationalMainTab = tab;
@@ -9970,6 +9970,7 @@ function switchMainTab(tab) {
         document.getElementById('aboutView').style.display = 'none';
         document.getElementById('mapView').style.display = 'none';
         document.getElementById('devicesView').style.display = 'none';
+        document.getElementById('filesView')?.style && (document.getElementById('filesView').style.display = 'none');
         document.getElementById('nodeManagerView')?.style && (document.getElementById('nodeManagerView').style.display = 'none');
 
         document.getElementById('chatListContainer').style.display = currentChatId ? 'none' : 'block';
@@ -10002,6 +10003,7 @@ function switchMainTab(tab) {
     const videoView = document.getElementById('videoView');
     const mediaView = document.getElementById('mediaView');
     const devicesView = document.getElementById('devicesView');
+    const filesView = document.getElementById('filesView');
     const nodeManagerView = document.getElementById('nodeManagerView');
     const photoView = document.getElementById('photoView');
     const chatHeader = document.getElementById('chatHeader');
@@ -10017,6 +10019,7 @@ function switchMainTab(tab) {
     if (videoView) videoView.style.display = 'none';
     if (mediaView) mediaView.style.display = 'none';
     if (devicesView) devicesView.style.display = 'none';
+    if (filesView) filesView.style.display = 'none';
     if (nodeManagerView) nodeManagerView.style.display = 'none';
     if (photoView) photoView.style.display = 'none';
     if (systemView) systemView.style.display = 'none';
@@ -10143,6 +10146,19 @@ function switchMainTab(tab) {
         updateStatusDock('devices');
         stopMessagePolling();
         loadPeripheralDevices();
+
+    } else if (tab === 'files') {
+        if (chatHeader) chatHeader.style.display = 'none';
+        if (chatListContainer) chatListContainer.style.display = 'none';
+        if (messagesView) messagesView.style.display = 'none';
+        if (filesView) filesView.style.display = 'flex';
+
+        updateStatusDock('files');
+        stopMessagePolling();
+
+        if (typeof openFilesWorkspace === 'function') {
+            openFilesWorkspace();
+        }
 
     } else if (tab === 'node-manager') {
         if (chatHeader) chatHeader.style.display = 'none';
@@ -10274,6 +10290,10 @@ function updateStatusDock(tab) {
         workspaceLabel.textContent = window.I18N.t('nav.devices');
         setDockStatusBaseline(window.I18N.t('notifications.peripherals'), 'online');
         setStatusDockContext('Active profile');
+    } else if (tab === 'files') {
+        workspaceLabel.textContent = window.I18N.t('nav.files');
+        setDockStatusBaseline(window.I18N.t('notifications.ready'), 'online');
+        setStatusDockContext('MCAttach');
     } else if (tab === 'node-manager') {
         workspaceLabel.textContent = window.I18N.t('node_manager.title');
         setDockStatusBaseline(window.I18N.t('notifications.active_radio'), 'online');

@@ -213,6 +213,150 @@ def test_unconfirmed_binding_projects_as_key_unverified(tmp_path):
         mca_runtime.reset_state_for_tests()
 
 
+def _seed_key_changed_binding(state, source_address="!aaaaaaaa"):
+    """Insert a binding with a parked pending identity (KEY_CHANGED): the
+    active key is trusted, and a contradicting newer key is parked in the
+    pending columns - mirroring `_handle_key_announce`'s parked path."""
+    state.conn.execute(
+        """
+        INSERT INTO mca_recipient_bindings
+            (id, workspace_id, adapter_id, transport_address, principal_id,
+             sender_key_id, public_identity, key_epoch, bound_at,
+             tofu_confirmed_at, pending_public_identity, pending_key_epoch,
+             pending_detected_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            f"meshtastic:{source_address}",
+            "local",
+            "meshtastic",
+            source_address,
+            "1" * 16,
+            "1" * 16,
+            "02" * 32,  # active (trusted) key
+            0,
+            0.0,
+            1.0,        # tofu_confirmed_at set -> MCA_READY absent the pending key
+            "03" * 32,  # parked newer key
+            1,          # pending_key_epoch
+            2.0,        # pending_detected_at
+        ),
+    )
+    state.conn.commit()
+
+
+def _submit_trust_command(facade, kind, contact_id="!aaaaaaaa"):
+    command = Command(
+        command_id=f"cmd-{kind}",
+        kind=kind,
+        payload={"contact_id": contact_id, "adapter_id": "meshtastic"},
+        created_at=0.0,
+    )
+    facade.submit(command)
+    return command.command_id
+
+
+def test_confirm_command_transitions_key_unverified_to_trusted(tmp_path):
+    state, _, _ = _started_state(tmp_path, "trust-confirm")
+    try:
+        facade = state.facade
+        _seed_trusted_binding(state, confirmed=False)  # KEY_UNVERIFIED
+        cid = _submit_trust_command(facade, "contact_confirm")
+
+        state.service.tick()
+
+        assert facade.get_command(cid).status == STATUS_SUCCEEDED
+        binding = facade.recipient_snapshot().by_address["!aaaaaaaa"]
+        assert binding.status is AddressStatus.MCA_READY
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_confirm_command_is_invalid_state_transition_for_a_trusted_binding(tmp_path):
+    state, _, _ = _started_state(tmp_path, "trust-confirm-already")
+    try:
+        facade = state.facade
+        _seed_trusted_binding(state, confirmed=True)  # MCA_READY
+        cid = _submit_trust_command(facade, "contact_confirm")
+
+        state.service.tick()
+
+        assert facade.get_command(cid).status == STATUS_FAILED
+        assert facade.get_command(cid).error_code == "invalid_state_transition"
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_accept_key_change_promotes_pending_and_requires_a_new_confirm(tmp_path):
+    state, _, _ = _started_state(tmp_path, "trust-accept")
+    try:
+        facade = state.facade
+        _seed_key_changed_binding(state)  # KEY_CHANGED
+        cid = _submit_trust_command(facade, "contact_accept_key_change")
+
+        state.service.tick()
+
+        assert facade.get_command(cid).status == STATUS_SUCCEEDED
+        binding = facade.recipient_snapshot().by_address["!aaaaaaaa"]
+        # Accepting resets tofu_confirmed_at, so the promoted key is back to
+        # KEY_UNVERIFIED awaiting its own confirm - not silently trusted.
+        assert binding.status is AddressStatus.KEY_UNVERIFIED
+        assert binding.key_epoch == 1
+        assert binding.pending_fingerprint is None
+        assert binding.pending_key_epoch is None
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_accept_key_change_is_invalid_state_transition_for_a_non_changed_binding(tmp_path):
+    state, _, _ = _started_state(tmp_path, "trust-accept-bad")
+    try:
+        facade = state.facade
+        _seed_trusted_binding(state, confirmed=True)  # MCA_READY, no pending
+        cid = _submit_trust_command(facade, "contact_accept_key_change")
+
+        state.service.tick()
+
+        assert facade.get_command(cid).status == STATUS_FAILED
+        assert facade.get_command(cid).error_code == "invalid_state_transition"
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_reject_key_change_clears_pending_and_keeps_the_trusted_binding(tmp_path):
+    state, _, _ = _started_state(tmp_path, "trust-reject")
+    try:
+        facade = state.facade
+        _seed_key_changed_binding(state)  # KEY_CHANGED
+        cid = _submit_trust_command(facade, "contact_reject_key_change")
+
+        state.service.tick()
+
+        assert facade.get_command(cid).status == STATUS_SUCCEEDED
+        binding = facade.recipient_snapshot().by_address["!aaaaaaaa"]
+        # Rejecting only clears the parked identity: the trusted binding (and
+        # its tofu_confirmed_at) is left exactly as it was -> MCA_READY.
+        assert binding.status is AddressStatus.MCA_READY
+        assert binding.pending_fingerprint is None
+        assert binding.pending_key_epoch is None
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_trust_command_is_contact_not_found_for_an_unknown_contact(tmp_path):
+    state, _, _ = _started_state(tmp_path, "trust-notfound")
+    try:
+        facade = state.facade
+        cid = _submit_trust_command(facade, "contact_confirm", contact_id="!bbbbbbbb")
+
+        state.service.tick()
+
+        assert facade.get_command(cid).status == STATUS_FAILED
+        assert facade.get_command(cid).error_code == "contact_not_found"
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
 # --- get_attachments_facade: never lazy-create the SQLite runtime ----------
 
 
@@ -758,6 +902,8 @@ def test_real_service_wires_the_lifecycle_and_create_handlers(tmp_path):
             "attachment_reject", "attachment_cancel", "attachment_save",
             "attachment_revoke", "attachment_delete_local_content",
             "contact_request_key",
+            "contact_confirm", "contact_accept_key_change",
+            "contact_reject_key_change",
             "provider_probe", "provider_register", "provider_update",
             "provider_set_default", "provider_remove",
             "provider_set_upload_token", "provider_clear_upload_token",

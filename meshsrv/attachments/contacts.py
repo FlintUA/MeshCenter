@@ -48,6 +48,14 @@ _STATUS_MAP = {
 }
 
 
+def status_to_public(status: AddressStatus) -> ContactStatus:
+    """Map a raw `AddressStatus` to its public `ContactStatus` vocabulary -
+    the single place the API layer turns a binding's status into the wire
+    string (`confirmation_required`/`trusted`/`key_changed`/`key_unknown`),
+    rather than re-deriving the mapping at every call site."""
+    return _STATUS_MAP[status]
+
+
 def contact_status(coordinator: KeyExchangeCoordinator, source_address: str) -> ContactStatus:
     """Read-only - never sends anything, never performs I/O. `source_address`
     is the same transport address `key_exchange.py`'s own methods key on

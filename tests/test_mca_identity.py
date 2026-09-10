@@ -15,6 +15,7 @@ import pytest
 from meshsrv.attachments.db.migrations import migrate
 from meshsrv.attachments.identity import (
     IdentityError,
+    compute_fingerprint,
     compute_key_id,
     create_principal,
     derive_x25519_public,
@@ -123,6 +124,27 @@ def test_load_signing_key_raises_if_key_file_missing(conn, workspace_manager, tm
 def test_compute_key_id_rejects_wrong_length():
     with pytest.raises(IdentityError):
         compute_key_id(b"\x00" * 10)
+
+
+def test_compute_fingerprint_is_full_sha256_hexdigest():
+    import hashlib
+
+    key = bytes(range(32))  # a deterministic 32-byte stand-in public identity
+    fp = compute_fingerprint(key)
+    # 64 lowercase hex chars - the full 256-bit digest, distinct from the
+    # 16-char (first-8-bytes) `compute_key_id` lookup value.
+    assert len(fp) == 64
+    assert all(ch in "0123456789abcdef" for ch in fp)
+    assert fp == hashlib.sha256(key).hexdigest()
+    # The fingerprint's first 16 hex chars ARE the key_id (the lookup value is
+    # a prefix of the full digest) - the fingerprint is a strict superset.
+    assert fp[:16] == compute_key_id(key)
+    assert len(compute_key_id(key)) == 16
+
+
+def test_compute_fingerprint_rejects_wrong_length():
+    with pytest.raises(IdentityError):
+        compute_fingerprint(b"\x00" * 10)
 
 
 def test_derive_x25519_public_rejects_wrong_length():

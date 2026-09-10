@@ -87,9 +87,12 @@ from meshsrv.attachments.idempotency import (
 )
 from meshsrv.attachments.key_exchange import AddressStatus
 from meshsrv.attachments.provider_registry import (
+    CLEAR,
+    MAX_UPLOAD_TOKEN_BYTES,
     ProviderRegistryError,
     decode_provider_id,
     encode_provider_id,
+    normalize_origin,
 )
 from meshsrv.attachments.recipient_snapshot import RecipientRejectionReason, evaluate_recipient_trust
 from meshsrv.attachments.snapshots import (
@@ -1320,3 +1323,279 @@ def register_attachments_routes(app, handle_errors):
                 body["state"] = record.state
             return jsonify(body), 200
         return _json_error("idempotency_conflict", "idempotency conflict"), 409
+
+    # ---- Step 1.6A.4: multi-Relay provider onboarding/management -----------
+    #
+    # The eight provider mutations (§7.11/§7.12), all worker commands like
+    # every other mutation: the request thread does pure synchronous
+    # validation (id shape, `normalize_origin`, and the two-phase probe
+    # snapshot check for registration) then enqueues a frozen `Command` and
+    # returns 202 - the worker executes it and the client polls
+    # GET /api/mca/commands/{command_id} for the real result (§3.4). The
+    # worker re-checks everything it must (never trusts the queue), so the
+    # synchronous checks here are fast-feedback defense-in-depth, not the
+    # authority. Existence checks (`provider_not_found`) are deliberately
+    # left to the worker's command result (§7.12: synchronous validation is
+    # pure), never a stale snapshot read.
+
+    def _submit_provider_command(facade, kind, payload):
+        """Mint a command id, enqueue the frozen `Command` through `facade`
+        (already fetched + not-None-checked by the caller), and return the
+        §7.9 `202 {command_id}`. `CommandQueueFull` maps to 429
+        `command_queue_full` - caught here, not left to `_mca_error_boundary`,
+        which would mis-map it to a 500."""
+        command = Command(
+            command_id=mint_command_id(),
+            kind=kind,
+            payload=payload,
+            created_at=time.time(),
+        )
+        try:
+            command_id = facade.submit(command)
+        except CommandQueueFull:
+            return _json_error("command_queue_full", "command queue is full"), 429
+        return jsonify({"ok": True, "command_id": command_id}), 202
+
+    @app.route("/api/mca/providers/probe", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def probe_provider():
+        """§7.11 phase 1: validate the browser-supplied origin is a bare
+        HTTPS origin (`normalize_origin`, pure - no DNS/network on this
+        thread) and enqueue the `provider_probe` worker command, which is
+        the sole executor of the DNS resolve + `/v1/info` fetch (§12)."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return _json_error("invalid_metadata", "invalid request body"), 400
+        base_url = body.get("base_url")
+        if not isinstance(base_url, str) or not base_url.strip():
+            return _json_error("invalid_origin", "invalid provider origin"), 400
+        try:
+            normalize_origin(base_url)
+        except ProviderRegistryError:
+            return _json_error("invalid_origin", "invalid provider origin"), 400
+        return _submit_provider_command(facade, "provider_probe", {"base_url": base_url})
+
+    @app.route("/api/mca/providers", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def register_provider():
+        """§7.11 phase 2: register a provider from a single-use probe. The
+        browser supplies only `probe_id` + `fingerprint_confirmation` (its
+        human-confirmed fingerprint) + the policy fields; every identity
+        field (`origin`/`service_public_key`/TTLs/`protocol_version`/derived
+        `provider_id`) comes from the `ProbeRecord`, so a corrupted frontend
+        can only reference a probe the server already performed. Synchronous
+        checks: probe exists (`probe_id_not_found`), fingerprint matches
+        (`provider_id_mismatch`), policy shape/max_ciphertext_bytes
+        (`invalid_metadata`); the atomic check-and-consume happens on the
+        worker."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return _json_error("invalid_metadata", "invalid request body"), 400
+
+        probe_id = body.get("probe_id")
+        if not isinstance(probe_id, str) or not probe_id:
+            return _json_error("probe_id_not_found", "probe not found or expired"), 400
+        probe = facade.get_probe(probe_id)
+        if probe is None:
+            return _json_error("probe_id_not_found", "probe not found or expired"), 400
+
+        if body.get("fingerprint_confirmation") != probe.service_key_fingerprint:
+            return _json_error("provider_id_mismatch", "fingerprint confirmation does not match"), 400
+
+        display_name = body.get("display_name")
+        if not isinstance(display_name, str) or not display_name.strip():
+            return _json_error("invalid_metadata", "display_name must be a non-empty string"), 400
+
+        policy = body.get("policy")
+        if policy is None:
+            policy = {}
+        if not isinstance(policy, dict):
+            return _json_error("invalid_metadata", "policy must be an object"), 400
+        kind = policy.get("kind", "own")
+        if kind not in ("own", "third_party"):
+            return _json_error("invalid_metadata", "kind must be 'own' or 'third_party'"), 400
+        upload_allowed = policy.get("upload_allowed", True)
+        download_allowed = policy.get("download_allowed", True)
+        if not isinstance(upload_allowed, bool) or not isinstance(download_allowed, bool):
+            return _json_error("invalid_metadata", "policy flags must be booleans"), 400
+        max_ciphertext_bytes = policy.get("max_ciphertext_bytes")
+        if max_ciphertext_bytes is not None and (
+            isinstance(max_ciphertext_bytes, bool)
+            or not isinstance(max_ciphertext_bytes, int)
+            or max_ciphertext_bytes <= 0
+            or max_ciphertext_bytes > probe.max_ciphertext_bytes
+        ):
+            return _json_error("invalid_metadata", "max_ciphertext_bytes exceeds the provider limit"), 400
+
+        policy_payload = {
+            "kind": kind,
+            "upload_allowed": upload_allowed,
+            "download_allowed": download_allowed,
+        }
+        if max_ciphertext_bytes is not None:
+            policy_payload["max_ciphertext_bytes"] = max_ciphertext_bytes
+
+        return _submit_provider_command(facade, "provider_register", {
+            "probe_id": probe_id,
+            "display_name": display_name,
+            "policy": policy_payload,
+            "fingerprint_confirmation": body.get("fingerprint_confirmation"),
+        })
+
+    @app.route("/api/mca/providers/<provider_id>", methods=["PATCH"])
+    @handle_errors
+    @_mca_error_boundary
+    def update_provider(provider_id):
+        """§7.12: partial edit of non-identity fields. Identity fields
+        (`origin`/`service_public_key`) are not editable - the body has no
+        key for them (changing either is a new registration, ADR-0008). For
+        the clearable TTL/`protocol_version` fields, `null` means CLEAR
+        (explicitly back to unset) and an absent key means leave alone - the
+        documented sentinel `provider_registry.CLEAR` is what crosses the
+        command payload, never a `None` (which the worker treats as "leave
+        alone")."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        err = _validate_provider_id(provider_id)
+        if err is not None:
+            body, status = err
+            return body, status
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return _json_error("invalid_metadata", "invalid request body"), 400
+
+        payload = {"provider_id": provider_id}
+        if "display_name" in body:
+            value = body["display_name"]
+            if not isinstance(value, str) or not value.strip():
+                return _json_error("invalid_metadata", "display_name must be a non-empty string"), 400
+            payload["display_name"] = value
+        for field in ("enabled", "upload_allowed", "download_allowed"):
+            if field in body:
+                value = body[field]
+                if not isinstance(value, bool):
+                    return _json_error("invalid_metadata", f"{field} must be a boolean"), 400
+                payload[field] = value
+        for field in ("min_ttl_seconds", "max_ttl_seconds"):
+            if field in body:
+                value = body[field]
+                if value is None:
+                    payload[field] = CLEAR
+                elif isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                    return _json_error("invalid_metadata", f"{field} must be a positive integer or null"), 400
+                else:
+                    payload[field] = value
+        if "protocol_version" in body:
+            value = body["protocol_version"]
+            if value is None:
+                payload["protocol_version"] = CLEAR
+            elif not isinstance(value, str) or not value.strip():
+                return _json_error("invalid_metadata", "protocol_version must be a non-empty string or null"), 400
+            else:
+                payload["protocol_version"] = value
+
+        if len(payload) == 1:
+            # Nothing but provider_id - no recognized fields to update.
+            return _json_error("invalid_metadata", "no fields to update"), 400
+        return _submit_provider_command(facade, "provider_update", payload)
+
+    @app.route("/api/mca/providers/<provider_id>/default", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def set_default_provider(provider_id):
+        """§7.12: make one provider the default (transactional single-
+        default, ADR-0008). `provider_not_found` surfaces via the command
+        result (§7.12: synchronous validation is pure)."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        err = _validate_provider_id(provider_id)
+        if err is not None:
+            body, status = err
+            return body, status
+        return _submit_provider_command(facade, "provider_set_default", {"provider_id": provider_id})
+
+    @app.route("/api/mca/providers/<provider_id>", methods=["DELETE"])
+    @handle_errors
+    @_mca_error_boundary
+    def remove_provider(provider_id):
+        """§7.12: delete the profile outright when nothing references it,
+        else disable it (history preserved). The `{"action": "deleted"|
+        "disabled"}` outcome is the command result (§7.9)."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        err = _validate_provider_id(provider_id)
+        if err is not None:
+            body, status = err
+            return body, status
+        return _submit_provider_command(facade, "provider_remove", {"provider_id": provider_id})
+
+    @app.route("/api/mca/providers/<provider_id>/upload-token", methods=["PUT"])
+    @handle_errors
+    @_mca_error_boundary
+    def set_provider_upload_token(provider_id):
+        """§7.12: store an upload token (0600 file). The token is never
+        echoed; the synchronous `upload_token_too_long` check mirrors the
+        worker's authoritative cap (`MAX_UPLOAD_TOKEN_BYTES`) so an
+        over-long token is rejected before it is ever enqueued."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        err = _validate_provider_id(provider_id)
+        if err is not None:
+            body, status = err
+            return body, status
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return _json_error("invalid_metadata", "invalid request body"), 400
+        token = body.get("upload_token")
+        if not isinstance(token, str) or not token.strip():
+            return _json_error("invalid_metadata", "upload_token must be a non-empty string"), 400
+        if len(token.encode("utf-8")) > MAX_UPLOAD_TOKEN_BYTES:
+            return _json_error("upload_token_too_long", "upload token exceeds the maximum length"), 400
+        return _submit_provider_command(facade, "provider_set_upload_token", {
+            "provider_id": provider_id,
+            "upload_token": token,
+        })
+
+    @app.route("/api/mca/providers/<provider_id>/upload-token", methods=["DELETE"])
+    @handle_errors
+    @_mca_error_boundary
+    def clear_provider_upload_token(provider_id):
+        """§7.12: remove an upload token. Idempotent; the result is
+        `upload_token_configured: false` (command result)."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        err = _validate_provider_id(provider_id)
+        if err is not None:
+            body, status = err
+            return body, status
+        return _submit_provider_command(facade, "provider_clear_upload_token", {"provider_id": provider_id})
+
+    @app.route("/api/mca/providers/<provider_id>/check", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def check_provider(provider_id):
+        """§7.12: force a fresh reachability/identity check now (the periodic
+        monitor is lazy). The worker runs `connectivity.refresh(force=True)`;
+        the fresh state is observable via the connectivity snapshot (§3.4),
+        not this command's own result."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        err = _validate_provider_id(provider_id)
+        if err is not None:
+            body, status = err
+            return body, status
+        return _submit_provider_command(facade, "provider_check", {"provider_id": provider_id})

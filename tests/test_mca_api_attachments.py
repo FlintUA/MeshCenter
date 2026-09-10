@@ -52,9 +52,12 @@ from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
 from meshsrv.attachments.facade import FacadeNotReady
 from meshsrv.attachments.idempotency import IdempotencyEntry, PendingReservations
 from meshsrv.attachments.provider_registry import (
+    CLEAR,
+    MAX_UPLOAD_TOKEN_BYTES,
     ProviderRegistryError,
     decode_provider_id,
     encode_provider_id,
+    normalize_origin,
 )
 from meshsrv.attachments.key_exchange import AddressStatus
 from meshsrv.attachments.recipient_snapshot import (
@@ -207,6 +210,7 @@ class _FakeFacade:
         spool_dir=None,
         committed=None,
         recipient=None,
+        probes=None,
     ):
         self._snapshot = snapshot or _snapshot([])
         self._providers = providers or {}
@@ -221,6 +225,10 @@ class _FakeFacade:
         self.queue_full = queue_full
         self.submitted = []  # commands the POST endpoints handed to submit()
         self.spool_dir = spool_dir
+        # probe_id -> ProbeRecord (or a minimal stand-in exposing the two
+        # fields the phase-2 route's synchronous validation reads:
+        # service_key_fingerprint + max_ciphertext_bytes).
+        self._probes = probes or {}
         # A real reservation store + committed index, so the create endpoint's
         # idempotency paths (fresh/replay_pending/replay_committed/conflict)
         # are exercised against the same logic the facade actually runs.
@@ -239,6 +247,11 @@ class _FakeFacade:
 
     def get_command(self, command_id):
         return self._commands.get(command_id)
+
+    def get_probe(self, probe_id):
+        # The request-thread, non-consuming probe read for phase-2
+        # synchronous validation (probe_id_not_found / provider_id_mismatch).
+        return self._probes.get(probe_id)
 
     def submit(self, command):
         # Mirrors the real facade's request-thread write surface: gated on
@@ -496,7 +509,7 @@ def test_routes_reject_non_get_methods(monkeypatch):
     c = _client(monkeypatch, _FakeFacade())
     assert c.put("/api/attachments").status_code == 405
     assert c.put("/api/mca/identity").status_code == 405
-    assert c.delete(f"/api/mca/providers/{PROVIDER_ID}").status_code == 405
+    assert c.delete("/api/mca/identity").status_code == 405
 
 
 # ---- GET /api/attachments -------------------------------------------------
@@ -2529,3 +2542,284 @@ def test_requirements_pin_flask_floor_above_30():
     assert req.specifier.contains("3.1.3")
     # And it is still bounded below 4.0 (the next, untested major).
     assert not req.specifier.contains("4.0.0")
+
+
+# ---- Step 1.6A.4: provider mutation routes (§7.11/§7.12) ------------------
+#
+# The eight mutation endpoints all return 202 + command_id (the worker runs
+# them; the client polls the command), except where a *synchronous* pure
+# validation error applies (invalid origin, probe not found/fingerprint
+# mismatch/policy shape, invalid provider id, upload token too long, queue
+# full, or not-ready). The synchronous checks are defense-in-depth only -
+# the worker re-checks everything - so these tests pin exactly which
+# validation happens *before* the command is enqueued (and thus returns a
+# 400, not a 202), and that every accepted request enqueues a frozen
+# Command of the right kind with the right payload and never leaks the
+# upload token or the raw service key into any response body.
+
+
+def _probe(*, fingerprint="ab" * 32, max_ciphertext_bytes=5 * 1024 * 1024 + 1024):
+    """A minimal probe stand-in for phase-2 synchronous validation: the
+    route reads only these two fields (the real `ProbeRecord`'s other
+    fields come from the server, never the browser)."""
+    return SimpleNamespace(
+        service_key_fingerprint=fingerprint,
+        max_ciphertext_bytes=max_ciphertext_bytes,
+    )
+
+
+def _submitted(facade, index=-1):
+    """The `index`-th command the route handed to `facade.submit()`."""
+    return facade.submitted[index]
+
+
+def test_provider_mutations_are_503_when_facade_missing(monkeypatch):
+    c = _client(monkeypatch, None)
+    for method, path, body in (
+        ("post", "/api/mca/providers/probe", {"base_url": "https://relay.example.net"}),
+        ("post", "/api/mca/providers", {"probe_id": "p"}),
+        ("patch", f"/api/mca/providers/{PROVIDER_ID}", {"display_name": "x"}),
+        ("post", f"/api/mca/providers/{PROVIDER_ID}/default", {}),
+        ("delete", f"/api/mca/providers/{PROVIDER_ID}", None),
+        ("put", f"/api/mca/providers/{PROVIDER_ID}/upload-token", {"upload_token": "t"}),
+        ("delete", f"/api/mca/providers/{PROVIDER_ID}/upload-token", None),
+        ("post", f"/api/mca/providers/{PROVIDER_ID}/check", {}),
+    ):
+        resp = getattr(c, method)(path, json=body)
+        assert resp.status_code == 503, (method, path)
+        assert resp.get_json()["error_code"] == "mca_not_ready"
+
+
+def test_probe_normalizes_and_enqueues(monkeypatch):
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.post("/api/mca/providers/probe", json={"base_url": "https://Relay.Example.Net/"})
+    assert resp.status_code == 202
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert body["command_id"]
+    cmd = _submitted(facade)
+    assert cmd.kind == "provider_probe"
+    # The worker re-normalizes the origin; the request thread passes the
+    # browser's spelling through unchanged (defense-in-depth, not a trust
+    # boundary).
+    assert cmd.payload == {"base_url": "https://Relay.Example.Net/"}
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        None,                    # missing
+        "",                      # empty
+        "   ",                   # whitespace-only
+        123,                     # not a string
+        "http://relay.example.net",  # not https
+        "ftp://relay.example.net",   # wrong scheme
+        "https://relay.example.net/path",  # not a bare origin
+        "https://relay.example.net?q=1",   # query
+        "https://user:pass@relay.example.net",  # credentials
+    ],
+)
+def test_probe_rejects_non_https_bare_origin_synchronously(monkeypatch, base_url):
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    body = {"base_url": base_url} if base_url is not None else {}
+    resp = c.post("/api/mca/providers/probe", json=body)
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_origin"
+    assert facade.submitted == [], "invalid origin must never be enqueued"
+
+
+def test_register_enqueues_policy_and_fingerprint(monkeypatch):
+    facade = _FakeFacade(probes={"probe-1": _probe()})
+    c = _client(monkeypatch, facade)
+    resp = c.post("/api/mca/providers", json={
+        "probe_id": "probe-1",
+        "display_name": "My Relay",
+        "fingerprint_confirmation": "ab" * 32,
+        "policy": {"kind": "third_party", "upload_allowed": False, "download_allowed": True},
+    })
+    assert resp.status_code == 202
+    cmd = _submitted(facade)
+    assert cmd.kind == "provider_register"
+    # Identity fields come from the probe (server-side), never the browser;
+    # the browser only supplies probe_id + confirmation + policy.
+    assert cmd.payload == {
+        "probe_id": "probe-1",
+        "display_name": "My Relay",
+        "fingerprint_confirmation": "ab" * 32,
+        "policy": {"kind": "third_party", "upload_allowed": False, "download_allowed": True},
+    }
+
+
+def test_register_rejects_unknown_probe_synchronously(monkeypatch):
+    facade = _FakeFacade(probes={})
+    c = _client(monkeypatch, facade)
+    resp = c.post("/api/mca/providers", json={
+        "probe_id": "missing",
+        "display_name": "My Relay",
+        "fingerprint_confirmation": "ab" * 32,
+    })
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "probe_id_not_found"
+    assert facade.submitted == []
+
+
+def test_register_rejects_fingerprint_mismatch_synchronously(monkeypatch):
+    facade = _FakeFacade(probes={"probe-1": _probe(fingerprint="cd" * 32)})
+    c = _client(monkeypatch, facade)
+    resp = c.post("/api/mca/providers", json={
+        "probe_id": "probe-1",
+        "display_name": "My Relay",
+        "fingerprint_confirmation": "ab" * 32,
+    })
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "provider_id_mismatch"
+    assert facade.submitted == []
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {"kind": "bogus"},                          # invalid kind
+        {"kind": "own", "upload_allowed": "yes"},   # non-bool flag
+        {"kind": "own", "download_allowed": 1},     # non-bool flag
+        {"kind": "own", "max_ciphertext_bytes": 0},  # non-positive
+        {"kind": "own", "max_ciphertext_bytes": 5 * 1024 * 1024 + 1025},  # exceeds probe limit
+    ],
+)
+def test_register_rejects_invalid_policy_synchronously(monkeypatch, policy):
+    facade = _FakeFacade(probes={"probe-1": _probe()})
+    c = _client(monkeypatch, facade)
+    resp = c.post("/api/mca/providers", json={
+        "probe_id": "probe-1",
+        "display_name": "My Relay",
+        "fingerprint_confirmation": "ab" * 32,
+        "policy": policy,
+    })
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_metadata"
+    assert facade.submitted == []
+
+
+def test_update_enqueues_and_maps_null_to_clear_sentinel(monkeypatch):
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.patch(f"/api/mca/providers/{PROVIDER_ID}", json={
+        "display_name": "Renamed",
+        "min_ttl_seconds": None,
+        "max_ttl_seconds": 3600,
+        "protocol_version": None,
+        "enabled": False,
+    })
+    assert resp.status_code == 202
+    cmd = _submitted(facade)
+    assert cmd.kind == "provider_update"
+    assert cmd.payload["provider_id"] == PROVIDER_ID
+    assert cmd.payload["display_name"] == "Renamed"
+    assert cmd.payload["enabled"] is False
+    assert cmd.payload["max_ttl_seconds"] == 3600
+    # JSON `null` + present key -> the CLEAR sentinel (never a bare None,
+    # which the worker treats as "leave alone").
+    assert cmd.payload["min_ttl_seconds"] is CLEAR
+    assert cmd.payload["protocol_version"] is CLEAR
+
+
+def test_update_rejects_empty_body(monkeypatch):
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.patch(f"/api/mca/providers/{PROVIDER_ID}", json={})
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_metadata"
+    assert facade.submitted == []
+
+
+def test_update_rejects_malformed_provider_id(monkeypatch):
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.patch("/api/mca/providers/AAAA", json={"display_name": "x"})
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_provider_id"
+    assert facade.submitted == []
+
+
+def test_set_default_enqueues(monkeypatch):
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/mca/providers/{PROVIDER_ID}/default", json={})
+    assert resp.status_code == 202
+    cmd = _submitted(facade)
+    assert cmd.kind == "provider_set_default"
+    assert cmd.payload == {"provider_id": PROVIDER_ID}
+
+
+def test_remove_enqueues(monkeypatch):
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.delete(f"/api/mca/providers/{PROVIDER_ID}")
+    assert resp.status_code == 202
+    cmd = _submitted(facade)
+    assert cmd.kind == "provider_remove"
+    assert cmd.payload == {"provider_id": PROVIDER_ID}
+
+
+def test_set_upload_token_enqueues_without_echoing(monkeypatch):
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.put(f"/api/mca/providers/{PROVIDER_ID}/upload-token", json={"upload_token": "s3cret"})
+    assert resp.status_code == 202
+    body = resp.get_json()
+    # The 202 body is only ok+command_id - the token never appears anywhere
+    # in the response.
+    assert "s3cret" not in json.dumps(body)
+    cmd = _submitted(facade)
+    assert cmd.kind == "provider_set_upload_token"
+    assert cmd.payload == {"provider_id": PROVIDER_ID, "upload_token": "s3cret"}
+
+
+def test_set_upload_token_rejects_overlong_synchronously(monkeypatch):
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.put(f"/api/mca/providers/{PROVIDER_ID}/upload-token", json={
+        "upload_token": "x" * (MAX_UPLOAD_TOKEN_BYTES + 1),
+    })
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "upload_token_too_long"
+    assert facade.submitted == []
+
+
+def test_set_upload_token_rejects_empty_synchronously(monkeypatch):
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.put(f"/api/mca/providers/{PROVIDER_ID}/upload-token", json={"upload_token": ""})
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_metadata"
+    assert facade.submitted == []
+
+
+def test_clear_upload_token_enqueues(monkeypatch):
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.delete(f"/api/mca/providers/{PROVIDER_ID}/upload-token")
+    assert resp.status_code == 202
+    cmd = _submitted(facade)
+    assert cmd.kind == "provider_clear_upload_token"
+    assert cmd.payload == {"provider_id": PROVIDER_ID}
+
+
+def test_check_enqueues(monkeypatch):
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/mca/providers/{PROVIDER_ID}/check", json={})
+    assert resp.status_code == 202
+    cmd = _submitted(facade)
+    assert cmd.kind == "provider_check"
+    assert cmd.payload == {"provider_id": PROVIDER_ID}
+
+
+def test_provider_mutation_queue_full_is_429(monkeypatch):
+    facade = _FakeFacade(queue_full=True)
+    c = _client(monkeypatch, facade)
+    resp = c.post("/api/mca/providers/probe", json={"base_url": "https://relay.example.net"})
+    assert resp.status_code == 429
+    assert resp.get_json()["error_code"] == "command_queue_full"

@@ -22,6 +22,8 @@ import pytest
 from meshsrv.attachments.db.migrations import migrate
 from meshsrv.attachments.provider_registry import (
     CLEAR,
+    MAX_PROVIDER_PROFILES,
+    MAX_UPLOAD_TOKEN_BYTES,
     ProviderRegistry,
     ProviderRegistryError,
     compute_provider_id,
@@ -192,6 +194,61 @@ def test_re_registering_same_provider_is_idempotent_and_updates_fields(registry)
     assert len(registry.list_providers()) == 1
 
 
+def _register_distinct(registry, index, **overrides):
+    """Register one provider whose (origin) differs from every other call
+    by `index`, so each registration is a genuinely new identity (a new
+    `provider_id`) rather than an idempotent re-registration."""
+    kwargs = dict(
+        display_name=f"Relay {index}",
+        base_url=f"https://relay-{index}.example.net",
+        service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    kwargs.update(overrides)
+    return registry.register(**kwargs)
+
+
+def test_register_enforces_max_provider_profiles(registry):
+    for index in range(MAX_PROVIDER_PROFILES):
+        _register_distinct(registry, index)
+    assert len(registry.list_providers()) == MAX_PROVIDER_PROFILES
+    with pytest.raises(ProviderRegistryError) as exc_info:
+        _register_distinct(registry, MAX_PROVIDER_PROFILES)
+    assert exc_info.value.error_code == "provider_limit_reached"
+    # the rejected registration must not have partially committed
+    assert len(registry.list_providers()) == MAX_PROVIDER_PROFILES
+
+
+def test_idempotent_re_registration_does_not_consume_a_slot(registry):
+    """Step 1.6A.4: re-registering an already-present (origin, key) pair
+    is idempotent - it refreshes the row in place and must NOT count as a
+    new profile. Fill to the cap, re-register one existing identity, and
+    confirm the cap still blocks only genuinely-new identities."""
+    for index in range(MAX_PROVIDER_PROFILES):
+        _register_distinct(registry, index)
+    # re-register an existing identity - must succeed and leave count unchanged
+    refreshed = _register_distinct(registry, 0, display_name="Renamed Relay 0")
+    assert refreshed.display_name == "Renamed Relay 0"
+    assert len(registry.list_providers()) == MAX_PROVIDER_PROFILES
+    # a genuinely new identity is still blocked at the cap
+    with pytest.raises(ProviderRegistryError) as exc_info:
+        _register_distinct(registry, MAX_PROVIDER_PROFILES)
+    assert exc_info.value.error_code == "provider_limit_reached"
+
+
+def test_re_registration_does_not_bump_count_before_the_cap(registry):
+    """The inverse of the above: re-registering an existing identity while
+    one slot is still free must leave that slot free (a 7->re-register->8th
+    sequence must succeed), proving the limit check counts distinct rows,
+    not registration attempts."""
+    for index in range(MAX_PROVIDER_PROFILES - 1):
+        _register_distinct(registry, index)
+    _register_distinct(registry, 0, display_name="Renamed")
+    assert len(registry.list_providers()) == MAX_PROVIDER_PROFILES - 1
+    _register_distinct(registry, MAX_PROVIDER_PROFILES - 1)
+    assert len(registry.list_providers()) == MAX_PROVIDER_PROFILES
+
+
 def test_list_providers_and_get_default(registry):
     registry.register(
         display_name="A",
@@ -308,6 +365,27 @@ def test_upload_token_round_trips_and_is_never_on_the_profile(registry, wsm):
     token_path = wsm.paths("a1b2c3d4e5f60718").keys / f"relay_upload_token_{profile.provider_id}.secret"
     assert token_path.exists()
     assert (token_path.stat().st_mode & 0o777) == 0o600
+
+
+def test_set_upload_token_rejects_over_max_bytes(registry, wsm):
+    """Step 1.6A.4: an upload token longer than MAX_UPLOAD_TOKEN_BYTES UTF-8
+    bytes is rejected before any bytes touch disk (authoritative worker-side
+    check in `set_upload_token()`, mirrored synchronously at the API)."""
+    profile = registry.register(
+        display_name="A", base_url="https://a.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    principal_id = "a1b2c3d4e5f60718"
+    at_limit = "x" * MAX_UPLOAD_TOKEN_BYTES
+    registry.set_upload_token(profile.provider_id, wsm, principal_id, at_limit)
+    assert registry.get_upload_token(profile.provider_id, wsm, principal_id) == at_limit
+
+    over_limit = "x" * (MAX_UPLOAD_TOKEN_BYTES + 1)
+    with pytest.raises(ProviderRegistryError) as exc_info:
+        registry.set_upload_token(profile.provider_id, wsm, principal_id, over_limit)
+    assert exc_info.value.error_code == "upload_token_too_long"
+    # the prior valid token is still the one on disk - nothing was truncated or replaced
+    assert registry.get_upload_token(profile.provider_id, wsm, principal_id) == at_limit
 
 
 def test_update_profile_never_changes_identity_fields(registry):

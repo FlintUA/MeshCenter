@@ -45,6 +45,7 @@ simply inlined.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
 import os
 import queue
@@ -55,6 +56,8 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+import requests
+
 from meshsrv.attachments import codec, crypto, receiver, sender
 from meshsrv.attachments.command_registry import CommandRegistry
 from meshsrv.attachments.commands import MAX_COMMANDS_PER_TICK, Command, CommandQueue
@@ -63,9 +66,25 @@ from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispat
 from meshsrv.attachments.identity import MCAPrincipal
 from meshsrv.attachments.idempotency import PendingReservation, PendingReservations, validate_canonical_hash, validate_client_request_id
 from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator, RateLimited
-from meshsrv.attachments.provider_registry import ProviderRegistry, ProviderRegistryError, decode_provider_id, encode_provider_id
+from meshsrv.attachments.probe_registry import (
+    PROBE_STATUS_PROBED,
+    PROBE_TTL_SECONDS,
+    ProbeRecord,
+    ProbeRegistry,
+    mint_probe_id,
+    serialize_probe_record,
+)
+from meshsrv.attachments.provider_registry import (
+    ProviderRegistry,
+    ProviderRegistryError,
+    compute_provider_id,
+    decode_provider_id,
+    encode_provider_id,
+    normalize_origin,
+)
 from meshsrv.attachments.recipient_snapshot import RecipientSnapshotPublisher
 from meshsrv.attachments.relay_client import RelayClient, RelayError, RelayHTTPError
+from meshsrv.attachments.relay_http import RelayNetworkError
 from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
@@ -258,6 +277,7 @@ class AttachmentsService:
         provider_registry: ProviderRegistry,
         key_exchange: KeyExchangeCoordinator,
         connectivity_monitor: ConnectivityMonitor,
+        probe_registry: Optional[ProbeRegistry] = None,
         delivery_adapter: Optional[DeliveryAdapter] = None,
         relay_client_factory: Optional[RelayClientFactory] = None,
         tick_seconds: float = DEFAULT_TICK_SECONDS,
@@ -280,6 +300,7 @@ class AttachmentsService:
         self._provider_registry = provider_registry
         self._key_exchange = key_exchange
         self._connectivity = connectivity_monitor
+        self._probe_registry = probe_registry if probe_registry is not None else ProbeRegistry()
         self._delivery_adapter = delivery_adapter
         self._relay_client_factory = relay_client_factory or self._default_relay_client
         self._tick_seconds = tick_seconds
@@ -788,11 +809,15 @@ class AttachmentsService:
 
     def _build_dispatcher(self) -> CommandDispatcher:
         """The real kind->handler table the worker runs (replaces the empty
-        placeholder this service would otherwise default to). The six command
-        handlers wired so far - the idempotent create (`attachment_create`,
-        Step 1.6A.3B), the three Step 1.6A.3A lifecycle commands
-        (retry/download/reject), and the two Step 1.6A.3C mutations (cancel
-        and contact key request) - every other enumerated kind stays
+        placeholder this service would otherwise default to). The six
+        attachment/contact command handlers wired so far - the idempotent
+        create (`attachment_create`, Step 1.6A.3B), the three Step 1.6A.3A
+        lifecycle commands (retry/download/reject), and the two Step 1.6A.3C
+        mutations (cancel and contact key request) - plus the eight Step
+        1.6A.4 provider commands (`provider_probe`/`provider_register`/
+        `provider_update`/`provider_set_default`/`provider_remove`/
+        `provider_set_upload_token`/`provider_clear_upload_token`/
+        `provider_check`). Every other enumerated kind stays
         `unsupported_command_kind` until its own future sub-stage wires it.
         Built once at construction (the dispatcher snapshots its mapping),
         never mutated afterwards."""
@@ -803,6 +828,14 @@ class AttachmentsService:
             "attachment_reject": self._command_reject,
             "attachment_cancel": self._command_cancel,
             "contact_request_key": self._command_request_key,
+            "provider_probe": self._command_provider_probe,
+            "provider_register": self._command_provider_register,
+            "provider_update": self._command_provider_update,
+            "provider_set_default": self._command_provider_set_default,
+            "provider_remove": self._command_provider_remove,
+            "provider_set_upload_token": self._command_provider_set_upload_token,
+            "provider_clear_upload_token": self._command_provider_clear_upload_token,
+            "provider_check": self._command_provider_check,
         })
 
     def _command_create(self, command: Command) -> CommandOutcome:
@@ -1562,6 +1595,260 @@ class AttachmentsService:
             resource_id=contact_id,
             result={"contact_id": contact_id, "status": "requested"},
         )
+
+    # ---- Step 1.6A.4: multi-Relay provider onboarding/management --------
+
+    def _command_provider_probe(self, command: Command) -> CommandOutcome:
+        """`provider_probe` (§7.11 phase 1): resolve the browser-supplied
+        origin (defensive re-validation of what the request thread already
+        normalized - never trusts the queue), reach the Relay over a §12
+        SSRF-pinned `RelayClient`, and record its `/v1/info` as a single-use
+        `ProbeRecord`. The worker is the sole executor of DNS/HTTP here, so
+        no request thread ever touches the network. Nothing is persisted to
+        SQLite - the probe record is in-memory and TTL-bounded (§3.2)."""
+        base_url = command.payload.get("base_url")
+        if not isinstance(base_url, str) or not base_url.strip():
+            return CommandOutcome.failed("invalid_origin")
+        try:
+            origin = normalize_origin(base_url)
+        except ProviderRegistryError:
+            return CommandOutcome.failed("invalid_origin")
+
+        # `RelayClient(origin)` eagerly runs the §12 policy (HTTPS-only,
+        # cert-verify-on, DNS resolve + global-routability check + IP pinning,
+        # redirects off) via `build_secure_session`, so construction itself
+        # surfaces an unroutable/non-HTTPS origin.
+        try:
+            client = RelayClient(origin)
+        except RelayNetworkError as exc:
+            return CommandOutcome.failed(exc.error_code)
+        try:
+            info = client.get_info()
+        except RelayNetworkError as exc:
+            return CommandOutcome.failed(exc.error_code)
+        except (RelayError, requests.RequestException):
+            return CommandOutcome.failed("relay_unreachable")
+
+        provider_id = compute_provider_id(origin, info.service_public_key)
+        if provider_id != info.provider_id:
+            return CommandOutcome.failed("relay_identity_mismatch")
+
+        service_key_fingerprint = hashlib.sha256(info.service_public_key).hexdigest()
+        probe_id = mint_probe_id()
+        record = ProbeRecord(
+            probe_id=probe_id,
+            origin=origin,
+            provider_id=provider_id,
+            service_public_key=info.service_public_key,
+            service_key_fingerprint=service_key_fingerprint,
+            protocol_version=None,
+            max_ciphertext_bytes=info.limits.max_ciphertext_bytes,
+            min_ttl_seconds=None,
+            max_ttl_seconds=info.limits.max_hard_ttl_seconds,
+            expires_at=self._now() + PROBE_TTL_SECONDS,
+            status=PROBE_STATUS_PROBED,
+        )
+        self._probe_registry.add(record)
+        return CommandOutcome.succeeded(
+            resource_id=probe_id, result=serialize_probe_record(record)
+        )
+
+    def _command_provider_register(self, command: Command) -> CommandOutcome:
+        """`provider_register` (§7.11 phase 2): consume the single-use probe
+        and materialize the profile from the probe's own server-fetched
+        identity fields - never from browser-supplied Relay parameters
+        (`origin`/`service_public_key`/TTLs/`protocol_version`/derived
+        `provider_id` all come from the `ProbeRecord`). The browser chooses
+        only the policy fields (`kind`/`upload_allowed`/`download_allowed`/
+        `max_ciphertext_bytes`) and confirms the fingerprint. First
+        registration becomes the default; later ones never silently replace
+        it (§7.12 - explicit `set_default()` only)."""
+        probe_id = command.payload.get("probe_id")
+        if not isinstance(probe_id, str) or not probe_id:
+            return CommandOutcome.failed("probe_id_not_found")
+        probe = self._probe_registry.consume(probe_id)
+        if probe is None:
+            # Single-use (§7.11): None here is a replay (already consumed) or
+            # a probe that expired after the request thread's synchronous
+            # validation but before this execution - either way, re-probe.
+            return CommandOutcome.failed("probe_id_used")
+
+        if command.payload.get("fingerprint_confirmation") != probe.service_key_fingerprint:
+            return CommandOutcome.failed("provider_id_mismatch")
+
+        policy = command.payload.get("policy")
+        if not isinstance(policy, dict):
+            policy = {}
+        kind = policy.get("kind", "own")
+        upload_allowed = policy.get("upload_allowed", True)
+        download_allowed = policy.get("download_allowed", True)
+        if not isinstance(kind, str):
+            return CommandOutcome.failed("invalid_metadata")
+        if not isinstance(upload_allowed, bool) or not isinstance(download_allowed, bool):
+            return CommandOutcome.failed("invalid_metadata")
+
+        max_ciphertext_bytes = policy.get("max_ciphertext_bytes")
+        if max_ciphertext_bytes is None:
+            max_ciphertext_bytes = probe.max_ciphertext_bytes
+        elif (
+            isinstance(max_ciphertext_bytes, bool)
+            or not isinstance(max_ciphertext_bytes, int)
+            or max_ciphertext_bytes <= 0
+            or max_ciphertext_bytes > probe.max_ciphertext_bytes
+        ):
+            # §7.11: a supplied max_ciphertext_bytes must not exceed the
+            # probe's advertised limit (synchronous `invalid_metadata`).
+            return CommandOutcome.failed("invalid_metadata")
+
+        try:
+            profile = self._provider_registry.register(
+                display_name=command.payload.get("display_name"),
+                base_url=probe.origin,
+                service_public_key=probe.service_public_key,
+                max_ciphertext_bytes=max_ciphertext_bytes,
+                upload_allowed=upload_allowed,
+                download_allowed=download_allowed,
+                kind=kind,
+                min_ttl_seconds=probe.min_ttl_seconds,
+                max_ttl_seconds=probe.max_ttl_seconds,
+                protocol_version=probe.protocol_version,
+                now=self._now(),
+            )
+        except ProviderRegistryError as exc:
+            return CommandOutcome.failed(exc.error_code or "invalid_metadata")
+
+        # First registered becomes default; never silently replaces an
+        # existing default (§7.12).
+        if self._provider_registry.get_default() is None:
+            self._provider_registry.set_default(profile.provider_id)
+
+        return CommandOutcome.succeeded(
+            resource_id=profile.provider_id, result={"provider_id": profile.provider_id}
+        )
+
+    def _command_provider_update(self, command: Command) -> CommandOutcome:
+        """`provider_update` (§7.12): partial edit of non-identity fields.
+        Identity fields (`origin`/`service_public_key`) are not editable by
+        design - `update_profile()` refuses them and there is no payload key
+        for them. A CLEAR sentinel (produced by the API layer from JSON
+        `null` + `clear: true`) clears a TTL/`protocol_version` field;
+        `None`/absent leaves it alone."""
+        provider_id = command.payload.get("provider_id")
+        if not isinstance(provider_id, str) or not provider_id:
+            return CommandOutcome.failed("invalid_provider_id")
+        if self._provider_registry.resolve(provider_id) is None:
+            return CommandOutcome.failed("provider_not_found")
+
+        for value in (
+            command.payload.get("enabled"),
+            command.payload.get("upload_allowed"),
+            command.payload.get("download_allowed"),
+        ):
+            if value is not None and not isinstance(value, bool):
+                return CommandOutcome.failed("invalid_metadata")
+
+        try:
+            profile = self._provider_registry.update_profile(
+                provider_id,
+                display_name=command.payload.get("display_name"),
+                enabled=command.payload.get("enabled"),
+                upload_allowed=command.payload.get("upload_allowed"),
+                download_allowed=command.payload.get("download_allowed"),
+                min_ttl_seconds=command.payload.get("min_ttl_seconds"),
+                max_ttl_seconds=command.payload.get("max_ttl_seconds"),
+                protocol_version=command.payload.get("protocol_version"),
+            )
+        except ProviderRegistryError:
+            return CommandOutcome.failed("invalid_metadata")
+        return CommandOutcome.succeeded(resource_id=provider_id, result={"provider_id": provider_id})
+
+    def _command_provider_set_default(self, command: Command) -> CommandOutcome:
+        """`provider_set_default` (§7.12): make one provider the default.
+        `set_default()` is transactional (clears the old default atomically,
+        ADR-0008); a later registration never silently replaces the default."""
+        provider_id = command.payload.get("provider_id")
+        if not isinstance(provider_id, str) or not provider_id:
+            return CommandOutcome.failed("invalid_provider_id")
+        try:
+            profile = self._provider_registry.set_default(provider_id)
+        except ProviderRegistryError:
+            return CommandOutcome.failed("provider_not_found")
+        return CommandOutcome.succeeded(resource_id=provider_id, result={"provider_id": provider_id})
+
+    def _command_provider_remove(self, command: Command) -> CommandOutcome:
+        """`provider_remove` (§7.12): delete the profile outright when
+        nothing references it, else disable it (history preserved, ADR-0008).
+        Result `{"action": "deleted"|"disabled"}` per §7.9."""
+        provider_id = command.payload.get("provider_id")
+        if not isinstance(provider_id, str) or not provider_id:
+            return CommandOutcome.failed("invalid_provider_id")
+        if self._provider_registry.resolve(provider_id) is None:
+            return CommandOutcome.failed("provider_not_found")
+        try:
+            action = self._provider_registry.remove_or_disable(
+                provider_id, self._workspace_manager, self._principal.principal_id
+            )
+        except ProviderRegistryError:
+            return CommandOutcome.failed("provider_not_found")
+        return CommandOutcome.succeeded(resource_id=provider_id, result={"action": action})
+
+    def _command_provider_set_upload_token(self, command: Command) -> CommandOutcome:
+        """`provider_set_upload_token` (§7.12): persist an upload token to a
+        0600 file, never echoing it. The authoritative length cap lives in
+        `set_upload_token()` (worker-side, in the same write); this handler
+        surfaces its `upload_token_too_long` code without ever logging the
+        token."""
+        provider_id = command.payload.get("provider_id")
+        if not isinstance(provider_id, str) or not provider_id:
+            return CommandOutcome.failed("invalid_provider_id")
+        if self._provider_registry.resolve(provider_id) is None:
+            return CommandOutcome.failed("provider_not_found")
+        token = command.payload.get("upload_token")
+        if not isinstance(token, str) or not token.strip():
+            return CommandOutcome.failed("invalid_metadata")
+        try:
+            self._provider_registry.set_upload_token(
+                provider_id, self._workspace_manager, self._principal.principal_id, token
+            )
+        except ProviderRegistryError as exc:
+            return CommandOutcome.failed(exc.error_code or "invalid_metadata")
+        return CommandOutcome.succeeded(
+            resource_id=provider_id,
+            result={"provider_id": provider_id, "upload_token_configured": True},
+        )
+
+    def _command_provider_clear_upload_token(self, command: Command) -> CommandOutcome:
+        """`provider_clear_upload_token` (§7.12): remove an upload token.
+        Idempotent (no token configured → no-op); result
+        `upload_token_configured: false`."""
+        provider_id = command.payload.get("provider_id")
+        if not isinstance(provider_id, str) or not provider_id:
+            return CommandOutcome.failed("invalid_provider_id")
+        if self._provider_registry.resolve(provider_id) is None:
+            return CommandOutcome.failed("provider_not_found")
+        try:
+            self._provider_registry.clear_upload_token(
+                provider_id, self._workspace_manager, self._principal.principal_id
+            )
+        except ProviderRegistryError:
+            return CommandOutcome.failed("provider_not_found")
+        return CommandOutcome.succeeded(
+            resource_id=provider_id,
+            result={"provider_id": provider_id, "upload_token_configured": False},
+        )
+
+    def _command_provider_check(self, command: Command) -> CommandOutcome:
+        """`provider_check` (§7.12): force a fresh reachability/identity check
+        of the provider now (the periodic monitor is lazy). The worker is the
+        sole executor of DNS/HTTP here; the fresh state is observable via the
+        connectivity snapshot (§3.4), not this command's own result."""
+        provider_id = command.payload.get("provider_id")
+        if not isinstance(provider_id, str) or not provider_id:
+            return CommandOutcome.failed("invalid_provider_id")
+        if self._provider_registry.resolve(provider_id) is None:
+            return CommandOutcome.failed("provider_not_found")
+        self._connectivity.refresh(force=True)
+        return CommandOutcome.succeeded(resource_id=provider_id, result={"provider_id": provider_id})
 
     def _refresh_snapshot(self) -> None:
         """Step 1.6A.1 (correction #1): republish the attachment snapshot

@@ -18,6 +18,7 @@ end to end against the real mock Relay).
 from __future__ import annotations
 
 import base64
+import hashlib
 import sqlite3
 import time
 import uuid
@@ -32,9 +33,16 @@ from meshsrv.attachments.db import migrations
 from meshsrv.attachments.delivery.base import DeliveryError, DeliveryReceipt
 from meshsrv.attachments.delivery.fakes import FakeTextAdapter, InMemoryEther
 from meshsrv.attachments.key_exchange import KeyExchangeCoordinator
-from meshsrv.attachments.provider_registry import ProviderRegistry
+from meshsrv.attachments.probe_registry import PROBE_STATUS_PROBED, ProbeRecord
+from meshsrv.attachments.provider_registry import (
+    CLEAR,
+    MAX_UPLOAD_TOKEN_BYTES,
+    ProviderRegistry,
+    compute_provider_id,
+)
 from meshsrv.attachments.relay.mock_server import MockRelayStore, create_mock_relay_app
-from meshsrv.attachments.relay_client import RelayClient, RelayHTTPError
+from meshsrv.attachments.relay_client import RelayClient, RelayHTTPError, RelayInfo, RelayLimits
+from meshsrv.attachments.relay_http import RelayNetworkError
 from meshsrv.attachments.service import AttachmentsService, _provider_id_text
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
@@ -1775,3 +1783,362 @@ def test_command_request_key_revalidates_contact_id_and_route(
     for command in cases:
         outcome = svc._dispatcher.dispatch(command)
         assert outcome.error_code == "invalid_contact_id"
+
+
+# ---- Step 1.6A.4: provider onboarding/management handlers ----------------
+#
+# The worker is the sole executor of DNS/HTTP (probe), SQLite writes
+# (register/update/default/remove), and token-file side effects
+# (set/clear token) - the request thread only enqueues. These tests drive
+# the eight `_command_provider_*` handlers directly, with the Relay client
+# swapped for a fake (never real DNS/HTTP), and pin: the two-phase probe
+# (single-use consume, fingerprint match, identity fields come from the
+# probe not the browser), the MAX_PROVIDER_PROFILES/idempotent-re-register
+# gate, the CLEAR sentinel, and that no result ever echoes the upload
+# token or the raw service key.
+
+
+def _provider_command(kind, payload):
+    return Command(
+        command_id=uuid.uuid4().hex,
+        kind=kind,
+        payload=payload,
+        created_at=time.time(),
+    )
+
+
+_RELAY_KEY = bytes(range(32))
+_RELAY_ORIGIN = "https://relay.example.net"
+_RELAY_FINGERPRINT = hashlib.sha256(_RELAY_KEY).hexdigest()
+
+
+def _probe_record(*, probe_id="probe-1", max_ciphertext_bytes=10_000_000, fingerprint=None):
+    """A completed phase-1 probe record, as the worker would have stored
+    after `provider_probe` (identity fields server-fetched, single-use)."""
+    return ProbeRecord(
+        probe_id=probe_id,
+        origin=_RELAY_ORIGIN,
+        provider_id=compute_provider_id(_RELAY_ORIGIN, _RELAY_KEY),
+        service_public_key=_RELAY_KEY,
+        service_key_fingerprint=fingerprint or _RELAY_FINGERPRINT,
+        protocol_version=None,
+        max_ciphertext_bytes=max_ciphertext_bytes,
+        min_ttl_seconds=None,
+        max_ttl_seconds=86400,
+        expires_at=time.time() + 100,
+        status=PROBE_STATUS_PROBED,
+    )
+
+
+def _relay_info():
+    return RelayInfo(
+        protocol="MCA/1",
+        relay_version="1.0.0",
+        base_url=_RELAY_ORIGIN,
+        provider_id=compute_provider_id(_RELAY_ORIGIN, _RELAY_KEY),
+        service_public_key=_RELAY_KEY,
+        limits=RelayLimits(
+            max_ciphertext_bytes=10_000_000,
+            max_manifest_bytes=1024,
+            max_chunk_bytes=1024,
+            max_chunks=100,
+            max_recipients=10,
+            default_hard_ttl_seconds=3600,
+            max_hard_ttl_seconds=86400,
+            default_download_grace_seconds=3600,
+        ),
+        anonymous_upload=True,
+        download_authorization="none",
+    )
+
+
+class _FakeRelayClient:
+    """A RelayClient stand-in whose constructor performs no network I/O
+    (the real one eagerly runs the §12 SSRF policy), returning a fixed
+    `/v1/info`."""
+
+    def __init__(self, base_url):
+        self.base_url = base_url
+
+    def get_info(self):
+        return _relay_info()
+
+
+def test_provider_probe_records_a_single_use_probe(monkeypatch, service):
+    import meshsrv.attachments.service as service_module
+
+    monkeypatch.setattr(service_module, "RelayClient", _FakeRelayClient)
+    outcome = service._command_provider_probe(
+        _provider_command("provider_probe", {"base_url": _RELAY_ORIGIN})
+    )
+    assert outcome.error_code is None
+    assert outcome.resource_id  # the minted probe_id (32 hex chars)
+    assert outcome.result["probe_id"] == outcome.resource_id
+    assert outcome.result["origin"] == _RELAY_ORIGIN
+    assert outcome.result["provider_id"] == compute_provider_id(_RELAY_ORIGIN, _RELAY_KEY)
+    assert outcome.result["service_key_fingerprint"] == _RELAY_FINGERPRINT
+    # The result is §7.9-safe: never the raw service key, never the internal
+    # status field.
+    assert "service_public_key" not in outcome.result
+    assert "status" not in outcome.result
+    assert len(service._probe_registry) == 1
+
+
+def test_provider_probe_rejects_non_https_origin(service):
+    outcome = service._command_provider_probe(
+        _provider_command("provider_probe", {"base_url": "http://relay.example.net"})
+    )
+    assert outcome.error_code == "invalid_origin"
+
+
+def test_provider_probe_rejects_missing_base_url(service):
+    outcome = service._command_provider_probe(_provider_command("provider_probe", {}))
+    assert outcome.error_code == "invalid_origin"
+
+
+def test_provider_probe_surfaces_unroutable_origin(monkeypatch, service):
+    import meshsrv.attachments.service as service_module
+
+    class _UnroutableClient:
+        def __init__(self, base_url):
+            raise RelayNetworkError("origin_not_routable", "not routable")
+
+    monkeypatch.setattr(service_module, "RelayClient", _UnroutableClient)
+    outcome = service._command_provider_probe(
+        _provider_command("provider_probe", {"base_url": _RELAY_ORIGIN})
+    )
+    assert outcome.error_code == "origin_not_routable"
+
+
+def test_provider_register_materializes_profile_from_probe(service, provider_registry):
+    service._probe_registry.add(_probe_record())
+    outcome = service._command_provider_register(
+        _provider_command(
+            "provider_register",
+            {
+                "probe_id": "probe-1",
+                "display_name": "My Relay",
+                "fingerprint_confirmation": _RELAY_FINGERPRINT,
+                "policy": {"kind": "own", "upload_allowed": True, "download_allowed": True},
+            },
+        )
+    )
+    assert outcome.error_code is None
+    provider_id = outcome.resource_id
+    profile = provider_registry.resolve(provider_id)
+    assert profile is not None
+    assert profile.display_name == "My Relay"
+    # Identity fields come from the probe (server-fetched), never the browser.
+    assert profile.origin == _RELAY_ORIGIN
+    assert profile.service_public_key == _RELAY_KEY
+    # First registration becomes the default (§7.12).
+    assert provider_registry.get_default().provider_id == provider_id
+
+
+def test_provider_register_consumes_probe_single_use(service, provider_registry):
+    service._probe_registry.add(_probe_record())
+    payload = {
+        "probe_id": "probe-1",
+        "display_name": "My Relay",
+        "fingerprint_confirmation": _RELAY_FINGERPRINT,
+        "policy": {},
+    }
+    first = service._command_provider_register(_provider_command("provider_register", dict(payload)))
+    assert first.error_code is None
+    # A replayed register with the same probe_id is a replay, never a second
+    # registration - the probe was consumed.
+    second = service._command_provider_register(_provider_command("provider_register", dict(payload)))
+    assert second.error_code == "probe_id_used"
+
+
+def test_provider_register_rejects_fingerprint_mismatch(service):
+    service._probe_registry.add(_probe_record())
+    outcome = service._command_provider_register(
+        _provider_command(
+            "provider_register",
+            {
+                "probe_id": "probe-1",
+                "display_name": "My Relay",
+                "fingerprint_confirmation": "00" * 32,
+                "policy": {},
+            },
+        )
+    )
+    assert outcome.error_code == "provider_id_mismatch"
+
+
+def test_provider_register_rejects_invalid_kind(service):
+    service._probe_registry.add(_probe_record())
+    outcome = service._command_provider_register(
+        _provider_command(
+            "provider_register",
+            {
+                "probe_id": "probe-1",
+                "display_name": "My Relay",
+                "fingerprint_confirmation": _RELAY_FINGERPRINT,
+                "policy": {"kind": "bogus"},
+            },
+        )
+    )
+    assert outcome.error_code == "invalid_metadata"
+
+
+def test_provider_register_rejects_ciphertext_over_probe_limit(service):
+    service._probe_registry.add(_probe_record(max_ciphertext_bytes=1000))
+    outcome = service._command_provider_register(
+        _provider_command(
+            "provider_register",
+            {
+                "probe_id": "probe-1",
+                "display_name": "My Relay",
+                "fingerprint_confirmation": _RELAY_FINGERPRINT,
+                "policy": {"max_ciphertext_bytes": 1001},
+            },
+        )
+    )
+    assert outcome.error_code == "invalid_metadata"
+
+
+def test_provider_register_idempotent_same_identity_does_not_consume_slot(
+    service, provider_registry
+):
+    # Re-registering the same (origin, key) is idempotent and must not
+    # consume an extra slot (MAX_PROVIDER_PROFILES enforcement, §7.12).
+    for _ in range(2):
+        service._probe_registry.add(_probe_record())
+        outcome = service._command_provider_register(
+            _provider_command(
+                "provider_register",
+                {
+                    "probe_id": "probe-1",
+                    "display_name": "My Relay",
+                    "fingerprint_confirmation": _RELAY_FINGERPRINT,
+                    "policy": {},
+                },
+            )
+        )
+        assert outcome.error_code is None
+    assert len(provider_registry.list_providers()) == 1
+
+
+def test_provider_update_edits_non_identity_fields(service, provider_registry, registered_provider):
+    outcome = service._command_provider_update(
+        _provider_command(
+            "provider_update",
+            {"provider_id": registered_provider.provider_id, "display_name": "Renamed", "enabled": False},
+        )
+    )
+    assert outcome.error_code is None
+    profile = provider_registry.resolve(registered_provider.provider_id)
+    assert profile.display_name == "Renamed"
+    assert profile.enabled is False
+
+
+def test_provider_update_clear_sentinel_clears_ttl(service, provider_registry, registered_provider):
+    provider_registry.update_profile(registered_provider.provider_id, min_ttl_seconds=60)
+    outcome = service._command_provider_update(
+        _provider_command(
+            "provider_update",
+            {"provider_id": registered_provider.provider_id, "min_ttl_seconds": CLEAR},
+        )
+    )
+    assert outcome.error_code is None
+    assert provider_registry.resolve(registered_provider.provider_id).min_ttl_seconds is None
+
+
+def test_provider_update_unknown_provider(service):
+    outcome = service._command_provider_update(
+        _provider_command("provider_update", {"provider_id": "AAAAAAAAAAA", "display_name": "x"})
+    )
+    assert outcome.error_code == "provider_not_found"
+
+
+def test_provider_set_default_moves_default(service, provider_registry, registered_provider):
+    second = provider_registry.register(
+        display_name="Second",
+        base_url="https://second.example",
+        service_public_key=b"\x07" * 32,
+        max_ciphertext_bytes=1000,
+    )
+    outcome = service._command_provider_set_default(
+        _provider_command("provider_set_default", {"provider_id": second.provider_id})
+    )
+    assert outcome.error_code is None
+    assert provider_registry.get_default().provider_id == second.provider_id
+
+
+def test_provider_remove_deletes_unreferenced(service, provider_registry, registered_provider):
+    outcome = service._command_provider_remove(
+        _provider_command("provider_remove", {"provider_id": registered_provider.provider_id})
+    )
+    assert outcome.error_code is None
+    assert outcome.result == {"action": "deleted"}
+    assert provider_registry.resolve(registered_provider.provider_id) is None
+
+
+def test_provider_remove_unknown(service):
+    outcome = service._command_provider_remove(
+        _provider_command("provider_remove", {"provider_id": "AAAAAAAAAAA"})
+    )
+    assert outcome.error_code == "provider_not_found"
+
+
+def test_provider_set_upload_token(service, provider_registry, registered_provider):
+    outcome = service._command_provider_set_upload_token(
+        _provider_command(
+            "provider_set_upload_token",
+            {"provider_id": registered_provider.provider_id, "upload_token": "secret-token"},
+        )
+    )
+    assert outcome.error_code is None
+    assert outcome.result == {
+        "provider_id": registered_provider.provider_id,
+        "upload_token_configured": True,
+    }
+    # The token is never echoed - only the configured flag.
+    assert "secret-token" not in repr(outcome.result)
+    assert provider_registry.resolve(registered_provider.provider_id).upload_token_configured is True
+
+
+def test_provider_set_upload_token_empty(service, registered_provider):
+    outcome = service._command_provider_set_upload_token(
+        _provider_command(
+            "provider_set_upload_token",
+            {"provider_id": registered_provider.provider_id, "upload_token": ""},
+        )
+    )
+    assert outcome.error_code == "invalid_metadata"
+
+
+def test_provider_set_upload_token_too_long(service, registered_provider):
+    outcome = service._command_provider_set_upload_token(
+        _provider_command(
+            "provider_set_upload_token",
+            {"provider_id": registered_provider.provider_id, "upload_token": "x" * (MAX_UPLOAD_TOKEN_BYTES + 1)},
+        )
+    )
+    assert outcome.error_code == "upload_token_too_long"
+
+
+def test_provider_clear_upload_token_is_idempotent(service, registered_provider):
+    outcome = service._command_provider_clear_upload_token(
+        _provider_command("provider_clear_upload_token", {"provider_id": registered_provider.provider_id})
+    )
+    assert outcome.error_code is None
+    assert outcome.result == {
+        "provider_id": registered_provider.provider_id,
+        "upload_token_configured": False,
+    }
+
+
+def test_provider_check_forces_fresh_refresh(service, registered_provider, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        service._connectivity, "refresh", lambda *, force=False: calls.append(force)
+    )
+    outcome = service._command_provider_check(
+        _provider_command("provider_check", {"provider_id": registered_provider.provider_id})
+    )
+    assert outcome.error_code is None
+    assert outcome.result == {"provider_id": registered_provider.provider_id}
+    assert calls == [True]

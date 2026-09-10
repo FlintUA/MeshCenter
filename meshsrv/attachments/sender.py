@@ -848,6 +848,27 @@ def cancel(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = 
     return CANCELLED
 
 
+def revoke(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = None) -> str:
+    """Step 1.6A.5 (§7.3/§8): the *local* half of a revoke, transitioning a
+    sent attachment out of SENT/RECEIVED/DOWNLOADED into REVOKED and dropping
+    its `mca_sender_state` row. Pure and local by design - the remote Relay
+    revoke is the caller's responsibility (and must complete *before* this is
+    called, so a committed-but-unreachable object is never marked REVOKED on
+    an unconfirmed remote failure). Only SENT/RECEIVED/DOWNLOADED are
+    revocable here; anything else (including every terminal state) raises
+    `SenderError`, exactly like `cancel()`'s own state guard."""
+    now = _now() if now is None else now
+    row = _row(conn, attachment_id)
+    if row["state"] not in (SENT, RECEIVED, DOWNLOADED):
+        raise SenderError(
+            f"attachment {attachment_id!r} is {row['state']!r}, not SENT/RECEIVED/DOWNLOADED - cannot revoke"
+        )
+    _set_state(conn, attachment_id, REVOKED, now)
+    conn.execute("DELETE FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,))
+    conn.commit()
+    return REVOKED
+
+
 # ---- the one step-dispatcher -------------------------------------------------
 
 

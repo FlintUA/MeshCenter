@@ -246,10 +246,10 @@ def test_command_submitted_through_the_facade_is_drained_to_a_terminal_result(tm
     state, _, _ = _started_state(tmp_path, "e")
     try:
         facade = state.facade
-        # `attachment_save` is still enumerated-but-unwired (its own future
+        # `attachment_import` is still enumerated-but-unwired (its own future
         # sub-stage will add the handler), so it exercises the "kind has no
         # handler" path regardless of how many handlers later steps wire.
-        command = Command(command_id="cmd-1", kind="attachment_save", payload={}, created_at=0.0)
+        command = Command(command_id="cmd-1", kind="attachment_import", payload={}, created_at=0.0)
         facade.submit(command)
         # Before any tick: registered queued (an immediate poll sees queued).
         assert facade.get_command("cmd-1").status == STATUS_QUEUED
@@ -754,7 +754,9 @@ def test_real_service_wires_the_lifecycle_and_create_handlers(tmp_path):
         # kind->handler table shared by the state and the worker.
         assert dispatcher.supported_kinds() == frozenset({
             "attachment_create", "attachment_retry", "attachment_download",
-            "attachment_reject", "attachment_cancel", "contact_request_key",
+            "attachment_reject", "attachment_cancel", "attachment_save",
+            "attachment_revoke", "attachment_delete_local_content",
+            "contact_request_key",
             "provider_probe", "provider_register", "provider_update",
             "provider_set_default", "provider_remove",
             "provider_set_upload_token", "provider_clear_upload_token",

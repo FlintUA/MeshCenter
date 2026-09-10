@@ -71,7 +71,7 @@ from meshsrv.attachments.identity import MCAPrincipal
 from meshsrv.attachments.probe_registry import ProbeRecord, ProbeRegistry
 from meshsrv.attachments.provider_registry import ProviderProfile
 from meshsrv.attachments.recipient_snapshot import RecipientSnapshot, RecipientSnapshotPublisher
-from meshsrv.attachments.snapshots import AttachmentRecord, AttachmentsSnapshot, AttachmentsSnapshotPublisher
+from meshsrv.attachments.snapshots import AttachmentRecord, AttachmentsSnapshot, AttachmentsSnapshotPublisher, resolve_locator
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor, ConnectivitySnapshot, UploadDecision
 
@@ -228,6 +228,19 @@ class AttachmentsFacade:
         immutable, public-info-only record (never private key material). Not
         readiness-gated: the principal is resolved at construction."""
         return self._principal
+
+    def resolve_content_locator(self, locator: str) -> Path:
+        """Serve-time re-validation of a `ContentDescriptor.locator` back to an
+        absolute path inside the controlled content area (§3.7/§7.14). This is
+        the one filesystem-resolving operation the content route is permitted
+        (§7.14's "one path validation, not two independent resolutions"): it
+        resolves through the workspace manager (never `conn`, never the network,
+        never the tick lock), so a symlink under `files/`/`cache/incoming/` that
+        escapes the controlled area is rejected (`ContentLocatorError`) rather
+        than served. Not readiness-gated: the workspace manager is resolved at
+        construction, independent of snapshot publication."""
+        paths = self._workspace_manager.paths(self._principal.principal_id)
+        return resolve_locator(paths, locator)
 
     # ---- request-thread write: submit a mutation -------------------------
 

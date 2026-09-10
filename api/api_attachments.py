@@ -70,7 +70,7 @@ from collections.abc import Mapping
 from functools import wraps
 from pathlib import Path
 
-from flask import jsonify, request
+from flask import jsonify, request, send_file
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from meshsrv.attachments import mca_runtime, mime_allowlist, receiver, sender
@@ -96,6 +96,8 @@ from meshsrv.attachments.provider_registry import (
 )
 from meshsrv.attachments.recipient_snapshot import RecipientRejectionReason, evaluate_recipient_trust
 from meshsrv.attachments.snapshots import (
+    ContentDisposition,
+    ContentLocatorError,
     serialize_attachment_public,
     serialize_delivery,
     serialize_timeline_event,
@@ -916,6 +918,20 @@ def register_attachments_routes(app, handle_errors):
         # failed/rejected/expired/revoked/cancelled rows are never cancellable.
         return record.direction == "sent" and record.state in sender.AUTOMATIC_STATES
 
+    def _save_precondition(record):
+        # §7.3 save: a received attachment in AVAILABLE (verified plaintext
+        # cached) only - nothing else has cache content to move into files/.
+        return record.direction == "received" and record.state == receiver.AVAILABLE
+
+    def _revoke_precondition(record):
+        # §7.3 revoke: an outgoing attachment that has actually reached the
+        # recipient (SENT/RECEIVED/DOWNLOADED) - earlier states use /cancel.
+        return record.direction == "sent" and record.state in (
+            sender.SENT,
+            sender.RECEIVED,
+            sender.DOWNLOADED,
+        )
+
     @app.route("/api/attachments/<attachment_id>/retry", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
@@ -939,6 +955,99 @@ def register_attachments_routes(app, handle_errors):
     @_mca_error_boundary
     def cancel_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_cancel", _cancel_precondition)
+
+    # ---- Step 1.6A.5 content / save / revoke / local-content ---------------
+    #
+    # The final four endpoints: `GET /content` (§7.14) is a read that resolves
+    # the internal `ContentDescriptor.locator` (never serialized) through the
+    # facade's one serve-time re-validation and streams the verified plaintext
+    # under the §7.14 security headers. The three mutations (§7.3) go through
+    # the same command queue as every other action: the request thread
+    # validates id + synchronous precondition, enqueues a frozen `Command`,
+    # returns 202, and the worker executes (re-checking the persisted row) -
+    # the client polls `GET /api/mca/commands/{command_id}` (§3.4).
+
+    @app.route("/api/attachments/<attachment_id>/content", methods=["GET"])
+    @handle_errors
+    @_mca_error_boundary
+    def get_attachment_content(attachment_id):
+        """§7.14: stream a content-available attachment's verified plaintext.
+        Inline only for decoded-and-verified image/jpeg/png/webp; everything
+        else (including PDF) is `application/octet-stream` + attachment.
+        `nosniff`/`no-store`/`sandbox` are always set. The filename comes from
+        `sanitize_display_name(record.file_name)`, never the client path."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        record, err = _resolve_attachment(facade, attachment_id)
+        if err is not None:
+            body, status = err
+            return body, status
+        descriptor = record.descriptor
+        if descriptor is None:
+            return _json_error("not_available", "content is not available"), 409
+        try:
+            file_path = facade.resolve_content_locator(descriptor.locator)
+        except ContentLocatorError:
+            return _json_error("content_missing", "content file is missing"), 404
+        if not file_path.is_file():
+            return _json_error("content_missing", "content file is missing"), 404
+
+        inline = descriptor.disposition is ContentDisposition.INLINE
+        served_mime = descriptor.mime_type if inline else "application/octet-stream"
+        safe_name = mime_allowlist.sanitize_display_name(record.file_name)
+        response = send_file(
+            file_path,
+            mimetype=served_mime,
+            as_attachment=not inline,
+            download_name=safe_name,
+            conditional=True,
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Content-Security-Policy"] = "sandbox"
+        return response
+
+    @app.route("/api/attachments/<attachment_id>/save", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def save_attachment(attachment_id):
+        return _submit_lifecycle_command(attachment_id, "attachment_save", _save_precondition)
+
+    @app.route("/api/attachments/<attachment_id>/revoke", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def revoke_attachment(attachment_id):
+        return _submit_lifecycle_command(attachment_id, "attachment_revoke", _revoke_precondition)
+
+    @app.route("/api/attachments/<attachment_id>/local-content", methods=["DELETE"])
+    @handle_errors
+    @_mca_error_boundary
+    def delete_local_content(attachment_id):
+        """§7.3 local-content: delete the `files/` copy, keeping the row and
+        its history. The synchronous precondition is `saved=true` (§7.3) and
+        its 409 is `not_saved` (§10), not `invalid_state_transition` - the
+        current state is not the relevant axis here."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        record, err = _resolve_attachment(facade, attachment_id)
+        if err is not None:
+            body, status = err
+            return body, status
+        if not record.saved:
+            return _json_error("not_saved", "no saved content to delete"), 409
+        command = Command(
+            command_id=mint_command_id(),
+            kind="attachment_delete_local_content",
+            payload={"attachment_id": attachment_id},
+            created_at=time.time(),
+        )
+        try:
+            command_id = facade.submit(command)
+        except CommandQueueFull:
+            return _json_error("command_queue_full", "command queue is full"), 429
+        return jsonify({"ok": True, "command_id": command_id}), 202
 
     # ---- Step 1.6A.3C: contact key request (§7.10) --------------------------
 

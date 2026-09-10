@@ -166,6 +166,32 @@ def _truncate_code_points(text: str, max_code_points: Optional[int]) -> str:
     return text[:max_code_points]
 
 
+def sanitize_display_name(raw_filename) -> str:
+    """Derive a safe, single-component display name from an untrusted
+    filename (a manifest header `file_name` from a possibly hostile sender,
+    or any client-supplied name), for use as a `files/` name and as a
+    `Content-Disposition` filename. Never trusts the input as a path: takes
+    the basename (so a hostile `../../etc/passwd` or `..\\..\\x` cannot
+    survive even as a display name), drops non-printable characters (which
+    also strips CR/LF - no header injection), strips leading/trailing dots
+    and whitespace, and falls back to `"attachment"` when nothing safe
+    remains. The result is guaranteed NUL-free, path-separator-free,
+    non-empty, and not `.`/`..` - safe to hand to
+    `workspace.resolve_saved_path()` or to embed in a filename. Length is
+    deliberately *not* capped here - callers that need a bounded name
+    truncate afterwards (`normalize_file_name_for_mime(..., max_code_
+    points=...)` on the create path; `MAX_SOURCE_NAME_CODE_POINTS` on the
+    save path)."""
+    if not isinstance(raw_filename, str):
+        return "attachment"
+    base = raw_filename.replace("\\", "/").rsplit("/", 1)[-1]
+    base = "".join(ch for ch in base if ch.isprintable())
+    base = base.strip().strip(".")
+    if not base:
+        return "attachment"
+    return base
+
+
 def normalize_file_name_for_mime(
     file_name: str, mime_type: str, max_code_points: Optional[int] = None
 ) -> str:

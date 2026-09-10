@@ -2142,3 +2142,366 @@ def test_provider_check_forces_fresh_refresh(service, registered_provider, monke
     assert outcome.error_code is None
     assert outcome.result == {"provider_id": registered_provider.provider_id}
     assert calls == [True]
+
+
+# ---- Step 1.6A.5: attachment_save / revoke / delete-local-content -----------
+
+
+def _seed_received_available(conn, principal, wsm, *, attachment_id, file_name="photo.jpg",
+                             mime_type="image/jpeg", plain_size=0, content=b"received plaintext"):
+    """Seed a received AVAILABLE row whose `saved_path` points at a real
+    `cache/incoming/<id>` plaintext file, so the save/delete command handlers
+    have a servable source to move/unlink. Returns the cache file path."""
+    paths = wsm.paths(principal.principal_id)
+    paths.cache_incoming.mkdir(parents=True, exist_ok=True)
+    cache_file = paths.cache_incoming / attachment_id
+    cache_file.write_bytes(content)
+    conn.execute(
+        """
+        INSERT INTO attachments
+            (id, workspace_id, transfer_id, direction, principal_id, state,
+             file_name, mime_type, plain_size, saved_path,
+             created_at, hard_expires_at, download_grace_seconds)
+        VALUES (?, ?, ?, 'received', ?, 'AVAILABLE', ?, ?, ?, ?, 0, 0, 3600)
+        """,
+        (attachment_id, principal.workspace_id, uuid.uuid4().hex,
+         principal.principal_id, file_name, mime_type, plain_size, str(cache_file)),
+    )
+    conn.commit()
+    return cache_file
+
+
+def _saved_path_of(conn, attachment_id):
+    conn.row_factory = sqlite3.Row
+    return conn.execute(
+        "SELECT saved_path FROM attachments WHERE id = ?", (attachment_id,)
+    ).fetchone()["saved_path"]
+
+
+def _save_command(attachment_id):
+    return Command(command_id=uuid.uuid4().hex, kind="attachment_save",
+                   payload={"attachment_id": attachment_id}, created_at=time.time())
+
+
+def _revoke_command(attachment_id):
+    return Command(command_id=uuid.uuid4().hex, kind="attachment_revoke",
+                   payload={"attachment_id": attachment_id}, created_at=time.time())
+
+
+def _delete_local_content_command(attachment_id):
+    return Command(command_id=uuid.uuid4().hex, kind="attachment_delete_local_content",
+                   payload={"attachment_id": attachment_id}, created_at=time.time())
+
+
+# ---- attachment_save -------------------------------------------------------
+
+
+def test_command_save_moves_cache_content_into_files_and_flips_saved(
+    conn, wsm, principal, service
+):
+    """A received AVAILABLE row's `cache/incoming/<id>` plaintext is moved
+    (atomic replace) into `files/` under its display name; the cache copy is
+    gone, the row's saved_path repoints into files/, and the content is intact."""
+    attachment_id = "a" * 32
+    _seed_received_available(conn, principal, wsm, attachment_id=attachment_id,
+                             file_name="photo.jpg", mime_type="image/jpeg",
+                             content=b"\xff\xd8\xff" + b"payload")
+
+    outcome = service._dispatcher.dispatch(_save_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert outcome.resource_id == attachment_id
+    assert dict(outcome.result) == {"attachment_id": attachment_id, "saved": True, "file_name": "photo.jpg"}
+
+    paths = wsm.paths(principal.principal_id)
+    saved = paths.files / "photo.jpg"
+    assert saved.exists()
+    assert saved.read_bytes() == b"\xff\xd8\xff" + b"payload"
+    assert not (paths.cache_incoming / attachment_id).exists()  # moved, not copied
+    assert _saved_path_of(conn, attachment_id) == str(saved)
+    assert receiver.get_state(conn, attachment_id) == receiver.AVAILABLE  # state unchanged
+
+
+def test_command_save_is_idempotent_resave_returns_prior_result_without_copying(
+    conn, wsm, principal, service
+):
+    """Re-saving an already-saved row returns the prior result (same file_name)
+    without copying, and does not mint a second files/ name."""
+    attachment_id = "b" * 32
+    _seed_received_available(conn, principal, wsm, attachment_id=attachment_id, file_name="photo.jpg")
+
+    first = service._dispatcher.dispatch(_save_command(attachment_id))
+    second = service._dispatcher.dispatch(_save_command(attachment_id))
+
+    assert first.error_code is None
+    assert second.error_code is None
+    assert dict(second.result) == dict(first.result) == {
+        "attachment_id": attachment_id, "saved": True, "file_name": "photo.jpg",
+    }
+    paths = wsm.paths(principal.principal_id)
+    assert [p.name for p in paths.files.iterdir()] == ["photo.jpg"]
+
+
+def test_command_save_idempotent_resave_content_missing(conn, wsm, principal, service):
+    """If the files/ copy was deleted after a save, a re-save fails content_missing
+    rather than silently claiming saved=true."""
+    attachment_id = "c" * 32
+    _seed_received_available(conn, principal, wsm, attachment_id=attachment_id, file_name="photo.jpg")
+
+    assert service._dispatcher.dispatch(_save_command(attachment_id)).error_code is None
+    (wsm.paths(principal.principal_id).files / "photo.jpg").unlink()
+
+    outcome = service._dispatcher.dispatch(_save_command(attachment_id))
+    assert outcome.error_code == "content_missing"
+    assert outcome.resource_id is None and outcome.result is None
+
+
+def test_command_save_resolves_name_collision_without_overwriting(conn, wsm, principal, service):
+    """Two received rows with the same display name save to `photo.jpg` and
+    `photo (2).jpg` respectively - the second never overwrites the first."""
+    first_id, second_id = "d" * 32, "e" * 32
+    _seed_received_available(conn, principal, wsm, attachment_id=first_id,
+                             file_name="photo.jpg", content=b"first")
+    _seed_received_available(conn, principal, wsm, attachment_id=second_id,
+                             file_name="photo.jpg", content=b"second")
+
+    assert service._dispatcher.dispatch(_save_command(first_id)).error_code is None
+    assert service._dispatcher.dispatch(_save_command(second_id)).error_code is None
+
+    paths = wsm.paths(principal.principal_id)
+    assert (paths.files / "photo.jpg").read_bytes() == b"first"
+    assert (paths.files / "photo (2).jpg").read_bytes() == b"second"
+
+
+def test_command_save_sanitizes_a_hostile_file_name(conn, wsm, principal, service):
+    """A traversal/path file_name never becomes a files/ component: it is
+    reduced to its basename and saved under that, not under the hostile path."""
+    attachment_id = "f" * 32
+    _seed_received_available(conn, principal, wsm, attachment_id=attachment_id,
+                             file_name="../../etc/passwd", mime_type="text/plain",
+                             content=b"text")
+
+    outcome = service._dispatcher.dispatch(_save_command(attachment_id))
+
+    assert outcome.error_code is None
+    paths = wsm.paths(principal.principal_id)
+    assert (paths.files / "passwd").exists()
+    assert _saved_path_of(conn, attachment_id) == str(paths.files / "passwd")
+    # No file escaped the files/ directory.
+    assert (paths.files.parent / "etc").exists() is False
+
+
+def test_command_save_rejects_a_non_available_row(conn, wsm, principal, service):
+    """Save re-validates the persisted row: a received row not in AVAILABLE (or
+    a sent row) fails invalid_state_transition and moves nothing."""
+    attachment_id = "11" * 16
+    _seed_received_available(conn, principal, wsm, attachment_id=attachment_id, file_name="photo.jpg")
+    conn.execute("UPDATE attachments SET state = ? WHERE id = ?", (receiver.WAITING_CONSENT, attachment_id))
+    conn.commit()
+
+    outcome = service._dispatcher.dispatch(_save_command(attachment_id))
+
+    assert outcome.error_code == "invalid_state_transition"
+    assert (wsm.paths(principal.principal_id).cache_incoming / attachment_id).exists()  # untouched
+
+
+def test_command_save_unknown_id_is_not_found(service):
+    outcome = service._dispatcher.dispatch(_save_command("0" * 32))
+    assert outcome.error_code == "attachment_not_found"
+
+
+def test_command_save_content_missing_when_cache_file_gone(conn, wsm, principal, service):
+    """A row whose saved_path points at a cache/incoming name that no longer
+    exists fails content_missing, leaving the row unchanged."""
+    attachment_id = "22" * 16
+    _seed_received_available(conn, principal, wsm, attachment_id=attachment_id, file_name="photo.jpg")
+    (wsm.paths(principal.principal_id).cache_incoming / attachment_id).unlink()
+
+    outcome = service._dispatcher.dispatch(_save_command(attachment_id))
+
+    assert outcome.error_code == "content_missing"
+    assert _saved_path_of(conn, attachment_id) is not None  # row unchanged
+
+
+# ---- attachment_revoke -----------------------------------------------------
+
+
+def _seed_sent_downloadable(conn, wsm, principal, registered_provider, remote_recipient,
+                            tmp_path, *, revoke_token="revoke-1"):
+    """A real sent-side DRAFT (via sender.create_draft) advanced to SENT, plus
+    a sender-state row carrying a revoke token - the persisted shape
+    `_command_revoke` re-reads. Returns the attachment_id."""
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal)
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal,
+                                  registered_provider=registered_provider, tmp_path=tmp_path)
+    conn.execute("UPDATE attachments SET state = ? WHERE id = ?", (sender.SENT, attachment_id))
+    conn.commit()
+    _insert_sender_state(conn, attachment_id, upload_id="upload-1", revoke_token=revoke_token)
+    return attachment_id
+
+
+def test_command_revoke_revokes_remote_then_marks_revoked(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path
+):
+    """Remote-first: `revoke()` is called with the row's own transfer_id
+    (hex-decoded) + revoke token, and only after it succeeds does the row
+    become REVOKED and its sender-state row is dropped."""
+    attachment_id = _seed_sent_downloadable(conn, wsm, principal, registered_provider,
+                                            remote_recipient, tmp_path)
+    transfer_id_hex = conn.execute("SELECT transfer_id FROM attachments WHERE id = ?", (attachment_id,)).fetchone()[0]
+
+    stub = _StubRelayClient(revoke_result="ok")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert dict(outcome.result) == {"attachment_id": attachment_id, "state": sender.REVOKED}
+    assert stub.revoke_calls == [(bytes.fromhex(transfer_id_hex), "revoke-1")]
+    assert sender.get_state(conn, attachment_id) == sender.REVOKED
+    assert conn.execute("SELECT 1 FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone() is None
+
+
+def test_command_revoke_remote_404_is_confirmed_absence(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path
+):
+    """A Relay 404 means the object is already gone, so the remote half is
+    satisfied and the local half still completes to REVOKED."""
+    attachment_id = _seed_sent_downloadable(conn, wsm, principal, registered_provider,
+                                            remote_recipient, tmp_path)
+    stub = _StubRelayClient(revoke_result=RelayHTTPError(404, "not_found", "gone"))
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert sender.get_state(conn, attachment_id) == sender.REVOKED
+
+
+def test_command_revoke_remote_non_404_is_relay_unreachable_and_preserves_row(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path
+):
+    """A non-404 remote failure must NOT mark the row REVOKED - it fails
+    relay_unreachable and preserves the row and its sender state."""
+    attachment_id = _seed_sent_downloadable(conn, wsm, principal, registered_provider,
+                                            remote_recipient, tmp_path)
+    stub = _StubRelayClient(revoke_result=RelayHTTPError(500, "relay_down", "down"))
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code == "relay_unreachable"
+    assert sender.get_state(conn, attachment_id) == sender.SENT
+    assert conn.execute("SELECT 1 FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone() is not None
+
+
+def test_command_revoke_missing_revoke_token_is_relay_unreachable(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    """A sent row whose sender state lacks a revoke token cannot be revoked
+    remotely, so revoke fails relay_unreachable and preserves everything."""
+    attachment_id = _seed_sent_downloadable(conn, wsm, principal, registered_provider,
+                                            remote_recipient, tmp_path, revoke_token=None)
+
+    outcome = service._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code == "relay_unreachable"
+    assert sender.get_state(conn, attachment_id) == sender.SENT
+
+
+def test_command_revoke_rejects_a_non_downloadable_row(
+    conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service
+):
+    """Revoke re-validates the persisted row: a sent row still in DRAFT is not
+    downloadable, so it fails invalid_state_transition."""
+    _, _, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal)
+    attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal,
+                                  registered_provider=registered_provider, tmp_path=tmp_path)
+
+    outcome = service._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code == "invalid_state_transition"
+    assert sender.get_state(conn, attachment_id) == sender.DRAFT
+
+
+def test_command_revoke_unknown_id_is_not_found(service):
+    outcome = service._dispatcher.dispatch(_revoke_command("0" * 32))
+    assert outcome.error_code == "attachment_not_found"
+
+
+# ---- attachment_delete_local_content ---------------------------------------
+
+
+def test_command_delete_local_content_unlinks_files_copy_and_flips_saved(
+    conn, wsm, principal, service
+):
+    """After a save, deleting local content unlinks the files/ copy and clears
+    saved_path (saved=false), keeping the row and its history."""
+    attachment_id = "33" * 16
+    _seed_received_available(conn, principal, wsm, attachment_id=attachment_id, file_name="photo.jpg")
+    assert service._dispatcher.dispatch(_save_command(attachment_id)).error_code is None
+
+    outcome = service._dispatcher.dispatch(_delete_local_content_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert dict(outcome.result) == {"attachment_id": attachment_id, "saved": False}
+    assert _saved_path_of(conn, attachment_id) is None
+    assert not (wsm.paths(principal.principal_id).files / "photo.jpg").exists()
+    assert receiver.get_state(conn, attachment_id) == receiver.AVAILABLE  # history kept
+
+
+def test_command_delete_local_content_not_saved(conn, wsm, principal, service):
+    """A row whose content is still only in cache/incoming (never saved) fails
+    not_saved - there is no files/ copy to delete."""
+    attachment_id = "44" * 16
+    _seed_received_available(conn, principal, wsm, attachment_id=attachment_id, file_name="photo.jpg")
+
+    outcome = service._dispatcher.dispatch(_delete_local_content_command(attachment_id))
+
+    assert outcome.error_code == "not_saved"
+    assert (wsm.paths(principal.principal_id).cache_incoming / attachment_id).exists()  # cache untouched
+
+
+def test_command_delete_local_content_missing_file_is_clean(conn, wsm, principal, service):
+    """A saved row whose files/ copy is already gone deletes cleanly (missing_ok):
+    saved_path is cleared without error."""
+    attachment_id = "55" * 16
+    _seed_received_available(conn, principal, wsm, attachment_id=attachment_id, file_name="photo.jpg")
+    assert service._dispatcher.dispatch(_save_command(attachment_id)).error_code is None
+    (wsm.paths(principal.principal_id).files / "photo.jpg").unlink()
+
+    outcome = service._dispatcher.dispatch(_delete_local_content_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert dict(outcome.result) == {"attachment_id": attachment_id, "saved": False}
+    assert _saved_path_of(conn, attachment_id) is None
+
+
+def test_command_delete_local_content_unlink_failure_is_content_missing(
+    conn, wsm, principal, service
+):
+    """A files/ path that cannot be unlinked (a directory there) fails
+    content_missing, leaving saved_path intact so the row stays consistent."""
+    attachment_id = "66" * 16
+    _seed_received_available(conn, principal, wsm, attachment_id=attachment_id, file_name="photo.jpg")
+    assert service._dispatcher.dispatch(_save_command(attachment_id)).error_code is None
+
+    files_dir = wsm.paths(principal.principal_id).files
+    (files_dir / "photo.jpg").unlink()
+    (files_dir / "photo.jpg").mkdir()  # a directory -> unlink() raises
+
+    outcome = service._dispatcher.dispatch(_delete_local_content_command(attachment_id))
+
+    assert outcome.error_code == "content_missing"
+    assert _saved_path_of(conn, attachment_id) is not None  # row unchanged

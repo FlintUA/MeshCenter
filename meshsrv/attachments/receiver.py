@@ -1066,8 +1066,15 @@ def _step_downloading(conn, row, workspace_manager, principal, provider_registry
         _quarantine(workspace_manager, principal.principal_id, transfer_id_hex, bytes(assembled))
         return _fail(conn, attachment_id, now, "plaintext_digest_mismatch")
 
-    saved_path = workspace_manager.unique_file_name(principal.principal_id, header.file_name)
-    saved_path.write_bytes(bytes(assembled))
+    # Step 1.6A.5 storage model: the verified plaintext is written to the
+    # internal content cache under its canonical attachment id - never the
+    # sender-controlled `header.file_name`, which is retained only as the
+    # safe *display* name in `file_name`. The descriptor still points into
+    # `cache/incoming/` (content_available=true, saved=false) until the user
+    # explicitly saves, which is what moves it into `files/`.
+    paths = workspace_manager.paths(principal.principal_id)
+    cache_path = paths.cache_incoming / attachment_id
+    cache_path.write_bytes(bytes(assembled))
 
     try:
         client.complete(transfer_id, secret.receipt_secret)
@@ -1085,7 +1092,7 @@ def _step_downloading(conn, row, workspace_manager, principal, provider_registry
         AVAILABLE,
         now,
         extra_sql=", file_name = ?, mime_type = ?, plain_size = ?, plain_sha256 = ?, saved_path = ?",
-        extra_params=(header.file_name, header.mime_type, header.plain_size, header.plain_sha256.hex(), str(saved_path)),
+        extra_params=(header.file_name, header.mime_type, header.plain_size, header.plain_sha256.hex(), str(cache_path)),
     )
     ack = _maybe_send_ack(
         conn,

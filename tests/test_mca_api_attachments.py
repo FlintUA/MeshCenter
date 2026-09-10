@@ -67,8 +67,12 @@ from meshsrv.attachments.recipient_snapshot import (
 from meshsrv.attachments.snapshots import (
     AttachmentRecord,
     AttachmentsSnapshot,
+    ContentDescriptor,
+    ContentDisposition,
+    ContentLocatorError,
     DeliveryRecord,
     TimelineEvent,
+    disposition_for_mime_type,
 )
 from meshsrv.connectivity_monitor import (
     ConnectivitySnapshot,
@@ -178,6 +182,20 @@ def _snapshot(records):
     )
 
 
+def _descriptor(attachment_id=ATTACHMENT_ID, *, mime_type="image/jpeg", locator="files/photo.jpg",
+                disposition=None, plain_size=1234):
+    """A `ContentDescriptor` for content-route tests. `disposition` defaults to
+    the real `disposition_for_mime_type(mime_type)` so the inline-vs-attachment
+    behaviour under test stays consistent with the production decision."""
+    return ContentDescriptor(
+        attachment_id=attachment_id,
+        locator=locator,
+        mime_type=mime_type,
+        disposition=disposition if disposition is not None else disposition_for_mime_type(mime_type),
+        plain_size=plain_size,
+    )
+
+
 def _trusted_recipient_snapshot(source_address="!aaaaaaaa"):
     """The default recipient snapshot for the fake facade: `!aaaaaaaa` is a
     known, `MCA_READY` binding, so the pre-existing create tests (which all
@@ -211,6 +229,7 @@ class _FakeFacade:
         committed=None,
         recipient=None,
         probes=None,
+        content_files=None,
     ):
         self._snapshot = snapshot or _snapshot([])
         self._providers = providers or {}
@@ -234,6 +253,9 @@ class _FakeFacade:
         # are exercised against the same logic the facade actually runs.
         self._pending = PendingReservations()
         self._committed = committed or {}
+        # locator -> real on-disk Path, the one serve-time resolution the
+        # content route performs. An unknown locator raises ContentLocatorError.
+        self._content_files = content_files or {}
 
     def attachments_snapshot(self):
         if self.not_ready:
@@ -299,6 +321,15 @@ class _FakeFacade:
 
     def identity_snapshot(self):
         return self._identity
+
+    def resolve_content_locator(self, locator):
+        # The one serve-time re-validation the content route is permitted
+        # (§7.14): resolve a descriptor locator to a real path, or raise
+        # ContentLocatorError for anything outside the controlled area (here:
+        # any locator the test did not deliberately map to a real file).
+        if locator in self._content_files:
+            return self._content_files[locator]
+        raise ContentLocatorError("locator resolves outside the controlled content area")
 
 
 class _RaisingFacade(_FakeFacade):
@@ -2805,6 +2836,301 @@ def test_clear_upload_token_enqueues(monkeypatch):
     cmd = _submitted(facade)
     assert cmd.kind == "provider_clear_upload_token"
     assert cmd.payload == {"provider_id": PROVIDER_ID}
+
+
+# ---- Step 1.6A.5: GET content (§7.14) --------------------------------------
+
+
+def test_content_inline_image_serves_mime_and_security_headers(monkeypatch, tmp_path):
+    data = b"\xff\xd8\xff\xe0" + b"\x00" * 16
+    f = tmp_path / "photo.jpg"
+    f.write_bytes(data)
+    facade = _FakeFacade(
+        snapshot=_snapshot([_attachment(
+            direction="received", state="AVAILABLE", file_name="photo.jpg",
+            mime_type="image/jpeg", plain_size=len(data),
+            descriptor=_descriptor(mime_type="image/jpeg", locator="files/photo.jpg", plain_size=len(data)),
+        )]),
+        content_files={"files/photo.jpg": f},
+    )
+    c = _client(monkeypatch, facade)
+
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+
+    assert resp.status_code == 200
+    assert resp.data == data
+    assert resp.mimetype == "image/jpeg"
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
+    assert resp.headers["Cache-Control"] == "no-store"
+    assert resp.headers["Content-Security-Policy"] == "sandbox"
+    cd = resp.headers["Content-Disposition"]
+    assert "inline" in cd
+    assert "photo.jpg" in cd
+
+
+def test_content_non_inline_is_octet_stream_attachment(monkeypatch, tmp_path):
+    # PDF is not in the inline preview set: served as application/octet-stream
+    # with an attachment disposition, never sniffed/hinted as PDF.
+    data = b"%PDF-1.4 " + b"\x00" * 16
+    f = tmp_path / "report.pdf"
+    f.write_bytes(data)
+    facade = _FakeFacade(
+        snapshot=_snapshot([_attachment(
+            direction="received", state="AVAILABLE", file_name="report.pdf",
+            mime_type="application/pdf", plain_size=len(data),
+            descriptor=_descriptor(mime_type="application/pdf", locator="files/report.pdf", plain_size=len(data)),
+        )]),
+        content_files={"files/report.pdf": f},
+    )
+    c = _client(monkeypatch, facade)
+
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+
+    assert resp.status_code == 200
+    assert resp.data == data
+    assert resp.mimetype == "application/octet-stream"
+    cd = resp.headers["Content-Disposition"]
+    assert "attachment" in cd
+    assert "report.pdf" in cd
+
+
+def test_content_sanitizes_a_hostile_download_name(monkeypatch, tmp_path):
+    data = b"\xff\xd8\xff\xe0" + b"\x00" * 8
+    f = tmp_path / "photo.jpg"
+    f.write_bytes(data)
+    facade = _FakeFacade(
+        snapshot=_snapshot([_attachment(
+            direction="received", state="AVAILABLE", file_name="../../etc/passwd",
+            mime_type="image/jpeg", plain_size=len(data),
+            descriptor=_descriptor(mime_type="image/jpeg", locator="files/photo.jpg", plain_size=len(data)),
+        )]),
+        content_files={"files/photo.jpg": f},
+    )
+    c = _client(monkeypatch, facade)
+
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+
+    assert resp.status_code == 200
+    cd = resp.headers["Content-Disposition"]
+    assert "passwd" in cd
+    assert "etc" not in cd and ".." not in cd
+
+
+def test_content_409_not_available_when_descriptor_is_none(monkeypatch):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(
+        direction="received", state="WAITING_CONSENT", descriptor=None,
+    )]))
+    c = _client(monkeypatch, facade)
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+    assert resp.status_code == 409
+    assert resp.get_json()["error_code"] == "not_available"
+
+
+def test_content_404_content_missing_on_locator_error(monkeypatch):
+    # A descriptor whose locator does not resolve to a controlled file (the
+    # fake raises ContentLocatorError) is served as 404 content_missing, never
+    # the raw exception.
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(
+        direction="received", state="AVAILABLE",
+        descriptor=_descriptor(locator="files/does-not-exist.jpg"),
+    )]))
+    c = _client(monkeypatch, facade)
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+    assert resp.status_code == 404
+    assert resp.get_json()["error_code"] == "content_missing"
+
+
+def test_content_404_content_missing_when_file_gone(monkeypatch, tmp_path):
+    # The locator resolves but the file is no longer on disk -> 404 content_missing.
+    missing = tmp_path / "photo.jpg"  # never written
+    facade = _FakeFacade(
+        snapshot=_snapshot([_attachment(
+            direction="received", state="AVAILABLE",
+            descriptor=_descriptor(locator="files/photo.jpg"),
+        )]),
+        content_files={"files/photo.jpg": missing},
+    )
+    c = _client(monkeypatch, facade)
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+    assert resp.status_code == 404
+    assert resp.get_json()["error_code"] == "content_missing"
+
+
+def test_content_invalid_and_unknown_id(monkeypatch):
+    c = _client(monkeypatch, _FakeFacade())
+    assert c.get("/api/attachments/not-hex/content").status_code == 400
+    assert c.get("/api/attachments/not-hex/content").get_json()["error_code"] == "invalid_attachment_id"
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+    assert resp.status_code == 404
+    assert resp.get_json()["error_code"] == "attachment_not_found"
+
+
+def test_content_is_503_when_facade_missing(monkeypatch):
+    c = _client(monkeypatch, None)
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+    assert resp.status_code == 503
+    assert resp.get_json()["error_code"] == "mca_not_ready"
+
+
+# ---- Step 1.6A.5: save / revoke / local-content mutations ------------------
+
+
+_SAVE_PATH = f"/api/attachments/{ATTACHMENT_ID}/save"
+_REVOKE_PATH = f"/api/attachments/{ATTACHMENT_ID}/revoke"
+_DELETE_LOCAL_PATH = f"/api/attachments/{ATTACHMENT_ID}/local-content"
+
+
+def test_save_accepted_for_received_available(monkeypatch):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(
+        direction="received", state=receiver.AVAILABLE,
+    )]))
+    c = _client(monkeypatch, facade)
+    resp = c.post(_SAVE_PATH)
+    assert resp.status_code == 202
+    _assert_202_accepted(resp.get_json(), facade, "attachment_save")
+
+
+@pytest.mark.parametrize("direction,state", [
+    ("received", receiver.WAITING_CONSENT),  # not yet AVAILABLE
+    ("received", receiver.DOWNLOADING),
+    ("received", receiver.REJECTED),
+    ("sent", sender.DRAFT),
+    ("sent", sender.SENT),
+])
+def test_save_rejected_unless_received_and_available(monkeypatch, direction, state):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction=direction, state=state)]))
+    c = _client(monkeypatch, facade)
+    resp = c.post(_SAVE_PATH)
+    assert resp.status_code == 409
+    assert resp.get_json()["error_code"] == "invalid_state_transition"
+    assert facade.submitted == []
+
+
+@pytest.mark.parametrize("state", [sender.SENT, sender.RECEIVED, sender.DOWNLOADED])
+def test_revoke_accepted_for_sent_downloadable(monkeypatch, state):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction="sent", state=state)]))
+    c = _client(monkeypatch, facade)
+    resp = c.post(_REVOKE_PATH)
+    assert resp.status_code == 202
+    _assert_202_accepted(resp.get_json(), facade, "attachment_revoke")
+
+
+@pytest.mark.parametrize("direction,state", [
+    ("sent", sender.DRAFT),            # not yet sent
+    ("sent", sender.READY_TO_SEND),
+    ("sent", sender.REVOKED),          # terminal
+    ("sent", sender.CANCELLED),
+    ("sent", sender.EXPIRED),
+    ("received", receiver.AVAILABLE),  # wrong direction
+])
+def test_revoke_rejected_unless_sent_and_downloadable(monkeypatch, direction, state):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(direction=direction, state=state)]))
+    c = _client(monkeypatch, facade)
+    resp = c.post(_REVOKE_PATH)
+    assert resp.status_code == 409
+    assert resp.get_json()["error_code"] == "invalid_state_transition"
+    assert facade.submitted == []
+
+
+def test_delete_local_content_accepted_when_saved(monkeypatch):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(
+        direction="received", state=receiver.AVAILABLE, saved=True,
+    )]))
+    c = _client(monkeypatch, facade)
+    resp = c.delete(_DELETE_LOCAL_PATH)
+    assert resp.status_code == 202
+    _assert_202_accepted(resp.get_json(), facade, "attachment_delete_local_content")
+
+
+def test_delete_local_content_rejected_when_not_saved(monkeypatch):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(
+        direction="received", state=receiver.AVAILABLE, saved=False,
+    )]))
+    c = _client(monkeypatch, facade)
+    resp = c.delete(_DELETE_LOCAL_PATH)
+    assert resp.status_code == 409
+    assert resp.get_json()["error_code"] == "not_saved"
+    assert facade.submitted == []
+
+
+@pytest.mark.parametrize("method,path", [
+    ("post", _SAVE_PATH),
+    ("post", _REVOKE_PATH),
+    ("delete", _DELETE_LOCAL_PATH),
+])
+def test_mutations_reject_malformed_id(monkeypatch, method, path):
+    c = _client(monkeypatch, _FakeFacade())
+    resp = getattr(c, method)("/api/attachments/not-hex/" + path.rsplit("/", 1)[-1])
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_attachment_id"
+
+
+@pytest.mark.parametrize("method,path", [
+    ("post", _SAVE_PATH),
+    ("post", _REVOKE_PATH),
+    ("delete", _DELETE_LOCAL_PATH),
+])
+def test_mutations_unknown_id_is_404(monkeypatch, method, path):
+    c = _client(monkeypatch, _FakeFacade())
+    resp = getattr(c, method)(path)
+    assert resp.status_code == 404
+    assert resp.get_json()["error_code"] == "attachment_not_found"
+
+
+@pytest.mark.parametrize("method,path,record_kwargs", [
+    ("post", _SAVE_PATH, {"direction": "received", "state": receiver.AVAILABLE}),
+    ("post", _REVOKE_PATH, {"direction": "sent", "state": sender.SENT}),
+    ("delete", _DELETE_LOCAL_PATH, {"direction": "received", "state": receiver.AVAILABLE, "saved": True}),
+])
+def test_mutations_queue_full_is_429(monkeypatch, method, path, record_kwargs):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(**record_kwargs)]), queue_full=True)
+    c = _client(monkeypatch, facade)
+    resp = getattr(c, method)(path)
+    assert resp.status_code == 429
+    assert resp.get_json()["error_code"] == "command_queue_full"
+    assert facade.submitted == []
+
+
+@pytest.mark.parametrize("method,path", [
+    ("post", _SAVE_PATH),
+    ("post", _REVOKE_PATH),
+    ("delete", _DELETE_LOCAL_PATH),
+])
+def test_mutations_are_503_when_facade_missing(monkeypatch, method, path):
+    c = _client(monkeypatch, None)
+    resp = getattr(c, method)(path)
+    assert resp.status_code == 503
+    assert resp.get_json()["error_code"] == "mca_not_ready"
+
+
+@pytest.mark.parametrize("method,path,record_kwargs,kind", [
+    ("post", _SAVE_PATH, {"direction": "received", "state": receiver.AVAILABLE}, "attachment_save"),
+    ("post", _REVOKE_PATH, {"direction": "sent", "state": sender.SENT}, "attachment_revoke"),
+    ("delete", _DELETE_LOCAL_PATH,
+     {"direction": "received", "state": receiver.AVAILABLE, "saved": True},
+     "attachment_delete_local_content"),
+])
+def test_mutations_valid_csrf_token_reaches_submission(monkeypatch, method, path, record_kwargs, kind):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(**record_kwargs)]))
+    c = _csrf_client(monkeypatch, facade)
+    _set_csrf_token(c, "session-token")
+    resp = getattr(c, method)(path, headers={"X-CSRF-Token": "session-token"})
+    assert resp.status_code == 202
+    _assert_202_accepted(resp.get_json(), facade, kind)
+
+
+@pytest.mark.parametrize("method,path,record_kwargs", [
+    ("post", _SAVE_PATH, {"direction": "received", "state": receiver.AVAILABLE}),
+    ("post", _REVOKE_PATH, {"direction": "sent", "state": sender.SENT}),
+    ("delete", _DELETE_LOCAL_PATH, {"direction": "received", "state": receiver.AVAILABLE, "saved": True}),
+])
+def test_mutations_missing_csrf_token_is_403(monkeypatch, method, path, record_kwargs):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(**record_kwargs)]))
+    c = _csrf_client(monkeypatch, facade)
+    resp = getattr(c, method)(path)  # no X-CSRF-Token header, no session token
+    assert resp.status_code == 403
+    assert resp.get_json()["error_code"] == "csrf_invalid"
+    assert facade.submitted == []
 
 
 def test_check_enqueues(monkeypatch):

@@ -9953,6 +9953,13 @@ function switchMainTab(tab) {
         lastOperationalMainTab = tab;
     }
 
+    // Leaving the Files workspace? Tear its module down cleanly (stops its
+    // polling timer and closes any open modal) so it never runs while hidden.
+    if (currentMainTab === 'files' && tab !== 'files' &&
+        typeof MeshCenterFiles === 'object' && typeof MeshCenterFiles.deactivate === 'function') {
+        MeshCenterFiles.deactivate();
+    }
+
 //    if (radioHealthTimer) {
 //        clearInterval(radioHealthTimer);
 //        radioHealthTimer = null;
@@ -10156,8 +10163,8 @@ function switchMainTab(tab) {
         updateStatusDock('files');
         stopMessagePolling();
 
-        if (typeof openFilesWorkspace === 'function') {
-            openFilesWorkspace();
+        if (typeof MeshCenterFiles === 'object' && typeof MeshCenterFiles.activate === 'function') {
+            MeshCenterFiles.activate();
         }
 
     } else if (tab === 'node-manager') {

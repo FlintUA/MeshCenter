@@ -712,9 +712,9 @@
                             <p class="workspace-page-subtitle" data-i18n="files.subtitle">End-to-end encrypted file transfers with your Meshtastic contacts</p>
                         </div>
                         <div class="workspace-page-actions">
-                            <button type="button" class="mc-refresh-btn" onclick="openFilesSendDialog()">📤 <span data-i18n="files.send_file">Send file</span></button>
-                            <button type="button" class="mc-refresh-btn" onclick="openFilesProviderSettings()">⚙️ <span data-i18n="files.providers">Relay providers</span></button>
-                            <button type="button" class="mc-refresh-btn" onclick="loadFilesWorkspace(true)">↻ <span data-i18n="common.refresh">Refresh</span></button>
+                            <button type="button" class="mc-refresh-btn" data-files-action="send">📤 <span data-i18n="files.send_file">Send file</span></button>
+                            <button type="button" class="mc-refresh-btn" data-files-action="providers">⚙️ <span data-i18n="files.providers">Relay providers</span></button>
+                            <button type="button" class="mc-refresh-btn" data-files-action="refresh">↻ <span data-i18n="common.refresh">Refresh</span></button>
                         </div>
                     </header>
                     <div class="files-layout" id="filesLayout">
@@ -726,11 +726,18 @@
                         </aside>
                         <section class="files-archive" id="filesArchivePane" aria-label="Files transfers">
                             <div class="files-pane-title">🗂️ <span data-i18n="files.archive_title">Transfers</span></div>
-                            <div class="files-filter-tabs" id="filesFilterTabs">
-                                <button class="files-filter-tab active" data-filter="all" onclick="setFilesFilter('all')" data-i18n="files.filter_all">All</button>
-                                <button class="files-filter-tab" data-filter="pending" onclick="setFilesFilter('pending')" data-i18n="files.filter_pending">Pending</button>
-                                <button class="files-filter-tab" data-filter="saved" onclick="setFilesFilter('saved')" data-i18n="files.filter_saved">Saved</button>
-                                <button class="files-filter-tab" data-filter="errors" onclick="setFilesFilter('errors')" data-i18n="files.filter_errors">Errors</button>
+                            <div class="files-filter-tabs" id="filesFilterTabs" role="tablist" aria-label="Transfer filters">
+                                <button class="files-filter-tab active" data-files-filter="all" role="tab" aria-selected="true" data-i18n="files.filter_all">All</button>
+                                <button class="files-filter-tab" data-files-filter="received" role="tab" aria-selected="false" data-i18n="files.filter_received">Received</button>
+                                <button class="files-filter-tab" data-files-filter="sent" role="tab" aria-selected="false" data-i18n="files.filter_sent">Sent</button>
+                                <button class="files-filter-tab" data-files-filter="pending" role="tab" aria-selected="false" data-i18n="files.filter_pending">Pending</button>
+                                <button class="files-filter-tab" data-files-filter="saved" role="tab" aria-selected="false" data-i18n="files.filter_saved">Saved</button>
+                                <button class="files-filter-tab" data-files-filter="errors" role="tab" aria-selected="false" data-i18n="files.filter_errors">Errors</button>
+                            </div>
+                            <div class="files-archive-tools">
+                                <input type="search" id="filesSearch" class="files-search" autocomplete="off"
+                                    placeholder="Search transfers" aria-label="Search transfers" data-i18n-placeholder="files.search_placeholder" />
+                                <div class="files-summary" id="filesSummary" aria-live="polite"></div>
                             </div>
                             <div class="files-archive-list" id="filesArchiveList">
                                 <div class="device-dashboard-loading" data-i18n="files.loading_transfers">Loading transfers...</div>
@@ -2338,7 +2345,7 @@
 <script src="{{ url_for('static', filename='chat-camera.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-map.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20260821-domain-split"></script>
-<script src="/static/files.js?v=20260910-files-workspace"></script>
+<script src="/static/files.js?v=20260910-files-workspace-fixes"></script>
 <script src="/static/chat.js?v=20260904-theme-stage8-2"></script>
 <script src="/static/media.js?v=20260818-xss-fix-delete-onclick"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>

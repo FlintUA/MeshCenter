@@ -59,7 +59,7 @@ from typing import Callable, Dict, List, Optional
 import requests
 from nacl.signing import VerifyKey
 
-from meshsrv.attachments import codec, crypto, receiver, sender
+from meshsrv.attachments import codec, contacts, crypto, receiver, sender
 from meshsrv.attachments.command_registry import CommandRegistry
 from meshsrv.attachments.commands import MAX_COMMANDS_PER_TICK, Command, CommandQueue
 from meshsrv.attachments.db.tombstones import is_tombstoned
@@ -844,7 +844,9 @@ class AttachmentsService:
         attachment/contact command handlers wired so far - the idempotent
         create (`attachment_create`, Step 1.6A.3B), the three Step 1.6A.3A
         lifecycle commands (retry/download/reject), and the two Step 1.6A.3C
-        mutations (cancel and contact key request) - plus the eight Step
+        mutations (cancel and contact key request) - the three Step 1.7
+        contact-trust commands (`contact_confirm`/`contact_accept_key_change`/
+        `contact_reject_key_change`, Files workspace) - plus the eight Step
         1.6A.4 provider commands (`provider_probe`/`provider_register`/
         `provider_update`/`provider_set_default`/`provider_remove`/
         `provider_set_upload_token`/`provider_clear_upload_token`/
@@ -862,6 +864,9 @@ class AttachmentsService:
             "attachment_revoke": self._command_revoke,
             "attachment_delete_local_content": self._command_delete_local_content,
             "contact_request_key": self._command_request_key,
+            "contact_confirm": self._command_confirm,
+            "contact_accept_key_change": self._command_accept_key_change,
+            "contact_reject_key_change": self._command_reject_key_change,
             "provider_probe": self._command_provider_probe,
             "provider_register": self._command_provider_register,
             "provider_update": self._command_provider_update,
@@ -1857,6 +1862,82 @@ class AttachmentsService:
         return CommandOutcome.succeeded(
             resource_id=contact_id,
             result={"contact_id": contact_id, "status": "requested"},
+        )
+
+    # ---- Step 1.7: contact trust (Files workspace) -----------------------
+
+    def _command_confirm(self, command: Command) -> CommandOutcome:
+        """`contact_confirm` (Step 1.7): set `tofu_confirmed_at` on a contact
+        whose key is announced but never confirmed (`KEY_UNVERIFIED`). The
+        worker re-reads the live binding (never trusts the queue): no binding
+        -> `contact_not_found`, any status other than `KEY_UNVERIFIED` ->
+        `invalid_state_transition`. On success the recipient snapshot is
+        refreshed so `GET /api/mca/contacts` reflects `trusted`."""
+        contact_id = command.payload.get("contact_id")
+        adapter_id = command.payload.get("adapter_id")
+        if not _is_contact_id(contact_id) or adapter_id != "meshtastic":
+            return CommandOutcome.failed("invalid_contact_id")
+        binding = self._key_exchange.get_binding(contact_id)
+        if binding is None:
+            return CommandOutcome.failed("contact_not_found")
+        if binding.status is not AddressStatus.KEY_UNVERIFIED:
+            return CommandOutcome.failed("invalid_state_transition")
+        contacts.confirm_binding(self._key_exchange, contact_id, now=self._now())
+        self._refresh_recipient_snapshot()
+        return CommandOutcome.succeeded(
+            resource_id=contact_id,
+            result={"contact_id": contact_id, "status": "trusted"},
+        )
+
+    def _command_accept_key_change(self, command: Command) -> CommandOutcome:
+        """`contact_accept_key_change` (Step 1.7): promote a parked key change
+        into the trusted binding. The worker re-reads the live binding (never
+        trusts the queue): no binding -> `contact_not_found`, not `KEY_CHANGED`
+        -> `invalid_state_transition`. Accepting resets `tofu_confirmed_at`, so
+        the promoted key lands back in `KEY_UNVERIFIED` awaiting its own,
+        separate confirm. On success the recipient snapshot is refreshed."""
+        contact_id = command.payload.get("contact_id")
+        adapter_id = command.payload.get("adapter_id")
+        if not _is_contact_id(contact_id) or adapter_id != "meshtastic":
+            return CommandOutcome.failed("invalid_contact_id")
+        binding = self._key_exchange.get_binding(contact_id)
+        if binding is None:
+            return CommandOutcome.failed("contact_not_found")
+        if binding.status is not AddressStatus.KEY_CHANGED:
+            return CommandOutcome.failed("invalid_state_transition")
+        try:
+            contacts.accept_key_change(self._key_exchange, contact_id, now=self._now())
+        except contacts.ContactError:
+            return CommandOutcome.failed("invalid_state_transition")
+        self._refresh_recipient_snapshot()
+        return CommandOutcome.succeeded(
+            resource_id=contact_id,
+            result={"contact_id": contact_id, "status": "confirmation_required"},
+        )
+
+    def _command_reject_key_change(self, command: Command) -> CommandOutcome:
+        """`contact_reject_key_change` (Step 1.7): dismiss a parked key change,
+        leaving the existing trusted binding untouched (not a blacklist). The
+        worker re-reads the live binding (never trusts the queue): no binding
+        -> `contact_not_found`, not `KEY_CHANGED` -> `invalid_state_transition`.
+        On success the recipient snapshot is refreshed."""
+        contact_id = command.payload.get("contact_id")
+        adapter_id = command.payload.get("adapter_id")
+        if not _is_contact_id(contact_id) or adapter_id != "meshtastic":
+            return CommandOutcome.failed("invalid_contact_id")
+        binding = self._key_exchange.get_binding(contact_id)
+        if binding is None:
+            return CommandOutcome.failed("contact_not_found")
+        if binding.status is not AddressStatus.KEY_CHANGED:
+            return CommandOutcome.failed("invalid_state_transition")
+        try:
+            contacts.reject_key_change(self._key_exchange, contact_id)
+        except contacts.ContactError:
+            return CommandOutcome.failed("invalid_state_transition")
+        self._refresh_recipient_snapshot()
+        return CommandOutcome.succeeded(
+            resource_id=contact_id,
+            result={"contact_id": contact_id, "status": "trusted"},
         )
 
     # ---- Step 1.6A.4: multi-Relay provider onboarding/management --------

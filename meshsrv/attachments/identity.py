@@ -87,6 +87,18 @@ def compute_key_id(public_identity: bytes) -> str:
     return hashlib.sha256(public_identity).digest()[:8].hex()
 
 
+def compute_fingerprint(public_identity: bytes) -> str:
+    """Full 256-bit SHA-256 fingerprint (64 lowercase hex chars) of a 32-byte
+    Ed25519 public identity - a stable, non-secret display/compare value for
+    the contact-trust UI (ADR-0009 v2, Step 1.7 Files workspace). Distinct
+    from `compute_key_id()` above (first 8 bytes, 16 hex chars), which stays
+    the lookup/`sender_key_id` key. Trust is still pinned to the full key -
+    this fingerprint is an identifier, never a proof."""
+    if len(public_identity) != 32:
+        raise IdentityError(f"public_identity must be 32 raw bytes (Ed25519), got {len(public_identity)}")
+    return hashlib.sha256(public_identity).hexdigest()
+
+
 def derive_x25519_public(public_identity: bytes) -> bytes:
     """ADR-0002: the confirmed Ed25519->X25519 conversion, verified
     byte-identical on `dev`/`prod`/the dev workstation - see

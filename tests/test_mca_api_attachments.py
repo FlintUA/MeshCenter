@@ -201,7 +201,8 @@ def _trusted_recipient_snapshot(source_address="!aaaaaaaa"):
     known, `MCA_READY` binding, so the pre-existing create tests (which all
     post that source_address) pass the Finding 7 synchronous check without
     each having to stand up a binding. The `public_identity` bytes are
-    deliberately *not* modelled here - the projection never carries them."""
+    deliberately *not* modelled here - the projection never carries them;
+    `fingerprint` is a non-secret digest stand-in, never the raw bytes."""
     return RecipientSnapshot(
         by_address={
             source_address: RecipientBindingSnapshot(
@@ -209,6 +210,10 @@ def _trusted_recipient_snapshot(source_address="!aaaaaaaa"):
                 transport_address=source_address,
                 key_id="1" * 16,
                 status=AddressStatus.MCA_READY,
+                fingerprint="0" * 64,
+                key_epoch=0,
+                pending_fingerprint=None,
+                pending_key_epoch=None,
             )
         }
     )
@@ -1489,6 +1494,10 @@ def _recipient_at(address, status):
                 transport_address=address,
                 key_id="2" * 16,
                 status=status,
+                fingerprint="0" * 64,
+                key_epoch=0,
+                pending_fingerprint=None,
+                pending_key_epoch=None,
             )
         }
     )
@@ -1620,6 +1629,159 @@ def test_request_key_valid_csrf_token_reaches_submission(monkeypatch):
     resp = c.post(f"/api/mca/contacts/{CONTACT_ID}/request-key", headers={"X-CSRF-Token": "session-token"})
     assert resp.status_code == 202
     _assert_request_key_202(resp.get_json(), facade, CONTACT_ID)
+
+
+# ---- Step 1.7: Files-workspace contact trust -------------------------------
+
+
+def _binding(address, status, **overrides):
+    base = dict(
+        adapter_id="meshtastic",
+        transport_address=address,
+        key_id="1" * 16,
+        status=status,
+        fingerprint="f" * 64,
+        key_epoch=0,
+        pending_fingerprint=None,
+        pending_key_epoch=None,
+    )
+    base.update(overrides)
+    return RecipientBindingSnapshot(**base)
+
+
+def _assert_trust_202(body, facade, contact_id, kind):
+    assert body["ok"] is True
+    assert set(body) == {"ok", "command_id"}
+    assert len(facade.submitted) == 1
+    cmd = facade.submitted[0]
+    assert cmd.kind == kind
+    assert dict(cmd.payload) == {
+        "contact_id": contact_id,
+        "adapter_id": mca_runtime.ADAPTER_ID,
+    }
+
+
+def test_list_contacts_returns_allowlist_serialized_bindings_in_order(monkeypatch):
+    facade = _FakeFacade(recipient=RecipientSnapshot(by_address={
+        "!bbbbbbbb": _binding("!bbbbbbbb", AddressStatus.MCA_READY, key_epoch=2),
+        "!aaaaaaaa": _binding(
+            "!aaaaaaaa", AddressStatus.KEY_CHANGED,
+            fingerprint="a" * 64, pending_fingerprint="b" * 64, pending_key_epoch=3,
+        ),
+    }))
+    c = _client(monkeypatch, facade)
+    resp = c.get("/api/mca/contacts")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["ok"] is True
+    # Deterministic contact_id-ascending order, and only the allowlist fields
+    # (§11) - never a `public_identity` bytes field.
+    assert [x["contact_id"] for x in body["contacts"]] == ["!aaaaaaaa", "!bbbbbbbb"]
+    first, second = body["contacts"]
+    assert first == {
+        "contact_id": "!aaaaaaaa",
+        "adapter_id": "meshtastic",
+        "key_id": "1" * 16,
+        "status": "key_changed",
+        "fingerprint": "a" * 64,
+        "key_epoch": 0,
+        "pending_fingerprint": "b" * 64,
+        "pending_key_epoch": 3,
+    }
+    assert second["status"] == "trusted"
+    assert second["key_epoch"] == 2
+    assert second["pending_fingerprint"] is None
+    assert "public_identity" not in first
+
+
+def test_list_contacts_empty_snapshot_is_200_empty_list(monkeypatch):
+    c = _client(monkeypatch, _FakeFacade(recipient=RecipientSnapshot(by_address={})))
+    resp = c.get("/api/mca/contacts")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"ok": True, "contacts": []}
+
+
+def test_list_contacts_is_503_when_facade_missing(monkeypatch):
+    c = _client(monkeypatch, None)
+    resp = c.get("/api/mca/contacts")
+    assert resp.status_code == 503
+    assert resp.get_json()["error_code"] == "mca_not_ready"
+
+
+@pytest.mark.parametrize("path,kwargs,kind,status", [
+    ("/confirm", {}, "contact_confirm", AddressStatus.KEY_UNVERIFIED),
+    ("/key-change/accept", {}, "contact_accept_key_change", AddressStatus.KEY_CHANGED),
+    ("/key-change/reject", {}, "contact_reject_key_change", AddressStatus.KEY_CHANGED),
+])
+def test_trust_mutation_enqueues_when_precondition_holds(monkeypatch, path, kwargs, kind, status):
+    facade = _FakeFacade(recipient=_recipient_at(CONTACT_ID, status))
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/mca/contacts/{CONTACT_ID}{path}", **kwargs)
+    assert resp.status_code == 202
+    _assert_trust_202(resp.get_json(), facade, CONTACT_ID, kind)
+
+
+@pytest.mark.parametrize("path", ["/confirm", "/key-change/accept", "/key-change/reject"])
+def test_trust_mutation_is_503_when_facade_missing(monkeypatch, path):
+    c = _client(monkeypatch, None)
+    resp = c.post(f"/api/mca/contacts/{CONTACT_ID}{path}")
+    assert resp.status_code == 503
+    assert resp.get_json()["error_code"] == "mca_not_ready"
+
+
+@pytest.mark.parametrize("path", ["/confirm", "/key-change/accept", "/key-change/reject"])
+@pytest.mark.parametrize("contact_id", ["not-hex", "!756F9960", "756f9960", "!gggggggg"])
+def test_trust_mutation_rejects_a_malformed_contact_id(monkeypatch, path, contact_id):
+    c = _client(monkeypatch, _FakeFacade())
+    resp = c.post(f"/api/mca/contacts/{contact_id}{path}")
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_contact_id"
+
+
+@pytest.mark.parametrize("path", ["/confirm", "/key-change/accept", "/key-change/reject"])
+def test_trust_mutation_rejects_a_nonempty_body(monkeypatch, path):
+    facade = _FakeFacade(recipient=_recipient_at(CONTACT_ID, AddressStatus.KEY_UNVERIFIED))
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/mca/contacts/{CONTACT_ID}{path}", json={"extra": True})
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_metadata"
+    assert facade.submitted == []
+
+
+@pytest.mark.parametrize("path", ["/confirm", "/key-change/accept", "/key-change/reject"])
+def test_trust_mutation_is_404_for_an_unknown_contact(monkeypatch, path):
+    c = _client(monkeypatch, _FakeFacade(recipient=RecipientSnapshot(by_address={})))
+    resp = c.post(f"/api/mca/contacts/{CONTACT_ID}{path}")
+    assert resp.status_code == 404
+    assert resp.get_json()["error_code"] == "contact_not_found"
+
+
+@pytest.mark.parametrize("path,bad_statuses", [
+    ("/confirm", [AddressStatus.MCA_READY, AddressStatus.KEY_CHANGED]),
+    ("/key-change/accept", [AddressStatus.MCA_READY, AddressStatus.KEY_UNVERIFIED]),
+    ("/key-change/reject", [AddressStatus.MCA_READY, AddressStatus.KEY_UNVERIFIED]),
+])
+def test_trust_mutation_is_409_when_precondition_fails(monkeypatch, path, bad_statuses):
+    for bad in bad_statuses:
+        facade = _FakeFacade(recipient=_recipient_at(CONTACT_ID, bad))
+        c = _client(monkeypatch, facade)
+        resp = c.post(f"/api/mca/contacts/{CONTACT_ID}{path}")
+        assert resp.status_code == 409
+        body = resp.get_json()
+        assert body["error_code"] == "invalid_state_transition"
+        assert "status" in body
+        assert facade.submitted == []
+
+
+@pytest.mark.parametrize("path", ["/confirm", "/key-change/accept", "/key-change/reject"])
+def test_trust_mutation_queue_full_is_429(monkeypatch, path):
+    status = AddressStatus.KEY_UNVERIFIED if path == "/confirm" else AddressStatus.KEY_CHANGED
+    facade = _FakeFacade(recipient=_recipient_at(CONTACT_ID, status), queue_full=True)
+    c = _client(monkeypatch, facade)
+    resp = c.post(f"/api/mca/contacts/{CONTACT_ID}{path}")
+    assert resp.status_code == 429
+    assert resp.get_json()["error_code"] == "command_queue_full"
+    assert facade.submitted == []
 
 
 # ---- Step 1.6A.3B: idempotent multipart create (POST /api/attachments) -----
@@ -2129,6 +2291,10 @@ def test_create_untrusted_recipient_is_400_recipient_not_trusted(monkeypatch, tm
                     transport_address="!aaaaaaaa",
                     key_id="1" * 16,
                     status=status,
+                    fingerprint="0" * 64,
+                    key_epoch=0,
+                    pending_fingerprint=None,
+                    pending_key_epoch=None,
                 )
             }
         ),

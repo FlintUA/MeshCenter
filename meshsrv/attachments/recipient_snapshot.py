@@ -33,11 +33,13 @@ there, never silently accepted.
 
 No-secret discipline (§11), enforced by construction: the published snapshot
 carries only the *public identifiers* of a binding - `adapter_id`,
-`transport_address`, `key_id`, and the derived `status`. The recipient's
-`public_identity` bytes are never projected here: the worker resolves the
-real key material from the live binding at commit time, never from anything
-a browser supplied. A request thread can at most *name* a recipient address
-it wants to send to; it cannot inject, read, or bypass the binding's key.
+`transport_address`, `key_id`, the derived `status`, and the derived,
+non-secret `fingerprint`/`pending_fingerprint` (full SHA-256 hex digests, not
+the raw bytes). The recipient's `public_identity` bytes are never projected
+here: the worker resolves the real key material from the live binding at
+commit time, never from anything a browser supplied. A request thread can at
+most *name* a recipient address it wants to send to; it cannot inject, read,
+or bypass the binding's key.
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ import threading
 import types
 from typing import Dict, List, Mapping, Optional
 
+from meshsrv.attachments.identity import compute_fingerprint
 from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator, RecipientBinding
 
 
@@ -64,14 +67,19 @@ class RecipientRejectionReason(str, enum.Enum):
 @dataclasses.dataclass(frozen=True)
 class RecipientBindingSnapshot:
     """The immutable request-thread-readable projection of one TOFU binding.
-    Public identifiers only - never `public_identity` (see module docstring).
-    `key_id` is the binding's `sender_key_id` (the MCA key id a
-    `sender.RecipientTarget` is built from)."""
+    Public identifiers and derived non-secret digests only - never the raw
+    `public_identity` bytes (see module docstring). `key_id` is the binding's
+    `sender_key_id` (the MCA key id a `sender.RecipientTarget` is built from);
+    `fingerprint`/`pending_fingerprint` are full SHA-256 hex digests."""
 
     adapter_id: str
     transport_address: str
     key_id: str
     status: AddressStatus
+    fingerprint: str
+    key_epoch: int
+    pending_fingerprint: Optional[str]
+    pending_key_epoch: Optional[int]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -143,6 +151,14 @@ class RecipientSnapshotPublisher:
                 transport_address=binding.transport_address,
                 key_id=binding.sender_key_id,
                 status=binding.status,
+                fingerprint=compute_fingerprint(binding.public_identity),
+                key_epoch=binding.key_epoch,
+                pending_fingerprint=(
+                    compute_fingerprint(binding.pending_public_identity)
+                    if binding.pending_public_identity is not None
+                    else None
+                ),
+                pending_key_epoch=binding.pending_key_epoch,
             )
         fresh = RecipientSnapshot(by_address=by_address)
         with self._lock:

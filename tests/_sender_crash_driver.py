@@ -28,6 +28,8 @@ import signal
 import sqlite3
 import sys
 
+import requests
+
 sys.path.insert(0, os.getcwd())
 
 from meshsrv.attachments import codec, identity, sender  # noqa: E402
@@ -135,7 +137,16 @@ def main() -> int:
     else:
         attachment_id = attachment_id_arg
 
-    relay_client = RelayClient(relay_base_url, upload_access_token=upload_access_token)
+    # The parent test serves a plain-HTTP loopback mock Relay, which the
+    # production §12 SSRF default transport (HTTPS-only, globally-routable,
+    # IP-pinned) correctly rejects. Inject a bare session so this driver
+    # exercises the sender's real crash-recovery path against that local
+    # mock rather than failing at RelayClient construction.
+    relay_client = RelayClient(
+        relay_base_url,
+        upload_access_token=upload_access_token,
+        session=requests.Session(),
+    )
     delivery_adapter = LoggingTextAdapter(sent_log_path)
 
     for _ in range(30):

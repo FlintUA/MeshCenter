@@ -16,7 +16,7 @@ import sqlite3
 import pytest
 from nacl.signing import SigningKey
 
-from meshsrv.attachments import identity, manifest, sender
+from meshsrv.attachments import codec, identity, manifest, sender
 from meshsrv.attachments.db import migrations
 from meshsrv.attachments.delivery.fakes import FakeTextAdapter, InMemoryEther
 from meshsrv.attachments.relay.mock_server import MockRelayStore, create_mock_relay_app
@@ -247,11 +247,18 @@ def test_full_happy_path_reaches_sent_then_downloaded(conn, wsm, principal, reci
     assert len(events) == 1
     assert events[0]["text"].startswith("MCA1:")
 
-    assert sender.on_ack_received(conn, attachment_id) == sender.RECEIVED
-    assert sender.on_ack_downloaded(conn, attachment_id) == sender.DOWNLOADED
+    assert sender.apply_ack(conn, attachment_id, codec.MessageType.ACK_RECEIVED) == sender.RECEIVED
+    assert sender.apply_ack(conn, attachment_id, codec.MessageType.ACK_DOWNLOADED) == sender.DOWNLOADED
 
     # sender-side transient key material is cleared once fully downloaded
     assert sender._get_sender_state(conn, attachment_id) is None
+
+    # ... but the retained revoke capability survives the download, so a
+    # post-download revoke is still possible (ADR-0009 Decision 5).
+    revoke_row = conn.execute(
+        "SELECT revoke_token FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone()
+    assert revoke_row is not None and revoke_row[0] is not None
 
 
 def test_validation_fails_on_missing_source_file(conn, wsm, principal, recipient, tmp_path, relay_client):
@@ -291,19 +298,189 @@ def test_queued_upload_stays_put_when_network_unavailable(conn, wsm, principal, 
     assert new_state == sender.QUEUED_UPLOAD
 
 
-def test_on_ack_received_requires_sent_state(conn, wsm, principal, recipient, tmp_path):
+def test_ack_received_on_draft_is_dropped_not_raised(conn, wsm, principal, recipient, tmp_path):
+    """ADR-0009 Decision 4: apply_ack() is monotonic and idempotent - a stray
+    ACK_RECEIVED against a still-DRAFT attachment is *dropped* (state
+    unchanged, no exception), never treated as a caller error. Mesh delivery
+    is unordered, so a real wire consumer will hit out-of-order ACKs and must
+    not blow up."""
     attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
-    with pytest.raises(sender.SenderError):
-        sender.on_ack_received(conn, attachment_id)
+    assert sender.get_state(conn, attachment_id) == sender.DRAFT
+    assert sender.apply_ack(conn, attachment_id, codec.MessageType.ACK_RECEIVED) == sender.DRAFT
+    assert sender.get_state(conn, attachment_id) == sender.DRAFT
 
 
-def test_on_ack_downloaded_requires_received_state(conn, wsm, principal, recipient, tmp_path, relay_client):
+def test_ack_downloaded_on_sent_applies_received_then_downloaded(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0009 Decision 4: ACK_DOWNLOADED arriving without a preceding
+    ACK_RECEIVED (lost/reordered on the mesh) still carries SENT all the way
+    to DOWNLOADED - the exact tolerance the old on_ack_downloaded() (which
+    required state == RECEIVED exactly and raised otherwise) did not have."""
     attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
     ether = InMemoryEther()
     adapter = FakeTextAdapter(ether, "sender-addr")
     _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+    assert sender.apply_ack(conn, attachment_id, codec.MessageType.ACK_DOWNLOADED) == sender.DOWNLOADED
+    assert sender.get_state(conn, attachment_id) == sender.DOWNLOADED
+
+
+def test_create_draft_fails_closed_on_non_32_byte_identity(conn, wsm, principal, recipient, tmp_path):
+    """ADR-0009 Decision 2/6: a draft handed a public_identity that is not
+    exactly 32 bytes is refused now (it could never be ACK-verified later),
+    not stored as an unverifiable transfer."""
+    _, pub, key_id = recipient
+    source_path = tmp_path / "a.txt"
+    source_path.write_bytes(b"hello")
     with pytest.raises(sender.SenderError):
-        sender.on_ack_downloaded(conn, attachment_id)
+        sender.create_draft(
+            conn, wsm, principal, workspace_id="local", source_path=str(source_path), file_name="a.txt",
+            mime_type="text/plain", recipients=[sender.RecipientTarget(public_identity=b"\x00" * 31, key_id=key_id)],
+            adapter_id="fake-text", connector_profile_id="default", route_type="DIRECT", route_id="r",
+            provider_id=b"\x01" * 8,
+        )
+
+
+def test_create_draft_fails_closed_on_mismatched_key_id(conn, wsm, principal, recipient, tmp_path):
+    """ADR-0009 Decision 2/6: a draft whose recipient key_id does not derive
+    from its public_identity is refused - the pinned-key check at ACK time
+    would never match, so the draft fails closed at creation instead."""
+    _, pub, _ = recipient
+    source_path = tmp_path / "a.txt"
+    source_path.write_bytes(b"hello")
+    with pytest.raises(sender.SenderError):
+        sender.create_draft(
+            conn, wsm, principal, workspace_id="local", source_path=str(source_path), file_name="a.txt",
+            mime_type="text/plain", recipients=[sender.RecipientTarget(public_identity=pub, key_id="deadbeefdeadbeef")],
+            adapter_id="fake-text", connector_profile_id="default", route_type="DIRECT", route_id="r",
+            provider_id=b"\x01" * 8,
+        )
+
+
+def test_create_draft_fails_closed_on_multi_recipient(conn, wsm, principal, recipient, tmp_path):
+    """ADR-0009 Stage 1 scope: exactly one recipient, one DIRECT delivery.
+    A multi-recipient draft has no inbound-ACK semantics defined yet, so it
+    fails closed rather than being half-supported."""
+    _, pub, key_id = recipient
+    source_path = tmp_path / "a.txt"
+    source_path.write_bytes(b"hello")
+    with pytest.raises(sender.SenderError):
+        sender.create_draft(
+            conn, wsm, principal, workspace_id="local", source_path=str(source_path), file_name="a.txt",
+            mime_type="text/plain",
+            recipients=[
+                sender.RecipientTarget(public_identity=pub, key_id=key_id),
+                sender.RecipientTarget(public_identity=pub, key_id=key_id),
+            ],
+            adapter_id="fake-text", connector_profile_id="default", route_type="DIRECT", route_id="r",
+            provider_id=b"\x01" * 8,
+        )
+
+
+def test_revoke_state_materialized_on_ready_to_send(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0009 Decision 5: the retained revoke capability is written at the
+    READY_TO_SEND transition (the first point both revoke_token and
+    hard_expires_at are known), so a later ACK_DOWNLOADED can drop the
+    transient mca_sender_state without destroying the revoke token."""
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "sender-addr")
+    _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+    assert sender.get_state(conn, attachment_id) == sender.SENT
+
+    row = conn.execute(
+        "SELECT revoke_token, delete_after, created_at, updated_at "
+        "FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone()
+    assert row is not None
+    revoke_token, delete_after, created_at, updated_at = row
+    # The token matches the transient row's own; delete_after is a decimal
+    # epoch-string bound (hard_expires_at + download_grace).
+    assert revoke_token == sender._get_sender_state(conn, attachment_id)["revoke_token"]
+    assert isinstance(delete_after, str) and delete_after.isdigit()
+    assert int(delete_after) > 0
+    assert created_at is not None and updated_at is not None
+
+
+def test_ack_downloaded_retains_revoke_state_after_sender_state_dropped(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0009 Decision 5: the ACK_DOWNLOADED path deletes the transient
+    mca_sender_state row (its encryption/upload secrets are now useless) but
+    *preserves* mca_sender_revoke_state, so a post-download revoke still has
+    its token."""
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "sender-addr")
+    _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+    revoke_token_before = sender._get_sender_state(conn, attachment_id)["revoke_token"]
+
+    assert sender.apply_ack(conn, attachment_id, codec.MessageType.ACK_DOWNLOADED) == sender.DOWNLOADED
+    assert sender._get_sender_state(conn, attachment_id) is None  # transient row gone
+
+    retained = conn.execute(
+        "SELECT revoke_token FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone()
+    assert retained is not None and retained[0] == revoke_token_before
+
+
+def test_ack_provider_unknown_is_non_terminal_and_recovers(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0009 Decision 4a: ACK_PROVIDER_UNKNOWN leaves the attachment SENT
+    (not a terminal state) with a non-terminal error_code, and a later
+    ACK_RECEIVED/ACK_DOWNLOADED still transitions cleanly."""
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "sender-addr")
+    _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+
+    assert sender.apply_ack(conn, attachment_id, codec.MessageType.ACK_PROVIDER_UNKNOWN) == sender.SENT
+    assert sender.get_state(conn, attachment_id) == sender.SENT
+    row = conn.execute("SELECT error_code FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+    assert row[0] == sender.PROVIDER_UNKNOWN_ERROR
+    # Retained upload + revoke capability - the object may still be fetched.
+    assert sender._get_sender_state(conn, attachment_id) is not None
+
+    # A later ACK_RECEIVED still transitions cleanly (never regressed).
+    assert sender.apply_ack(conn, attachment_id, codec.MessageType.ACK_RECEIVED) == sender.RECEIVED
+
+
+def test_cancel_deletes_revoke_state(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0009 Decision 5a: a confirmed cancel retires both secret tables -
+    the transient row and the retained revoke capability."""
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "sender-addr")
+    _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone() is not None
+
+    # cancel() from SENT raises (only pre-send drafts are cancellable) - use a
+    # fresh draft that hasn't reached SENT, and drive it only to READY_TO_SEND
+    # so a revoke-state row exists before the cancel.
+    attachment_id2, _ = _draft(conn, wsm, principal, recipient, tmp_path, file_name="b.txt", route_id="receiver2")
+    _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id2, {sender.READY_TO_SEND})
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id2,)
+    ).fetchone() is not None
+
+    assert sender.cancel(conn, attachment_id2) == sender.CANCELLED
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id2,)
+    ).fetchone() is None
+
+
+def test_revoke_deletes_revoke_state(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0009 Decision 5a: a confirmed revoke retires both secret tables."""
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "sender-addr")
+    _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone() is not None
+
+    assert sender.revoke(conn, attachment_id) == sender.REVOKED
+    assert sender._get_sender_state(conn, attachment_id) is None
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone() is None
 
 
 def test_cancel_from_draft_and_rejects_from_sent(conn, wsm, principal, recipient, tmp_path, relay_client):

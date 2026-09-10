@@ -43,7 +43,7 @@ from meshsrv.attachments.provider_registry import (
 from meshsrv.attachments.relay.mock_server import MockRelayStore, create_mock_relay_app
 from meshsrv.attachments.relay_client import RelayClient, RelayHTTPError, RelayInfo, RelayLimits
 from meshsrv.attachments.relay_http import RelayNetworkError
-from meshsrv.attachments.service import AttachmentsService, _provider_id_text
+from meshsrv.attachments.service import AttachmentsService, InboundEvent, _provider_id_text
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
 
@@ -365,9 +365,12 @@ def test_tick_drives_a_draft_all_the_way_to_sent(conn, wsm, principal, registere
 def test_recipient_identity_is_re_resolved_from_bindings_not_reused(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, service):
     """Nothing in this test process ever holds `recipient_principal`'s
     public_identity in memory once create_draft() returns - the service
-    must re-derive it from key_exchange bindings at ENCRYPTING time
-    (sender.py's own docstring: it deliberately doesn't persist that
-    value a second time)."""
+    must re-derive it from key_exchange bindings at ENCRYPTING time. The
+    identity IS now also pinned on `attachment_recipients.
+    recipient_public_identity` (ADR-0009/Migration 14), but that copy is for
+    inbound-ACK verification, not the ENCRYPTING seal - the seal still
+    re-resolves the currently-trusted binding so a key rotation fails closed
+    rather than re-encrypting to a stale key."""
     _, _, recipient_principal = remote_recipient
     _bind_recipient(conn, recipient_principal)
     attachment_id = _create_draft(conn, wsm, principal, recipient_principal=recipient_principal, registered_provider=registered_provider, tmp_path=tmp_path)
@@ -2505,3 +2508,187 @@ def test_command_delete_local_content_unlink_failure_is_content_missing(
 
     assert outcome.error_code == "content_missing"
     assert _saved_path_of(conn, attachment_id) is not None  # row unchanged
+
+
+# --------------------------------------------------------------------------
+# ADR-0009 v2: signed inbound ACK routing (Decisions 2/3/4/4a/7/8). These
+# drive the *worker-side* path - an ACK enqueued as an InboundEvent and
+# drained by service.tick() - never sender.apply_ack() directly, to prove the
+# routing/verification sequence (transfer lookup -> cardinality -> source
+# route -> pinned key -> signature -> apply) is what actually gates the write.
+# --------------------------------------------------------------------------
+
+
+def _create_ack_draft(conn, wsm, principal, recipient_principal, registered_provider, tmp_path, *, connector_profile_id, route_id="remote-addr"):
+    source_path = tmp_path / "ack-outgoing.txt"
+    source_path.write_bytes(b"hello ack")
+    return sender.create_draft(
+        conn, wsm, principal,
+        workspace_id="local",
+        source_path=str(source_path),
+        file_name="ack-outgoing.txt",
+        mime_type="text/plain",
+        recipients=[sender.RecipientTarget(public_identity=recipient_principal.public_identity, key_id=recipient_principal.key_id)],
+        adapter_id=ADAPTER_ID,
+        connector_profile_id=connector_profile_id,
+        route_type="DIRECT",
+        route_id=route_id,
+        provider_id=_raw_provider_id(registered_provider),
+    )
+
+
+def _drive_sent(conn, wsm, principal, relay_client, recipient_principal, attachment_id):
+    recipient_identities = {recipient_principal.key_id: recipient_principal.public_identity}
+    sender_adapter = FakeTextAdapter(InMemoryEther(), "sender-side")
+    for _ in range(20):
+        if sender.get_state(conn, attachment_id) == sender.SENT:
+            break
+        sender.run_step(
+            conn, workspace_manager=wsm, principal=principal,
+            recipient_identities=recipient_identities, relay_client=relay_client,
+            delivery_adapter=sender_adapter, attachment_id=attachment_id,
+        )
+    assert sender.get_state(conn, attachment_id) == sender.SENT
+    row = conn.execute("SELECT transfer_id FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+    return bytes.fromhex(row[0])
+
+
+def _ack_event(recipient_wsm, recipient_principal, message_type, transfer_id, source_address="remote-addr"):
+    """A signed, MCA1-TEXT-encoded inbound ACK as the recipient would send it,
+    wrapped as the InboundEvent the listener would enqueue."""
+    signing_key = identity.load_signing_key(recipient_wsm, recipient_principal)
+    ack_cbor = codec.encode_simple_ack(message_type, transfer_id, signing_key)
+    return InboundEvent(text=codec.to_text(ack_cbor), source_address=source_address, packet_id="p1", received_at=time.time())
+
+
+def _sent_ack_fixture(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service):
+    """Bind the recipient, create + drive a draft to SENT whose delivery row's
+    connector_profile_id matches the service's own adapter (so the source-route
+    check can pass), and return (attachment_id, transfer_id, recipient_wsm,
+    recipient_principal)."""
+    _, recipient_wsm, recipient_principal = remote_recipient
+    _bind_recipient(conn, recipient_principal, transport_address="remote-addr")
+    connector_profile_id = service._delivery_adapter.connector_profile_id
+    attachment_id = _create_ack_draft(
+        conn, wsm, principal, recipient_principal, registered_provider, tmp_path,
+        connector_profile_id=connector_profile_id,
+    )
+    transfer_id = _drive_sent(conn, wsm, principal, relay_client, recipient_principal, attachment_id)
+    return attachment_id, transfer_id, recipient_wsm, recipient_principal
+
+
+def test_inbound_ack_received_routes_and_applies(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service):
+    attachment_id, transfer_id, recipient_wsm, recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.ACK_RECEIVED, transfer_id))
+    service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.RECEIVED
+
+
+def test_inbound_ack_downloaded_routes_and_applies(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service):
+    attachment_id, transfer_id, recipient_wsm, recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.ACK_DOWNLOADED, transfer_id))
+    service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.DOWNLOADED
+    # Transient sender state dropped, retained revoke capability preserved.
+    assert sender._get_sender_state(conn, attachment_id) is None
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone() is not None
+
+
+def test_inbound_ack_provider_unknown_marks_non_terminal(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service):
+    attachment_id, transfer_id, recipient_wsm, recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.ACK_PROVIDER_UNKNOWN, transfer_id))
+    service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.SENT  # not terminal
+    row = conn.execute("SELECT error_code FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+    assert row[0] == sender.PROVIDER_UNKNOWN_ERROR
+
+
+def test_inbound_ack_wrong_signature_is_dropped(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service):
+    attachment_id, transfer_id, recipient_wsm, recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    # Sign with a *different*, unrelated key - the pinned identity must reject it.
+    impostor_key = identity.load_signing_key(wsm, principal)  # the sender's own key, not the recipient's
+    ack_cbor = codec.encode_simple_ack(codec.MessageType.ACK_RECEIVED, transfer_id, impostor_key)
+    service.enqueue_inbound(InboundEvent(text=codec.to_text(ack_cbor), source_address="remote-addr", packet_id="p1", received_at=time.time()))
+    service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.SENT  # unchanged
+
+
+def test_inbound_ack_pinned_key_missing_is_dropped(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service):
+    attachment_id, transfer_id, recipient_wsm, recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    # A pre-migration (or somehow unverifiable) transfer with no pinned identity.
+    conn.execute("UPDATE attachment_recipients SET recipient_public_identity = NULL WHERE attachment_id = ?", (attachment_id,))
+    conn.commit()
+    service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.ACK_RECEIVED, transfer_id))
+    service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.SENT  # unchanged
+
+
+def test_inbound_ack_source_route_mismatch_is_dropped(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service):
+    attachment_id, transfer_id, recipient_wsm, recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    # A validly-signed ACK arriving over a *different* source route must not apply.
+    service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.ACK_RECEIVED, transfer_id, source_address="some-other-route"))
+    service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.SENT  # unchanged
+
+
+def test_inbound_ack_unknown_transfer_is_dropped(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service, caplog):
+    import logging
+    _, recipient_wsm, recipient_principal = remote_recipient
+    unknown_transfer_id = b"\x11" * 16
+    with caplog.at_level(logging.WARNING, logger="meshsrv.attachments.service"):
+        service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.ACK_RECEIVED, unknown_transfer_id))
+        service.tick()
+    assert any("unknown_transfer" in record.message for record in caplog.records)
+
+
+def test_inbound_ack_tombstoned_transfer_is_dropped(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service, caplog):
+    import logging
+    from meshsrv.attachments.db.tombstones import record_tombstone
+    _, recipient_wsm, recipient_principal = remote_recipient
+    stale_transfer_id = b"\x22" * 16
+    record_tombstone(conn, transfer_id=stale_transfer_id.hex(), workspace_id="local", reason="revoked")
+    with caplog.at_level(logging.INFO, logger="meshsrv.attachments.service"):
+        service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.ACK_RECEIVED, stale_transfer_id))
+        service.tick()
+    assert any("tombstoned_transfer" in record.message for record in caplog.records)
+
+
+def test_inbound_ack_sends_no_radio_response(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service):
+    """ADR-0009 Decision 8: an ACK is the end of a conversation - the worker
+    must never send anything back over the radio, valid or not."""
+    attachment_id, transfer_id, recipient_wsm, recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    ether = service._delivery_adapter._ether
+    service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.ACK_RECEIVED, transfer_id))
+    service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.RECEIVED  # it *did* apply
+    # ... but nothing was sent back to the ACK's source (or anywhere else).
+    assert ether.drain("remote-addr") == []
+
+
+def test_inbound_ack_is_enqueue_only_until_tick(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service):
+    """The listener->worker boundary holds for ACKs too: enqueuing an ACK must
+    not mutate sender state; only the worker's tick applies it (Decision 1)."""
+    attachment_id, transfer_id, recipient_wsm, recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    assert service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.ACK_RECEIVED, transfer_id)) is True
+    # No tick yet -> still SENT (the enqueue path never writes).
+    assert sender.get_state(conn, attachment_id) == sender.SENT
+    service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.RECEIVED

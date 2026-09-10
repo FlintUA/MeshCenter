@@ -144,16 +144,22 @@ class FakeTextAdapter(DeliveryAdapter):
             logical_message = codec.from_text(text)
         except codec.CodecError as exc:
             raise DeliveryError(f"fake-text ingest: malformed MCA1-TEXT payload: {exc}") from exc
+        # Mirror MeshtasticTextAdapter.ingest()'s transport_event contract
+        # (`source_address`/`packet_id`/`received_at`, as built by the
+        # service's `_process_one_inbound_event()`), with a `from`/
+        # `idempotency_key` fallback so the fake-to-fake `send`->ether->
+        # `ingest` contract tests keep working unchanged.
+        source_address = transport_event.get("source_address") or transport_event.get("from")
         return DeliveryEnvelope(
             logical_message=logical_message,
             wire_format=WireFormat.MCA1_TEXT,
             adapter_id=self.adapter_id,
             connector_profile_id=self._own_address,
             route_type=RouteType.DIRECT,
-            route_id=str(transport_event.get("from", "")),
-            source_address=transport_event.get("from"),
-            external_message_id=transport_event.get("idempotency_key"),
-            received_at=time.time(),
+            route_id=str(source_address) if source_address else "",
+            source_address=source_address,
+            external_message_id=transport_event.get("packet_id", transport_event.get("idempotency_key")),
+            received_at=transport_event.get("received_at", time.time()),
             transport_metadata={},
         )
 
@@ -236,16 +242,20 @@ class FakeBinaryAdapter(DeliveryAdapter):
         except codec.CodecError as exc:
             raise DeliveryError(f"fake-binary ingest: malformed MCA1-CBOR payload: {exc}") from exc
         route_type = transport_event.get("route_type", RouteType.DIRECT)
+        # Same contract mirroring as FakeTextAdapter.ingest(): prefer the
+        # service's `source_address`/`packet_id` keys, fall back to the
+        # fake-to-fake `from`/`idempotency_key` shape.
+        source_address = transport_event.get("source_address") or transport_event.get("from")
         return DeliveryEnvelope(
             logical_message=logical_message,
             wire_format=WireFormat.MCA1_CBOR,
             adapter_id=self.adapter_id,
             connector_profile_id=self._own_address,
             route_type=route_type,
-            route_id=str(transport_event.get("from", "")),
-            source_address=transport_event.get("from"),
-            external_message_id=transport_event.get("idempotency_key"),
-            received_at=time.time(),
+            route_id=str(source_address) if source_address else "",
+            source_address=source_address,
+            external_message_id=transport_event.get("packet_id", transport_event.get("idempotency_key")),
+            received_at=transport_event.get("received_at", time.time()),
             transport_metadata={},
         )
 

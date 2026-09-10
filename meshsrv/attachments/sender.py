@@ -89,12 +89,46 @@ TERMINAL_STATES = frozenset(
 )
 # States run_step() can make forward progress on by itself, without
 # waiting for an external event (an inbound ACK, a UI "send now" click).
-# SENT/RECEIVED are intentionally excluded - see on_ack_received()/
-# on_ack_downloaded().
+# SENT/RECEIVED are intentionally excluded - see apply_ack().
 AUTOMATIC_STATES = frozenset({DRAFT, VALIDATING, ENCRYPTING, QUEUED_UPLOAD, UPLOADING, READY_TO_SEND})
 
 DEFAULT_HARD_TTL_SECONDS = 72 * 3600  # design spec 14: hard_expiry = 72h
 DEFAULT_DOWNLOAD_GRACE_SECONDS = 3600  # design spec 14: download_grace = 1h
+
+# ADR-0009 (v2): the non-terminal error_code an ACK_PROVIDER_UNKNOWN stamps on
+# a still-SENT row (and its delivery). Deliberately NOT a terminal state - the
+# upload succeeded, the recipient's own Provider Registry simply didn't know the
+# provider this workspace named; a later ACK_RECEIVED/ACK_DOWNLOADED still
+# transitions cleanly (see `apply_ack()`).
+PROVIDER_UNKNOWN_ERROR = "recipient_provider_unknown"
+
+
+def revoke_state_ts(unix_seconds: float) -> str:
+    """On-disk TEXT timestamp format for `mca_sender_revoke_state`'s
+    `delete_after`/`created_at`/`updated_at` columns. The migration schema
+    (Migration 14) fixes these columns as TEXT; the value is the Unix epoch
+    second rendered as a decimal string, so the derivation from the
+    already-integer `attachments.hard_expires_at` stays transparent and the
+    worker's cleanup (`CAST(delete_after AS INTEGER) <= now`) never has to
+    parse an ISO-8601 string. Shared with Migration 14's backfill fixup so
+    the two can never drift into two encodings."""
+    return str(int(unix_seconds))
+
+
+def revoke_delete_after(
+    hard_expires_at: Optional[float],
+    download_grace_seconds: Optional[int],
+    now: float,
+) -> float:
+    """The epoch second after which the Relay object protected by a retained
+    revoke token is guaranteed gone (`hard_expires_at + download_grace_seconds`),
+    i.e. the `mca_sender_revoke_state.delete_after` bound. When
+    `hard_expires_at` is not yet known (None/<=0 - an in-flight row whose
+    commit() hasn't reported one), falls back to `now + DEFAULT_HARD_TTL_SECONDS`
+    as a conservative upper bound: a not-yet-committed object, once committed,
+    lives at most the hard TTL plus grace."""
+    hard = hard_expires_at if (hard_expires_at and hard_expires_at > 0) else (now + DEFAULT_HARD_TTL_SECONDS)
+    return hard + (download_grace_seconds or DEFAULT_DOWNLOAD_GRACE_SECONDS)
 
 KIND_GENERIC = 0
 
@@ -235,8 +269,26 @@ def create_draft(
 
     if not recipients:
         raise SenderError("a draft must have at least one recipient")
+    if len(recipients) != 1:
+        # Stage 1 scope (ADR-0009): exactly one recipient, one DIRECT
+        # delivery - a multi-recipient draft has no inbound-ACK semantics
+        # defined yet, so it fails closed rather than being half-supported.
+        raise SenderError(f"Stage 1 drafts require exactly one recipient, got {len(recipients)}")
     if len(provider_id) != 8:
         raise SenderError(f"provider_id must be 8 raw bytes, got {len(provider_id)}")
+    for recipient in recipients:
+        # ADR-0009 Decision 2/6: pin the recipient's exact Ed25519 public
+        # identity on the transfer, so a later inbound ACK is verified against
+        # the key this envelope was actually sealed to (never the *current*
+        # TOFU binding). Fail closed on a wrong-sized identity or a key_id
+        # that doesn't derive from it - a draft that can never be ACK-verified
+        # is refused now, not discovered later as an unverifiable transfer.
+        if len(recipient.public_identity) != 32:
+            raise SenderError(
+                f"recipient public_identity must be 32 raw bytes (Ed25519), got {len(recipient.public_identity)}"
+            )
+        if identity.compute_key_id(recipient.public_identity) != recipient.key_id:
+            raise SenderError("recipient key_id does not match the key id derived from its public_identity")
     comment = normalize_comment(comment)
 
     now = _now() if now is None else now
@@ -282,10 +334,11 @@ def create_draft(
     for recipient in recipients:
         conn.execute(
             """
-            INSERT INTO attachment_recipients (id, attachment_id, envelope_id, recipient_principal_id)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO attachment_recipients
+                (id, attachment_id, envelope_id, recipient_principal_id, recipient_public_identity)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (uuid.uuid4().hex, attachment_id, recipient.key_id, recipient.key_id),
+            (uuid.uuid4().hex, attachment_id, recipient.key_id, recipient.key_id, recipient.public_identity),
         )
     conn.execute(
         """
@@ -441,6 +494,31 @@ def _get_sender_state(conn: sqlite3.Connection, attachment_id: str) -> Optional[
     return conn.execute("SELECT * FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone()
 
 
+def _ensure_revoke_state(
+    conn: sqlite3.Connection,
+    attachment_id: str,
+    revoke_token: str,
+    hard_expires_at: Optional[float],
+    download_grace_seconds: Optional[int],
+    now: float,
+) -> None:
+    """ADR-0009 Decision 5: materialize (or refresh) the *retained* revoke
+    capability for an attachment whose Relay object is (about to be) committed.
+    Upsert-on-conflict so a crash-resume re-running the READY_TO_SEND
+    transition, or the ACK_DOWNLOADED path's defensive re-materialization, can
+    never duplicate the row. This row is deliberately NOT deleted on
+    ACK_DOWNLOADED - it is the one thing that keeps a post-download revoke
+    possible after `mca_sender_state` is dropped."""
+    delete_after = revoke_delete_after(hard_expires_at, download_grace_seconds, now)
+    conn.execute(
+        "INSERT INTO mca_sender_revoke_state "
+        "(attachment_id, revoke_token, delete_after, created_at, updated_at) VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(attachment_id) DO UPDATE SET revoke_token = excluded.revoke_token, "
+        "delete_after = excluded.delete_after, updated_at = excluded.updated_at",
+        (attachment_id, revoke_token, revoke_state_ts(delete_after), revoke_state_ts(now), revoke_state_ts(now)),
+    )
+
+
 def _step_encrypting(
     conn: sqlite3.Connection, principal: MCAPrincipal, row: sqlite3.Row, now: float, recipient_identities: dict
 ) -> str:
@@ -551,13 +629,21 @@ def _step_encrypting(
 
 def _public_identity_for(recipient_row: sqlite3.Row, recipient_identities: dict) -> bytes:
     """The recipient's raw 32-byte Ed25519 public identity, for sealing
-    their envelope. `attachment_recipients` deliberately has no
-    `public_identity` column of its own (it is receiver-lookup state that
-    already lives in `mca_recipient_bindings`, keyed by the same
-    `envelope_id`/key_id this row stores) - `run_step()` is handed the
-    mapping fresh on every ENCRYPTING call (`recipient_identities`) rather
-    than this module persisting a second copy of key material that
-    `key_exchange.py`/`mca_recipient_bindings` already owns."""
+    their envelope. Sealing uses the caller-supplied `recipient_identities`
+    mapping (re-resolved and trust-checked fresh on every ENCRYPTING call by
+    the service's `_resolve_recipient_identities()`), *not* a value read back
+    off the recipient row.
+
+    Note for ADR-0009: `attachment_recipients` now *does* carry a
+    `recipient_public_identity` column (added by Migration 14), but that
+    column exists for a different purpose - pinning the exact key an inbound
+    ACK is later verified against (`service._process_inbound_ack()`), which
+    must keep trusting the key this envelope was sealed to even after a
+    contact-key rotation. ENCRYPTING still goes through the caller's mapping
+    so it re-resolves the *currently-trusted* binding (and fails closed via
+    `fail_recipients_not_trusted()` when that binding is no longer
+    MCA_READY), rather than blindly re-encrypting to a key that may have
+    rotated since the draft was created."""
 
     key_id = recipient_row["envelope_id"]
     if key_id not in recipient_identities:
@@ -673,6 +759,16 @@ def _step_uploading(
         return FAILED_UPLOAD
 
     hard_expires_at = _parse_relay_timestamp(descriptor.hard_expires_at)
+    # ADR-0009 Decision 5: the Relay object is now committed - persist the
+    # retained revoke capability (revoke_token + a delete_after bound) *before*
+    # this attachment can ever reach SENT, so a later ACK_DOWNLOADED may delete
+    # the transient `mca_sender_state` without destroying the token a
+    # post-download revoke needs. Skipped only when the session somehow failed
+    # to hand back a revoke_token (nothing to retain).
+    if revoke_token is not None:
+        _ensure_revoke_state(
+            conn, attachment_id, revoke_token, hard_expires_at, row["download_grace_seconds"], now
+        )
     _set_state(
         conn,
         attachment_id,
@@ -817,24 +913,127 @@ def _step_ready_to_send(
 # ---- external events (driven by inbound ACKs, not run_step) ----------------
 
 
-def on_ack_received(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = None) -> str:
+def apply_ack(conn: sqlite3.Connection, attachment_id: str, message_type, now: Optional[float] = None) -> str:
+    """ADR-0009 Decision 4: verify-and-apply one inbound simple ACK against a
+    *sent* attachment, atomically and idempotently. `message_type` is one of
+    `codec.MessageType.ACK_RECEIVED` / `ACK_DOWNLOADED` / `ACK_PROVIDER_UNKNOWN`
+    (the caller has already peeked and signature-verified it). Returns the
+    resulting `attachments.state`; an out-of-order/duplicate/stale ACK is
+    *dropped* by returning the current state unchanged rather than raising, so
+    the worker's inbound dispatch can apply any ACK to any row with no
+    try/except around the state machine. Raises `SenderError` only for a
+    genuinely invalid input (unknown `attachment_id`, or a `message_type` that
+    is not an ACK - a programmer error, never a wire event)."""
     now = _now() if now is None else now
     row = _row(conn, attachment_id)
-    if row["state"] != SENT:
-        raise SenderError(f"attachment {attachment_id!r} is {row['state']!r}, not SENT - cannot record ACK_RECEIVED")
-    _set_state(conn, attachment_id, RECEIVED, now)
+    if message_type == codec.MessageType.ACK_RECEIVED:
+        return _apply_ack_received(conn, row, now)
+    if message_type == codec.MessageType.ACK_DOWNLOADED:
+        return _apply_ack_downloaded(conn, row, now)
+    if message_type == codec.MessageType.ACK_PROVIDER_UNKNOWN:
+        return _apply_ack_provider_unknown(conn, row, now)
+    raise SenderError(f"{message_type!r} is not an inbound-ACK message type")
+
+
+def _apply_ack_received(conn: sqlite3.Connection, row: sqlite3.Row, now: float) -> str:
+    """SENT -> RECEIVED (set received_at/ack_at if null, clear errors, one
+    timeline event); RECEIVED/DOWNLOADED -> no-op (duplicate/superseded); any
+    other state -> dropped (no write)."""
+    attachment_id = row["id"]
+    state = row["state"]
+    if state in (RECEIVED, DOWNLOADED):
+        return state
+    if state != SENT:
+        return state
+    delivery = _delivery_for(conn, attachment_id)
+    for recipient in _recipients_for(conn, attachment_id):
+        conn.execute(
+            "UPDATE attachment_recipients SET received_at = COALESCE(received_at, ?) WHERE id = ?",
+            (now, recipient["id"]),
+        )
+    conn.execute(
+        "UPDATE attachment_deliveries SET state = 'RECEIVED', ack_at = COALESCE(ack_at, ?), error_code = NULL "
+        "WHERE id = ?",
+        (now, delivery["id"]),
+    )
+    conn.execute("UPDATE attachments SET state = ?, error_code = NULL WHERE id = ?", (RECEIVED, attachment_id))
+    _record_event(conn, attachment_id, now, "ack_received", {"to": RECEIVED})
+    conn.commit()
     return RECEIVED
 
 
-def on_ack_downloaded(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = None) -> str:
-    now = _now() if now is None else now
-    row = _row(conn, attachment_id)
-    if row["state"] != RECEIVED:
-        raise SenderError(f"attachment {attachment_id!r} is {row['state']!r}, not RECEIVED - cannot record ACK_DOWNLOADED")
-    _set_state(conn, attachment_id, DOWNLOADED, now)
-    conn.execute("DELETE FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,))
+def _apply_ack_downloaded(conn: sqlite3.Connection, row: sqlite3.Row, now: float) -> str:
+    """SENT -> (apply RECEIVED, then) DOWNLOADED; RECEIVED -> DOWNLOADED;
+    DOWNLOADED -> no-op; any other state -> dropped. Deletes the transient
+    `mca_sender_state` row only after the revoke capability is durable (ADR-0009
+    Decision 5), preserving `mca_sender_revoke_state`."""
+    attachment_id = row["id"]
+    state = row["state"]
+    if state == DOWNLOADED:
+        return state
+    if state not in (SENT, RECEIVED):
+        return state
+    delivery = _delivery_for(conn, attachment_id)
+    for recipient in _recipients_for(conn, attachment_id):
+        conn.execute(
+            "UPDATE attachment_recipients SET received_at = COALESCE(received_at, ?), "
+            "downloaded_at = COALESCE(downloaded_at, ?) WHERE id = ?",
+            (now, now, recipient["id"]),
+        )
+    conn.execute(
+        "UPDATE attachment_deliveries SET state = 'DOWNLOADED', ack_at = COALESCE(ack_at, ?), error_code = NULL "
+        "WHERE id = ?",
+        (now, delivery["id"]),
+    )
+    conn.execute("UPDATE attachments SET state = ?, error_code = NULL WHERE id = ?", (DOWNLOADED, attachment_id))
+    _record_event(conn, attachment_id, now, "ack_downloaded", {"to": DOWNLOADED})
+    _delete_transient_sender_state_keeping_revoke(conn, row, now)
     conn.commit()
     return DOWNLOADED
+
+
+def _apply_ack_provider_unknown(conn: sqlite3.Connection, row: sqlite3.Row, now: float) -> str:
+    """SENT -> keep SENT, stamp a non-terminal `error_code` and delivery
+    `PROVIDER_UNKNOWN` (never a terminal state - ADR-0009 Decision 4a);
+    RECEIVED/DOWNLOADED -> ignored (never regress); any other state -> dropped.
+    Idempotent on the delivery already being PROVIDER_UNKNOWN. The upload and
+    revoke capability are retained - the object may still be fetched later."""
+    attachment_id = row["id"]
+    state = row["state"]
+    if state in (RECEIVED, DOWNLOADED):
+        return state
+    if state != SENT:
+        return state
+    delivery = _delivery_for(conn, attachment_id)
+    if delivery["state"] == "PROVIDER_UNKNOWN":
+        return state  # already applied - no second event, no re-write
+    conn.execute("UPDATE attachments SET error_code = ? WHERE id = ?", (PROVIDER_UNKNOWN_ERROR, attachment_id))
+    conn.execute(
+        "UPDATE attachment_deliveries SET state = 'PROVIDER_UNKNOWN', ack_at = COALESCE(ack_at, ?), "
+        "error_code = ? WHERE id = ?",
+        (now, PROVIDER_UNKNOWN_ERROR, delivery["id"]),
+    )
+    _record_event(conn, attachment_id, now, "ack_provider_unknown", {"to": SENT})
+    conn.commit()
+    return SENT
+
+
+def _delete_transient_sender_state_keeping_revoke(conn: sqlite3.Connection, row: sqlite3.Row, now: float) -> None:
+    """ADR-0009 Decision 5: before dropping the transient `mca_sender_state`
+    row (its encryption/upload secrets are useless once the recipient has the
+    object), make sure the retained revoke capability is durable. Normally the
+    READY_TO_SEND transition already wrote `mca_sender_revoke_state`; this
+    defensive re-materialization covers a row that somehow reached SENT without
+    one (a pre-migration row whose token was backfilled, or a crash between the
+    two writes). If there is no revoke_token at all, there is nothing to retain
+    and the transient row is simply dropped."""
+    sender_state = _get_sender_state(conn, row["id"])
+    revoke_token = sender_state["revoke_token"] if sender_state is not None else None
+    if revoke_token is not None:
+        _ensure_revoke_state(
+            conn, row["id"], revoke_token, row["hard_expires_at"], row["download_grace_seconds"], now
+        )
+    conn.execute("DELETE FROM mca_sender_state WHERE attachment_id = ?", (row["id"],))
 
 
 def cancel(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = None) -> str:
@@ -844,6 +1043,9 @@ def cancel(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = 
         raise SenderError(f"attachment {attachment_id!r} is {row['state']!r} - cannot cancel")
     _set_state(conn, attachment_id, CANCELLED, now)
     conn.execute("DELETE FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,))
+    # ADR-0009 Decision 5/5a: a confirmed cancel also retires the retained
+    # revoke capability - there is no Relay object left to revoke.
+    conn.execute("DELETE FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,))
     conn.commit()
     return CANCELLED
 
@@ -865,6 +1067,9 @@ def revoke(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = 
         )
     _set_state(conn, attachment_id, REVOKED, now)
     conn.execute("DELETE FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,))
+    # ADR-0009 Decision 5/5a: a confirmed revoke also retires the retained
+    # revoke capability (its one job is now done).
+    conn.execute("DELETE FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,))
     conn.commit()
     return REVOKED
 
@@ -892,9 +1097,12 @@ def run_step(
     ENCRYPTING: a `{key_id_hex: public_identity_bytes}` mapping for every
     recipient on this attachment, since ENCRYPTING is the one step that
     needs each recipient's raw 32-byte public identity to seal their
-    envelope, and this module deliberately does not persist that value a
-    second time (see `_public_identity_for()`'s docstring) - the caller
-    already has it from resolving `RecipientTarget`s for `create_draft()`.
+    envelope. The caller re-resolves that mapping from its current trusted
+    bindings on every ENCRYPTING call (see `_public_identity_for()`'s
+    docstring) - even though ADR-0009 now pins the identity on the
+    `attachment_recipients` row for inbound-ACK verification, ENCRYPTING
+    still goes through this fresh, trust-checked mapping rather than
+    re-encrypting to a possibly-rotated key.
     """
 
     now = _now() if now is None else now
@@ -922,8 +1130,8 @@ def run_step(
         return _step_ready_to_send(conn, principal, signing_key, delivery_adapter, row, now)
 
     # SENT/RECEIVED and every terminal state: nothing for run_step() to do
-    # on its own - progress from here is event-driven (on_ack_received /
-    # on_ack_downloaded) or already final.
+    # on its own - progress from here is event-driven (apply_ack, driven by
+    # an inbound ACK) or already final.
     return state
 
 

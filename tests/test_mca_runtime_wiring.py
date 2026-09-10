@@ -45,6 +45,7 @@ from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
 from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispatcher, CommandOutcome
 from meshsrv.attachments.facade import AttachmentsFacade, FacadeNotReady
 from meshsrv.attachments.idempotency import PendingReservation, PendingReservations
+from meshsrv.attachments.identity import compute_key_id
 from meshsrv.attachments.key_exchange import AddressStatus
 from meshsrv.attachments.probe_registry import ProbeRegistry
 from meshsrv.attachments.provider_registry import compute_provider_id, encode_provider_id
@@ -969,10 +970,14 @@ def _spool_path(state, attachment_id):
 
 
 def _trusted_binding():
+    public_identity = b"\x02" * 32
     return SimpleNamespace(
         status=AddressStatus.MCA_READY,
-        public_identity=b"\x02" * 32,
-        sender_key_id="1" * 16,
+        public_identity=public_identity,
+        # sender_key_id must derive from public_identity - ADR-0009's
+        # create_draft() now fails closed when it does not (compute_key_id),
+        # matching how key_exchange stores the two consistently.
+        sender_key_id=compute_key_id(public_identity),
     )
 
 

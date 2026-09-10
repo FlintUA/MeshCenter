@@ -1,8 +1,8 @@
 # MCAttach: File Transfer - Technical Reference
 
-**Status:** Living document, current as of the PR #231 review hardening pass (Stage 1, `mcattach-adr-0008-hardening` branch).
+**Status:** Living document, current as of the ADR-0009 v2 inbound-ACK routing work (`mcattach-adr-0009-inbound-ack-routing`).
 **Audience:** developers working on this codebase. For a non-technical explanation, see `MCAttach_File_Transfer_Plain_Language.md`. For multi-Relay specifics, see `MCAttach_Multi_Relay_Requirements.md`.
-**References:** ADR-0001 (wire protocol), ADR-0003 (SQLite exception for MCA state), ADR-0005 (Relay identity), ADR-0006 (sender state machine), ADR-0007 (receiver state machine), ADR-0008 (backend layer, plus its PR #231 amendment).
+**References:** ADR-0001 (wire protocol), ADR-0003 (SQLite exception for MCA state), ADR-0005 (Relay identity), ADR-0006 (sender state machine), ADR-0007 (receiver state machine), ADR-0008 (backend layer, plus its PR #231 amendment), ADR-0009 (signed inbound control messages — ACK routing, superseding the earlier PR #231 exclusions).
 
 ## 1. What MCAttach is
 
@@ -28,18 +28,19 @@ All MCA/1 messages are CBOR-encoded, either inlined as Base64URL text prefixed `
 | 10 | `EXPIRED` | An offer's hard expiry passed before completion. |
 | 11 | `KEY_ROTATE` | Announces a principal's key rotation. |
 
-**Implemented today:** `OFFER`, `KEY_REQUEST`, `KEY_ANNOUNCE`, `KEY_ACK` have real dispatch logic (`KeyExchangeCoordinator.handle_incoming()` for the key-exchange types, `receiver.handle_offer()` for `OFFER`). **Not implemented** (flagged, not silently missing - `mca_runtime.py`'s own module docstring, unchanged by this hardening pass): `ACK_RECEIVED`/`ACK_DOWNLOADED`/`ACK_PROVIDER_UNKNOWN`/`CANCEL`/`REJECTED`/`EXPIRED`/`KEY_ROTATE` have no production dispatch path yet - `sender.py`'s SENT state does not yet advance off a real inbound ACK. This is explicitly out of scope for the PR #231 review (its own exclusion list names sender-side inbound ACK routing and new terminal states as future work, likely ADR-0009).
+**Implemented today:** `OFFER`, `KEY_REQUEST`, `KEY_ANNOUNCE`, `KEY_ACK`, and — as of ADR-0009 v2 — the three sender-side simple ACKs `ACK_RECEIVED`/`ACK_DOWNLOADED`/`ACK_PROVIDER_UNKNOWN`. The ACKs are dispatched by `AttachmentsService._process_inbound_ack()` (worker thread, single owner of `conn`): each is decode-verified against the recipient public identity pinned on the exact transfer (`attachment_recipients.recipient_public_identity`, never the current TOFU binding), source-route-checked against the persisted DIRECT delivery row, then applied via `sender.apply_ack()` (see §3). `ACK_RECEIVED` advances `SENT → RECEIVED`; `ACK_DOWNLOADED` advances `SENT/RECEIVED → DOWNLOADED` and drops the transient `mca_sender_state` while retaining the `mca_sender_revoke_state` revoke capability; `ACK_PROVIDER_UNKNOWN` sets `error_code = recipient_provider_unknown` and is **non-terminal** (the attachment stays `SENT`, recoverable once the recipient's provider is corrected). **Not implemented** (flagged, not silently missing): `CANCEL`/`REJECTED`/`EXPIRED`/`KEY_ROTATE` still have no inbound dispatch path — those remain explicitly out of scope.
 
 ## 3. State machines
 
-### Sender (`meshsrv/attachments/sender.py`, ADR-0006)
+### Sender (`meshsrv/attachments/sender.py`, ADR-0006, ADR-0009)
 
 ```
-DRAFT -> VALIDATING -> ENCRYPTING -> QUEUED_UPLOAD -> UPLOADING -> READY_TO_SEND -> SENT
+DRAFT -> VALIDATING -> ENCRYPTING -> QUEUED_UPLOAD -> UPLOADING -> READY_TO_SEND -> SENT -> RECEIVED -> DOWNLOADED
                                                                       (terminal: FAILED_VALIDATION / FAILED_UPLOAD / FAILED_RADIO)
+                                                                      (terminal: EXPIRED / REVOKED / CANCELLED)
 ```
 
-`AUTOMATIC_STATES = {DRAFT, VALIDATING, ENCRYPTING, QUEUED_UPLOAD, UPLOADING, READY_TO_SEND}` - every non-terminal, non-`SENT` state `AttachmentsService`'s tick scan advances automatically via `run_step()`. `create_draft()` records the recipient key_id(s) and the delivery route (adapter/connector/route type/route id) at creation time; nothing after that call changes which Relay or which route an attachment uses.
+`AUTOMATIC_STATES = {DRAFT, VALIDATING, ENCRYPTING, QUEUED_UPLOAD, UPLOADING, READY_TO_SEND}` - every non-terminal, non-`SENT` state `AttachmentsService`'s tick scan advances automatically via `run_step()`. `SENT`/`RECEIVED` are deliberately **excluded** from the automatic scan: they advance only off a verified inbound ACK via `sender.apply_ack()` (ADR-0009, §2), never off the tick. `create_draft()` records the recipient key_id(s) **and pins the recipient's exact 32-byte Ed25519 public identity** (`attachment_recipients.recipient_public_identity`) plus the delivery route (adapter/connector/route type/route id) at creation time; nothing after that call changes which Relay, which route, or which key an attachment's ACK is verified against.
 
 ### Receiver (`meshsrv/attachments/receiver.py`, ADR-0007)
 

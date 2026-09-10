@@ -785,6 +785,68 @@ ALTER TABLE mca_key_exchange_contact_state DROP COLUMN last_request_sent_at;
 """
 
 
+# ADR-0009 (v2, signed inbound ACK routing). Two additive, fail-closed
+# changes, both needed so a *sent* attachment can later verify and apply an
+# inbound ACK and still be revocable after its transient sender state is gone:
+#
+# - `attachment_recipients.recipient_public_identity` - the exact 32-byte
+#   Ed25519 public identity the OFFER's envelope was sealed to, pinned at
+#   `create_draft()` time. ACK verification (ADR-0009 Decision 2) checks the
+#   inbound signature against this transfer-pinned key, never the *current*
+#   TOFU binding. Deliberately NOT backfilled: a pre-migration row with a
+#   NULL identity is an unverifiable transfer, and an inbound ACK for it is
+#   dropped (fail closed), never guessed at.
+# - `mca_sender_revoke_state` - the retained revoke capability, split out of
+#   `mca_sender_state` so the transient encryption/upload row can be deleted on
+#   ACK_DOWNLOADED without destroying the `revoke_token` a later revoke needs
+#   (ADR-0009 Decision 5). Timestamps are Unix epoch seconds rendered as
+#   decimal TEXT (the task's schema fixes these columns as TEXT); the worker's
+#   cleanup compares via `CAST(delete_after AS INTEGER)`.
+_MIGRATION_0014_UP = """
+ALTER TABLE attachment_recipients ADD COLUMN recipient_public_identity BLOB;
+
+CREATE TABLE mca_sender_revoke_state (
+    attachment_id TEXT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE,
+    revoke_token TEXT NOT NULL,
+    delete_after TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+_MIGRATION_0014_DOWN = """
+DROP TABLE IF EXISTS mca_sender_revoke_state;
+ALTER TABLE attachment_recipients DROP COLUMN recipient_public_identity;
+"""
+
+
+def _migration_0014_fixup_backfill_revoke_state(conn: sqlite3.Connection) -> None:
+    """ADR-0009 Decision 5/6: copy every already-persisted non-null
+    `revoke_token` from `mca_sender_state` into the new
+    `mca_sender_revoke_state`, so a sent attachment that predates this
+    migration still retains its revoke capability after `mca_sender_state`
+    is later deleted on ACK_DOWNLOADED. `delete_after` is derived with
+    `sender`'s own shared helper (never a second, drift-prone formula);
+    rows with a NULL `revoke_token` are left alone (nothing to retain)."""
+    import time
+
+    from meshsrv.attachments.sender import revoke_delete_after, revoke_state_ts
+
+    now = time.time()
+    rows = conn.execute(
+        "SELECT s.attachment_id, s.revoke_token, a.hard_expires_at, a.download_grace_seconds "
+        "FROM mca_sender_state s JOIN attachments a ON a.id = s.attachment_id "
+        "WHERE s.revoke_token IS NOT NULL"
+    ).fetchall()
+    for attachment_id, revoke_token, hard_expires_at, download_grace_seconds in rows:
+        delete_after = revoke_delete_after(hard_expires_at, download_grace_seconds, now)
+        conn.execute(
+            "INSERT OR IGNORE INTO mca_sender_revoke_state "
+            "(attachment_id, revoke_token, delete_after, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (attachment_id, revoke_token, revoke_state_ts(delete_after), revoke_state_ts(now), revoke_state_ts(now)),
+        )
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -820,6 +882,10 @@ MIGRATIONS: Sequence[Migration] = (
         data_fixup=_migration_0012_create_dirty_triggers,
     ),
     Migration(13, "contact_key_request_rate_limit", _MIGRATION_0013_UP, _MIGRATION_0013_DOWN),
+    Migration(
+        14, "signed_inbound_ack_routing", _MIGRATION_0014_UP, _MIGRATION_0014_DOWN,
+        data_fixup=_migration_0014_fixup_backfill_revoke_state,
+    ),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0
@@ -840,6 +906,7 @@ ALL_TABLE_NAMES = frozenset(
         "mca_key_exchange_contact_state",
         "mca_key_exchange_quota",
         "mca_sender_state",
+        "mca_sender_revoke_state",
         "mca_receiver_state",
         "mca_outgoing_replies",
         # PR #231 review (2nd pass): was missing here - added by the same

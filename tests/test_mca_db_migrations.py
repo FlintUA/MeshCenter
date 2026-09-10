@@ -870,3 +870,151 @@ def test_migration_13_is_a_noop_for_an_already_migrated_db(conn):
     migrate(conn)  # idempotent, no "duplicate column" error
     assert current_version(conn) == LATEST_VERSION
     assert "last_request_sent_at" in _contact_state_columns(conn)
+
+
+# --------------------------------------------------------------------------
+# Migration 14 (ADR-0009 v2, signed inbound ACK routing): pinned recipient
+# public identity + retained sender revoke capability. Two additive changes:
+#   (1) `attachment_recipients.recipient_public_identity` BLOB (nullable,
+#       fail-closed - pre-migration rows are NOT backfilled, so a NULL identity
+#       is an unverifiable transfer, never guessed at);
+#   (2) `mca_sender_revoke_state` - retains the revoke_token after the
+#       transient `mca_sender_state` row is deleted on ACK_DOWNLOADED.
+# --------------------------------------------------------------------------
+
+_MIGRATION_14_REVOKE_COLUMNS = frozenset({
+    "attachment_id", "revoke_token", "delete_after", "created_at", "updated_at",
+})
+
+
+def _recipient_columns(conn) -> set:
+    return {row[1] for row in conn.execute("PRAGMA table_info(attachment_recipients)").fetchall()}
+
+
+def _revoke_state_columns(conn) -> set:
+    return {row[1] for row in conn.execute("PRAGMA table_info(mca_sender_revoke_state)").fetchall()}
+
+
+def _insert_sender_state_row(conn, attachment_id, *, revoke_token, hard_expires_at=1000, download_grace_seconds=3600):
+    """Seed a v13-shaped `mca_sender_state` row (plus its parent `attachments`
+    row) so a backfill test can prove Migration 14's data_fixup copies the
+    revoke_token into `mca_sender_revoke_state`."""
+    conn.execute(
+        """INSERT INTO attachments
+           (id, workspace_id, transfer_id, direction, principal_id, state,
+            created_at, hard_expires_at, download_grace_seconds)
+           VALUES (?, 'ws-1', ?, 'sent', '0123456789abcdef', 'SENT', ?, ?, ?)""",
+        (attachment_id, f"tx-{attachment_id}", 900, hard_expires_at, download_grace_seconds),
+    )
+    conn.execute(
+        """INSERT INTO mca_sender_state
+           (attachment_id, data_key, nonce_prefix, revoke_token, created_at, updated_at)
+           VALUES (?, 'aa', 'bb', ?, 900, 900)""",
+        (attachment_id, revoke_token),
+    )
+    conn.commit()
+
+
+def test_migration_14_adds_recipient_public_identity_and_revoke_state_table(conn):
+    migrate(conn, target_version=13)
+    assert "recipient_public_identity" not in _recipient_columns(conn)
+    assert "mca_sender_revoke_state" not in _table_names(conn)
+
+    migrate(conn, target_version=14)
+    assert current_version(conn) == 14
+    assert "recipient_public_identity" in _recipient_columns(conn)
+    assert _revoke_state_columns(conn) == _MIGRATION_14_REVOKE_COLUMNS
+
+
+def test_migration_14_recipient_public_identity_column_exists_exactly_once(conn):
+    """The column is added by exactly one migration - a re-migrate must never
+    duplicate it (columns-exist-once)."""
+    migrate(conn)
+    migrate(conn)  # idempotent, no "duplicate column" error
+    occurrences = [row[1] for row in conn.execute("PRAGMA table_info(attachment_recipients)").fetchall()]
+    assert occurrences.count("recipient_public_identity") == 1
+
+
+def test_migration_14_downgrade_then_reupgrade(conn):
+    migrate(conn, target_version=14)
+    assert "recipient_public_identity" in _recipient_columns(conn)
+    assert "mca_sender_revoke_state" in _table_names(conn)
+
+    migrate(conn, target_version=13)
+    assert "recipient_public_identity" not in _recipient_columns(conn)
+    assert "mca_sender_revoke_state" not in _table_names(conn)
+
+    migrate(conn)  # re-upgrade to LATEST_VERSION
+    assert current_version(conn) == LATEST_VERSION
+    assert "recipient_public_identity" in _recipient_columns(conn)
+    assert _revoke_state_columns(conn) == _MIGRATION_14_REVOKE_COLUMNS
+
+
+def test_migration_14_backfill_copies_non_null_revoke_tokens(conn):
+    """ADR-0009 Decision 5/6: the up-migration's data_fixup copies every
+    already-persisted non-null `revoke_token` into `mca_sender_revoke_state`,
+    deriving `delete_after = hard_expires_at + download_grace_seconds` (a
+    decimal-epoch TEXT), so a pre-migration sent row still retains its revoke
+    capability after mca_sender_state is later deleted."""
+    migrate(conn, target_version=13)
+    _insert_sender_state_row(conn, "att-with-token", revoke_token="revoke-abc")
+    _insert_sender_state_row(conn, "att-no-token", revoke_token=None)
+
+    migrate(conn, target_version=14)
+
+    row = conn.execute(
+        "SELECT revoke_token, delete_after FROM mca_sender_revoke_state WHERE attachment_id = 'att-with-token'"
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "revoke-abc"
+    # hard_expires_at=1000 + download_grace_seconds=3600 -> 4600, decimal TEXT.
+    assert row[1] == "4600"
+
+
+def test_migration_14_backfill_skips_null_revoke_tokens(conn):
+    """A row with a NULL revoke_token has nothing to retain - it must not
+    produce a mca_sender_revoke_state row (nothing to retain, and a NOT NULL
+    column would otherwise have to be fabricated)."""
+    migrate(conn, target_version=13)
+    _insert_sender_state_row(conn, "att-no-token", revoke_token=None)
+
+    migrate(conn, target_version=14)
+
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = 'att-no-token'"
+    ).fetchone() is None
+
+
+def test_migration_14_does_not_backfill_recipient_public_identity(conn):
+    """ADR-0009 Decision 2/6: pre-migration recipient rows are NOT backfilled -
+    a NULL identity is an unverifiable transfer (dropped by the ACK path), never
+    guessed at. The column is added but existing rows stay NULL."""
+    migrate(conn, target_version=13)
+    conn.execute(
+        """INSERT INTO attachments
+           (id, workspace_id, transfer_id, direction, principal_id, state,
+            created_at, hard_expires_at, download_grace_seconds)
+           VALUES ('att-1', 'ws-1', 'tx-1', 'sent', '0123456789abcdef', 'SENT', 900, 1000, 3600)"""
+    )
+    conn.execute(
+        "INSERT INTO attachment_recipients (id, attachment_id, envelope_id, recipient_principal_id) "
+        "VALUES ('rcpt-1', 'att-1', 'env-1', 'rp-1')"
+    )
+    conn.commit()
+
+    migrate(conn, target_version=14)
+
+    row = conn.execute(
+        "SELECT recipient_public_identity FROM attachment_recipients WHERE id = 'rcpt-1'"
+    ).fetchone()
+    assert row is not None and row[0] is None  # not backfilled
+
+
+def test_migration_14_revoke_state_table_is_in_authoritative_inventory(conn):
+    """`mca_sender_revoke_state` is part of `ALL_TABLE_NAMES` (the
+    authoritative completeness set), and a full migration creates it - so the
+    generic `test_migrate_on_clean_db_creates_all_ten_tables`-style inventory
+    check actually covers it."""
+    assert "mca_sender_revoke_state" in ALL_TABLE_NAMES
+    migrate(conn)
+    assert "mca_sender_revoke_state" in _table_names(conn)

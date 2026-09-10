@@ -57,13 +57,15 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 import requests
+from nacl.signing import VerifyKey
 
 from meshsrv.attachments import codec, crypto, receiver, sender
 from meshsrv.attachments.command_registry import CommandRegistry
 from meshsrv.attachments.commands import MAX_COMMANDS_PER_TICK, Command, CommandQueue
+from meshsrv.attachments.db.tombstones import is_tombstoned
 from meshsrv.attachments.delivery.base import DeliveryAdapter, DeliveryEnvelope, DeliveryError, Route, RouteType
 from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispatcher, CommandOutcome
-from meshsrv.attachments.identity import MCAPrincipal
+from meshsrv.attachments.identity import MCAPrincipal, compute_key_id
 from meshsrv.attachments.idempotency import PendingReservation, PendingReservations, validate_canonical_hash, validate_client_request_id
 from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator, RateLimited
 from meshsrv.attachments.probe_registry import (
@@ -140,6 +142,23 @@ SPOOL_CLEANUP_BACKLOG_MAXSIZE = 256
 
 # How many backlogged spool-cleanup attempts one tick makes before moving on.
 MAX_SPOOL_CLEANUP_PER_TICK = 8
+
+# ADR-0009 Decision 5: how many expired `mca_sender_revoke_state` rows one tick
+# deletes (bounded, so a large backlog drains over successive ticks rather than
+# blocking one). The row protects a Relay object already past hard-expiry +
+# download-grace, so its token has no remaining purpose.
+MAX_REVOKE_STATE_CLEANUP_PER_TICK = 100
+
+# ADR-0009 Decision 7: the three inbound simple-ACK types routed to the new
+# signed-ACK path (`_process_inbound_ack`). Every other message type continues
+# its existing path (OFFER, key-exchange).
+_INBOUND_ACK_TYPES = frozenset(
+    {
+        codec.MessageType.ACK_RECEIVED,
+        codec.MessageType.ACK_DOWNLOADED,
+        codec.MessageType.ACK_PROVIDER_UNKNOWN,
+    }
+)
 
 # Finding 5: bounded orphan-staging recovery. A staged file older than this
 # many seconds is treated as abandoned - the request thread crashed (or the
@@ -594,6 +613,11 @@ class AttachmentsService:
 
         # Finding 3: retry any backlogged spool-file removals, bounded per tick.
         self._drain_spool_cleanup()
+
+        # ADR-0009 Decision 5: retire expired retained-revoke-capability rows,
+        # bounded per tick (mca_sender_revoke_state is not a projected table, so
+        # this needs no snapshot refresh).
+        self._cleanup_expired_revoke_state()
 
         # Finding 5: bounded orphan-staging recovery - delete only old,
         # unreferenced staged files left behind by a crash, never an active
@@ -1215,6 +1239,23 @@ class AttachmentsService:
                 if len(self._spool_cleanup_backlog) < SPOOL_CLEANUP_BACKLOG_MAXSIZE:
                     self._spool_cleanup_backlog.add(attachment_id)
 
+    def _cleanup_expired_revoke_state(self) -> None:
+        """ADR-0009 Decision 5: delete retained revoke-capability rows whose
+        `delete_after` bound has passed - the Relay object they protected is
+        guaranteed gone (hard expiry + download grace), so the token has no
+        remaining purpose. Bounded to `MAX_REVOKE_STATE_CLEANUP_PER_TICK` rows
+        per tick, so a large backlog drains over successive ticks rather than
+        blocking one. `delete_after` is a decimal-string epoch, so the
+        comparison casts to INTEGER rather than relying on lexicographic order."""
+        self._conn.execute(
+            "DELETE FROM mca_sender_revoke_state WHERE attachment_id IN ("
+            "  SELECT attachment_id FROM mca_sender_revoke_state "
+            "  WHERE CAST(delete_after AS INTEGER) <= ? LIMIT ?"
+            ")",
+            (int(self._now()), MAX_REVOKE_STATE_CLEANUP_PER_TICK),
+        )
+        self._conn.commit()
+
     def _create_failure_cleanup(self, command: Command) -> None:
         """The total failure cleanup for a create that will not commit a row
         (Finding 3): roll back any in-flight transaction, drop the pending
@@ -1484,6 +1525,23 @@ class AttachmentsService:
             (attachment_id,),
         ).fetchone()
 
+    def _revoke_token_for(self, attachment_id: str) -> Optional[str]:
+        """ADR-0009 Decision 5a: the revoke token a revoke needs, read from the
+        retained `mca_sender_revoke_state` first - the row that survives
+        ACK_DOWNLOADED's deletion of `mca_sender_state` - falling back to
+        `mca_sender_state` only for a row that predates the migration (or is
+        still pre-DOWNLOADED, where the transient row still holds the token)."""
+        self._conn.row_factory = sqlite3.Row
+        row = self._conn.execute(
+            "SELECT revoke_token FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+        ).fetchone()
+        if row is not None and row["revoke_token"] is not None:
+            return row["revoke_token"]
+        row = self._conn.execute(
+            "SELECT revoke_token FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)
+        ).fetchone()
+        return row["revoke_token"] if row is not None else None
+
     def _command_cancel(self, command: Command) -> CommandOutcome:
         """`attachment_cancel` (§7.4): the explicit user action that cancels
         an outgoing attachment still in an automatic (pre-SENT) state. The
@@ -1683,8 +1741,7 @@ class AttachmentsService:
         ):
             return CommandOutcome.failed("invalid_state_transition")
 
-        sender_state = self._sender_state_row(attachment_id)
-        revoke_token = sender_state["revoke_token"] if sender_state is not None else None
+        revoke_token = self._revoke_token_for(attachment_id)
         transfer_id = row["transfer_id"]
         if transfer_id is None or revoke_token is None:
             # A Relay object exists but its revoke token (or transfer id) was
@@ -2128,6 +2185,10 @@ class AttachmentsService:
             logger.info("AttachmentsService: malformed MCA message from %s: %s", event.source_address, exc)
             return
 
+        if message_type in _INBOUND_ACK_TYPES:
+            self._process_inbound_ack(envelope, message_type, source_address=event.source_address)
+            return
+
         if message_type == codec.MessageType.OFFER:
             self._process_inbound_offer(envelope, source_address=event.source_address)
             return
@@ -2196,6 +2257,90 @@ class AttachmentsService:
             )
         except receiver.ReceiverError as exc:
             logger.info("AttachmentsService: rejected OFFER from %s: %s", source_address, exc)
+
+    def _process_inbound_ack(self, envelope: DeliveryEnvelope, message_type, *, source_address: str) -> None:
+        """ADR-0009 Decision 7/8: verify and apply one inbound simple ACK against
+        a *sent* attachment. Every step before the final `sender.apply_ack()` is a
+        read/verify that can only ever drop (never write, never reply over the
+        radio). Each drop reason is logged via `_drop_ack()` at a sanitized level
+        - a fixed reason token only. No radio response is ever sent for any ACK:
+        valid, invalid, unknown, tombstoned, duplicate, or stale."""
+        raw = envelope.logical_message
+        try:
+            unverified = codec.decode_simple_ack(raw, message_type, verify_key=None)
+        except codec.CodecError:
+            self._drop_ack("not_well_formed")
+            return
+
+        # 16-byte transfer_id, already validated by the decoder, hex for the
+        # lookup. No tombstone/attachment lookup touches anything the decoder
+        # did not already bound.
+        transfer_id_hex = unverified.transfer_id.hex()
+        attachment = self._conn.execute(
+            "SELECT * FROM attachments WHERE workspace_id = ? AND transfer_id = ? AND direction = 'sent'",
+            (self._principal.workspace_id, transfer_id_hex),
+        ).fetchone()
+        if attachment is None:
+            if is_tombstoned(self._conn, transfer_id_hex):
+                # A stale ack racing an orphaned-upload restart (the transfer was
+                # tombstoned and re-issued under a fresh id) - expected, not hostile.
+                self._drop_ack("tombstoned_transfer", level="info")
+            else:
+                self._drop_ack("unknown_transfer", level="warning")
+            return
+        attachment_id = attachment["id"]
+
+        recipients = self._conn.execute(
+            "SELECT * FROM attachment_recipients WHERE attachment_id = ?", (attachment_id,)
+        ).fetchall()
+        deliveries = self._conn.execute(
+            "SELECT * FROM attachment_deliveries WHERE attachment_id = ?", (attachment_id,)
+        ).fetchall()
+        if len(recipients) != 1 or len(deliveries) != 1:
+            # Stage 1 scope (Decision 5): a cardinality mismatch is an
+            # internal-consistency failure to fail closed on, never guess around.
+            self._drop_ack("cardinality", level="warning")
+            return
+        recipient_row = recipients[0]
+        delivery_row = deliveries[0]
+
+        # Decision 3: the ACK must arrive on the exact DIRECT route the OFFER
+        # was sent over, as persisted on the delivery row.
+        if (
+            delivery_row["route_type"] != RouteType.DIRECT.value
+            or delivery_row["adapter_id"] != envelope.adapter_id
+            or delivery_row["connector_profile_id"] != envelope.connector_profile_id
+            or delivery_row["route_id"] != envelope.route_id
+        ):
+            self._drop_ack("source_route_mismatch", level="warning")
+            return
+
+        # Decision 2: verify against the recipient public identity pinned on this
+        # transfer. Never `get_binding_by_key_id()` - a valid ACK signed by the
+        # old pinned key must still be accepted after a contact-key rotation,
+        # while an ACK signed only by the new current key must be rejected.
+        pinned = recipient_row["recipient_public_identity"]
+        if not isinstance(pinned, bytes) or len(pinned) != 32:
+            self._drop_ack("pinned_key_missing", level="warning")
+            return
+        if compute_key_id(pinned) != recipient_row["recipient_principal_id"]:
+            self._drop_ack("pinned_key_mismatch", level="warning")
+            return
+        try:
+            codec.decode_simple_ack(raw, message_type, verify_key=VerifyKey(pinned))
+        except codec.CodecError:
+            self._drop_ack("signature_invalid", level="warning")
+            return
+
+        sender.apply_ack(self._conn, attachment_id, message_type, now=self._now())
+
+    def _drop_ack(self, reason: str, *, level: str = "info") -> None:
+        """Log one sanitized ACK drop. `reason` is a fixed token only - never the
+        raw source address, key bytes/key IDs, signature, transfer/attachment
+        IDs, ciphertext, manifest, local path, or exception text (ADR-0009
+        Decision 8)."""
+        log = logger.info if level == "info" else logger.warning
+        log("AttachmentsService: dropped inbound ACK (%s)", reason)
 
     def _send_reply_now(self, reply_logical: bytes, source_address: str, *, idempotency_key: str) -> None:
         """A KEY_ANNOUNCE/KEY_ACK reply is small, already-signed, and has
@@ -2432,14 +2577,19 @@ class AttachmentsService:
 
     def _resolve_recipient_identities(self, attachment_id: str) -> Dict[str, bytes]:
         """`run_step()`'s ENCRYPTING handler needs `{key_id_hex:
-        public_identity_bytes}` for every recipient (sender.py's own
-        docstring: it deliberately doesn't persist that value a second
-        time). `attachment_recipients.recipient_principal_id` holds each
-        recipient's key_id (create_draft()'s own INSERT) - re-resolving
-        the public identity from `key_exchange`'s bindings table here is
-        exactly what a caller driving run_step() after a restart, rather
-        than right after create_draft(), has to do instead of reusing an
-        in-memory value that no longer exists.
+        public_identity_bytes}` for every recipient. `attachment_recipients.
+        recipient_principal_id` holds each recipient's key_id (create_draft()'s
+        own INSERT) - re-resolving the public identity from `key_exchange`'s
+        bindings table here is exactly what a caller driving run_step() after a
+        restart, rather than right after create_draft(), has to do instead of
+        reusing an in-memory value that no longer exists.
+
+        ADR-0009 note: `attachment_recipients` *does* now persist the identity
+        in `recipient_public_identity` (Migration 14), but that is the pinned
+        copy for inbound-ACK verification, not the value ENCRYPTING seals with.
+        This method still re-resolves from the bindings table so the seal uses
+        the *currently-trusted* key and fails closed on rotation (below), while
+        the pinned copy keeps trusting the original key for ACK verification.
 
         Reviewer-found defect (PR #227 defect #6): this used to hand back
         `binding.public_identity` for ANY binding it found, trusted or

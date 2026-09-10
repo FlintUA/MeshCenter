@@ -106,6 +106,18 @@ jobs:
             node --check "$script"
           done
 
+      - name: Frontend behavior tests (node vm)
+        run: |
+          set -e
+          # Dependency-free behavior tests: each .mjs loads the real script
+          # source through Node's built-in `vm` against a stub DOM/fetch, so
+          # there is no jest/browser runner to install. Mirrors `node --check`
+          # above by keeping CI's JS gate stdlib-only.
+          for test in tests/frontend/*.mjs; do
+            echo "node $test"
+            node "$test"
+          done
+
       - name: i18n catalog consistency check
         run: python scripts/check-i18n.py
 

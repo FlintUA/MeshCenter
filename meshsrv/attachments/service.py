@@ -83,9 +83,16 @@ from meshsrv.attachments.provider_registry import (
     normalize_origin,
 )
 from meshsrv.attachments.recipient_snapshot import RecipientSnapshotPublisher
+from meshsrv.attachments.mime_allowlist import MAX_SOURCE_NAME_CODE_POINTS, sanitize_display_name
 from meshsrv.attachments.relay_client import RelayClient, RelayError, RelayHTTPError
 from meshsrv.attachments.relay_http import RelayNetworkError
-from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
+from meshsrv.attachments.snapshots import (
+    AttachmentsSnapshotPublisher,
+    ContentLocatorError,
+    _is_inside_files,
+    make_locator,
+    resolve_locator,
+)
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
 
@@ -827,6 +834,9 @@ class AttachmentsService:
             "attachment_download": self._command_download,
             "attachment_reject": self._command_reject,
             "attachment_cancel": self._command_cancel,
+            "attachment_save": self._command_save,
+            "attachment_revoke": self._command_revoke,
+            "attachment_delete_local_content": self._command_delete_local_content,
             "contact_request_key": self._command_request_key,
             "provider_probe": self._command_provider_probe,
             "provider_register": self._command_provider_register,
@@ -1548,6 +1558,202 @@ class AttachmentsService:
         return CommandOutcome.succeeded(
             resource_id=attachment_id,
             result={"attachment_id": attachment_id, "state": sender.CANCELLED},
+        )
+
+    # ---- Step 1.6A.5 content/save/revoke/local-content commands -------------
+
+    def _content_row(self, attachment_id: str) -> Optional[sqlite3.Row]:
+        """The wider persisted row the content-affecting commands (save /
+        local-content) need beyond `_attachment_row`: `file_name` (the display
+        name, sanitized only at its use points - §7.3/§7.14), `mime_type`/
+        `plain_size`, and `saved_path` (the descriptor's source -
+        `cache/incoming/<id>` before a save, `files/` after one). Re-read from
+        the worker-owned `conn` (§3.1). Returns `None` for an unknown id or a
+        row in another workspace."""
+        self._conn.row_factory = sqlite3.Row
+        return self._conn.execute(
+            "SELECT id, direction, provider_id, state, file_name, mime_type, plain_size, saved_path "
+            "FROM attachments WHERE id = ? AND workspace_id = ?",
+            (attachment_id, self._principal.workspace_id),
+        ).fetchone()
+
+    def _resolve_content_path(self, paths, saved_path) -> Optional[Path]:
+        """Resolve a persisted `saved_path` back to an absolute, serve-time
+        re-validated content file path (`make_locator` + `resolve_locator`),
+        or `None` if the path is not a servable content file (a sent row's
+        spool path, a NULL/malformed/traversing path, or one that resolves
+        outside `files/`/`cache/incoming/` - `resolve_locator` follows symlinks
+        and rejects escapes). The one filesystem-touching step §7.14 allows;
+        never reads `conn`."""
+        locator = make_locator(paths, saved_path)
+        if locator is None:
+            return None
+        try:
+            return resolve_locator(paths, locator)
+        except ContentLocatorError:
+            return None
+
+    def _command_save(self, command: Command) -> CommandOutcome:
+        """`attachment_save` (§7.3): move a received `AVAILABLE` attachment's
+        verified plaintext out of `cache/incoming/<id>` and into `files/`
+        under a collision-resolving safe display name (`unique_file_name()`),
+        flipping `saved` true. Genuinely idempotent, not merely deduplicated
+        (§7.3 note): `unique_file_name()` resolves a name conflict only on the
+        **first** save - a re-save of an already-`saved` row returns the prior
+        result (`saved=true`, same `file_name`) **without copying** when the
+        `files/` copy still exists, and `content_missing` when it has since
+        been deleted. Never overwrites an existing `files/` name.
+
+        The move is a same-filesystem `Path.replace()` (atomic), done before
+        the `saved_path` UPDATE commits, so a failed move leaves the row (and
+        its cache copy) untouched. The `file_name` is sanitized
+        (`sanitize_display_name` - basename, printable-only, NUL/separator/
+        dot-stripped) and capped to `MAX_SOURCE_NAME_CODE_POINTS` before it
+        ever becomes a `files/` component - never trusted as a path. The
+        snapshot is refreshed before the success is reported, so the client's
+        next GET already sees `saved=true`."""
+        attachment_id = command.payload.get("attachment_id")
+        row = self._content_row(attachment_id)
+        if row is None:
+            return CommandOutcome.failed("attachment_not_found")
+        if row["direction"] != "received" or row["state"] != receiver.AVAILABLE:
+            return CommandOutcome.failed("invalid_state_transition")
+
+        paths = self._workspace_manager.paths(self._principal.principal_id)
+        saved_path = row["saved_path"]
+        saved = make_locator(paths, saved_path) is not None and _is_inside_files(paths, saved_path)
+
+        if saved:
+            # Idempotent re-save: the row already points into files/. Return
+            # the prior result without copying; fail only if the copy is gone.
+            existing = self._resolve_content_path(paths, saved_path)
+            if existing is None or not existing.is_file():
+                return CommandOutcome.failed("content_missing")
+            return CommandOutcome.succeeded(
+                resource_id=attachment_id,
+                result={"attachment_id": attachment_id, "saved": True, "file_name": row["file_name"]},
+            )
+
+        source = self._resolve_content_path(paths, saved_path)
+        if source is None or not source.is_file():
+            return CommandOutcome.failed("content_missing")
+
+        safe_name = (
+            sanitize_display_name(row["file_name"])[:MAX_SOURCE_NAME_CODE_POINTS].strip(".")
+            or "attachment"
+        )
+        dest = self._workspace_manager.unique_file_name(self._principal.principal_id, safe_name)
+        source.replace(dest)
+        self._conn.execute(
+            "UPDATE attachments SET saved_path = ? WHERE id = ?", (str(dest), attachment_id)
+        )
+        self._conn.commit()
+        self._refresh_snapshot()
+        return CommandOutcome.succeeded(
+            resource_id=attachment_id,
+            result={"attachment_id": attachment_id, "saved": True, "file_name": row["file_name"]},
+        )
+
+    def _command_revoke(self, command: Command) -> CommandOutcome:
+        """`attachment_revoke` (§7.3/§7.4/§8): revoke a sent attachment's Relay
+        object and mark it REVOKED. Remote-first, exactly like cancel's remote
+        half, so a committed-but-unreachable object is never marked REVOKED on
+        an unconfirmed remote failure:
+
+        - **remote first**: the Relay object identified by the row's persisted
+          `transfer_id` is revoked with the persisted `revoke_token`. A Relay
+          **404 is confirmed absence** (already gone → the remote half is
+          satisfied); any other failure, or a missing `transfer_id`/
+          `revoke_token`/pinned provider, is `relay_unreachable` with the row
+          and sender state preserved for a manual retry.
+        - **local second, only after the remote half resolves**: `sender.revoke()`
+          (SENT/RECEIVED/DOWNLOADED → REVOKED, `mca_sender_state` dropped).
+
+        Reuses `_cancel_row` (transfer_id + pinned provider_id) - revoke has no
+        spool to clean, so there is no local filesystem step, only the state
+        transition. The snapshot is refreshed before the success is reported."""
+        attachment_id = command.payload.get("attachment_id")
+        row = self._cancel_row(attachment_id)
+        if row is None:
+            return CommandOutcome.failed("attachment_not_found")
+        if row["direction"] != "sent" or row["state"] not in (
+            sender.SENT,
+            sender.RECEIVED,
+            sender.DOWNLOADED,
+        ):
+            return CommandOutcome.failed("invalid_state_transition")
+
+        sender_state = self._sender_state_row(attachment_id)
+        revoke_token = sender_state["revoke_token"] if sender_state is not None else None
+        transfer_id = row["transfer_id"]
+        if transfer_id is None or revoke_token is None:
+            # A Relay object exists but its revoke token (or transfer id) was
+            # never persisted - we cannot revoke it safely. Preserve everything.
+            return CommandOutcome.failed("relay_unreachable")
+        provider_id_text = _provider_id_text(row["direction"], row["provider_id"])
+        profile = self._provider_registry.resolve(provider_id_text) if provider_id_text else None
+        if profile is None or not profile.enabled:
+            return CommandOutcome.failed("relay_unreachable")
+        relay_client = self._relay_client_factory(provider_id_text) if provider_id_text else None
+        if relay_client is None:
+            return CommandOutcome.failed("relay_unreachable")
+        try:
+            relay_client.revoke(bytes.fromhex(transfer_id), revoke_token)
+        except RelayHTTPError as exc:
+            if exc.status_code != 404:
+                return CommandOutcome.failed("relay_unreachable")
+            # 404 = confirmed absence: the remote half is already done.
+        except RelayError:
+            return CommandOutcome.failed("relay_unreachable")
+
+        try:
+            sender.revoke(self._conn, attachment_id, now=self._now())
+        except sender.SenderError:
+            self._rollback_silently()
+            return CommandOutcome.failed("invalid_state_transition")
+        self._refresh_snapshot()
+        return CommandOutcome.succeeded(
+            resource_id=attachment_id,
+            result={"attachment_id": attachment_id, "state": sender.REVOKED},
+        )
+
+    def _command_delete_local_content(self, command: Command) -> CommandOutcome:
+        """`attachment_delete_local_content` (§7.3/§8): delete the `files/` copy
+        of a saved attachment, flipping `saved` false while keeping the
+        attachment row and its full history intact. Precondition is `saved=true`
+        (§7.3) - derived here, never trusted from the snapshot, so a row that
+        raced to `saved=false` (or was never saved) fails `not_saved` rather
+        than deleting something it does not have. The `files/` file is unlinked
+        first (`missing_ok` - an already-gone copy is clean), then `saved_path`
+        is cleared to NULL and committed, so `saved` can never report false
+        while the file still exists on disk (an unlink failure leaves the row
+        unchanged). The snapshot is refreshed before the success is reported."""
+        attachment_id = command.payload.get("attachment_id")
+        row = self._content_row(attachment_id)
+        if row is None:
+            return CommandOutcome.failed("attachment_not_found")
+
+        paths = self._workspace_manager.paths(self._principal.principal_id)
+        saved_path = row["saved_path"]
+        saved = make_locator(paths, saved_path) is not None and _is_inside_files(paths, saved_path)
+        if not saved:
+            return CommandOutcome.failed("not_saved")
+
+        path = self._resolve_content_path(paths, saved_path)
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("AttachmentsService: could not unlink a saved files/ copy")
+                return CommandOutcome.failed("content_missing")
+        self._conn.execute(
+            "UPDATE attachments SET saved_path = NULL WHERE id = ?", (attachment_id,)
+        )
+        self._conn.commit()
+        self._refresh_snapshot()
+        return CommandOutcome.succeeded(
+            resource_id=attachment_id,
+            result={"attachment_id": attachment_id, "saved": False},
         )
 
     def _command_request_key(self, command: Command) -> CommandOutcome:

@@ -230,7 +230,8 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
             return jsonify({"ok": True, "processes": results[:5]})
         except Exception as exc:
-            return jsonify({"ok": False, "error": str(exc)}), 500
+            log_system_event("Top processes failed", "ERROR", str(exc), source="system")
+            return jsonify({"ok": False, "error": "Failed to retrieve top processes"}), 500
 
     def get_saved_wifi_names():
         result = network_config.list_wifi_connections()

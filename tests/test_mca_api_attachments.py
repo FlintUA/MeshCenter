@@ -671,6 +671,32 @@ def test_list_counterparty_filter_no_match_empty(monkeypatch):
     assert body["total"] == 0
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "!aaaaaaaa\n",      # trailing newline
+        "!aaaaaaaa\r",      # trailing carriage return
+        "!aaaaaaaa ",       # trailing space
+        "!aaaaaaaa\t",      # trailing tab
+        "!aaaaaaaaX",       # trailing non-hex garbage
+        "!aaaaaaaa\n\n",    # two trailing newlines
+        " !aaaaaaaa",       # leading space
+        "\n!aaaaaaaa",      # leading newline
+        "!aaaaaaaa!",       # trailing non-hex
+        "",                 # empty
+        None,               # not a str
+        123,                # not a str
+    ],
+)
+def test_is_contact_id_rejects_trailing_whitespace_and_newline(value):
+    # §7.10 regression pin: `re.match`'s `$` matches *before* a trailing
+    # newline, so `!aaaaaaaa\n` would sneak past a `.match()` check. The
+    # validator must use `.fullmatch()` so exactly `!` + 8 lowercase hex is the
+    # only accepted shape.
+    assert api_attachments._is_contact_id("!aaaaaaaa") is True
+    assert api_attachments._is_contact_id(value) is False
+
+
 def test_list_total_is_before_pagination(monkeypatch):
     facade = _FakeFacade(snapshot=_snapshot([_attachment(id=f"{i:032x}") for i in range(5)]))
     c = _client(monkeypatch, facade)
@@ -734,6 +760,10 @@ def test_list_pagination_valid_boundaries(monkeypatch, query, expected):
         ("counterparty=!ABC", "invalid_counterparty"),          # too short
         ("counterparty=!ABCDEFGH", "invalid_counterparty"),     # uppercase hex
         ("counterparty=!1234567g", "invalid_counterparty"),     # non-hex
+        ("counterparty=!aaaaaaaa%0A", "invalid_counterparty"),  # URL-encoded trailing newline
+        ("counterparty=!aaaaaaaa%20", "invalid_counterparty"),  # URL-encoded trailing space
+        ("counterparty=!aaaaaaaa%09", "invalid_counterparty"),  # URL-encoded trailing tab
+        ("counterparty=!aaaaaaaa%0D", "invalid_counterparty"),  # URL-encoded trailing CR
     ],
 )
 def test_list_invalid_query_params(monkeypatch, query, code):

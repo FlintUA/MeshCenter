@@ -133,7 +133,9 @@ _CONTACT_ID_RE = re.compile(r"^![0-9a-f]{8}$")
 
 
 def _is_contact_id(value) -> bool:
-    return isinstance(value, str) and _CONTACT_ID_RE.match(value) is not None
+    # `fullmatch` (not `match`) so a trailing newline/space/carriage-return can
+    # never sneak past the `$`-before-newline leniency of `re.match`.
+    return isinstance(value, str) and _CONTACT_ID_RE.fullmatch(value) is not None
 
 
 # ---- list-filter state sets ----------------------------------------------

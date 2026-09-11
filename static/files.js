@@ -203,6 +203,7 @@
         truncated: false,
         filter: 'all',
         counterparty: '',         // active counterparty filter (canonical !hex contact id); '' = none (P3)
+        lastTransfersQueryKey: '', // last query applied by loadTransfers — a change invalidates detail (P3)
         search: '',
         selectedId: null,
 
@@ -568,11 +569,24 @@
         var url = transfersUrl();
         var queryKey = transfersQueryKey();
         var key = 'transfers:' + queryKey;
-        // P3: the response is applied only if its query (direction|filter|
-        // counterparty) is still the active one. A stale out-of-order response
-        // from a superseded filter/counterparty switch is dropped (including a
-        // stale error); a same-query reload still joins/coalesces via the
-        // query-keyed guard (G1 preserved) instead of being swallowed.
+        // P3: a direction/filter/counterparty change invalidates any in-flight
+        // or already-rendered detail from the previous query immediately (bump
+        // detailSeq to drop a late detail response, clear the coalesced pending
+        // refetch and fingerprint, drop the old selection, and empty the panel)
+        // so the old counterparty's transfer can never leak into the new view.
+        if (state.lastTransfersQueryKey !== queryKey) {
+            state.lastTransfersQueryKey = queryKey;
+            state.detailSeq++;
+            state.detailPending = null;
+            state.detailFingerprint = null;
+            state.selectedId = null;
+            clearDetailPanel();
+        }
+        // The response is applied only if its query (direction|filter|counterparty)
+        // is still the active one. A stale out-of-order response from a superseded
+        // filter/counterparty switch is dropped (including a stale error); a
+        // same-query reload still joins/coalesces via the query-keyed guard (G1
+        // preserved) instead of being swallowed.
         return guardedLoad(key, function () {
             return api(url);
         }, function (r) {
@@ -585,16 +599,15 @@
             state.attachments = Array.isArray(r.data.attachments) ? r.data.attachments : [];
             state.total = r.data.total || 0;
             state.truncated = state.total > LIST_LIMIT;
+            // Reconcile selection FIRST (before rendering list or detail), so the
+            // first element of a new result is selected and its detail rendered
+            // with no stale previous card shown in between (C5 §10.5 + P3).
+            if (!state.selectedId || !state.attachments.some(function (a) { return a.id === state.selectedId; })) {
+                state.selectedId = state.attachments.length ? state.attachments[0].id : null;
+            }
             renderTransfers();
             renderSummaries();
-            // Preserve selection if it still exists, else auto-select first (C5 §10.5).
-            if (state.selectedId && !state.attachments.some(function (a) { return a.id === state.selectedId; })) {
-                state.selectedId = null;
-            }
-            if (!state.selectedId && state.attachments.length) {
-                state.selectedId = state.attachments[0].id;
-                renderDetail(state.selectedId, true);
-            } else if (state.selectedId) {
+            if (state.selectedId) {
                 var sel = null;
                 for (var i = 0; i < state.attachments.length; i++) {
                     if (state.attachments[i].id === state.selectedId) { sel = state.attachments[i]; break; }
@@ -605,6 +618,12 @@
                 if (sel && (!isTerminalState(sel.state) || detailFingerprint(sel) !== state.detailFingerprint)) {
                     renderDetail(state.selectedId, true);
                 }
+            } else {
+                // P3: empty result — no selection, so clear the detail state and
+                // panel (an in-flight detail was already invalidated above on
+                // query change; this also covers a same-query poll going empty).
+                state.detailFingerprint = null;
+                clearDetailPanel();
             }
         });
     }
@@ -705,14 +724,20 @@
                 '<div class="files-contact-item' +
                     (c.status === 'trusted' ? ' is-trusted' : '') +
                     (filtered ? ' is-filtered' : '') +
-                    '" role="button" tabindex="0" aria-pressed="' + (filtered ? 'true' : 'false') +
-                    '" data-files-action="contact-filter" data-contact="' + esc(c.contact_id) + '">' +
-                    '<div class="files-contact-head">' +
-                        name +
-                        '<span class="files-contact-id">' + esc(c.contact_id) + '</span>' +
-                        '<span class="files-contact-status files-status-' + esc(c.status) + '">' + esc(status) + '</span>' +
-                    '</div>' +
-                    '<div class="files-contact-fp">' + esc(shortFp) + '</div>' +
+                    '" data-contact="' + esc(c.contact_id) + '">' +
+                    // P3: the name/id/fingerprint block is its own button, a
+                    // sibling of the key-management buttons in `trust` — no
+                    // nested interactive elements (the outer item stays inert).
+                    '<button type="button" class="files-contact-select"' +
+                        ' data-files-action="contact-filter" data-contact="' + esc(c.contact_id) + '"' +
+                        ' aria-pressed="' + (filtered ? 'true' : 'false') + '">' +
+                        '<span class="files-contact-head">' +
+                            name +
+                            '<span class="files-contact-id">' + esc(c.contact_id) + '</span>' +
+                            '<span class="files-contact-status files-status-' + esc(c.status) + '">' + esc(status) + '</span>' +
+                        '</span>' +
+                        '<span class="files-contact-fp">' + esc(shortFp) + '</span>' +
+                    '</button>' +
                     trust +
                 '</div>'
             );
@@ -870,6 +895,11 @@
         state.detailSeq++;
         renderTransfers();
         renderDetail(id, false);
+    }
+
+    function clearDetailPanel() {
+        var body = getEl('filesDetailBody');
+        if (body) body.innerHTML = '';
     }
 
     function detailFingerprint(a) {
@@ -1475,19 +1505,10 @@
     }
 
     function onDocumentKeydown(e) {
-        // P3: contact-filter items are role="button" — Enter/Space toggles the
-        // counterparty filter (native buttons inside the item still handle their
-        // own Enter/Space via the normal click path, so this only fires for the
-        // item itself whose closest data-files-action is 'contact-filter').
-        if (e.key === 'Enter' || e.key === ' ') {
-            var filterItem = closestAttr(e.target, 'data-files-action');
-            if (filterItem && filterItem.getAttribute('data-files-action') === 'contact-filter') {
-                e.preventDefault();
-                var cid = filterItem.getAttribute('data-contact');
-                if (cid && findContact(cid)) toggleCounterpartyFilter(cid);
-                return;
-            }
-        }
+        // P3: the contact select area is a real <button type="button"> now, so
+        // Enter/Space are handled natively by the browser as a click on that
+        // button (dispatched via onDocumentClick → contact-filter). No custom
+        // key handling here — the key-management buttons stay separate siblings.
         if (!state.dialog) return;
         if (e.key === 'Escape') {
             // "Only when safe" (R6): never dismiss while a send request is in

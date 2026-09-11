@@ -4407,6 +4407,26 @@ html[data-theme="dark"] #notificationsCard {
     margin-bottom: 8px;
 }
 .files-contact-item.is-trusted { border-color: var(--mc-success, #2f9e63); }
+.files-contact-item.is-filtered { border-color: var(--mc-accent, #2f7bb5); box-shadow: 0 0 0 1px var(--mc-accent, #2f7bb5); }
+/* P3: the outer item is inert; the name/id/fingerprint block is a real button
+   so Enter/Space and screen readers treat it as one interactive element. */
+.files-contact-select {
+    display: block;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.files-contact-select:focus-visible {
+    outline: 2px solid var(--mc-accent, #2f7bb5);
+    outline-offset: 2px;
+    border-radius: 6px;
+}
 .files-contact-head {
     display: flex;
     align-items: center;
@@ -4420,6 +4440,7 @@ html[data-theme="dark"] #notificationsCard {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .files-contact-fp {
+    display: block;
     margin-top: 4px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 11px;

@@ -202,6 +202,8 @@
         total: 0,
         truncated: false,
         filter: 'all',
+        counterparty: '',         // active counterparty filter (canonical !hex contact id); '' = none (P3)
+        lastTransfersQueryKey: '', // last query applied by loadTransfers — a change invalidates detail (P3)
         search: '',
         selectedId: null,
 
@@ -549,14 +551,46 @@
         });
     }
 
-    function loadTransfers() {
+    function transfersQueryKey() {
+        var mapping = FILTER_API[state.filter] || FILTER_API.all;
+        return mapping.direction + '|' + mapping.filter + '|' + (state.counterparty || '');
+    }
+
+    function transfersUrl() {
         var mapping = FILTER_API[state.filter] || FILTER_API.all;
         var url = '/api/attachments?direction=' + encodeURIComponent(mapping.direction) +
             '&filter=' + encodeURIComponent(mapping.filter) +
             '&limit=' + LIST_LIMIT;
-        return guardedLoad('transfers', function () {
+        if (state.counterparty) url += '&counterparty=' + encodeURIComponent(state.counterparty);
+        return url;
+    }
+
+    function loadTransfers() {
+        var url = transfersUrl();
+        var queryKey = transfersQueryKey();
+        // P3: the guard key carries the epoch so a reactivated tab never joins
+        // a request left in-flight from a previous activation (which would be
+        // dropped on epoch mismatch, leaving the fresh activation with no data
+        // until the next timer tick). Same-query reloads within one activation
+        // still share the key (G1 join/coalesce preserved).
+        var key = 'transfers:' + state.epoch + ':' + queryKey;
+        // A direction/filter/counterparty change invalidates the old selection
+        // and any in-flight/rendered detail immediately, so the old
+        // counterparty's card can't linger during the fetch gap.
+        if (state.lastTransfersQueryKey !== queryKey) {
+            state.lastTransfersQueryKey = queryKey;
+            state.selectedId = null;
+            invalidateDetail();
+        }
+        // The response is applied only if its query (direction|filter|counterparty)
+        // is still the active one. A stale out-of-order response from a superseded
+        // filter/counterparty switch is dropped (including a stale error); a
+        // same-query reload still joins/coalesces via the query-keyed guard (G1
+        // preserved) instead of being swallowed.
+        return guardedLoad(key, function () {
             return api(url);
         }, function (r) {
+            if (transfersQueryKey() !== queryKey) return; // superseded — drop, incl. errors
             if (r.status !== 200 || !r.data || r.data.ok !== true) {
                 if (r.status === 503) renderTransfersError(t('files.not_ready', 'MCAttach service is not ready'));
                 else renderTransfersError(filesErrorCode(r.data));
@@ -565,16 +599,25 @@
             state.attachments = Array.isArray(r.data.attachments) ? r.data.attachments : [];
             state.total = r.data.total || 0;
             state.truncated = state.total > LIST_LIMIT;
+
+            // Compute the new selection BEFORE mutating detail/selection state.
+            // A selection that changed — or became null — under the SAME query
+            // (the selected transfer left the pending filter, was deleted, or
+            // the server returned an empty list) must invalidate the detail
+            // too, not just a query-key change: a late response for the old
+            // selection must never repaint a transfer that's no longer selected.
+            var nextId = state.selectedId;
+            if (!nextId || !state.attachments.some(function (a) { return a.id === nextId; })) {
+                nextId = state.attachments.length ? state.attachments[0].id : null;
+            }
+            if (nextId !== state.selectedId) {
+                invalidateDetail();
+            }
+            state.selectedId = nextId;
+
             renderTransfers();
             renderSummaries();
-            // Preserve selection if it still exists, else auto-select first (C5 §10.5).
-            if (state.selectedId && !state.attachments.some(function (a) { return a.id === state.selectedId; })) {
-                state.selectedId = null;
-            }
-            if (!state.selectedId && state.attachments.length) {
-                state.selectedId = state.attachments[0].id;
-                renderDetail(state.selectedId, true);
-            } else if (state.selectedId) {
+            if (state.selectedId) {
                 var sel = null;
                 for (var i = 0; i < state.attachments.length; i++) {
                     if (state.attachments[i].id === state.selectedId) { sel = state.attachments[i]; break; }
@@ -585,8 +628,20 @@
                 if (sel && (!isTerminalState(sel.state) || detailFingerprint(sel) !== state.detailFingerprint)) {
                     renderDetail(state.selectedId, true);
                 }
+            } else {
+                // No selection — ensure the panel and fingerprint are clear.
+                state.detailFingerprint = null;
+                clearDetailPanel();
             }
         });
+    }
+
+    // P3: the post-command authoritative refresh for the transfer list keys off
+    // the current epoch + query (direction|filter|counterparty), so a command
+    // settling after a filter/counterparty switch — or after a reactivation —
+    // refreshes the query the user is actually looking at, never a stale bucket.
+    function refreshTransfers() {
+        return refreshAfterCommand('transfers:' + state.epoch + ':' + transfersQueryKey(), loadTransfers);
     }
 
     // ---- contact merge (C3 §8.1) -------------------------------------------
@@ -669,17 +724,28 @@
             var status = filesContactStatusLabel(c.status);
             var shortFp = c.fingerprint ? c.fingerprint.slice(0, 16) : '';
             var trust = contactTrustActions(c);
+            var filtered = state.counterparty === c.contact_id;
             var name = c.name
                 ? '<span class="files-contact-name">' + esc(c.name) + '</span>'
                 : '';
             return (
-                '<div class="files-contact-item' + (c.status === 'trusted' ? ' is-trusted' : '') + '" data-contact="' + esc(c.contact_id) + '">' +
-                    '<div class="files-contact-head">' +
-                        name +
-                        '<span class="files-contact-id">' + esc(c.contact_id) + '</span>' +
-                        '<span class="files-contact-status files-status-' + esc(c.status) + '">' + esc(status) + '</span>' +
-                    '</div>' +
-                    '<div class="files-contact-fp">' + esc(shortFp) + '</div>' +
+                '<div class="files-contact-item' +
+                    (c.status === 'trusted' ? ' is-trusted' : '') +
+                    (filtered ? ' is-filtered' : '') +
+                    '" data-contact="' + esc(c.contact_id) + '">' +
+                    // P3: the name/id/fingerprint block is its own button, a
+                    // sibling of the key-management buttons in `trust` — no
+                    // nested interactive elements (the outer item stays inert).
+                    '<button type="button" class="files-contact-select"' +
+                        ' data-files-action="contact-filter" data-contact="' + esc(c.contact_id) + '"' +
+                        ' aria-pressed="' + (filtered ? 'true' : 'false') + '">' +
+                        '<span class="files-contact-head">' +
+                            name +
+                            '<span class="files-contact-id">' + esc(c.contact_id) + '</span>' +
+                            '<span class="files-contact-status files-status-' + esc(c.status) + '">' + esc(status) + '</span>' +
+                        '</span>' +
+                        '<span class="files-contact-fp">' + esc(shortFp) + '</span>' +
+                    '</button>' +
                     trust +
                 '</div>'
             );
@@ -837,6 +903,24 @@
         state.detailSeq++;
         renderTransfers();
         renderDetail(id, false);
+    }
+
+    function clearDetailPanel() {
+        var body = getEl('filesDetailBody');
+        if (body) body.innerHTML = '';
+    }
+
+    // P3: invalidate any in-flight or already-rendered detail (and the
+    // coalesced pending refetch + fingerprint), without an explicit selection
+    // change. Used both on query change and when the selection changes — or
+    // becomes null — under the same query key (selected transfer left the
+    // filter, was deleted, or the server returned an empty list), so a late
+    // old-detail response can never repaint a transfer that is no longer shown.
+    function invalidateDetail() {
+        state.detailSeq++;
+        state.detailPending = null;
+        state.detailFingerprint = null;
+        clearDetailPanel();
     }
 
     function detailFingerprint(a) {
@@ -1033,8 +1117,8 @@
                     resourceKey: resourceKey,
                     queued: opts.queued,
                     success: opts.success,
-                    onSuccess: function () { return refreshAfterCommand('transfers', loadTransfers); },
-                    onUnknown: function () { return refreshAfterCommand('transfers', loadTransfers); },
+                    onSuccess: function () { return refreshTransfers(); },
+                    onUnknown: function () { return refreshTransfers(); },
                 });
             } else if (r.status === 409) {
                 toast(t('files.state_changed', 'This transfer changed — refreshing'), 'info');
@@ -1111,8 +1195,8 @@
                         resourceKey: resourceKey,
                         queued: t('files.deleting_local', 'Deleting local copy…'),
                         success: t('files.local_deleted', 'Local copy deleted'),
-                        onSuccess: function () { return refreshAfterCommand('transfers', loadTransfers); },
-                        onUnknown: function () { return refreshAfterCommand('transfers', loadTransfers); },
+                        onSuccess: function () { return refreshTransfers(); },
+                        onUnknown: function () { return refreshTransfers(); },
                     });
                 } else {
                     toast(filesErrorCode(r.data), 'error');
@@ -1442,6 +1526,10 @@
     }
 
     function onDocumentKeydown(e) {
+        // P3: the contact select area is a real <button type="button"> now, so
+        // Enter/Space are handled natively by the browser as a click on that
+        // button (dispatched via onDocumentClick → contact-filter). No custom
+        // key handling here — the key-management buttons stay separate siblings.
         if (!state.dialog) return;
         if (e.key === 'Escape') {
             // "Only when safe" (R6): never dismiss while a send request is in
@@ -1525,6 +1613,7 @@
         }
 
         if (contactId && findContact(contactId)) {
+            if (action === 'contact-filter') { toggleCounterpartyFilter(contactId); return; }
             if (action === 'contact-request-key') { contactRequestKey(contactId); return; }
             if (action === 'contact-confirm') { contactConfirm(contactId); return; }
             if (action === 'contact-accept') { contactAcceptKeyChange(contactId); return; }
@@ -1590,6 +1679,16 @@
             btn.classList.toggle('active', isActive);
             if (btn.setAttribute) btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
         }) : null;
+        loadTransfers();
+    }
+
+    // P3: counterparty filter — selects transfers by the stable counterparty id
+    // only (canonicalNodeId), never the display name. Toggling the already-active
+    // contact clears the filter and returns the full list.
+    function toggleCounterpartyFilter(contactId) {
+        var canonical = canonicalNodeId(contactId || '');
+        state.counterparty = (canonical === state.counterparty) ? '' : canonical;
+        renderContacts();
         loadTransfers();
     }
 
@@ -2263,7 +2362,7 @@
                             // F5: close only after the authoritative refresh
                             // settles, and return its Promise so the tracker
                             // does not announce success early.
-                            return refreshAfterCommand('transfers', loadTransfers).then(function () {
+                            return refreshTransfers().then(function () {
                                 closeModal(false);
                                 if (attachmentId) selectAttachment(attachmentId);
                             });
@@ -2280,7 +2379,7 @@
                         },
                         onUnknown: function () {
                             unlockSend();
-                            return refreshAfterCommand('transfers', loadTransfers);
+                            return refreshTransfers();
                         },
                     });
                     // Do not claim success yet: the tracker owns the final outcome.

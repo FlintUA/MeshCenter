@@ -133,7 +133,9 @@ _CONTACT_ID_RE = re.compile(r"^![0-9a-f]{8}$")
 
 
 def _is_contact_id(value) -> bool:
-    return isinstance(value, str) and _CONTACT_ID_RE.match(value) is not None
+    # `fullmatch` (not `match`) so a trailing newline/space/carriage-return can
+    # never sneak past the `$`-before-newline leniency of `re.match`.
+    return isinstance(value, str) and _CONTACT_ID_RE.fullmatch(value) is not None
 
 
 # ---- list-filter state sets ----------------------------------------------
@@ -677,6 +679,10 @@ def register_attachments_routes(app, handle_errors):
         if filter_ not in _VALID_FILTERS:
             return _json_error("invalid_filter", "invalid filter"), 400
 
+        counterparty = request.args.get("counterparty")
+        if counterparty is not None and not _is_contact_id(counterparty):
+            return _json_error("invalid_counterparty", "invalid counterparty"), 400
+
         limit, offset, err = _parse_limit_offset()
         if err is not None:
             body, status = err
@@ -695,6 +701,8 @@ def register_attachments_routes(app, handle_errors):
             if filter_ == "errors" and record.state not in _FILTER_ERROR_STATES:
                 continue
             if filter_ == "saved" and not record.saved:
+                continue
+            if counterparty is not None and record.counterparty_contact_id != counterparty:
                 continue
             matching.append(record)
 

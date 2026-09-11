@@ -1780,6 +1780,522 @@ async function test_provider_error_codes_are_localized() {
     console.log('PASS: test_provider_error_codes_are_localized');
 }
 
+async function test_counterparty_filter_out_of_order_responses() {
+    // P3: switching counterparty A -> B issues distinct fetches, and a stale A
+    // response that resolves AFTER B must be dropped — never overwrite B's list.
+    let releaseA;
+    const gateA = new Promise((r) => { releaseA = r; });
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [
+                    contact('!aaaaaaaa', 'trusted'),
+                    contact('!bbbbbbbb', 'trusted'),
+                ] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                const cp = new URL(url, 'http://x').searchParams.get('counterparty');
+                if (cp === '!aaaaaaaa') {
+                    await gateA; // hold A's (soon-to-be-stale) response
+                    return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT', { file_name: 'from-a.pdf' })], total: 1 });
+                }
+                if (cp === '!bbbbbbbb') {
+                    return json(200, { ok: true, attachments: [attachment('b1', 'sent', 'SENT', { file_name: 'from-b.pdf' })], total: 1 });
+                }
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!bbbbbbbb' });
+
+    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-b.pdf'));
+
+    releaseA();
+    await new Promise((r) => setTimeout(r, 50));
+
+    const html = sandbox._document.elements.get('filesArchiveList').innerHTML;
+    assert.ok(html.includes('from-b.pdf'), 'B list must still be shown after A resolves late');
+    assert.ok(!html.includes('from-a.pdf'), 'stale A response must not overwrite B list');
+
+    console.log('PASS: test_counterparty_filter_out_of_order_responses');
+}
+
+async function test_counterparty_filter_a_b_a_switching() {
+    // P3 (fast-switch): A -> B -> A with the FIRST A request still in flight.
+    // The three dispatches happen back-to-back without waiting for any response
+    // (the old test waited for each response, so it never exercised the fast
+    // scenario). B resolves first while the query is already back to A and must
+    // be dropped; the held A response (still the current query) must win. The
+    // second A joins the still-in-flight first A rather than issuing a
+    // duplicate request (query-keyed guard).
+    let releaseA;
+    const gateA = new Promise((r) => { releaseA = r; });
+    const cps = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [
+                    contact('!aaaaaaaa', 'trusted'),
+                    contact('!bbbbbbbb', 'trusted'),
+                ] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                const cp = new URL(url, 'http://x').searchParams.get('counterparty');
+                cps.push(cp);
+                if (cp === '!aaaaaaaa') {
+                    await gateA; // hold the first A response across the B/back-to-A switches
+                    return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT', { file_name: 'from-a.pdf' })], total: 1 });
+                }
+                if (cp === '!bbbbbbbb') {
+                    return json(200, { ok: true, attachments: [attachment('b1', 'sent', 'SENT', { file_name: 'from-b.pdf' })], total: 1 });
+                }
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    // Fast switch: dispatch all three without awaiting any response. The first
+    // A fetch is gated (in flight) while B and the back-to-A switch happen.
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!bbbbbbbb' });
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+
+    // Let B's fast response resolve while the query is already back to A — it
+    // must be dropped and never paint B's list.
+    await new Promise((r) => setTimeout(r, 30));
+    assert.ok(
+        !sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-b.pdf'),
+        'B response must be dropped when the query is already back to A',
+    );
+
+    // Release the held first-A response; it is still the current query and wins.
+    releaseA();
+    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
+
+    const html = sandbox._document.elements.get('filesArchiveList').innerHTML;
+    assert.ok(html.includes('from-a.pdf'), 'the held A response must win (final A selection)');
+    assert.ok(!html.includes('from-b.pdf'), 'B list must not survive');
+
+    // The second A joined the still-in-flight first A (same query key), so no
+    // duplicate A request was issued — exactly one request per distinct query.
+    assert.deepEqual(
+        cps.filter(Boolean),
+        ['!aaaaaaaa', '!bbbbbbbb'],
+        'fast A->B->A issues one request per distinct query; the second A joins the first',
+    );
+
+    console.log('PASS: test_counterparty_filter_a_b_a_switching');
+}
+
+async function test_counterparty_filter_refresh_keeps_filter() {
+    // P3: a manual refresh while a counterparty filter is active must re-fetch
+    // WITH the counterparty still applied (never silently drop it).
+    const cps = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                cps.push(new URL(url, 'http://x').searchParams.get('counterparty'));
+                return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT')], total: 1 });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    await waitFor(() => cps.includes('!aaaaaaaa'));
+
+    dispatch(sandbox, { 'data-files-action': 'refresh' });
+    await waitFor(() => cps.filter((c) => c === '!aaaaaaaa').length >= 2);
+
+    assert.ok(
+        cps.filter(Boolean).every((c) => c === '!aaaaaaaa'),
+        'after a filter is active, every transfers request (including refresh) must carry it',
+    );
+
+    console.log('PASS: test_counterparty_filter_refresh_keeps_filter');
+}
+
+async function test_counterparty_filter_reset_returns_full_list() {
+    // P3: toggling the active contact off clears the filter and returns the
+    // full list (request carries no counterparty).
+    const cps = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                cps.push(new URL(url, 'http://x').searchParams.get('counterparty'));
+                return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT')], total: 1 });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    await waitFor(() => cps.includes('!aaaaaaaa'));
+
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    await waitFor(() => cps.length >= 3 && cps[cps.length - 1] === null);
+
+    assert.equal(cps[cps.length - 1], null, 'reset must issue a request with no counterparty (full list)');
+
+    const html = sandbox._document.elements.get('filesContactsList').innerHTML;
+    assert.ok(!html.includes('is-filtered'), 'reset must clear the is-filtered class');
+
+    console.log('PASS: test_counterparty_filter_reset_returns_full_list');
+}
+
+async function test_counterparty_detail_invalidation_on_switch_to_empty() {
+    // P3 review: switching counterparty while a detail fetch is still in flight
+    // must invalidate it — a late detail response for the OLD counterparty can
+    // never paint into the new (empty) view.
+    let releaseDetail;
+    const gateDetail = new Promise((r) => { releaseDetail = r; });
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [
+                    contact('!aaaaaaaa', 'trusted'),
+                    contact('!bbbbbbbb', 'trusted'),
+                ] });
+            }
+            if (url === '/api/attachments?counterparty=!aaaaaaaa') {
+                return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT', { file_name: 'from-a.pdf' })], total: 1 });
+            }
+            if (url === '/api/attachments?counterparty=!bbbbbbbb') {
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            if (url === '/api/attachments/a1') {
+                await gateDetail; // hold the OLD counterparty's detail fetch
+                return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT', { file_name: 'a-detail.pdf' }), timeline: [] });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    // Select A -> its first transfer is auto-selected and its detail fetch begins (held).
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
+
+    // Switch to B (no transfers) -> the in-flight A detail is invalidated and
+    // the panel is cleared immediately.
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!bbbbbbbb' });
+    await waitFor(() => !sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
+
+    const body = sandbox._document.elements.get('filesDetailBody');
+    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'detail panel must be cleared on switch to empty B');
+
+    // Release the stale A detail response — it must be dropped, not painted.
+    releaseDetail();
+    await new Promise((r) => setTimeout(r, 30));
+    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'late A detail must not paint after switching to empty B');
+
+    console.log('PASS: test_counterparty_detail_invalidation_on_switch_to_empty');
+}
+
+async function test_counterparty_switch_to_nonempty_selects_first_card() {
+    // P3 review: switching to a NON-empty counterparty must select the FIRST
+    // card of the new result and show only its detail — never the previous
+    // counterparty's detail, and never a non-first card.
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [
+                    contact('!aaaaaaaa', 'trusted'),
+                    contact('!bbbbbbbb', 'trusted'),
+                ] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                const cp = new URL(url, 'http://x').searchParams.get('counterparty');
+                if (cp === '!aaaaaaaa') {
+                    return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT', { file_name: 'from-a.pdf' })], total: 1 });
+                }
+                if (cp === '!bbbbbbbb') {
+                    return json(200, { ok: true, attachments: [
+                        attachment('b1', 'sent', 'SENT', { file_name: 'from-b1.pdf' }),
+                        attachment('b2', 'sent', 'SENT', { file_name: 'from-b2.pdf' }),
+                    ], total: 2 });
+                }
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            if (url === '/api/attachments/a1') {
+                return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT', { file_name: 'a-detail.pdf' }), timeline: [] });
+            }
+            if (url === '/api/attachments/b1') {
+                return json(200, { ok: true, attachment: attachment('b1', 'sent', 'SENT', { file_name: 'b1-detail.pdf' }), timeline: [] });
+            }
+            if (url === '/api/attachments/b2') {
+                return json(200, { ok: true, attachment: attachment('b2', 'sent', 'SENT', { file_name: 'b2-detail.pdf' }), timeline: [] });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    // Select A -> its single transfer is auto-selected and its detail fetched.
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    await waitFor(() => (sandbox._document.elements.get('filesDetailBody')?.innerHTML || '').includes('a-detail.pdf'));
+
+    // Switch to B (two transfers) -> the FIRST card (b1) must be selected.
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!bbbbbbbb' });
+    await waitFor(() => (sandbox._document.elements.get('filesDetailBody')?.innerHTML || '').includes('b1-detail.pdf'));
+
+    const listHtml = sandbox._document.elements.get('filesArchiveList').innerHTML;
+    assert.ok(listHtml.includes('from-b1.pdf'), 'B list shows its first transfer');
+    assert.ok(listHtml.includes('from-b2.pdf'), 'B list shows its second transfer');
+    assert.ok(!listHtml.includes('from-a.pdf'), 'A list must not survive the switch to B');
+
+    const detailHtml = sandbox._document.elements.get('filesDetailBody').innerHTML;
+    assert.ok(detailHtml.includes('b1-detail.pdf'), 'the first B card must be selected and its detail shown');
+    assert.ok(!detailHtml.includes('b2-detail.pdf'), 'a non-first B card must not be auto-selected');
+    assert.ok(!detailHtml.includes('a-detail.pdf'), 'the previous A detail must not survive');
+
+    console.log('PASS: test_counterparty_switch_to_nonempty_selects_first_card');
+}
+
+async function test_contact_select_and_key_actions_are_separate() {
+    // P3 review: the contact select area and the key-management buttons are
+    // distinct sibling interactive elements — the outer item is inert, the
+    // name/id block is its own button, and "Request key" is a sibling button.
+    // Enter/Space on a native button maps to a click on that button, so:
+    // Enter/Space on the select toggles the filter; Enter/Space on "Request
+    // key" must NOT change the filter.
+    const cps = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'key_unknown')] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                cps.push(new URL(url, 'http://x').searchParams.get('counterparty'));
+                return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT')], total: 1 });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('files-contact-select'));
+
+    const contactsHtml = sandbox._document.elements.get('filesContactsList').innerHTML;
+    assert.ok(contactsHtml.includes('class="files-contact-select"'), 'the select area is a real button');
+    assert.ok(!contactsHtml.includes('files-contact-item" role="button"'), 'the outer item is no longer role=button');
+    assert.ok(!contactsHtml.includes('tabindex='), 'the outer item is out of the tab order (native buttons only)');
+    assert.ok(contactsHtml.includes('contact-request-key'), 'the Request key button is rendered');
+    // The Request key button is a sibling of the select button (outside it):
+    // it appears after the select button's closing tag.
+    const selectClose = contactsHtml.indexOf('</button>');
+    assert.ok(
+        selectClose !== -1 && contactsHtml.indexOf('contact-request-key') > selectClose,
+        'Request key must be a sibling, outside the select button',
+    );
+
+    // Enter/Space on the select area == click -> toggles the filter.
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    await waitFor(() => cps.includes('!aaaaaaaa'));
+
+    // Enter/Space on Request key == click -> must NOT change the filter (no
+    // transfers request is issued).
+    const before = cps.length;
+    dispatch(sandbox, { 'data-files-action': 'contact-request-key', 'data-contact': '!aaaaaaaa' });
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(cps.length, before, 'Request key must not issue a transfers request (filter unchanged)');
+
+    console.log('PASS: test_contact_select_and_key_actions_are_separate');
+}
+
+async function test_same_query_detail_invalidation_on_empty_poll() {
+    // P3 review (second pass): the list can change under the SAME query key —
+    // the selected transfer completed and left the pending filter, was deleted,
+    // or the server returned an empty list — with no direction/filter/
+    // counterparty switch. That selection change (to null) must invalidate the
+    // in-flight detail too, so a late old-detail response cannot repaint a
+    // transfer that is no longer shown.
+    let releaseDetail;
+    const gateDetail = new Promise((r) => { releaseDetail = r; });
+    let poll = 0;
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                poll += 1;
+                if (poll === 1) {
+                    return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT', { file_name: 'from-a.pdf' })], total: 1 });
+                }
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            if (url === '/api/attachments/a1') {
+                await gateDetail; // hold the old selection's detail fetch across the poll
+                return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT', { file_name: 'a-detail.pdf' }), timeline: [] });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
+
+    // Same-query poll now returns empty — the selection disappears without any
+    // query-key change.
+    dispatch(sandbox, { 'data-files-action': 'refresh' });
+    await waitFor(() => !sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
+
+    const body = sandbox._document.elements.get('filesDetailBody');
+    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'detail panel must be cleared when the selection disappears');
+
+    // Release the stale detail — it must be dropped, not painted.
+    releaseDetail();
+    await new Promise((r) => setTimeout(r, 30));
+    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'late detail for the now-missing transfer must not appear');
+
+    console.log('PASS: test_same_query_detail_invalidation_on_empty_poll');
+}
+
+async function test_same_query_replaces_selection_no_transient_stale_detail() {
+    // P3 review (second pass): the same query key replacing A with B (A left the
+    // pending filter and B became the first row) is a selection change, not a
+    // query change. It must invalidate A's in-flight detail so A's late response
+    // never paints — not even transiently — while B's coalesced detail is still
+    // pending.
+    let releaseDetailA, releaseDetailB;
+    const gateDetailA = new Promise((r) => { releaseDetailA = r; });
+    const gateDetailB = new Promise((r) => { releaseDetailB = r; });
+    let poll = 0;
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                poll += 1;
+                if (poll === 1) {
+                    return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT', { file_name: 'from-a.pdf' })], total: 1 });
+                }
+                return json(200, { ok: true, attachments: [attachment('b1', 'sent', 'SENT', { file_name: 'from-b.pdf' })], total: 1 });
+            }
+            if (url === '/api/attachments/a1') {
+                await gateDetailA;
+                return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT', { file_name: 'a-detail.pdf' }), timeline: [] });
+            }
+            if (url === '/api/attachments/b1') {
+                await gateDetailB;
+                return json(200, { ok: true, attachment: attachment('b1', 'sent', 'SENT', { file_name: 'b-detail.pdf' }), timeline: [] });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
+
+    // Same query now replaces A with B (same direction/filter/counterparty).
+    dispatch(sandbox, { 'data-files-action': 'refresh' });
+    await waitFor(() => {
+        const h = sandbox._document.elements.get('filesArchiveList').innerHTML;
+        return h.includes('from-b.pdf') && !h.includes('from-a.pdf');
+    });
+
+    const body = sandbox._document.elements.get('filesDetailBody');
+    // While B's detail is still pending (A's detail is still in flight and held),
+    // the panel must be empty — not showing A's stale detail.
+    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'panel must be cleared while the new selection is pending');
+
+    // Release the late A detail: it must be dropped, and the coalesced B detail
+    // fires next — A's content must never paint, even transiently.
+    releaseDetailA();
+    await new Promise((r) => setTimeout(r, 30));
+    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'late A detail must not paint even transiently');
+    assert.ok(!body.innerHTML.includes('b-detail.pdf'), 'B detail is still in flight (gated), not yet painted');
+
+    releaseDetailB();
+    await waitFor(() => body.innerHTML.includes('b-detail.pdf'));
+    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'the stale A detail must never have painted');
+
+    console.log('PASS: test_same_query_replaces_selection_no_transient_stale_detail');
+}
+
+async function test_reactivation_issues_fresh_transfers_request() {
+    // P3 review (second pass): deactivate() bumps the epoch but does not clear
+    // unfinished state.loading entries. On rapid re-entry, loadTransfers() must
+    // NOT join the old-epoch in-flight request (which would be dropped on epoch
+    // mismatch, leaving the fresh activation with no data until the next timer
+    // tick). Including the epoch in the guard key forces a fresh request.
+    let releaseOld;
+    const gateOld = new Promise((r) => { releaseOld = r; });
+    let transfersCalls = 0;
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                transfersCalls += 1;
+                if (transfersCalls === 1) {
+                    await gateOld; // hold the FIRST activation's transfers request
+                    return json(200, { ok: true, attachments: [attachment('old1', 'sent', 'SENT', { file_name: 'stale.pdf' })], total: 1 });
+                }
+                return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT', { file_name: 'fresh.pdf' })], total: 1 });
+            }
+            if (url === '/api/attachments/a1') {
+                return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT', { file_name: 'fresh-detail.pdf' }), timeline: [] });
+            }
+            if (url === '/api/attachments/old1') {
+                return json(200, { ok: true, attachment: attachment('old1', 'sent', 'SENT', { file_name: 'stale-detail.pdf' }), timeline: [] });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => transfersCalls === 1); // first (old-epoch) request is now in flight and held
+
+    // Deactivate then immediately re-activate while the first request is still held.
+    sandbox.window.MeshCenterFiles.deactivate();
+    sandbox.window.MeshCenterFiles.activate();
+    await waitFor(() => transfersCalls >= 2);
+
+    assert.ok(transfersCalls >= 2, 're-activation must issue a second, fresh transfers request (new epoch key)');
+
+    // The new-epoch response applies.
+    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('fresh.pdf'));
+
+    // The late old-epoch response changes nothing (dropped by epoch mismatch).
+    releaseOld();
+    await new Promise((r) => setTimeout(r, 30));
+    const listHtml = sandbox._document.elements.get('filesArchiveList').innerHTML;
+    assert.ok(listHtml.includes('fresh.pdf'), 'the fresh-epoch list must survive the late old response');
+    assert.ok(!listHtml.includes('stale.pdf'), 'the late old-epoch list must not apply');
+
+    console.log('PASS: test_reactivation_issues_fresh_transfers_request');
+}
+
 async function main() {
     await test_activate_merges_contacts_and_excludes_local();
     await test_trust_confirm_shows_full_fingerprint();
@@ -1821,7 +2337,18 @@ async function main() {
     await test_stale_send_settings_do_not_update_new_dialog();
     await test_send_provider_fetch_not_suppressed_by_workspace_load();
     await test_provider_error_codes_are_localized();
-    console.log('All files UI behavior tests passed (38 scenarios).');
+    // PR 3: counterparty filtering + race-safe transfer loading.
+    await test_counterparty_filter_out_of_order_responses();
+    await test_counterparty_filter_a_b_a_switching();
+    await test_counterparty_filter_refresh_keeps_filter();
+    await test_counterparty_filter_reset_returns_full_list();
+    await test_counterparty_detail_invalidation_on_switch_to_empty();
+    await test_counterparty_switch_to_nonempty_selects_first_card();
+    await test_contact_select_and_key_actions_are_separate();
+    await test_same_query_detail_invalidation_on_empty_poll();
+    await test_same_query_replaces_selection_no_transient_stale_detail();
+    await test_reactivation_issues_fresh_transfers_request();
+    console.log('All files UI behavior tests passed (48 scenarios).');
 }
 
 main()

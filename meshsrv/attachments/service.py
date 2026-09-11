@@ -166,6 +166,14 @@ MAX_SPOOL_CLEANUP_PER_TICK = 8
 # download-grace, so its token has no remaining purpose.
 MAX_REVOKE_STATE_CLEANUP_PER_TICK = 100
 
+# PR 2.5 (outbound EXPIRED): how many received attachments one tick's expiry
+# reconciliation pass may transition to EXPIRED (each enqueues one signed
+# EXPIRED). Bounded so a large backlog of past-deadline offers drains over
+# successive ticks rather than flushing a matching burst of outbound frames
+# onto the radio all at once - the same per-tick work discipline as
+# MAX_ATTACHMENTS_PER_TICK / MAX_OUTGOING_REPLY_SENDS_PER_DISPATCH.
+MAX_RECEIVER_EXPIRY_PER_TICK = 8
+
 # ADR-0009 Decision 7 (extended by ADR-0010): the inbound simple-ACK-shaped
 # types routed to the signed-ACK path (`_process_inbound_ack`). ACK_RECEIVED /
 # ACK_DOWNLOADED / ACK_PROVIDER_UNKNOWN / REJECTED / EXPIRED all verify and
@@ -628,6 +636,13 @@ class AttachmentsService:
                     row["direction"],
                 )
             processed += 1
+
+        # PR 2.5 (outbound EXPIRED): after the automatic row-scan, sweep
+        # received attachments whose authoritative hard deadline has passed into
+        # EXPIRED + a signed EXPIRED frame, before the reply dispatch below so a
+        # just-enqueued EXPIRED is sent this same tick.
+        self._reconcile_receiver_expiry()
+
         self._dispatch_outgoing_replies()
 
         # Step 1.6A.1 (correction #1): republish the attachment snapshot
@@ -1511,24 +1526,52 @@ class AttachmentsService:
 
     def _command_reject(self, command: Command) -> CommandOutcome:
         """`attachment_reject`: the explicit user action that moves a received
-        `WAITING_CONSENT` row to `REJECTED` (§7.3). Delegates to
-        `receiver.reject()` unchanged, which only transitions the local row to
-        `REJECTED` and commits - it does **not** enqueue or send a signed
-        `MessageType.REJECTED` frame back to the sender. ADR-0010 implements the
-        *sender-side* consumption of such a frame (`_process_inbound_ack` ->
-        `sender.apply_rejected()`), but the *receiver-side generation* of the
-        signed REJECTED (durable outbox delivery to the sender) is still
-        deferred - so a rejection round trip to the sender is *not* complete
-        after this command."""
+        `WAITING_CONSENT` row to `REJECTED` (§7.3). PR 2.5 closes the outbound
+        half of the round trip: the local `WAITING_CONSENT -> REJECTED`
+        transition and the enqueue of the signed `MessageType.REJECTED` frame
+        to the pinned sender route happen in the **same** DB transaction (one
+        commit, never two sequential ones). The invariant is both directions -
+        no local REJECTED is committed without a durably-queued REJECTED when a
+        valid route exists, and no queued message is written without the local
+        transition (a failed transition rolls back the uncommitted enqueue).
+
+        Idempotent at the durable layer: the outbox dedup (`mca_outgoing_replies`
+        UNIQUE(attachment_id, event_type)) makes a repeat call a no-op on the
+        message, and the WAITING_CONSENT state guard makes it a no-op on the
+        transition. Radio unavailability does **not** undo the local rejection -
+        the frame stays PENDING in the outbox and is dispatched later with
+        backoff, surviving restart. The command reports success once the local
+        transition and the enqueue are durably committed; it does not wait for
+        radio delivery."""
         attachment_id = command.payload.get("attachment_id")
-        row = self._attachment_row(attachment_id)
+        self._conn.row_factory = sqlite3.Row
+        row = self._conn.execute(
+            "SELECT id, direction, state, transfer_id FROM attachments "
+            "WHERE id = ? AND workspace_id = ?",
+            (attachment_id, self._principal.workspace_id),
+        ).fetchone()
         if row is None:
             return CommandOutcome.failed("attachment_not_found")
         if row["direction"] != "received" or row["state"] != receiver.WAITING_CONSENT:
             return CommandOutcome.failed("invalid_state_transition")
         try:
-            receiver.reject(self._conn, attachment_id, now=self._now())
-        except receiver.ReceiverError:
+            receiver.reject(self._conn, attachment_id, now=self._now(), commit=False)
+            receiver.enqueue_control_message(
+                self._conn,
+                attachment_id=attachment_id,
+                transfer_id=bytes.fromhex(row["transfer_id"]),
+                message_type=codec.MessageType.REJECTED,
+                event_type=receiver._EVENT_REJECTED_SENT,
+                principal=self._principal,
+                workspace_manager=self._workspace_manager,
+                now=self._now(),
+            )
+            self._conn.commit()
+        except (receiver.ReceiverError, ValueError):
+            # A race (the row moved off WAITING_CONSENT between read and call)
+            # or a malformed transfer_id - roll back the uncommitted transition
+            # + enqueue and report the same failure the old delegate returned.
+            self._rollback_silently()
             return CommandOutcome.failed("invalid_state_transition")
         return CommandOutcome.succeeded(
             resource_id=attachment_id,
@@ -1576,6 +1619,40 @@ class AttachmentsService:
             "SELECT revoke_token FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)
         ).fetchone()
         return row["revoke_token"] if row is not None else None
+
+    def _cancel_route_for(self, attachment_id: str) -> Optional["receiver.ReplyRoute"]:
+        """PR 2.5: the immutable route snapshot for a sender-side CANCEL, read
+        from `attachment_deliveries` (the same row `_step_ready_to_send` builds
+        its OFFER `Route` from). `attachment_deliveries` has no
+        `destination_address` column, so for the DIRECT-only MVP it is set equal
+        to `route_id` - the same conflation `_step_ready_to_send` already makes.
+        Returns None when the delivery row is missing or any route field is
+        NULL, so the enqueue falls back to NULL route columns and the dispatch
+        step fails it closed to UNDELIVERABLE rather than guessing a
+        destination."""
+        self._conn.row_factory = sqlite3.Row
+        delivery = self._conn.execute(
+            "SELECT adapter_id, connector_profile_id, route_type, route_id "
+            "FROM attachment_deliveries WHERE attachment_id = ? ORDER BY id LIMIT 1",
+            (attachment_id,),
+        ).fetchone()
+        if delivery is None:
+            return None
+        fields = (
+            delivery["adapter_id"],
+            delivery["connector_profile_id"],
+            delivery["route_type"],
+            delivery["route_id"],
+        )
+        if any(field is None for field in fields):
+            return None
+        return receiver.ReplyRoute(
+            adapter_id=delivery["adapter_id"],
+            connector_profile_id=delivery["connector_profile_id"],
+            route_type=delivery["route_type"],
+            route_id=delivery["route_id"],
+            destination_address=delivery["route_id"],
+        )
 
     def _command_cancel(self, command: Command) -> CommandOutcome:
         """`attachment_cancel` (§7.4): the explicit user action that cancels
@@ -1762,6 +1839,17 @@ class AttachmentsService:
         - **local second, only after the remote half resolves**: `sender.revoke()`
           (SENT/RECEIVED/DOWNLOADED → REVOKED, `mca_sender_state` dropped).
 
+        PR 2.5 adds the outbound CANCEL to the local half, but only for
+        **SENT** and **RECEIVED** (the receiver has not downloaded the plaintext,
+        so a radio CANCEL can still retract the offer): the `REVOKED` transition
+        and the signed CANCEL enqueue share **one** DB transaction. For
+        **DOWNLOADED** the local Relay revoke + `REVOKED` transition still
+        complete, but **no** radio CANCEL is generated - a CANCEL cannot retract
+        plaintext the receiver already holds, so sending one would be a lie (it
+        would only tell the receiver to discard an object it already has). A
+        Relay revoke that fails leaves the state unchanged and enqueues nothing
+        (the revoke capability is preserved for a retry).
+
         Reuses `_cancel_row` (transfer_id + pinned provider_id) - revoke has no
         spool to clean, so there is no local filesystem step, only the state
         transition. The snapshot is refreshed before the success is reported."""
@@ -1798,9 +1886,30 @@ class AttachmentsService:
         except RelayError:
             return CommandOutcome.failed("relay_unreachable")
 
+        # PR 2.5: CANCEL is generated only for SENT/RECEIVED (the receiver has
+        # not yet downloaded the plaintext). DOWNLOADED still transitions to
+        # REVOKED locally but sends no radio CANCEL.
+        should_send_cancel = row["state"] in (sender.SENT, sender.RECEIVED)
+        cancel_route = self._cancel_route_for(attachment_id) if should_send_cancel else None
         try:
-            sender.revoke(self._conn, attachment_id, now=self._now())
-        except sender.SenderError:
+            sender.revoke(self._conn, attachment_id, now=self._now(), commit=False)
+            if should_send_cancel:
+                receiver.enqueue_control_message(
+                    self._conn,
+                    attachment_id=attachment_id,
+                    transfer_id=bytes.fromhex(transfer_id),
+                    message_type=codec.MessageType.CANCEL,
+                    event_type=sender.CANCEL_EVENT_TYPE,
+                    principal=self._principal,
+                    workspace_manager=self._workspace_manager,
+                    now=self._now(),
+                    route=cancel_route,
+                )
+            self._conn.commit()
+        except (sender.SenderError, ValueError):
+            # A malformed transfer_id or a raced state change - roll back the
+            # uncommitted transition + enqueue so the revoke capability and
+            # prior state are preserved for a retry.
             self._rollback_silently()
             return CommandOutcome.failed("invalid_state_transition")
         self._refresh_snapshot()
@@ -2722,16 +2831,73 @@ class AttachmentsService:
         except Exception:  # noqa: BLE001 - must never crash the worker thread
             logger.exception("AttachmentsService: failed to send reply to %s", source_address)
 
+    def _reconcile_receiver_expiry(self) -> None:
+        """PR 2.5 (outbound EXPIRED): the bounded receiver-side expiry sweep.
+        For every received attachment in a `receiver.EXPIRABLE_STATES` state
+        whose authoritative `hard_expires_at` has now passed (positive and
+        `<= now`), transition it to EXPIRED and enqueue one signed EXPIRED
+        frame to the pinned sender route - atomically, per row, via
+        `receiver.expire()`. Bounded to `MAX_RECEIVER_EXPIRY_PER_TICK` rows
+        per tick (a large backlog drains over successive ticks); the rest wait
+        for the next tick. Restart-safe and duplicate-free by construction:
+        `receiver.expire()`'s state guard plus the outbox dedup make a re-run
+        a no-op - a row already EXPIRED (or whose frame is already enqueued)
+        is skipped, never double-transitioned or double-enqueued. Runs offline
+        (it is pure SQLite + enqueue - no network, no radio), so a restart
+        resumes the sweep where it left off without a radio round-trip.
+
+        Invalid deadlines are fail-closed here *and* re-checked in
+        `receiver.expire()`: the query only selects rows with
+        `hard_expires_at IS NOT NULL AND hard_expires_at > 0`, so a NULL/
+        zero/negative deadline is never swept, and `expire()` independently
+        refuses to transition a row whose deadline has not actually passed."""
+        now = self._now()
+        placeholders = ",".join("?" for _ in receiver.EXPIRABLE_STATES)
+        self._conn.row_factory = sqlite3.Row
+        rows = self._conn.execute(
+            f"""
+            SELECT id FROM attachments
+            WHERE workspace_id = ? AND direction = 'received'
+              AND state IN ({placeholders})
+              AND hard_expires_at IS NOT NULL AND hard_expires_at > 0
+              AND hard_expires_at <= ?
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (
+                self._principal.workspace_id,
+                *receiver.EXPIRABLE_STATES,
+                now,
+                MAX_RECEIVER_EXPIRY_PER_TICK,
+            ),
+        ).fetchall()
+        for row in rows:
+            try:
+                receiver.expire(
+                    self._conn,
+                    workspace_manager=self._workspace_manager,
+                    principal=self._principal,
+                    attachment_id=row["id"],
+                    now=now,
+                )
+            except Exception:  # noqa: BLE001 - one bad row must not stop the rest of the sweep
+                logger.exception(
+                    "AttachmentsService: receiver expiry failed for attachment %s", row["id"]
+                )
+
     def _dispatch_outgoing_replies(self) -> None:
-        """PR #227 defect #1: the one place a queued receiver-side ACK
-        (mca_outgoing_replies, receiver.py) is ever actually handed to a
-        transport. Runs every tick, after the row-scan above, so a reply
-        enqueued by this same tick's own _step_received() calls is
+        """PR #227 defect #1 (generalized by PR 2.5): the one place a queued
+        control message - a receiver-side ACK/REJECTED/EXPIRED, or a
+        sender-side CANCEL - (mca_outgoing_replies, receiver.py) is ever
+        actually handed to a transport. Runs every tick, after the row-scan
+        and expiry sweep above, so a frame enqueued by this same tick is
         dispatched without waiting for a second tick. Rate-limited to
         `receiver.MAX_OUTGOING_REPLY_SENDS_PER_DISPATCH` rows per call
-        (receiver.fetch_due_outgoing_replies()'s own LIMIT) - the rest
-        simply wait for the next tick, rather than flushing an entire
-        backlog onto the radio at once."""
+        (receiver.fetch_due_outgoing_replies()'s own LIMIT) - the rest simply
+        wait for the next tick, rather than flushing an entire backlog onto
+        the radio at once. The route is read from the outbox row's own
+        immutable snapshot (migration 17), never re-derived from mutable
+        contact data."""
         if self._delivery_adapter is None:
             return
         for reply in receiver.fetch_due_outgoing_replies(
@@ -2744,6 +2910,41 @@ class AttachmentsService:
                 # towards: terminal, not a backoff case.
                 receiver.mark_reply_undeliverable(
                     self._conn, reply.id, self._now(), error_code="no_reply_route_recorded"
+                )
+                continue
+            # PR 2.5: the route snapshot is validated strictly before any send
+            # - a control message is DIRECT-only, both route_id and
+            # destination_address must be canonical contact ids, destination
+            # must equal route_id, and the adapter/connector must match this
+            # service's own live delivery adapter. Any of these failing means
+            # the snapshot is malformed/incomplete (or was written by a route
+            # shape this MVP does not support, e.g. a channel) - fail closed to
+            # UNDELIVERABLE, never silently redirected, never guessed past.
+            if reply.route_type != RouteType.DIRECT.value:
+                receiver.mark_reply_undeliverable(
+                    self._conn, reply.id, self._now(),
+                    error_code=f"reply_route_not_direct:{reply.route_type!r}",
+                )
+                continue
+            if not _is_contact_id(reply.route_id) or not _is_contact_id(reply.destination_address):
+                receiver.mark_reply_undeliverable(
+                    self._conn, reply.id, self._now(),
+                    error_code=(
+                        f"reply_route_not_contact_id:route_id={reply.route_id!r},"
+                        f"destination={reply.destination_address!r}"
+                    ),
+                )
+                continue
+            if reply.destination_address != reply.route_id:
+                # DIRECT-only MVP: the send target must be the route_id itself.
+                # A mismatch means the snapshot came from a non-DIRECT shape we
+                # do not support (or a migration bug) - never guess a target.
+                receiver.mark_reply_undeliverable(
+                    self._conn, reply.id, self._now(),
+                    error_code=(
+                        f"reply_destination_mismatch:route_id={reply.route_id!r},"
+                        f"destination={reply.destination_address!r}"
+                    ),
                 )
                 continue
             # PR #231 review (3rd pass): "do not silently ignore persisted
@@ -2812,30 +3013,6 @@ class AttachmentsService:
                 # source protection). Left PENDING, retried on a later
                 # dispatch once the relevant window has room again -
                 # never marked sent, never dropped.
-                continue
-            # PR #231 review (4th pass): a missing destination_address is
-            # now fail-closed (UNDELIVERABLE), not silently defaulted to
-            # route_id. destination_address (not bare route_id) is the
-            # actual send target - kept as a separate persisted field
-            # precisely so a future non-DIRECT route shape (where "reply
-            # to" is not simply "the same address route_id already
-            # names") does not have to change this call site, only stop
-            # conflating them (ReplyRoute's own docstring, receiver.py).
-            # For the DIRECT-only MVP the two are structurally always
-            # equal by the time this line is reached (ReplyRoute.
-            # destination_address is a required, non-Optional dataclass
-            # field, and the adapter_id/connector_profile_id checks above
-            # already reject any row that was persisted without a full
-            # ReplyRoute) - this check has no known way to trigger today,
-            # but is made explicit anyway rather than left as an implicit
-            # "or route_id" fallback with no stated route-type contract
-            # justifying it, since a silent fallback is exactly the kind
-            # of masked assumption a future route shape (or a data
-            # migration bug) could quietly violate.
-            if reply.destination_address is None:
-                receiver.mark_reply_undeliverable(
-                    self._conn, reply.id, self._now(), error_code="reply_destination_address_missing"
-                )
                 continue
             route = Route(
                 route_type=RouteType(reply.route_type), route_id=reply.route_id,

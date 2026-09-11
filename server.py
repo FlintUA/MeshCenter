@@ -519,8 +519,7 @@ def handle_errors(f):
             traceback.print_exc()
             return jsonify({
                 "ok": False,
-                "error": str(e),
-                "traceback": traceback.format_exc() if app.debug else None
+                "error": str(e)
             }), 500
     return decorated_function
 

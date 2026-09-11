@@ -165,7 +165,8 @@
         visible: true,
         epoch: 0,                 // bumped on activate()/deactivate() — stale reads are dropped
         refreshTimer: null,
-        loading: {},              // per-resource in-flight guard (no overlap)
+        loading: {},              // per-resource in-flight guard (key -> Promise; joinable, G1)
+        followUp: {},             // per-resource coalesced post-command authoritative read (G1)
         busy: {},                 // resourceKey -> commandId currently tracked
         detailSeq: 0,             // guards stale detail renders (V2)
         detailInFlight: false,    // at most one detail fetch at a time (R4)
@@ -427,16 +428,43 @@
     // ---- resource loaders (C1 §6.3 concurrency: guarded, no overlap) -------
 
     function guardedLoad(key, fetcher, onDone) {
-        if (state.loading[key]) return Promise.resolve();
-        state.loading[key] = true;
+        // G1: the guard is a JOINABLE promise, not a boolean — a caller that
+        // fires while the same resource is already loading gets the in-flight
+        // promise back (and waits on it) instead of an instantly-resolved one,
+        // so a terminal callback can never announce completion ahead of the
+        // authoritative read it is waiting on. The key is released only after
+        // the promise fully settles, so an awaiter observes the guard as free.
+        if (state.loading[key]) return state.loading[key];
         var epoch = state.epoch;
-        return fetcher().then(function (result) {
-            state.loading[key] = false;
-            if (epoch !== state.epoch || !state.active) return;
-            onDone(result);
+        var promise = fetcher().then(function (result) {
+            if (epoch === state.epoch && state.active) onDone(result);
         }).catch(function () {
-            state.loading[key] = false;
+            // a failed read leaves the projection unchanged; the guard is still
+            // released below so the next read is not permanently blocked
+        }).then(function () {
+            if (state.loading[key] === promise) delete state.loading[key];
         });
+        state.loading[key] = promise;
+        return promise;
+    }
+
+    // G1: a command's terminal projection refresh. Join any read already in
+    // flight for `key` (so a command that settles mid-refresh cannot announce
+    // success/unknown before that authoritative read lands), then issue exactly
+    // one fresh read so the projection reflects the just-committed command.
+    // Coalesces concurrent terminal callbacks for the same resource onto a
+    // single follow-up read.
+    function refreshAfterCommand(key, loader) {
+        var prior = state.loading[key] || state.followUp[key];
+        var joined = prior ? prior.then(function () {}, function () {}) : Promise.resolve();
+        var read = joined.then(loader);
+        state.followUp[key] = read;
+        read.then(function () {
+            if (state.followUp[key] === read) delete state.followUp[key];
+        }, function () {
+            if (state.followUp[key] === read) delete state.followUp[key];
+        });
+        return read;
     }
 
     function refreshContacts() {
@@ -987,8 +1015,8 @@
                     resourceKey: resourceKey,
                     queued: opts.queued,
                     success: opts.success,
-                    onSuccess: function () { return loadTransfers(); },
-                    onUnknown: function () { return loadTransfers(); },
+                    onSuccess: function () { return refreshAfterCommand('transfers', loadTransfers); },
+                    onUnknown: function () { return refreshAfterCommand('transfers', loadTransfers); },
                 });
             } else if (r.status === 409) {
                 toast(t('files.state_changed', 'This transfer changed — refreshing'), 'info');
@@ -1065,8 +1093,8 @@
                         resourceKey: resourceKey,
                         queued: t('files.deleting_local', 'Deleting local copy…'),
                         success: t('files.local_deleted', 'Local copy deleted'),
-                        onSuccess: function () { return loadTransfers(); },
-                        onUnknown: function () { return loadTransfers(); },
+                        onSuccess: function () { return refreshAfterCommand('transfers', loadTransfers); },
+                        onUnknown: function () { return refreshAfterCommand('transfers', loadTransfers); },
                     });
                 } else {
                     toast(filesErrorCode(r.data), 'error');
@@ -1109,8 +1137,8 @@
                     resourceKey: resourceKey,
                     queued: opts.queued,
                     success: opts.success,
-                    onSuccess: function () { return refreshContacts(); },
-                    onUnknown: function () { return refreshContacts(); },
+                    onSuccess: function () { return refreshAfterCommand('contacts', refreshContacts); },
+                    onUnknown: function () { return refreshAfterCommand('contacts', refreshContacts); },
                 });
             } else if (r.status === 429) {
                 var retry = (r.data && r.data.retry_after_seconds) || 600;
@@ -2139,7 +2167,7 @@
                             // F5: close only after the authoritative refresh
                             // settles, and return its Promise so the tracker
                             // does not announce success early.
-                            return loadTransfers().then(function () {
+                            return refreshAfterCommand('transfers', loadTransfers).then(function () {
                                 closeModal(false);
                                 if (attachmentId) selectAttachment(attachmentId);
                             });
@@ -2156,7 +2184,7 @@
                         },
                         onUnknown: function () {
                             unlockSend();
-                            return loadTransfers();
+                            return refreshAfterCommand('transfers', loadTransfers);
                         },
                     });
                     // Do not claim success yet: the tracker owns the final outcome.
@@ -2231,8 +2259,8 @@
                     resourceKey: resourceKey,
                     queued: opts.queued,
                     success: opts.success,
-                    onSuccess: function () { return loadProviders(); },
-                    onUnknown: function () { return loadProviders(); },
+                    onSuccess: function () { return refreshAfterCommand('providers', loadProviders); },
+                    onUnknown: function () { return refreshAfterCommand('providers', loadProviders); },
                 });
             } else {
                 toast(filesErrorCode(r.data), 'error');
@@ -2635,9 +2663,9 @@
                         if (resultEl) resultEl.innerHTML = '';
                         var originEl = getEl('filesProviderOrigin');
                         if (originEl) originEl.value = '';
-                        return loadProviders();
+                        return refreshAfterCommand('providers', loadProviders);
                     },
-                    onUnknown: function () { return loadProviders(); },
+                    onUnknown: function () { return refreshAfterCommand('providers', loadProviders); },
                 });
             }).catch(function () {
                 toast(t('files.error.network_error', 'Network error'), 'error');

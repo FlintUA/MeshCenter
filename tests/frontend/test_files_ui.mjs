@@ -1565,6 +1565,221 @@ async function test_provider_card_shows_status_fields() {
     console.log('PASS: test_provider_card_shows_status_fields');
 }
 
+async function test_command_awaits_inflight_then_fresh_refresh() {
+    // G1: when a command's terminal projection refresh is ALREADY in flight at
+    // settle time, the terminal callback must JOIN that read, then issue a fresh
+    // read, and only then announce success — never while the earlier read is
+    // still unresolved (the old boolean guard returned an instantly-resolved
+    // promise and announced success early).
+    let listCalls = 0;
+    let releaseInFlight;
+    const inFlightGate = new Promise((r) => { releaseInFlight = r; });
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url.startsWith('/api/attachments?')) {
+                listCalls += 1;
+                if (listCalls === 2) await inFlightGate; // hold the in-flight refresh
+                return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT')], total: 1 });
+            }
+            if (url === '/api/attachments/a1/revoke') {
+                return json(202, { ok: true, command_id: 'cmd-1' });
+            }
+            if (url === '/api/mca/commands/cmd-1') {
+                return json(200, { ok: true, command: { command_id: 'cmd-1', status: 'succeeded', type: 'revoke', resource_id: 'a1' } });
+            }
+            if (url === '/api/attachments/a1') {
+                return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT'), timeline: [] });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('report.pdf'));
+
+    // Start a second transfers load (in-flight, held) before the command settles.
+    dispatch(sandbox, { 'data-files-action': 'refresh' });
+    await waitFor(() => listCalls >= 2);
+
+    dispatch(sandbox, { 'data-files-action': 'attach-revoke', 'data-attachment': 'a1' });
+    dispatch(sandbox, { 'data-files-action': 'modal-confirm' });
+
+    await waitFor(() => sandbox._fetchLog.some((e) => e.url === '/api/mca/commands/cmd-1'));
+
+    assert.ok(
+        !sandbox._notifications.some((n) => n.kind === 'update' && n.type === 'success'),
+        'success must not be announced while the in-flight refresh is still unresolved',
+    );
+    assert.equal(listCalls, 2, 'the terminal callback must join the in-flight read, not announce success early');
+
+    releaseInFlight();
+    await waitFor(() => sandbox._notifications.some((n) => n.kind === 'update' && n.type === 'success'));
+
+    const successes = sandbox._notifications.filter((n) => n.kind === 'update' && n.type === 'success').length;
+    assert.equal(successes, 1, 'success must fire exactly once after the fresh read settles');
+    assert.ok(listCalls >= 3, 'a fresh authoritative read must follow the joined in-flight read');
+
+    console.log('PASS: test_command_awaits_inflight_then_fresh_refresh');
+}
+
+async function test_send_does_not_act_on_cached_providers_before_fresh() {
+    // G2.1: a new Send dialog must not render/select the cached provider list,
+    // nor check readiness against it, before this dialog's own fresh provider
+    // response arrives — the fresh load owns the select and readiness.
+    let providerCalls = 0;
+    let readinessCalls = 0;
+    let releaseFresh;
+    const freshGate = new Promise((r) => { releaseFresh = r; });
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/providers') {
+                providerCalls += 1;
+                if (providerCalls >= 2) await freshGate; // hold the Send dialog's fresh read
+                return json(200, { ok: true, providers: [provider('prov1', { is_default: true })] });
+            }
+            if (url.includes('upload-readiness')) {
+                readinessCalls += 1;
+                return json(200, { ok: true, ready: true, reason: null });
+            }
+            return undefined;
+        }),
+    });
+
+    // Populate the cached provider list via the workspace provider dialog.
+    activate(sandbox);
+    dispatch(sandbox, { 'data-files-action': 'providers' });
+    await waitFor(() => (sandbox._document.elements.get('filesProvidersList')?.innerHTML || '').includes('provider-toggle'));
+
+    // Open a Send dialog; its fresh provider read is held.
+    dispatch(sandbox, { 'data-files-action': 'send' });
+    await waitFor(() => providerCalls >= 2);
+
+    const sel = sandbox._document.getElementById('filesSendProvider');
+    assert.equal(sel.value, '', 'the cached provider must not be pre-selected before the fresh read');
+    assert.ok(sel.innerHTML.includes('Loading providers'), 'the provider select must show a loading state, not cached providers');
+    assert.equal(readinessCalls, 0, 'no readiness check may run against a cached provider before the fresh read');
+
+    releaseFresh();
+    await waitFor(() => sel.value === 'prov1');
+    assert.ok(readinessCalls >= 1, 'readiness is checked only after the fresh provider projection arrives');
+
+    console.log('PASS: test_send_does_not_act_on_cached_providers_before_fresh');
+}
+
+async function test_stale_send_settings_do_not_update_new_dialog() {
+    // G2.2: a settings response started for an older Send dialog must not update
+    // a newer one. Dialog 1's settings fetch (bluetooth) is held and released
+    // AFTER dialog 2 opens with its own serial fetch — the stale response is dropped.
+    // (activate() is required so guardedLoad onDone callbacks actually run.)
+    let settingsCalls = 0;
+    let releaseOld;
+    const oldGate = new Promise((r) => { releaseOld = r; });
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/settings') {
+                settingsCalls += 1;
+                // #1 = activate's workspace settings load; #2 = dialog 1's send load.
+                if (settingsCalls === 2) {
+                    await oldGate;
+                    return json(200, { ok: true, settings: { meshtastic: { transport: 'bluetooth' } } });
+                }
+                return json(200, { ok: true, settings: { meshtastic: { transport: 'serial' } } });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+
+    // Dialog 1: its send settings fetch is held (will later report bluetooth).
+    dispatch(sandbox, { 'data-files-action': 'send' });
+    await waitFor(() => settingsCalls === 2);
+
+    // Close dialog 1 and open dialog 2, whose settings fetch resolves serial.
+    dispatch(sandbox, { 'data-files-action': 'modal-close' });
+    dispatch(sandbox, { 'data-files-action': 'send' });
+    await waitFor(() => settingsCalls === 3);
+    await waitFor(() => (sandbox._document.getElementById('filesSendStatus').innerHTML || '').includes('serial'));
+
+    // Release dialog 1's held bluetooth response — it must not overwrite dialog 2.
+    releaseOld();
+    await new Promise((r) => setTimeout(r, 30));
+
+    const status = sandbox._document.getElementById('filesSendStatus').innerHTML;
+    assert.doesNotMatch(status, /Bluetooth/, 'a stale older-dialog settings response must not update the newer dialog');
+    assert.equal(
+        sandbox._document.getElementById('filesSendSubmit').textContent,
+        'Send',
+        'the submit label must stay "Send" (serial), not flip to "Send without confirmation"',
+    );
+
+    console.log('PASS: test_stale_send_settings_do_not_update_new_dialog');
+}
+
+async function test_send_provider_fetch_not_suppressed_by_workspace_load() {
+    // G2.3: an in-flight workspace provider load must not suppress the Send
+    // dialog's required fresh provider request (distinct generation-scoped key).
+    let providerCalls = 0;
+    let releaseWorkspace;
+    const wsGate = new Promise((r) => { releaseWorkspace = r; });
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/providers') {
+                providerCalls += 1;
+                if (providerCalls === 1) await wsGate; // hold the workspace load
+                return json(200, { ok: true, providers: [provider('prov1', { is_default: true })] });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    dispatch(sandbox, { 'data-files-action': 'providers' });
+    await waitFor(() => providerCalls === 1);
+
+    // Open the Send dialog while the workspace provider load is still held.
+    dispatch(sandbox, { 'data-files-action': 'send' });
+    await waitFor(() => sandbox._document.getElementById('filesSendProvider').value === 'prov1');
+
+    assert.ok(providerCalls >= 2, 'the Send dialog must issue its own fresh provider fetch despite the in-flight workspace load');
+    releaseWorkspace();
+
+    console.log('PASS: test_send_provider_fetch_not_suppressed_by_workspace_load');
+}
+
+async function test_provider_error_codes_are_localized() {
+    // G3: raw provider last_error_code values must be mapped to localized labels
+    // (numeric-only HTTP status, exception class names, identity codes), never
+    // rendered verbatim; null falls back to the em-dash.
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/providers') {
+                return json(200, { ok: true, providers: [
+                    provider('p1', { last_error_code: 'http_503' }),
+                    provider('p2', { last_error_code: 'ConnectionError' }),
+                    provider('p3', { last_error_code: 'service_public_key_mismatch' }),
+                    provider('p4', { last_error_code: null }),
+                ] });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    dispatch(sandbox, { 'data-files-action': 'providers' });
+    await waitFor(() => (sandbox._document.elements.get('filesProvidersList')?.innerHTML || '').includes('provider-toggle'));
+
+    const html = sandbox._document.elements.get('filesProvidersList').innerHTML;
+    assert.match(html, /HTTP 503/, 'http_503 must render as a numeric-only HTTP status label');
+    assert.doesNotMatch(html, /http_503/, 'the raw http_503 code must not be rendered verbatim');
+    assert.match(html, /Connection failed/, 'ConnectionError must render its localized label');
+    assert.doesNotMatch(html, /ConnectionError/, 'the raw ConnectionError class name must not be rendered verbatim');
+    assert.match(html, /Provider key mismatch/, 'service_public_key_mismatch must render its localized label');
+    assert.match(html, /—/, 'a null error code must render the em-dash fallback');
+
+    console.log('PASS: test_provider_error_codes_are_localized');
+}
+
 async function main() {
     await test_activate_merges_contacts_and_excludes_local();
     await test_trust_confirm_shows_full_fingerprint();
@@ -1600,7 +1815,13 @@ async function main() {
     await test_send_unknown_awaits_refresh();
     await test_provider_command_awaits_refresh();
     await test_provider_card_shows_status_fields();
-    console.log('All files UI behavior tests passed (33 scenarios).');
+    // Final race corrections (G1-G3).
+    await test_command_awaits_inflight_then_fresh_refresh();
+    await test_send_does_not_act_on_cached_providers_before_fresh();
+    await test_stale_send_settings_do_not_update_new_dialog();
+    await test_send_provider_fetch_not_suppressed_by_workspace_load();
+    await test_provider_error_codes_are_localized();
+    console.log('All files UI behavior tests passed (38 scenarios).');
 }
 
 main()

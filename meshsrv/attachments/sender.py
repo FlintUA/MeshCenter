@@ -1056,6 +1056,12 @@ def apply_expired(conn: sqlite3.Connection, attachment_id: str, now: Optional[fl
     observation of it, is the single source of truth for when an object is
     genuinely past expiry. At the exact boundary it is accepted.
 
+    Fail closed: a row with no valid positive authoritative deadline
+    (`hard_expires_at` NULL, zero, or negative - e.g. a draft that never
+    reached READY_TO_SEND, or a pre-migration row) can never be expired by an
+    inbound frame. With no deadline there is no boundary to have passed, so an
+    EXPIRED is dropped with no state, secret-table, or timeline mutation.
+
     Retention mirrors `apply_rejected`: only the transient `mca_sender_state`
     row is dropped; the retained `mca_sender_revoke_state` row survives to
     bounded cleanup at `delete_after`."""
@@ -1067,7 +1073,9 @@ def apply_expired(conn: sqlite3.Connection, attachment_id: str, now: Optional[fl
     if state not in (SENT, RECEIVED):
         return state
     hard_expires_at = row["hard_expires_at"]
-    if hard_expires_at is not None and hard_expires_at > 0 and now < hard_expires_at:
+    if hard_expires_at is None or hard_expires_at <= 0:
+        return state  # no valid authoritative deadline - drop (fail closed)
+    if now < hard_expires_at:
         return state  # not yet past the sender's authoritative hard expiry - drop
     conn.execute("UPDATE attachments SET state = ?, error_code = NULL WHERE id = ?", (EXPIRED, attachment_id))
     _record_event(conn, attachment_id, now, "expired", {"to": EXPIRED})

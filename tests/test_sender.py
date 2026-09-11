@@ -578,6 +578,97 @@ def test_apply_expired_accepts_after_boundary_and_duplicate_is_noop(conn, wsm, p
     assert sender.get_state(conn, attachment_id) == sender.EXPIRED
 
 
+def test_apply_expired_fails_closed_when_hard_expires_at_is_null():
+    """ADR-0010 Decision 2 (fail closed): with no authoritative deadline
+    (hard_expires_at NULL) an inbound EXPIRED is dropped - no state,
+    secret-table, or timeline mutation, even at a `now` far past any plausible
+    boundary. Uses a reduced, nullable `hard_expires_at` schema because the
+    production schema's `NOT NULL` makes the NULL value unreachable there - the
+    guard is defence-in-depth for exactly that legacy/never-assigned case."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE attachments (
+            id TEXT PRIMARY KEY, state TEXT NOT NULL, hard_expires_at INTEGER
+        );
+        CREATE TABLE mca_sender_state (
+            attachment_id TEXT PRIMARY KEY, revoke_token TEXT
+        );
+        CREATE TABLE mca_sender_revoke_state (
+            attachment_id TEXT PRIMARY KEY, revoke_token TEXT,
+            delete_after TEXT, created_at TEXT, updated_at TEXT
+        );
+        CREATE TABLE attachment_events (
+            id INTEGER PRIMARY KEY, attachment_id TEXT, occurred_at REAL,
+            event_type TEXT, detail_json TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO attachments (id, state, hard_expires_at) VALUES (?, ?, ?)",
+        ("att-null", sender.SENT, None),
+    )
+    conn.execute(
+        "INSERT INTO mca_sender_state (attachment_id, revoke_token) VALUES (?, ?)",
+        ("att-null", "tok-1"),
+    )
+    conn.execute(
+        "INSERT INTO mca_sender_revoke_state (attachment_id, revoke_token, delete_after, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("att-null", "tok-1", "9999999999.0", "1.0", "1.0"),
+    )
+    conn.execute(
+        "INSERT INTO attachment_events (attachment_id, occurred_at, event_type, detail_json) VALUES (?, ?, ?, ?)",
+        ("att-null", 1.0, "created", "{}"),
+    )
+
+    assert sender.apply_expired(conn, "att-null", now=10**12) == sender.SENT
+    assert sender.get_state(conn, "att-null") == sender.SENT
+    # Secret tables unchanged (transient row still present, revoke row intact).
+    assert conn.execute(
+        "SELECT revoke_token FROM mca_sender_state WHERE attachment_id = 'att-null'"
+    ).fetchone()[0] == "tok-1"
+    assert conn.execute(
+        "SELECT revoke_token FROM mca_sender_revoke_state WHERE attachment_id = 'att-null'"
+    ).fetchone()[0] == "tok-1"
+    # Timeline unchanged (no "expired" event recorded).
+    assert conn.execute(
+        "SELECT COUNT(*) FROM attachment_events WHERE attachment_id = 'att-null'"
+    ).fetchone()[0] == 1
+
+
+def test_apply_expired_fails_closed_when_hard_expires_at_is_zero(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0010 Decision 2 (fail closed): hard_expires_at = 0 is not a valid
+    positive authoritative deadline, so an inbound EXPIRED is dropped - no
+    state, secret-table, or timeline mutation."""
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "sender-addr")
+    _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+
+    conn.execute("UPDATE attachments SET hard_expires_at = 0 WHERE id = ?", (attachment_id,))
+    conn.commit()
+
+    transient_before = tuple(sender._get_sender_state(conn, attachment_id))
+    revoke_before = tuple(conn.execute(
+        "SELECT * FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone())
+    events_before = conn.execute(
+        "SELECT COUNT(*) FROM attachment_events WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone()[0]
+
+    assert sender.apply_expired(conn, attachment_id, now=1) == sender.SENT
+    assert sender.get_state(conn, attachment_id) == sender.SENT
+    assert tuple(sender._get_sender_state(conn, attachment_id)) == transient_before
+    assert tuple(conn.execute(
+        "SELECT * FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone()) == revoke_before
+    assert conn.execute(
+        "SELECT COUNT(*) FROM attachment_events WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone()[0] == events_before
+
+
 def test_apply_rejected_on_terminal_is_noop(conn, wsm, principal, recipient, tmp_path, relay_client):
     """ADR-0010: a stale REJECTED arriving after DOWNLOADED must never regress
     the terminal state - monotonic and idempotent, mirroring apply_ack()."""

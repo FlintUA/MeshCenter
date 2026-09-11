@@ -877,9 +877,10 @@ DROP TABLE IF EXISTS mca_auto_key_request_quota;
 # resume that finally re-verifies the parked offer. Inbound CANCEL verification
 # (ADR-0010 Decision 3) checks the sender's signature against THIS pinned key,
 # never the *current* TOFU binding resolved from the mutable transport address
-# - so a later key rotation on that address can neither let a rotated-out key
-# still cancel (its key no longer matches the pinned identity) nor break a
-# valid CANCEL signed by the key the OFFER was actually admitted under. NULL
+# - so a later key rotation on that address can neither let the rotated-in key
+# cancel that old transfer (its key no longer matches the pinned identity) nor
+# break a valid CANCEL signed by the original pinned key the OFFER was actually
+# admitted under. NULL
 # for a still-parked WAITING_KEY offer (nothing verified yet) and for
 # pre-migration rows; a CANCEL for either is dropped (fail closed), never
 # guessed at. Deliberately NOT projected into public snapshots/REST (the

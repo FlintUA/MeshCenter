@@ -21,6 +21,7 @@ Pure stdlib + a temp sqlite schema - no Flask/network/radio, safe in CI.
 """
 
 import dataclasses
+import json
 import os
 import sqlite3
 import sys
@@ -442,10 +443,12 @@ CREATE TABLE attachments (
     hard_expires_at REAL, download_grace_seconds INTEGER, provider_id TEXT,
     saved_path TEXT, primary_delivery_id TEXT, error_code TEXT,
     client_request_id TEXT, canonical_hash TEXT,
-    reply_route_type TEXT, reply_route_id TEXT
+    reply_route_type TEXT, reply_route_id TEXT,
+    sender_public_identity BLOB
 );
 CREATE TABLE attachment_recipients (
-    id INTEGER, attachment_id TEXT, envelope_id TEXT, recipient_principal_id TEXT
+    id INTEGER, attachment_id TEXT, envelope_id TEXT, recipient_principal_id TEXT,
+    recipient_public_identity BLOB
 );
 CREATE TABLE attachment_deliveries (
     id TEXT, attachment_id TEXT, adapter_id TEXT, connector_profile_id TEXT,
@@ -779,6 +782,58 @@ def test_build_assembles_recipients_and_deliveries(paths, conn, workspace_manage
     assert record.recipients == (RecipientRecord(key_id="env-1", principal_id="recip-a"),)
     assert record.deliveries[0].id == "d1"
     assert record.deliveries[0].external_message_id == "ext-9"
+
+
+def test_build_never_projects_sender_or_recipient_public_identity(paths, conn, workspace_manager):
+    """Migration 16's `attachments.sender_public_identity` and migration 14's
+    `attachment_recipients.recipient_public_identity` hold raw Ed25519 key
+    bytes, pinned at admission for signature verification. The snapshot builder
+    reads those rows but copies only the allowed columns into `AttachmentRecord`
+    /`RecipientRecord`, and `serialize_attachment_public` builds the list/detail
+    shape field-by-field (never `asdict`), so the raw bytes never reach the
+    public projection - even when they are genuinely present in the DB."""
+    raw_sender = bytes(range(32))
+    raw_recipient = bytes(range(0x80, 0xA0))
+    conn.execute(
+        "INSERT INTO attachments (id, workspace_id, direction, state, created_at, "
+        "hard_expires_at, download_grace_seconds, sender_public_identity) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("att-key", "local", "received", "AVAILABLE", 0.0, 999.0, 300, raw_sender),
+    )
+    conn.execute(
+        "INSERT INTO attachment_recipients (attachment_id, envelope_id, recipient_principal_id, "
+        "recipient_public_identity) VALUES (?, ?, ?, ?)",
+        ("att-key", "env-1", "recip-a", raw_recipient),
+    )
+    snap = _build(conn, workspace_manager)
+    record = snap.by_id["att-key"]
+
+    # The raw bytes are genuinely present in the DB rows (the test is not
+    # vacuous - it proves the projection drops them, not that they were absent).
+    assert conn.execute(
+        "SELECT sender_public_identity FROM attachments WHERE id = 'att-key'"
+    ).fetchone()[0] == raw_sender
+    assert conn.execute(
+        "SELECT recipient_public_identity FROM attachment_recipients WHERE attachment_id = 'att-key'"
+    ).fetchone()[0] == raw_recipient
+
+    # The projection types never copy the raw-key columns.
+    assert not hasattr(record, "sender_public_identity")
+    assert not hasattr(record.recipients[0], "recipient_public_identity")
+
+    # The public serializer (both list and detail shapes) never emits the field
+    # names, nor the raw bytes in any encoding.
+    for out in (
+        serialize_attachment_public(record),
+        serialize_attachment_public(record, include_timeline=True),
+    ):
+        assert "sender_public_identity" not in out
+        assert "recipient_public_identity" not in out
+        for recipient in out["recipients"]:
+            assert "public_identity" not in recipient
+        text = json.dumps(out, sort_keys=True)
+        assert raw_sender.hex() not in text
+        assert raw_recipient.hex() not in text
 
 
 def test_build_snapshot_is_frozen(paths, conn, workspace_manager):

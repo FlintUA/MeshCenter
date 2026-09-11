@@ -670,12 +670,16 @@ def handle_offer(
     terminal, the existing state is returned unchanged with no replies
     and no work at all (ADR-0001 section 6's dedup rule).
 
-    An OFFER whose signature fails verification (when a binding *is*
-    already known for its `sender_key_id`) is rejected outright - no
-    attachment row is created for it at all. This is the one path with no
+    An OFFER whose signature fails verification (when a binding is already
+    known **and `MCA_READY`** for its `sender_key_id`) is rejected outright -
+    no attachment row is created for it at all. This is the one path with no
     corresponding state: criterion #18 ("a tampered pointer signature is
     never shown as valid") applies here just as much as to the
-    descriptor/chunk signatures checked later in `Verifying`.
+    descriptor/chunk signatures checked later in `Verifying`. A binding that
+    is known but not `MCA_READY` (`KEY_UNVERIFIED`/`KEY_CHANGED`) is NOT
+    verified here - it is parked in `WAITING_KEY` like an unknown key, and
+    the signature is checked on resume in `_step_waiting_key` once the human
+    has explicitly trusted (or resolved) the key.
     """
 
     now = _now() if now is None else now
@@ -704,7 +708,16 @@ def handle_offer(
     sender_key_id_hex = unverified.sender_key_id.hex()
     binding = key_exchange.get_binding_by_key_id(sender_key_id_hex)
 
-    if binding is not None:
+    # PR 1 (trust gate at admission): a binding must be MCA_READY (TOFU-
+    # confirmed, no pending rotation) before its key may authorize an OFFER.
+    # KEY_UNVERIFIED (announced, never confirmed) and KEY_CHANGED (a
+    # conflicting key pending accept/reject) are treated exactly like an
+    # unknown key: the OFFER is parked in WAITING_KEY and signature-checked
+    # only once the key is explicitly trusted (see _step_waiting_key). An
+    # unverified or not-yet-accepted key never authorizes a file here.
+    binding_ready = binding is not None and binding.status == AddressStatus.MCA_READY
+
+    if binding_ready:
         try:
             codec.decode_offer(raw_offer, verify_key=VerifyKey(binding.public_identity))
         except codec.CodecError as exc:
@@ -739,13 +752,13 @@ def handle_offer(
             principal.workspace_id,
             transfer_id_hex,
             principal.principal_id,
-            (binding.principal_id if binding is not None else None),
+            (binding.principal_id if binding_ready else None),
             encode_provider_id(unverified.provider_id),
             OFFER_RECEIVED,
             now,
             unverified.hard_expires_at,
             DEFAULT_DOWNLOAD_GRACE_SECONDS,
-            (raw_offer if binding is None else None),
+            (raw_offer if not binding_ready else None),
             # "DIRECT" - must match delivery.base.RouteType.DIRECT.value.
             # Not imported here (this module never imports anything from
             # delivery.base/DeliveryAdapter, per its own module docstring)
@@ -780,7 +793,7 @@ def handle_offer(
         replies.append(ack)
     conn.commit()
 
-    if binding is None:
+    if not binding_ready:
         _set_state(conn, attachment_id, WAITING_KEY, now)
         conn.commit()
         return ReceiveResult(attachment_id=attachment_id, state=WAITING_KEY, replies=replies)

@@ -121,6 +121,14 @@ MAX_ATTACHMENTS_PER_TICK = 8
 # (migration 13) still governs how often any one address is asked.
 MAX_AUTO_KEY_REQUESTS_PER_TICK = 8
 
+# Internal tri-state results of `_auto_request_key_for_row` (PR 1 correction
+# pass): distinguish "sent" (counts toward the per-tick cap) from "the
+# workspace-wide hourly budget is exhausted" (stop the scan) from an ordinary
+# skip (continue to the next row). Strings, not an enum, to match the module's
+# existing lightweight-result style.
+_AUTO_KEY_REQUEST_SENT = "sent"
+_AUTO_KEY_REQUEST_QUOTA_EXHAUSTED = "quota_exhausted"
+
 # PR #231 review, section 2 (single-owner SQLite model): the radio
 # listener thread never touches the MCA database directly any more - it
 # only builds an immutable InboundEvent and puts it on this bounded
@@ -1840,19 +1848,30 @@ class AttachmentsService:
         having to click "request key" for every transfer. For each received
         attachment parked in WAITING_KEY whose signer's key is STILL unknown,
         send a rate-limited KEY_REQUEST to the persisted reply route - the
-        same per-address limit and persisted `last_request_sent_at`
-        `_command_request_key` uses - so the sender is prompted to announce
-        its key and the transfer can later resume once the human confirms it.
+        same per-address interval and persisted `last_request_sent_at`
+        `_command_request_key` uses, plus a persisted workspace-wide hourly
+        budget - so the sender is prompted to announce its key and the
+        transfer can later resume once the human confirms it.
+
+        PR 1 correction pass: three layered safeguards keep a stranger
+        flooding OFFERs from many distinct unknown-key addresses from
+        turning this scan into an unbounded outbound burst:
+
+        - **per-tick send cap** (`MAX_AUTO_KEY_REQUESTS_PER_TICK`), the same
+          shape as `MAX_ATTACHMENTS_PER_TICK`;
+        - **per-canonical-address dedup within the tick**: `attempted` holds
+          every address already tried this tick *including failed/unsent*
+          sends, so two rows from the same sender can never both send in one
+          tick;
+        - **persisted workspace-wide hourly budget** (migration 15), checked
+          per-row so mid-scan exhaustion stops the scan for the rest of the
+          tick.
 
         Mirrors `_command_request_key`'s revalidation posture: nothing about
-        a parked row is trusted here either. The key is re-checked by key id
-        (not address), so a new-key OFFER from an address that already has a
-        trusted binding is still correctly treated as unknown; a failed or
-        `sent=False` delivery consumes no quota. Safe to run every tick:
-        idempotent (the rate limit collapses repeated attempts to one request
-        per window, and a row already advanced out of WAITING_KEY this tick
-        is simply not re-scanned), bounded by the same one-bad-row-must-not-
-        stop-the-scan rule as the row scan."""
+        a parked row is trusted here either. Safe to run every tick: the
+        per-address rate limit collapses repeated attempts to one request
+        per window, a row already advanced out of WAITING_KEY this tick is
+        simply not re-scanned, and one bad row must not stop the scan."""
         if self._delivery_adapter is None:
             return
         self._conn.row_factory = sqlite3.Row
@@ -1861,45 +1880,72 @@ class AttachmentsService:
         # cap below (not a scan LIMIT) bounds the outbound burst without
         # letting an already-rate-limited row starve a not-yet-requested one.
         rows = self._conn.execute(
-            "SELECT id, reply_route_id, pending_offer_cbor FROM attachments "
-            "WHERE workspace_id = ? AND direction = 'received' AND state = ? ORDER BY created_at",
+            "SELECT id, reply_route_id, reply_route_type, reply_destination_address, pending_offer_cbor "
+            "FROM attachments WHERE workspace_id = ? AND direction = 'received' AND state = ? ORDER BY created_at",
             (self._principal.workspace_id, receiver.WAITING_KEY),
         ).fetchall()
         sent_this_tick = 0
+        attempted: "set[str]" = set()
         for row in rows:
             if sent_this_tick >= MAX_AUTO_KEY_REQUESTS_PER_TICK:
                 break
             try:
-                if self._auto_request_key_for_row(row):
-                    sent_this_tick += 1
+                outcome = self._auto_request_key_for_row(row, attempted)
             except Exception:  # noqa: BLE001 - one bad row must not stop the scan
                 logger.exception(
                     "AttachmentsService: auto key-request failed for attachment %s", row["id"]
                 )
+                continue
+            if outcome == _AUTO_KEY_REQUEST_QUOTA_EXHAUSTED:
+                # Workspace-wide hourly budget is full - no further automatic
+                # request can be sent this tick regardless of row, so stop.
+                break
+            if outcome == _AUTO_KEY_REQUEST_SENT:
+                sent_this_tick += 1
 
-    def _auto_request_key_for_row(self, row: sqlite3.Row) -> bool:
+    def _auto_request_key_for_row(self, row: sqlite3.Row, attempted: "set[str]") -> Optional[str]:
         route_id = row["reply_route_id"]
+        route_type = row["reply_route_type"]
+        destination = row["reply_destination_address"]
         pending_raw = row["pending_offer_cbor"]
         if not route_id or pending_raw is None:
-            return False
+            return None
+        # PR 1 (correction): validate the *complete* persisted reply route
+        # before sending, not just the bare `reply_route_id`. The reply is
+        # DIRECT-only, and the destination must equal the (already-canonical)
+        # route id - a malformed or non-DIRECT persisted route is never sent
+        # to (left for the human's manual action, never guessed at).
+        if route_type != "DIRECT" or not _is_contact_id(route_id) or destination != route_id:
+            logger.warning(
+                "AttachmentsService: skipping auto key-request for attachment %s: "
+                "invalid persisted reply route (type=%r, id=%r, destination=%r)",
+                row["id"], route_type, route_id, destination,
+            )
+            return None
+        # Per-canonical-address dedup within this tick: `attempted` covers
+        # sent, failed, and rate-limited attempts alike, so a second row from
+        # the same sender never re-sends in the same tick. (`route_id` is
+        # already canonical - validated at the inbound boundary - so this key
+        # needs no `.lower()` normalization.)
+        if route_id in attempted:
+            return None
+        attempted.add(route_id)
         try:
             unverified = codec.decode_offer(bytes(pending_raw), verify_key=None)
         except codec.CodecError:
-            return False
+            return None
         if self._key_exchange.get_binding_by_key_id(unverified.sender_key_id.hex()) is not None:
             # Key is now known (announced since the OFFER parked it) - the
             # trust gate in `_step_waiting_key` owns whether/when to resume.
-            return False
-        # Meshtastic node ids are lowercase hex by convention; `.lower()` is
-        # idempotent and defensively normalizes any uppercase hex the transport
-        # passed through, so the address-keyed rate-limit row matches the one
-        # `_command_request_key` (fed by the already-lowercased frontend id)
-        # reads and writes.
-        normalized = route_id.lower()
+            return None
         try:
-            self._key_exchange.check_key_request_rate_limit(normalized, self._now())
+            self._key_exchange.check_key_request_rate_limit(route_id, self._now())
         except RateLimited:
-            return False
+            return None
+        try:
+            self._key_exchange.check_auto_key_request_quota(self._now())
+        except RateLimited:
+            return _AUTO_KEY_REQUEST_QUOTA_EXHAUSTED
         key_request = self._key_exchange.build_key_request()
         route = Route(route_type=RouteType.DIRECT, route_id=route_id, destination_address=route_id)
         try:
@@ -1908,11 +1954,12 @@ class AttachmentsService:
                 wire_payload, route, idempotency_key=f"auto-key-request-{row['id']}"
             )
         except DeliveryError:
-            return False
+            return None
         if not receipt.sent:
-            return False
-        self._key_exchange.record_key_request_sent(normalized, self._now())
-        return True
+            return None
+        self._key_exchange.record_key_request_sent(route_id, self._now())
+        self._key_exchange.record_auto_key_request_sent(self._now())
+        return _AUTO_KEY_REQUEST_SENT
 
     def _command_request_key(self, command: Command) -> CommandOutcome:
         """`contact_request_key` (§7.10): send a signed KEY_REQUEST to a
@@ -2406,6 +2453,18 @@ class AttachmentsService:
         from meshsrv.attachments.provider_registry import encode_provider_id
 
         raw_offer = envelope.logical_message
+        # PR 1 (correction): canonical node-id validation at the inbound
+        # boundary. `source_address` (== `envelope.route_id` for the
+        # DIRECT-only MVP) becomes the persisted `reply_route_id`, so it is
+        # validated *here*, once, rather than being `str()`-cast through and
+        # later `.lower()`-normalized at send time. A non-canonical node id
+        # (not `!` + 8 lowercase hex) is dropped outright - never stored, never
+        # normalized, never replied to.
+        if not _is_contact_id(source_address):
+            logger.info(
+                "AttachmentsService: rejected OFFER from non-canonical source address %r", source_address
+            )
+            return
         try:
             unverified = codec.decode_offer(raw_offer, verify_key=None)
             provider_id_text = encode_provider_id(unverified.provider_id)

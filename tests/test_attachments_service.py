@@ -1522,6 +1522,20 @@ class _RaisingSendAdapter(FakeTextAdapter):
         raise DeliveryError("simulated send failure")
 
 
+class _CountingRaisingAdapter(FakeTextAdapter):
+    """Raises DeliveryError on every send but records each attempt, so a
+    test can assert the attempt *count* (same-address dedup must collapse
+    to a single attempt even when that attempt fails)."""
+
+    def __init__(self, ether, address):
+        super().__init__(ether, address)
+        self.send_calls = 0
+
+    def send(self, wire_payload, route, idempotency_key):
+        self.send_calls += 1
+        raise DeliveryError("simulated send failure")
+
+
 # ---- attachment_cancel -----------------------------------------------------
 
 
@@ -1877,6 +1891,126 @@ def test_auto_request_missing_key_skips_once_the_key_is_known(
     assert ether.drain(contact) == []  # no request: the key is already known
 
 
+def test_auto_request_missing_key_dedups_same_address_within_tick(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR 1 correction: two parked WAITING_KEY rows from the SAME canonical
+    address must not both attempt a KEY_REQUEST in one tick. The `attempted`
+    set marks the address *before* the send, so dedup covers failed sends
+    too - even when the first send raises DeliveryError, the second row is
+    skipped and the adapter sees exactly one attempt."""
+    _, wsm2, principal2 = remote_recipient
+    contact = "!756f9960"
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    for _ in range(2):
+        result = receiver.handle_offer(
+            conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+            key_exchange=key_exchange, raw_offer=_build_offer_from(principal2, signing_key),
+            network_available=True, source_address=contact,
+        )
+        assert result.state == receiver.WAITING_KEY
+
+    ether = InMemoryEther()
+    adapter = _CountingRaisingAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    svc._auto_request_missing_keys()
+
+    assert adapter.send_calls == 1
+
+
+def test_auto_request_missing_key_hourly_quota_stops_scan_and_persists(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
+):
+    """PR 1 correction: the persisted workspace-wide hourly budget bounds the
+    automatic KEY_REQUEST scan independently of the per-tick cap. Once
+    `max_auto_key_requests_per_hour` sends are recorded in
+    `mca_auto_key_request_quota`, the scan stops mid-tick rather than
+    overshooting, and the counter is persisted (survives a restart)."""
+    quota = 2
+    low_quota_key_exchange = KeyExchangeCoordinator(
+        conn, wsm, principal, ADAPTER_ID, max_auto_key_requests_per_hour=quota
+    )
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, low_quota_key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    addresses = [f"!000000{i:02x}" for i in range(5)]
+    for contact in addresses:
+        sk = SigningKey.generate()
+        fake_principal = type("P", (), {"key_id": identity.compute_key_id(bytes(sk.verify_key))})()
+        raw_offer = codec.encode_offer(
+            codec.OfferFields(
+                provider_id=uuid.uuid4().bytes[:8],
+                transfer_id=uuid.uuid4().bytes,
+                sender_key_id=bytes.fromhex(fake_principal.key_id),
+                kind=0,
+                size_bucket=1,
+                hard_expires_at=int(time.time()) + 3600,
+                flags=0,
+            ),
+            sk,
+        )
+        result = receiver.handle_offer(
+            conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+            key_exchange=key_exchange, raw_offer=raw_offer, network_available=True, source_address=contact,
+        )
+        assert result.state == receiver.WAITING_KEY
+
+    svc._auto_request_missing_keys()
+
+    sent = sum(len(ether.drain(addr)) for addr in addresses)
+    assert sent == quota  # the scan stopped once the hourly budget was exhausted
+
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT requests_sent FROM mca_auto_key_request_quota WHERE workspace_id = ?",
+        (principal.workspace_id,),
+    ).fetchone()
+    assert row is not None and row["requests_sent"] == quota
+
+
+def test_inbound_offer_non_canonical_source_is_dropped(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR 1 correction: canonical node-id validation at the inbound boundary
+    (`_process_inbound_offer`). A non-canonical source_address - e.g.
+    uppercase hex, which the removed `.lower()` send-time workaround used to
+    silently normalize - is dropped outright: never stored, never replied
+    to. A canonical lowercase address is admitted as before."""
+    _, wsm2, principal2 = remote_recipient
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    def _offer():
+        return codec.encode_offer(
+            codec.OfferFields(
+                provider_id=uuid.uuid4().bytes[:8],
+                transfer_id=uuid.uuid4().bytes,
+                sender_key_id=bytes.fromhex(principal2.key_id),
+                kind=0,
+                size_bucket=1,
+                hard_expires_at=int(time.time()) + 3600,
+                flags=0,
+            ),
+            signing_key,
+        )
+
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(_offer()), source_address="!756F9960", packet_id="p1", received_at=time.time()))
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(_offer()), source_address="!756f9960", packet_id="p2", received_at=time.time()))
+    svc.tick()
+
+    received_count = conn.execute(
+        "SELECT COUNT(*) FROM attachments WHERE workspace_id = ? AND direction = 'received'",
+        (principal.workspace_id,),
+    ).fetchone()[0]
+    assert received_count == 1  # only the canonical one was admitted
+
+
 def test_auto_request_missing_key_caps_sends_per_tick(
     conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
 ):
@@ -1886,7 +2020,13 @@ def test_auto_request_missing_key_caps_sends_per_tick(
     rest (fair, oldest-first) rather than them being silently dropped."""
     ether = InMemoryEther()
     adapter = FakeTextAdapter(ether, "local-addr")
-    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+    # The default 12/hour workspace quota would otherwise block the 13th of
+    # the 13 sends and confound this test - use a high quota so the per-tick
+    # cap is the only bound under test (the hourly quota has its own test).
+    high_quota_key_exchange = KeyExchangeCoordinator(
+        conn, wsm, principal, ADAPTER_ID, max_auto_key_requests_per_hour=10_000
+    )
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, high_quota_key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
 
     total = MAX_AUTO_KEY_REQUESTS_PER_TICK + 5
     addresses = [f"!000000{i:02x}" for i in range(total)]

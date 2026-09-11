@@ -307,6 +307,66 @@ def test_waiting_key_does_not_advance_on_unverified_binding(conn, wsm, principal
     assert result3.state == receiver.WAITING_PROVIDER
 
 
+def test_handle_offer_parks_on_preexisting_unverified_binding(conn, wsm, principal, provider_registry, key_exchange, remote_sender):
+    """PR 1 correction: the trust gate applies at ADMISSION, not only on
+    resume. An OFFER whose sender_key_id already resolves to a
+    KEY_UNVERIFIED binding (a KEY_ANNOUNCE was delivered but never
+    confirmed) must park in WAITING_KEY exactly like an unknown key -
+    the unconfirmed key never authorizes the file at intake."""
+    conn2, wsm2, principal2 = remote_sender
+    _bind_remote_sender(conn, principal2, transport_address="remote-addr", confirmed=False)
+    raw_offer = _build_offer(
+        provider_id=os.urandom(8), transfer_id=os.urandom(16), sender_principal=principal2,
+        sender_signing_key=identity.load_signing_key(wsm2, principal2), hard_expires_at=int(time.time()) + 3600,
+    )
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+        source_address="remote-addr",
+    )
+    assert result.state == receiver.WAITING_KEY
+    row = conn.execute(
+        "SELECT pending_offer_cbor, sender_principal_id FROM attachments WHERE id = ?",
+        (result.attachment_id,),
+    ).fetchone()
+    assert bytes(row[0]) == raw_offer  # parked, not authorized
+    assert row[1] is None  # sender identity not stamped until the key is trusted
+
+
+def test_handle_offer_parks_on_preexisting_key_changed_binding(conn, wsm, principal, provider_registry, key_exchange, remote_sender):
+    """PR 1 correction: a KEY_CHANGED binding (a conflicting key is parked
+    pending human accept/reject) must not authorize an OFFER signed by the
+    still-current key. Intake parks in WAITING_KEY until the key change is
+    resolved - never proceeds straight to WAITING_PROVIDER on a key whose
+    replacement is un-adjudicated."""
+    conn2, wsm2, principal2 = remote_sender
+    _bind_remote_sender(conn, principal2, transport_address="remote-addr", confirmed=True)
+    # Park a conflicting identity -> status flips MCA_READY -> KEY_CHANGED.
+    new_identity = SigningKey.generate().verify_key.encode()
+    conn.execute(
+        "UPDATE mca_recipient_bindings SET pending_public_identity = ?, pending_key_epoch = 1, pending_detected_at = ? "
+        "WHERE workspace_id = ? AND adapter_id = ? AND transport_address = ?",
+        (new_identity.hex(), int(time.time()), "local", ADAPTER_ID, "remote-addr"),
+    )
+    conn.commit()
+    raw_offer = _build_offer(
+        provider_id=os.urandom(8), transfer_id=os.urandom(16), sender_principal=principal2,
+        sender_signing_key=identity.load_signing_key(wsm2, principal2), hard_expires_at=int(time.time()) + 3600,
+    )
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+        source_address="remote-addr",
+    )
+    assert result.state == receiver.WAITING_KEY
+    row = conn.execute(
+        "SELECT pending_offer_cbor, sender_principal_id FROM attachments WHERE id = ?",
+        (result.attachment_id,),
+    ).fetchone()
+    assert bytes(row[0]) == raw_offer
+    assert row[1] is None
+
+
 # ---- PR #231 review (2nd pass): inbound OFFER admission limits ------------
 
 

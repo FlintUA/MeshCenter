@@ -190,6 +190,7 @@
         sendSignature: null,      // semantic send-form signature (C7 idempotency)
         sendClientRequestId: null,
         sendInFlight: false,
+        sendGeneration: 0,        // bumped per send-dialog open/close — isolates generations (G2)
         sendReadinessToken: 0,    // monotonic token — stale readiness responses dropped (F2)
         sendReadiness: null,      // authoritative readiness result for the open send dialog
         sendTtlDebounce: null,    // debounce timer for rapid Custom-TTL typing (F2)
@@ -513,10 +514,9 @@
                     relays: r.data.relays || {},
                 };
             }
-            // F2: fresh connectivity landing for the open Send dialog refreshes
-            // the status line and re-requests authoritative readiness.
-            renderSendStatus();
-            refreshSendReadiness();
+            // G2: workspace-level loads must never drive a Send dialog's status
+            // or readiness — only the send dialog's own generation-scoped loads
+            // (loadConnectivityForSend) update an open Send dialog.
         });
     }
 
@@ -527,7 +527,7 @@
             if (r.status === 200 && r.data && r.data.ok && r.data.settings) {
                 state.settings = r.data.settings;
             }
-            renderSendStatus();
+            // G2: see loadConnectivity — no Send-dialog side effects here.
         });
     }
 
@@ -1334,6 +1334,7 @@
 
     function closeModal(result) {
         if (!state.dialog) return;
+        var wasSend = isSendDialogOpen();
         var el = state.dialog;
         state.dialog = null;
         if (el._filesOnResolve) el._filesOnResolve(result);
@@ -1343,6 +1344,10 @@
             try { state.dialogReturnFocus.focus(); } catch (_) { /* ignore */ }
         }
         state.dialogReturnFocus = null;
+        // G2: closing a Send dialog ends its generation, so any provider/
+        // connectivity/settings/readiness response still in flight for it is
+        // dropped rather than mutating the next dialog.
+        if (wasSend) invalidateSendGeneration();
     }
 
     function focusFirst(root) {
@@ -1629,6 +1634,9 @@
     function openSendDialog() {
         if (typeof document === 'undefined') return;
         closeModal();
+        // G2: this dialog owns a fresh generation; every load/readiness it starts
+        // is scoped to it and dropped the moment it closes or is replaced.
+        var gen = ++state.sendGeneration;
         var id = 'files-send';
         var html =
             '<div class="files-modal-backdrop" data-files-action="modal-backdrop-close" role="presentation">' +
@@ -1678,24 +1686,40 @@
             '</div>';
         var el = openModalHtml(html, function () { state.sendInFlight = false; });
         el.className = 'files-dialog-root is-send';
-        // F2: render the dialog first, then start the fresh loads — each settles
-        // and updates the open dialog independently (order-independent).
+        // G2.1/G2.3: never render the cached provider list as actionable, and
+        // never check readiness against it, before the fresh provider projection
+        // for THIS dialog arrives — that fresh load owns the select and readiness.
+        // Render recipients/status/ttl first, then start the generation-scoped
+        // loads; each settles and updates the open dialog independently.
         renderSendRecipients();
-        renderSendProviders();
+        renderSendProvidersLoading();
         renderSendStatus();
         renderSendCustomTtl();
         renderSendSubmit();
-        refreshSendReadiness();
-        loadConnectivity();
-        loadSettings();
-        loadProvidersForSend();
+        loadConnectivityForSend(gen);
+        loadSettingsForSend(gen);
+        loadProvidersForSend(gen);
     }
 
-    function loadProvidersForSend() {
-        // R7: always fetch a FRESH provider projection on open — never trust
-        // the cached list — so the Relay-state/readiness feedback reflects the
-        // latest connectivity snapshot rather than one from an earlier visit.
-        return guardedLoad('providers', function () { return api('/api/mca/providers'); }, function (r) {
+    // G2.1/G2.3: an empty, explicitly-cleared provider select while the fresh
+    // provider projection is still in flight. This keeps the cached provider list
+    // (and any cached readiness the user could act on) out of the dialog until
+    // this dialog's own provider response lands.
+    function renderSendProvidersLoading() {
+        var sel = getEl('filesSendProvider');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">' + esc(t('files.loading_providers', 'Loading providers…')) + '</option>';
+        sel.value = '';
+        var readiness = getEl('filesSendReadiness');
+        if (readiness) readiness.innerHTML = '';
+    }
+
+    function loadProvidersForSend(gen) {
+        // R7: always fetch a FRESH provider projection on open — never trust the
+        // cached list. G2.3: scoped to a unique per-generation key so it can
+        // never be suppressed by a concurrently in-flight workspace provider load.
+        return guardedLoad('providers-send-' + gen, function () { return api('/api/mca/providers'); }, function (r) {
+            if (!sendGenerationCurrent(gen)) return; // a newer/closed dialog owns the form now
             state.providers = (r.status === 200 && r.data && r.data.ok && Array.isArray(r.data.providers))
                 ? r.data.providers : [];
             renderSendProviders();
@@ -1703,6 +1727,36 @@
             // F2: a fresh provider projection triggers the authoritative readiness
             // request for the (now known) selected provider/TTL.
             refreshSendReadiness();
+        });
+    }
+
+    function loadConnectivityForSend(gen) {
+        // G2.2: a connectivity response started for an older Send dialog must
+        // never update this (newer) one — scoped key + generation gate.
+        return guardedLoad('connectivity-send-' + gen, function () {
+            return api('/api/mca/connectivity');
+        }, function (r) {
+            if (!sendGenerationCurrent(gen)) return;
+            if (r.status === 200 && r.data && r.data.ok) {
+                state.connectivity = {
+                    internet: r.data.internet || 'unknown',
+                    relays: r.data.relays || {},
+                };
+            }
+            renderSendStatus();
+        });
+    }
+
+    function loadSettingsForSend(gen) {
+        // G2.2: same isolation for the settings projection (transport selection).
+        return guardedLoad('settings-send-' + gen, function () {
+            return api('/api/settings');
+        }, function (r) {
+            if (!sendGenerationCurrent(gen)) return;
+            if (r.status === 200 && r.data && r.data.ok && r.data.settings) {
+                state.settings = r.data.settings;
+            }
+            renderSendStatus();
         });
     }
 
@@ -1985,6 +2039,27 @@
             String(state.dialog.className).indexOf('is-send') !== -1);
     }
 
+    // G2: a generation is "current" only while it is the latest generation AND
+    // its Send dialog is still open. Every async send-dialog response is gated
+    // on this, so a slower response started for an older dialog can never update
+    // a newer one (G2.2), and a response landing after close is dropped too.
+    function sendGenerationCurrent(gen) {
+        return gen === state.sendGeneration && isSendDialogOpen();
+    }
+
+    // G2: end the current Send-dialog generation — bump the generation token,
+    // drop the authoritative readiness result, and cancel any pending debounce
+    // so a stale readiness check cannot fire for a closed/replaced dialog.
+    function invalidateSendGeneration() {
+        state.sendGeneration++;
+        state.sendReadinessToken++;
+        state.sendReadiness = null;
+        if (state.sendTtlDebounce) {
+            clearTimeout(state.sendTtlDebounce);
+            state.sendTtlDebounce = null;
+        }
+    }
+
     // F2: authoritative readiness for the exact requested TTL, rendered into a
     // dedicated element (filesSendReadinessCheck) separate from the config-only
     // Relay-state/upload line (filesSendReadiness). A monotonic token drops any
@@ -2034,6 +2109,7 @@
 
     function refreshSendReadiness() {
         if (!isSendDialogOpen()) { state.sendReadiness = null; return; }
+        var gen = state.sendGeneration; // G2: gate the async response on this dialog
         var sel = getEl('filesSendProvider');
         var providerId = sel ? sel.value : '';
         var ttl = sendTtlSecondsStrict();
@@ -2059,7 +2135,7 @@
         api('/api/mca/providers/' + encodeURIComponent(providerId) +
             '/upload-readiness?requested_ttl_seconds=' + ttl).then(function (r) {
             if (token !== state.sendReadinessToken) return; // stale response — drop
-            if (!isSendDialogOpen()) return;                  // dialog closed/advanced — drop
+            if (!sendGenerationCurrent(gen)) return;          // dialog closed/advanced — drop
             var ready = Boolean(r.status === 200 && r.data && r.data.ok === true && r.data.ready);
             var reason = ready ? null : (r.data && r.data.reason ? r.data.reason : 'relay_unreachable');
             state.sendReadiness = { providerId: providerId, ttl: ttl, ready: ready, reason: reason, pending: false };
@@ -2070,8 +2146,10 @@
 
     function scheduleSendReadinessRefresh() {
         if (state.sendTtlDebounce) clearTimeout(state.sendTtlDebounce);
+        var gen = state.sendGeneration; // G2: the debounce is scoped to this dialog
         state.sendTtlDebounce = setTimeout(function () {
             state.sendTtlDebounce = null;
+            if (!sendGenerationCurrent(gen)) return; // dialog closed/replaced — drop
             refreshSendReadiness();
         }, 300);
     }

@@ -742,11 +742,11 @@ def handle_offer(
     conn.execute(
         """
         INSERT INTO attachments
-            (id, workspace_id, transfer_id, direction, principal_id, sender_principal_id, provider_id, state,
+            (id, workspace_id, transfer_id, direction, principal_id, sender_principal_id, sender_public_identity, provider_id, state,
              created_at, hard_expires_at, download_grace_seconds, pending_offer_cbor,
              reply_route_type, reply_route_id,
              reply_adapter_id, reply_connector_profile_id, reply_destination_address)
-        VALUES (?, ?, ?, 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             attachment_id,
@@ -754,6 +754,11 @@ def handle_offer(
             transfer_id_hex,
             principal.principal_id,
             (binding.principal_id if binding_ready else None),
+            # ADR-0010 Decision 3: pin the exact public identity this OFFER
+            # was verified against, so a later inbound CANCEL is checked
+            # against the key the OFFER was actually admitted under - never
+            # the mutable current address binding (key-rotation-safe).
+            (binding.public_identity if binding_ready else None),
             encode_provider_id(unverified.provider_id),
             OFFER_RECEIVED,
             now,
@@ -914,8 +919,8 @@ def _step_waiting_key(conn, row, workspace_manager, principal, provider_registry
         return ReceiveResult(attachment_id=attachment_id, state=FAILED, replies=[])
 
     conn.execute(
-        "UPDATE attachments SET sender_principal_id = ?, pending_offer_cbor = NULL WHERE id = ?",
-        (binding.principal_id, attachment_id),
+        "UPDATE attachments SET sender_principal_id = ?, sender_public_identity = ?, pending_offer_cbor = NULL WHERE id = ?",
+        (binding.principal_id, binding.public_identity, attachment_id),
     )
     return _resolve_provider_or_wait(
         conn,

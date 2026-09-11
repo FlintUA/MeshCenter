@@ -2633,12 +2633,14 @@ class AttachmentsService:
 
     def _process_inbound_cancel(self, envelope: DeliveryEnvelope, *, source_address: str) -> None:
         """ADR-0010: verify and apply one inbound CANCEL (Sender -> Receiver)
-        against a *received* attachment. The CANCEL is signed by the sender
-        with its *current* key, so this is the receiver-side mirror of
-        `_process_inbound_ack`'s sender-side path: source-route check against
-        the OFFER's persisted reply route, sender identity resolved via the
-        pinned address binding and tied to the OFFER's stored
-        `sender_principal_id`, then signature verification, then
+        against a *received* attachment. The CANCEL is signed by the sender,
+        and is verified against the sender public identity *pinned on this
+        transfer at OFFER admission* (`sender_public_identity`) - never the
+        current address binding, so the check is key-rotation-safe (the
+        receiver-side mirror of `_process_inbound_ack`'s pinned-recipient
+        path). Steps: source-route check against the OFFER's persisted reply
+        route, then pinned-key consistency (`compute_key_id(pinned) ==
+        sender_principal_id`), then signature verification, then
         `receiver.apply_cancelled()`. Every step before the apply can only
         drop (never write, never reply over the radio) - the same discipline
         as ADR-0009 Decision 7/8."""
@@ -2673,20 +2675,21 @@ class AttachmentsService:
             self._drop_ack("source_route_mismatch", level="warning")
             return
 
-        # Resolve the sender's current binding by address and tie its stable
-        # principal_id to the one stored when the OFFER was admitted. A NULL
-        # stored sender_principal_id (the OFFER was parked in WAITING_KEY
-        # behind an unverified key) can never be cancelled by a later CANCEL.
-        binding = self._key_exchange.get_binding(envelope.route_id)
-        if binding is None:
-            self._drop_ack("unknown_sender", level="warning")
-            return
-        if attachment["sender_principal_id"] is None or binding.principal_id != attachment["sender_principal_id"]:
-            self._drop_ack("sender_identity_mismatch", level="warning")
-            return
-        pinned = binding.public_identity
+        # ADR-0010 Decision 3: verify against the sender public identity
+        # pinned on this transfer when the OFFER was admitted - never
+        # `get_binding(envelope.route_id)`, which resolves the *current* TOFU
+        # binding and would both break a valid CANCEL after a contact-key
+        # rotation (the address now resolves to a different key) and let a
+        # rotated-out key cancel (only the new key matches the mutable
+        # binding). A NULL pinned identity (the OFFER was parked in
+        # WAITING_KEY behind an unverified key, or a pre-migration row) is
+        # unverifiable and dropped, never guessed at.
+        pinned = attachment["sender_public_identity"]
         if not isinstance(pinned, bytes) or len(pinned) != 32:
             self._drop_ack("sender_key_missing", level="warning")
+            return
+        if compute_key_id(pinned) != attachment["sender_principal_id"]:
+            self._drop_ack("sender_key_mismatch", level="warning")
             return
         try:
             codec.decode_simple_ack(raw, codec.MessageType.CANCEL, verify_key=VerifyKey(pinned))

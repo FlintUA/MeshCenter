@@ -483,15 +483,17 @@ def test_revoke_deletes_revoke_state(conn, wsm, principal, recipient, tmp_path, 
     ).fetchone() is None
 
 
-def test_apply_rejected_transitions_sent_to_rejected_and_cleans_up(conn, wsm, principal, recipient, tmp_path, relay_client):
-    """ADR-0010: an inbound REJECTED (recipient declined the offer) moves
-    SENT -> REJECTED (terminal) and retires both secret tables - exactly the
-    cleanup a local revoke performs, since a declined object has no Relay
-    state left worth revoking."""
+def test_apply_rejected_transitions_sent_to_rejected_and_retains_revoke_state(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0010 Decision 5: an inbound REJECTED (recipient declined the offer)
+    moves SENT -> REJECTED (terminal) and drops only the transient
+    mca_sender_state row; the retained mca_sender_revoke_state row survives so
+    the revoke capability stays durable until bounded cleanup retires it at
+    delete_after (or a future confirmed Relay revoke removes it)."""
     attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
     ether = InMemoryEther()
     adapter = FakeTextAdapter(ether, "sender-addr")
     _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+    revoke_token_before = sender._get_sender_state(conn, attachment_id)["revoke_token"]
     assert conn.execute(
         "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
     ).fetchone() is not None
@@ -499,28 +501,81 @@ def test_apply_rejected_transitions_sent_to_rejected_and_cleans_up(conn, wsm, pr
     assert sender.apply_rejected(conn, attachment_id) == sender.REJECTED
     assert sender.get_state(conn, attachment_id) == sender.REJECTED
     assert sender.is_terminal(sender.REJECTED)
-    assert sender._get_sender_state(conn, attachment_id) is None
-    assert conn.execute(
-        "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
-    ).fetchone() is None
+    assert sender._get_sender_state(conn, attachment_id) is None  # transient dropped
+    retained = conn.execute(
+        "SELECT revoke_token FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone()
+    assert retained is not None and retained[0] == revoke_token_before  # revoke capability preserved
 
 
-def test_apply_expired_transitions_sent_to_expired_and_cleans_up(conn, wsm, principal, recipient, tmp_path, relay_client):
-    """ADR-0010: an inbound EXPIRED (recipient observed the hard expiry pass)
-    moves SENT -> EXPIRED (terminal) and retires both secret tables - the
-    Relay object is past hard-expiry + download-grace, so its revoke token has
-    no remaining purpose."""
+def test_apply_expired_transitions_sent_to_expired_and_retains_revoke_state(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0010 Decision 5: an inbound EXPIRED (past the sender's authoritative
+    hard_expires_at) moves SENT -> EXPIRED (terminal) and drops only the
+    transient mca_sender_state row, retaining mca_sender_revoke_state exactly
+    like apply_rejected()."""
     attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
     ether = InMemoryEther()
     adapter = FakeTextAdapter(ether, "sender-addr")
     _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+    revoke_token_before = sender._get_sender_state(conn, attachment_id)["revoke_token"]
+    hard_expires_at = conn.execute(
+        "SELECT hard_expires_at FROM attachments WHERE id = ?", (attachment_id,)
+    ).fetchone()[0]
+    assert hard_expires_at > 0
 
-    assert sender.apply_expired(conn, attachment_id) == sender.EXPIRED
+    assert sender.apply_expired(conn, attachment_id, now=hard_expires_at + 100) == sender.EXPIRED
     assert sender.get_state(conn, attachment_id) == sender.EXPIRED
-    assert sender._get_sender_state(conn, attachment_id) is None
+    assert sender._get_sender_state(conn, attachment_id) is None  # transient dropped
+    retained = conn.execute(
+        "SELECT revoke_token FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone()
+    assert retained is not None and retained[0] == revoke_token_before  # revoke capability preserved
+
+
+def test_apply_expired_rejects_before_authoritative_hard_expiry_then_accepts_at_boundary(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0010 Decision 2: an inbound EXPIRED arriving *before* the sender's
+    authoritative hard_expires_at is dropped with no state change - the
+    sender's own expiry timestamp, not the recipient's observation of it, is
+    authoritative. At the exact boundary it is accepted."""
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "sender-addr")
+    _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+    hard_expires_at = conn.execute(
+        "SELECT hard_expires_at FROM attachments WHERE id = ?", (attachment_id,)
+    ).fetchone()[0]
+    assert hard_expires_at > 0
+
+    # Before the boundary: dropped, state and both secret tables unchanged.
+    assert sender.apply_expired(conn, attachment_id, now=hard_expires_at - 1) == sender.SENT
+    assert sender.get_state(conn, attachment_id) == sender.SENT
+    assert sender._get_sender_state(conn, attachment_id) is not None
     assert conn.execute(
         "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
-    ).fetchone() is None
+    ).fetchone() is not None
+
+    # Exact boundary: accepted.
+    assert sender.apply_expired(conn, attachment_id, now=hard_expires_at) == sender.EXPIRED
+    assert sender.get_state(conn, attachment_id) == sender.EXPIRED
+
+
+def test_apply_expired_accepts_after_boundary_and_duplicate_is_noop(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0010 Decision 2/4: an EXPIRED after the boundary is applied; a
+    duplicate/stale EXPIRED against the now-terminal row is a no-op (never
+    regresses, never raises)."""
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "sender-addr")
+    _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+    hard_expires_at = conn.execute(
+        "SELECT hard_expires_at FROM attachments WHERE id = ?", (attachment_id,)
+    ).fetchone()[0]
+
+    assert sender.apply_expired(conn, attachment_id, now=hard_expires_at + 100) == sender.EXPIRED
+    assert sender.get_state(conn, attachment_id) == sender.EXPIRED
+    # Duplicate (later, still after the boundary): unchanged, still terminal.
+    assert sender.apply_expired(conn, attachment_id, now=hard_expires_at + 200) == sender.EXPIRED
+    assert sender.get_state(conn, attachment_id) == sender.EXPIRED
 
 
 def test_apply_rejected_on_terminal_is_noop(conn, wsm, principal, recipient, tmp_path, relay_client):

@@ -480,12 +480,20 @@ Success result (only when both halves completed): state `CANCELLED`, `saved_path
   "download_grace_seconds": 3600, "provider_id": "<base64url>",
   "saved": false, "content_available": false,
   "primary_delivery_id": "<uuid|null>", "error_code": "relay_unreachable|null",
+  "counterparty_contact_id": "!1a2b3c4d|null",
   "recipients": [{"key_id": "<hex16>", "principal_id": "<hex16>"}],
   "deliveries": [ ... ]
 }
 ```
 
 `content_available` is `true` only for a received attachment in `AVAILABLE` (decrypted+verified blob present) or a sent attachment with `saved=true`. **No `saved_path`, no `include_raw`, no `ContentDescriptor.locator`** — the file location is internal-only (§3.7). `file_name` is `null` until the manifest is opened for a received attachment (design spec §17.2).
+
+`counterparty_contact_id` is the canonical transport address of the counterparty for that transfer, in the same `!`+8-lowercase-hex contact-id namespace the UI's contact merge builds (`mergeContacts`), so the archive/detail/search views can map an attachment back to a contact. It is derived **only** from persisted routing data, never from `recipient.principal_id` (the recipient's MCA *principal* id — a different 16-hex namespace) nor from `envelope_id` (a key id, not a node id):
+
+- **sent `DIRECT`** → the single applicable `attachment_deliveries.route_id`; exactly one `DIRECT` delivery, else `null` (ambiguous).
+- **received `DIRECT`** → the persisted `attachments.reply_route_id`, only when `reply_route_type == "DIRECT"`.
+
+Missing, invalid (wrong length / non-hex), ambiguous, or non-`DIRECT` routing all yield `null`, so the UI falls back to "no contact mapping" rather than guessing. The field is computed in the snapshot publisher (`meshsrv/attachments/snapshots.py`) and is present on **both** the list and detail projections; it is a read-only projection with **no DB migration** (the persisted `recipients`/`deliveries`/`reply_route_*` columns are unchanged).
 
 ### 7.6 `POST /api/mca/import` (Stage 1)
 

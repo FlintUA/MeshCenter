@@ -276,7 +276,27 @@
       "ciphertext_too_large": "Файл перевищує ліміт розміру провайдера",
       "ttl_below_minimum": "Термін нижче мінімуму провайдера",
       "ttl_above_maximum": "Термін вище максимуму провайдера"
-    }
+    },
+    "provider_display_name": "Відображуване ім'я",
+    "provider_enabled": "Увімкнено",
+    "provider_upload_allowed": "Вивантаження дозволено",
+    "provider_download_allowed": "Завантаження дозволено",
+    "provider_ttl_min": "Мін. TTL (сек.)",
+    "provider_ttl_max": "Макс. TTL (сек.)",
+    "provider_ttl_unset": "Не задано",
+    "edit_provider": "Редагувати провайдера",
+    "edit": "Редагувати",
+    "err_provider_display_name": "Відображуване ім'я не може бути порожнім.",
+    "err_provider_ttl": "TTL має бути додатним цілим числом секунд.",
+    "err_provider_ttl_min_max": "Мінімальний TTL не має перевищувати максимальний.",
+    "send_ttl_custom_placeholder": "Секунди",
+    "send_file_type": "Тип: {type}",
+    "send_file_type_unknown": "Тип: не розпізнано — сервер перевірить його",
+    "send_file_size": "Розмір: {size}",
+    "relay_state_label": "Стан ретранслятора",
+    "upload_ready": "Завантаження: готове",
+    "upload_not_ready": "Завантаження: не готове",
+    "err_ttl_custom": "Введіть ціле додатне число секунд для настроюваного терміну дії"
   },
   "about": {
     "tab_overview": "Огляд",
@@ -956,7 +976,10 @@
     "epaper_action_queued": "У черзі - дисплей оновиться найближчим часом",
     "epaper_reinit_in_progress": "Застосування та переініціалізація...",
     "epaper_reinit_success": "Застосовано - дисплей успішно переініціалізовано",
-    "epaper_reinit_failed": "Помилка переініціалізації"
+    "epaper_reinit_failed": "Помилка переініціалізації",
+    "files_title": "Файли / MCAttach",
+    "files_description": "Передача файлів через Mesh за допомогою Relay-провайдерів.",
+    "files_relay_providers": "Relay-провайдери"
   },
   "modals": {
     "message_info": "Інформація про повідомлення",

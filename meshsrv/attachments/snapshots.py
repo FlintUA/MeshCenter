@@ -330,6 +330,7 @@ class AttachmentRecord:
     saved: bool
     primary_delivery_id: Optional[str]
     error_code: Optional[str]
+    counterparty_contact_id: Optional[str]
     recipients: Tuple[RecipientRecord, ...]
     deliveries: Tuple[DeliveryRecord, ...]
     descriptor: Optional[ContentDescriptor]
@@ -421,6 +422,7 @@ def serialize_attachment_public(record: AttachmentRecord, *, include_timeline: b
         "content_available": record.content_available,
         "primary_delivery_id": record.primary_delivery_id,
         "error_code": record.error_code,
+        "counterparty_contact_id": record.counterparty_contact_id,
         "recipients": [serialize_recipient(r) for r in record.recipients],
         "deliveries": [serialize_delivery(d) for d in record.deliveries],
     }
@@ -511,6 +513,67 @@ def _event_from_row(row: sqlite3.Row) -> TimelineEvent:
     )
 
 
+# §7.5 `counterparty_contact_id`: the one place a counterparty's transport
+# address is derived for the public projection. It is canonicalized to `!` +
+# 8 lowercase hex (the same contact_id namespace `mergeContacts` builds) and
+# comes *only* from persisted routing data - never from
+# `recipient.principal_id` (the recipient's MCA principal id, a different
+# 16-hex namespace) nor from `envelope_id` (a key id, not a node id).
+_DIRECT_ROUTE_TYPE = "DIRECT"  # == delivery.base.RouteType.DIRECT.value (kept as a literal so this module need not import delivery.base)
+
+
+def _canonical_contact_id(value: Optional[Any]) -> Optional[str]:
+    """Canonicalize a DIRECT routing address to `!` + 8 lowercase hex, or
+    return `None` when it cannot be a real counterparty address (missing,
+    wrong length, non-hex, doubled `!`). Fail-closed - a value that is not
+    exactly one transport address is `None`, never a best-effort mangling."""
+    if not isinstance(value, str) or not value:
+        return None
+    candidate = value[1:] if value.startswith("!") else value
+    if len(candidate) != 8:
+        return None
+    try:
+        int(candidate, 16)
+    except (ValueError, TypeError):
+        return None
+    return "!" + candidate.lower()
+
+
+def _derive_counterparty_contact_id(
+    *,
+    direction: str,
+    reply_route_type: Optional[str],
+    reply_route_id: Optional[str],
+    deliveries: Sequence[DeliveryRecord],
+) -> Optional[str]:
+    """Derive `counterparty_contact_id` from persisted routing data (§7.5).
+
+    - sent DIRECT: the single applicable `attachment_deliveries.route_id` -
+      exactly one DIRECT delivery, else ambiguous (`None`).
+    - received DIRECT: the persisted `attachments.reply_route_id` (only when
+      `reply_route_type` is DIRECT).
+
+    Missing / invalid / ambiguous / non-DIRECT all yield `None`, so the UI
+    falls back to "no contact mapping" rather than guessing."""
+    if direction == "received":
+        if reply_route_type != _DIRECT_ROUTE_TYPE:
+            return None
+        return _canonical_contact_id(reply_route_id)
+    direct = [d.route_id for d in deliveries if d.route_type == _DIRECT_ROUTE_TYPE]
+    if len(direct) != 1:
+        return None
+    return _canonical_contact_id(direct[0])
+
+
+def _col(row: sqlite3.Row, name: str) -> Optional[Any]:
+    """Read a column that may be absent from a minimal/legacy schema (the
+    snapshot tests build a reduced `attachments` table without the migration-10
+    reply-route columns) as `None` instead of raising `IndexError`."""
+    if name in row.keys():
+        return row[name]
+    return None
+
+
 def _record_from_row(
     paths: WorkspacePaths,
     row: sqlite3.Row,
@@ -542,6 +605,12 @@ def _record_from_row(
         saved=saved,
     )
     timeline = tuple(events)
+    counterparty_contact_id = _derive_counterparty_contact_id(
+        direction=row["direction"],
+        reply_route_type=_col(row, "reply_route_type"),
+        reply_route_id=_col(row, "reply_route_id"),
+        deliveries=deliveries,
+    )
     return AttachmentRecord(
         id=attachment_id,
         direction=row["direction"],
@@ -557,6 +626,7 @@ def _record_from_row(
         saved=saved,
         primary_delivery_id=row["primary_delivery_id"],
         error_code=row["error_code"],
+        counterparty_contact_id=counterparty_contact_id,
         recipients=tuple(recipients),
         deliveries=tuple(deliveries),
         descriptor=descriptor,

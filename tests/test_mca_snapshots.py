@@ -39,6 +39,8 @@ from meshsrv.attachments.snapshots import (
     IdempotencyEntry,
     RecipientRecord,
     TimelineEvent,
+    _canonical_contact_id,
+    _derive_counterparty_contact_id,
     build_attachments_snapshot,
     clear_dirty_attachment_ids,
     disposition_for_mime_type,
@@ -303,7 +305,7 @@ def _record(**overrides):
         file_name="photo.jpg", mime_type="image/jpeg", plain_size=10,
         cipher_size=64, created_at=0.0, hard_expires_at=999.0,
         download_grace_seconds=300, provider_id="AbCdEfGhIjK", saved=True,
-        primary_delivery_id=None, error_code=None,
+        primary_delivery_id=None, error_code=None, counterparty_contact_id=None,
         recipients=(), deliveries=(), descriptor=None, timeline=(),
     )
     base.update(overrides)
@@ -339,6 +341,87 @@ def test_list_serialization_omits_timeline_but_detail_includes_it():
     assert out["timeline"] == [{"event_type": "created", "detail": {"recipients": 1}, "created_at": 1.0}]
 
 
+def test_public_serializer_includes_counterparty_contact_id():
+    # The §7.5 projection carries the counterparty transport address when the
+    # worker could derive it, and an explicit null when it could not.
+    out = serialize_attachment_public(_record(counterparty_contact_id="!deadbeef"))
+    assert out["counterparty_contact_id"] == "!deadbeef"
+    assert "counterparty_contact_id" in serialize_attachment_public(_record(counterparty_contact_id=None))
+
+
+# --- counterparty_contact_id derivation (PR #246 residual R3) ---------------
+
+def _delivery(route_type="DIRECT", route_id="!deadbeef"):
+    return DeliveryRecord(
+        id="d1", adapter_id="meshtastic", connector_profile_id="cp-1",
+        route_type=route_type, route_id=route_id, state="sent",
+        external_message_id=None, sent_at=1.0,
+    )
+
+
+def test_canonical_contact_id_normalizes_case_and_prefix():
+    assert _canonical_contact_id("!ABCDEF12") == "!abcdef12"
+    assert _canonical_contact_id("abcdef12") == "!abcdef12"
+    assert _canonical_contact_id("!abcdef12") == "!abcdef12"
+
+
+def test_canonical_contact_id_rejects_non_addresses():
+    assert _canonical_contact_id(None) is None
+    assert _canonical_contact_id("") is None
+    assert _canonical_contact_id("!abcd") is None            # too short
+    assert _canonical_contact_id("!abcdef123") is None       # too long
+    assert _canonical_contact_id("!zzzzzzzz") is None        # non-hex
+    assert _canonical_contact_id("!!abcdef12") is None       # doubled '!'
+    assert _canonical_contact_id(12345678) is None           # not a str
+
+
+def test_derive_sent_direct_uses_single_delivery_route_id():
+    got = _derive_counterparty_contact_id(
+        direction="sent", reply_route_type=None, reply_route_id=None,
+        deliveries=(_delivery(route_id="!DEADBEEF"),),
+    )
+    assert got == "!deadbeef"
+
+
+def test_derive_sent_direct_ambiguous_multiple_deliveries_is_null():
+    got = _derive_counterparty_contact_id(
+        direction="sent", reply_route_type=None, reply_route_id=None,
+        deliveries=(
+            _delivery(route_id="!11111111"),
+            _delivery(route_id="!22222222"),
+        ),
+    )
+    assert got is None
+
+
+def test_derive_sent_non_direct_is_null():
+    got = _derive_counterparty_contact_id(
+        direction="sent", reply_route_type=None, reply_route_id=None,
+        deliveries=(_delivery(route_type="CHANNEL", route_id="!deadbeef"),),
+    )
+    assert got is None
+
+
+def test_derive_received_direct_uses_reply_route_id():
+    got = _derive_counterparty_contact_id(
+        direction="received", reply_route_type="DIRECT", reply_route_id="!DEADBEEF",
+        deliveries=(),
+    )
+    assert got == "!deadbeef"
+
+
+def test_derive_received_non_direct_or_missing_route_is_null():
+    assert _derive_counterparty_contact_id(
+        direction="received", reply_route_type="CHANNEL", reply_route_id="!deadbeef", deliveries=(),
+    ) is None
+    assert _derive_counterparty_contact_id(
+        direction="received", reply_route_type=None, reply_route_id=None, deliveries=(),
+    ) is None
+    assert _derive_counterparty_contact_id(
+        direction="received", reply_route_type="DIRECT", reply_route_id="!zzzzzzzz", deliveries=(),
+    ) is None
+
+
 # --- AttachmentRecord.content_available -------------------------------------
 
 def test_attachment_record_content_available_derived_from_descriptor():
@@ -358,7 +441,8 @@ CREATE TABLE attachments (
     mime_type TEXT, plain_size INTEGER, cipher_size INTEGER, created_at REAL,
     hard_expires_at REAL, download_grace_seconds INTEGER, provider_id TEXT,
     saved_path TEXT, primary_delivery_id TEXT, error_code TEXT,
-    client_request_id TEXT, canonical_hash TEXT
+    client_request_id TEXT, canonical_hash TEXT,
+    reply_route_type TEXT, reply_route_id TEXT
 );
 CREATE TABLE attachment_recipients (
     id INTEGER, attachment_id TEXT, envelope_id TEXT, recipient_principal_id TEXT
@@ -487,6 +571,51 @@ def test_build_received_available_row_has_content(paths, conn, workspace_manager
     assert record.descriptor is not None
     assert record.descriptor.disposition is ContentDisposition.INLINE
     assert record.descriptor.locator == "files/photo.jpg"
+
+
+def test_build_received_direct_derives_counterparty_from_reply_route(conn, workspace_manager):
+    conn.execute(
+        "INSERT INTO attachments (id, workspace_id, direction, state, created_at, "
+        "hard_expires_at, download_grace_seconds, reply_route_type, reply_route_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("att-r1", "local", "received", "AVAILABLE", 0.0, 999.0, 300, "DIRECT", "!DEADBEEF"),
+    )
+    snap = _build(conn, workspace_manager)
+    assert snap.by_id["att-r1"].counterparty_contact_id == "!deadbeef"
+
+
+def test_build_sent_direct_derives_counterparty_from_delivery(conn, workspace_manager):
+    conn.execute(
+        "INSERT INTO attachments (id, workspace_id, direction, state, created_at, "
+        "hard_expires_at, download_grace_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("att-s1", "local", "sent", "queued", 0.0, 999.0, 300),
+    )
+    conn.execute(
+        "INSERT INTO attachment_deliveries (id, attachment_id, adapter_id, "
+        "connector_profile_id, route_type, route_id, state) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("d1", "att-s1", "meshtastic", "cp-1", "DIRECT", "!DEADBEEF", "sent"),
+    )
+    snap = _build(conn, workspace_manager)
+    assert snap.by_id["att-s1"].counterparty_contact_id == "!deadbeef"
+
+
+def test_build_counterparty_null_when_no_route(conn, workspace_manager):
+    # A sent row with no DIRECT delivery, and a received row with no reply
+    # route, both project counterparty_contact_id=None (fail closed).
+    conn.execute(
+        "INSERT INTO attachments (id, workspace_id, direction, state, created_at, "
+        "hard_expires_at, download_grace_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("att-x1", "local", "sent", "queued", 0.0, 999.0, 300),
+    )
+    conn.execute(
+        "INSERT INTO attachments (id, workspace_id, direction, state, created_at, "
+        "hard_expires_at, download_grace_seconds, reply_route_type) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("att-x2", "local", "received", "AVAILABLE", 0.0, 999.0, 300, "CHANNEL"),
+    )
+    snap = _build(conn, workspace_manager)
+    assert snap.by_id["att-x1"].counterparty_contact_id is None
+    assert snap.by_id["att-x2"].counterparty_contact_id is None
 
 
 def test_build_idempotency_index_from_client_request_id(paths, conn, workspace_manager):

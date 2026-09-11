@@ -164,6 +164,7 @@ def _attachment(id=ATTACHMENT_ID, direction="sent", state="SENT", **overrides):
         saved=False,
         primary_delivery_id=None,
         error_code=None,
+        counterparty_contact_id=None,
         recipients=(),
         deliveries=(),
         descriptor=None,
@@ -727,6 +728,8 @@ def test_detail_returns_attachment_with_separate_timeline(monkeypatch):
     # §11 safe-key allowlist redacts a non-allowlisted detail key.
     assert body["timeline"][0]["detail"] == {"error_code": "relay_unreachable"}
     assert body["timeline"][1]["detail"] == {}
+    # §7.5 counterparty_contact_id reaches both list and detail projections.
+    assert body["attachment"]["counterparty_contact_id"] is None
 
 
 def test_detail_invalid_id(monkeypatch):

@@ -106,9 +106,10 @@ VERIFYING = "VERIFYING"
 AVAILABLE = "AVAILABLE"
 EXPIRED = "EXPIRED"
 REJECTED = "REJECTED"
+CANCELLED = "CANCELLED"
 FAILED = "FAILED"
 
-TERMINAL_STATES = frozenset({AVAILABLE, EXPIRED, REJECTED, FAILED})
+TERMINAL_STATES = frozenset({AVAILABLE, EXPIRED, REJECTED, CANCELLED, FAILED})
 # States run_step() can make forward progress on by itself, without an
 # explicit user action (WAITING_CONSENT needs `begin_download()`).
 AUTOMATIC_STATES = frozenset({WAITING_KEY, WAITING_PROVIDER, WAITING_NETWORK, DOWNLOADING})
@@ -985,6 +986,23 @@ def reject(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = 
     _set_state(conn, attachment_id, REJECTED, now)
     conn.commit()
     return REJECTED
+
+
+def apply_cancelled(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = None) -> str:
+    """Inbound CANCEL (ADR-0001): the sender withdrew this offer. Any
+    non-terminal state (OFFER_RECEIVED .. VERIFYING) -> CANCELLED (terminal);
+    any terminal state -> no-op (a stale/duplicate CANCEL never regresses an
+    AVAILABLE/EXPIRED/REJECTED/FAILED row, and never overwrites a different
+    terminal outcome). The caller has already verified the CANCEL's signature
+    and sender identity, so this is the pure state write only."""
+    now = _now() if now is None else now
+    row = _row(conn, attachment_id)
+    if is_terminal(row["state"]):
+        return row["state"]
+    _set_state(conn, attachment_id, CANCELLED, now)
+    _record_event(conn, attachment_id, now, "cancelled", {"to": CANCELLED})
+    conn.commit()
+    return CANCELLED
 
 
 # ---- Downloading -> Verifying -> Available/Failed --------------------------

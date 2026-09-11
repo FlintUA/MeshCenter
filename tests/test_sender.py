@@ -483,6 +483,73 @@ def test_revoke_deletes_revoke_state(conn, wsm, principal, recipient, tmp_path, 
     ).fetchone() is None
 
 
+def test_apply_rejected_transitions_sent_to_rejected_and_cleans_up(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0010: an inbound REJECTED (recipient declined the offer) moves
+    SENT -> REJECTED (terminal) and retires both secret tables - exactly the
+    cleanup a local revoke performs, since a declined object has no Relay
+    state left worth revoking."""
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "sender-addr")
+    _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone() is not None
+
+    assert sender.apply_rejected(conn, attachment_id) == sender.REJECTED
+    assert sender.get_state(conn, attachment_id) == sender.REJECTED
+    assert sender.is_terminal(sender.REJECTED)
+    assert sender._get_sender_state(conn, attachment_id) is None
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone() is None
+
+
+def test_apply_expired_transitions_sent_to_expired_and_cleans_up(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0010: an inbound EXPIRED (recipient observed the hard expiry pass)
+    moves SENT -> EXPIRED (terminal) and retires both secret tables - the
+    Relay object is past hard-expiry + download-grace, so its revoke token has
+    no remaining purpose."""
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "sender-addr")
+    _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+
+    assert sender.apply_expired(conn, attachment_id) == sender.EXPIRED
+    assert sender.get_state(conn, attachment_id) == sender.EXPIRED
+    assert sender._get_sender_state(conn, attachment_id) is None
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone() is None
+
+
+def test_apply_rejected_on_terminal_is_noop(conn, wsm, principal, recipient, tmp_path, relay_client):
+    """ADR-0010: a stale REJECTED arriving after DOWNLOADED must never regress
+    the terminal state - monotonic and idempotent, mirroring apply_ack()."""
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "sender-addr")
+    _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, {sender.SENT})
+    assert sender.apply_ack(conn, attachment_id, codec.MessageType.ACK_DOWNLOADED) == sender.DOWNLOADED
+
+    assert sender.apply_rejected(conn, attachment_id) == sender.DOWNLOADED  # unchanged
+    assert sender.get_state(conn, attachment_id) == sender.DOWNLOADED
+    assert sender.apply_expired(conn, attachment_id) == sender.DOWNLOADED  # unchanged
+    assert sender.get_state(conn, attachment_id) == sender.DOWNLOADED
+
+
+def test_apply_rejected_on_draft_is_dropped(conn, wsm, principal, recipient, tmp_path):
+    """ADR-0010: a REJECTED/EXPIRED against a still-DRAFT attachment is
+    dropped (state unchanged, no write, no exception) - mesh delivery is
+    unordered, so a wire consumer must not blow up on an out-of-order
+    lifecycle ack, exactly like apply_ack()'s own tolerance."""
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
+    assert sender.apply_rejected(conn, attachment_id) == sender.DRAFT
+    assert sender.get_state(conn, attachment_id) == sender.DRAFT
+    assert sender.apply_expired(conn, attachment_id) == sender.DRAFT
+    assert sender.get_state(conn, attachment_id) == sender.DRAFT
+
+
 def test_cancel_from_draft_and_rejects_from_sent(conn, wsm, principal, recipient, tmp_path, relay_client):
     attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path)
     assert sender.cancel(conn, attachment_id) == sender.CANCELLED

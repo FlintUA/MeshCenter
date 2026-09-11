@@ -25,7 +25,7 @@ import uuid
 
 import pytest
 
-from nacl.signing import VerifyKey
+from nacl.signing import SigningKey, VerifyKey
 
 from meshsrv.attachments import codec, identity, receiver, sender
 from meshsrv.attachments.commands import Command
@@ -43,7 +43,7 @@ from meshsrv.attachments.provider_registry import (
 from meshsrv.attachments.relay.mock_server import MockRelayStore, create_mock_relay_app
 from meshsrv.attachments.relay_client import RelayClient, RelayHTTPError, RelayInfo, RelayLimits
 from meshsrv.attachments.relay_http import RelayNetworkError
-from meshsrv.attachments.service import AttachmentsService, InboundEvent, _provider_id_text
+from meshsrv.attachments.service import MAX_AUTO_KEY_REQUESTS_PER_TICK, AttachmentsService, InboundEvent, _provider_id_text
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
 
@@ -1786,6 +1786,140 @@ def test_command_request_key_revalidates_contact_id_and_route(
     for command in cases:
         outcome = svc._dispatcher.dispatch(command)
         assert outcome.error_code == "invalid_contact_id"
+
+
+# ---- PR 1: automatic missing-key request (recoverable WAITING_KEY) -------
+
+
+def _build_offer_from(principal2, signing_key):
+    return codec.encode_offer(
+        codec.OfferFields(
+            provider_id=uuid.uuid4().bytes[:8],
+            transfer_id=uuid.uuid4().bytes,
+            sender_key_id=bytes.fromhex(principal2.key_id),
+            kind=0,
+            size_bucket=1,
+            hard_expires_at=int(time.time()) + 3600,
+            flags=0,
+        ),
+        signing_key,
+    )
+
+
+def test_auto_request_missing_key_sends_rate_limited_key_request(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR 1: a received transfer parked in WAITING_KEY with an unknown signer
+    is proactively asked for its key once per rate-limit window, with the
+    request persisted (`last_request_sent_at`) so a restart does not reset
+    the throttle."""
+    _, wsm2, principal2 = remote_recipient
+    contact = "!756f9960"
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=_build_offer_from(principal2, signing_key),
+        network_available=True, source_address=contact,
+    )
+    assert result.state == receiver.WAITING_KEY
+
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    svc._auto_request_missing_keys()
+
+    events = ether.drain(contact)
+    assert len(events) == 1
+    assert codec.peek_message_type(codec.from_text(events[0]["text"])) == codec.MessageType.KEY_REQUEST
+    assert events[0]["idempotency_key"] == f"auto-key-request-{result.attachment_id}"
+
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT last_request_sent_at FROM mca_key_exchange_contact_state WHERE workspace_id = ? AND adapter_id = ? AND source_address = ?",
+        (principal.workspace_id, ADAPTER_ID, contact),
+    ).fetchone()
+    assert row is not None and row["last_request_sent_at"] is not None
+
+    # A second pass within the same window is rate-limited: no new send.
+    svc._auto_request_missing_keys()
+    assert ether.drain(contact) == []
+
+
+def test_auto_request_missing_key_skips_once_the_key_is_known(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR 1: once ANY binding for the signer's key exists (a KEY_ANNOUNCE
+    arrived and is pending confirmation), the auto-request stops - the trust
+    gate in `_step_waiting_key`, not a fresh key request, owns what happens
+    next."""
+    _, wsm2, principal2 = remote_recipient
+    contact = "!756f9960"
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=_build_offer_from(principal2, signing_key),
+        network_available=True, source_address=contact,
+    )
+    assert result.state == receiver.WAITING_KEY
+
+    # A KEY_ANNOUNCE arrives: an UNVERIFIED binding now exists for this key.
+    _bind_recipient_unconfirmed(conn, principal2, transport_address=contact)
+
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    svc._auto_request_missing_keys()
+
+    assert ether.drain(contact) == []  # no request: the key is already known
+
+
+def test_auto_request_missing_key_caps_sends_per_tick(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
+):
+    """PR 1: a flood of distinct unknown-key OFFERs must not turn into a
+    like-sized burst of outbound KEY_REQUESTs - one tick sends at most
+    MAX_AUTO_KEY_REQUESTS_PER_TICK requests, and the next tick drains the
+    rest (fair, oldest-first) rather than them being silently dropped."""
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    total = MAX_AUTO_KEY_REQUESTS_PER_TICK + 5
+    addresses = [f"!000000{i:02x}" for i in range(total)]
+    for i, contact in enumerate(addresses):
+        sk = SigningKey.generate()
+        fake_principal = type("P", (), {"key_id": identity.compute_key_id(bytes(sk.verify_key))})()
+        raw_offer = codec.encode_offer(
+            codec.OfferFields(
+                provider_id=uuid.uuid4().bytes[:8],
+                transfer_id=uuid.uuid4().bytes,
+                sender_key_id=bytes.fromhex(fake_principal.key_id),
+                kind=0,
+                size_bucket=1,
+                hard_expires_at=int(time.time()) + 3600,
+                flags=0,
+            ),
+            sk,
+        )
+        result = receiver.handle_offer(
+            conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+            key_exchange=key_exchange, raw_offer=raw_offer, network_available=True, source_address=contact,
+        )
+        assert result.state == receiver.WAITING_KEY
+
+    # First tick: exactly the cap, no more.
+    svc._auto_request_missing_keys()
+    sent_first = sum(len(ether.drain(addr)) for addr in addresses)
+    assert sent_first == MAX_AUTO_KEY_REQUESTS_PER_TICK
+
+    # Second tick: the remainder (still under the cap), not dropped.
+    svc._auto_request_missing_keys()
+    sent_second = sum(len(ether.drain(addr)) for addr in addresses)
+    assert sent_second == total - MAX_AUTO_KEY_REQUESTS_PER_TICK
 
 
 # ---- Step 1.6A.4: provider onboarding/management handlers ----------------

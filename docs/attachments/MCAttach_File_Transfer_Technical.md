@@ -17,7 +17,7 @@ All MCA/1 messages are CBOR-encoded, either inlined as Base64URL text prefixed `
 | Code | Type | Purpose |
 |---|---|---|
 | 1 | `OFFER` | Sender announces a new attachment: `provider_id`, `transfer_id`, `sender_key_id`, size bucket, expiry. |
-| 2 | `ACK_RECEIVED` | Receiver confirms it downloaded the object's ciphertext. |
+| 2 | `ACK_RECEIVED` | Receiver confirms it received and stored the OFFER (the sender's `SENT → RECEIVED` transition) - **not** that the ciphertext or plaintext was downloaded. |
 | 3 | `ACK_DOWNLOADED` | Receiver confirms it decrypted and made the file available. |
 | 4 | `ACK_PROVIDER_UNKNOWN` | Receiver reports it cannot resolve the OFFER's `provider_id`. |
 | 5 | `CANCEL` | Sender withdraws an in-flight offer. |
@@ -28,7 +28,7 @@ All MCA/1 messages are CBOR-encoded, either inlined as Base64URL text prefixed `
 | 10 | `EXPIRED` | An offer's hard expiry passed before completion. |
 | 11 | `KEY_ROTATE` | Announces a principal's key rotation. |
 
-**Implemented today:** `OFFER`, `KEY_REQUEST`, `KEY_ANNOUNCE`, `KEY_ACK`, and — as of ADR-0009 v2 — the three sender-side simple ACKs `ACK_RECEIVED`/`ACK_DOWNLOADED`/`ACK_PROVIDER_UNKNOWN`. The ACKs are dispatched by `AttachmentsService._process_inbound_ack()` (worker thread, single owner of `conn`): each is decode-verified against the recipient public identity pinned on the exact transfer (`attachment_recipients.recipient_public_identity`, never the current TOFU binding), source-route-checked against the persisted DIRECT delivery row, then applied via `sender.apply_ack()` (see §3). `ACK_RECEIVED` advances `SENT → RECEIVED`; `ACK_DOWNLOADED` advances `SENT/RECEIVED → DOWNLOADED` and drops the transient `mca_sender_state` while retaining the `mca_sender_revoke_state` revoke capability; `ACK_PROVIDER_UNKNOWN` sets `error_code = recipient_provider_unknown` and is **non-terminal** (the attachment stays `SENT`, recoverable once the recipient's provider is corrected). **Not implemented** (flagged, not silently missing): `CANCEL`/`REJECTED`/`EXPIRED`/`KEY_ROTATE` still have no inbound dispatch path — those remain explicitly out of scope.
+**Implemented today:** `OFFER`, `KEY_REQUEST`, `KEY_ANNOUNCE`, `KEY_ACK`, and — as of ADR-0009 v2 — the three sender-side simple ACKs `ACK_RECEIVED`/`ACK_DOWNLOADED`/`ACK_PROVIDER_UNKNOWN`. The ACKs are dispatched by `AttachmentsService._process_inbound_ack()` (worker thread, single owner of `conn`): each is decode-verified against the recipient public identity pinned on the exact transfer (`attachment_recipients.recipient_public_identity`, never the current TOFU binding), source-route-checked against the persisted DIRECT delivery row, then applied via `sender.apply_ack()` (see §3). `ACK_RECEIVED` advances `SENT → RECEIVED`; `ACK_DOWNLOADED` advances `SENT/RECEIVED → DOWNLOADED` and drops the transient `mca_sender_state` while retaining the `mca_sender_revoke_state` revoke capability; `ACK_PROVIDER_UNKNOWN` sets `error_code = recipient_provider_unknown` and is **non-terminal** (the attachment stays `SENT`, recoverable once the recipient's provider is corrected). `ACK_RECEIVED` is emitted the moment `handle_offer()` stores the OFFER (receiver.py, before any download), so it attests to *offer receipt*, never to ciphertext/plaintext delivery — the table above was corrected to match the code. **Not implemented** (flagged, not silently missing): `CANCEL`/`REJECTED`/`EXPIRED`/`KEY_ROTATE` still have no inbound dispatch path — those remain explicitly out of scope.
 
 ## 3. State machines
 
@@ -50,6 +50,11 @@ WAITING_KEY -> WAITING_PROVIDER -> WAITING_NETWORK -> WAITING_CONSENT -> DOWNLOA
 ```
 
 `AUTOMATIC_STATES = {WAITING_KEY, WAITING_PROVIDER, WAITING_NETWORK, DOWNLOADING}` - `WAITING_CONSENT` is deliberately excluded (a human decision, not something a tick should silently advance past). `handle_offer()` is the entry point for a real inbound `OFFER`; `AUTOMATIC_STATES` ordering mirrors WAITING_KEY's priority over the provider check - an OFFER from an unknown sender always lands in `WAITING_KEY` first, regardless of whether its `provider_id` is even resolvable.
+
+**PR 1 (recoverable missing-key workflow):** `WAITING_KEY` is not a dead end. Two halves make it recoverable:
+
+- **Trust-gated resume** (`receiver._step_waiting_key`): a parked transfer re-evaluates its pending OFFER every tick, but only advances when `get_binding_by_key_id()` resolves to an **`MCA_READY`** binding (`tofu_confirmed_at` set, no pending rotation). A `KEY_UNVERIFIED` binding (KEY_ANNOUNCE delivered, never confirmed) or a `KEY_CHANGED` one (a conflicting key is pending accept/reject) leaves the transfer parked - an unverified key never authorizes a file.
+- **Automatic key request** (`AttachmentsService._auto_request_missing_keys`, run once per tick): for every `WAITING_KEY` row whose signer's key is still unknown (`get_binding_by_key_id() is None`), send a `KEY_REQUEST` to its persisted `reply_route_id`, subject to the same per-address rate limit and persisted `mca_key_exchange_contact_state.last_request_sent_at` as the manual `contact_request_key` command. This is idempotent (rate-limited to one request per window) and restart-safe (the row, its pending OFFER, and the throttle timestamp are all persisted).
 
 ## 4. Single-owner SQLite model (PR #231 review, section 2)
 

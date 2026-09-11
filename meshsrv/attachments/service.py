@@ -112,6 +112,15 @@ DEFAULT_TICK_SECONDS = 5.0
 # work one tick takes before yielding back to the wake-driven loop.
 MAX_ATTACHMENTS_PER_TICK = 8
 
+# PR 1 (recoverable missing-key workflow): bound how many KEY_REQUESTs one
+# tick's automatic missing-key scan may *send*. A stranger who floods OFFERs
+# from many distinct unknown-key addresses (bounded globally by
+# receiver.MAX_PENDING_RECEIVED_GLOBAL) could otherwise trigger a like-sized
+# burst of outbound radio sends in a single tick; this caps that burst the
+# same way MAX_ATTACHMENTS_PER_TICK caps row work. Per-address rate limiting
+# (migration 13) still governs how often any one address is asked.
+MAX_AUTO_KEY_REQUESTS_PER_TICK = 8
+
 # PR #231 review, section 2 (single-owner SQLite model): the radio
 # listener thread never touches the MCA database directly any more - it
 # only builds an immutable InboundEvent and puts it on this bounded
@@ -577,6 +586,13 @@ class AttachmentsService:
         # be applied before this same tick's row-scan sees the rows it
         # changed, so the scan reflects the command, never a stale state).
         self._drain_commands()
+
+        # PR 1 (recoverable missing-key workflow): after draining user
+        # commands (so a `contact_request_key`/`contact_confirm` already
+        # drained this tick is reflected first), proactively request the key
+        # for any received transfer still parked in WAITING_KEY with an
+        # unknown signer. Rate-limited and idempotent - safe on every tick.
+        self._auto_request_missing_keys()
 
         # The only network I/O this tick performs itself beyond the
         # inbound-event dispatch above - everything after this is either
@@ -1817,6 +1833,86 @@ class AttachmentsService:
             resource_id=attachment_id,
             result={"attachment_id": attachment_id, "saved": False},
         )
+
+    def _auto_request_missing_keys(self) -> None:
+        """PR 1 (recoverable missing-key workflow): drive the missing-key
+        half of the receiver's WAITING_KEY state forward without a human
+        having to click "request key" for every transfer. For each received
+        attachment parked in WAITING_KEY whose signer's key is STILL unknown,
+        send a rate-limited KEY_REQUEST to the persisted reply route - the
+        same per-address limit and persisted `last_request_sent_at`
+        `_command_request_key` uses - so the sender is prompted to announce
+        its key and the transfer can later resume once the human confirms it.
+
+        Mirrors `_command_request_key`'s revalidation posture: nothing about
+        a parked row is trusted here either. The key is re-checked by key id
+        (not address), so a new-key OFFER from an address that already has a
+        trusted binding is still correctly treated as unknown; a failed or
+        `sent=False` delivery consumes no quota. Safe to run every tick:
+        idempotent (the rate limit collapses repeated attempts to one request
+        per window, and a row already advanced out of WAITING_KEY this tick
+        is simply not re-scanned), bounded by the same one-bad-row-must-not-
+        stop-the-scan rule as the row scan."""
+        if self._delivery_adapter is None:
+            return
+        self._conn.row_factory = sqlite3.Row
+        # `ORDER BY created_at` (oldest first) so a flood of parked offers is
+        # serviced fairly rather than in arbitrary SQLite row order; the send
+        # cap below (not a scan LIMIT) bounds the outbound burst without
+        # letting an already-rate-limited row starve a not-yet-requested one.
+        rows = self._conn.execute(
+            "SELECT id, reply_route_id, pending_offer_cbor FROM attachments "
+            "WHERE workspace_id = ? AND direction = 'received' AND state = ? ORDER BY created_at",
+            (self._principal.workspace_id, receiver.WAITING_KEY),
+        ).fetchall()
+        sent_this_tick = 0
+        for row in rows:
+            if sent_this_tick >= MAX_AUTO_KEY_REQUESTS_PER_TICK:
+                break
+            try:
+                if self._auto_request_key_for_row(row):
+                    sent_this_tick += 1
+            except Exception:  # noqa: BLE001 - one bad row must not stop the scan
+                logger.exception(
+                    "AttachmentsService: auto key-request failed for attachment %s", row["id"]
+                )
+
+    def _auto_request_key_for_row(self, row: sqlite3.Row) -> bool:
+        route_id = row["reply_route_id"]
+        pending_raw = row["pending_offer_cbor"]
+        if not route_id or pending_raw is None:
+            return False
+        try:
+            unverified = codec.decode_offer(bytes(pending_raw), verify_key=None)
+        except codec.CodecError:
+            return False
+        if self._key_exchange.get_binding_by_key_id(unverified.sender_key_id.hex()) is not None:
+            # Key is now known (announced since the OFFER parked it) - the
+            # trust gate in `_step_waiting_key` owns whether/when to resume.
+            return False
+        # Meshtastic node ids are lowercase hex by convention; `.lower()` is
+        # idempotent and defensively normalizes any uppercase hex the transport
+        # passed through, so the address-keyed rate-limit row matches the one
+        # `_command_request_key` (fed by the already-lowercased frontend id)
+        # reads and writes.
+        normalized = route_id.lower()
+        try:
+            self._key_exchange.check_key_request_rate_limit(normalized, self._now())
+        except RateLimited:
+            return False
+        key_request = self._key_exchange.build_key_request()
+        route = Route(route_type=RouteType.DIRECT, route_id=route_id, destination_address=route_id)
+        try:
+            wire_payload = self._delivery_adapter.encode(key_request, route)
+            receipt = self._delivery_adapter.send(
+                wire_payload, route, idempotency_key=f"auto-key-request-{row['id']}"
+            )
+        except DeliveryError:
+            return False
+        if not receipt.sent:
+            return False
+        self._key_exchange.record_key_request_sent(normalized, self._now())
+        return True
 
     def _command_request_key(self, command: Command) -> CommandOutcome:
         """`contact_request_key` (§7.10): send a signed KEY_REQUEST to a

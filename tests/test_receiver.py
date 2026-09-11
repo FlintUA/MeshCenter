@@ -138,7 +138,7 @@ def remote_sender(tmp_path):
     return conn2, wsm2, principal2
 
 
-def _insert_binding(conn, *, workspace_id, adapter_id, transport_address, principal_id, sender_key_id, public_identity, now):
+def _insert_binding(conn, *, workspace_id, adapter_id, transport_address, principal_id, sender_key_id, public_identity, now, confirmed=True):
     conn.execute(
         """
         INSERT INTO mca_recipient_bindings
@@ -146,12 +146,12 @@ def _insert_binding(conn, *, workspace_id, adapter_id, transport_address, princi
              key_epoch, bound_at, tofu_confirmed_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
         """,
-        (uuid.uuid4().hex, workspace_id, adapter_id, transport_address, principal_id, sender_key_id, public_identity.hex(), now, now),
+        (uuid.uuid4().hex, workspace_id, adapter_id, transport_address, principal_id, sender_key_id, public_identity.hex(), now, now if confirmed else None),
     )
     conn.commit()
 
 
-def _bind_remote_sender(conn, principal2, *, transport_address="remote-addr", now=None):
+def _bind_remote_sender(conn, principal2, *, transport_address="remote-addr", now=None, confirmed=True):
     now = time.time() if now is None else now
     _insert_binding(
         conn,
@@ -162,6 +162,7 @@ def _bind_remote_sender(conn, principal2, *, transport_address="remote-addr", no
         sender_key_id=principal2.key_id,
         public_identity=principal2.public_identity,
         now=now,
+        confirmed=confirmed,
     )
 
 
@@ -267,6 +268,43 @@ def test_waiting_key_advances_automatically_once_binding_recorded(conn, wsm, pri
     row = conn.execute("SELECT pending_offer_cbor, sender_principal_id FROM attachments WHERE id = ?", (result.attachment_id,)).fetchone()
     assert row[0] is None
     assert row[1] == principal2.principal_id
+
+
+def test_waiting_key_does_not_advance_on_unverified_binding(conn, wsm, principal, provider_registry, key_exchange, remote_sender):
+    """PR 1: a parked WAITING_KEY transfer must NOT resume merely because an
+    UNVERIFIED binding for its sender_key_id now exists (a KEY_ANNOUNCE was
+    delivered but no human confirmed it). Only an explicitly trusted key
+    (MCA_READY, `tofu_confirmed_at` set) may authorize the file."""
+    conn2, wsm2, principal2 = remote_sender
+    raw_offer = _build_offer(
+        provider_id=os.urandom(8), transfer_id=os.urandom(16), sender_principal=principal2,
+        sender_signing_key=identity.load_signing_key(wsm2, principal2), hard_expires_at=int(time.time()) + 3600,
+    )
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+    )
+    assert result.state == receiver.WAITING_KEY
+
+    # An UNVERIFIED binding appears (KEY_ANNOUNCE delivered, never confirmed).
+    _bind_remote_sender(conn, principal2, confirmed=False)
+
+    result2 = receiver.run_step(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, network_available=True, attachment_id=result.attachment_id,
+    )
+    assert result2.state == receiver.WAITING_KEY
+    row = conn.execute("SELECT pending_offer_cbor FROM attachments WHERE id = ?", (result.attachment_id,)).fetchone()
+    assert bytes(row[0]) == raw_offer  # still parked, not yet authorized
+
+    # The human explicitly confirms the key -> the transfer now resumes.
+    key_exchange.confirm_tofu("remote-addr")
+
+    result3 = receiver.run_step(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, network_available=True, attachment_id=result.attachment_id,
+    )
+    assert result3.state == receiver.WAITING_PROVIDER
 
 
 # ---- PR #231 review (2nd pass): inbound OFFER admission limits ------------

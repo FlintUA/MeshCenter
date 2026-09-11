@@ -82,7 +82,7 @@ from nacl.signing import VerifyKey
 
 from meshsrv.attachments import codec, crypto, identity, manifest
 from meshsrv.attachments.identity import MCAPrincipal
-from meshsrv.attachments.key_exchange import KeyExchangeCoordinator
+from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator
 from meshsrv.attachments.provider_registry import ProviderRegistry, encode_provider_id
 from meshsrv.attachments.relay_client import (
     RelayClient,
@@ -876,7 +876,16 @@ def _step_waiting_key(conn, row, workspace_manager, principal, provider_registry
 
     unverified = codec.decode_offer(bytes(pending_raw), verify_key=None)
     binding = key_exchange.get_binding_by_key_id(unverified.sender_key_id.hex())
-    if binding is None:
+    if binding is None or binding.status != AddressStatus.MCA_READY:
+        # PR 1 (recoverable missing-key workflow): a parked transfer resumes
+        # ONLY once its signer's key is explicitly trusted. `binding is None`
+        # means the key is still unknown; `binding.status != MCA_READY` covers
+        # both KEY_UNVERIFIED (a KEY_ANNOUNCE arrived but no human confirmed
+        # it) and KEY_CHANGED (a conflicting key is pending accept/reject).
+        # Advancing on either would let an unverified key authorize a file -
+        # exactly the trust boundary TOFU exists to hold. `get_binding_by_key_id`
+        # is deliberately address-agnostic and does NOT filter on trust, so
+        # that filter has to live here, at the state-transition boundary.
         return ReceiveResult(attachment_id=attachment_id, state=WAITING_KEY, replies=[])
 
     try:

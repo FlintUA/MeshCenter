@@ -642,6 +642,35 @@ def test_list_filter_saved(monkeypatch):
     assert [a["id"] for a in body["attachments"]] == ["b" * 32]
 
 
+def test_list_counterparty_filter(monkeypatch):
+    # Filters by the stable counterparty id only — never the display name, and
+    # a record with no counterparty (missing/ambiguous/non-DIRECT) is excluded.
+    facade = _FakeFacade(
+        snapshot=_snapshot([
+            _attachment(id="a" * 32, counterparty_contact_id="!aaaaaaaa"),
+            _attachment(id="b" * 32, counterparty_contact_id="!bbbbbbbb"),
+            _attachment(id="c" * 32, counterparty_contact_id=None),
+        ])
+    )
+    c = _client(monkeypatch, facade)
+    body = c.get("/api/attachments?counterparty=!aaaaaaaa").get_json()
+    assert [a["id"] for a in body["attachments"]] == ["a" * 32]
+    assert body["total"] == 1
+    # No counterparty param -> full list.
+    assert c.get("/api/attachments").get_json()["total"] == 3
+
+
+def test_list_counterparty_filter_no_match_empty(monkeypatch):
+    facade = _FakeFacade(
+        snapshot=_snapshot([_attachment(id="a" * 32, counterparty_contact_id="!aaaaaaaa")])
+    )
+    c = _client(monkeypatch, facade)
+    body = c.get("/api/attachments?counterparty=!cccccccc").get_json()
+    assert body["ok"] is True
+    assert body["attachments"] == []
+    assert body["total"] == 0
+
+
 def test_list_total_is_before_pagination(monkeypatch):
     facade = _FakeFacade(snapshot=_snapshot([_attachment(id=f"{i:032x}") for i in range(5)]))
     c = _client(monkeypatch, facade)
@@ -701,6 +730,10 @@ def test_list_pagination_valid_boundaries(monkeypatch, query, expected):
         ("direction=up", "invalid_direction"),
         ("state=NOT_A_STATE", "invalid_state"),
         ("filter=weird", "invalid_filter"),
+        ("counterparty=NOT_A_CONTACT_ID", "invalid_counterparty"),
+        ("counterparty=!ABC", "invalid_counterparty"),          # too short
+        ("counterparty=!ABCDEFGH", "invalid_counterparty"),     # uppercase hex
+        ("counterparty=!1234567g", "invalid_counterparty"),     # non-hex
     ],
 )
 def test_list_invalid_query_params(monkeypatch, query, code):

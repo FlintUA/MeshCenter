@@ -202,6 +202,7 @@
         total: 0,
         truncated: false,
         filter: 'all',
+        counterparty: '',         // active counterparty filter (canonical !hex contact id); '' = none (P3)
         search: '',
         selectedId: null,
 
@@ -549,14 +550,33 @@
         });
     }
 
-    function loadTransfers() {
+    function transfersQueryKey() {
+        var mapping = FILTER_API[state.filter] || FILTER_API.all;
+        return mapping.direction + '|' + mapping.filter + '|' + (state.counterparty || '');
+    }
+
+    function transfersUrl() {
         var mapping = FILTER_API[state.filter] || FILTER_API.all;
         var url = '/api/attachments?direction=' + encodeURIComponent(mapping.direction) +
             '&filter=' + encodeURIComponent(mapping.filter) +
             '&limit=' + LIST_LIMIT;
-        return guardedLoad('transfers', function () {
+        if (state.counterparty) url += '&counterparty=' + encodeURIComponent(state.counterparty);
+        return url;
+    }
+
+    function loadTransfers() {
+        var url = transfersUrl();
+        var queryKey = transfersQueryKey();
+        var key = 'transfers:' + queryKey;
+        // P3: the response is applied only if its query (direction|filter|
+        // counterparty) is still the active one. A stale out-of-order response
+        // from a superseded filter/counterparty switch is dropped (including a
+        // stale error); a same-query reload still joins/coalesces via the
+        // query-keyed guard (G1 preserved) instead of being swallowed.
+        return guardedLoad(key, function () {
             return api(url);
         }, function (r) {
+            if (transfersQueryKey() !== queryKey) return; // superseded — drop, incl. errors
             if (r.status !== 200 || !r.data || r.data.ok !== true) {
                 if (r.status === 503) renderTransfersError(t('files.not_ready', 'MCAttach service is not ready'));
                 else renderTransfersError(filesErrorCode(r.data));
@@ -587,6 +607,14 @@
                 }
             }
         });
+    }
+
+    // P3: the post-command authoritative refresh for the transfer list now keys
+    // off the *current* query (direction|filter|counterparty), not a fixed
+    // 'transfers' bucket — so a command settling after a filter/counterparty
+    // switch refreshes the query the user is actually looking at.
+    function refreshTransfers() {
+        return refreshAfterCommand('transfers:' + transfersQueryKey(), loadTransfers);
     }
 
     // ---- contact merge (C3 §8.1) -------------------------------------------
@@ -669,11 +697,16 @@
             var status = filesContactStatusLabel(c.status);
             var shortFp = c.fingerprint ? c.fingerprint.slice(0, 16) : '';
             var trust = contactTrustActions(c);
+            var filtered = state.counterparty === c.contact_id;
             var name = c.name
                 ? '<span class="files-contact-name">' + esc(c.name) + '</span>'
                 : '';
             return (
-                '<div class="files-contact-item' + (c.status === 'trusted' ? ' is-trusted' : '') + '" data-contact="' + esc(c.contact_id) + '">' +
+                '<div class="files-contact-item' +
+                    (c.status === 'trusted' ? ' is-trusted' : '') +
+                    (filtered ? ' is-filtered' : '') +
+                    '" role="button" tabindex="0" aria-pressed="' + (filtered ? 'true' : 'false') +
+                    '" data-files-action="contact-filter" data-contact="' + esc(c.contact_id) + '">' +
                     '<div class="files-contact-head">' +
                         name +
                         '<span class="files-contact-id">' + esc(c.contact_id) + '</span>' +
@@ -1033,8 +1066,8 @@
                     resourceKey: resourceKey,
                     queued: opts.queued,
                     success: opts.success,
-                    onSuccess: function () { return refreshAfterCommand('transfers', loadTransfers); },
-                    onUnknown: function () { return refreshAfterCommand('transfers', loadTransfers); },
+                    onSuccess: function () { return refreshTransfers(); },
+                    onUnknown: function () { return refreshTransfers(); },
                 });
             } else if (r.status === 409) {
                 toast(t('files.state_changed', 'This transfer changed — refreshing'), 'info');
@@ -1111,8 +1144,8 @@
                         resourceKey: resourceKey,
                         queued: t('files.deleting_local', 'Deleting local copy…'),
                         success: t('files.local_deleted', 'Local copy deleted'),
-                        onSuccess: function () { return refreshAfterCommand('transfers', loadTransfers); },
-                        onUnknown: function () { return refreshAfterCommand('transfers', loadTransfers); },
+                        onSuccess: function () { return refreshTransfers(); },
+                        onUnknown: function () { return refreshTransfers(); },
                     });
                 } else {
                     toast(filesErrorCode(r.data), 'error');
@@ -1442,6 +1475,19 @@
     }
 
     function onDocumentKeydown(e) {
+        // P3: contact-filter items are role="button" — Enter/Space toggles the
+        // counterparty filter (native buttons inside the item still handle their
+        // own Enter/Space via the normal click path, so this only fires for the
+        // item itself whose closest data-files-action is 'contact-filter').
+        if (e.key === 'Enter' || e.key === ' ') {
+            var filterItem = closestAttr(e.target, 'data-files-action');
+            if (filterItem && filterItem.getAttribute('data-files-action') === 'contact-filter') {
+                e.preventDefault();
+                var cid = filterItem.getAttribute('data-contact');
+                if (cid && findContact(cid)) toggleCounterpartyFilter(cid);
+                return;
+            }
+        }
         if (!state.dialog) return;
         if (e.key === 'Escape') {
             // "Only when safe" (R6): never dismiss while a send request is in
@@ -1525,6 +1571,7 @@
         }
 
         if (contactId && findContact(contactId)) {
+            if (action === 'contact-filter') { toggleCounterpartyFilter(contactId); return; }
             if (action === 'contact-request-key') { contactRequestKey(contactId); return; }
             if (action === 'contact-confirm') { contactConfirm(contactId); return; }
             if (action === 'contact-accept') { contactAcceptKeyChange(contactId); return; }
@@ -1590,6 +1637,16 @@
             btn.classList.toggle('active', isActive);
             if (btn.setAttribute) btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
         }) : null;
+        loadTransfers();
+    }
+
+    // P3: counterparty filter — selects transfers by the stable counterparty id
+    // only (canonicalNodeId), never the display name. Toggling the already-active
+    // contact clears the filter and returns the full list.
+    function toggleCounterpartyFilter(contactId) {
+        var canonical = canonicalNodeId(contactId || '');
+        state.counterparty = (canonical === state.counterparty) ? '' : canonical;
+        renderContacts();
         loadTransfers();
     }
 
@@ -2263,7 +2320,7 @@
                             // F5: close only after the authoritative refresh
                             // settles, and return its Promise so the tracker
                             // does not announce success early.
-                            return refreshAfterCommand('transfers', loadTransfers).then(function () {
+                            return refreshTransfers().then(function () {
                                 closeModal(false);
                                 if (attachmentId) selectAttachment(attachmentId);
                             });
@@ -2280,7 +2337,7 @@
                         },
                         onUnknown: function () {
                             unlockSend();
-                            return refreshAfterCommand('transfers', loadTransfers);
+                            return refreshTransfers();
                         },
                     });
                     // Do not claim success yet: the tracker owns the final outcome.

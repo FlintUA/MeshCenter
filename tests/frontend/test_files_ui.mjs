@@ -1780,6 +1780,168 @@ async function test_provider_error_codes_are_localized() {
     console.log('PASS: test_provider_error_codes_are_localized');
 }
 
+async function test_counterparty_filter_out_of_order_responses() {
+    // P3: switching counterparty A -> B issues distinct fetches, and a stale A
+    // response that resolves AFTER B must be dropped — never overwrite B's list.
+    let releaseA;
+    const gateA = new Promise((r) => { releaseA = r; });
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [
+                    contact('!aaaaaaaa', 'trusted'),
+                    contact('!bbbbbbbb', 'trusted'),
+                ] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                const cp = new URL(url, 'http://x').searchParams.get('counterparty');
+                if (cp === '!aaaaaaaa') {
+                    await gateA; // hold A's (soon-to-be-stale) response
+                    return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT', { file_name: 'from-a.pdf' })], total: 1 });
+                }
+                if (cp === '!bbbbbbbb') {
+                    return json(200, { ok: true, attachments: [attachment('b1', 'sent', 'SENT', { file_name: 'from-b.pdf' })], total: 1 });
+                }
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!bbbbbbbb' });
+
+    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-b.pdf'));
+
+    releaseA();
+    await new Promise((r) => setTimeout(r, 50));
+
+    const html = sandbox._document.elements.get('filesArchiveList').innerHTML;
+    assert.ok(html.includes('from-b.pdf'), 'B list must still be shown after A resolves late');
+    assert.ok(!html.includes('from-a.pdf'), 'stale A response must not overwrite B list');
+
+    console.log('PASS: test_counterparty_filter_out_of_order_responses');
+}
+
+async function test_counterparty_filter_a_b_a_switching() {
+    // P3: A -> B -> A must each issue a distinct request carrying the correct
+    // counterparty (the old fixed 'transfers' guard swallowed the switch), and
+    // the final A selection must win the list.
+    const cps = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [
+                    contact('!aaaaaaaa', 'trusted'),
+                    contact('!bbbbbbbb', 'trusted'),
+                ] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                const cp = new URL(url, 'http://x').searchParams.get('counterparty');
+                cps.push(cp);
+                if (cp === '!aaaaaaaa') return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT', { file_name: 'from-a.pdf' })], total: 1 });
+                if (cp === '!bbbbbbbb') return json(200, { ok: true, attachments: [attachment('b1', 'sent', 'SENT', { file_name: 'from-b.pdf' })], total: 1 });
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
+
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!bbbbbbbb' });
+    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-b.pdf'));
+
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
+
+    const html = sandbox._document.elements.get('filesArchiveList').innerHTML;
+    assert.ok(html.includes('from-a.pdf'), 'final A selection must win');
+    assert.ok(!html.includes('from-b.pdf'), 'B list must not survive the final A switch');
+    assert.deepEqual(
+        cps.filter(Boolean),
+        ['!aaaaaaaa', '!bbbbbbbb', '!aaaaaaaa'],
+        'each switch must issue a request for the newly-selected counterparty',
+    );
+
+    console.log('PASS: test_counterparty_filter_a_b_a_switching');
+}
+
+async function test_counterparty_filter_refresh_keeps_filter() {
+    // P3: a manual refresh while a counterparty filter is active must re-fetch
+    // WITH the counterparty still applied (never silently drop it).
+    const cps = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                cps.push(new URL(url, 'http://x').searchParams.get('counterparty'));
+                return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT')], total: 1 });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    await waitFor(() => cps.includes('!aaaaaaaa'));
+
+    dispatch(sandbox, { 'data-files-action': 'refresh' });
+    await waitFor(() => cps.filter((c) => c === '!aaaaaaaa').length >= 2);
+
+    assert.ok(
+        cps.filter(Boolean).every((c) => c === '!aaaaaaaa'),
+        'after a filter is active, every transfers request (including refresh) must carry it',
+    );
+
+    console.log('PASS: test_counterparty_filter_refresh_keeps_filter');
+}
+
+async function test_counterparty_filter_reset_returns_full_list() {
+    // P3: toggling the active contact off clears the filter and returns the
+    // full list (request carries no counterparty).
+    const cps = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                cps.push(new URL(url, 'http://x').searchParams.get('counterparty'));
+                return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT')], total: 1 });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    await waitFor(() => cps.includes('!aaaaaaaa'));
+
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    await waitFor(() => cps.length >= 3 && cps[cps.length - 1] === null);
+
+    assert.equal(cps[cps.length - 1], null, 'reset must issue a request with no counterparty (full list)');
+
+    const html = sandbox._document.elements.get('filesContactsList').innerHTML;
+    assert.ok(!html.includes('is-filtered'), 'reset must clear the is-filtered class');
+
+    console.log('PASS: test_counterparty_filter_reset_returns_full_list');
+}
+
 async function main() {
     await test_activate_merges_contacts_and_excludes_local();
     await test_trust_confirm_shows_full_fingerprint();
@@ -1821,7 +1983,12 @@ async function main() {
     await test_stale_send_settings_do_not_update_new_dialog();
     await test_send_provider_fetch_not_suppressed_by_workspace_load();
     await test_provider_error_codes_are_localized();
-    console.log('All files UI behavior tests passed (38 scenarios).');
+    // PR 3: counterparty filtering + race-safe transfer loading.
+    await test_counterparty_filter_out_of_order_responses();
+    await test_counterparty_filter_a_b_a_switching();
+    await test_counterparty_filter_refresh_keeps_filter();
+    await test_counterparty_filter_reset_returns_full_list();
+    console.log('All files UI behavior tests passed (42 scenarios).');
 }
 
 main()

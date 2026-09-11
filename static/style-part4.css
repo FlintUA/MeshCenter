@@ -4405,8 +4405,11 @@ html[data-theme="dark"] #notificationsCard {
     border-radius: 10px;
     background: var(--mc-surface, #fff);
     margin-bottom: 8px;
+    cursor: pointer;
 }
 .files-contact-item.is-trusted { border-color: var(--mc-success, #2f9e63); }
+.files-contact-item.is-filtered { border-color: var(--mc-accent, #2f7bb5); box-shadow: 0 0 0 1px var(--mc-accent, #2f7bb5); }
+.files-contact-item:focus-visible { outline: 2px solid var(--mc-accent, #2f7bb5); outline-offset: 1px; }
 .files-contact-head {
     display: flex;
     align-items: center;

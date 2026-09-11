@@ -387,9 +387,9 @@ Every mutation returns `202` + `command_id` (§3.4) unless a synchronous validat
 ### 7.1 Reads (1.6A.2)
 
 **`GET /api/attachments`** — list.
-- Query: `direction` (`sent`|`received`|`all`, default `all`); `state` (one state or `all`); `filter` (`pending`|`errors`|`saved`|`all`); `limit` (default 100, range 1–500); `offset` (default 0, ≥ 0). A present `limit`/`offset` must be a strict ASCII decimal integer within bounds — malformed or out-of-range values are a hard `400 invalid_pagination`, never silently clamped or coerced to a default.
+- Query: `direction` (`sent`|`received`|`all`, default `all`); `state` (one state or `all`); `filter` (`pending`|`errors`|`saved`|`all`); `counterparty` (a canonical `!`+8-lowercase-hex contact id, matching the record's `counterparty_contact_id` — absent means no counterparty filter, present-but-invalid is a hard `400 invalid_counterparty`); `limit` (default 100, range 1–500); `offset` (default 0, ≥ 0). A present `limit`/`offset` must be a strict ASCII decimal integer within bounds — malformed or out-of-range values are a hard `400 invalid_pagination`, never silently clamped or coerced to a default.
 - Response: `{"ok": true, "attachments": [<public projection §7.5>], "total": <int>}`.
-- Errors: `400 invalid_direction` / `invalid_state` / `invalid_filter` / `invalid_pagination`.
+- Errors: `400 invalid_direction` / `invalid_state` / `invalid_filter` / `invalid_counterparty` / `invalid_pagination`.
 
 **`GET /api/attachments/{id}`** — detail + timeline.
 - Response: `{"ok": true, "attachment": {…§7.5…}, "timeline": [{"event_type", "detail", "created_at"}]}` (timeline from `attachment_events`, redacted per §11).
@@ -664,7 +664,7 @@ Stable, snake_case, additive.
 
 | Status | `error_code` | Meaning |
 |---|---|---|
-| 400 | `invalid_metadata` / `invalid_attachment_id` / `invalid_direction` / `invalid_state` / `invalid_filter` / `invalid_command_id` / `invalid_origin` / `invalid_pagination` / `invalid_provider_id` / `invalid_query` / `invalid_contact_id` | malformed input |
+| 400 | `invalid_metadata` / `invalid_attachment_id` / `invalid_direction` / `invalid_state` / `invalid_filter` / `invalid_counterparty` / `invalid_command_id` / `invalid_origin` / `invalid_pagination` / `invalid_provider_id` / `invalid_query` / `invalid_contact_id` | malformed input |
 | 400 | `mime_not_allowed` / `file_too_large` / `metadata_too_large` / `ciphertext_too_large` | file/size validation |
 | 400 | `recipient_not_found` / `recipient_not_trusted` | binding missing or not `trusted` |
 | 400 | `provider_not_found` / `provider_disabled` / `upload_not_allowed` / `upload_token_missing` / `upload_token_too_long` / `ttl_out_of_range` / `provider_id_mismatch` | provider/registration |

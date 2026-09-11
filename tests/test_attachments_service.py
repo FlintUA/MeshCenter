@@ -22,6 +22,7 @@ import hashlib
 import sqlite3
 import time
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -43,7 +44,13 @@ from meshsrv.attachments.provider_registry import (
 from meshsrv.attachments.relay.mock_server import MockRelayStore, create_mock_relay_app
 from meshsrv.attachments.relay_client import RelayClient, RelayHTTPError, RelayInfo, RelayLimits
 from meshsrv.attachments.relay_http import RelayNetworkError
-from meshsrv.attachments.service import MAX_AUTO_KEY_REQUESTS_PER_TICK, AttachmentsService, InboundEvent, _provider_id_text
+from meshsrv.attachments.service import (
+    MAX_AUTO_KEY_REQUESTS_PER_TICK,
+    MAX_RECEIVER_EXPIRY_PER_TICK,
+    AttachmentsService,
+    InboundEvent,
+    _provider_id_text,
+)
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
 
@@ -938,11 +945,11 @@ def test_tick_dispatches_a_real_ack_received_back_to_the_sender(conn, wsm, princ
     and the frame is confirmed to actually arrive - decodable and
     correctly signed - at the sending node's own inbox."""
     sender_conn, sender_wsm, sender_principal = remote_recipient
-    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+    _bind_recipient(conn, sender_principal, transport_address="!aaaaaaaa")
 
     shared_ether = InMemoryEther()
     receiver_adapter = FakeTextAdapter(shared_ether, "receiver-addr")
-    sender_adapter = FakeTextAdapter(shared_ether, "remote-addr")
+    sender_adapter = FakeTextAdapter(shared_ether, "!aaaaaaaa")
 
     receiver_service = AttachmentsService(
         conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
@@ -987,22 +994,25 @@ def test_tick_dispatches_a_real_ack_received_back_to_the_sender(conn, wsm, princ
     result = receiver.handle_offer(
         conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
         key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
-        source_address="remote-addr",
+        source_address="!aaaaaaaa",
         # PR #231 review (3rd pass): the dispatch step now fails closed
         # on a missing adapter_id/connector_profile_id, not just a
         # mismatched one - a full ReplyRoute (matching receiver_adapter,
         # the real adapter this service dispatches through below) is
         # required for the ACK to actually reach the wire in this test.
+        # PR 2.5: route_id/destination_address are canonical contact ids
+        # (the sender's own address) so the DIRECT-only dispatch step's
+        # strict contact-id validation admits them.
         reply_route=receiver.ReplyRoute(
             adapter_id=receiver_adapter.adapter_id, connector_profile_id=receiver_adapter.connector_profile_id,
-            route_type="DIRECT", route_id="remote-addr", destination_address="remote-addr",
+            route_type="DIRECT", route_id="!aaaaaaaa", destination_address="!aaaaaaaa",
         ),
     )
     received_attachment_id = result.attachment_id
 
     # Enqueued, not yet sent - the send-before-mark-sent ordering this fix
     # establishes means nothing should be on the wire yet.
-    assert shared_ether.drain("remote-addr") == []
+    assert shared_ether.drain("!aaaaaaaa") == []
     pending_state = conn.execute(
         "SELECT state FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = 'ack_received_sent'",
         (received_attachment_id,),
@@ -1018,7 +1028,7 @@ def test_tick_dispatches_a_real_ack_received_back_to_the_sender(conn, wsm, princ
     assert sent_row[0] == "SENT"
     assert sent_row[1] is not None
 
-    events = shared_ether.drain("remote-addr")
+    events = shared_ether.drain("!aaaaaaaa")
     assert len(events) == 1
     envelope = sender_adapter.ingest(events[0])
     ack_fields = codec.decode_simple_ack(
@@ -1042,7 +1052,7 @@ def test_dispatch_marks_undeliverable_when_persisted_adapter_id_does_not_match(
     reaches the wire, rather than being silently sent through the wrong
     adapter."""
     sender_conn, sender_wsm, sender_principal = remote_recipient
-    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+    _bind_recipient(conn, sender_principal, transport_address="!aaaaaaaa")
 
     ether = InMemoryEther()
     receiver_adapter = FakeTextAdapter(ether, "receiver-addr")
@@ -1070,10 +1080,10 @@ def test_dispatch_marks_undeliverable_when_persisted_adapter_id_does_not_match(
     result = receiver.handle_offer(
         conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
         key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
-        source_address="remote-addr",
+        source_address="!aaaaaaaa",
         reply_route=receiver.ReplyRoute(
             adapter_id="a-completely-different-adapter", connector_profile_id="default",
-            route_type="DIRECT", route_id="remote-addr", destination_address="remote-addr",
+            route_type="DIRECT", route_id="!aaaaaaaa", destination_address="!aaaaaaaa",
         ),
     )
 
@@ -1084,8 +1094,8 @@ def test_dispatch_marks_undeliverable_when_persisted_adapter_id_does_not_match(
         (result.attachment_id,),
     ).fetchone()
     assert row[0] == "UNDELIVERABLE"
-    assert "reply_adapter_mismatch" in row[1]
-    assert ether.drain("remote-addr") == []
+    assert row[1] == "reply_adapter_mismatch"
+    assert ether.drain("!aaaaaaaa") == []
 
 
 # ---- PR #231 review (3rd pass): strict adapter/connector/route validation -
@@ -1102,7 +1112,7 @@ def _dispatch_one_offer_reply(
     replies row). One helper rather than duplicating this ~20-line setup
     per rejection reason."""
     sender_conn, sender_wsm, sender_principal = remote_recipient
-    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+    _bind_recipient(conn, sender_principal, transport_address="!aaaaaaaa")
 
     receiver_service = AttachmentsService(
         conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
@@ -1121,7 +1131,7 @@ def _dispatch_one_offer_reply(
     result = receiver.handle_offer(
         conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
         key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
-        source_address="remote-addr", reply_route=reply_route,
+        source_address="!aaaaaaaa", reply_route=reply_route,
     )
     receiver_service.tick()
 
@@ -1144,12 +1154,12 @@ def test_dispatch_marks_undeliverable_when_persisted_connector_profile_id_does_n
         remote_recipient, receiver_adapter=receiver_adapter,
         reply_route=receiver.ReplyRoute(
             adapter_id=receiver_adapter.adapter_id, connector_profile_id="a-completely-different-connector",
-            route_type="DIRECT", route_id="remote-addr", destination_address="remote-addr",
+            route_type="DIRECT", route_id="!aaaaaaaa", destination_address="!aaaaaaaa",
         ),
     )
     assert row[0] == "UNDELIVERABLE"
-    assert "reply_connector_mismatch" in row[1]
-    assert ether.drain("remote-addr") == []
+    assert row[1] == "reply_connector_mismatch"
+    assert ether.drain("!aaaaaaaa") == []
 
 
 def test_dispatch_marks_undeliverable_when_reply_route_is_entirely_missing(
@@ -1184,7 +1194,7 @@ def test_dispatch_marks_undeliverable_when_reply_route_is_entirely_missing(
         (result.attachment_id,),
     ).fetchone()
     assert row[0] == "UNDELIVERABLE"
-    assert row[1] == "no_reply_route_recorded"
+    assert row[1] == "reply_route_missing"
 
 
 def test_dispatch_marks_undeliverable_when_route_present_but_adapter_identity_missing(
@@ -1198,7 +1208,7 @@ def test_dispatch_marks_undeliverable_when_route_present_but_adapter_identity_mi
     ether = InMemoryEther()
     receiver_adapter = FakeTextAdapter(ether, "receiver-addr")
     sender_conn, sender_wsm, sender_principal = remote_recipient
-    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+    _bind_recipient(conn, sender_principal, transport_address="!aaaaaaaa")
     receiver_service = AttachmentsService(
         conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
         key_exchange=key_exchange, connectivity_monitor=connectivity_monitor,
@@ -1214,7 +1224,7 @@ def test_dispatch_marks_undeliverable_when_route_present_but_adapter_identity_mi
     result = receiver.handle_offer(
         conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
         key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
-        source_address="remote-addr",  # route recorded, but no reply_route -> no adapter identity
+        source_address="!aaaaaaaa",  # route recorded, but no reply_route -> no adapter identity
     )
     receiver_service.tick()
     row = conn.execute(
@@ -1222,41 +1232,44 @@ def test_dispatch_marks_undeliverable_when_route_present_but_adapter_identity_mi
         (result.attachment_id,),
     ).fetchone()
     assert row[0] == "UNDELIVERABLE"
-    assert "reply_adapter_mismatch" in row[1]
-    assert "persisted=None" in row[1]
-    assert ether.drain("remote-addr") == []
+    # PR 2.5 correction: a fixed sanitized token only - the persisted/configured
+    # adapter ids (which could embed identifying data) are never echoed into
+    # `last_error`.
+    assert row[1] == "reply_adapter_mismatch"
+    assert ether.drain("!aaaaaaaa") == []
 
 
-def test_dispatch_uses_persisted_destination_address_even_when_it_differs_from_route_id(
+def test_dispatch_marks_undeliverable_when_destination_address_differs_from_route_id(
     conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient
 ):
-    """destination_address is a separate persisted field precisely so it
-    can differ from route_id (ReplyRoute's own docstring: a future non-
-    DIRECT route shape) - proves the dispatch step actually sends to
-    destination_address, not silently back to route_id, when the two are
-    deliberately set apart. FakeTextAdapter.send() delivers into the
-    ether keyed by Route.destination_address, so draining the
-    destination_address inbox (not the route_id one) is the real proof."""
+    """PR 2.5: control messages are DIRECT-only, so destination_address
+    must equal route_id (both canonical contact ids). A reply route whose
+    two fields are deliberately set apart came from a non-DIRECT shape
+    this MVP does not support (or a migration bug) - dispatch must fail
+    closed to UNDELIVERABLE, never guess a target, never send to either
+    address. (This is the inverse of the pre-2.5 behavior, which would
+    have dispatched to destination_address as a future non-DIRECT shape;
+    that shape is explicitly out of scope until PR 4's recipient model.)"""
     ether = InMemoryEther()
     receiver_adapter = FakeTextAdapter(ether, "receiver-addr")
-    # A third inbox, distinct from both "receiver-addr" and "remote-addr" -
+    # A second inbox, distinct from both "receiver-addr" and the route_id -
     # registering it up front (ether.register()) means drain() finds a
     # real (possibly-empty) inbox rather than a KeyError on a name the
     # ether has never seen.
-    ether.register("remote-addr-real-destination")
+    ether.register("!bbbbbbbb")
 
-    attachment_id, row = _dispatch_one_offer_reply(
+    _, row = _dispatch_one_offer_reply(
         conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client,
         remote_recipient, receiver_adapter=receiver_adapter,
         reply_route=receiver.ReplyRoute(
             adapter_id=receiver_adapter.adapter_id, connector_profile_id=receiver_adapter.connector_profile_id,
-            route_type="DIRECT", route_id="remote-addr", destination_address="remote-addr-real-destination",
+            route_type="DIRECT", route_id="!aaaaaaaa", destination_address="!bbbbbbbb",
         ),
     )
-    assert row[0] == "SENT"
-    assert ether.drain("remote-addr") == []  # nothing delivered to the bare route_id
-    real_events = ether.drain("remote-addr-real-destination")
-    assert len(real_events) == 1  # delivered to destination_address instead
+    assert row[0] == "UNDELIVERABLE"
+    assert row[1] == "reply_destination_mismatch"
+    assert ether.drain("!aaaaaaaa") == []  # never sent to the bare route_id
+    assert ether.drain("!bbbbbbbb") == []  # nor to the differing destination
 
 
 def test_dispatch_marks_undeliverable_when_destination_address_is_missing_not_falling_back_to_route_id(
@@ -1274,7 +1287,7 @@ def test_dispatch_marks_undeliverable_when_destination_address_is_missing_not_fa
     receiver_adapter = FakeTextAdapter(ether, "receiver-addr")
 
     sender_conn, sender_wsm, sender_principal = remote_recipient
-    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+    _bind_recipient(conn, sender_principal, transport_address="!aaaaaaaa")
 
     receiver_service = AttachmentsService(
         conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
@@ -1291,18 +1304,23 @@ def test_dispatch_marks_undeliverable_when_destination_address_is_missing_not_fa
     result = receiver.handle_offer(
         conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
         key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
-        source_address="remote-addr",
+        source_address="!aaaaaaaa",
         reply_route=receiver.ReplyRoute(
             adapter_id=receiver_adapter.adapter_id, connector_profile_id=receiver_adapter.connector_profile_id,
-            route_type="DIRECT", route_id="remote-addr", destination_address="remote-addr",
+            route_type="DIRECT", route_id="!aaaaaaaa", destination_address="!aaaaaaaa",
         ),
     )
     attachment_id = result.attachment_id
 
-    # Simulate the anomaly: null out destination_address directly,
+    # Simulate the anomaly: null out the outbox snapshot's own
+    # destination_address directly (PR 2.5 / migration 17 - dispatch reads
+    # the snapshot from `mca_outgoing_replies`, not `attachments.reply_*`),
     # leaving adapter_id/connector_profile_id/route_type/route_id intact
     # and matching - only destination_address is missing.
-    conn.execute("UPDATE attachments SET reply_destination_address = NULL WHERE id = ?", (attachment_id,))
+    conn.execute(
+        "UPDATE mca_outgoing_replies SET destination_address = NULL WHERE attachment_id = ?",
+        (attachment_id,),
+    )
     conn.commit()
 
     receiver_service.tick()
@@ -1312,21 +1330,39 @@ def test_dispatch_marks_undeliverable_when_destination_address_is_missing_not_fa
         (attachment_id,),
     ).fetchone()
     assert row[0] == "UNDELIVERABLE"
-    assert row[1] == "reply_destination_address_missing"
-    assert ether.drain("remote-addr") == []  # never silently sent to route_id either
+    # PR 2.5 correction: a missing destination_address fails the same
+    # canonical-contact-id check as any other non-`![0-9a-f]{8}` destination,
+    # and the sanitized error is the fixed token only - never the offending
+    # field value (destination=None), never echoing a secret.
+    assert row[1] == "reply_route_invalid_contact"
+    assert ether.drain("!aaaaaaaa") == []  # never silently sent to route_id either
 
 
-def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient):
+def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient, caplog):
     """A DeliveryAdapter.send() failure must never be confused with
     success: the queued reply stays PENDING (retried on a later tick,
-    with backoff), not silently marked SENT or dropped."""
+    with backoff), not silently marked SENT or dropped.
+
+    PR 2.5 correction: the failure reason is a *fixed sanitized token*,
+    and the exception's own message (which may embed adapter/transport
+    secrets) must appear in neither the persisted `last_error` nor the
+    worker logs nor the public snapshot/API serialization."""
+    import json
+    import logging
+
+    from meshsrv.attachments import snapshots
+
+    # A unique marker folded into the simulated transport exception. If this
+    # string shows up anywhere in `last_error`, the logs, or the public
+    # snapshot, the sanitization is broken and the raw exception leaked.
+    SECRET_MARKER = "SECRET-MARKER-X7k2p9qRz"
 
     class _AlwaysFailsToSendAdapter(FakeTextAdapter):
         def send(self, wire_payload, route, idempotency_key):
-            raise RuntimeError("simulated transport failure")
+            raise RuntimeError(f"simulated transport failure {SECRET_MARKER}")
 
     _, _, sender_principal = remote_recipient
-    _bind_recipient(conn, sender_principal, transport_address="remote-addr")
+    _bind_recipient(conn, sender_principal, transport_address="!aaaaaaaa")
 
     failing_adapter = _AlwaysFailsToSendAdapter(InMemoryEther(), "receiver-addr")
     receiver_service = AttachmentsService(
@@ -1347,13 +1383,16 @@ def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, pr
     result = receiver.handle_offer(
         conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
         key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
-        source_address="remote-addr",
+        source_address="!aaaaaaaa",
         # PR #231 review (3rd pass): required now that a missing adapter_id/
         # connector_profile_id fails closed - see the sibling dispatch test
-        # above for the same fix.
+        # above for the same fix. PR 2.5: route_id/destination_address are
+        # canonical contact ids so the DIRECT-only dispatch step's strict
+        # contact-id validation admits them (a non-canonical value would
+        # be marked UNDELIVERABLE before the send is even attempted).
         reply_route=receiver.ReplyRoute(
             adapter_id=failing_adapter.adapter_id, connector_profile_id=failing_adapter.connector_profile_id,
-            route_type="DIRECT", route_id="remote-addr", destination_address="remote-addr",
+            route_type="DIRECT", route_id="!aaaaaaaa", destination_address="!aaaaaaaa",
         ),
     )
 
@@ -1363,6 +1402,9 @@ def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, pr
     ).fetchone()
     assert before[0] == 0
 
+    # Capture every propagated record from every logger, so a stray
+    # `logger.exception()` (which embeds the full traceback) can't hide.
+    caplog.set_level(logging.DEBUG)
     receiver_service.tick()
 
     after = conn.execute(
@@ -1372,7 +1414,28 @@ def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, pr
     assert after[0] == "PENDING"  # never marked SENT on a failed send
     assert after[1] == 1
     assert after[2] > before[1]  # backed off into the future
-    assert "simulated transport failure" in after[3]
+    # PR 2.5 correction: the fixed token, never the exception text.
+    assert after[3] == "delivery_error"
+    assert SECRET_MARKER not in after[3]
+
+    # The raw exception message must not reach the worker logs either.
+    assert SECRET_MARKER not in caplog.text
+
+    # Nor the public snapshot / API serialization (the outbox's `last_error`
+    # is an internal column and is not projected; prove no leak path exists).
+    snapshot = snapshots.build_attachments_snapshot(
+        conn,
+        workspace_id=principal.workspace_id,
+        workspace_manager=wsm,
+        principal_id=principal.principal_id,
+        now=time.time(),
+    )
+    public = json.dumps(
+        snapshots.serialize_attachment_public(
+            snapshot.by_id[result.attachment_id], include_timeline=True
+        )
+    )
+    assert SECRET_MARKER not in public
 
 
 def test_handle_offer_without_source_address_never_dispatches(conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient):
@@ -3496,3 +3559,1045 @@ def test_inbound_cancel_bad_signature_is_dropped(conn, wsm, principal, provider_
     service.tick()
 
     assert receiver.get_state(conn, result.attachment_id) == receiver.WAITING_PROVIDER  # unchanged
+
+
+# ---- PR 2.5: outbound generation of CANCEL/REJECTED/EXPIRED ---------------
+# PR #252 closed the *inbound* half of the lifecycle (a signed REJECTED/EXPIRED
+# applies against a sent row; a signed CANCEL applies against a received row).
+# PR 2.5 closes the *outbound* half: the receiver *generates* a signed REJECTED
+# on explicit reject and a signed EXPIRED on expiry reconciliation; the sender
+# *generates* a signed CANCEL on revoke (SENT/RECEIVED only). Each is written to
+# the durable `mca_outgoing_replies` outbox with an immutable route snapshot
+# (migration 17) in the same DB transaction as its local state transition, and
+# dispatched later with backoff - never synchronously waited-for.
+
+SENDER_ADDR = "!aaaaaaaa"
+RECEIVER_ADDR = "!bbbbbbbb"
+
+
+def _reject_command(attachment_id):
+    return Command(command_id=uuid.uuid4().hex, kind="attachment_reject",
+                   payload={"attachment_id": attachment_id}, created_at=time.time())
+
+
+def _seed_received_row(conn, principal, *, attachment_id, transfer_id, state, hard_expires_at,
+                       sender_principal_id=None, sender_public_identity=None, reply=None):
+    """Seed a received attachment row with full control over the pinned reply
+    route and sender identity, bypassing OFFER admission (so no queued ACKs
+    obscure the single outbound frame under test). `reply` is a
+    `receiver.ReplyRoute` (or None -> no route; dispatch then fails closed to
+    UNDELIVERABLE per-field rather than guessing a destination)."""
+    fields = {
+        "id": attachment_id,
+        "workspace_id": principal.workspace_id,
+        "transfer_id": transfer_id.hex(),
+        "direction": "received",
+        "principal_id": principal.principal_id,
+        "state": state,
+        "created_at": int(time.time()),
+        "hard_expires_at": hard_expires_at,
+        "download_grace_seconds": 3600,
+    }
+    if sender_principal_id is not None:
+        fields["sender_principal_id"] = sender_principal_id
+    if sender_public_identity is not None:
+        fields["sender_public_identity"] = sender_public_identity
+    if reply is not None:
+        fields["reply_adapter_id"] = reply.adapter_id
+        fields["reply_connector_profile_id"] = reply.connector_profile_id
+        fields["reply_route_type"] = reply.route_type
+        fields["reply_route_id"] = reply.route_id
+        fields["reply_destination_address"] = reply.destination_address
+    columns = ", ".join(fields)
+    placeholders = ", ".join("?" for _ in fields)
+    conn.execute(f"INSERT INTO attachments ({columns}) VALUES ({placeholders})", tuple(fields.values()))
+    conn.commit()
+
+
+def _outbox_row(conn, attachment_id, event_type):
+    conn.row_factory = sqlite3.Row
+    return conn.execute(
+        "SELECT id, state, message, attempts, route_type, route_id, adapter_id, "
+        "connector_profile_id, destination_address FROM mca_outgoing_replies "
+        "WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, event_type),
+    ).fetchone()
+
+
+def _count_state(conn, state):
+    return conn.execute("SELECT COUNT(*) FROM attachments WHERE state = ?", (state,)).fetchone()[0]
+
+
+# ---- outbound REJECTED (attachment_reject) --------------------------------
+
+
+def test_command_reject_enqueues_signed_rejected_in_one_transaction(conn, wsm, principal, service):
+    """A WAITING_CONSENT -> REJECTED transition and its signed REJECTED frame
+    are committed atomically: after the command the row is REJECTED and exactly
+    one 'rejected_sent' outbox row exists, carrying the immutable DIRECT route
+    snapshot and a REJECTED frame signed by this workspace's own MCA identity."""
+    attachment_id = "aa" * 16
+    transfer_id = b"\x01" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+
+    outcome = service._dispatcher.dispatch(_reject_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert dict(outcome.result) == {"attachment_id": attachment_id, "state": receiver.REJECTED}
+    assert receiver.get_state(conn, attachment_id) == receiver.REJECTED
+
+    row = _outbox_row(conn, attachment_id, receiver._EVENT_REJECTED_SENT)
+    assert row is not None
+    assert row["state"] == "PENDING"
+    assert row["attempts"] == 0
+    assert (
+        row["adapter_id"], row["connector_profile_id"], row["route_type"], row["route_id"], row["destination_address"]
+    ) == ("fake-text", "local-addr", "DIRECT", "!aaaaaaaa", "!aaaaaaaa")
+    decoded = codec.decode_simple_ack(
+        row["message"], codec.MessageType.REJECTED, verify_key=VerifyKey(principal.public_identity)
+    )
+    assert decoded.transfer_id == transfer_id
+
+    # The next dispatch sends it out over the pinned route.
+    ether = service._delivery_adapter._ether
+    service.tick()
+    events = ether.drain("!aaaaaaaa")
+    assert len(events) == 1
+    assert codec.peek_message_type(codec.from_text(events[0]["text"])) == codec.MessageType.REJECTED
+
+
+def test_command_reject_is_idempotent_and_not_repeatable(conn, wsm, principal, service):
+    """A second reject of an already-REJECTED row fails invalid_state_transition
+    and does not create a second outbox row - the UNIQUE(attachment_id,
+    event_type) dedup plus the WAITING_CONSENT state guard hold together."""
+    attachment_id = "bb" * 16
+    transfer_id = b"\x02" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+
+    assert service._dispatcher.dispatch(_reject_command(attachment_id)).error_code is None
+    assert service._dispatcher.dispatch(_reject_command(attachment_id)).error_code == "invalid_state_transition"
+
+    assert conn.execute(
+        "SELECT COUNT(*) FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, receiver._EVENT_REJECTED_SENT),
+    ).fetchone()[0] == 1
+
+
+def test_command_reject_wrong_state_no_transition_no_enqueue(conn, wsm, principal, service):
+    """A non-WAITING_CONSENT row cannot be rejected: no state change, no outbox
+    row, the same invalid_state_transition the old delegate returned."""
+    attachment_id = "cc" * 16
+    transfer_id = b"\x03" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.WAITING_PROVIDER, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+
+    outcome = service._dispatcher.dispatch(_reject_command(attachment_id))
+
+    assert outcome.error_code == "invalid_state_transition"
+    assert receiver.get_state(conn, attachment_id) == receiver.WAITING_PROVIDER
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, receiver._EVENT_REJECTED_SENT),
+    ).fetchone() is None
+
+
+# ---- outbound EXPIRED (receiver-side expiry reconciliation) ---------------
+
+
+def test_reconcile_expiry_transitions_and_enqueues_signed_expired(conn, wsm, principal, service):
+    """Once the authoritative hard deadline passes, the tick's expiry sweep moves
+    an expirable row to EXPIRED and enqueues + dispatches one signed EXPIRED."""
+    attachment_id = "dd" * 16
+    transfer_id = b"\x04" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) - 100,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+
+    service.tick()
+
+    assert receiver.get_state(conn, attachment_id) == receiver.EXPIRED
+    row = _outbox_row(conn, attachment_id, receiver._EVENT_EXPIRED_SENT)
+    assert row is not None
+    decoded = codec.decode_simple_ack(
+        row["message"], codec.MessageType.EXPIRED, verify_key=VerifyKey(principal.public_identity)
+    )
+    assert decoded.transfer_id == transfer_id
+
+    events = service._delivery_adapter._ether.drain("!aaaaaaaa")
+    assert len(events) == 1
+    assert codec.peek_message_type(codec.from_text(events[0]["text"])) == codec.MessageType.EXPIRED
+
+
+def test_reconcile_expiry_fails_closed_on_zero_deadline(conn, wsm, principal, service):
+    """A zero deadline has no authoritative boundary that can have passed -
+    the row is left unchanged and no EXPIRED is enqueued."""
+    attachment_id = "ee" * 16
+    transfer_id = b"\x05" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=0,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+
+    service.tick()
+
+    assert receiver.get_state(conn, attachment_id) == receiver.WAITING_CONSENT
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, receiver._EVENT_EXPIRED_SENT),
+    ).fetchone() is None
+
+
+def test_reconcile_expiry_fails_closed_on_negative_deadline(conn, wsm, principal, service):
+    """A negative deadline is treated the same as zero: no expiry, no frame."""
+    attachment_id = "ff" * 16
+    transfer_id = b"\x06" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=-5,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+
+    service.tick()
+
+    assert receiver.get_state(conn, attachment_id) == receiver.WAITING_CONSENT
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, receiver._EVENT_EXPIRED_SENT),
+    ).fetchone() is None
+
+
+def test_reconcile_expiry_skips_non_expirable_states(conn, wsm, principal, service):
+    """VERIFYING is non-terminal but neither expirable nor automatic - a past
+    deadline does not expire it (an in-flight verify is not raced)."""
+    attachment_id = "00" * 16
+    transfer_id = b"\x07" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.VERIFYING, hard_expires_at=int(time.time()) - 100,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+
+    service.tick()
+
+    assert receiver.get_state(conn, attachment_id) == receiver.VERIFYING
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, receiver._EVENT_EXPIRED_SENT),
+    ).fetchone() is None
+
+
+def test_reconcile_expiry_is_bounded_per_tick(conn, wsm, principal, service):
+    """A backlog drains over successive ticks: at most MAX_RECEIVER_EXPIRY_PER_TICK
+    rows expire per tick; the rest wait for the next one."""
+    attachment_ids = []
+    for i in range(MAX_RECEIVER_EXPIRY_PER_TICK + 2):
+        attachment_id = f"e{i:02d}" + "0" * 30
+        _seed_received_row(
+            conn, principal, attachment_id=attachment_id,
+            transfer_id=bytes([i + 1]) * 16,
+            state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) - 100,
+        )
+        attachment_ids.append(attachment_id)
+
+    service.tick()
+    assert _count_state(conn, receiver.EXPIRED) == MAX_RECEIVER_EXPIRY_PER_TICK
+    assert _count_state(conn, receiver.WAITING_CONSENT) == 2
+
+    service.tick()
+    assert _count_state(conn, receiver.EXPIRED) == MAX_RECEIVER_EXPIRY_PER_TICK + 2
+    assert _count_state(conn, receiver.WAITING_CONSENT) == 0
+
+
+# ---- outbox route snapshot is immutable at dispatch ------------------------
+
+
+def test_outbox_route_snapshot_is_frozen_at_enqueue_time(conn, wsm, principal, service):
+    """The route snapshot is captured at enqueue, not re-derived at dispatch:
+    mutating the live `attachments.reply_*` route after the REJECTED is queued
+    must not change where it is sent - dispatch reads the outbox row's own
+    frozen columns."""
+    attachment_id = "11" * 16
+    transfer_id = b"\x08" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    service._dispatcher.dispatch(_reject_command(attachment_id))
+
+    # Mutate the *live* route after enqueue: the sender address appears to have
+    # changed to a different canonical id.
+    conn.execute(
+        "UPDATE attachments SET reply_route_id = ?, reply_destination_address = ? WHERE id = ?",
+        ("!bbbbbbbb", "!bbbbbbbb", attachment_id),
+    )
+    conn.commit()
+
+    ether = service._delivery_adapter._ether
+    service.tick()
+
+    # The frame still went to the *frozen* destination, not the mutated one.
+    assert len(ether.drain("!aaaaaaaa")) == 1
+    assert ether.drain("!bbbbbbbb") == []
+
+
+# ---- outbound CANCEL (attachment_revoke) ----------------------------------
+
+
+def test_command_revoke_sent_enqueues_and_dispatches_signed_cancel(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path, relay_client, service
+):
+    """Revoking a SENT attachment transitions it to REVOKED and enqueues a signed
+    CANCEL to the pinned DIRECT route in the same transaction; the next dispatch
+    sends it. (DOWNLOADED would suppress the CANCEL - see the test below.)"""
+    attachment_id, transfer_id, _recipient_wsm, _recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+
+    stub = _StubRelayClient(revoke_result="ok")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert dict(outcome.result) == {"attachment_id": attachment_id, "state": sender.REVOKED}
+    assert sender.get_state(conn, attachment_id) == sender.REVOKED
+
+    row = _outbox_row(conn, attachment_id, sender.CANCEL_EVENT_TYPE)
+    assert row is not None
+    assert row["state"] == "PENDING"
+    assert (
+        row["adapter_id"], row["connector_profile_id"], row["route_type"], row["route_id"], row["destination_address"]
+    ) == ("fake-text", "local-addr", "DIRECT", "!aaaaaaaa", "!aaaaaaaa")
+    decoded = codec.decode_simple_ack(
+        row["message"], codec.MessageType.CANCEL, verify_key=VerifyKey(principal.public_identity)
+    )
+    assert decoded.transfer_id == transfer_id
+
+    ether = svc._delivery_adapter._ether
+    svc.tick()
+    events = ether.drain("!aaaaaaaa")
+    assert len(events) == 1
+    assert codec.peek_message_type(codec.from_text(events[0]["text"])) == codec.MessageType.CANCEL
+
+
+def test_command_revoke_downloaded_enqueues_no_cancel(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path
+):
+    """A DOWNLOADED attachment still revokes remotely + locally to REVOKED, but
+    sends no CANCEL: a CANCEL cannot retract plaintext the receiver already
+    downloaded, so sending one would be a lie."""
+    attachment_id = _seed_sent_downloadable(conn, wsm, principal, registered_provider,
+                                            remote_recipient, tmp_path)
+    conn.execute("UPDATE attachments SET state = ? WHERE id = ?", (sender.DOWNLOADED, attachment_id))
+    conn.commit()
+
+    stub = _StubRelayClient(revoke_result="ok")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert sender.get_state(conn, attachment_id) == sender.REVOKED
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, sender.CANCEL_EVENT_TYPE),
+    ).fetchone() is None
+
+
+def test_command_revoke_relay_failure_preserves_row_and_enqueues_no_cancel(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path
+):
+    """A non-404 Relay revoke failure leaves the row SENT and enqueues nothing -
+    the revoke capability is preserved for a retry, no CANCEL leaks out."""
+    attachment_id = _seed_sent_downloadable(conn, wsm, principal, registered_provider,
+                                            remote_recipient, tmp_path)
+
+    stub = _StubRelayClient(revoke_result=RelayHTTPError(500, "relay_down", "down"))
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code == "relay_unreachable"
+    assert sender.get_state(conn, attachment_id) == sender.SENT
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, sender.CANCEL_EVENT_TYPE),
+    ).fetchone() is None
+
+
+def test_command_revoke_missing_delivery_route_never_falls_back_to_reply_route(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path
+):
+    """PR 2.5 correction: when `_cancel_route_for()` cannot produce a complete
+    sender delivery route, the CANCEL is enqueued with an *explicitly
+    incomplete* snapshot (all five route columns NULL) and dispatched fail-
+    closed to UNDELIVERABLE - never falling back to the sender row's own
+    `reply_*` columns. A sent row's `reply_*` route (if ever populated) is
+    unrelated to where its CANCEL goes; falling back would hand the CANCEL to
+    a wholly wrong address."""
+    attachment_id = _seed_sent_downloadable(conn, wsm, principal, registered_provider,
+                                            remote_recipient, tmp_path)
+    # Make the delivery route incomplete (no delivery row -> `_cancel_route_for`
+    # returns None), and deliberately populate the sender row's `reply_*` columns
+    # with a valid but *different* address.
+    conn.execute("DELETE FROM attachment_deliveries WHERE attachment_id = ?", (attachment_id,))
+    conn.execute(
+        "UPDATE attachments SET reply_adapter_id = ?, reply_connector_profile_id = ?, "
+        "reply_route_type = ?, reply_route_id = ?, reply_destination_address = ? WHERE id = ?",
+        ("fake-text", "local-addr", "DIRECT", "!bbbbbbbb", "!bbbbbbbb", attachment_id),
+    )
+    conn.commit()
+
+    ether = InMemoryEther()
+    ether.register("!bbbbbbbb")
+    stub = _StubRelayClient(revoke_result="ok")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(ether, "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+    assert outcome.error_code is None
+    assert sender.get_state(conn, attachment_id) == sender.REVOKED
+
+    row = _outbox_row(conn, attachment_id, sender.CANCEL_EVENT_TYPE)
+    assert row is not None
+    assert row["state"] == "PENDING"
+    # The explicitly-incomplete snapshot: all five route columns NULL, not the
+    # reply_* values.
+    assert (
+        row["adapter_id"], row["connector_profile_id"], row["route_type"],
+        row["route_id"], row["destination_address"]
+    ) == (None, None, None, None, None)
+
+    svc.tick()
+    after = _outbox_row(conn, attachment_id, sender.CANCEL_EVENT_TYPE)
+    assert after["state"] == "UNDELIVERABLE"
+    assert conn.execute(
+        "SELECT last_error FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, sender.CANCEL_EVENT_TYPE),
+    ).fetchone()[0] == "reply_route_missing"
+    assert ether.drain("!bbbbbbbb") == []  # CANCEL never delivered to the reply_* address
+
+
+# ---- PR 2.5 correction: exception-atomic transitions -----------------------
+# A failure after the state write but before the outbox insert must roll back
+# the whole operation (state, timeline event, sender transient/revoke-state
+# deletion, any partial outbox row) via the `_atomic` SAVEPOINT - never leak a
+# partial write into a later commit on the worker's single connection.
+
+
+def test_command_reject_signing_failure_rolls_back_transition_and_enqueue(
+    conn, wsm, principal, service, monkeypatch
+):
+    """A signing-key load failure inside `enqueue_control_message()` (after
+    `receiver.reject(commit=False)` already wrote REJECTED) rolls back the whole
+    operation: the row stays WAITING_CONSENT, no outbox row is left behind, and
+    a later unrelated commit does not resurrect the partial write."""
+    attachment_id = "12" * 16
+    transfer_id = b"\x09" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+
+    def _raise_signing_failure(workspace_manager, principal):
+        raise RuntimeError("injected signing failure")
+
+    monkeypatch.setattr("meshsrv.attachments.identity.load_signing_key", _raise_signing_failure)
+
+    outcome = service._dispatcher.dispatch(_reject_command(attachment_id))
+
+    assert outcome.error_code == "command_execution_failed"
+    assert receiver.get_state(conn, attachment_id) == receiver.WAITING_CONSENT
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, receiver._EVENT_REJECTED_SENT),
+    ).fetchone() is None
+
+    # A later, unrelated operation (a second reject on a different row) must not
+    # resurrect the failed row's partial write.
+    monkeypatch.undo()
+    other_id = "13" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=other_id, transfer_id=b"\x0a" * 16,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    assert service._dispatcher.dispatch(_reject_command(other_id)).error_code is None
+    assert receiver.get_state(conn, other_id) == receiver.REJECTED
+    assert receiver.get_state(conn, attachment_id) == receiver.WAITING_CONSENT  # unchanged
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, receiver._EVENT_REJECTED_SENT),
+    ).fetchone() is None
+
+
+def test_reconcile_expiry_signing_failure_isolates_failed_row_and_continues(
+    conn, wsm, principal, service, monkeypatch
+):
+    """A signing failure on one expiring row rolls back *that* row in isolation
+    (state unchanged, no `expired` timeline event, no outbox row) while later
+    rows still expire and commit cleanly - the failed row's partial writes are
+    never committed by the later rows' commits."""
+    first_id, second_id = "14" * 16, "15" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=first_id, transfer_id=b"\x0b" * 16,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) - 100,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    _seed_received_row(
+        conn, principal, attachment_id=second_id, transfer_id=b"\x0c" * 16,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) - 100,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    # Force deterministic ordering: first_id expires before second_id.
+    conn.execute("UPDATE attachments SET created_at = 100 WHERE id = ?", (first_id,))
+    conn.execute("UPDATE attachments SET created_at = 200 WHERE id = ?", (second_id,))
+    conn.commit()
+
+    real_load = identity.load_signing_key
+    calls = {"n": 0}
+
+    def flaky_load(workspace_manager, principal):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("injected signing failure")
+        return real_load(workspace_manager, principal)
+
+    monkeypatch.setattr("meshsrv.attachments.identity.load_signing_key", flaky_load)
+
+    service.tick()
+
+    # The failed row rolled back in isolation.
+    assert receiver.get_state(conn, first_id) == receiver.WAITING_CONSENT
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (first_id, receiver._EVENT_EXPIRED_SENT),
+    ).fetchone() is None
+    assert conn.execute(
+        "SELECT 1 FROM attachment_events WHERE attachment_id = ? AND event_type = 'expired'",
+        (first_id,),
+    ).fetchone() is None
+
+    # The later row expired and committed cleanly.
+    assert receiver.get_state(conn, second_id) == receiver.EXPIRED
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (second_id, receiver._EVENT_EXPIRED_SENT),
+    ).fetchone() is not None
+    assert conn.execute(
+        "SELECT 1 FROM attachment_events WHERE attachment_id = ? AND event_type = 'expired'",
+        (second_id,),
+    ).fetchone() is not None
+
+
+def test_command_revoke_signing_failure_rolls_back_transition_and_preserves_sender_state(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path, monkeypatch
+):
+    """A signing failure inside the CANCEL enqueue (after `sender.revoke(
+    commit=False)` already wrote REVOKED + deleted the sender-state rows) rolls
+    back everything: state stays SENT, the sender-state row (the revoke
+    capability) survives, and no CANCEL outbox row is left behind."""
+    attachment_id = _seed_sent_downloadable(conn, wsm, principal, registered_provider,
+                                            remote_recipient, tmp_path)
+
+    stub = _StubRelayClient(revoke_result="ok")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    def _raise_signing_failure(workspace_manager, principal):
+        raise RuntimeError("injected signing failure")
+
+    monkeypatch.setattr("meshsrv.attachments.identity.load_signing_key", _raise_signing_failure)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code == "command_execution_failed"
+    assert sender.get_state(conn, attachment_id) == sender.SENT  # unchanged
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone() is not None  # revoke capability survives the rollback
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, sender.CANCEL_EVENT_TYPE),
+    ).fetchone() is None
+
+    # A later retry (a fresh commit) only succeeds because the rollback left the
+    # row cleanly revocable - proving the partial write did not leak.
+    monkeypatch.undo()
+    assert svc._dispatcher.dispatch(_revoke_command(attachment_id)).error_code is None
+    assert sender.get_state(conn, attachment_id) == sender.REVOKED
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, sender.CANCEL_EVENT_TYPE),
+    ).fetchone() is not None
+
+
+# ---- PR 2.5 correction: remaining lifecycle variants -----------------------
+
+
+def test_command_revoke_received_enqueues_cancel(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path, relay_client, service
+):
+    """Revoking a RECEIVED row also generates a CANCEL, exactly like SENT - the
+    receiver has the ciphertext but not the plaintext, so the offer can still be
+    retracted over the radio."""
+    attachment_id, transfer_id, _recipient_wsm, _recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    conn.execute("UPDATE attachments SET state = ? WHERE id = ?", (sender.RECEIVED, attachment_id))
+    conn.commit()
+
+    stub = _StubRelayClient(revoke_result="ok")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert sender.get_state(conn, attachment_id) == sender.REVOKED
+    row = _outbox_row(conn, attachment_id, sender.CANCEL_EVENT_TYPE)
+    assert row is not None
+    decoded = codec.decode_simple_ack(
+        row["message"], codec.MessageType.CANCEL, verify_key=VerifyKey(principal.public_identity)
+    )
+    assert decoded.transfer_id == transfer_id
+
+
+def test_command_revoke_relay_404_still_enqueues_cancel(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path, relay_client, service
+):
+    """A Relay 404 (confirmed absence) is a *valid* remote result: the local
+    half still completes to REVOKED and the CANCEL is still generated, exactly
+    as a successful remote revoke would."""
+    attachment_id, transfer_id, _recipient_wsm, _recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    stub = _StubRelayClient(revoke_result=RelayHTTPError(404, "not_found", "gone"))
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert sender.get_state(conn, attachment_id) == sender.REVOKED
+    assert _outbox_row(conn, attachment_id, sender.CANCEL_EVENT_TYPE) is not None
+
+
+def test_pending_control_delivery_survives_database_reopen(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    relay_client, relay_session, tmp_path
+):
+    """A control frame enqueued but not yet dispatched (PENDING) survives a
+    close + reopen of the SQLite database: a fresh service on the reopened
+    connection dispatches the same durable frame on its first tick."""
+    attachment_id = "16" * 16
+    transfer_id = b"\x0d" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    ether = InMemoryEther()
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(ether, "local-addr"),
+                                 relay_client_factory=lambda _: relay_client)
+    # Enqueue the REJECTED (PENDING) but do NOT tick to dispatch it.
+    assert svc._dispatcher.dispatch(_reject_command(attachment_id)).error_code is None
+    assert _outbox_row(conn, attachment_id, receiver._EVENT_REJECTED_SENT)["state"] == "PENDING"
+    assert ether.drain("!aaaaaaaa") == []
+
+    db_path = tmp_path / "attachments.db"
+    conn.close()
+
+    conn2 = sqlite3.connect(str(db_path), check_same_thread=False)
+    conn2.execute("PRAGMA foreign_keys = ON")
+    provider_registry2 = ProviderRegistry(conn2, "local")
+    key_exchange2 = KeyExchangeCoordinator(conn2, wsm, principal, ADAPTER_ID)
+    connectivity2 = ConnectivityMonitor(provider_registry2, session=relay_session)
+    ether2 = InMemoryEther()
+    svc2 = _service_with_delivery(
+        conn2, wsm, principal, provider_registry2, key_exchange2, connectivity2,
+        FakeTextAdapter(ether2, "local-addr"), relay_client_factory=lambda _: relay_client,
+    )
+
+    svc2.tick()
+
+    events = ether2.drain("!aaaaaaaa")
+    assert len(events) == 1
+    assert codec.peek_message_type(codec.from_text(events[0]["text"])) == codec.MessageType.REJECTED
+
+
+def test_retry_after_reopen_sends_same_frame_with_same_idempotency_key(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    relay_client, relay_session, tmp_path
+):
+    """A control frame whose first send failed stays PENDING with the *same*
+    durable frame bytes and outbox row id across a database reopen, so a retry
+    after restart sends the same frame with the same idempotency key."""
+    attachment_id = "17" * 16
+    transfer_id = b"\x0e" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    raising = _RaisingSendAdapter(InMemoryEther(), "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, raising,
+                                 relay_client_factory=lambda _: relay_client)
+    assert svc._dispatcher.dispatch(_reject_command(attachment_id)).error_code is None
+    svc.tick()  # first send attempt fails -> attempt counted, stays PENDING
+
+    before = _outbox_row(conn, attachment_id, receiver._EVENT_REJECTED_SENT)
+    assert before["state"] == "PENDING"
+    assert before["attempts"] == 1
+    outbox_id = conn.execute(
+        "SELECT id FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, receiver._EVENT_REJECTED_SENT),
+    ).fetchone()[0]
+    frame = before["message"]
+
+    # The failed first attempt pushed `next_attempt_at` out by backoff; pull it
+    # back into the past so the reopened service's tick sees the frame as due
+    # (the point under test is durable-frame + idempotency-key stability across
+    # a restart, not the backoff clock itself).
+    conn.execute(
+        "UPDATE mca_outgoing_replies SET next_attempt_at = 0 WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, receiver._EVENT_REJECTED_SENT),
+    )
+    conn.commit()
+
+    db_path = tmp_path / "attachments.db"
+    conn.close()
+
+    conn2 = sqlite3.connect(str(db_path), check_same_thread=False)
+    conn2.execute("PRAGMA foreign_keys = ON")
+    provider_registry2 = ProviderRegistry(conn2, "local")
+    key_exchange2 = KeyExchangeCoordinator(conn2, wsm, principal, ADAPTER_ID)
+    connectivity2 = ConnectivityMonitor(provider_registry2, session=relay_session)
+    ether2 = InMemoryEther()
+    svc2 = _service_with_delivery(
+        conn2, wsm, principal, provider_registry2, key_exchange2, connectivity2,
+        FakeTextAdapter(ether2, "local-addr"), relay_client_factory=lambda _: relay_client,
+    )
+
+    svc2.tick()
+
+    events = ether2.drain("!aaaaaaaa")
+    assert len(events) == 1
+    assert events[0]["text"] == codec.to_text(frame)  # the same durable frame bytes
+    assert events[0]["idempotency_key"] == f"mca-reply-{outbox_id}"  # the same idempotency key
+    assert codec.peek_message_type(codec.from_text(events[0]["text"])) == codec.MessageType.REJECTED
+
+
+# ---- PR 2.5 two-service integration (shared ether) ------------------------
+# Two full AttachmentsService instances on one InMemoryEther: the sender at
+# SENDER_ADDR, the receiver at RECEIVER_ADDR. These prove the *generated*
+# outbound frame actually crosses to the peer and applies - the outbound half
+# (PR 2.5) meeting the inbound half (PR #252) end to end.
+
+
+def _two_peer_services(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+                       relay_client, remote_recipient, relay_session, *, sender_relay_factory=None):
+    """Build both peer services on one shared ether. Returns (ether, sender_ns,
+    receiver_ns) where each ns holds conn/wsm/principal/service/addr."""
+    conn2, wsm2, principal2 = remote_recipient
+    ether = InMemoryEther()
+
+    sender_service = AttachmentsService(
+        conn, workspace_manager=wsm, principal=principal,
+        provider_registry=provider_registry, key_exchange=key_exchange,
+        connectivity_monitor=connectivity_monitor,
+        delivery_adapter=FakeTextAdapter(ether, SENDER_ADDR),
+        relay_client_factory=sender_relay_factory or (lambda _: relay_client),
+        max_per_tick=8,
+    )
+
+    receiver_provider_registry = ProviderRegistry(conn2, "local")
+    receiver_key_exchange = KeyExchangeCoordinator(conn2, wsm2, principal2, ADAPTER_ID)
+    receiver_connectivity = ConnectivityMonitor(receiver_provider_registry, session=relay_session)
+    receiver_service = AttachmentsService(
+        conn2, workspace_manager=wsm2, principal=principal2,
+        provider_registry=receiver_provider_registry, key_exchange=receiver_key_exchange,
+        connectivity_monitor=receiver_connectivity,
+        delivery_adapter=FakeTextAdapter(ether, RECEIVER_ADDR),
+        relay_client_factory=lambda _: relay_client,
+        max_per_tick=8,
+    )
+
+    sender_ns = SimpleNamespace(conn=conn, wsm=wsm, principal=principal, service=sender_service, addr=SENDER_ADDR)
+    receiver_ns = SimpleNamespace(conn=conn2, wsm=wsm2, principal=principal2, service=receiver_service, addr=RECEIVER_ADDR)
+    return ether, sender_ns, receiver_ns
+
+
+def _drive_sender_to_sent(sender_ns, receiver_ns, registered_provider, relay_client, tmp_path):
+    """Sender-side setup shared by all three round-trips: a draft to the
+    receiver's address driven to SENT through sender.run_step, returning
+    (attachment_id, transfer_id)."""
+    attachment_id = _create_ack_draft(
+        sender_ns.conn, sender_ns.wsm, sender_ns.principal, receiver_ns.principal,
+        registered_provider, tmp_path,
+        connector_profile_id=SENDER_ADDR, route_id=RECEIVER_ADDR,
+    )
+    transfer_id = _drive_sent(sender_ns.conn, sender_ns.wsm, sender_ns.principal,
+                              relay_client, receiver_ns.principal, attachment_id)
+    return attachment_id, transfer_id
+
+
+def _deliver_to(ether, to_addr, service):
+    """Drain `to_addr`'s inbox and enqueue each delivered frame as an inbound
+    event on `service` (the peer), simulating the listener->worker boundary.
+    Returns the number of frames delivered."""
+    events = ether.drain(to_addr)
+    for event in events:
+        service.enqueue_inbound(
+            InboundEvent(text=event["text"], source_address=event["from"],
+                         packet_id=event.get("idempotency_key", "p1"), received_at=time.time())
+        )
+    return len(events)
+
+
+def test_two_service_receiver_rejects_then_sender_rejected(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    relay_client, registered_provider, remote_recipient, relay_session, tmp_path
+):
+    """Round trip: the receiver explicitly rejects -> a signed REJECTED crosses
+    the ether -> the sender's row applies it to REJECTED. No OFFER admission on
+    the receiver side (the row is seeded directly) so the only frame on the wire
+    is the REJECTED itself."""
+    ether, sender_ns, receiver_ns = _two_peer_services(
+        conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+        relay_client, remote_recipient, relay_session,
+    )
+    attachment_id, transfer_id = _drive_sender_to_sent(sender_ns, receiver_ns, registered_provider, relay_client, tmp_path)
+
+    received_id = "ab" * 16
+    _seed_received_row(
+        receiver_ns.conn, receiver_ns.principal, attachment_id=received_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=receiver.ReplyRoute(adapter_id="fake-text", connector_profile_id=RECEIVER_ADDR,
+                                  route_type="DIRECT", route_id=SENDER_ADDR, destination_address=SENDER_ADDR),
+    )
+
+    outcome = receiver_ns.service._dispatcher.dispatch(_reject_command(received_id))
+    assert outcome.error_code is None
+    receiver_ns.service.tick()
+
+    assert _deliver_to(ether, SENDER_ADDR, sender_ns.service) == 1
+    sender_ns.service.tick()
+
+    assert sender.get_state(sender_ns.conn, attachment_id) == sender.REJECTED
+    assert receiver.get_state(receiver_ns.conn, received_id) == receiver.REJECTED
+
+
+def test_two_service_receiver_expires_then_sender_expired(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    relay_client, registered_provider, remote_recipient, relay_session, tmp_path
+):
+    """Round trip: the receiver's expiry reconciliation generates a signed
+    EXPIRED once the hard deadline passes -> it crosses the ether -> the
+    sender's row applies it to EXPIRED (its own deadline moved into the past)."""
+    ether, sender_ns, receiver_ns = _two_peer_services(
+        conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+        relay_client, remote_recipient, relay_session,
+    )
+    attachment_id, transfer_id = _drive_sender_to_sent(sender_ns, receiver_ns, registered_provider, relay_client, tmp_path)
+
+    # The sender's authoritative hard deadline must also be in the past before
+    # apply_expired() accepts the EXPIRED (boundary guard).
+    conn.execute(
+        "UPDATE attachments SET hard_expires_at = ? WHERE id = ?",
+        (int(time.time()) - 100, attachment_id),
+    )
+    conn.commit()
+
+    received_id = "cd" * 16
+    _seed_received_row(
+        receiver_ns.conn, receiver_ns.principal, attachment_id=received_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) - 100,
+        reply=receiver.ReplyRoute(adapter_id="fake-text", connector_profile_id=RECEIVER_ADDR,
+                                  route_type="DIRECT", route_id=SENDER_ADDR, destination_address=SENDER_ADDR),
+    )
+
+    receiver_ns.service.tick()
+
+    assert _deliver_to(ether, SENDER_ADDR, sender_ns.service) == 1
+    sender_ns.service.tick()
+
+    assert sender.get_state(sender_ns.conn, attachment_id) == sender.EXPIRED
+    assert receiver.get_state(receiver_ns.conn, received_id) == receiver.EXPIRED
+
+
+def test_two_service_sender_revokes_then_receiver_cancelled(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    relay_client, registered_provider, remote_recipient, relay_session, tmp_path
+):
+    """Round trip: the sender revokes a SENT transfer -> a signed CANCEL crosses
+    the ether -> the receiver's row applies it to CANCELLED, verified against the
+    sender public identity pinned at OFFER admission."""
+    ether, sender_ns, receiver_ns = _two_peer_services(
+        conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+        relay_client, remote_recipient, relay_session,
+        sender_relay_factory=lambda _: _StubRelayClient(revoke_result="ok"),
+    )
+    attachment_id, transfer_id = _drive_sender_to_sent(sender_ns, receiver_ns, registered_provider, relay_client, tmp_path)
+
+    received_id = "ef" * 16
+    _seed_received_row(
+        receiver_ns.conn, receiver_ns.principal, attachment_id=received_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        sender_principal_id=sender_ns.principal.key_id,
+        sender_public_identity=sender_ns.principal.public_identity,
+        reply=receiver.ReplyRoute(adapter_id="fake-text", connector_profile_id=RECEIVER_ADDR,
+                                  route_type="DIRECT", route_id=SENDER_ADDR, destination_address=SENDER_ADDR),
+    )
+
+    outcome = sender_ns.service._dispatcher.dispatch(_revoke_command(attachment_id))
+    assert outcome.error_code is None
+    sender_ns.service.tick()
+
+    assert _deliver_to(ether, RECEIVER_ADDR, receiver_ns.service) == 1
+    receiver_ns.service.tick()
+
+    assert receiver.get_state(receiver_ns.conn, received_id) == receiver.CANCELLED
+    assert sender.get_state(sender_ns.conn, attachment_id) == sender.REVOKED
+
+
+# ---- PR 2.5 correction: transaction hygiene at worker exception boundaries ---
+
+
+def test_atomic_refuses_entry_when_an_outer_transaction_is_active(conn, wsm, principal, service):
+    """`_atomic()` is a top-level-only service transaction: if the worker
+    connection already has an outer transaction open (a caller's own DML with
+    no commit), it must fail fast with RuntimeError rather than release the
+    savepoint and then unconditionally commit the caller's uncommitted work."""
+    attachment_id = "01" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=b"\x01" * 16,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    conn.execute("UPDATE attachments SET download_grace_seconds = 9999 WHERE id = ?", (attachment_id,))
+    assert conn.in_transaction is True
+
+    with pytest.raises(RuntimeError):
+        with service._atomic("probe"):
+            pass
+
+    # The guard failed fast and left the caller's outer transaction untouched.
+    assert conn.in_transaction is True
+    conn.rollback()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT download_grace_seconds FROM attachments WHERE id = ?", (attachment_id,)
+    ).fetchone()
+    assert row["download_grace_seconds"] == 3600  # 9999 was never committed
+
+
+def test_step_failure_partial_write_is_not_committed_by_later_expiry_commit(
+    conn, wsm, principal, service, monkeypatch
+):
+    """A `run_step` that writes to the shared connection and then raises leaves
+    no uncommitted residue: the failed row's partial write is rolled back at the
+    row-scan boundary, and the same tick's later expiry sweep (which commits)
+    does not resurrect it."""
+    failing_id, expiry_id = "02" * 16, "03" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=failing_id, transfer_id=b"\x02" * 16,
+        state=receiver.WAITING_PROVIDER, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    _seed_received_row(
+        conn, principal, attachment_id=expiry_id, transfer_id=b"\x03" * 16,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) - 100,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+
+    def failing_run_step(conn, **kwargs):
+        # A database write that precedes the injected failure - the exact
+        # "partial write" shape this test exists to catch.
+        conn.execute(
+            "INSERT INTO attachment_events (id, attachment_id, occurred_at, event_type, detail_json) "
+            "VALUES (?, ?, ?, 'sentinel', '{}')",
+            (uuid.uuid4().hex, kwargs["attachment_id"], int(time.time())),
+        )
+        raise RuntimeError("injected step failure")
+
+    monkeypatch.setattr("meshsrv.attachments.receiver.run_step", failing_run_step)
+
+    service.tick()
+
+    # The failed step's partial write was rolled back and never resurrected ...
+    assert conn.execute(
+        "SELECT 1 FROM attachment_events WHERE event_type = 'sentinel'"
+    ).fetchone() is None
+    # ... even though a later commit in the same tick (the expiry sweep) did run.
+    assert receiver.get_state(conn, expiry_id) == receiver.EXPIRED
+    assert receiver.get_state(conn, failing_id) == receiver.WAITING_PROVIDER  # unchanged
+
+
+def test_inbound_partial_write_is_not_resurrected_by_later_commit(
+    conn, wsm, principal, service, monkeypatch
+):
+    """A failed inbound event's partial write is rolled back at the drain
+    boundary, so a later commit in the same tick (the expiry sweep) cannot
+    resurrect it."""
+    expiry_id = "04" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=expiry_id, transfer_id=b"\x04" * 16,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) - 100,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+
+    def failing_process(event):
+        conn.execute(
+            "INSERT INTO attachment_events (id, attachment_id, occurred_at, event_type, detail_json) "
+            "VALUES (?, ?, ?, 'sentinel', '{}')",
+            (uuid.uuid4().hex, expiry_id, int(time.time())),
+        )
+        raise RuntimeError("injected inbound failure")
+
+    monkeypatch.setattr(service, "_process_one_inbound_event", failing_process)
+    service.enqueue_inbound(
+        InboundEvent(text="dummy", source_address="!aaaaaaaa", packet_id="p1", received_at=time.time())
+    )
+
+    service.tick()
+
+    assert conn.execute(
+        "SELECT 1 FROM attachment_events WHERE event_type = 'sentinel'"
+    ).fetchone() is None
+    assert receiver.get_state(conn, expiry_id) == receiver.EXPIRED

@@ -895,6 +895,85 @@ ALTER TABLE attachments DROP COLUMN sender_public_identity;
 """
 
 
+# PR 2.5 (outbound generation of CANCEL/REJECTED/EXPIRED): persist the
+# complete immutable route snapshot directly on each queued
+# `mca_outgoing_replies` row, so a queued control message is dispatched from
+# the route captured at enqueue time - never re-derived from mutable contact
+# data at send time. Before this, the dispatch step JOINed `attachments` at
+# dispatch time to read `reply_route_type`/`reply_route_id`/... which (a) only
+# worked for receiver-side replies (the only outbox rows that existed) and
+# (b) meant the route was not actually frozen on the queued row. These five
+# columns hold the same five fields `receiver.ReplyRoute` already carries
+# (adapter_id, connector_profile_id, route_type, route_id, destination_address):
+# sender-side CANCEL rows capture them from `attachment_deliveries`, and
+# receiver-side REJECTED/EXPIRED (plus the pre-existing ACK_RECEIVED/
+# ACK_PROVIDER_UNKNOWN/ACK_DOWNLOADED rows) from `attachments.reply_*`.
+#
+# Backfill: copy the reply route from the owning `attachments` row where it is
+# *complete* (all five fields non-NULL). A pre-existing row whose reply route
+# is missing or incomplete is left NULL - the dispatch step then fails it
+# closed to UNDELIVERABLE rather than guessing a destination. No existing row
+# can be a sender-side CANCEL (that generation does not exist before this
+# migration), so `attachments.reply_*` is the only source the backfill can
+# consult.
+_MIGRATION_0017_UP = """
+ALTER TABLE mca_outgoing_replies ADD COLUMN adapter_id TEXT;
+ALTER TABLE mca_outgoing_replies ADD COLUMN connector_profile_id TEXT;
+ALTER TABLE mca_outgoing_replies ADD COLUMN route_type TEXT;
+ALTER TABLE mca_outgoing_replies ADD COLUMN route_id TEXT;
+ALTER TABLE mca_outgoing_replies ADD COLUMN destination_address TEXT;
+"""
+
+_MIGRATION_0017_DOWN = """
+ALTER TABLE mca_outgoing_replies DROP COLUMN destination_address;
+ALTER TABLE mca_outgoing_replies DROP COLUMN route_id;
+ALTER TABLE mca_outgoing_replies DROP COLUMN route_type;
+ALTER TABLE mca_outgoing_replies DROP COLUMN connector_profile_id;
+ALTER TABLE mca_outgoing_replies DROP COLUMN adapter_id;
+"""
+
+
+def _migration_0017_fixup_backfill_outbox_routes(conn: sqlite3.Connection) -> None:
+    """PR 2.5: copy each queued reply's reply route from its owning
+    `attachments` row into the new outbox columns, but only where that reply
+    route is *complete* (all five fields non-NULL). An incomplete route is
+    left NULL, so the dispatch step fails it closed to UNDELIVERABLE rather
+    than guessing a destination - never a partial/guessed route."""
+    conn.execute(
+        """
+        UPDATE mca_outgoing_replies
+        SET adapter_id = (
+                SELECT a.reply_adapter_id FROM attachments a
+                WHERE a.id = mca_outgoing_replies.attachment_id
+            ),
+            connector_profile_id = (
+                SELECT a.reply_connector_profile_id FROM attachments a
+                WHERE a.id = mca_outgoing_replies.attachment_id
+            ),
+            route_type = (
+                SELECT a.reply_route_type FROM attachments a
+                WHERE a.id = mca_outgoing_replies.attachment_id
+            ),
+            route_id = (
+                SELECT a.reply_route_id FROM attachments a
+                WHERE a.id = mca_outgoing_replies.attachment_id
+            ),
+            destination_address = (
+                SELECT a.reply_destination_address FROM attachments a
+                WHERE a.id = mca_outgoing_replies.attachment_id
+            )
+        WHERE attachment_id IN (
+            SELECT a.id FROM attachments a
+            WHERE a.reply_adapter_id IS NOT NULL
+              AND a.reply_connector_profile_id IS NOT NULL
+              AND a.reply_route_type IS NOT NULL
+              AND a.reply_route_id IS NOT NULL
+              AND a.reply_destination_address IS NOT NULL
+        )
+        """
+    )
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -936,6 +1015,10 @@ MIGRATIONS: Sequence[Migration] = (
     ),
     Migration(15, "auto_key_request_quota", _MIGRATION_0015_UP, _MIGRATION_0015_DOWN),
     Migration(16, "pinned_sender_identity", _MIGRATION_0016_UP, _MIGRATION_0016_DOWN),
+    Migration(
+        17, "outbox_route_snapshot", _MIGRATION_0017_UP, _MIGRATION_0017_DOWN,
+        data_fixup=_migration_0017_fixup_backfill_outbox_routes,
+    ),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0

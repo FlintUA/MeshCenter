@@ -15,13 +15,15 @@ State machine (design spec 15.2):
     WaitingConsent   -> Downloading            (explicit user action only)
     Downloading      -> Verifying | WaitingNetwork (transient error)
     Verifying        -> Available | Failed
-    {OfferReceived, WaitingKey, WaitingProvider, WaitingNetwork} -> Expired
+    {OfferReceived, WaitingKey, WaitingProvider, WaitingNetwork, WaitingConsent} -> Expired
     WaitingConsent   -> Rejected
 
-`Expired` is not swept automatically in this pass (no expiry sweep worker
-exists yet, same scope boundary `sender.py` drew for its own `Expired`/
-`Revoked` states) - the state constant exists for the schema/UI to use
-once Step 1.8 (TTL/cleanup) adds the sweep.
+`Expired` is swept automatically by PR 2.5's bounded reconciliation pass
+(`AttachmentsService._reconcile_receiver_expiry()` -> `expire()` below): a
+received attachment in an `EXPIRABLE_STATES` state whose authoritative
+`hard_expires_at` has passed is transitioned to EXPIRED and a signed EXPIRED
+frame is enqueued to the sender. Before PR 2.5 the state constant existed only
+for the schema/UI - the outbound generation is what this sweep adds.
 
 Two entry points, mirroring `key_exchange.py`'s "holds no transport of its
 own" convention rather than `sender.py`'s "calls delivery_adapter.send()
@@ -113,14 +115,30 @@ TERMINAL_STATES = frozenset({AVAILABLE, EXPIRED, REJECTED, CANCELLED, FAILED})
 # States run_step() can make forward progress on by itself, without an
 # explicit user action (WAITING_CONSENT needs `begin_download()`).
 AUTOMATIC_STATES = frozenset({WAITING_KEY, WAITING_PROVIDER, WAITING_NETWORK, DOWNLOADING})
+# PR 2.5 (outbound EXPIRED): the non-terminal receiver states the expiry
+# reconciliation pass may transition to EXPIRED once the offer's authoritative
+# `hard_expires_at` has passed. DOWNLOADING/VERIFYING are deliberately
+# excluded - they are in-flight (the download either completes or fails on its
+# own Relay 404 when the object is gone), so expiring them mid-download would
+# race an active transfer. WAITING_CONSENT is included: the user may be sitting
+# at the consent prompt when the hard deadline passes, and a past-deadline
+# object is no longer fetchable regardless. OFFER_RECEIVED is included for the
+# same reason (a parked offer that never advanced past admission).
+EXPIRABLE_STATES = frozenset(
+    {OFFER_RECEIVED, WAITING_KEY, WAITING_PROVIDER, WAITING_NETWORK, WAITING_CONSENT}
+)
 
 _ACK_RECEIVED_TYPE = codec.MessageType.ACK_RECEIVED
 _ACK_PROVIDER_UNKNOWN_TYPE = codec.MessageType.ACK_PROVIDER_UNKNOWN
 _ACK_DOWNLOADED_TYPE = codec.MessageType.ACK_DOWNLOADED
+_REJECTED_TYPE = codec.MessageType.REJECTED
+_EXPIRED_TYPE = codec.MessageType.EXPIRED
 
 _EVENT_ACK_RECEIVED_SENT = "ack_received_sent"
 _EVENT_ACK_PROVIDER_UNKNOWN_SENT = "ack_provider_unknown_sent"
 _EVENT_ACK_DOWNLOADED_SENT = "ack_downloaded_sent"
+_EVENT_REJECTED_SENT = "rejected_sent"
+_EVENT_EXPIRED_SENT = "expired_sent"
 
 DEFAULT_DOWNLOAD_GRACE_SECONDS = 3600  # design spec 14: download_grace = 1h (mirrors sender.py's default)
 
@@ -253,16 +271,18 @@ def _record_event(conn: sqlite3.Connection, attachment_id: str, now: float, even
     )
 
 
-def _ack_already_enqueued(conn: sqlite3.Connection, attachment_id: str, event_type: str) -> bool:
-    """`mca_outgoing_replies` is now the single idempotency ledger for
-    "has this ACK been handled" - a row existing here (PENDING, SENT, or
-    UNDELIVERABLE) means this call already decided to send it once, no
-    matter whether the real transmission has happened yet. Renamed from
+def _control_already_enqueued(conn: sqlite3.Connection, attachment_id: str, event_type: str) -> bool:
+    """`mca_outgoing_replies` is the single idempotency ledger for "has this
+    control message (ACK / REJECTED / EXPIRED / CANCEL) already been decided" -
+    a row existing here (PENDING, SENT, or UNDELIVERABLE) means this call
+    already decided to send it once, no matter whether the real transmission
+    has happened yet. Renamed from `_ack_already_enqueued()` and, before that,
     `_ack_already_sent()`/its old `attachment_events`-backed check
-    (PR #227 defect #1): that name/table pairing conflated "we decided to
-    send this" with "this was actually transmitted", which is exactly
-    the ambiguity that let this module claim an ACK was sent when it
-    never left the process."""
+    (PR #227 defect #1): the earlier name/table pairing conflated "we decided
+    to send this" with "this was actually transmitted", which is exactly the
+    ambiguity that let this module claim an ACK was sent when it never left
+    the process. Renamed again in PR 2.5 as the outbox generalizes beyond
+    ACKs to carry every signed lifecycle control message."""
     row = conn.execute(
         "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ? LIMIT 1",
         (attachment_id, event_type),
@@ -286,7 +306,55 @@ def _set_state(
     )
 
 
-def _maybe_send_ack(
+def _reply_route_snapshot(
+    conn: sqlite3.Connection, attachment_id: str,
+) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """Read the pinned reply-route snapshot off a *received* attachment row
+    (the five `reply_*` columns `handle_offer()` persisted at OFFER
+    admission), preserving each field independently. A field that was never
+    recorded - `reply_adapter_id`/`reply_connector_profile_id` for the
+    legacy `source_address`-only `handle_offer()` call shape, or a
+    `reply_destination_address` that a data-integrity anomaly nulled out -
+    is returned as `None` rather than collapsing the whole snapshot to "no
+    route". The dispatch step then fails closed *per-field* (missing or
+    mismatched adapter/connector, non-canonical route_id/destination, or a
+    destination that differs from route_id), so a partial route is never
+    silently completed or guessed past.
+
+    Returns (adapter_id, connector_profile_id, route_type, route_id,
+    destination_address), all `None` when the attachment row itself is
+    missing."""
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT reply_adapter_id, reply_connector_profile_id, reply_route_type, "
+        "reply_route_id, reply_destination_address FROM attachments WHERE id = ?",
+        (attachment_id,),
+    ).fetchone()
+    if row is None:
+        return (None, None, None, None, None)
+    return (
+        row["reply_adapter_id"],
+        row["reply_connector_profile_id"],
+        row["reply_route_type"],
+        row["reply_route_id"],
+        row["reply_destination_address"],
+    )
+
+
+# PR 2.5 correction: the *default* route source for a receiver-side control
+# message (ACK / REJECTED / EXPIRED) is the attachment's own pinned `reply_*`
+# route. It is a distinct sentinel - not `None` - so the two callers that
+# *must* not mean "derive the reply route" can't be conflated with the
+# default: a sender-side CANCEL passes `route=None` explicitly to mean "no
+# complete delivery route was recorded - persist an explicitly-incomplete
+# snapshot and let dispatch fail it closed to UNDELIVERABLE". Collapsing the
+# two onto a single `None` was the PR 2.5 bug: a sender CANCEL whose delivery
+# route was missing silently fell back to `attachments.reply_*` and could be
+# sent to a wholly unrelated address.
+_DERIVE_REPLY_ROUTE = object()
+
+
+def enqueue_control_message(
     conn: sqlite3.Connection,
     *,
     attachment_id: str,
@@ -296,40 +364,71 @@ def _maybe_send_ack(
     principal: MCAPrincipal,
     workspace_manager: MCAWorkspaceManager,
     now: float,
+    route: object = _DERIVE_REPLY_ROUTE,
 ) -> Optional[bytes]:
-    """Enqueue `message_type` at most once per `attachment_id` (ADR-0007
-    decision 5 - unchanged) into the real `mca_outgoing_replies` outbox
-    (PR #227 defect #1) instead of handing the encoded frame to a caller
-    that (in production) never actually transmitted it. Returns the
-    encoded frame that was newly enqueued this call, or `None` if this
-    event_type was already enqueued before - same observable return
-    contract callers/tests already depend on, so `ReceiveResult.replies`
-    still means "how many ACK types this call newly decided to send",
-    even though *sending* now happens later, out of this call entirely,
-    via AttachmentsService's own dispatch step
-    (`fetch_due_outgoing_replies()`/`mark_reply_sent()`/
-    `mark_reply_attempt_failed()` below).
+    """Enqueue one signed control message (ACK_RECEIVED / ACK_DOWNLOADED /
+    ACK_PROVIDER_UNKNOWN / REJECTED / EXPIRED / CANCEL) at most once per
+    `(attachment_id, event_type)` into the `mca_outgoing_replies` outbox.
+    Returns the encoded frame newly enqueued this call, or `None` if this
+    `event_type` was already enqueued before - the same observable return
+    contract the old ACK-only `_maybe_send_ack()` (this function's
+    predecessor) kept, so `ReceiveResult.replies` still means "how many
+    control-message types this call newly decided to send", even though
+    *sending* happens later, out of this call entirely, via
+    AttachmentsService's own dispatch step (`fetch_due_outgoing_replies()`/
+    `mark_reply_sent()`/`mark_reply_attempt_failed()` below).
 
-    Deliberately does NOT record any "sent" bookkeeping here - that used
-    to happen via `_record_event()` in this exact spot, before any
-    transmission was attempted at all (the commit-before-send ordering
-    bug this fix closes). The outbox row this inserts starts, and stays,
-    PENDING until the dispatch step's own `mark_reply_sent()` call
-    confirms a real `DeliveryAdapter.send()` succeeded."""
+    `route` is the immutable route snapshot persisted on the outbox row
+    (PR 2.5 / migration 17) so the later dispatch step sends through the
+    route captured *now*, never a mutable contact lookup. It is one of three
+    non-overlapping values, with no single `None` meaning two different
+    things:
 
-    if _ack_already_enqueued(conn, attachment_id, event_type):
+    - `_DERIVE_REPLY_ROUTE` (the default): a receiver-side message, whose
+      route is the attachment's own pinned `reply_*` route
+      (`_reply_route_snapshot()`).
+    - a `ReplyRoute`: a caller-supplied complete route snapshot (a
+      sender-side CANCEL read from `attachment_deliveries`).
+    - `None`: an *explicitly incomplete* snapshot (a sender-side CANCEL whose
+      delivery route is missing/incomplete) - the five route columns are left
+      NULL so the dispatch step fails it closed to UNDELIVERABLE, never
+      falling back to `attachments.reply_*`.
+
+    A missing/partial route is still enqueued (the local transition must
+    never be silently separated from its outbox row) with whichever of the
+    five route columns were not recorded left NULL, so the dispatch step
+    fails it closed to UNDELIVERABLE per-field (missing or mismatched
+    adapter/connector, non-canonical route_id/destination, or a destination
+    that differs from route_id) rather than guessing a destination.
+
+    Deliberately does NOT record any "sent" bookkeeping here - the outbox
+    row this inserts starts, and stays, PENDING until the dispatch step's
+    own `mark_reply_sent()` call confirms a real `DeliveryAdapter.send()`
+    succeeded (the commit-before-send ordering bug this design closes)."""
+
+    if _control_already_enqueued(conn, attachment_id, event_type):
         return None
+    if route is _DERIVE_REPLY_ROUTE:
+        snapshot = _reply_route_snapshot(conn, attachment_id)
+    elif route is None:
+        snapshot = (None, None, None, None, None)
+    else:
+        snapshot = (
+            route.adapter_id, route.connector_profile_id, route.route_type,
+            route.route_id, route.destination_address,
+        )
     signing_key = identity.load_signing_key(workspace_manager, principal)
-    ack = codec.encode_simple_ack(message_type, transfer_id, signing_key)
+    frame = codec.encode_simple_ack(message_type, transfer_id, signing_key)
     conn.execute(
         """
         INSERT INTO mca_outgoing_replies
-            (id, attachment_id, event_type, message, state, attempts, created_at, next_attempt_at)
-        VALUES (?, ?, ?, ?, 'PENDING', 0, ?, ?)
+            (id, attachment_id, event_type, message, state, attempts, created_at, next_attempt_at,
+             adapter_id, connector_profile_id, route_type, route_id, destination_address)
+        VALUES (?, ?, ?, ?, 'PENDING', 0, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (uuid.uuid4().hex, attachment_id, event_type, ack, now, now),
+        (uuid.uuid4().hex, attachment_id, event_type, frame, now, now, *snapshot),
     )
-    return ack
+    return frame
 
 
 # ---- outgoing ACK outbox: dispatch-side API (PR #227 defect #1) -----------
@@ -342,33 +441,26 @@ def _maybe_send_ack(
 @dataclasses.dataclass(frozen=True)
 class PendingReply:
     """One row due for a real send attempt. `route_type`/`route_id`/
-    `adapter_id`/`connector_profile_id`/`destination_address` all come
-    from the owning attachment's own `reply_route_type`/`reply_route_id`/
-    `reply_adapter_id`/`reply_connector_profile_id`/
-    `reply_destination_address` (set once, at `handle_offer()` time, from
-    the real `DeliveryEnvelope` that received the OFFER - PR #231
-    review, section 4.2). `route_type`/`route_id` being `None` means no
-    route was ever recorded for this attachment (a caller that ran
-    `handle_offer()` without `source_address`/`reply_route`, e.g. this
-    module's own non-integration tests), which the dispatch step treats
-    as permanently undeliverable rather than retrying forever for no
-    reason. `adapter_id`/`connector_profile_id` can independently be
-    `None` even when a route exists - the pre-hardening-pass
-    `source_address`-only call shape (still accepted by `handle_offer()`
-    for backward compatibility with callers that only need rate-
-    limiting/audit) never recorded them. PR #231 review (3rd pass): the
-    dispatch step now fails closed - permanently undeliverable, never
-    guessed past - on either a *missing* `adapter_id`/
-    `connector_profile_id` or a *mismatched* one against the dispatching
-    service's own adapter. An earlier pass of this fix (2nd pass)
-    treated a missing `adapter_id` as "unknown, trust the currently-
-    configured adapter" - inconsistent with the fail-closed posture
-    applied everywhere else in this review (TOFU binding, inbound-OFFER
-    admission); not knowing which adapter/connector a reply belongs to
-    is exactly the situation where guessing must not happen. In
-    production this never matters: `AttachmentsService.
-    _process_inbound_offer()` always builds a full `ReplyRoute` from the
-    real `DeliveryEnvelope` that received the OFFER."""
+    `adapter_id`/`connector_profile_id`/`destination_address` come from the
+    immutable route snapshot persisted on the outbox row itself
+    (`mca_outgoing_replies`' own five route columns - migration 17, PR 2.5),
+    captured at enqueue time and never re-derived from mutable contact data
+    at dispatch time. For a receiver-side reply that snapshot was set once at
+    `handle_offer()` time from the real `DeliveryEnvelope` that received the
+    OFFER (PR #231 review, section 4.2); for a sender-side CANCEL it was read
+    from `attachment_deliveries` at revoke time. Any of `route_type`/
+    `route_id` being `None` means no route was ever recorded for this
+    attachment (a caller that ran `handle_offer()` without
+    `source_address`/`reply_route`, e.g. this module's own non-integration
+    tests), which the dispatch step treats as permanently undeliverable
+    rather than retrying forever for no reason. `adapter_id`/
+    `connector_profile_id` can independently be `None` even when a route
+    exists - the pre-hardening-pass `source_address`-only call shape (still
+    accepted by `handle_offer()` for backward compatibility) never recorded
+    them. PR #231 review (3rd pass): the dispatch step now fails closed -
+    permanently undeliverable, never guessed past - on either a *missing*
+    `adapter_id`/`connector_profile_id` or a *mismatched* one against the
+    dispatching service's own adapter."""
 
     id: str
     attachment_id: str
@@ -387,15 +479,18 @@ def fetch_due_outgoing_replies(
 ) -> List[PendingReply]:
     """Up to `limit` PENDING replies whose `next_attempt_at` has arrived,
     oldest-created first - the rate limit (PR #227 defect #1) that keeps
-    a burst of queued ACKs from being flushed onto the radio all at once
-    in a single dispatch pass; the rest simply wait for the next tick."""
+    a burst of queued control messages from being flushed onto the radio all
+    at once in a single dispatch pass; the rest simply wait for the next
+    tick. The route snapshot is read from the outbox row's own columns
+    (migration 17), not JOINed from `attachments` - the route is frozen at
+    enqueue time; `attachments` is joined only for the workspace filter."""
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         """
         SELECT r.id AS id, r.attachment_id AS attachment_id, r.event_type AS event_type, r.message AS message,
-               r.attempts AS attempts, a.reply_route_type AS route_type, a.reply_route_id AS route_id,
-               a.reply_adapter_id AS adapter_id, a.reply_connector_profile_id AS connector_profile_id,
-               a.reply_destination_address AS destination_address
+               r.attempts AS attempts, r.route_type AS route_type, r.route_id AS route_id,
+               r.adapter_id AS adapter_id, r.connector_profile_id AS connector_profile_id,
+               r.destination_address AS destination_address
         FROM mca_outgoing_replies AS r
         JOIN attachments AS a ON a.id = r.attachment_id
         WHERE a.workspace_id = ? AND r.state = 'PENDING' AND r.next_attempt_at <= ?
@@ -785,7 +880,7 @@ def handle_offer(
     )
 
     replies: List[bytes] = []
-    ack = _maybe_send_ack(
+    ack = enqueue_control_message(
         conn,
         attachment_id=attachment_id,
         transfer_id=unverified.transfer_id,
@@ -805,7 +900,7 @@ def handle_offer(
         return ReceiveResult(attachment_id=attachment_id, state=WAITING_KEY, replies=replies)
 
     def _send_provider_unknown_ack() -> Optional[bytes]:
-        return _maybe_send_ack(
+        return enqueue_control_message(
             conn,
             attachment_id=attachment_id,
             transfer_id=unverified.transfer_id,
@@ -871,7 +966,7 @@ def run_step(
 
 def _build_provider_unknown_callback(conn, *, attachment_id, transfer_id, principal, workspace_manager, now):
     def _send() -> Optional[bytes]:
-        return _maybe_send_ack(
+        return enqueue_control_message(
             conn,
             attachment_id=attachment_id,
             transfer_id=transfer_id,
@@ -983,14 +1078,82 @@ def begin_download(conn: sqlite3.Connection, attachment_id: str, now: Optional[f
     return DOWNLOADING
 
 
-def reject(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = None) -> str:
+def reject(
+    conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = None, *, commit: bool = True
+) -> str:
     now = _now() if now is None else now
     row = _row(conn, attachment_id)
     if row["state"] != WAITING_CONSENT:
         raise ReceiverError(f"attachment {attachment_id!r} is {row['state']!r}, not WAITING_CONSENT - cannot reject")
     _set_state(conn, attachment_id, REJECTED, now)
-    conn.commit()
+    # PR 2.5: `commit=False` lets the caller (AttachmentsService._command_reject)
+    # enqueue the signed REJECTED into the same transaction before committing
+    # once - the local transition and the outbox row share a single commit,
+    # never two sequential commits. Default remains True so the existing
+    # transition-only callers/tests keep their exact observable behavior.
+    if commit:
+        conn.commit()
     return REJECTED
+
+
+def expire(
+    conn: sqlite3.Connection,
+    *,
+    workspace_manager: MCAWorkspaceManager,
+    principal: MCAPrincipal,
+    attachment_id: str,
+    now: Optional[float] = None,
+    commit: bool = True,
+) -> str:
+    """PR 2.5 (outbound EXPIRED): the receiver-side hard-expiry transition.
+    When a received attachment's authoritative `hard_expires_at` has passed,
+    move it to EXPIRED and enqueue one signed EXPIRED frame to the pinned
+    sender route - atomically (a single commit, unless the caller passes
+    `commit=False` to fold this into a larger transaction, exactly like
+    `reject()`'s own `commit` param).
+
+    Eligibility is `EXPIRABLE_STATES` (OFFER_RECEIVED, WAITING_KEY,
+    WAITING_PROVIDER, WAITING_NETWORK, WAITING_CONSENT); DOWNLOADING/VERIFYING
+    are in-flight and every terminal state is unchanged. The deadline itself is
+    fail-closed: a `hard_expires_at` that is NULL, zero, or negative has no
+    authoritative boundary to have passed, and a `now` before the deadline has
+    not crossed it - either way this returns the current state unchanged with
+    no transition, no message, no timeline event. At/after the deadline it
+    transitions exactly once and enqueues exactly once (the `mca_outgoing_replies`
+    dedup in `enqueue_control_message()` makes a repeat call a no-op on the
+    message; the state guard makes it a no-op on the transition).
+
+    Idempotent by construction, like `apply_cancelled()`: it returns the
+    resulting state (EXPIRED when it transitioned, otherwise the unchanged
+    prior state) rather than raising for a state reason, so the worker's
+    bounded reconciliation pass can apply it to any eligible row with no
+    try/except around the state machine. Never raises for an ordinary
+    "not yet expired" / "already terminal" outcome."""
+    now = _now() if now is None else now
+    row = _row(conn, attachment_id)
+    state = row["state"]
+    if state not in EXPIRABLE_STATES:
+        return state
+    hard_expires_at = row["hard_expires_at"]
+    if hard_expires_at is None or hard_expires_at <= 0:
+        return state  # no authoritative deadline - fail closed, never expire
+    if now < hard_expires_at:
+        return state  # not yet past the authoritative hard expiry
+    _set_state(conn, attachment_id, EXPIRED, now)
+    _record_event(conn, attachment_id, now, "expired", {"to": EXPIRED})
+    enqueue_control_message(
+        conn,
+        attachment_id=attachment_id,
+        transfer_id=bytes.fromhex(row["transfer_id"]),
+        message_type=_EXPIRED_TYPE,
+        event_type=_EVENT_EXPIRED_SENT,
+        principal=principal,
+        workspace_manager=workspace_manager,
+        now=now,
+    )
+    if commit:
+        conn.commit()
+    return EXPIRED
 
 
 def apply_cancelled(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = None) -> str:
@@ -1139,7 +1302,7 @@ def _step_downloading(conn, row, workspace_manager, principal, provider_registry
         extra_sql=", file_name = ?, mime_type = ?, plain_size = ?, plain_sha256 = ?, saved_path = ?",
         extra_params=(header.file_name, header.mime_type, header.plain_size, header.plain_sha256.hex(), str(cache_path)),
     )
-    ack = _maybe_send_ack(
+    ack = enqueue_control_message(
         conn,
         attachment_id=attachment_id,
         transfer_id=transfer_id,

@@ -11,7 +11,7 @@ ADR-0009 wired `ACK_RECEIVED` / `ACK_DOWNLOADED` / `ACK_PROVIDER_UNKNOWN` - the 
 
 All three are already fully round-tripped by `codec.py` (`encode_simple_ack` / `decode_simple_ack`, `_SIMPLE_ACK_TYPES` includes them), so no wire change is needed - only the inbound dispatch and state transitions.
 
-**Scope note:** this ADR completes the *inbound consumption* of the three messages. Their *generation* is still deferred and explicitly not part of this ADR: `receiver.reject()`/`_command_reject()` transitions the local row but still sends no signed `REJECTED` frame, there is no receiver-side `EXPIRED` emission, and `sender.cancel()`/`sender.revoke()` still send no signed `CANCEL` frame. Closing the round trip (durable outbox generation on top of the consumption added here) is a separate, later piece of work. This ADR does not claim the lifecycle is end-to-end complete - only that the inbound half, which was entirely absent, is now routed and applied.
+**Scope note:** this ADR completes the *inbound consumption* of the three messages. Their *generation* was implemented by the follow-on **ADR-0011 (outbound generation of CANCEL/REJECTED/EXPIRED — durable outbox)**: `_command_reject()` now enqueues a signed `REJECTED`, a bounded reconciliation sweep emits receiver-side `EXPIRED`, and `_command_revoke()` enqueues a signed `CANCEL` for SENT/RECEIVED — each in the same DB transaction as its local state transition, dispatched later with backoff. This ADR's own decisions (the inbound routing, the pinned-identity verification, and the terminal state constants) are unchanged by ADR-0011 and remain as recorded below.
 
 ### Semantics (from ADR-0001)
 

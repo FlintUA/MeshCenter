@@ -1005,6 +1005,7 @@ async function test_modal_accessibility_and_escape() {
 
     // The background must be marked inert while the modal is open.
     assert.equal(main.getAttribute('aria-hidden'), 'true', 'background must be aria-hidden while a modal is open');
+    assert.equal(main.inert, true, 'background must carry the native inert property while a modal is open');
 
     // Escape closes the dialog and restores the background.
     dispatchKey(sandbox, 'Escape');
@@ -1013,6 +1014,7 @@ async function test_modal_accessibility_and_escape() {
         'Escape must close the dialog',
     );
     assert.equal(main.getAttribute('aria-hidden'), null, 'background inert state must be restored on close');
+    assert.equal(main.inert, false, 'background native inert property must be restored on close');
 
     console.log('PASS: test_modal_accessibility_and_escape');
 }
@@ -1086,20 +1088,64 @@ async function test_send_dialog_renders_custom_ttl_input() {
 async function test_send_file_feedback_shows_mime() {
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
     const fileInput = sandbox._document.getElementById('filesSendFile');
+    const feedback = () => sandbox._document.getElementById('filesSendFileFeedback').innerHTML;
 
+    // Allowlisted extension + MIME -> allowed, shows the type + size.
     fileInput.files = [{ name: 'report.pdf', size: 4096, type: 'application/pdf' }];
     dispatchChange(sandbox, 'filesSendFile');
-    let feedback = sandbox._document.getElementById('filesSendFileFeedback').innerHTML;
-    assert.match(feedback, /application\/pdf/, 'a known extension must surface its MIME type in the advisory feedback');
-    assert.match(feedback, /Size/, 'file size feedback must be present');
+    assert.match(feedback(), /application\/pdf/, 'an allowlisted extension must surface its MIME type');
+    assert.match(feedback(), /Size/, 'file size feedback must be present');
 
-    // Unknown type: advisory warning, not a hard block (server is authoritative).
+    // Allowlisted extension with an empty MIME -> still allowed (log -> text/plain).
+    fileInput.files = [{ name: 'notes.log', size: 512, type: '' }];
+    dispatchChange(sandbox, 'filesSendFile');
+    assert.match(feedback(), /text\/plain/, 'an allowlisted extension with an empty MIME must still be allowed');
+
+    // Extensionless file with an allowlisted MIME -> allowed.
+    fileInput.files = [{ name: 'blob', size: 2048, type: 'image/png' }];
+    dispatchChange(sandbox, 'filesSendFile');
+    assert.match(feedback(), /image\/png/, 'an allowlisted MIME must allow an extensionless file');
+
+    // Unknown extension + unknown MIME -> hard local rejection (F1).
     fileInput.files = [{ name: 'archive.bin', size: 128, type: 'application/octet-stream' }];
     dispatchChange(sandbox, 'filesSendFile');
-    feedback = sandbox._document.getElementById('filesSendFileFeedback').innerHTML;
-    assert.match(feedback, /unrecognized/, 'an unrecognized type must be described as unrecognized');
+    assert.match(feedback(), /File type is not allowed/, 'an unallowlisted type must be rejected with feedback');
+
+    // Rejected -> allowed clears the stale error.
+    fileInput.files = [{ name: 'report.pdf', size: 4096, type: 'application/pdf' }];
+    dispatchChange(sandbox, 'filesSendFile');
+    assert.doesNotMatch(feedback(), /not allowed/, 'selecting an allowed file must clear a stale rejection');
 
     console.log('PASS: test_send_file_feedback_shows_mime');
+}
+
+async function test_send_rejects_disallowed_file_blocks_requests() {
+    // F1: a disallowed file is rejected locally before any readiness or create
+    // request is issued.
+    let readinessCalls = 0;
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url.includes('upload-readiness')) {
+                readinessCalls += 1;
+                return json(200, { ok: true, ready: true, reason: null });
+            }
+            return undefined;
+        }),
+    });
+
+    prepareSendForm(sandbox, { fileName: 'archive.bin', mime: 'application/octet-stream' });
+    dispatch(sandbox, { 'data-files-action': 'send-submit' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.equal(
+        sandbox._document.getElementById('filesSendFileFeedback').textContent,
+        'File type is not allowed',
+        'a disallowed file must be rejected with localized feedback',
+    );
+    assert.equal(createRequests(sandbox).length, 0, 'a disallowed file must block the create POST');
+    assert.equal(readinessCalls, 0, 'a disallowed file must block the readiness request');
+
+    console.log('PASS: test_send_rejects_disallowed_file_blocks_requests');
 }
 
 async function test_send_lists_all_providers_with_reason() {
@@ -1190,6 +1236,335 @@ async function test_deactivate_clears_open_dialog() {
     console.log('PASS: test_deactivate_clears_open_dialog');
 }
 
+// ---- final-acceptance regressions (F1-F5, Section 7) -------------------------
+
+async function test_send_proactive_readiness_exact_ttl() {
+    // F2: opening the Send dialog triggers a proactive, authoritative readiness
+    // request for the EXACT requested TTL (the default 3-day TTL here).
+    const ttlSeen = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/providers') {
+                return json(200, { ok: true, providers: [provider('prov1', { is_default: true })] });
+            }
+            if (url.includes('upload-readiness')) {
+                const m = url.match(/requested_ttl_seconds=(\d+)/);
+                ttlSeen.push(m ? parseInt(m[1], 10) : null);
+                return json(200, { ok: true, ready: true, reason: null });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    dispatch(sandbox, { 'data-files-action': 'send' });
+    await waitFor(() => ttlSeen.length >= 1);
+
+    assert.equal(ttlSeen[0], 259200, 'the proactive check must use the exact default TTL');
+    const check = sandbox._document.getElementById('filesSendReadinessCheck').innerHTML;
+    assert.match(check, /Upload: ready/, 'the readiness check must render ready for the exact TTL');
+
+    console.log('PASS: test_send_proactive_readiness_exact_ttl');
+}
+
+async function test_send_readiness_stale_response_dropped() {
+    // F2: a slow, older readiness response (for a superseded TTL) must be
+    // dropped by the monotonic token and never overwrite the newer result.
+    const pending = []; // { ttl, resolve } in request order
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/providers') {
+                return json(200, { ok: true, providers: [provider('prov1', { is_default: true })] });
+            }
+            if (url.includes('upload-readiness')) {
+                const m = url.match(/requested_ttl_seconds=(\d+)/);
+                const ttl = m ? parseInt(m[1], 10) : null;
+                return new Promise((resolve) => { pending.push({ ttl, resolve }); });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    dispatch(sandbox, { 'data-files-action': 'send' });
+    await waitFor(() => pending.length >= 1);
+
+    // Switch to a valid custom TTL -> a newer readiness request for ttl=120.
+    sandbox._document.getElementById('filesSendExpiry').value = 'custom';
+    sandbox._document.getElementById('filesSendCustomTtlSeconds').value = '120';
+    dispatchChange(sandbox, 'filesSendExpiry');
+    await waitFor(() => pending.some((p) => p.ttl === 120));
+
+    const newest = pending.filter((p) => p.ttl === 120).pop();
+    const older = pending.filter((p) => p.ttl === 259200);
+    assert.ok(newest && older.length >= 1, 'an older and a newer readiness request must both have fired');
+
+    newest.resolve(json(200, { ok: true, ready: true, reason: null }));
+    await waitFor(() => /Upload: ready/.test(sandbox._document.getElementById('filesSendReadinessCheck').innerHTML));
+
+    // Every older (default-TTL) response lands after the newer one and must be
+    // dropped rather than overwriting the ready result.
+    older.forEach((p) => p.resolve(json(200, { ok: true, ready: false, reason: 'relay_unreachable' })));
+    await new Promise((r) => setTimeout(r, 30));
+    assert.match(
+        sandbox._document.getElementById('filesSendReadinessCheck').innerHTML,
+        /Upload: ready/,
+        'a stale readiness response must not overwrite the newer result',
+    );
+
+    console.log('PASS: test_send_readiness_stale_response_dropped');
+}
+
+async function test_send_readiness_blank_custom_ttl_no_request() {
+    // F2 + Section 7: a blank Custom TTL shows a localized prompt and issues no
+    // readiness request (no fictitious 86400-second TTL is fabricated).
+    let readinessCalls = 0;
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/providers') {
+                return json(200, { ok: true, providers: [provider('prov1', { is_default: true })] });
+            }
+            if (url.includes('upload-readiness')) {
+                readinessCalls += 1;
+                return json(200, { ok: true, ready: true, reason: null });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    dispatch(sandbox, { 'data-files-action': 'send' });
+    await waitFor(() => readinessCalls >= 1); // the default-TTL check already fired
+
+    sandbox._document.getElementById('filesSendExpiry').value = 'custom';
+    sandbox._document.getElementById('filesSendCustomTtlSeconds').value = '';
+    dispatchChange(sandbox, 'filesSendExpiry');
+    await new Promise((r) => setTimeout(r, 40));
+
+    const callsAtBlank = readinessCalls;
+    const check = sandbox._document.getElementById('filesSendReadinessCheck').innerHTML;
+    const summary = sandbox._document.getElementById('filesSendExpirySummary').innerHTML;
+    assert.match(check, /whole number/, 'a blank custom TTL must show the local prompt, not request readiness');
+    assert.match(summary, /whole number/, 'the expiry summary must prompt for a value, not show a fictitious expiry');
+    assert.doesNotMatch(summary, /86400/, 'the summary must never show a fabricated 86400-second expiry');
+
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(readinessCalls, callsAtBlank, 'a blank custom TTL must not issue a readiness request');
+
+    console.log('PASS: test_send_readiness_blank_custom_ttl_no_request');
+}
+
+async function test_send_custom_ttl_summary_local_validation() {
+    // Section 7: the Custom-TTL summary validates against the provider min/max
+    // locally (below-min / above-max prompts), and renders expiry+grace only
+    // for a valid value.
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/providers') {
+                return json(200, { ok: true, providers: [provider('prov1', { is_default: true, min_ttl_seconds: 60, max_ttl_seconds: 3600 })] });
+            }
+            if (url.includes('upload-readiness')) {
+                return json(200, { ok: true, ready: true, reason: null });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    dispatch(sandbox, { 'data-files-action': 'send' });
+    await waitFor(() => (sandbox._document.getElementById('filesSendProvider').innerHTML || '').includes('prov1'));
+
+    const summary = () => sandbox._document.getElementById('filesSendExpirySummary').innerHTML;
+    const setTtl = (v) => {
+        sandbox._document.getElementById('filesSendExpiry').value = 'custom';
+        sandbox._document.getElementById('filesSendCustomTtlSeconds').value = v;
+        dispatchChange(sandbox, 'filesSendExpiry');
+    };
+
+    setTtl('30'); // below min (60)
+    assert.match(summary(), /below the provider minimum/, 'a below-minimum TTL must be flagged locally');
+    assert.doesNotMatch(summary(), /86400/, 'no fabricated expiry for a below-minimum TTL');
+
+    setTtl('7200'); // above max (3600)
+    assert.match(summary(), /above the provider maximum/, 'an above-maximum TTL must be flagged locally');
+
+    setTtl('120'); // valid
+    assert.match(summary(), /Expires/, 'a valid custom TTL must render the expiry summary');
+    assert.match(summary(), /grace/, 'a valid custom TTL must render the download grace');
+    assert.doesNotMatch(summary(), /provider minimum|provider maximum/, 'a valid custom TTL must not show a min/max error');
+
+    console.log('PASS: test_send_custom_ttl_summary_local_validation');
+}
+
+async function test_send_create_success_waits_for_refresh() {
+    // F5: a create that succeeds must not announce success until the
+    // authoritative transfer refresh has settled, and then exactly once.
+    let listResolve;
+    const listGate = new Promise((r) => { listResolve = r; });
+    let listCalls = 0;
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url.includes('upload-readiness')) {
+                return json(200, { ok: true, ready: true, reason: null });
+            }
+            if (url === '/api/attachments') {
+                return json(202, { ok: true, command_id: 'cmd-ok', attachment_id: null });
+            }
+            if (url === '/api/mca/commands/cmd-ok') {
+                return json(200, { ok: true, command: { command_id: 'cmd-ok', status: 'succeeded' } });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                listCalls += 1;
+                await listGate;
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            return undefined;
+        }),
+    });
+
+    prepareSendForm(sandbox, {});
+    dispatch(sandbox, { 'data-files-action': 'send-submit' });
+
+    await waitFor(() => createRequests(sandbox).length === 1);
+    await waitFor(() => listCalls >= 1); // the onSuccess refresh is in flight, held
+
+    assert.ok(
+        !sandbox._notifications.some((n) => n.kind === 'update' && n.type === 'success'),
+        'create success must not be announced before the transfer refresh settles',
+    );
+
+    listResolve();
+    await waitFor(() => sandbox._notifications.some((n) => n.kind === 'update' && n.type === 'success'));
+    const successes = sandbox._notifications.filter((n) => n.kind === 'update' && n.type === 'success').length;
+    assert.equal(successes, 1, 'create success must fire exactly once after the refresh settles');
+
+    console.log('PASS: test_send_create_success_waits_for_refresh');
+}
+
+async function test_send_unknown_awaits_refresh() {
+    // F5: a 404 (unknown after restart) must wait for the refresh to settle
+    // before announcing, and must never replay the create.
+    let listResolve;
+    const listGate = new Promise((r) => { listResolve = r; });
+    let listCalls = 0;
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url.includes('upload-readiness')) {
+                return json(200, { ok: true, ready: true, reason: null });
+            }
+            if (url === '/api/attachments') {
+                return json(202, { ok: true, command_id: 'cmd-unk', attachment_id: null });
+            }
+            if (url === '/api/mca/commands/cmd-unk') {
+                return json(404, { ok: false, error: 'not found', error_code: 'attachment_not_found' });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                listCalls += 1;
+                await listGate;
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            return undefined;
+        }),
+    });
+
+    prepareSendForm(sandbox, {});
+    dispatch(sandbox, { 'data-files-action': 'send-submit' });
+
+    await waitFor(() => createRequests(sandbox).length === 1);
+    await waitFor(() => listCalls >= 1); // onUnknown refresh in flight, held
+
+    assert.ok(
+        !sandbox._notifications.some((n) => n.kind === 'update' && n.type === 'warning'),
+        'the unknown warning must wait for the refresh to settle',
+    );
+
+    listResolve();
+    await waitFor(() => sandbox._notifications.some((n) => n.kind === 'update' && n.type === 'warning'));
+    assert.equal(createRequests(sandbox).length, 1, 'unknown must never replay the create');
+
+    console.log('PASS: test_send_unknown_awaits_refresh');
+}
+
+async function test_provider_command_awaits_refresh() {
+    // F5: a provider command that succeeds must not announce success until the
+    // authoritative provider refresh has settled, and then exactly once.
+    let providersCalls = 0;
+    let refreshResolve;
+    const refreshGate = new Promise((r) => { refreshResolve = r; });
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/providers') {
+                providersCalls += 1;
+                if (providersCalls >= 2) await refreshGate;
+                return json(200, { ok: true, providers: [provider('prov1')] });
+            }
+            if (url === '/api/mca/providers/prov1') {
+                return json(202, { ok: true, command_id: 'cmd-prov' });
+            }
+            if (url === '/api/mca/commands/cmd-prov') {
+                return json(200, { ok: true, command: { command_id: 'cmd-prov', status: 'succeeded' } });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    dispatch(sandbox, { 'data-files-action': 'providers' });
+    await waitFor(() => (sandbox._document.elements.get('filesProvidersList')?.innerHTML || '').includes('provider-toggle'));
+
+    dispatch(sandbox, { 'data-files-action': 'provider-toggle', 'data-provider': 'prov1' });
+    await waitFor(() => providersCalls >= 2); // the onSuccess refresh is in flight, held
+
+    assert.ok(
+        !sandbox._notifications.some((n) => n.kind === 'update' && n.type === 'success'),
+        'provider success must not be announced before the refresh settles',
+    );
+
+    refreshResolve();
+    await waitFor(() => sandbox._notifications.some((n) => n.kind === 'update' && n.type === 'success'));
+    const successes = sandbox._notifications.filter((n) => n.kind === 'update' && n.type === 'success').length;
+    assert.equal(successes, 1, 'provider success must fire exactly once after the refresh settles');
+
+    console.log('PASS: test_provider_command_awaits_refresh');
+}
+
+async function test_provider_card_shows_status_fields() {
+    // F3: the shared provider card must render the live status fields — upload
+    // readiness, last-checked timestamp, last check result, latency, last error
+    // — with numeric-only latency and a safe fallback for a null error code.
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/providers') {
+                return json(200, { ok: true, providers: [provider('prov1', {
+                    last_checked_at: 1700000000,
+                    last_check_result: 'online',
+                    last_latency_ms: 42,
+                    last_error_code: null,
+                    upload_readiness: 'ready',
+                })] });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    dispatch(sandbox, { 'data-files-action': 'providers' });
+    await waitFor(() => (sandbox._document.elements.get('filesProvidersList')?.innerHTML || '').includes('provider-toggle'));
+
+    const html = sandbox._document.elements.get('filesProvidersList').innerHTML;
+    assert.match(html, /Upload readiness/, 'the provider card must show upload readiness');
+    assert.match(html, /Ready/, 'upload readiness must render its localized value');
+    assert.match(html, /Last checked/, 'the provider card must show the last-checked timestamp');
+    assert.match(html, /Last check result/, 'the provider card must show the last check result');
+    assert.match(html, /Online/, 'the last check result must render its localized value');
+    assert.match(html, /Latency/, 'the provider card must show latency');
+    assert.match(html, /42 ms/, 'the provider card must render numeric-only latency');
+    assert.match(html, /Last error/, 'the provider card must show the last error');
+    assert.match(html, /—/, 'a null error code must render the em-dash fallback, not raw text');
+
+    console.log('PASS: test_provider_card_shows_status_fields');
+}
+
 async function main() {
     await test_activate_merges_contacts_and_excludes_local();
     await test_trust_confirm_shows_full_fingerprint();
@@ -1215,7 +1590,17 @@ async function main() {
     await test_send_lists_all_providers_with_reason();
     await test_send_custom_ttl_validation();
     await test_deactivate_clears_open_dialog();
-    console.log('All files UI behavior tests passed (24 scenarios).');
+    // Final-acceptance regressions (F1-F5, Section 7).
+    await test_send_rejects_disallowed_file_blocks_requests();
+    await test_send_proactive_readiness_exact_ttl();
+    await test_send_readiness_stale_response_dropped();
+    await test_send_readiness_blank_custom_ttl_no_request();
+    await test_send_custom_ttl_summary_local_validation();
+    await test_send_create_success_waits_for_refresh();
+    await test_send_unknown_awaits_refresh();
+    await test_provider_command_awaits_refresh();
+    await test_provider_card_shows_status_fields();
+    console.log('All files UI behavior tests passed (33 scenarios).');
 }
 
 main()

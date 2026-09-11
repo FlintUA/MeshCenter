@@ -158,6 +158,24 @@
         upload_disabled: 'Uploads disabled',
     };
 
+    // G3: allowlist mapping from the backend's raw provider `last_error_code`
+    // (see meshsrv/connectivity_monitor.py) to a localized label. Identity
+    // findings and requests.RequestException subclass names are the only
+    // classes the monitor persists; anything else falls back to a generic
+    // "check failed" label so raw exception text is never rendered verbatim.
+    var PROVIDER_ERROR_CODE_LABELS = {
+        info_malformed: { key: 'files.provider_error.info_malformed', fallback: 'Provider info malformed' },
+        provider_id_mismatch: { key: 'files.provider_error.provider_id_mismatch', fallback: 'Provider identity mismatch' },
+        service_public_key_mismatch: { key: 'files.provider_error.service_public_key_mismatch', fallback: 'Provider key mismatch' },
+        ConnectionError: { key: 'files.provider_error.connection_error', fallback: 'Connection failed' },
+        ConnectTimeout: { key: 'files.provider_error.connect_timeout', fallback: 'Connection timed out' },
+        ReadTimeout: { key: 'files.provider_error.read_timeout', fallback: 'Response timed out' },
+        Timeout: { key: 'files.provider_error.timeout', fallback: 'Request timed out' },
+        SSLError: { key: 'files.provider_error.ssl_error', fallback: 'TLS error' },
+        TooManyRedirects: { key: 'files.provider_error.too_many_redirects', fallback: 'Too many redirects' },
+        RequestException: { key: 'files.provider_error.request_error', fallback: 'Request failed' },
+    };
+
     // ---- single internal state object --------------------------------------
 
     var state = {
@@ -2644,7 +2662,24 @@
             ? p.last_latency_ms + ' ms' : '—';
     }
     function providerLastError(p) {
-        return p.last_error_code ? p.last_error_code : '—';
+        var code = p && p.last_error_code ? String(p.last_error_code) : '';
+        if (!code) return '—';
+        // http_<3 digits> -> localized template carrying only the numeric status
+        // (never the raw code string), so a provider returning 503 reads "HTTP 503".
+        var http = /^http_(\d{3})$/.exec(code);
+        if (http) {
+            return tparams('files.provider_error.http_status', { status: http[1] }, 'HTTP ' + http[1]);
+        }
+        // unsupported_protocol_version:<value> -> localized; the value is a
+        // protocol version, not user/secret text, but it is still not echoed
+        // verbatim — the label carries the meaning without the raw suffix.
+        if (code.indexOf('unsupported_protocol_version:') === 0) {
+            return t('files.provider_error.unsupported_protocol_version', 'Unsupported protocol version');
+        }
+        var mapped = PROVIDER_ERROR_CODE_LABELS[code];
+        if (mapped) return t(mapped.key, mapped.fallback);
+        // Any other (unknown) raw code is never rendered verbatim.
+        return t('files.provider_error.unknown', 'Check failed');
     }
     function providerUploadReadiness(p) {
         return filesUploadReadinessLabel(p.upload_readiness);

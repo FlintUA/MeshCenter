@@ -56,6 +56,18 @@ MIN_SECONDS_BETWEEN_ANNOUNCES_TO_SAME_ADDRESS = 10 * 60
 MIN_SECONDS_BETWEEN_KEY_REQUESTS_TO_SAME_ADDRESS = 10 * 60
 _QUOTA_WINDOW_SECONDS = 3600
 
+# PR 1 (recoverable missing-key workflow): workspace-wide cap on *automatic*
+# outbound KEY_REQUESTs - the receiver-side auto-request scan that prompts a
+# sender to announce its key for a parked transfer. Mirrors the announce
+# quota's shape (one rolling hourly window per workspace, persisted in
+# mca_auto_key_request_quota), but is a separate counter so asking for keys
+# never shares a window with announcing one's own (see the docstring on
+# check_key_request_rate_limit for that separation). The per-address interval
+# (MIN_SECONDS_BETWEEN_KEY_REQUESTS_TO_SAME_ADDRESS) and the service's
+# per-tick cap (MAX_AUTO_KEY_REQUESTS_PER_TICK) remain independent, tighter
+# guards on top of this aggregate bound.
+DEFAULT_MAX_AUTO_KEY_REQUESTS_PER_HOUR = 12
+
 
 class KeyExchangeError(RuntimeError):
     """Base class for this module's errors."""
@@ -150,6 +162,7 @@ class KeyExchangeCoordinator:
         max_announces_per_hour: int = DEFAULT_MAX_ANNOUNCES_PER_HOUR,
         min_seconds_between_announces: int = MIN_SECONDS_BETWEEN_ANNOUNCES_TO_SAME_ADDRESS,
         min_seconds_between_key_requests: int = MIN_SECONDS_BETWEEN_KEY_REQUESTS_TO_SAME_ADDRESS,
+        max_auto_key_requests_per_hour: int = DEFAULT_MAX_AUTO_KEY_REQUESTS_PER_HOUR,
         now_fn=time.time,
     ):
         conn.row_factory = sqlite3.Row
@@ -160,6 +173,7 @@ class KeyExchangeCoordinator:
         self._max_per_hour = max_announces_per_hour
         self._min_interval = min_seconds_between_announces
         self._min_key_request_interval = min_seconds_between_key_requests
+        self._max_auto_key_requests_per_hour = max_auto_key_requests_per_hour
         self._now = now_fn
 
     # ---- incoming message dispatch --------------------------------------
@@ -312,6 +326,51 @@ class KeyExchangeCoordinator:
             """,
             (self._principal.workspace_id, self._adapter_id, source_address, now),
         )
+        self._conn.commit()
+
+    # ---- automatic KEY_REQUEST quota (PR 1) ------------------------------
+
+    def check_auto_key_request_quota(self, now: float) -> None:
+        """PR 1: workspace-wide cap on *automatic* KEY_REQUESTs (the
+        receiver-side auto-request scan), independent of the per-address
+        interval above and of the KEY_ANNOUNCE quota. Raises `RateLimited`
+        when the rolling hourly window is already full; a NULL/absent row
+        (never auto-requested) is allowed."""
+        quota_row = self._conn.execute(
+            "SELECT window_start_at, requests_sent FROM mca_auto_key_request_quota WHERE workspace_id = ?",
+            (self._principal.workspace_id,),
+        ).fetchone()
+        if quota_row is not None and now - quota_row["window_start_at"] < _QUOTA_WINDOW_SECONDS:
+            if quota_row["requests_sent"] >= self._max_auto_key_requests_per_hour:
+                raise RateLimited(
+                    f"hourly automatic KEY_REQUEST quota reached ({self._max_auto_key_requests_per_hour}/hour)"
+                )
+
+    def record_auto_key_request_sent(self, now: float) -> None:
+        """Persist the workspace-wide auto-request count only after a request
+        was actually accepted for send (same principle as
+        `record_key_request_sent` - a failed send never consumes the quota).
+        Mirrors `_record_announce_sent()`'s rolling-window UPSERT but writes
+        `mca_auto_key_request_quota`, not `mca_key_exchange_quota`, so the
+        two budgets stay independent."""
+        quota_row = self._conn.execute(
+            "SELECT window_start_at, requests_sent FROM mca_auto_key_request_quota WHERE workspace_id = ?",
+            (self._principal.workspace_id,),
+        ).fetchone()
+        if quota_row is None or now - quota_row["window_start_at"] >= _QUOTA_WINDOW_SECONDS:
+            self._conn.execute(
+                """
+                INSERT INTO mca_auto_key_request_quota (workspace_id, window_start_at, requests_sent)
+                VALUES (?, ?, 1)
+                ON CONFLICT(workspace_id) DO UPDATE SET window_start_at = excluded.window_start_at, requests_sent = 1
+                """,
+                (self._principal.workspace_id, now),
+            )
+        else:
+            self._conn.execute(
+                "UPDATE mca_auto_key_request_quota SET requests_sent = requests_sent + 1 WHERE workspace_id = ?",
+                (self._principal.workspace_id,),
+            )
         self._conn.commit()
 
     # ---- KEY_ANNOUNCE handling (someone else's identity arriving) -------

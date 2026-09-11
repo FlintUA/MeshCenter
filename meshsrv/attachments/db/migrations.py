@@ -847,6 +847,28 @@ def _migration_0014_fixup_backfill_revoke_state(conn: sqlite3.Connection) -> Non
         )
 
 
+# PR 1 (recoverable missing-key workflow): a persisted workspace-wide quota
+# for the receiver's *automatic* KEY_REQUEST scan, so a stranger flooding
+# OFFERs from many distinct unknown-key addresses cannot trigger an unbounded
+# aggregate of outbound KEY_REQUESTs over time. Mirrors migration 4's
+# `mca_key_exchange_quota` rolling-window shape (one row per workspace,
+# `window_start_at` + a counter) but is a separate table so asking for keys
+# never shares a window with announcing one's own. `requests_sent` is
+# incremented only on a successful send; `check_auto_key_request_quota`/
+# `record_auto_key_request_sent` in key_exchange.py own the row.
+_MIGRATION_0015_UP = """
+CREATE TABLE mca_auto_key_request_quota (
+    workspace_id TEXT PRIMARY KEY,
+    window_start_at INTEGER NOT NULL,
+    requests_sent INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+_MIGRATION_0015_DOWN = """
+DROP TABLE IF EXISTS mca_auto_key_request_quota;
+"""
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -886,6 +908,7 @@ MIGRATIONS: Sequence[Migration] = (
         14, "signed_inbound_ack_routing", _MIGRATION_0014_UP, _MIGRATION_0014_DOWN,
         data_fixup=_migration_0014_fixup_backfill_revoke_state,
     ),
+    Migration(15, "auto_key_request_quota", _MIGRATION_0015_UP, _MIGRATION_0015_DOWN),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0
@@ -919,6 +942,10 @@ ALL_TABLE_NAMES = frozenset(
         # AFTER triggers on the four projected tables (one row per affected
         # attachment_id, deduplicated by INSERT OR IGNORE).
         "mca_dirty_attachments",
+        # Migration 15 (PR 1): the workspace-wide automatic KEY_REQUEST
+        # budget, rolled into its own table (not mca_key_exchange_quota) so
+        # asking for keys never shares a window with announcing one's own.
+        "mca_auto_key_request_quota",
     }
 )
 

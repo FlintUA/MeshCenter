@@ -25,14 +25,14 @@ import uuid
 
 import pytest
 
-from nacl.signing import VerifyKey
+from nacl.signing import SigningKey, VerifyKey
 
 from meshsrv.attachments import codec, identity, receiver, sender
 from meshsrv.attachments.commands import Command
 from meshsrv.attachments.db import migrations
-from meshsrv.attachments.delivery.base import DeliveryError, DeliveryReceipt
+from meshsrv.attachments.delivery.base import DeliveryEnvelope, DeliveryError, DeliveryReceipt
 from meshsrv.attachments.delivery.fakes import FakeTextAdapter, InMemoryEther
-from meshsrv.attachments.key_exchange import KeyExchangeCoordinator
+from meshsrv.attachments.key_exchange import KeyExchangeCoordinator, RateLimited
 from meshsrv.attachments.probe_registry import PROBE_STATUS_PROBED, ProbeRecord
 from meshsrv.attachments.provider_registry import (
     CLEAR,
@@ -43,7 +43,7 @@ from meshsrv.attachments.provider_registry import (
 from meshsrv.attachments.relay.mock_server import MockRelayStore, create_mock_relay_app
 from meshsrv.attachments.relay_client import RelayClient, RelayHTTPError, RelayInfo, RelayLimits
 from meshsrv.attachments.relay_http import RelayNetworkError
-from meshsrv.attachments.service import AttachmentsService, InboundEvent, _provider_id_text
+from meshsrv.attachments.service import MAX_AUTO_KEY_REQUESTS_PER_TICK, AttachmentsService, InboundEvent, _provider_id_text
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
 
@@ -1522,6 +1522,49 @@ class _RaisingSendAdapter(FakeTextAdapter):
         raise DeliveryError("simulated send failure")
 
 
+class _CountingRaisingAdapter(FakeTextAdapter):
+    """Raises DeliveryError on every send but records each attempt, so a
+    test can assert the attempt *count* (same-address dedup must collapse
+    to a single attempt even when that attempt fails)."""
+
+    def __init__(self, ether, address):
+        super().__init__(ether, address)
+        self.send_calls = 0
+
+    def send(self, wire_payload, route, idempotency_key):
+        self.send_calls += 1
+        raise DeliveryError("simulated send failure")
+
+
+class _MismatchedSourceAdapter(FakeTextAdapter):
+    """Returns an envelope whose `source_address`/`route_id` disagree with the
+    transport event's `source_address` (simulating a transport that misreports
+    the route identity it actually received on), to pin the common-inbound-path
+    equality check: even though each id is individually canonical, the mismatch
+    must drop the message before dispatch."""
+
+    def __init__(self, ether, address, *, misreported="!aaaaaaaa"):
+        super().__init__(ether, address)
+        self._misreported = misreported
+
+    def ingest(self, transport_event):
+        envelope = super().ingest(transport_event)
+        if envelope is None:
+            return None
+        return DeliveryEnvelope(
+            logical_message=envelope.logical_message,
+            wire_format=envelope.wire_format,
+            adapter_id=envelope.adapter_id,
+            connector_profile_id=envelope.connector_profile_id,
+            route_type=envelope.route_type,
+            route_id=self._misreported,
+            source_address=self._misreported,
+            external_message_id=envelope.external_message_id,
+            received_at=envelope.received_at,
+            transport_metadata=envelope.transport_metadata,
+        )
+
+
 # ---- attachment_cancel -----------------------------------------------------
 
 
@@ -1786,6 +1829,562 @@ def test_command_request_key_revalidates_contact_id_and_route(
     for command in cases:
         outcome = svc._dispatcher.dispatch(command)
         assert outcome.error_code == "invalid_contact_id"
+
+
+# ---- PR 1: automatic missing-key request (recoverable WAITING_KEY) -------
+
+
+def _build_offer_from(principal2, signing_key):
+    return codec.encode_offer(
+        codec.OfferFields(
+            provider_id=uuid.uuid4().bytes[:8],
+            transfer_id=uuid.uuid4().bytes,
+            sender_key_id=bytes.fromhex(principal2.key_id),
+            kind=0,
+            size_bucket=1,
+            hard_expires_at=int(time.time()) + 3600,
+            flags=0,
+        ),
+        signing_key,
+    )
+
+
+def _reply_route(contact):
+    """A full DIRECT `receiver.ReplyRoute` matching the `FakeTextAdapter`
+    (`adapter_id="fake-text"`, `connector_profile_id="local-addr"`) this
+    module's auto-request tests dispatch through, so the persisted reply
+    route passes `_auto_request_key_for_row`'s strict adapter/connector
+    validation."""
+    return receiver.ReplyRoute(
+        adapter_id="fake-text",
+        connector_profile_id="local-addr",
+        route_type="DIRECT",
+        route_id=contact,
+        destination_address=contact,
+    )
+
+
+def test_auto_request_missing_key_sends_rate_limited_key_request(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR 1: a received transfer parked in WAITING_KEY with an unknown signer
+    is proactively asked for its key once per rate-limit window, with the
+    request persisted (`last_request_sent_at`) so a restart does not reset
+    the throttle."""
+    _, wsm2, principal2 = remote_recipient
+    contact = "!756f9960"
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=_build_offer_from(principal2, signing_key),
+        network_available=True, source_address=contact, reply_route=_reply_route(contact),
+    )
+    assert result.state == receiver.WAITING_KEY
+
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    svc._auto_request_missing_keys()
+
+    events = ether.drain(contact)
+    assert len(events) == 1
+    assert codec.peek_message_type(codec.from_text(events[0]["text"])) == codec.MessageType.KEY_REQUEST
+    assert events[0]["idempotency_key"] == f"auto-key-request-{result.attachment_id}"
+
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT last_request_sent_at FROM mca_key_exchange_contact_state WHERE workspace_id = ? AND adapter_id = ? AND source_address = ?",
+        (principal.workspace_id, ADAPTER_ID, contact),
+    ).fetchone()
+    assert row is not None and row["last_request_sent_at"] is not None
+
+    # A second pass within the same window is rate-limited: no new send.
+    svc._auto_request_missing_keys()
+    assert ether.drain(contact) == []
+
+
+def test_auto_request_missing_key_skips_once_the_key_is_known(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR 1: once ANY binding for the signer's key exists (a KEY_ANNOUNCE
+    arrived and is pending confirmation), the auto-request stops - the trust
+    gate in `_step_waiting_key`, not a fresh key request, owns what happens
+    next."""
+    _, wsm2, principal2 = remote_recipient
+    contact = "!756f9960"
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=_build_offer_from(principal2, signing_key),
+        network_available=True, source_address=contact, reply_route=_reply_route(contact),
+    )
+    assert result.state == receiver.WAITING_KEY
+
+    # A KEY_ANNOUNCE arrives: an UNVERIFIED binding now exists for this key.
+    _bind_recipient_unconfirmed(conn, principal2, transport_address=contact)
+
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    svc._auto_request_missing_keys()
+
+    assert ether.drain(contact) == []  # no request: the key is already known
+
+
+def test_auto_request_missing_key_dedups_same_address_within_tick(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR 1 correction: two parked WAITING_KEY rows from the SAME canonical
+    address must not both attempt a KEY_REQUEST in one tick. The `attempted`
+    set marks the address *before* the send, so dedup covers failed sends
+    too - even when the first send raises DeliveryError, the second row is
+    skipped and the adapter sees exactly one attempt."""
+    _, wsm2, principal2 = remote_recipient
+    contact = "!756f9960"
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    for _ in range(2):
+        result = receiver.handle_offer(
+            conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+            key_exchange=key_exchange, raw_offer=_build_offer_from(principal2, signing_key),
+            network_available=True, source_address=contact, reply_route=_reply_route(contact),
+        )
+        assert result.state == receiver.WAITING_KEY
+
+    ether = InMemoryEther()
+    adapter = _CountingRaisingAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    svc._auto_request_missing_keys()
+
+    assert adapter.send_calls == 1
+
+
+def test_auto_request_missing_key_hourly_quota_stops_scan_and_persists(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
+):
+    """PR 1 correction: the persisted workspace-wide hourly budget bounds the
+    automatic KEY_REQUEST scan independently of the per-tick cap. Once
+    `max_auto_key_requests_per_hour` sends are recorded in
+    `mca_auto_key_request_quota`, the scan stops mid-tick rather than
+    overshooting, and the counter is persisted (survives a restart)."""
+    quota = 2
+    low_quota_key_exchange = KeyExchangeCoordinator(
+        conn, wsm, principal, ADAPTER_ID, max_auto_key_requests_per_hour=quota
+    )
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, low_quota_key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    addresses = [f"!000000{i:02x}" for i in range(5)]
+    for contact in addresses:
+        sk = SigningKey.generate()
+        fake_principal = type("P", (), {"key_id": identity.compute_key_id(bytes(sk.verify_key))})()
+        raw_offer = codec.encode_offer(
+            codec.OfferFields(
+                provider_id=uuid.uuid4().bytes[:8],
+                transfer_id=uuid.uuid4().bytes,
+                sender_key_id=bytes.fromhex(fake_principal.key_id),
+                kind=0,
+                size_bucket=1,
+                hard_expires_at=int(time.time()) + 3600,
+                flags=0,
+            ),
+            sk,
+        )
+        result = receiver.handle_offer(
+            conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+            key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+            source_address=contact, reply_route=_reply_route(contact),
+        )
+        assert result.state == receiver.WAITING_KEY
+
+    svc._auto_request_missing_keys()
+
+    sent = sum(len(ether.drain(addr)) for addr in addresses)
+    assert sent == quota  # the scan stopped once the hourly budget was exhausted
+
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT requests_sent FROM mca_auto_key_request_quota WHERE workspace_id = ?",
+        (principal.workspace_id,),
+    ).fetchone()
+    assert row is not None and row["requests_sent"] == quota
+
+
+def test_inbound_offer_non_canonical_source_is_dropped(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR 1 (final correction): canonical node-id validation at the common
+    inbound boundary (`_process_one_inbound_event`, before message-type
+    dispatch). A non-canonical source_address - e.g. uppercase hex, which the
+    removed `.lower()` send-time workaround used to silently normalize - is
+    dropped outright: never stored, never replied to. A canonical lowercase
+    address is admitted as before."""
+    _, wsm2, principal2 = remote_recipient
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    def _offer():
+        return codec.encode_offer(
+            codec.OfferFields(
+                provider_id=uuid.uuid4().bytes[:8],
+                transfer_id=uuid.uuid4().bytes,
+                sender_key_id=bytes.fromhex(principal2.key_id),
+                kind=0,
+                size_bucket=1,
+                hard_expires_at=int(time.time()) + 3600,
+                flags=0,
+            ),
+            signing_key,
+        )
+
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(_offer()), source_address="!756F9960", packet_id="p1", received_at=time.time()))
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(_offer()), source_address="!756f9960", packet_id="p2", received_at=time.time()))
+    svc.tick()
+
+    received_count = conn.execute(
+        "SELECT COUNT(*) FROM attachments WHERE workspace_id = ? AND direction = 'received'",
+        (principal.workspace_id,),
+    ).fetchone()[0]
+    assert received_count == 1  # only the canonical one was admitted
+
+
+def test_auto_request_missing_key_caps_sends_per_tick(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
+):
+    """PR 1: a flood of distinct unknown-key OFFERs must not turn into a
+    like-sized burst of outbound KEY_REQUESTs - one tick sends at most
+    MAX_AUTO_KEY_REQUESTS_PER_TICK requests, and the next tick drains the
+    rest (fair, oldest-first) rather than them being silently dropped."""
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    # The default 12/hour workspace quota would otherwise block the 13th of
+    # the 13 sends and confound this test - use a high quota so the per-tick
+    # cap is the only bound under test (the hourly quota has its own test).
+    high_quota_key_exchange = KeyExchangeCoordinator(
+        conn, wsm, principal, ADAPTER_ID, max_auto_key_requests_per_hour=10_000
+    )
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, high_quota_key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    total = MAX_AUTO_KEY_REQUESTS_PER_TICK + 5
+    addresses = [f"!000000{i:02x}" for i in range(total)]
+    for i, contact in enumerate(addresses):
+        sk = SigningKey.generate()
+        fake_principal = type("P", (), {"key_id": identity.compute_key_id(bytes(sk.verify_key))})()
+        raw_offer = codec.encode_offer(
+            codec.OfferFields(
+                provider_id=uuid.uuid4().bytes[:8],
+                transfer_id=uuid.uuid4().bytes,
+                sender_key_id=bytes.fromhex(fake_principal.key_id),
+                kind=0,
+                size_bucket=1,
+                hard_expires_at=int(time.time()) + 3600,
+                flags=0,
+            ),
+            sk,
+        )
+        result = receiver.handle_offer(
+            conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+            key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+            source_address=contact, reply_route=_reply_route(contact),
+        )
+        assert result.state == receiver.WAITING_KEY
+
+    # First tick: exactly the cap, no more.
+    svc._auto_request_missing_keys()
+    sent_first = sum(len(ether.drain(addr)) for addr in addresses)
+    assert sent_first == MAX_AUTO_KEY_REQUESTS_PER_TICK
+
+    # Second tick: the remainder (still under the cap), not dropped.
+    svc._auto_request_missing_keys()
+    sent_second = sum(len(ether.drain(addr)) for addr in addresses)
+    assert sent_second == total - MAX_AUTO_KEY_REQUESTS_PER_TICK
+
+
+def test_auto_request_missing_key_skips_row_with_no_reply_route(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR 1 (final correction): a WAITING_KEY row persisted without a full
+    ReplyRoute (reply_adapter_id/reply_connector_profile_id NULL - the
+    source_address-only handle_offer() shape) is never auto-requested to:
+    guessing which adapter/connector to send through would be the same
+    fail-closed failure ACK dispatch marks UNDELIVERABLE."""
+    _, wsm2, principal2 = remote_recipient
+    contact = "!756f9960"
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=_build_offer_from(principal2, signing_key),
+        network_available=True, source_address=contact,  # no reply_route -> NULL adapter/connector
+    )
+    assert result.state == receiver.WAITING_KEY
+
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    svc._auto_request_missing_keys()
+
+    assert ether.drain(contact) == []
+
+
+def test_auto_request_missing_key_skips_row_with_mismatched_reply_adapter(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR 1 (final correction): a WAITING_KEY row whose persisted reply
+    adapter/connector does not match this service's own delivery_adapter is
+    never auto-requested to - the same fail-closed rule as ACK dispatch."""
+    _, wsm2, principal2 = remote_recipient
+    contact = "!756f9960"
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=_build_offer_from(principal2, signing_key),
+        network_available=True, source_address=contact,
+        reply_route=receiver.ReplyRoute(
+            adapter_id="some-other-adapter",
+            connector_profile_id="some-other-connector",
+            route_type="DIRECT",
+            route_id=contact,
+            destination_address=contact,
+        ),
+    )
+    assert result.state == receiver.WAITING_KEY
+
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    svc._auto_request_missing_keys()
+
+    assert ether.drain(contact) == []
+
+
+def test_auto_request_missing_key_skips_expired_waiting_key_row(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    """PR 1 (final correction): a WAITING_KEY row whose hard_expires_at has
+    passed (<= now, boundary included) is never auto-requested to - PR 2 will
+    own the actual EXPIRED transition; this scan must simply not ping the
+    sender for a dead transfer's key."""
+    _, wsm2, principal2 = remote_recipient
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    fixed_now = 2_000_000.0
+
+    def _offer(hard_expires_at):
+        return codec.encode_offer(
+            codec.OfferFields(
+                provider_id=uuid.uuid4().bytes[:8],
+                transfer_id=uuid.uuid4().bytes,
+                sender_key_id=bytes.fromhex(principal2.key_id),
+                kind=0,
+                size_bucket=1,
+                hard_expires_at=hard_expires_at,
+                flags=0,
+            ),
+            signing_key,
+        )
+
+    expired = "!000000aa"
+    future = "!000000bb"
+    # Boundary: hard_expires_at exactly at `now` (<= -> skipped).
+    receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=_offer(int(fixed_now)),
+        network_available=True, source_address=expired, reply_route=_reply_route(expired),
+    )
+    # Still in the future -> eligible.
+    receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=_offer(int(fixed_now) + 3600),
+        network_available=True, source_address=future, reply_route=_reply_route(future),
+    )
+
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = AttachmentsService(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, connectivity_monitor=connectivity_monitor,
+        delivery_adapter=adapter, relay_client_factory=lambda _: relay_client,
+        max_per_tick=8, now_fn=lambda: fixed_now,
+    )
+
+    svc._auto_request_missing_keys()
+
+    assert ether.drain(expired) == []
+    assert len(ether.drain(future)) == 1
+
+
+def test_auto_request_missing_key_hourly_quota_survives_connection_reopen(
+    conn, wsm, principal, provider_registry, connectivity_monitor, relay_client, remote_recipient, tmp_path
+):
+    """PR 1 (final correction): the persisted hourly quota survives a full
+    connection close + reopen with a *fresh* KeyExchangeCoordinator and
+    AttachmentsService - the budget lives in the DB, not in either object's
+    memory."""
+    _, wsm2, principal2 = remote_recipient
+    contact = "!756f9960"
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    now = [1_000_000.0]
+
+    def now_fn():
+        return now[0]
+
+    # Exhaust the workspace quota once (quota = 1), on this connection.
+    quota_key_exchange = KeyExchangeCoordinator(
+        conn, wsm, principal, ADAPTER_ID, max_auto_key_requests_per_hour=1, now_fn=now_fn
+    )
+    quota_key_exchange.record_auto_key_request_sent(now_fn())
+    with pytest.raises(RateLimited):
+        quota_key_exchange.check_auto_key_request_quota(now_fn())
+
+    # Park a WAITING_KEY row with a valid reply route in the SAME DB file.
+    receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=quota_key_exchange, raw_offer=_build_offer_from(principal2, signing_key),
+        network_available=True, source_address=contact, reply_route=_reply_route(contact),
+    )
+
+    db_path = str(tmp_path / "attachments.db")
+    conn.close()
+
+    # Reopen the same file and build entirely fresh collaborators.
+    conn2 = sqlite3.connect(db_path, check_same_thread=False)
+    conn2.execute("PRAGMA foreign_keys = ON")
+    principal2 = identity.ensure_principal(conn2, wsm, "local")
+    fresh_key_exchange = KeyExchangeCoordinator(
+        conn2, wsm, principal2, ADAPTER_ID, max_auto_key_requests_per_hour=1, now_fn=now_fn
+    )
+    ether = InMemoryEther()
+    fresh_service = AttachmentsService(
+        conn2, workspace_manager=wsm, principal=principal2,
+        provider_registry=ProviderRegistry(conn2, "local"),
+        key_exchange=fresh_key_exchange, connectivity_monitor=connectivity_monitor,
+        delivery_adapter=FakeTextAdapter(ether, "local-addr"),
+        relay_client_factory=lambda _: relay_client, max_per_tick=8, now_fn=now_fn,
+    )
+
+    # Still blocked: the persisted budget is full, so nothing is sent.
+    fresh_service._auto_request_missing_keys()
+    assert ether.drain(contact) == []
+
+    # Once the window expires, the quota resets and the scan sends again.
+    now[0] += 3600
+    fresh_service._auto_request_missing_keys()
+    assert len(ether.drain(contact)) == 1
+
+
+def test_inbound_non_canonical_source_cannot_side_effect(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient, tmp_path, registered_provider
+):
+    """PR 1 (final correction): the common inbound boundary drops any MCA
+    message whose source is non-canonical BEFORE dispatch, so it cannot
+    create a key binding (KEY_ANNOUNCE), trigger a key reply (KEY_REQUEST),
+    create an attachment (OFFER), or apply an ACK."""
+    _, wsm2, principal2 = remote_recipient
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    # The ACK side effect needs a real sent attachment (route "!aaaaaaaa").
+    attachment_id, transfer_id, recipient_wsm, recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, svc,
+    )
+
+    bad = "!756F9960"  # uppercase hex - non-canonical
+    announce_sk = SigningKey.generate()
+    announce = codec.encode_key_announce(
+        codec.KeyAnnounceFields(public_identity=bytes(announce_sk.verify_key), epoch=0), announce_sk,
+    )
+    request = codec.encode_key_request(codec.KeyRequestFields(sender_key_id=b"\x02" * 8), SigningKey.generate())
+
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(announce), source_address=bad, packet_id="p1", received_at=time.time()))
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(request), source_address=bad, packet_id="p2", received_at=time.time()))
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(_build_offer_from(principal2, signing_key)), source_address=bad, packet_id="p3", received_at=time.time()))
+    svc.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.ACK_RECEIVED, transfer_id, source_address=bad))
+    svc.tick()
+
+    # No key binding was created for the non-canonical source.
+    bindings = conn.execute(
+        "SELECT COUNT(*) FROM mca_recipient_bindings WHERE transport_address = ?", (bad,)
+    ).fetchone()[0]
+    assert bindings == 0
+    # No KEY_REQUEST reply was sent back.
+    assert ether.drain(bad) == []
+    # No received attachment was created.
+    received = conn.execute(
+        "SELECT COUNT(*) FROM attachments WHERE workspace_id = ? AND direction = 'received'",
+        (principal.workspace_id,),
+    ).fetchone()[0]
+    assert received == 0
+    # The ACK was not applied.
+    assert sender.get_state(conn, attachment_id) == sender.SENT
+
+
+def test_inbound_mismatched_source_cannot_side_effect(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient, tmp_path, registered_provider
+):
+    """PR 1 (final correction): even when every id is individually canonical,
+    a source whose event/envelope/route disagree is dropped before dispatch -
+    it cannot create a binding, trigger a reply, create an attachment, or
+    apply an ACK."""
+    _, wsm2, principal2 = remote_recipient
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    ether = InMemoryEther()
+    adapter = _MismatchedSourceAdapter(ether, "local-addr", misreported="!cccccccc")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter, relay_client_factory=lambda _: relay_client)
+
+    # The ACK fixture's sent attachment is over route "!aaaaaaaa" (its own
+    # default), independent of the adapter's misreported "!cccccccc".
+    attachment_id, transfer_id, recipient_wsm, recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, svc,
+    )
+
+    event_source = "!756f9960"  # canonical, but the adapter reports "!cccccccc"
+    announce_sk = SigningKey.generate()
+    announce = codec.encode_key_announce(
+        codec.KeyAnnounceFields(public_identity=bytes(announce_sk.verify_key), epoch=0), announce_sk,
+    )
+    request = codec.encode_key_request(codec.KeyRequestFields(sender_key_id=b"\x02" * 8), SigningKey.generate())
+
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(announce), source_address=event_source, packet_id="p1", received_at=time.time()))
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(request), source_address=event_source, packet_id="p2", received_at=time.time()))
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(_build_offer_from(principal2, signing_key)), source_address=event_source, packet_id="p3", received_at=time.time()))
+    svc.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.ACK_RECEIVED, transfer_id, source_address=event_source))
+    svc.tick()
+
+    # No key binding at the claimed source nor the misreported route.
+    for addr in (event_source, "!cccccccc"):
+        bindings = conn.execute(
+            "SELECT COUNT(*) FROM mca_recipient_bindings WHERE transport_address = ?", (addr,)
+        ).fetchone()[0]
+        assert bindings == 0
+    # No KEY_REQUEST reply was sent to either address.
+    assert ether.drain(event_source) == []
+    assert ether.drain("!cccccccc") == []
+    # No received attachment was created.
+    received = conn.execute(
+        "SELECT COUNT(*) FROM attachments WHERE workspace_id = ? AND direction = 'received'",
+        (principal.workspace_id,),
+    ).fetchone()[0]
+    assert received == 0
+    # The ACK was not applied.
+    assert sender.get_state(conn, attachment_id) == sender.SENT
 
 
 # ---- Step 1.6A.4: provider onboarding/management handlers ----------------
@@ -2519,7 +3118,7 @@ def test_command_delete_local_content_unlink_failure_is_content_missing(
 # --------------------------------------------------------------------------
 
 
-def _create_ack_draft(conn, wsm, principal, recipient_principal, registered_provider, tmp_path, *, connector_profile_id, route_id="remote-addr"):
+def _create_ack_draft(conn, wsm, principal, recipient_principal, registered_provider, tmp_path, *, connector_profile_id, route_id="!aaaaaaaa"):
     source_path = tmp_path / "ack-outgoing.txt"
     source_path.write_bytes(b"hello ack")
     return sender.create_draft(
@@ -2553,7 +3152,7 @@ def _drive_sent(conn, wsm, principal, relay_client, recipient_principal, attachm
     return bytes.fromhex(row[0])
 
 
-def _ack_event(recipient_wsm, recipient_principal, message_type, transfer_id, source_address="remote-addr"):
+def _ack_event(recipient_wsm, recipient_principal, message_type, transfer_id, source_address="!aaaaaaaa"):
     """A signed, MCA1-TEXT-encoded inbound ACK as the recipient would send it,
     wrapped as the InboundEvent the listener would enqueue."""
     signing_key = identity.load_signing_key(recipient_wsm, recipient_principal)
@@ -2567,7 +3166,7 @@ def _sent_ack_fixture(conn, wsm, principal, registered_provider, remote_recipien
     check can pass), and return (attachment_id, transfer_id, recipient_wsm,
     recipient_principal)."""
     _, recipient_wsm, recipient_principal = remote_recipient
-    _bind_recipient(conn, recipient_principal, transport_address="remote-addr")
+    _bind_recipient(conn, recipient_principal, transport_address="!aaaaaaaa")
     connector_profile_id = service._delivery_adapter.connector_profile_id
     attachment_id = _create_ack_draft(
         conn, wsm, principal, recipient_principal, registered_provider, tmp_path,
@@ -2618,7 +3217,7 @@ def test_inbound_ack_wrong_signature_is_dropped(conn, wsm, principal, registered
     # Sign with a *different*, unrelated key - the pinned identity must reject it.
     impostor_key = identity.load_signing_key(wsm, principal)  # the sender's own key, not the recipient's
     ack_cbor = codec.encode_simple_ack(codec.MessageType.ACK_RECEIVED, transfer_id, impostor_key)
-    service.enqueue_inbound(InboundEvent(text=codec.to_text(ack_cbor), source_address="remote-addr", packet_id="p1", received_at=time.time()))
+    service.enqueue_inbound(InboundEvent(text=codec.to_text(ack_cbor), source_address="!aaaaaaaa", packet_id="p1", received_at=time.time()))
     service.tick()
     assert sender.get_state(conn, attachment_id) == sender.SENT  # unchanged
 
@@ -2640,7 +3239,7 @@ def test_inbound_ack_source_route_mismatch_is_dropped(conn, wsm, principal, regi
         conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
     )
     # A validly-signed ACK arriving over a *different* source route must not apply.
-    service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.ACK_RECEIVED, transfer_id, source_address="some-other-route"))
+    service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.ACK_RECEIVED, transfer_id, source_address="!bbbbbbbb"))
     service.tick()
     assert sender.get_state(conn, attachment_id) == sender.SENT  # unchanged
 
@@ -2678,7 +3277,7 @@ def test_inbound_ack_sends_no_radio_response(conn, wsm, principal, registered_pr
     service.tick()
     assert sender.get_state(conn, attachment_id) == sender.RECEIVED  # it *did* apply
     # ... but nothing was sent back to the ACK's source (or anywhere else).
-    assert ether.drain("remote-addr") == []
+    assert ether.drain("!aaaaaaaa") == []
 
 
 def test_inbound_ack_is_enqueue_only_until_tick(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service):

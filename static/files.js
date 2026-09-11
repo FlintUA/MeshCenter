@@ -568,19 +568,19 @@
     function loadTransfers() {
         var url = transfersUrl();
         var queryKey = transfersQueryKey();
-        var key = 'transfers:' + queryKey;
-        // P3: a direction/filter/counterparty change invalidates any in-flight
-        // or already-rendered detail from the previous query immediately (bump
-        // detailSeq to drop a late detail response, clear the coalesced pending
-        // refetch and fingerprint, drop the old selection, and empty the panel)
-        // so the old counterparty's transfer can never leak into the new view.
+        // P3: the guard key carries the epoch so a reactivated tab never joins
+        // a request left in-flight from a previous activation (which would be
+        // dropped on epoch mismatch, leaving the fresh activation with no data
+        // until the next timer tick). Same-query reloads within one activation
+        // still share the key (G1 join/coalesce preserved).
+        var key = 'transfers:' + state.epoch + ':' + queryKey;
+        // A direction/filter/counterparty change invalidates the old selection
+        // and any in-flight/rendered detail immediately, so the old
+        // counterparty's card can't linger during the fetch gap.
         if (state.lastTransfersQueryKey !== queryKey) {
             state.lastTransfersQueryKey = queryKey;
-            state.detailSeq++;
-            state.detailPending = null;
-            state.detailFingerprint = null;
             state.selectedId = null;
-            clearDetailPanel();
+            invalidateDetail();
         }
         // The response is applied only if its query (direction|filter|counterparty)
         // is still the active one. A stale out-of-order response from a superseded
@@ -599,12 +599,22 @@
             state.attachments = Array.isArray(r.data.attachments) ? r.data.attachments : [];
             state.total = r.data.total || 0;
             state.truncated = state.total > LIST_LIMIT;
-            // Reconcile selection FIRST (before rendering list or detail), so the
-            // first element of a new result is selected and its detail rendered
-            // with no stale previous card shown in between (C5 §10.5 + P3).
-            if (!state.selectedId || !state.attachments.some(function (a) { return a.id === state.selectedId; })) {
-                state.selectedId = state.attachments.length ? state.attachments[0].id : null;
+
+            // Compute the new selection BEFORE mutating detail/selection state.
+            // A selection that changed — or became null — under the SAME query
+            // (the selected transfer left the pending filter, was deleted, or
+            // the server returned an empty list) must invalidate the detail
+            // too, not just a query-key change: a late response for the old
+            // selection must never repaint a transfer that's no longer selected.
+            var nextId = state.selectedId;
+            if (!nextId || !state.attachments.some(function (a) { return a.id === nextId; })) {
+                nextId = state.attachments.length ? state.attachments[0].id : null;
             }
+            if (nextId !== state.selectedId) {
+                invalidateDetail();
+            }
+            state.selectedId = nextId;
+
             renderTransfers();
             renderSummaries();
             if (state.selectedId) {
@@ -619,21 +629,19 @@
                     renderDetail(state.selectedId, true);
                 }
             } else {
-                // P3: empty result — no selection, so clear the detail state and
-                // panel (an in-flight detail was already invalidated above on
-                // query change; this also covers a same-query poll going empty).
+                // No selection — ensure the panel and fingerprint are clear.
                 state.detailFingerprint = null;
                 clearDetailPanel();
             }
         });
     }
 
-    // P3: the post-command authoritative refresh for the transfer list now keys
-    // off the *current* query (direction|filter|counterparty), not a fixed
-    // 'transfers' bucket — so a command settling after a filter/counterparty
-    // switch refreshes the query the user is actually looking at.
+    // P3: the post-command authoritative refresh for the transfer list keys off
+    // the current epoch + query (direction|filter|counterparty), so a command
+    // settling after a filter/counterparty switch — or after a reactivation —
+    // refreshes the query the user is actually looking at, never a stale bucket.
     function refreshTransfers() {
-        return refreshAfterCommand('transfers:' + transfersQueryKey(), loadTransfers);
+        return refreshAfterCommand('transfers:' + state.epoch + ':' + transfersQueryKey(), loadTransfers);
     }
 
     // ---- contact merge (C3 §8.1) -------------------------------------------
@@ -900,6 +908,19 @@
     function clearDetailPanel() {
         var body = getEl('filesDetailBody');
         if (body) body.innerHTML = '';
+    }
+
+    // P3: invalidate any in-flight or already-rendered detail (and the
+    // coalesced pending refetch + fingerprint), without an explicit selection
+    // change. Used both on query change and when the selection changes — or
+    // becomes null — under the same query key (selected transfer left the
+    // filter, was deleted, or the server returned an empty list), so a late
+    // old-detail response can never repaint a transfer that is no longer shown.
+    function invalidateDetail() {
+        state.detailSeq++;
+        state.detailPending = null;
+        state.detailFingerprint = null;
+        clearDetailPanel();
     }
 
     function detailFingerprint(a) {

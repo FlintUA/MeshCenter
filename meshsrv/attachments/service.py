@@ -1880,7 +1880,8 @@ class AttachmentsService:
         # cap below (not a scan LIMIT) bounds the outbound burst without
         # letting an already-rate-limited row starve a not-yet-requested one.
         rows = self._conn.execute(
-            "SELECT id, reply_route_id, reply_route_type, reply_destination_address, pending_offer_cbor "
+            "SELECT id, reply_adapter_id, reply_connector_profile_id, reply_route_id, reply_route_type, "
+            "reply_destination_address, pending_offer_cbor, hard_expires_at "
             "FROM attachments WHERE workspace_id = ? AND direction = 'received' AND state = ? ORDER BY created_at",
             (self._principal.workspace_id, receiver.WAITING_KEY),
         ).fetchall()
@@ -1910,16 +1911,41 @@ class AttachmentsService:
         pending_raw = row["pending_offer_cbor"]
         if not route_id or pending_raw is None:
             return None
+        # PR 1 (final correction): do not automatically request a key for an
+        # expired WAITING_KEY transfer. `hard_expires_at` is the receiver's own
+        # persisted deadline; once it has passed (<= now, boundary included)
+        # there is nothing to resume, so the row is skipped outright rather
+        # than pinging the sender for a key to a dead transfer. (PR 2 will own
+        # the actual EXPIRED state transition; this scan simply must not keep
+        # requesting keys for a row past its deadline.)
+        hard_expires_at = row["hard_expires_at"]
+        if hard_expires_at is not None and hard_expires_at <= self._now():
+            return None
         # PR 1 (correction): validate the *complete* persisted reply route
-        # before sending, not just the bare `reply_route_id`. The reply is
-        # DIRECT-only, and the destination must equal the (already-canonical)
-        # route id - a malformed or non-DIRECT persisted route is never sent
-        # to (left for the human's manual action, never guessed at).
-        if route_type != "DIRECT" or not _is_contact_id(route_id) or destination != route_id:
+        # before sending, not just the bare `reply_route_id`. Mirroring
+        # `_dispatch_outgoing_replies`'s ACK-outbox posture, the persisted
+        # `reply_adapter_id`/`reply_connector_profile_id` must exactly match
+        # this service's own `delivery_adapter` (a NULL or mismatched value
+        # fails closed, same as a wholly-missing route - never guessed at),
+        # the reply is DIRECT-only, and the destination must equal the
+        # (already-canonical) route id. A malformed, mismatched, or
+        # non-DIRECT persisted route is never sent to (left for the human's
+        # manual action).
+        adapter_id = self._delivery_adapter.adapter_id
+        connector_profile_id = self._delivery_adapter.connector_profile_id
+        if (
+            route_type != "DIRECT"
+            or not _is_contact_id(route_id)
+            or destination != route_id
+            or row["reply_adapter_id"] != adapter_id
+            or row["reply_connector_profile_id"] != connector_profile_id
+        ):
             logger.warning(
                 "AttachmentsService: skipping auto key-request for attachment %s: "
-                "invalid persisted reply route (type=%r, id=%r, destination=%r)",
+                "invalid persisted reply route (type=%r, id=%r, destination=%r, "
+                "adapter=%r, connector=%r)",
                 row["id"], route_type, route_id, destination,
+                row["reply_adapter_id"], row["reply_connector_profile_id"],
             )
             return None
         # Per-canonical-address dedup within this tick: `attempted` covers
@@ -2403,6 +2429,32 @@ class AttachmentsService:
         if envelope is None:
             return
 
+        # PR 1 (final correction): canonical node-id validation at the common
+        # inbound boundary, BEFORE any message type is decoded or dispatched.
+        # For the DIRECT-only MVP the event's `source_address`, the envelope's
+        # `source_address`, and the envelope's `route_id` must all be the same
+        # canonical `!` + 8-lowercase-hex node id. A non-canonical or
+        # internally-mismatched source is dropped outright here, so it can
+        # never create a key binding, trigger a key reply, create an
+        # attachment, or apply an ACK. (This supersedes the OFFER-only check
+        # that used to live in `_process_inbound_offer`, which guarded only
+        # one message type and only the bare `source_address`, not the full
+        # route identity - a KEY_REQUEST/KEY_ANNOUNCE/KEY_ACK or attachment
+        # ACK carrying a bogus source used to slip past it.)
+        if (
+            not _is_contact_id(event.source_address)
+            or not _is_contact_id(envelope.source_address)
+            or not _is_contact_id(envelope.route_id)
+            or event.source_address != envelope.source_address
+            or envelope.source_address != envelope.route_id
+        ):
+            logger.info(
+                "AttachmentsService: rejected inbound MCA message from non-canonical or mismatched source "
+                "(event=%r, envelope_source=%r, route_id=%r)",
+                event.source_address, envelope.source_address, envelope.route_id,
+            )
+            return
+
         try:
             message_type = codec.peek_message_type(envelope.logical_message)
         except codec.CodecError as exc:
@@ -2453,18 +2505,6 @@ class AttachmentsService:
         from meshsrv.attachments.provider_registry import encode_provider_id
 
         raw_offer = envelope.logical_message
-        # PR 1 (correction): canonical node-id validation at the inbound
-        # boundary. `source_address` (== `envelope.route_id` for the
-        # DIRECT-only MVP) becomes the persisted `reply_route_id`, so it is
-        # validated *here*, once, rather than being `str()`-cast through and
-        # later `.lower()`-normalized at send time. A non-canonical node id
-        # (not `!` + 8 lowercase hex) is dropped outright - never stored, never
-        # normalized, never replied to.
-        if not _is_contact_id(source_address):
-            logger.info(
-                "AttachmentsService: rejected OFFER from non-canonical source address %r", source_address
-            )
-            return
         try:
             unverified = codec.decode_offer(raw_offer, verify_key=None)
             provider_id_text = encode_provider_id(unverified.provider_id)

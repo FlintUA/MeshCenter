@@ -71,6 +71,7 @@ from meshsrv.attachments.snapshots import (
     ContentDisposition,
     ContentLocatorError,
     DeliveryRecord,
+    RecipientRecord,
     TimelineEvent,
     disposition_for_mime_type,
 )
@@ -730,6 +731,44 @@ def test_detail_returns_attachment_with_separate_timeline(monkeypatch):
     assert body["timeline"][1]["detail"] == {}
     # §7.5 counterparty_contact_id reaches both list and detail projections.
     assert body["attachment"]["counterparty_contact_id"] is None
+
+
+def _assert_no_key_identity(d):
+    """The public projection never carries raw key identity - neither the
+    migration-16 `sender_public_identity` / migration-14
+    `recipient_public_identity` BLOB fields nor a `public_identity`/
+    `public_x25519` key (§11). The serializer builds the shape field-by-field,
+    so these can only appear if someone regresses it to `asdict` or adds the
+    column to the projection type."""
+    for forbidden in ("sender_public_identity", "recipient_public_identity", "public_identity", "public_x25519"):
+        assert forbidden not in d
+
+
+def test_public_list_and_detail_never_expose_key_identity(monkeypatch):
+    """Migration 16 `sender_public_identity` and migration 14
+    `recipient_public_identity` are raw-key BLOBs pinned at admission for
+    signature verification. They must never appear in the public list or
+    detail responses (nor any recipient sub-object) - the projection is an
+    explicit field allowlist."""
+    attachment_id = "a" * 32
+    facade = _FakeFacade(snapshot=_snapshot([
+        _attachment(
+            id=attachment_id,
+            direction="sent",
+            recipients=(RecipientRecord(key_id="1" * 16, principal_id="2" * 16),),
+        ),
+    ]))
+    c = _client(monkeypatch, facade)
+
+    list_item = c.get("/api/attachments").get_json()["attachments"][0]
+    _assert_no_key_identity(list_item)
+    for recipient in list_item["recipients"]:
+        _assert_no_key_identity(recipient)
+
+    detail = c.get(f"/api/attachments/{attachment_id}").get_json()
+    _assert_no_key_identity(detail["attachment"])
+    for recipient in detail["attachment"]["recipients"]:
+        _assert_no_key_identity(recipient)
 
 
 def test_detail_invalid_id(monkeypatch):

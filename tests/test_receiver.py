@@ -745,3 +745,28 @@ def test_begin_download_requires_waiting_consent(conn, wsm, principal, provider_
     assert result.state == receiver.WAITING_PROVIDER
     with pytest.raises(receiver.ReceiverError):
         receiver.begin_download(conn, result.attachment_id)
+
+
+def test_apply_cancelled_transitions_nonterminal_to_cancelled_and_is_idempotent(conn, wsm, principal, provider_registry, key_exchange, remote_sender):
+    """ADR-0010: an inbound CANCEL (sender withdrew the offer) moves any
+    non-terminal received row to CANCELLED (terminal), and a duplicate CANCEL
+    is a no-op rather than an error - the caller has already verified the
+    signature/sender identity, so this is the pure state write only."""
+    conn2, wsm2, principal2 = remote_sender
+    _bind_remote_sender(conn, principal2)
+    raw_offer = _build_offer(
+        provider_id=os.urandom(8), transfer_id=os.urandom(16), sender_principal=principal2,
+        sender_signing_key=identity.load_signing_key(wsm2, principal2), hard_expires_at=int(time.time()) + 3600,
+    )
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=raw_offer, network_available=True,
+    )
+    assert result.state == receiver.WAITING_PROVIDER
+
+    assert receiver.apply_cancelled(conn, result.attachment_id) == receiver.CANCELLED
+    assert receiver.get_state(conn, result.attachment_id) == receiver.CANCELLED
+    assert receiver.is_terminal(receiver.CANCELLED)
+    # idempotent: a duplicate CANCEL never regresses nor raises
+    assert receiver.apply_cancelled(conn, result.attachment_id) == receiver.CANCELLED
+    assert receiver.get_state(conn, result.attachment_id) == receiver.CANCELLED

@@ -166,14 +166,20 @@ MAX_SPOOL_CLEANUP_PER_TICK = 8
 # download-grace, so its token has no remaining purpose.
 MAX_REVOKE_STATE_CLEANUP_PER_TICK = 100
 
-# ADR-0009 Decision 7: the three inbound simple-ACK types routed to the new
-# signed-ACK path (`_process_inbound_ack`). Every other message type continues
-# its existing path (OFFER, key-exchange).
+# ADR-0009 Decision 7 (extended by ADR-0010): the inbound simple-ACK-shaped
+# types routed to the signed-ACK path (`_process_inbound_ack`). ACK_RECEIVED /
+# ACK_DOWNLOADED / ACK_PROVIDER_UNKNOWN / REJECTED / EXPIRED all verify and
+# apply against a *sent* attachment (direction='sent'); CANCEL is the one
+# sender-signed simple-ack that applies against a *received* attachment and is
+# dispatched to `_process_inbound_cancel` instead (see `_process_one_inbound_event`).
+# Every other message type continues its existing path (OFFER, key-exchange).
 _INBOUND_ACK_TYPES = frozenset(
     {
         codec.MessageType.ACK_RECEIVED,
         codec.MessageType.ACK_DOWNLOADED,
         codec.MessageType.ACK_PROVIDER_UNKNOWN,
+        codec.MessageType.REJECTED,
+        codec.MessageType.EXPIRED,
     }
 )
 
@@ -1508,12 +1514,12 @@ class AttachmentsService:
         `WAITING_CONSENT` row to `REJECTED` (§7.3). Delegates to
         `receiver.reject()` unchanged, which only transitions the local row to
         `REJECTED` and commits - it does **not** enqueue or send a signed
-        `MessageType.REJECTED` frame back to the sender. A real wire-level
-        rejection (signed REJECTED generation, durable outbox delivery,
-        sender-side source/key verification, and sender-state handling) is
-        deliberately deferred to the still-pending inbound control-message /
-        ADR-0009 work, so a rejection round trip to the sender is *not*
-        complete after this command."""
+        `MessageType.REJECTED` frame back to the sender. ADR-0010 implements the
+        *sender-side* consumption of such a frame (`_process_inbound_ack` ->
+        `sender.apply_rejected()`), but the *receiver-side generation* of the
+        signed REJECTED (durable outbox delivery to the sender) is still
+        deferred - so a rejection round trip to the sender is *not* complete
+        after this command."""
         attachment_id = command.payload.get("attachment_id")
         row = self._attachment_row(attachment_id)
         if row is None:
@@ -2465,6 +2471,10 @@ class AttachmentsService:
             self._process_inbound_ack(envelope, message_type, source_address=event.source_address)
             return
 
+        if message_type == codec.MessageType.CANCEL:
+            self._process_inbound_cancel(envelope, source_address=event.source_address)
+            return
+
         if message_type == codec.MessageType.OFFER:
             self._process_inbound_offer(envelope, source_address=event.source_address)
             return
@@ -2535,12 +2545,15 @@ class AttachmentsService:
             logger.info("AttachmentsService: rejected OFFER from %s: %s", source_address, exc)
 
     def _process_inbound_ack(self, envelope: DeliveryEnvelope, message_type, *, source_address: str) -> None:
-        """ADR-0009 Decision 7/8: verify and apply one inbound simple ACK against
-        a *sent* attachment. Every step before the final `sender.apply_ack()` is a
-        read/verify that can only ever drop (never write, never reply over the
-        radio). Each drop reason is logged via `_drop_ack()` at a sanitized level
-        - a fixed reason token only. No radio response is ever sent for any ACK:
-        valid, invalid, unknown, tombstoned, duplicate, or stale."""
+        """ADR-0009 Decision 7/8, extended by ADR-0010: verify and apply one
+        inbound simple ACK against a *sent* attachment (ACK_RECEIVED /
+        ACK_DOWNLOADED / ACK_PROVIDER_UNKNOWN) or one inbound terminal lifecycle
+        ack (REJECTED / EXPIRED) against a *sent* attachment. Every step before
+        the final `sender.apply_*` is a read/verify that can only ever drop
+        (never write, never reply over the radio). Each drop reason is logged via
+        `_drop_ack()` at a sanitized level - a fixed reason token only. No radio
+        response is ever sent for any ACK: valid, invalid, unknown, tombstoned,
+        duplicate, or stale."""
         raw = envelope.logical_message
         try:
             unverified = codec.decode_simple_ack(raw, message_type, verify_key=None)
@@ -2608,7 +2621,83 @@ class AttachmentsService:
             self._drop_ack("signature_invalid", level="warning")
             return
 
-        sender.apply_ack(self._conn, attachment_id, message_type, now=self._now())
+        # ADR-0010: REJECTED/EXPIRED are the sender-side terminal lifecycle
+        # acks (Receiver -> Sender). ACK_RECEIVED/ACK_DOWNLOADED/
+        # ACK_PROVIDER_UNKNOWN keep the existing `apply_ack` dispatcher.
+        if message_type == codec.MessageType.REJECTED:
+            sender.apply_rejected(self._conn, attachment_id, now=self._now())
+        elif message_type == codec.MessageType.EXPIRED:
+            sender.apply_expired(self._conn, attachment_id, now=self._now())
+        else:
+            sender.apply_ack(self._conn, attachment_id, message_type, now=self._now())
+
+    def _process_inbound_cancel(self, envelope: DeliveryEnvelope, *, source_address: str) -> None:
+        """ADR-0010: verify and apply one inbound CANCEL (Sender -> Receiver)
+        against a *received* attachment. The CANCEL is signed by the sender,
+        and is verified against the sender public identity *pinned on this
+        transfer at OFFER admission* (`sender_public_identity`) - never the
+        current address binding, so the check is key-rotation-safe (the
+        receiver-side mirror of `_process_inbound_ack`'s pinned-recipient
+        path). Steps: source-route check against the OFFER's persisted reply
+        route, then pinned-key consistency (`compute_key_id(pinned) ==
+        sender_principal_id`), then signature verification, then
+        `receiver.apply_cancelled()`. Every step before the apply can only
+        drop (never write, never reply over the radio) - the same discipline
+        as ADR-0009 Decision 7/8."""
+        raw = envelope.logical_message
+        try:
+            unverified = codec.decode_simple_ack(raw, codec.MessageType.CANCEL, verify_key=None)
+        except codec.CodecError:
+            self._drop_ack("not_well_formed")
+            return
+
+        transfer_id_hex = unverified.transfer_id.hex()
+        attachment = self._conn.execute(
+            "SELECT * FROM attachments WHERE workspace_id = ? AND transfer_id = ? AND direction = 'received'",
+            (self._principal.workspace_id, transfer_id_hex),
+        ).fetchone()
+        if attachment is None:
+            if is_tombstoned(self._conn, transfer_id_hex):
+                self._drop_ack("tombstoned_transfer", level="info")
+            else:
+                self._drop_ack("unknown_transfer", level="warning")
+            return
+        attachment_id = attachment["id"]
+
+        # The CANCEL must arrive on the same DIRECT route the OFFER came in on,
+        # as persisted in the OFFER's reply-route columns.
+        if (
+            attachment["reply_route_type"] != RouteType.DIRECT.value
+            or attachment["reply_adapter_id"] != envelope.adapter_id
+            or attachment["reply_connector_profile_id"] != envelope.connector_profile_id
+            or attachment["reply_route_id"] != envelope.route_id
+        ):
+            self._drop_ack("source_route_mismatch", level="warning")
+            return
+
+        # ADR-0010 Decision 3: verify against the sender public identity
+        # pinned on this transfer when the OFFER was admitted - never
+        # `get_binding(envelope.route_id)`, which resolves the *current* TOFU
+        # binding and would both break a valid CANCEL after a contact-key
+        # rotation (the address now resolves to a different key) and let a
+        # rotated-out key cancel (only the new key matches the mutable
+        # binding). A NULL pinned identity (the OFFER was parked in
+        # WAITING_KEY behind an unverified key, or a pre-migration row) is
+        # unverifiable and dropped, never guessed at.
+        pinned = attachment["sender_public_identity"]
+        if not isinstance(pinned, bytes) or len(pinned) != 32:
+            self._drop_ack("sender_key_missing", level="warning")
+            return
+        if compute_key_id(pinned) != attachment["sender_principal_id"]:
+            self._drop_ack("sender_key_mismatch", level="warning")
+            return
+        try:
+            codec.decode_simple_ack(raw, codec.MessageType.CANCEL, verify_key=VerifyKey(pinned))
+        except codec.CodecError:
+            self._drop_ack("signature_invalid", level="warning")
+            return
+
+        receiver.apply_cancelled(self._conn, attachment_id, now=self._now())
 
     def _drop_ack(self, reason: str, *, level: str = "info") -> None:
         """Log one sanitized ACK drop. `reason` is a fixed token only - never the

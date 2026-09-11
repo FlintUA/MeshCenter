@@ -1018,3 +1018,31 @@ def test_migration_14_revoke_state_table_is_in_authoritative_inventory(conn):
     assert "mca_sender_revoke_state" in ALL_TABLE_NAMES
     migrate(conn)
     assert "mca_sender_revoke_state" in _table_names(conn)
+
+
+# --------------------------------------------------------------------------
+# Migration 16 (ADR-0010 v2): `attachments.sender_public_identity` BLOB -
+# the pinned sender identity for inbound CANCEL verification, the receiver-side
+# mirror of migration 14's `recipient_public_identity`.
+# --------------------------------------------------------------------------
+
+
+def test_migration_16_adds_sender_public_identity(conn):
+    migrate(conn, target_version=15)
+    assert "sender_public_identity" not in _attachments_columns(conn)
+
+    migrate(conn, target_version=16)
+    assert current_version(conn) == 16
+    assert "sender_public_identity" in _attachments_columns(conn)
+
+
+def test_migration_16_downgrade_then_reupgrade(conn):
+    migrate(conn, target_version=16)
+    assert "sender_public_identity" in _attachments_columns(conn)
+
+    migrate(conn, target_version=15)
+    assert "sender_public_identity" not in _attachments_columns(conn)
+
+    migrate(conn)  # re-upgrade to LATEST_VERSION
+    assert current_version(conn) == LATEST_VERSION
+    assert "sender_public_identity" in _attachments_columns(conn)

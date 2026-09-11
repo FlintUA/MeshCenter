@@ -3291,3 +3291,208 @@ def test_inbound_ack_is_enqueue_only_until_tick(conn, wsm, principal, registered
     assert sender.get_state(conn, attachment_id) == sender.SENT
     service.tick()
     assert sender.get_state(conn, attachment_id) == sender.RECEIVED
+
+
+# ---- ADR-0010: inbound CANCEL/REJECTED/EXPIRED lifecycle dispatch ----------
+# REJECTED/EXPIRED flow through the same signed-ACK path as ACK_RECEIVED (they
+# are recipient -> sender), while CANCEL is the one sender -> receiver ack and
+# verifies against the OFFER's stored sender identity instead.
+
+
+def test_inbound_rejected_routes_and_applies(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service):
+    """ADR-0010: a recipient-signed REJECTED applies against the sent row ->
+    REJECTED (terminal), dropping the transient mca_sender_state while
+    *retaining* the mca_sender_revoke_state revoke capability, through the
+    exact same signed-ACK verification path as ACK_RECEIVED."""
+    attachment_id, transfer_id, recipient_wsm, recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.REJECTED, transfer_id))
+    service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.REJECTED
+    assert sender._get_sender_state(conn, attachment_id) is None
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone() is not None
+
+
+def test_inbound_expired_routes_and_applies(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service):
+    """ADR-0010: a recipient-signed EXPIRED applies against the sent row ->
+    EXPIRED (terminal), dropping the transient mca_sender_state while
+    *retaining* the mca_sender_revoke_state revoke capability. The sender's
+    hard_expires_at is first moved into the past so the inbound EXPIRED clears
+    the `now >= hard_expires_at` boundary guard (tested in detail in
+    test_sender.py)."""
+    attachment_id, transfer_id, recipient_wsm, recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    conn.execute(
+        "UPDATE attachments SET hard_expires_at = ? WHERE id = ?", (int(time.time()) - 100, attachment_id)
+    )
+    conn.commit()
+    service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.EXPIRED, transfer_id))
+    service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.EXPIRED
+    assert sender._get_sender_state(conn, attachment_id) is None
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone() is not None
+
+
+def test_inbound_expired_before_hard_expiry_is_dropped(conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service):
+    """ADR-0010 Decision 2: a recipient-signed EXPIRED arriving *before* the
+    sender's authoritative hard_expires_at is dropped with no state change -
+    the sender's own expiry timestamp, not the recipient's observation of it,
+    is authoritative."""
+    attachment_id, transfer_id, recipient_wsm, recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    hard_expires_at = conn.execute(
+        "SELECT hard_expires_at FROM attachments WHERE id = ?", (attachment_id,)
+    ).fetchone()[0]
+    assert hard_expires_at > int(time.time())  # the mock Relay sets a future TTL
+
+    service.enqueue_inbound(_ack_event(recipient_wsm, recipient_principal, codec.MessageType.EXPIRED, transfer_id))
+    service.tick()
+    assert sender.get_state(conn, attachment_id) == sender.SENT  # unchanged
+    assert sender._get_sender_state(conn, attachment_id) is not None
+
+
+def test_inbound_cancel_routes_and_applies(conn, wsm, principal, provider_registry, key_exchange, remote_recipient, service):
+    """ADR-0010: a sender-signed CANCEL, arriving over the OFFER's own DIRECT
+    reply route and verifying against the sender public identity pinned on the
+    transfer at OFFER admission, cancels the received row (non-terminal ->
+    CANCELLED). No radio response is sent back."""
+    _, wsm2, principal2 = remote_recipient
+    contact = "!aaaaaaaa"
+    _bind_recipient(conn, principal2, transport_address=contact)
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=_build_offer_from(principal2, signing_key),
+        network_available=True, source_address=contact, reply_route=_reply_route(contact),
+    )
+    assert result.state == receiver.WAITING_PROVIDER
+
+    row = conn.execute("SELECT transfer_id FROM attachments WHERE id = ?", (result.attachment_id,)).fetchone()
+    transfer_id = bytes.fromhex(row[0])
+    cancel_cbor = codec.encode_simple_ack(codec.MessageType.CANCEL, transfer_id, signing_key)
+    ether = service._delivery_adapter._ether
+
+    # Flush the OFFER's *own* queued ACKs (ACK_RECEIVED + ACK_PROVIDER_UNKNOWN)
+    # so the no-reply assertion below isolates the CANCEL's own traffic.
+    service.tick()
+    assert ether.drain(contact) != []  # the OFFER's ACKs went out
+
+    service.enqueue_inbound(
+        InboundEvent(text=codec.to_text(cancel_cbor), source_address=contact, packet_id="p1", received_at=time.time())
+    )
+    service.tick()
+
+    assert receiver.get_state(conn, result.attachment_id) == receiver.CANCELLED
+    assert ether.drain(contact) == []  # Decision 8: a CANCEL is never answered
+
+
+def test_inbound_cancel_pinned_key_still_cancels_after_rotation(conn, wsm, principal, provider_registry, key_exchange, remote_recipient, service):
+    """ADR-0010 Decision 3 (key-rotation-safety): a CANCEL is verified against
+    the sender public identity pinned on the transfer at OFFER admission, never
+    the mutable current address binding. After the address's key is rotated, the
+    ORIGINAL (pinned) key can still withdraw its own offer - the new key must
+    not be able to silently break that."""
+    _, wsm2, principal2 = remote_recipient
+    contact = "!aaaaaaaa"
+    _bind_recipient(conn, principal2, transport_address=contact)
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=_build_offer_from(principal2, signing_key),
+        network_available=True, source_address=contact, reply_route=_reply_route(contact),
+    )
+    assert result.state == receiver.WAITING_PROVIDER
+
+    # Rotate the address's binding to a NEW key (new principal_id + identity).
+    new_sk = SigningKey.generate()
+    new_pub = bytes(new_sk.verify_key)
+    new_key_id = identity.compute_key_id(new_pub)
+    conn.execute("DELETE FROM mca_recipient_bindings WHERE transport_address = ?", (contact,))
+    _insert_binding(
+        conn, workspace_id="local", adapter_id=ADAPTER_ID, transport_address=contact,
+        principal_id=new_key_id, sender_key_id=new_key_id, public_identity=new_pub, now=time.time(),
+    )
+
+    row = conn.execute("SELECT transfer_id FROM attachments WHERE id = ?", (result.attachment_id,)).fetchone()
+    transfer_id = bytes.fromhex(row[0])
+    cancel_cbor = codec.encode_simple_ack(codec.MessageType.CANCEL, transfer_id, signing_key)  # the ORIGINAL key
+    service.enqueue_inbound(
+        InboundEvent(text=codec.to_text(cancel_cbor), source_address=contact, packet_id="p1", received_at=time.time())
+    )
+    service.tick()
+
+    assert receiver.get_state(conn, result.attachment_id) == receiver.CANCELLED  # original key still trusted
+
+
+def test_inbound_cancel_rotated_in_key_cannot_cancel(conn, wsm, principal, provider_registry, key_exchange, remote_recipient, service):
+    """ADR-0010 Decision 3: a CANCEL signed by the address's NEW (rotated-in)
+    key - which is not the identity the OFFER was admitted under - is dropped;
+    the received row stays non-terminal. A key that did not authorize the offer
+    can never cancel it."""
+    _, wsm2, principal2 = remote_recipient
+    contact = "!aaaaaaaa"
+    _bind_recipient(conn, principal2, transport_address=contact)
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=_build_offer_from(principal2, signing_key),
+        network_available=True, source_address=contact, reply_route=_reply_route(contact),
+    )
+
+    # Rotate the address's binding to a NEW key (the rotated-in key).
+    new_sk = SigningKey.generate()
+    new_pub = bytes(new_sk.verify_key)
+    new_key_id = identity.compute_key_id(new_pub)
+    conn.execute("DELETE FROM mca_recipient_bindings WHERE transport_address = ?", (contact,))
+    _insert_binding(
+        conn, workspace_id="local", adapter_id=ADAPTER_ID, transport_address=contact,
+        principal_id=new_key_id, sender_key_id=new_key_id, public_identity=new_pub, now=time.time(),
+    )
+
+    row = conn.execute("SELECT transfer_id FROM attachments WHERE id = ?", (result.attachment_id,)).fetchone()
+    transfer_id = bytes.fromhex(row[0])
+    cancel_cbor = codec.encode_simple_ack(codec.MessageType.CANCEL, transfer_id, new_sk)  # the NEW key
+    service.enqueue_inbound(
+        InboundEvent(text=codec.to_text(cancel_cbor), source_address=contact, packet_id="p1", received_at=time.time())
+    )
+    service.tick()
+
+    assert receiver.get_state(conn, result.attachment_id) == receiver.WAITING_PROVIDER  # unchanged
+
+
+def test_inbound_cancel_bad_signature_is_dropped(conn, wsm, principal, provider_registry, key_exchange, remote_recipient, service):
+    """ADR-0010: a CANCEL carrying the right transfer_id/source but signed by a
+    key that is not the pinned sender identity is dropped on signature
+    verification."""
+    _, wsm2, principal2 = remote_recipient
+    contact = "!aaaaaaaa"
+    _bind_recipient(conn, principal2, transport_address=contact)
+    signing_key = identity.load_signing_key(wsm2, principal2)
+
+    result = receiver.handle_offer(
+        conn, workspace_manager=wsm, principal=principal, provider_registry=provider_registry,
+        key_exchange=key_exchange, raw_offer=_build_offer_from(principal2, signing_key),
+        network_available=True, source_address=contact, reply_route=_reply_route(contact),
+    )
+
+    row = conn.execute("SELECT transfer_id FROM attachments WHERE id = ?", (result.attachment_id,)).fetchone()
+    transfer_id = bytes.fromhex(row[0])
+    impostor_sk = SigningKey.generate()
+    cancel_cbor = codec.encode_simple_ack(codec.MessageType.CANCEL, transfer_id, impostor_sk)
+
+    service.enqueue_inbound(
+        InboundEvent(text=codec.to_text(cancel_cbor), source_address=contact, packet_id="p1", received_at=time.time())
+    )
+    service.tick()
+
+    assert receiver.get_state(conn, result.attachment_id) == receiver.WAITING_PROVIDER  # unchanged

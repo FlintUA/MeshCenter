@@ -80,12 +80,13 @@ DOWNLOADED = "DOWNLOADED"
 EXPIRED = "EXPIRED"
 REVOKED = "REVOKED"
 CANCELLED = "CANCELLED"
+REJECTED = "REJECTED"
 FAILED_VALIDATION = "FAILED_VALIDATION"
 FAILED_UPLOAD = "FAILED_UPLOAD"
 FAILED_RADIO = "FAILED_RADIO"
 
 TERMINAL_STATES = frozenset(
-    {DOWNLOADED, EXPIRED, REVOKED, CANCELLED, FAILED_VALIDATION, FAILED_UPLOAD, FAILED_RADIO}
+    {DOWNLOADED, EXPIRED, REVOKED, CANCELLED, REJECTED, FAILED_VALIDATION, FAILED_UPLOAD, FAILED_RADIO}
 )
 # States run_step() can make forward progress on by itself, without
 # waiting for an external event (an inbound ACK, a UI "send now" click).
@@ -1016,6 +1017,71 @@ def _apply_ack_provider_unknown(conn: sqlite3.Connection, row: sqlite3.Row, now:
     _record_event(conn, attachment_id, now, "ack_provider_unknown", {"to": SENT})
     conn.commit()
     return SENT
+
+
+def apply_rejected(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = None) -> str:
+    """Inbound REJECTED (ADR-0001): the recipient declined this offer. SENT/
+    RECEIVED -> REJECTED (terminal); any terminal state -> no-op (a stale or
+    duplicate REJECTED never regresses a DOWNLOADED/EXPIRED/REVOKED row); any
+    pre-send state -> dropped (no write - an OFFER can only be declined after
+    it was actually sent). Drops only the transient `mca_sender_state` row
+    (its encryption/upload secrets are useless once declined); the retained
+    `mca_sender_revoke_state` row survives so the revoke capability stays
+    durable until bounded cleanup retires it at `delete_after` (ADR-0010
+    Decision 5), or a future confirmed Relay revoke removes it."""
+    now = _now() if now is None else now
+    row = _row(conn, attachment_id)
+    state = row["state"]
+    if is_terminal(state):
+        return state
+    if state not in (SENT, RECEIVED):
+        return state
+    conn.execute("UPDATE attachments SET state = ?, error_code = NULL WHERE id = ?", (REJECTED, attachment_id))
+    _record_event(conn, attachment_id, now, "rejected", {"to": REJECTED})
+    _delete_transient_sender_state_keeping_revoke(conn, row, now)
+    conn.commit()
+    return REJECTED
+
+
+def apply_expired(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = None) -> str:
+    """Inbound EXPIRED (ADR-0001): the recipient observed the offer's hard
+    expiry pass. SENT/RECEIVED -> EXPIRED (terminal); any terminal state ->
+    no-op; any pre-send state -> dropped.
+
+    ADR-0010 Decision 2: an inbound EXPIRED is only *accepted* once the
+    sender's authoritative `hard_expires_at` has actually passed (`now >=
+    hard_expires_at`). An EXPIRED arriving before that boundary (a recipient
+    whose clock has run ahead, or a replayed/stale frame) is dropped with no
+    state change - the sender's own expiry timestamp, not the recipient's
+    observation of it, is the single source of truth for when an object is
+    genuinely past expiry. At the exact boundary it is accepted.
+
+    Fail closed: a row with no valid positive authoritative deadline
+    (`hard_expires_at` NULL, zero, or negative - e.g. a draft that never
+    reached READY_TO_SEND, or a pre-migration row) can never be expired by an
+    inbound frame. With no deadline there is no boundary to have passed, so an
+    EXPIRED is dropped with no state, secret-table, or timeline mutation.
+
+    Retention mirrors `apply_rejected`: only the transient `mca_sender_state`
+    row is dropped; the retained `mca_sender_revoke_state` row survives to
+    bounded cleanup at `delete_after`."""
+    now = _now() if now is None else now
+    row = _row(conn, attachment_id)
+    state = row["state"]
+    if is_terminal(state):
+        return state
+    if state not in (SENT, RECEIVED):
+        return state
+    hard_expires_at = row["hard_expires_at"]
+    if hard_expires_at is None or hard_expires_at <= 0:
+        return state  # no valid authoritative deadline - drop (fail closed)
+    if now < hard_expires_at:
+        return state  # not yet past the sender's authoritative hard expiry - drop
+    conn.execute("UPDATE attachments SET state = ?, error_code = NULL WHERE id = ?", (EXPIRED, attachment_id))
+    _record_event(conn, attachment_id, now, "expired", {"to": EXPIRED})
+    _delete_transient_sender_state_keeping_revoke(conn, row, now)
+    conn.commit()
+    return EXPIRED
 
 
 def _delete_transient_sender_state_keeping_revoke(conn: sqlite3.Connection, row: sqlite3.Row, now: float) -> None:

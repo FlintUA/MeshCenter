@@ -869,6 +869,32 @@ DROP TABLE IF EXISTS mca_auto_key_request_quota;
 """
 
 
+# ADR-0010 (v2, pinned sender identity for inbound CANCEL): the receiver-side
+# mirror of migration 14's `attachment_recipients.recipient_public_identity`.
+# Holds the exact 32-byte Ed25519 public identity the OFFER's own signature was
+# verified against, pinned once at trusted OFFER admission (receiver.py
+# `handle_offer()` under an `MCA_READY` binding) or at the `WAITING_KEY -> *`
+# resume that finally re-verifies the parked offer. Inbound CANCEL verification
+# (ADR-0010 Decision 3) checks the sender's signature against THIS pinned key,
+# never the *current* TOFU binding resolved from the mutable transport address
+# - so a later key rotation on that address can neither let the rotated-in key
+# cancel that old transfer (its key no longer matches the pinned identity) nor
+# break a valid CANCEL signed by the original pinned key the OFFER was actually
+# admitted under. NULL
+# for a still-parked WAITING_KEY offer (nothing verified yet) and for
+# pre-migration rows; a CANCEL for either is dropped (fail closed), never
+# guessed at. Deliberately NOT projected into public snapshots/REST (the
+# snapshot projection is explicit field-by-field, so this BLOB stays private by
+# construction - same precedent as `recipient_public_identity`).
+_MIGRATION_0016_UP = """
+ALTER TABLE attachments ADD COLUMN sender_public_identity BLOB;
+"""
+
+_MIGRATION_0016_DOWN = """
+ALTER TABLE attachments DROP COLUMN sender_public_identity;
+"""
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -909,6 +935,7 @@ MIGRATIONS: Sequence[Migration] = (
         data_fixup=_migration_0014_fixup_backfill_revoke_state,
     ),
     Migration(15, "auto_key_request_quota", _MIGRATION_0015_UP, _MIGRATION_0015_DOWN),
+    Migration(16, "pinned_sender_identity", _MIGRATION_0016_UP, _MIGRATION_0016_DOWN),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0

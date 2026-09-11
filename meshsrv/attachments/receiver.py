@@ -106,9 +106,10 @@ VERIFYING = "VERIFYING"
 AVAILABLE = "AVAILABLE"
 EXPIRED = "EXPIRED"
 REJECTED = "REJECTED"
+CANCELLED = "CANCELLED"
 FAILED = "FAILED"
 
-TERMINAL_STATES = frozenset({AVAILABLE, EXPIRED, REJECTED, FAILED})
+TERMINAL_STATES = frozenset({AVAILABLE, EXPIRED, REJECTED, CANCELLED, FAILED})
 # States run_step() can make forward progress on by itself, without an
 # explicit user action (WAITING_CONSENT needs `begin_download()`).
 AUTOMATIC_STATES = frozenset({WAITING_KEY, WAITING_PROVIDER, WAITING_NETWORK, DOWNLOADING})
@@ -741,11 +742,11 @@ def handle_offer(
     conn.execute(
         """
         INSERT INTO attachments
-            (id, workspace_id, transfer_id, direction, principal_id, sender_principal_id, provider_id, state,
+            (id, workspace_id, transfer_id, direction, principal_id, sender_principal_id, sender_public_identity, provider_id, state,
              created_at, hard_expires_at, download_grace_seconds, pending_offer_cbor,
              reply_route_type, reply_route_id,
              reply_adapter_id, reply_connector_profile_id, reply_destination_address)
-        VALUES (?, ?, ?, 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             attachment_id,
@@ -753,6 +754,11 @@ def handle_offer(
             transfer_id_hex,
             principal.principal_id,
             (binding.principal_id if binding_ready else None),
+            # ADR-0010 Decision 3: pin the exact public identity this OFFER
+            # was verified against, so a later inbound CANCEL is checked
+            # against the key the OFFER was actually admitted under - never
+            # the mutable current address binding (key-rotation-safe).
+            (binding.public_identity if binding_ready else None),
             encode_provider_id(unverified.provider_id),
             OFFER_RECEIVED,
             now,
@@ -913,8 +919,8 @@ def _step_waiting_key(conn, row, workspace_manager, principal, provider_registry
         return ReceiveResult(attachment_id=attachment_id, state=FAILED, replies=[])
 
     conn.execute(
-        "UPDATE attachments SET sender_principal_id = ?, pending_offer_cbor = NULL WHERE id = ?",
-        (binding.principal_id, attachment_id),
+        "UPDATE attachments SET sender_principal_id = ?, sender_public_identity = ?, pending_offer_cbor = NULL WHERE id = ?",
+        (binding.principal_id, binding.public_identity, attachment_id),
     )
     return _resolve_provider_or_wait(
         conn,
@@ -985,6 +991,23 @@ def reject(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = 
     _set_state(conn, attachment_id, REJECTED, now)
     conn.commit()
     return REJECTED
+
+
+def apply_cancelled(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = None) -> str:
+    """Inbound CANCEL (ADR-0001): the sender withdrew this offer. Any
+    non-terminal state (OFFER_RECEIVED .. VERIFYING) -> CANCELLED (terminal);
+    any terminal state -> no-op (a stale/duplicate CANCEL never regresses an
+    AVAILABLE/EXPIRED/REJECTED/FAILED row, and never overwrites a different
+    terminal outcome). The caller has already verified the CANCEL's signature
+    and sender identity, so this is the pure state write only."""
+    now = _now() if now is None else now
+    row = _row(conn, attachment_id)
+    if is_terminal(row["state"]):
+        return row["state"]
+    _set_state(conn, attachment_id, CANCELLED, now)
+    _record_event(conn, attachment_id, now, "cancelled", {"to": CANCELLED})
+    conn.commit()
+    return CANCELLED
 
 
 # ---- Downloading -> Verifying -> Available/Failed --------------------------

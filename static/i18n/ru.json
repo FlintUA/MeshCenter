@@ -277,6 +277,18 @@
       "ttl_below_minimum": "Срок ниже минимума провайдера",
       "ttl_above_maximum": "Срок выше максимума провайдера"
     },
+    "upload_readiness": {
+      "ready": "Готов",
+      "upload_token_missing": "Токен загрузки не настроен",
+      "upload_disabled": "Загрузки отключены"
+    },
+    "readiness_checking": "Проверка загрузки…",
+    "provider_upload_readiness": "Готовность загрузки",
+    "provider_last_checked": "Последняя проверка",
+    "provider_last_check_result": "Результат последней проверки",
+    "provider_last_latency": "Задержка",
+    "provider_last_error": "Последняя ошибка",
+    "provider_never_checked": "Никогда не проверялся",
     "provider_display_name": "Отображаемое имя",
     "provider_enabled": "Включено",
     "provider_upload_allowed": "Выгрузка разрешена",

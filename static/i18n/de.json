@@ -277,6 +277,18 @@
       "ttl_below_minimum": "Ablauf liegt unter dem Anbieter-Minimum",
       "ttl_above_maximum": "Ablauf liegt über dem Anbieter-Maximum"
     },
+    "upload_readiness": {
+      "ready": "Bereit",
+      "upload_token_missing": "Kein Upload-Token konfiguriert",
+      "upload_disabled": "Uploads deaktiviert"
+    },
+    "readiness_checking": "Prüfe Upload…",
+    "provider_upload_readiness": "Upload-Bereitschaft",
+    "provider_last_checked": "Zuletzt geprüft",
+    "provider_last_check_result": "Letztes Prüfergebnis",
+    "provider_last_latency": "Latenz",
+    "provider_last_error": "Letzter Fehler",
+    "provider_never_checked": "Nie geprüft",
     "provider_display_name": "Anzeigename",
     "provider_enabled": "Aktiviert",
     "provider_upload_allowed": "Upload erlaubt",

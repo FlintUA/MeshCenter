@@ -277,6 +277,18 @@
       "ttl_below_minimum": "Expiry is below the provider minimum",
       "ttl_above_maximum": "Expiry is above the provider maximum"
     },
+    "upload_readiness": {
+      "ready": "Ready",
+      "upload_token_missing": "No upload token configured",
+      "upload_disabled": "Uploads disabled"
+    },
+    "readiness_checking": "Checking upload…",
+    "provider_upload_readiness": "Upload readiness",
+    "provider_last_checked": "Last checked",
+    "provider_last_check_result": "Last check result",
+    "provider_last_latency": "Latency",
+    "provider_last_error": "Last error",
+    "provider_never_checked": "Never checked",
     "provider_display_name": "Display name",
     "provider_enabled": "Enabled",
     "provider_upload_allowed": "Upload allowed",

@@ -277,6 +277,18 @@
       "ttl_below_minimum": "Термін нижче мінімуму провайдера",
       "ttl_above_maximum": "Термін вище максимуму провайдера"
     },
+    "upload_readiness": {
+      "ready": "Готово",
+      "upload_token_missing": "Токен завантаження не налаштовано",
+      "upload_disabled": "Завантаження вимкнено"
+    },
+    "readiness_checking": "Перевірка завантаження…",
+    "provider_upload_readiness": "Готовність завантаження",
+    "provider_last_checked": "Остання перевірка",
+    "provider_last_check_result": "Результат останньої перевірки",
+    "provider_last_latency": "Затримка",
+    "provider_last_error": "Остання помилка",
+    "provider_never_checked": "Ніколи не перевірявся",
     "provider_display_name": "Відображуване ім'я",
     "provider_enabled": "Увімкнено",
     "provider_upload_allowed": "Вивантаження дозволено",

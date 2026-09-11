@@ -150,6 +150,14 @@
         ttl_above_maximum: 'Expiry is above the provider maximum',
     };
 
+    // UploadReadiness (config-only 3-value enum) — distinct from the richer
+    // UploadRejectionReason map above, which shares `upload_token_missing`.
+    var FILES_UPLOAD_READINESS_LABELS = {
+        ready: 'Ready',
+        upload_token_missing: 'No upload token configured',
+        upload_disabled: 'Uploads disabled',
+    };
+
     // ---- single internal state object --------------------------------------
 
     var state = {
@@ -181,6 +189,9 @@
         sendSignature: null,      // semantic send-form signature (C7 idempotency)
         sendClientRequestId: null,
         sendInFlight: false,
+        sendReadinessToken: 0,    // monotonic token — stale readiness responses dropped (F2)
+        sendReadiness: null,      // authoritative readiness result for the open send dialog
+        sendTtlDebounce: null,    // debounce timer for rapid Custom-TTL typing (F2)
 
         dialog: null,             // currently-open dialog element
         dialogReturnFocus: null,  // element to restore focus to on close (C11)
@@ -223,6 +234,7 @@
     function filesContactStatusLabel(s) { return t('files.contact.' + s, FILES_CONTACT_STATUS_LABELS[s] || s); }
     function filesRelayStateLabel(s) { return t('files.relay_state.' + s, FILES_RELAY_STATE_LABELS[s] || s); }
     function filesReadinessLabel(s) { return t('files.ready_reason.' + s, FILES_READINESS_LABELS[s] || s || 'Unknown'); }
+    function filesUploadReadinessLabel(s) { return t('files.upload_readiness.' + s, FILES_UPLOAD_READINESS_LABELS[s] || s || 'Unknown'); }
 
     function filesErrorCode(data) {
         var code = (data && data.error_code) ? data.error_code : 'internal_error';
@@ -428,7 +440,7 @@
     }
 
     function refreshContacts() {
-        guardedLoad('contacts', function () {
+        return guardedLoad('contacts', function () {
             return Promise.all([
                 api('/api/nodes_management'),
                 api('/api/mca/contacts'),
@@ -464,7 +476,7 @@
     }
 
     function loadConnectivity() {
-        guardedLoad('connectivity', function () {
+        return guardedLoad('connectivity', function () {
             return api('/api/mca/connectivity');
         }, function (r) {
             if (r.status === 200 && r.data && r.data.ok) {
@@ -473,16 +485,21 @@
                     relays: r.data.relays || {},
                 };
             }
+            // F2: fresh connectivity landing for the open Send dialog refreshes
+            // the status line and re-requests authoritative readiness.
+            renderSendStatus();
+            refreshSendReadiness();
         });
     }
 
     function loadSettings() {
-        guardedLoad('settings', function () {
+        return guardedLoad('settings', function () {
             return api('/api/settings');
         }, function (r) {
             if (r.status === 200 && r.data && r.data.ok && r.data.settings) {
                 state.settings = r.data.settings;
             }
+            renderSendStatus();
         });
     }
 
@@ -491,7 +508,7 @@
         var url = '/api/attachments?direction=' + encodeURIComponent(mapping.direction) +
             '&filter=' + encodeURIComponent(mapping.filter) +
             '&limit=' + LIST_LIMIT;
-        guardedLoad('transfers', function () {
+        return guardedLoad('transfers', function () {
             return api(url);
         }, function (r) {
             if (r.status !== 200 || !r.data || r.data.ok !== true) {
@@ -970,8 +987,8 @@
                     resourceKey: resourceKey,
                     queued: opts.queued,
                     success: opts.success,
-                    onSuccess: function () { loadTransfers(); },
-                    onUnknown: function () { loadTransfers(); },
+                    onSuccess: function () { return loadTransfers(); },
+                    onUnknown: function () { return loadTransfers(); },
                 });
             } else if (r.status === 409) {
                 toast(t('files.state_changed', 'This transfer changed — refreshing'), 'info');
@@ -1048,8 +1065,8 @@
                         resourceKey: resourceKey,
                         queued: t('files.deleting_local', 'Deleting local copy…'),
                         success: t('files.local_deleted', 'Local copy deleted'),
-                        onSuccess: function () { loadTransfers(); },
-                        onUnknown: function () { loadTransfers(); },
+                        onSuccess: function () { return loadTransfers(); },
+                        onUnknown: function () { return loadTransfers(); },
                     });
                 } else {
                     toast(filesErrorCode(r.data), 'error');
@@ -1092,8 +1109,8 @@
                     resourceKey: resourceKey,
                     queued: opts.queued,
                     success: opts.success,
-                    onSuccess: function () { refreshContacts(); },
-                    onUnknown: function () { refreshContacts(); },
+                    onSuccess: function () { return refreshContacts(); },
+                    onUnknown: function () { return refreshContacts(); },
                 });
             } else if (r.status === 429) {
                 var retry = (r.data && r.data.retry_after_seconds) || 600;
@@ -1339,10 +1356,17 @@
         for (var i = 0; i < children.length; i++) {
             var c = children[i];
             if (c === dialogRoot) continue;
+            // F4: store the prior native inert state (a real Element.inert boolean
+            // in the browser, an observable expando on the test double) alongside
+            // the prior aria-hidden, so BOTH are restored on every close path.
+            if (typeof c._filesPrevInert === 'undefined') {
+                c._filesPrevInert = (c.inert === true);
+            }
             if (typeof c._filesPrevAriaHidden === 'undefined') {
                 c._filesPrevAriaHidden = c.getAttribute ? c.getAttribute('aria-hidden') : null;
             }
             if (c.setAttribute) c.setAttribute('aria-hidden', 'true');
+            c.inert = true; // native property in the browser; expando in the harness
         }
     }
 
@@ -1358,6 +1382,10 @@
                     c.setAttribute('aria-hidden', c._filesPrevAriaHidden);
                 }
                 delete c._filesPrevAriaHidden;
+            }
+            if (typeof c._filesPrevInert !== 'undefined') {
+                c.inert = c._filesPrevInert === true;
+                delete c._filesPrevInert;
             }
         }
     }
@@ -1479,9 +1507,12 @@
             return;
         }
         // The custom-TTL number input fires 'input' as digits are typed, so the
-        // expiry summary updates live rather than only on blur.
+        // expiry summary updates live rather than only on blur; the authoritative
+        // readiness refresh is debounced (F2).
         if (target.id === 'filesSendCustomTtlSeconds') {
             renderSendExpiry();
+            renderSendSubmit();
+            scheduleSendReadinessRefresh();
             return;
         }
     }
@@ -1491,9 +1522,10 @@
     function onDocumentChange(e) {
         var target = e.target;
         if (!target || !target.id) return;
-        if (target.id === 'filesSendExpiry') { renderSendCustomTtl(); return; }
+        if (target.id === 'filesSendExpiry') { renderSendCustomTtl(); refreshSendReadiness(); return; }
         if (target.id === 'filesSendFile') { renderSendFileFeedback(); return; }
-        if (target.id === 'filesSendProvider') { renderSendProviderReadiness(); return; }
+        if (target.id === 'filesSendProvider') { renderSendProviderReadiness(); refreshSendReadiness(); return; }
+        if (target.id === 'filesSendRecipient') { renderSendSubmit(); return; }
     }
 
     // ---- filter (C5) -------------------------------------------------------
@@ -1569,9 +1601,6 @@
     function openSendDialog() {
         if (typeof document === 'undefined') return;
         closeModal();
-        loadConnectivity();
-        loadSettings();
-        loadProvidersForSend();
         var id = 'files-send';
         var html =
             '<div class="files-modal-backdrop" data-files-action="modal-backdrop-close" role="presentation">' +
@@ -1590,6 +1619,7 @@
                             '<span class="files-field-label">' + esc(t('files.send_provider', 'Relay provider')) + '</span>' +
                             '<select id="filesSendProvider"></select>' +
                             '<div class="files-send-readiness" id="filesSendReadiness" aria-live="polite"></div>' +
+                            '<div class="files-send-readiness-check" id="filesSendReadinessCheck" aria-live="polite"></div>' +
                         '</label>' +
                         '<label class="files-field">' +
                             '<span class="files-field-label">' + esc(t('files.send_file_label', 'File')) + '</span>' +
@@ -1620,10 +1650,17 @@
             '</div>';
         var el = openModalHtml(html, function () { state.sendInFlight = false; });
         el.className = 'files-dialog-root is-send';
+        // F2: render the dialog first, then start the fresh loads — each settles
+        // and updates the open dialog independently (order-independent).
         renderSendRecipients();
         renderSendProviders();
         renderSendStatus();
         renderSendCustomTtl();
+        renderSendSubmit();
+        refreshSendReadiness();
+        loadConnectivity();
+        loadSettings();
+        loadProvidersForSend();
     }
 
     function loadProvidersForSend() {
@@ -1635,6 +1672,9 @@
                 ? r.data.providers : [];
             renderSendProviders();
             renderSendStatus();
+            // F2: a fresh provider projection triggers the authoritative readiness
+            // request for the (now known) selected provider/TTL.
+            refreshSendReadiness();
         });
     }
 
@@ -1784,20 +1824,27 @@
         if (!el) return;
         var input = getEl('filesSendFile');
         var f = input && input.files && input.files.length ? input.files[0] : null;
-        if (!f) { el.innerHTML = ''; return; }
+        if (!f) { el.innerHTML = ''; renderSendSubmit(); return; }
+        // F1: an allowlisted extension or MIME is allowed; anything else is
+        // rejected locally (immediate, localized feedback). A stale rejection
+        // clears the moment an allowed file is selected — the server's magic-byte
+        // sniffing stays the real authority.
+        if (!fileTypeAllowed(f)) {
+            el.innerHTML = '<span class="files-status-error">' +
+                esc(t('files.err_mime', 'File type is not allowed')) + '</span>';
+            renderSendSubmit();
+            return;
+        }
         var name = (f.name || '').toLowerCase();
         var ext = name.indexOf('.') !== -1 ? name.split('.').pop() : '';
-        // R7: advisory MIME feedback from the server-authoritative allowlist
-        // (JPEG/PNG/WebP/PDF/TXT/LOG/CSV/JSON). The client only *describes* the
-        // file here; the server sniffs magic bytes and is the real authority,
-        // so an unrecognized type is a warning, never a hard block.
         var known = EXTENSION_MIME[ext] || (ALLOWED_MIME[f.type] ? f.type : '');
         var typeLine = known
             ? tparams('files.send_file_type', { type: known }, 'Type: ' + known)
-            : t('files.send_file_type_unknown', 'Type: unrecognized — the server will validate it');
+            : t('files.send_file_type_unknown', 'Type: unrecognized');
         el.innerHTML =
             '<span>' + esc(typeLine) + '</span>' +
             ' · <span>' + esc(tparams('files.send_file_size', { size: fmtBytes(f.size) }, 'Size: ' + fmtBytes(f.size))) + '</span>';
+        renderSendSubmit();
     }
 
     function renderSendCustomTtl() {
@@ -1811,7 +1858,21 @@
     function renderSendExpiry() {
         var summary = getEl('filesSendExpirySummary');
         if (!summary) return;
-        var ttl = sendTtlSeconds();
+        var ttl = sendTtlSecondsStrict();
+        // Section 7: a blank/invalid Custom TTL shows a localized prompt, not a
+        // fictitious 86400-second expiry. Expiry/grace are computed only once a
+        // valid value is present, and the value is checked against the selected
+        // provider's min/max locally before the summary is shown.
+        if (ttl === null) {
+            summary.innerHTML = '<span class="files-status-warn">' +
+                esc(t('files.err_ttl_custom', 'Enter a positive whole number of seconds for the custom expiry')) + '</span>';
+            return;
+        }
+        var minMax = sendTtlMinMaxError(ttl);
+        if (minMax) {
+            summary.innerHTML = '<span class="files-status-warn">' + esc(minMax) + '</span>';
+            return;
+        }
         var grace = sendGraceSeconds(ttl);
         var expiry = Math.floor(Date.now() / 1000) + ttl;
         summary.innerHTML =
@@ -1820,6 +1881,15 @@
     }
 
     function sendTtlSeconds() {
+        // Submit-path helper: returns the resolved TTL. submitSend validates a
+        // Custom value before this is ever consulted, so the 86400 fallback is
+        // unreachable in the custom branch during a real submit.
+        var ttl = sendTtlSecondsStrict();
+        if (ttl !== null) return ttl;
+        return 86400;
+    }
+
+    function sendTtlSecondsStrict() {
         var sel = getEl('filesSendExpiry');
         var mode = sel ? sel.value : 'default';
         if (mode === 'extended') return 604800;
@@ -1828,9 +1898,22 @@
             var raw = input ? String(input.value || '').trim() : '';
             var n = parseInt(raw, 10);
             if (raw !== '' && Number.isFinite(n) && String(n) === raw && n > 0) return n;
-            return 86400; // fallback; submitSend validates the custom value itself
+            return null; // blank/zero/non-integer/negative — no fictitious TTL
         }
         return 259200; // default 3 days
+    }
+
+    function sendTtlMinMaxError(ttl) {
+        var sel = getEl('filesSendProvider');
+        var p = sel && sel.value ? providerById(sel.value) : null;
+        if (!p) return null;
+        if (p.min_ttl_seconds != null && ttl < p.min_ttl_seconds) {
+            return filesReadinessLabel('ttl_below_minimum');
+        }
+        if (p.max_ttl_seconds != null && ttl > p.max_ttl_seconds) {
+            return filesReadinessLabel('ttl_above_maximum');
+        }
+        return null;
     }
 
     function sendGraceSeconds(ttl) {
@@ -1844,11 +1927,13 @@
         var expiry = getEl('filesSendExpiry');
         var comment = getEl('filesSendComment');
         var f = file && file.files && file.files.length ? file.files[0] : null;
+        var ttl = sendTtlSecondsStrict(); // null only for an invalid Custom value
         return [
             recipient ? recipient.value : '',
             provider ? provider.value : '',
             expiry ? expiry.value : 'default',
-            String(sendTtlSeconds()), // custom TTL is part of the semantic form
+            ttl === null ? '' : String(ttl), // exact TTL in the semantic form
+            ttl === null ? '' : String(sendGraceSeconds(ttl)), // exact grace too (Section 7)
             comment ? (comment.value || '').trim() : '',
             f ? f.name : '',
             f ? String(f.size) : '',
@@ -1865,6 +1950,102 @@
         state.sendInFlight = false;
         var submit = getEl('filesSendSubmit');
         if (submit) submit.disabled = false;
+    }
+
+    function isSendDialogOpen() {
+        return Boolean(state.dialog && state.dialog.className &&
+            String(state.dialog.className).indexOf('is-send') !== -1);
+    }
+
+    // F2: authoritative readiness for the exact requested TTL, rendered into a
+    // dedicated element (filesSendReadinessCheck) separate from the config-only
+    // Relay-state/upload line (filesSendReadiness). A monotonic token drops any
+    // response that no longer matches the latest request, so a slower older
+    // response or one landing after the dialog closed/advanced cannot overwrite
+    // the current value.
+    function renderSendReadinessCheck() {
+        var el = getEl('filesSendReadinessCheck');
+        if (!el) return;
+        var s = state.sendReadiness;
+        if (!s) { el.innerHTML = ''; return; }
+        if (s.pending) {
+            el.innerHTML = '<span>' + esc(t('files.readiness_checking', 'Checking upload…')) + '</span>';
+            return;
+        }
+        if (s.reason === 'ttl_invalid') {
+            el.innerHTML = '<span class="files-status-warn">' +
+                esc(t('files.err_ttl_custom', 'Enter a positive whole number of seconds for the custom expiry')) + '</span>';
+            return;
+        }
+        var label = s.ready
+            ? t('files.upload_ready', 'Upload: ready')
+            : t('files.upload_not_ready', 'Upload: not ready') + ' — ' + filesReadinessLabel(s.reason);
+        el.innerHTML = '<span class="' + (s.ready ? 'files-status-ok' : 'files-status-warn') + '">' + esc(label) + '</span>';
+    }
+
+    // F2: gate the Send button on every prerequisite the server will re-check at
+    // submit. This is proactive feedback only — never authoritative — and is
+    // intentionally kept out of unlockSend(), which the tests rely on to set
+    // disabled=false directly after a terminal command.
+    function renderSendSubmit() {
+        var submit = getEl('filesSendSubmit');
+        if (!submit) return;
+        if (state.sendInFlight) { submit.disabled = true; return; }
+        var recipient = getEl('filesSendRecipient');
+        var provider = getEl('filesSendProvider');
+        var fileInput = getEl('filesSendFile');
+        var hasRecipient = Boolean(recipient && recipient.value);
+        var hasProvider = Boolean(provider && provider.value);
+        var file = fileInput && fileInput.files && fileInput.files.length ? fileInput.files[0] : null;
+        var fileOk = Boolean(file && fileTypeAllowed(file) &&
+            (typeof file.size !== 'number' || file.size <= MAX_SEND_BYTES));
+        var ttlValid = sendTtlSecondsStrict() !== null;
+        var readinessOk = Boolean(state.sendReadiness && state.sendReadiness.ready);
+        submit.disabled = !(hasRecipient && hasProvider && fileOk && ttlValid && readinessOk);
+    }
+
+    function refreshSendReadiness() {
+        if (!isSendDialogOpen()) { state.sendReadiness = null; return; }
+        var sel = getEl('filesSendProvider');
+        var providerId = sel ? sel.value : '';
+        var ttl = sendTtlSecondsStrict();
+        var token = ++state.sendReadinessToken;
+
+        if (!providerId) {
+            state.sendReadiness = null;
+            renderSendReadinessCheck();
+            renderSendSubmit();
+            return;
+        }
+        if (ttl === null) {
+            state.sendReadiness = { providerId: providerId, ttl: null, ready: false, reason: 'ttl_invalid', pending: false };
+            renderSendReadinessCheck();
+            renderSendSubmit();
+            return;
+        }
+
+        state.sendReadiness = { providerId: providerId, ttl: ttl, ready: false, reason: 'checking', pending: true };
+        renderSendReadinessCheck();
+        renderSendSubmit();
+
+        api('/api/mca/providers/' + encodeURIComponent(providerId) +
+            '/upload-readiness?requested_ttl_seconds=' + ttl).then(function (r) {
+            if (token !== state.sendReadinessToken) return; // stale response — drop
+            if (!isSendDialogOpen()) return;                  // dialog closed/advanced — drop
+            var ready = Boolean(r.status === 200 && r.data && r.data.ok === true && r.data.ready);
+            var reason = ready ? null : (r.data && r.data.reason ? r.data.reason : 'relay_unreachable');
+            state.sendReadiness = { providerId: providerId, ttl: ttl, ready: ready, reason: reason, pending: false };
+            renderSendReadinessCheck();
+            renderSendSubmit();
+        });
+    }
+
+    function scheduleSendReadinessRefresh() {
+        if (state.sendTtlDebounce) clearTimeout(state.sendTtlDebounce);
+        state.sendTtlDebounce = setTimeout(function () {
+            state.sendTtlDebounce = null;
+            refreshSendReadiness();
+        }, 300);
     }
 
     function submitSend() {
@@ -1955,9 +2136,13 @@
                             unlockSend();
                             state.sendSignature = null;
                             state.sendClientRequestId = null;
-                            closeModal(false);
-                            loadTransfers();
-                            if (attachmentId) selectAttachment(attachmentId);
+                            // F5: close only after the authoritative refresh
+                            // settles, and return its Promise so the tracker
+                            // does not announce success early.
+                            return loadTransfers().then(function () {
+                                closeModal(false);
+                                if (attachmentId) selectAttachment(attachmentId);
+                            });
                         },
                         onFailed: function () {
                             // Keep the form (and its client_request_id) so the
@@ -1971,7 +2156,7 @@
                         },
                         onUnknown: function () {
                             unlockSend();
-                            loadTransfers();
+                            return loadTransfers();
                         },
                     });
                     // Do not claim success yet: the tracker owns the final outcome.
@@ -1987,14 +2172,14 @@
     }
 
     function fileTypeAllowed(file) {
+        if (!file) return false;
         var name = (file.name || '').toLowerCase();
         var ext = name.indexOf('.') !== -1 ? name.split('.').pop() : '';
-        if (EXTENSION_MIME[ext] || ALLOWED_MIME[file.type]) {
-            // extension or declared MIME is in the allowlist — good enough for feedback
-            return true;
-        }
-        // Unknown extension and unknown MIME: let the server decide (authoritative).
-        return true;
+        // F1: a recognized allowlisted extension OR a browser-supplied allowlisted
+        // MIME (even extensionless) is allowed. When both are absent/unrecognized
+        // the file is rejected locally — the server's magic-byte sniffing remains
+        // authoritative, so this is a client-side gate, never a guarantee.
+        return Boolean(EXTENSION_MIME[ext] || ALLOWED_MIME[file.type]);
     }
 
     // ---- provider settings (C8) --------------------------------------------
@@ -2300,6 +2485,13 @@
                         providerField('files.provider_protocol', 'Protocol version', p.protocol_version || '—') +
                         providerField('files.provider_token', 'Token', p.upload_token_configured ? '✓' : '—') +
                     '</div>' +
+                    '<div class="files-provider-fields files-provider-status">' +
+                        providerField('files.provider_upload_readiness', 'Upload readiness', providerUploadReadiness(p)) +
+                        providerField('files.provider_last_checked', 'Last checked', providerLastChecked(p)) +
+                        providerField('files.provider_last_check_result', 'Last check result', providerLastCheckResult(p)) +
+                        providerField('files.provider_last_latency', 'Latency', providerLastLatency(p)) +
+                        providerField('files.provider_last_error', 'Last error', providerLastError(p)) +
+                    '</div>' +
                     '<div class="files-provider-actions">' +
                         '<button type="button" class="files-action-btn" data-files-action="provider-edit" data-provider="' + esc(p.provider_id) + '"' + enabled + '>' +
                             esc(t('files.edit', 'Edit')) + '</button>' +
@@ -2330,6 +2522,26 @@
     function providerField(labelKey, fallback, value) {
         return '<div class="files-provider-field"><span class="files-provider-field-label">' +
             esc(t(labelKey, fallback)) + '</span><span class="files-provider-field-value">' + esc(value) + '</span></div>';
+    }
+
+    // F3: the shared provider card's live status fields. Values are localized
+    // (local-timezone timestamp, numeric-only latency, safe code/fallback) and
+    // never expose secrets or raw exception text.
+    function providerLastChecked(p) {
+        return p.last_checked_at ? fmtDate(p.last_checked_at) : t('files.provider_never_checked', 'Never checked');
+    }
+    function providerLastCheckResult(p) {
+        return p.last_check_result ? filesRelayStateLabel(p.last_check_result) : '—';
+    }
+    function providerLastLatency(p) {
+        return (typeof p.last_latency_ms === 'number' && Number.isFinite(p.last_latency_ms))
+            ? p.last_latency_ms + ' ms' : '—';
+    }
+    function providerLastError(p) {
+        return p.last_error_code ? p.last_error_code : '—';
+    }
+    function providerUploadReadiness(p) {
+        return filesUploadReadinessLabel(p.upload_readiness);
     }
 
     function providerProbe() {
@@ -2423,9 +2635,9 @@
                         if (resultEl) resultEl.innerHTML = '';
                         var originEl = getEl('filesProviderOrigin');
                         if (originEl) originEl.value = '';
-                        loadProviders();
+                        return loadProviders();
                     },
-                    onUnknown: function () { loadProviders(); },
+                    onUnknown: function () { return loadProviders(); },
                 });
             }).catch(function () {
                 toast(t('files.error.network_error', 'Network error'), 'error');

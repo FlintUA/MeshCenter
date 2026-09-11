@@ -341,6 +341,19 @@ def _reply_route_snapshot(
     )
 
 
+# PR 2.5 correction: the *default* route source for a receiver-side control
+# message (ACK / REJECTED / EXPIRED) is the attachment's own pinned `reply_*`
+# route. It is a distinct sentinel - not `None` - so the two callers that
+# *must* not mean "derive the reply route" can't be conflated with the
+# default: a sender-side CANCEL passes `route=None` explicitly to mean "no
+# complete delivery route was recorded - persist an explicitly-incomplete
+# snapshot and let dispatch fail it closed to UNDELIVERABLE". Collapsing the
+# two onto a single `None` was the PR 2.5 bug: a sender CANCEL whose delivery
+# route was missing silently fell back to `attachments.reply_*` and could be
+# sent to a wholly unrelated address.
+_DERIVE_REPLY_ROUTE = object()
+
+
 def enqueue_control_message(
     conn: sqlite3.Connection,
     *,
@@ -351,7 +364,7 @@ def enqueue_control_message(
     principal: MCAPrincipal,
     workspace_manager: MCAWorkspaceManager,
     now: float,
-    route: Optional[ReplyRoute] = None,
+    route: object = _DERIVE_REPLY_ROUTE,
 ) -> Optional[bytes]:
     """Enqueue one signed control message (ACK_RECEIVED / ACK_DOWNLOADED /
     ACK_PROVIDER_UNKNOWN / REJECTED / EXPIRED / CANCEL) at most once per
@@ -367,17 +380,26 @@ def enqueue_control_message(
 
     `route` is the immutable route snapshot persisted on the outbox row
     (PR 2.5 / migration 17) so the later dispatch step sends through the
-    route captured *now*, never a mutable contact lookup. For a
-    receiver-side message, `route` defaults to the attachment's own pinned
-    `reply_*` route (`_reply_route_snapshot()`); for a sender-side CANCEL,
-    the caller passes the route read from `attachment_deliveries`
-    explicitly. A missing/partial route is still enqueued (the local
-    transition must never be silently separated from its outbox row) with
-    whichever of the five route columns were not recorded left NULL, so the
-    dispatch step fails it closed to UNDELIVERABLE per-field (missing or
-    mismatched adapter/connector, non-canonical route_id/destination, or a
-    destination that differs from route_id) rather than guessing a
-    destination.
+    route captured *now*, never a mutable contact lookup. It is one of three
+    non-overlapping values, with no single `None` meaning two different
+    things:
+
+    - `_DERIVE_REPLY_ROUTE` (the default): a receiver-side message, whose
+      route is the attachment's own pinned `reply_*` route
+      (`_reply_route_snapshot()`).
+    - a `ReplyRoute`: a caller-supplied complete route snapshot (a
+      sender-side CANCEL read from `attachment_deliveries`).
+    - `None`: an *explicitly incomplete* snapshot (a sender-side CANCEL whose
+      delivery route is missing/incomplete) - the five route columns are left
+      NULL so the dispatch step fails it closed to UNDELIVERABLE, never
+      falling back to `attachments.reply_*`.
+
+    A missing/partial route is still enqueued (the local transition must
+    never be silently separated from its outbox row) with whichever of the
+    five route columns were not recorded left NULL, so the dispatch step
+    fails it closed to UNDELIVERABLE per-field (missing or mismatched
+    adapter/connector, non-canonical route_id/destination, or a destination
+    that differs from route_id) rather than guessing a destination.
 
     Deliberately does NOT record any "sent" bookkeeping here - the outbox
     row this inserts starts, and stays, PENDING until the dispatch step's
@@ -386,13 +408,15 @@ def enqueue_control_message(
 
     if _control_already_enqueued(conn, attachment_id, event_type):
         return None
-    if route is not None:
+    if route is _DERIVE_REPLY_ROUTE:
+        snapshot = _reply_route_snapshot(conn, attachment_id)
+    elif route is None:
+        snapshot = (None, None, None, None, None)
+    else:
         snapshot = (
             route.adapter_id, route.connector_profile_id, route.route_type,
             route.route_id, route.destination_address,
         )
-    else:
-        snapshot = _reply_route_snapshot(conn, attachment_id)
     signing_key = identity.load_signing_key(workspace_manager, principal)
     frame = codec.encode_simple_ack(message_type, transfer_id, signing_key)
     conn.execute(

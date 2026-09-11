@@ -44,6 +44,7 @@ simply inlined.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import hashlib
 import logging
@@ -173,6 +174,21 @@ MAX_REVOKE_STATE_CLEANUP_PER_TICK = 100
 # onto the radio all at once - the same per-tick work discipline as
 # MAX_ATTACHMENTS_PER_TICK / MAX_OUTGOING_REPLY_SENDS_PER_DISPATCH.
 MAX_RECEIVER_EXPIRY_PER_TICK = 8
+
+# PR 2.5 correction: the *fixed* sanitized dispatch error tokens written to
+# `mca_outgoing_replies.last_error` and logged by `_dispatch_outgoing_replies`.
+# A persisted/logged error must never embed a route id, destination address,
+# adapter id, connector profile id, or exception text - only one of these
+# allowlisted tokens, plus (in logs only) a safe identifier and the exception
+# class name. See `_dispatch_outgoing_replies()` for where each is produced.
+REPLY_ROUTE_MISSING = "reply_route_missing"
+REPLY_ROUTE_NOT_DIRECT = "reply_route_not_direct"
+REPLY_ROUTE_INVALID_CONTACT = "reply_route_invalid_contact"
+REPLY_DESTINATION_MISMATCH = "reply_destination_mismatch"
+REPLY_ADAPTER_MISMATCH = "reply_adapter_mismatch"
+REPLY_CONNECTOR_MISMATCH = "reply_connector_mismatch"
+DELIVERY_ERROR = "delivery_error"
+DELIVERY_RECEIPT_NOT_SENT = "delivery_receipt_not_sent"
 
 # ADR-0009 Decision 7 (extended by ADR-0010): the inbound simple-ACK-shaped
 # types routed to the signed-ACK path (`_process_inbound_ack`). ACK_RECEIVED /
@@ -795,6 +811,14 @@ class AttachmentsService:
                 "AttachmentsService: command %s (%s) handler raised %s",
                 command.command_id, command.kind, type(exc).__name__,
             )
+            # PR 2.5 correction (defense-in-depth): roll back any transaction
+            # the raising handler left open, so a partially-written state
+            # transition (or half-inserted outbox row) can never be committed
+            # by a later, unrelated operation on this connection. The handler
+            # is expected to roll back itself (see `_atomic`); this is the
+            # belt-and-suspenders guarantee that even a handler that raises
+            # before reaching its own rollback cannot leak a partial write.
+            self._rollback_silently()
             self._record_failed(command, COMMAND_EXECUTION_FAILED)
             return
         if not isinstance(outcome, CommandOutcome):
@@ -1228,6 +1252,35 @@ class AttachmentsService:
         except Exception:
             pass
 
+    @contextlib.contextmanager
+    def _atomic(self, name: str = "op"):
+        """PR 2.5 correction (exception-atomic transitions): run a block as one
+        atomic unit on the worker's single SQLite connection. Opens a SAVEPOINT,
+        then on success releases it and commits the outer transaction, and on
+        any exception rolls back *to the savepoint* and releases it - so a
+        partial write from the block (a state UPDATE, an `attachment_events`
+        row, a sender transient/revoke-state DELETE, a half-inserted outbox
+        row) can never leak into a later commit on this connection.
+
+        Distinct from `_rollback_silently()`, which undoes *everything* since
+        the last commit: a SAVEPOINT rollback is scoped to exactly this block,
+        so a caller looping over many rows (the expiry sweep) can isolate one
+        failing row and keep processing later ones without committing the
+        failed row's partial writes. The worker is single-threaded and every
+        other operation commits or rolls back before yielding, so `_atomic`'s
+        savepoint is normally the outermost transaction - but it is correct
+        even when a caller's own DML opened an outer transaction first (the
+        savepoint is then nested and only the inner block is undone)."""
+        self._conn.execute(f"SAVEPOINT {name}")
+        try:
+            yield
+        except Exception:
+            self._conn.execute(f"ROLLBACK TO {name}")
+            self._conn.execute(f"RELEASE {name}")
+            raise
+        self._conn.execute(f"RELEASE {name}")
+        self._conn.commit()
+
     def _remove_reservation(self, client_request_id) -> None:
         """Drop the pending reservation for a create that will not commit a row
         (or whose row already exists). Guarded: a malformed/non-string key is
@@ -1555,24 +1608,40 @@ class AttachmentsService:
         if row["direction"] != "received" or row["state"] != receiver.WAITING_CONSENT:
             return CommandOutcome.failed("invalid_state_transition")
         try:
-            receiver.reject(self._conn, attachment_id, now=self._now(), commit=False)
-            receiver.enqueue_control_message(
-                self._conn,
-                attachment_id=attachment_id,
-                transfer_id=bytes.fromhex(row["transfer_id"]),
-                message_type=codec.MessageType.REJECTED,
-                event_type=receiver._EVENT_REJECTED_SENT,
-                principal=self._principal,
-                workspace_manager=self._workspace_manager,
-                now=self._now(),
-            )
-            self._conn.commit()
-        except (receiver.ReceiverError, ValueError):
+            with self._atomic("reject"):
+                receiver.reject(self._conn, attachment_id, now=self._now(), commit=False)
+                receiver.enqueue_control_message(
+                    self._conn,
+                    attachment_id=attachment_id,
+                    transfer_id=bytes.fromhex(row["transfer_id"]),
+                    message_type=codec.MessageType.REJECTED,
+                    event_type=receiver._EVENT_REJECTED_SENT,
+                    principal=self._principal,
+                    workspace_manager=self._workspace_manager,
+                    now=self._now(),
+                )
+        except receiver.ReceiverError:
             # A race (the row moved off WAITING_CONSENT between read and call)
-            # or a malformed transfer_id - roll back the uncommitted transition
-            # + enqueue and report the same failure the old delegate returned.
+            # - the SAVEPOINT rolled back the uncommitted transition + enqueue,
+            # and the state guard reports the same failure the old delegate did.
             self._rollback_silently()
             return CommandOutcome.failed("invalid_state_transition")
+        except ValueError:
+            # A malformed transfer_id - same rollback, same report.
+            self._rollback_silently()
+            return CommandOutcome.failed("invalid_state_transition")
+        except Exception as exc:  # noqa: BLE001 - never leak a partial transition
+            # PR 2.5 correction: a signing-key load / codec / unexpected failure
+            # inside enqueue_control_message() after the state was already
+            # written must still roll back the whole operation and report a
+            # terminal internal failure - not leave an open transaction that a
+            # later commit would half-apply. Sanitized: class name only.
+            self._rollback_silently()
+            logger.error(
+                "AttachmentsService: command %s (%s) handler raised %s",
+                command.command_id, command.kind, type(exc).__name__,
+            )
+            return CommandOutcome.failed(COMMAND_EXECUTION_FAILED)
         return CommandOutcome.succeeded(
             resource_id=attachment_id,
             result={"attachment_id": attachment_id, "state": receiver.REJECTED},
@@ -1627,9 +1696,13 @@ class AttachmentsService:
         `destination_address` column, so for the DIRECT-only MVP it is set equal
         to `route_id` - the same conflation `_step_ready_to_send` already makes.
         Returns None when the delivery row is missing or any route field is
-        NULL, so the enqueue falls back to NULL route columns and the dispatch
-        step fails it closed to UNDELIVERABLE rather than guessing a
-        destination."""
+        NULL. PR 2.5 correction: that None is passed through to
+        `enqueue_control_message(route=None)` as an *explicitly incomplete*
+        snapshot - the sender-side CANCEL must never fall back to the
+        attachment's own `reply_*` route (a sender row's reply_* columns are
+        unrelated to where its CANCEL goes; falling back would hand a CANCEL to
+        a wholly wrong address). The dispatch step then fails it closed to
+        UNDELIVERABLE rather than guessing a destination."""
         self._conn.row_factory = sqlite3.Row
         delivery = self._conn.execute(
             "SELECT adapter_id, connector_profile_id, route_type, route_id "
@@ -1892,26 +1965,40 @@ class AttachmentsService:
         should_send_cancel = row["state"] in (sender.SENT, sender.RECEIVED)
         cancel_route = self._cancel_route_for(attachment_id) if should_send_cancel else None
         try:
-            sender.revoke(self._conn, attachment_id, now=self._now(), commit=False)
-            if should_send_cancel:
-                receiver.enqueue_control_message(
-                    self._conn,
-                    attachment_id=attachment_id,
-                    transfer_id=bytes.fromhex(transfer_id),
-                    message_type=codec.MessageType.CANCEL,
-                    event_type=sender.CANCEL_EVENT_TYPE,
-                    principal=self._principal,
-                    workspace_manager=self._workspace_manager,
-                    now=self._now(),
-                    route=cancel_route,
-                )
-            self._conn.commit()
-        except (sender.SenderError, ValueError):
-            # A malformed transfer_id or a raced state change - roll back the
-            # uncommitted transition + enqueue so the revoke capability and
-            # prior state are preserved for a retry.
+            with self._atomic("revoke"):
+                sender.revoke(self._conn, attachment_id, now=self._now(), commit=False)
+                if should_send_cancel:
+                    receiver.enqueue_control_message(
+                        self._conn,
+                        attachment_id=attachment_id,
+                        transfer_id=bytes.fromhex(transfer_id),
+                        message_type=codec.MessageType.CANCEL,
+                        event_type=sender.CANCEL_EVENT_TYPE,
+                        principal=self._principal,
+                        workspace_manager=self._workspace_manager,
+                        now=self._now(),
+                        route=cancel_route,
+                    )
+        except sender.SenderError:
+            # A raced state change - the SAVEPOINT rolled back the uncommitted
+            # transition + enqueue so the revoke capability and prior state are
+            # preserved for a retry.
             self._rollback_silently()
             return CommandOutcome.failed("invalid_state_transition")
+        except ValueError:
+            # A malformed transfer_id - same rollback, same report.
+            self._rollback_silently()
+            return CommandOutcome.failed("invalid_state_transition")
+        except Exception as exc:  # noqa: BLE001 - never leak a partial transition
+            # PR 2.5 correction: a signing-key load / codec / unexpected failure
+            # after the state was already written must still roll back the whole
+            # operation and report a terminal internal failure. Sanitized.
+            self._rollback_silently()
+            logger.error(
+                "AttachmentsService: command %s (%s) handler raised %s",
+                command.command_id, command.kind, type(exc).__name__,
+            )
+            return CommandOutcome.failed(COMMAND_EXECUTION_FAILED)
         self._refresh_snapshot()
         return CommandOutcome.succeeded(
             resource_id=attachment_id,
@@ -2873,16 +2960,28 @@ class AttachmentsService:
         ).fetchall()
         for row in rows:
             try:
-                receiver.expire(
-                    self._conn,
-                    workspace_manager=self._workspace_manager,
-                    principal=self._principal,
-                    attachment_id=row["id"],
-                    now=now,
-                )
-            except Exception:  # noqa: BLE001 - one bad row must not stop the rest of the sweep
-                logger.exception(
-                    "AttachmentsService: receiver expiry failed for attachment %s", row["id"]
+                # PR 2.5 correction: each row's expire is its own SAVEPOINT
+                # (`_atomic`), so one failing row is rolled back in isolation and
+                # later rows still process without ever committing the failed
+                # row's partial writes (a state UPDATE/attachment_events/outbox
+                # row written before `expire()` raised). `commit=False` folds
+                # expire's transition + enqueue into that one savepoint.
+                with self._atomic("expire"):
+                    receiver.expire(
+                        self._conn,
+                        workspace_manager=self._workspace_manager,
+                        principal=self._principal,
+                        attachment_id=row["id"],
+                        now=now,
+                        commit=False,
+                    )
+            except Exception as exc:  # noqa: BLE001 - one bad row must not stop the rest of the sweep
+                # Sanitized: no exception message/traceback (it may embed the
+                # row's transfer id or other untrusted material) - only the
+                # DB-validated attachment id and the exception class name.
+                logger.error(
+                    "AttachmentsService: receiver expiry failed for attachment %s: %s",
+                    row["id"], type(exc).__name__,
                 )
 
     def _dispatch_outgoing_replies(self) -> None:
@@ -2907,9 +3006,10 @@ class AttachmentsService:
                 # No route was ever recorded for this reply's attachment
                 # (handle_offer() ran without source_address - see
                 # PendingReply's own docstring). Nothing to retry
-                # towards: terminal, not a backoff case.
+                # towards: terminal, not a backoff case. Fixed sanitized
+                # token - never the route values themselves.
                 receiver.mark_reply_undeliverable(
-                    self._conn, reply.id, self._now(), error_code="no_reply_route_recorded"
+                    self._conn, reply.id, self._now(), error_code=REPLY_ROUTE_MISSING
                 )
                 continue
             # PR 2.5: the route snapshot is validated strictly before any send
@@ -2923,16 +3023,13 @@ class AttachmentsService:
             if reply.route_type != RouteType.DIRECT.value:
                 receiver.mark_reply_undeliverable(
                     self._conn, reply.id, self._now(),
-                    error_code=f"reply_route_not_direct:{reply.route_type!r}",
+                    error_code=REPLY_ROUTE_NOT_DIRECT,
                 )
                 continue
             if not _is_contact_id(reply.route_id) or not _is_contact_id(reply.destination_address):
                 receiver.mark_reply_undeliverable(
                     self._conn, reply.id, self._now(),
-                    error_code=(
-                        f"reply_route_not_contact_id:route_id={reply.route_id!r},"
-                        f"destination={reply.destination_address!r}"
-                    ),
+                    error_code=REPLY_ROUTE_INVALID_CONTACT,
                 )
                 continue
             if reply.destination_address != reply.route_id:
@@ -2941,10 +3038,7 @@ class AttachmentsService:
                 # do not support (or a migration bug) - never guess a target.
                 receiver.mark_reply_undeliverable(
                     self._conn, reply.id, self._now(),
-                    error_code=(
-                        f"reply_destination_mismatch:route_id={reply.route_id!r},"
-                        f"destination={reply.destination_address!r}"
-                    ),
+                    error_code=REPLY_DESTINATION_MISMATCH,
                 )
                 continue
             # PR #231 review (3rd pass): "do not silently ignore persisted
@@ -2990,16 +3084,13 @@ class AttachmentsService:
             if reply.adapter_id is None or reply.adapter_id != adapter_id:
                 receiver.mark_reply_undeliverable(
                     self._conn, reply.id, self._now(),
-                    error_code=f"reply_adapter_mismatch:persisted={reply.adapter_id!r},configured={adapter_id!r}",
+                    error_code=REPLY_ADAPTER_MISMATCH,
                 )
                 continue
             if reply.connector_profile_id is None or reply.connector_profile_id != connector_profile_id:
                 receiver.mark_reply_undeliverable(
                     self._conn, reply.id, self._now(),
-                    error_code=(
-                        f"reply_connector_mismatch:persisted={reply.connector_profile_id!r},"
-                        f"configured={connector_profile_id!r}"
-                    ),
+                    error_code=REPLY_CONNECTOR_MISMATCH,
                 )
                 continue
             if not receiver.check_and_record_reply_quota(
@@ -3022,8 +3113,14 @@ class AttachmentsService:
                 wire_payload = self._delivery_adapter.encode(reply.message, route)
                 receipt = self._delivery_adapter.send(wire_payload, route, idempotency_key=f"mca-reply-{reply.id}")
             except Exception as exc:  # noqa: BLE001 - one bad reply must not stop the others or the tick
-                logger.exception("AttachmentsService: failed to send queued reply %s", reply.id)
-                receiver.mark_reply_attempt_failed(self._conn, reply.id, self._now(), error_code=str(exc))
+                # Sanitized: the exception text may embed adapter/transport
+                # data, so log only the safe outbox id + exception class, and
+                # persist only the fixed token - never str(exc).
+                logger.error(
+                    "AttachmentsService: failed to send queued reply %s: %s",
+                    reply.id, type(exc).__name__,
+                )
+                receiver.mark_reply_attempt_failed(self._conn, reply.id, self._now(), error_code=DELIVERY_ERROR)
                 continue
             if not receipt.sent:
                 # PR #231 review, section 4.1: adapter.send() returning
@@ -3033,7 +3130,7 @@ class AttachmentsService:
                 # PENDING, attempt counted, backoff scheduled.
                 logger.warning("AttachmentsService: reply %s not sent (receipt.sent=False)", reply.id)
                 receiver.mark_reply_attempt_failed(
-                    self._conn, reply.id, self._now(), error_code="delivery_receipt_sent_false"
+                    self._conn, reply.id, self._now(), error_code=DELIVERY_RECEIPT_NOT_SENT
                 )
                 continue
             receiver.mark_reply_sent(self._conn, reply.id, self._now())

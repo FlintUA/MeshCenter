@@ -1094,7 +1094,7 @@ def test_dispatch_marks_undeliverable_when_persisted_adapter_id_does_not_match(
         (result.attachment_id,),
     ).fetchone()
     assert row[0] == "UNDELIVERABLE"
-    assert "reply_adapter_mismatch" in row[1]
+    assert row[1] == "reply_adapter_mismatch"
     assert ether.drain("!aaaaaaaa") == []
 
 
@@ -1158,7 +1158,7 @@ def test_dispatch_marks_undeliverable_when_persisted_connector_profile_id_does_n
         ),
     )
     assert row[0] == "UNDELIVERABLE"
-    assert "reply_connector_mismatch" in row[1]
+    assert row[1] == "reply_connector_mismatch"
     assert ether.drain("!aaaaaaaa") == []
 
 
@@ -1194,7 +1194,7 @@ def test_dispatch_marks_undeliverable_when_reply_route_is_entirely_missing(
         (result.attachment_id,),
     ).fetchone()
     assert row[0] == "UNDELIVERABLE"
-    assert row[1] == "no_reply_route_recorded"
+    assert row[1] == "reply_route_missing"
 
 
 def test_dispatch_marks_undeliverable_when_route_present_but_adapter_identity_missing(
@@ -1232,8 +1232,10 @@ def test_dispatch_marks_undeliverable_when_route_present_but_adapter_identity_mi
         (result.attachment_id,),
     ).fetchone()
     assert row[0] == "UNDELIVERABLE"
-    assert "reply_adapter_mismatch" in row[1]
-    assert "persisted=None" in row[1]
+    # PR 2.5 correction: a fixed sanitized token only - the persisted/configured
+    # adapter ids (which could embed identifying data) are never echoed into
+    # `last_error`.
+    assert row[1] == "reply_adapter_mismatch"
     assert ether.drain("!aaaaaaaa") == []
 
 
@@ -1265,7 +1267,7 @@ def test_dispatch_marks_undeliverable_when_destination_address_differs_from_rout
         ),
     )
     assert row[0] == "UNDELIVERABLE"
-    assert "reply_destination_mismatch" in row[1]
+    assert row[1] == "reply_destination_mismatch"
     assert ether.drain("!aaaaaaaa") == []  # never sent to the bare route_id
     assert ether.drain("!bbbbbbbb") == []  # nor to the differing destination
 
@@ -1328,23 +1330,36 @@ def test_dispatch_marks_undeliverable_when_destination_address_is_missing_not_fa
         (attachment_id,),
     ).fetchone()
     assert row[0] == "UNDELIVERABLE"
-    # PR 2.5: a missing destination_address is no longer a distinct error
-    # code - it fails the same canonical-contact-id check as any other
-    # non-`![0-9a-f]{8}` destination, and the sanitized error must name
-    # the missing field (destination=None) without echoing any secret.
-    assert "reply_route_not_contact_id" in row[1]
-    assert "destination=None" in row[1]
+    # PR 2.5 correction: a missing destination_address fails the same
+    # canonical-contact-id check as any other non-`![0-9a-f]{8}` destination,
+    # and the sanitized error is the fixed token only - never the offending
+    # field value (destination=None), never echoing a secret.
+    assert row[1] == "reply_route_invalid_contact"
     assert ether.drain("!aaaaaaaa") == []  # never silently sent to route_id either
 
 
-def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient):
+def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient, caplog):
     """A DeliveryAdapter.send() failure must never be confused with
     success: the queued reply stays PENDING (retried on a later tick,
-    with backoff), not silently marked SENT or dropped."""
+    with backoff), not silently marked SENT or dropped.
+
+    PR 2.5 correction: the failure reason is a *fixed sanitized token*,
+    and the exception's own message (which may embed adapter/transport
+    secrets) must appear in neither the persisted `last_error` nor the
+    worker logs nor the public snapshot/API serialization."""
+    import json
+    import logging
+
+    from meshsrv.attachments import snapshots
+
+    # A unique marker folded into the simulated transport exception. If this
+    # string shows up anywhere in `last_error`, the logs, or the public
+    # snapshot, the sanitization is broken and the raw exception leaked.
+    SECRET_MARKER = "SECRET-MARKER-X7k2p9qRz"
 
     class _AlwaysFailsToSendAdapter(FakeTextAdapter):
         def send(self, wire_payload, route, idempotency_key):
-            raise RuntimeError("simulated transport failure")
+            raise RuntimeError(f"simulated transport failure {SECRET_MARKER}")
 
     _, _, sender_principal = remote_recipient
     _bind_recipient(conn, sender_principal, transport_address="!aaaaaaaa")
@@ -1387,6 +1402,9 @@ def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, pr
     ).fetchone()
     assert before[0] == 0
 
+    # Capture every propagated record from every logger, so a stray
+    # `logger.exception()` (which embeds the full traceback) can't hide.
+    caplog.set_level(logging.DEBUG)
     receiver_service.tick()
 
     after = conn.execute(
@@ -1396,7 +1414,28 @@ def test_dispatch_retries_a_failed_send_instead_of_marking_it_sent(conn, wsm, pr
     assert after[0] == "PENDING"  # never marked SENT on a failed send
     assert after[1] == 1
     assert after[2] > before[1]  # backed off into the future
-    assert "simulated transport failure" in after[3]
+    # PR 2.5 correction: the fixed token, never the exception text.
+    assert after[3] == "delivery_error"
+    assert SECRET_MARKER not in after[3]
+
+    # The raw exception message must not reach the worker logs either.
+    assert SECRET_MARKER not in caplog.text
+
+    # Nor the public snapshot / API serialization (the outbox's `last_error`
+    # is an internal column and is not projected; prove no leak path exists).
+    snapshot = snapshots.build_attachments_snapshot(
+        conn,
+        workspace_id=principal.workspace_id,
+        workspace_manager=wsm,
+        principal_id=principal.principal_id,
+        now=time.time(),
+    )
+    public = json.dumps(
+        snapshots.serialize_attachment_public(
+            snapshot.by_id[result.attachment_id], include_timeline=True
+        )
+    )
+    assert SECRET_MARKER not in public
 
 
 def test_handle_offer_without_source_address_never_dispatches(conn, wsm, principal, provider_registry, registered_provider, key_exchange, connectivity_monitor, relay_client, remote_recipient):
@@ -3908,6 +3947,380 @@ def test_command_revoke_relay_failure_preserves_row_and_enqueues_no_cancel(
         "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
         (attachment_id, sender.CANCEL_EVENT_TYPE),
     ).fetchone() is None
+
+
+def test_command_revoke_missing_delivery_route_never_falls_back_to_reply_route(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path
+):
+    """PR 2.5 correction: when `_cancel_route_for()` cannot produce a complete
+    sender delivery route, the CANCEL is enqueued with an *explicitly
+    incomplete* snapshot (all five route columns NULL) and dispatched fail-
+    closed to UNDELIVERABLE - never falling back to the sender row's own
+    `reply_*` columns. A sent row's `reply_*` route (if ever populated) is
+    unrelated to where its CANCEL goes; falling back would hand the CANCEL to
+    a wholly wrong address."""
+    attachment_id = _seed_sent_downloadable(conn, wsm, principal, registered_provider,
+                                            remote_recipient, tmp_path)
+    # Make the delivery route incomplete (no delivery row -> `_cancel_route_for`
+    # returns None), and deliberately populate the sender row's `reply_*` columns
+    # with a valid but *different* address.
+    conn.execute("DELETE FROM attachment_deliveries WHERE attachment_id = ?", (attachment_id,))
+    conn.execute(
+        "UPDATE attachments SET reply_adapter_id = ?, reply_connector_profile_id = ?, "
+        "reply_route_type = ?, reply_route_id = ?, reply_destination_address = ? WHERE id = ?",
+        ("fake-text", "local-addr", "DIRECT", "!bbbbbbbb", "!bbbbbbbb", attachment_id),
+    )
+    conn.commit()
+
+    ether = InMemoryEther()
+    ether.register("!bbbbbbbb")
+    stub = _StubRelayClient(revoke_result="ok")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(ether, "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+    assert outcome.error_code is None
+    assert sender.get_state(conn, attachment_id) == sender.REVOKED
+
+    row = _outbox_row(conn, attachment_id, sender.CANCEL_EVENT_TYPE)
+    assert row is not None
+    assert row["state"] == "PENDING"
+    # The explicitly-incomplete snapshot: all five route columns NULL, not the
+    # reply_* values.
+    assert (
+        row["adapter_id"], row["connector_profile_id"], row["route_type"],
+        row["route_id"], row["destination_address"]
+    ) == (None, None, None, None, None)
+
+    svc.tick()
+    after = _outbox_row(conn, attachment_id, sender.CANCEL_EVENT_TYPE)
+    assert after["state"] == "UNDELIVERABLE"
+    assert conn.execute(
+        "SELECT last_error FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, sender.CANCEL_EVENT_TYPE),
+    ).fetchone()[0] == "reply_route_missing"
+    assert ether.drain("!bbbbbbbb") == []  # CANCEL never delivered to the reply_* address
+
+
+# ---- PR 2.5 correction: exception-atomic transitions -----------------------
+# A failure after the state write but before the outbox insert must roll back
+# the whole operation (state, timeline event, sender transient/revoke-state
+# deletion, any partial outbox row) via the `_atomic` SAVEPOINT - never leak a
+# partial write into a later commit on the worker's single connection.
+
+
+def test_command_reject_signing_failure_rolls_back_transition_and_enqueue(
+    conn, wsm, principal, service, monkeypatch
+):
+    """A signing-key load failure inside `enqueue_control_message()` (after
+    `receiver.reject(commit=False)` already wrote REJECTED) rolls back the whole
+    operation: the row stays WAITING_CONSENT, no outbox row is left behind, and
+    a later unrelated commit does not resurrect the partial write."""
+    attachment_id = "12" * 16
+    transfer_id = b"\x09" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+
+    def _raise_signing_failure(workspace_manager, principal):
+        raise RuntimeError("injected signing failure")
+
+    monkeypatch.setattr("meshsrv.attachments.identity.load_signing_key", _raise_signing_failure)
+
+    outcome = service._dispatcher.dispatch(_reject_command(attachment_id))
+
+    assert outcome.error_code == "command_execution_failed"
+    assert receiver.get_state(conn, attachment_id) == receiver.WAITING_CONSENT
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, receiver._EVENT_REJECTED_SENT),
+    ).fetchone() is None
+
+    # A later, unrelated operation (a second reject on a different row) must not
+    # resurrect the failed row's partial write.
+    monkeypatch.undo()
+    other_id = "13" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=other_id, transfer_id=b"\x0a" * 16,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    assert service._dispatcher.dispatch(_reject_command(other_id)).error_code is None
+    assert receiver.get_state(conn, other_id) == receiver.REJECTED
+    assert receiver.get_state(conn, attachment_id) == receiver.WAITING_CONSENT  # unchanged
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, receiver._EVENT_REJECTED_SENT),
+    ).fetchone() is None
+
+
+def test_reconcile_expiry_signing_failure_isolates_failed_row_and_continues(
+    conn, wsm, principal, service, monkeypatch
+):
+    """A signing failure on one expiring row rolls back *that* row in isolation
+    (state unchanged, no `expired` timeline event, no outbox row) while later
+    rows still expire and commit cleanly - the failed row's partial writes are
+    never committed by the later rows' commits."""
+    first_id, second_id = "14" * 16, "15" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=first_id, transfer_id=b"\x0b" * 16,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) - 100,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    _seed_received_row(
+        conn, principal, attachment_id=second_id, transfer_id=b"\x0c" * 16,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) - 100,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    # Force deterministic ordering: first_id expires before second_id.
+    conn.execute("UPDATE attachments SET created_at = 100 WHERE id = ?", (first_id,))
+    conn.execute("UPDATE attachments SET created_at = 200 WHERE id = ?", (second_id,))
+    conn.commit()
+
+    real_load = identity.load_signing_key
+    calls = {"n": 0}
+
+    def flaky_load(workspace_manager, principal):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("injected signing failure")
+        return real_load(workspace_manager, principal)
+
+    monkeypatch.setattr("meshsrv.attachments.identity.load_signing_key", flaky_load)
+
+    service.tick()
+
+    # The failed row rolled back in isolation.
+    assert receiver.get_state(conn, first_id) == receiver.WAITING_CONSENT
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (first_id, receiver._EVENT_EXPIRED_SENT),
+    ).fetchone() is None
+    assert conn.execute(
+        "SELECT 1 FROM attachment_events WHERE attachment_id = ? AND event_type = 'expired'",
+        (first_id,),
+    ).fetchone() is None
+
+    # The later row expired and committed cleanly.
+    assert receiver.get_state(conn, second_id) == receiver.EXPIRED
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (second_id, receiver._EVENT_EXPIRED_SENT),
+    ).fetchone() is not None
+    assert conn.execute(
+        "SELECT 1 FROM attachment_events WHERE attachment_id = ? AND event_type = 'expired'",
+        (second_id,),
+    ).fetchone() is not None
+
+
+def test_command_revoke_signing_failure_rolls_back_transition_and_preserves_sender_state(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path, monkeypatch
+):
+    """A signing failure inside the CANCEL enqueue (after `sender.revoke(
+    commit=False)` already wrote REVOKED + deleted the sender-state rows) rolls
+    back everything: state stays SENT, the sender-state row (the revoke
+    capability) survives, and no CANCEL outbox row is left behind."""
+    attachment_id = _seed_sent_downloadable(conn, wsm, principal, registered_provider,
+                                            remote_recipient, tmp_path)
+
+    stub = _StubRelayClient(revoke_result="ok")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    def _raise_signing_failure(workspace_manager, principal):
+        raise RuntimeError("injected signing failure")
+
+    monkeypatch.setattr("meshsrv.attachments.identity.load_signing_key", _raise_signing_failure)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code == "command_execution_failed"
+    assert sender.get_state(conn, attachment_id) == sender.SENT  # unchanged
+    assert conn.execute(
+        "SELECT 1 FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)
+    ).fetchone() is not None  # revoke capability survives the rollback
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, sender.CANCEL_EVENT_TYPE),
+    ).fetchone() is None
+
+    # A later retry (a fresh commit) only succeeds because the rollback left the
+    # row cleanly revocable - proving the partial write did not leak.
+    monkeypatch.undo()
+    assert svc._dispatcher.dispatch(_revoke_command(attachment_id)).error_code is None
+    assert sender.get_state(conn, attachment_id) == sender.REVOKED
+    assert conn.execute(
+        "SELECT 1 FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, sender.CANCEL_EVENT_TYPE),
+    ).fetchone() is not None
+
+
+# ---- PR 2.5 correction: remaining lifecycle variants -----------------------
+
+
+def test_command_revoke_received_enqueues_cancel(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path, relay_client, service
+):
+    """Revoking a RECEIVED row also generates a CANCEL, exactly like SENT - the
+    receiver has the ciphertext but not the plaintext, so the offer can still be
+    retracted over the radio."""
+    attachment_id, transfer_id, _recipient_wsm, _recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    conn.execute("UPDATE attachments SET state = ? WHERE id = ?", (sender.RECEIVED, attachment_id))
+    conn.commit()
+
+    stub = _StubRelayClient(revoke_result="ok")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert sender.get_state(conn, attachment_id) == sender.REVOKED
+    row = _outbox_row(conn, attachment_id, sender.CANCEL_EVENT_TYPE)
+    assert row is not None
+    decoded = codec.decode_simple_ack(
+        row["message"], codec.MessageType.CANCEL, verify_key=VerifyKey(principal.public_identity)
+    )
+    assert decoded.transfer_id == transfer_id
+
+
+def test_command_revoke_relay_404_still_enqueues_cancel(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    registered_provider, remote_recipient, tmp_path, relay_client, service
+):
+    """A Relay 404 (confirmed absence) is a *valid* remote result: the local
+    half still completes to REVOKED and the CANCEL is still generated, exactly
+    as a successful remote revoke would."""
+    attachment_id, transfer_id, _recipient_wsm, _recipient_principal = _sent_ack_fixture(
+        conn, wsm, principal, registered_provider, remote_recipient, tmp_path, relay_client, service,
+    )
+    stub = _StubRelayClient(revoke_result=RelayHTTPError(404, "not_found", "gone"))
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(InMemoryEther(), "local-addr"),
+                                 relay_client_factory=lambda _: stub)
+
+    outcome = svc._dispatcher.dispatch(_revoke_command(attachment_id))
+
+    assert outcome.error_code is None
+    assert sender.get_state(conn, attachment_id) == sender.REVOKED
+    assert _outbox_row(conn, attachment_id, sender.CANCEL_EVENT_TYPE) is not None
+
+
+def test_pending_control_delivery_survives_database_reopen(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    relay_client, relay_session, tmp_path
+):
+    """A control frame enqueued but not yet dispatched (PENDING) survives a
+    close + reopen of the SQLite database: a fresh service on the reopened
+    connection dispatches the same durable frame on its first tick."""
+    attachment_id = "16" * 16
+    transfer_id = b"\x0d" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    ether = InMemoryEther()
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, FakeTextAdapter(ether, "local-addr"),
+                                 relay_client_factory=lambda _: relay_client)
+    # Enqueue the REJECTED (PENDING) but do NOT tick to dispatch it.
+    assert svc._dispatcher.dispatch(_reject_command(attachment_id)).error_code is None
+    assert _outbox_row(conn, attachment_id, receiver._EVENT_REJECTED_SENT)["state"] == "PENDING"
+    assert ether.drain("!aaaaaaaa") == []
+
+    db_path = tmp_path / "attachments.db"
+    conn.close()
+
+    conn2 = sqlite3.connect(str(db_path), check_same_thread=False)
+    conn2.execute("PRAGMA foreign_keys = ON")
+    provider_registry2 = ProviderRegistry(conn2, "local")
+    key_exchange2 = KeyExchangeCoordinator(conn2, wsm, principal, ADAPTER_ID)
+    connectivity2 = ConnectivityMonitor(provider_registry2, session=relay_session)
+    ether2 = InMemoryEther()
+    svc2 = _service_with_delivery(
+        conn2, wsm, principal, provider_registry2, key_exchange2, connectivity2,
+        FakeTextAdapter(ether2, "local-addr"), relay_client_factory=lambda _: relay_client,
+    )
+
+    svc2.tick()
+
+    events = ether2.drain("!aaaaaaaa")
+    assert len(events) == 1
+    assert codec.peek_message_type(codec.from_text(events[0]["text"])) == codec.MessageType.REJECTED
+
+
+def test_retry_after_reopen_sends_same_frame_with_same_idempotency_key(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor,
+    relay_client, relay_session, tmp_path
+):
+    """A control frame whose first send failed stays PENDING with the *same*
+    durable frame bytes and outbox row id across a database reopen, so a retry
+    after restart sends the same frame with the same idempotency key."""
+    attachment_id = "17" * 16
+    transfer_id = b"\x0e" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=transfer_id,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    raising = _RaisingSendAdapter(InMemoryEther(), "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange,
+                                 connectivity_monitor, raising,
+                                 relay_client_factory=lambda _: relay_client)
+    assert svc._dispatcher.dispatch(_reject_command(attachment_id)).error_code is None
+    svc.tick()  # first send attempt fails -> attempt counted, stays PENDING
+
+    before = _outbox_row(conn, attachment_id, receiver._EVENT_REJECTED_SENT)
+    assert before["state"] == "PENDING"
+    assert before["attempts"] == 1
+    outbox_id = conn.execute(
+        "SELECT id FROM mca_outgoing_replies WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, receiver._EVENT_REJECTED_SENT),
+    ).fetchone()[0]
+    frame = before["message"]
+
+    # The failed first attempt pushed `next_attempt_at` out by backoff; pull it
+    # back into the past so the reopened service's tick sees the frame as due
+    # (the point under test is durable-frame + idempotency-key stability across
+    # a restart, not the backoff clock itself).
+    conn.execute(
+        "UPDATE mca_outgoing_replies SET next_attempt_at = 0 WHERE attachment_id = ? AND event_type = ?",
+        (attachment_id, receiver._EVENT_REJECTED_SENT),
+    )
+    conn.commit()
+
+    db_path = tmp_path / "attachments.db"
+    conn.close()
+
+    conn2 = sqlite3.connect(str(db_path), check_same_thread=False)
+    conn2.execute("PRAGMA foreign_keys = ON")
+    provider_registry2 = ProviderRegistry(conn2, "local")
+    key_exchange2 = KeyExchangeCoordinator(conn2, wsm, principal, ADAPTER_ID)
+    connectivity2 = ConnectivityMonitor(provider_registry2, session=relay_session)
+    ether2 = InMemoryEther()
+    svc2 = _service_with_delivery(
+        conn2, wsm, principal, provider_registry2, key_exchange2, connectivity2,
+        FakeTextAdapter(ether2, "local-addr"), relay_client_factory=lambda _: relay_client,
+    )
+
+    svc2.tick()
+
+    events = ether2.drain("!aaaaaaaa")
+    assert len(events) == 1
+    assert events[0]["text"] == codec.to_text(frame)  # the same durable frame bytes
+    assert events[0]["idempotency_key"] == f"mca-reply-{outbox_id}"  # the same idempotency key
+    assert codec.peek_message_type(codec.from_text(events[0]["text"])) == codec.MessageType.REJECTED
 
 
 # ---- PR 2.5 two-service integration (shared ether) ------------------------

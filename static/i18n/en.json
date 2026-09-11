@@ -276,7 +276,27 @@
       "ciphertext_too_large": "File exceeds the provider size limit",
       "ttl_below_minimum": "Expiry is below the provider minimum",
       "ttl_above_maximum": "Expiry is above the provider maximum"
-    }
+    },
+    "provider_display_name": "Display name",
+    "provider_enabled": "Enabled",
+    "provider_upload_allowed": "Upload allowed",
+    "provider_download_allowed": "Download allowed",
+    "provider_ttl_min": "Min TTL (seconds)",
+    "provider_ttl_max": "Max TTL (seconds)",
+    "provider_ttl_unset": "Unset",
+    "edit_provider": "Edit provider",
+    "edit": "Edit",
+    "err_provider_display_name": "Display name must not be empty.",
+    "err_provider_ttl": "TTL must be a positive whole number of seconds.",
+    "err_provider_ttl_min_max": "Minimum TTL must not exceed maximum TTL.",
+    "send_ttl_custom_placeholder": "Seconds",
+    "send_file_type": "Type: {type}",
+    "send_file_type_unknown": "Type: unrecognized — the server will validate it",
+    "send_file_size": "Size: {size}",
+    "relay_state_label": "Relay state",
+    "upload_ready": "Upload: ready",
+    "upload_not_ready": "Upload: not ready",
+    "err_ttl_custom": "Enter a positive whole number of seconds for the custom expiry"
   },
   "about": {
     "tab_overview": "Overview",
@@ -956,7 +976,10 @@
     "epaper_action_queued": "Queued - the display will update shortly",
     "epaper_reinit_in_progress": "Applying and re-initializing...",
     "epaper_reinit_success": "Applied - display re-initialized successfully",
-    "epaper_reinit_failed": "Re-init failed"
+    "epaper_reinit_failed": "Re-init failed",
+    "files_title": "Files / MCAttach",
+    "files_description": "File transfers over the Mesh via Relay providers.",
+    "files_relay_providers": "Relay providers"
   },
   "modals": {
     "message_info": "Message Info",

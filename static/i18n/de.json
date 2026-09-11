@@ -276,7 +276,27 @@
       "ciphertext_too_large": "Datei überschreitet das Größenlimit des Anbieters",
       "ttl_below_minimum": "Ablauf liegt unter dem Anbieter-Minimum",
       "ttl_above_maximum": "Ablauf liegt über dem Anbieter-Maximum"
-    }
+    },
+    "provider_display_name": "Anzeigename",
+    "provider_enabled": "Aktiviert",
+    "provider_upload_allowed": "Upload erlaubt",
+    "provider_download_allowed": "Download erlaubt",
+    "provider_ttl_min": "Min. TTL (Sekunden)",
+    "provider_ttl_max": "Max. TTL (Sekunden)",
+    "provider_ttl_unset": "Nicht gesetzt",
+    "edit_provider": "Anbieter bearbeiten",
+    "edit": "Bearbeiten",
+    "err_provider_display_name": "Der Anzeigename darf nicht leer sein.",
+    "err_provider_ttl": "TTL muss eine positive ganze Zahl in Sekunden sein.",
+    "err_provider_ttl_min_max": "Die minimale TTL darf die maximale TTL nicht überschreiten.",
+    "send_ttl_custom_placeholder": "Sekunden",
+    "send_file_type": "Typ: {type}",
+    "send_file_type_unknown": "Typ: nicht erkannt — der Server prüft ihn",
+    "send_file_size": "Größe: {size}",
+    "relay_state_label": "Relay-Status",
+    "upload_ready": "Upload: bereit",
+    "upload_not_ready": "Upload: nicht bereit",
+    "err_ttl_custom": "Gib eine positive ganze Zahl an Sekunden für das benutzerdefinierte Ablaufdatum ein"
   },
   "about": {
     "tab_overview": "Übersicht",
@@ -956,7 +976,10 @@
     "epaper_action_queued": "Eingereiht - das Display wird in Kürze aktualisiert",
     "epaper_reinit_in_progress": "Wird übernommen und neu initialisiert...",
     "epaper_reinit_success": "Übernommen - Display erfolgreich neu initialisiert",
-    "epaper_reinit_failed": "Neuinitialisierung fehlgeschlagen"
+    "epaper_reinit_failed": "Neuinitialisierung fehlgeschlagen",
+    "files_title": "Dateien / MCAttach",
+    "files_description": "Dateiübertragungen über das Mesh via Relay-Anbieter.",
+    "files_relay_providers": "Relay-Anbieter"
   },
   "modals": {
     "message_info": "Nachrichteninfo",

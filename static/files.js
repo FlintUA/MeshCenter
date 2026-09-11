@@ -160,6 +160,9 @@
         loading: {},              // per-resource in-flight guard (no overlap)
         busy: {},                 // resourceKey -> commandId currently tracked
         detailSeq: 0,             // guards stale detail renders (V2)
+        detailInFlight: false,    // at most one detail fetch at a time (R4)
+        detailPending: null,      // coalesced follow-up id, or null (R4)
+        detailFingerprint: null,  // signature of the last-rendered detail (R4)
 
         contacts: [],             // merged contact projection (C3)
         nodes: [],                // raw /api/nodes_management nodes
@@ -181,6 +184,7 @@
 
         dialog: null,             // currently-open dialog element
         dialogReturnFocus: null,  // element to restore focus to on close (C11)
+        modalSeq: 0,              // id suffix for auto-wired aria-describedby (R6)
         providerProbe: null,      // last successful probe result (pending registration)
     };
 
@@ -367,6 +371,7 @@
                 if (Date.now() - started >= COMMAND_MAX_WAIT_MS) {
                     notifyUpdate(progressId, t('files.cmd_timeout', 'Timed out'), 'warning');
                     clearBusy(opts.resourceKey);
+                    if (opts.onTimeout) opts.onTimeout();
                     return;
                 }
                 sleep(COMMAND_POLL_MS).then(function () {
@@ -393,6 +398,7 @@
                         if (cmd.status === 'failed') {
                             notifyUpdate(progressId, filesErrorCode(cmd), 'error');
                             clearBusy(opts.resourceKey);
+                            if (opts.onFailed) opts.onFailed(cmd);
                             return;
                         }
                         // still pending — keep polling, no notification churn
@@ -409,10 +415,10 @@
     // ---- resource loaders (C1 §6.3 concurrency: guarded, no overlap) -------
 
     function guardedLoad(key, fetcher, onDone) {
-        if (state.loading[key]) return;
+        if (state.loading[key]) return Promise.resolve();
         state.loading[key] = true;
         var epoch = state.epoch;
-        fetcher().then(function (result) {
+        return fetcher().then(function (result) {
             state.loading[key] = false;
             if (epoch !== state.epoch || !state.active) return;
             onDone(result);
@@ -443,7 +449,7 @@
     }
 
     function loadProviders() {
-        guardedLoad('providers', function () {
+        return guardedLoad('providers', function () {
             return api('/api/mca/providers');
         }, function (r) {
             if (r.status === 200 && r.data && r.data.ok) {
@@ -506,7 +512,16 @@
                 state.selectedId = state.attachments[0].id;
                 renderDetail(state.selectedId, true);
             } else if (state.selectedId) {
-                renderDetail(state.selectedId, true);
+                var sel = null;
+                for (var i = 0; i < state.attachments.length; i++) {
+                    if (state.attachments[i].id === state.selectedId) { sel = state.attachments[i]; break; }
+                }
+                // R4: a terminal attachment whose list projection is unchanged
+                // since the last detail render does not need a per-poll detail
+                // fetch; only active (still-changing) or changed attachments do.
+                if (sel && (!isTerminalState(sel.state) || detailFingerprint(sel) !== state.detailFingerprint)) {
+                    renderDetail(state.selectedId, true);
+                }
             }
         });
     }
@@ -663,14 +678,14 @@
     }
 
     function contactForAttachment(a) {
-        if (!a.recipients || !a.recipients.length) return null;
-        var r = a.recipients[0];
-        var id = r.principal_id || r.key_id || '';
-        // recipients carry principal_id/key_id, not necessarily the node id; fall back to any contact.
-        for (var i = 0; i < state.contacts.length; i++) {
-            if (canonicalNodeId(state.contacts[i].contact_id) === canonicalNodeId(id)) return state.contacts[i];
-        }
-        return null;
+        // §7.5 counterparty_contact_id: a canonical transport address the
+        // worker derives from routing data (sent DIRECT delivery route_id /
+        // received DIRECT reply_route_id), never from recipient.principal_id
+        // (a different 16-hex namespace). When it is null (missing / ambiguous
+        // / non-DIRECT) there is no trustworthy contact mapping, so return
+        // null rather than guessing from a wrong-namespace recipient field.
+        if (!a.counterparty_contact_id) return null;
+        return findContact(a.counterparty_contact_id);
     }
 
     function providerById(pid) {
@@ -696,6 +711,7 @@
             var dirLabel = a.direction === 'sent'
                 ? t('files.sent', 'Sent') : t('files.received', 'Received');
             var selected = a.id === state.selectedId ? ' is-selected' : '';
+            var pressed = a.id === state.selectedId ? 'true' : 'false';
             var active = !isTerminalState(a.state) ? ' is-active' : '';
             var contactLabel = contact
                 ? (esc(contact.name || '') + ' <span class="files-transfer-id">' + esc(contact.contact_id) + '</span>')
@@ -706,7 +722,7 @@
                 : '';
             var busy = state.busy['attach:' + a.id] ? ' is-busy' : '';
             return (
-                '<button type="button" class="files-transfer-item' + selected + active + busy + '" data-files-action="select" data-attachment="' + esc(a.id) + '">' +
+                '<button type="button" class="files-transfer-item' + selected + active + busy + '" aria-pressed="' + pressed + '" data-files-action="select" data-attachment="' + esc(a.id) + '">' +
                     '<span class="files-transfer-icon">' + mimeIcon(a.mime_type) + '</span>' +
                     '<span class="files-transfer-dir" title="' + esc(dirLabel) + '">' + dir + '</span>' +
                     '<span class="files-transfer-main">' +
@@ -760,23 +776,62 @@
         renderDetail(id, false);
     }
 
+    function detailFingerprint(a) {
+        // A cheap signature of everything detailMarkup shows that can change
+        // without the list projection changing. Built from the *list*
+        // projection's own fields (id/state/error_code/saved/content_available/
+        // delivery states), so it can be compared against the fingerprint
+        // stored after the last *detail* fetch to decide whether a terminal
+        // attachment's detail needs re-fetching at all (R4).
+        var parts = [a.id, a.state, a.error_code || '', a.saved ? '1' : '0', a.content_available ? '1' : '0'];
+        var deliveries = a.deliveries || [];
+        for (var i = 0; i < deliveries.length; i++) parts.push(deliveries[i].state || '');
+        return parts.join('\u0000');
+    }
+
     function renderDetail(id, silent) {
         var body = getEl('filesDetailBody');
         if (!body) return;
+
+        // In-flight guard + coalescing (R4): never issue a second concurrent
+        // detail request. A follow-up requested while one is running is
+        // collapsed into a single pending refetch, fired once the in-flight
+        // request settles.
+        if (state.detailInFlight) {
+            state.detailPending = id;
+            return;
+        }
+
         var token = ++state.detailSeq;
         var epoch = state.epoch;
+        state.detailInFlight = true;
+        state.detailPending = null;
+
+        function settle() {
+            state.detailInFlight = false;
+            var pending = state.detailPending;
+            state.detailPending = null;
+            if (pending !== null && state.active && epoch === state.epoch) {
+                renderDetail(pending, true);
+            }
+        }
+
         api('/api/attachments/' + encodeURIComponent(id)).then(function (r) {
-            if (token !== state.detailSeq || epoch !== state.epoch) return; // stale (V2)
-            if (!state.active) return;
+            if (token !== state.detailSeq || epoch !== state.epoch) { settle(); return; } // stale (V2)
+            if (!state.active) { settle(); return; }
             if (r.status !== 200 || !r.data || r.data.ok !== true) {
                 body.innerHTML = '<div class="files-detail-empty">' + esc(filesErrorCode(r.data)) + '</div>';
+                settle();
                 return;
             }
             body.innerHTML = detailMarkup(r.data.attachment, Array.isArray(r.data.timeline) ? r.data.timeline : []);
+            state.detailFingerprint = detailFingerprint(r.data.attachment);
+            settle();
         }).catch(function () {
-            if (token !== state.detailSeq || epoch !== state.epoch) return;
-            if (!state.active) return;
+            if (token !== state.detailSeq || epoch !== state.epoch) { settle(); return; }
+            if (!state.active) { settle(); return; }
             body.innerHTML = '<div class="files-detail-empty">' + esc(t('files.error.network_error', 'Network error')) + '</div>';
+            settle();
         });
     }
 
@@ -829,8 +884,8 @@
     }
 
     function detailMarkup(a, timeline) {
-        var recipient = (a.recipients && a.recipients.length) ? a.recipients[0] : null;
-        var recipientId = recipient ? (recipient.principal_id || recipient.key_id) : '';
+        var contact = contactForAttachment(a);
+        var recipientId = contact ? contact.contact_id : (a.counterparty_contact_id || '');
         var provider = providerById(a.provider_id);
         var providerLabel = provider ? (provider.display_name || provider.origin || a.provider_id) : (a.provider_id || '—');
         var route = a.primary_delivery_id ? t('files.detail_direct', 'Direct') : t('files.detail_direct', 'Direct');
@@ -1059,7 +1114,7 @@
         var name = c && c.name ? c.name : contactId;
         confirmDialog({
             title: t('files.request_key_title', 'Request MCA key?'),
-            body: tparams('files.request_key_body', { name: name }, 'Ask ' + name + ' for their MCA encryption key.'),
+            bodyText: tparams('files.request_key_body', { name: name }, 'Ask ' + name + ' for their MCA encryption key.'),
             confirmLabel: t('files.request_key', 'Request key'),
             danger: false,
         }).then(function (yes) {
@@ -1077,8 +1132,8 @@
         var name = c && c.name ? c.name : contactId;
         confirmDialog({
             title: t('files.confirm_trust_title', 'Confirm contact key'),
-            body: fingerprintBlock(fp) + tparams('files.confirm_trust_body', { name: name },
-                'Verify this fingerprint with ' + name + ', then trust their key.'),
+            bodyHtml: fingerprintBlock(fp) + esc(tparams('files.confirm_trust_body', { name: name },
+                'Verify this fingerprint with ' + name + ', then trust their key.')),
             confirmLabel: t('files.trust_confirm', 'Trust key'),
             danger: false,
         }).then(function (yes) {
@@ -1096,8 +1151,8 @@
         var pending = c && c.pending_fingerprint ? c.pending_fingerprint : '';
         confirmDialog({
             title: t('files.key_change_accept_title', 'Accept key change?'),
-            body: fpPairBlock(cur, pending) + t('files.key_change_accept_body',
-                'The new key becomes current but stays unverified until you confirm it separately.'),
+            bodyHtml: fpPairBlock(cur, pending) + esc(t('files.key_change_accept_body',
+                'The new key becomes current but stays unverified until you confirm it separately.')),
             confirmLabel: t('files.key_change_accept', 'Accept'),
             danger: true,
         }).then(function (yes) {
@@ -1112,7 +1167,7 @@
     function contactRejectKeyChange(contactId) {
         confirmDialog({
             title: t('files.key_change_reject_title', 'Reject key change?'),
-            body: t('files.key_change_reject_body',
+            bodyText: t('files.key_change_reject_body',
                 'The previous trusted key is kept and the pending replacement is discarded.'),
             confirmLabel: t('files.key_change_reject', 'Reject'),
             danger: true,
@@ -1161,10 +1216,26 @@
     function confirmSpec(titleKey, bodyKey, confirmKey, titleFallback, bodyFallback) {
         return {
             title: t(titleKey, titleFallback),
-            body: t(bodyKey, bodyFallback),
+            bodyText: t(bodyKey, bodyFallback),
             confirmLabel: t(confirmKey, titleFallback),
             danger: true,
         };
+    }
+
+    // Resolve a confirmation body to trusted HTML. `bodyText` is plain,
+    // untrusted text and is always escaped; `bodyHtml` is markup assembled
+    // *inside this module* from static structure plus esc()-escaped values
+    // (e.g. the fingerprint block). Supplying both is a caller bug and fails
+    // closed with an empty body rather than letting ambiguous HTML through.
+    function confirmBody(spec) {
+        var hasText = spec.bodyText !== undefined && spec.bodyText !== null;
+        var hasHtml = spec.bodyHtml !== undefined && spec.bodyHtml !== null;
+        if (hasText && hasHtml) {
+            return ''; // ambiguous body source — fail closed
+        }
+        if (hasHtml) return spec.bodyHtml;
+        if (hasText) return esc(spec.bodyText);
+        return '';
     }
 
     function confirmDialog(spec) {
@@ -1172,6 +1243,7 @@
             if (typeof document === 'undefined') { resolve(true); return; }
             closeModal();
             var id = 'files-confirm-' + Date.now();
+            var body = confirmBody(spec);
             var html =
                 '<div class="files-modal-backdrop" data-files-action="modal-backdrop-close" role="presentation">' +
                     '<div class="files-modal" role="dialog" aria-modal="true" aria-labelledby="' + id + '-title">' +
@@ -1179,7 +1251,7 @@
                             '<h3 class="files-modal-title" id="' + id + '-title">' + esc(spec.title) + '</h3>' +
                             '<button type="button" class="files-modal-close" data-files-action="modal-close" aria-label="' + esc(t('files.dialog_close', 'Close dialog')) + '">×</button>' +
                         '</div>' +
-                        '<div class="files-modal-body">' + spec.body + '</div>' +
+                        '<div class="files-modal-body">' + body + '</div>' +
                         '<div class="files-modal-footer">' +
                             '<button type="button" class="files-modal-cancel" data-files-action="modal-cancel">' + esc(t('common.cancel', 'Cancel')) + '</button>' +
                             '<button type="button" class="files-modal-submit' + (spec.danger ? ' is-danger' : '') + '" data-files-action="modal-confirm">' + esc(spec.confirmLabel) + '</button>' +
@@ -1198,9 +1270,19 @@
         el.className = 'files-dialog-root';
         el.innerHTML = html;
         el._filesOnResolve = onResolve;
+        // Wire aria-describedby once, centrally (R6): the dialog is labelled by
+        // its title (aria-labelledby set by each builder) and described by its
+        // body. Doing it here means every dialog gets it without duplicating it.
+        var dialog = el.querySelector ? el.querySelector('.files-modal') : null;
+        var body = el.querySelector ? el.querySelector('.files-modal-body') : null;
+        if (dialog && body && !dialog.getAttribute('aria-describedby')) {
+            if (!body.id) body.id = 'files-modal-body-' + (++state.modalSeq);
+            dialog.setAttribute('aria-describedby', body.id);
+        }
         document.body.appendChild(el);
         state.dialog = el;
         state.dialogReturnFocus = (typeof document.activeElement !== 'undefined') ? document.activeElement : null;
+        setBackgroundInert(el);
         focusFirst(el);
         return el;
     }
@@ -1211,6 +1293,7 @@
         state.dialog = null;
         if (el._filesOnResolve) el._filesOnResolve(result);
         if (el.parentNode) el.parentNode.removeChild(el);
+        restoreBackgroundInert();
         if (state.dialogReturnFocus && typeof state.dialogReturnFocus.focus === 'function') {
             try { state.dialogReturnFocus.focus(); } catch (_) { /* ignore */ }
         }
@@ -1224,9 +1307,71 @@
         }
     }
 
+    function trapFocus(dialog, e) {
+        // Keep keyboard focus inside an open modal (R6): Tab/Shift-Tab wrap at
+        // the ends rather than escaping into the aria-hidden background.
+        var nodes = dialog.querySelectorAll
+            ? dialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+            : [];
+        var focusable = [];
+        for (var i = 0; i < nodes.length; i++) {
+            var n = nodes[i];
+            if (n.disabled || n.getAttribute('aria-hidden') === 'true') continue;
+            focusable.push(n);
+        }
+        if (!focusable.length) return;
+        var first = focusable[0];
+        var last = focusable[focusable.length - 1];
+        var active = (typeof document !== 'undefined') ? document.activeElement : null;
+        if (!active || !dialog.contains(active)) { e.preventDefault(); first.focus(); return; }
+        if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+    }
+
+    // Background inertness (R6): while a modal is open, mark every element
+    // sibling of the dialog root under <body> aria-hidden so a screen reader
+    // cannot land on content behind the modal; the prior value is restored on
+    // close. Uses the dialog root rather than a fixed container so it holds for
+    // every dialog regardless of which workspace opened it.
+    function setBackgroundInert(dialogRoot) {
+        var body = (typeof document !== 'undefined') ? document.body : null;
+        var children = body && (body.children || body._children) ? (body.children || body._children) : [];
+        for (var i = 0; i < children.length; i++) {
+            var c = children[i];
+            if (c === dialogRoot) continue;
+            if (typeof c._filesPrevAriaHidden === 'undefined') {
+                c._filesPrevAriaHidden = c.getAttribute ? c.getAttribute('aria-hidden') : null;
+            }
+            if (c.setAttribute) c.setAttribute('aria-hidden', 'true');
+        }
+    }
+
+    function restoreBackgroundInert() {
+        var body = (typeof document !== 'undefined') ? document.body : null;
+        var children = body && (body.children || body._children) ? (body.children || body._children) : [];
+        for (var i = 0; i < children.length; i++) {
+            var c = children[i];
+            if (typeof c._filesPrevAriaHidden !== 'undefined') {
+                if (c._filesPrevAriaHidden === null) {
+                    if (c.removeAttribute) c.removeAttribute('aria-hidden');
+                } else if (c.setAttribute) {
+                    c.setAttribute('aria-hidden', c._filesPrevAriaHidden);
+                }
+                delete c._filesPrevAriaHidden;
+            }
+        }
+    }
+
     function onDocumentKeydown(e) {
-        if (e.key !== 'Escape') return;
-        if (state.dialog) closeModal(false);
+        if (!state.dialog) return;
+        if (e.key === 'Escape') {
+            // "Only when safe" (R6): never dismiss while a send request is in
+            // flight, so an accidental Escape can't strand the send state machine.
+            if (state.sendInFlight) return;
+            closeModal(false);
+            return;
+        }
+        if (e.key === 'Tab') trapFocus(state.dialog, e);
     }
 
     function onVisibilityChange() {
@@ -1311,11 +1456,13 @@
             if (action === 'provider-set-default') { providerSetDefault(providerId); return; }
             if (action === 'provider-toggle') { providerToggle(providerId); return; }
             if (action === 'provider-check') { providerCheck(providerId); return; }
+            if (action === 'provider-edit') { openProviderEdit(providerId); return; }
             if (action === 'provider-remove') { providerRemove(providerId); return; }
             if (action === 'provider-save-token') { providerSetToken(providerId); return; }
             if (action === 'provider-clear-token') { providerClearToken(providerId); return; }
         }
 
+        if (action === 'provider-save') { providerSave(); return; }
         if (action === 'provider-probe') { providerProbe(); return; }
         if (action === 'provider-register') { providerRegister(); return; }
         if (action === 'send-submit') { submitSend(); return; }
@@ -1324,10 +1471,29 @@
 
     function onDocumentInput(e) {
         var target = e.target;
-        if (!target || target.id !== 'filesSearch') return;
-        state.search = target.value || '';
-        renderTransfers();
-        renderSummaries();
+        if (!target || !target.id) return;
+        if (target.id === 'filesSearch') {
+            state.search = target.value || '';
+            renderTransfers();
+            renderSummaries();
+            return;
+        }
+        // The custom-TTL number input fires 'input' as digits are typed, so the
+        // expiry summary updates live rather than only on blur.
+        if (target.id === 'filesSendCustomTtlSeconds') {
+            renderSendExpiry();
+            return;
+        }
+    }
+
+    // 'change' fires for <select> and <input type=file>, which do not emit a
+    // useful 'input' event; this routes the send form's dynamic feedback.
+    function onDocumentChange(e) {
+        var target = e.target;
+        if (!target || !target.id) return;
+        if (target.id === 'filesSendExpiry') { renderSendCustomTtl(); return; }
+        if (target.id === 'filesSendFile') { renderSendFileFeedback(); return; }
+        if (target.id === 'filesSendProvider') { renderSendProviderReadiness(); return; }
     }
 
     // ---- filter (C5) -------------------------------------------------------
@@ -1337,7 +1503,9 @@
         state.filter = filter;
         var tabs = (typeof document !== 'undefined') ? document.querySelectorAll('#filesFilterTabs [data-files-filter]') : [];
         tabs.forEach ? tabs.forEach(function (btn) {
-            btn.classList.toggle('active', btn.getAttribute('data-files-filter') === filter);
+            var isActive = btn.getAttribute('data-files-filter') === filter;
+            btn.classList.toggle('active', isActive);
+            if (btn.setAttribute) btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
         }) : null;
         loadTransfers();
     }
@@ -1435,6 +1603,8 @@
                                 '<option value="extended">' + esc(t('files.expiry_extended', 'Extended (7 days)')) + '</option>' +
                                 '<option value="custom">' + esc(t('files.expiry_custom', 'Custom')) + '</option>' +
                             '</select>' +
+                            '<input type="number" id="filesSendCustomTtlSeconds" min="1" step="1" inputmode="numeric" placeholder="' +
+                                esc(t('files.send_ttl_custom_placeholder', 'Seconds')) + '" autocomplete="off" style="display:none" />' +
                         '</label>' +
                         '<div class="files-send-expiry-summary" id="filesSendExpirySummary" aria-live="polite"></div>' +
                         '<label class="files-field">' +
@@ -1453,17 +1623,16 @@
         renderSendRecipients();
         renderSendProviders();
         renderSendStatus();
-        renderSendExpiry();
+        renderSendCustomTtl();
     }
 
     function loadProvidersForSend() {
-        if (state.providers.length) { renderSendProviders(); renderSendStatus(); return; }
-        guardedLoad('providers', function () { return api('/api/mca/providers'); }, function (r) {
-            if (r.status === 200 && r.data && r.data.ok) {
-                state.providers = Array.isArray(r.data.providers) ? r.data.providers : [];
-            } else {
-                state.providers = [];
-            }
+        // R7: always fetch a FRESH provider projection on open — never trust
+        // the cached list — so the Relay-state/readiness feedback reflects the
+        // latest connectivity snapshot rather than one from an earlier visit.
+        return guardedLoad('providers', function () { return api('/api/mca/providers'); }, function (r) {
+            state.providers = (r.status === 200 && r.data && r.data.ok && Array.isArray(r.data.providers))
+                ? r.data.providers : [];
             renderSendProviders();
             renderSendStatus();
         });
@@ -1502,19 +1671,60 @@
             p.upload_readiness === 'ready');
     }
 
+    // Why a provider is not selectable for upload, as a short human label.
+    // The list endpoint's `upload_readiness` is the config-only 3-value enum
+    // (ready/upload_token_missing/upload_disabled), so the richer reasons are
+    // derived from the profile flags directly; `upload_disabled` never reaches
+    // `filesReadinessLabel` here (it maps to `upload_not_allowed` above).
+    function providerNotReadyLabel(p) {
+        if (!p) return filesReadinessLabel('profile_not_found');
+        if (!p.enabled) return filesReadinessLabel('profile_disabled');
+        if (!p.upload_allowed) return filesReadinessLabel('upload_not_allowed');
+        if (!p.upload_token_configured) return filesReadinessLabel('upload_token_missing');
+        return filesReadinessLabel(p.upload_readiness);
+    }
+
     function renderSendProviders() {
         var sel = getEl('filesSendProvider');
         if (!sel) return;
-        var ready = state.providers.filter(uploadReadyProvider);
-        if (!ready.length) {
+        var prev = sel.value || '';
+
+        if (!state.providers.length) {
             sel.innerHTML = '<option value="">' + esc(t('files.no_providers', 'No upload providers configured')) + '</option>';
+            renderSendProviderReadiness();
             return;
         }
-        sel.innerHTML = ready.map(function (p) {
+
+        // R7: list ALL providers, not just the ready ones — a non-ready
+        // provider is shown (disabled) with the reason, so it never silently
+        // disappears and the user can see *why* it is not selectable.
+        sel.innerHTML = state.providers.map(function (p) {
             var label = p.display_name || p.origin || p.provider_id;
-            return '<option value="' + esc(p.provider_id) + '"' + (p.is_default ? ' selected' : '') + '>' +
-                esc(label) + '</option>';
+            if (uploadReadyProvider(p)) {
+                return '<option value="' + esc(p.provider_id) + '">' + esc(label) + '</option>';
+            }
+            return '<option value="' + esc(p.provider_id) + '" disabled>' +
+                esc(label + ' — ' + providerNotReadyLabel(p)) + '</option>';
         }).join('');
+
+        // R7: no auto-switch. Preserve an existing selection when it is still a
+        // ready option; only fall back to the default (then first ready) on
+        // first render, when the user has not made a choice yet.
+        if (prev && uploadReadyProvider(providerById(prev))) {
+            sel.value = prev;
+        } else if (!prev) {
+            var chosen = null;
+            for (var i = 0; i < state.providers.length; i++) {
+                if (state.providers[i].is_default && uploadReadyProvider(state.providers[i])) { chosen = state.providers[i]; break; }
+            }
+            if (!chosen) {
+                for (var j = 0; j < state.providers.length; j++) {
+                    if (uploadReadyProvider(state.providers[j])) { chosen = state.providers[j]; break; }
+                }
+            }
+            if (chosen) sel.value = chosen.provider_id;
+        }
+        renderSendProviderReadiness();
     }
 
     function renderSendStatus() {
@@ -1549,6 +1759,55 @@
         if (submit) submit.textContent = label;
     }
 
+    function renderSendProviderReadiness() {
+        var el = getEl('filesSendReadiness');
+        if (!el) return;
+        var sel = getEl('filesSendProvider');
+        var id = sel ? sel.value : '';
+        var p = id ? providerById(id) : null;
+        if (!p) { el.innerHTML = ''; return; }
+        // R7: Relay state and upload readiness are rendered as SEPARATE facts —
+        // the relay's reachability/identity is independent of whether uploads
+        // are configured/allowed for this profile.
+        var relay = filesRelayStateLabel(p.state);
+        var ready = uploadReadyProvider(p);
+        var readiness = ready
+            ? t('files.upload_ready', 'Upload: ready')
+            : t('files.upload_not_ready', 'Upload: not ready') + ' — ' + providerNotReadyLabel(p);
+        el.innerHTML =
+            '<span>' + esc(t('files.relay_state_label', 'Relay state') + ': ' + relay) + '</span>' +
+            ' · <span>' + esc(readiness) + '</span>';
+    }
+
+    function renderSendFileFeedback() {
+        var el = getEl('filesSendFileFeedback');
+        if (!el) return;
+        var input = getEl('filesSendFile');
+        var f = input && input.files && input.files.length ? input.files[0] : null;
+        if (!f) { el.innerHTML = ''; return; }
+        var name = (f.name || '').toLowerCase();
+        var ext = name.indexOf('.') !== -1 ? name.split('.').pop() : '';
+        // R7: advisory MIME feedback from the server-authoritative allowlist
+        // (JPEG/PNG/WebP/PDF/TXT/LOG/CSV/JSON). The client only *describes* the
+        // file here; the server sniffs magic bytes and is the real authority,
+        // so an unrecognized type is a warning, never a hard block.
+        var known = EXTENSION_MIME[ext] || (ALLOWED_MIME[f.type] ? f.type : '');
+        var typeLine = known
+            ? tparams('files.send_file_type', { type: known }, 'Type: ' + known)
+            : t('files.send_file_type_unknown', 'Type: unrecognized — the server will validate it');
+        el.innerHTML =
+            '<span>' + esc(typeLine) + '</span>' +
+            ' · <span>' + esc(tparams('files.send_file_size', { size: fmtBytes(f.size) }, 'Size: ' + fmtBytes(f.size))) + '</span>';
+    }
+
+    function renderSendCustomTtl() {
+        var sel = getEl('filesSendExpiry');
+        var input = getEl('filesSendCustomTtlSeconds');
+        var custom = sel && sel.value === 'custom';
+        if (input) input.style.display = custom ? '' : 'none';
+        renderSendExpiry();
+    }
+
     function renderSendExpiry() {
         var summary = getEl('filesSendExpirySummary');
         if (!summary) return;
@@ -1564,7 +1823,13 @@
         var sel = getEl('filesSendExpiry');
         var mode = sel ? sel.value : 'default';
         if (mode === 'extended') return 604800;
-        if (mode === 'custom') return 86400; // custom is provider-bounded at submit time
+        if (mode === 'custom') {
+            var input = getEl('filesSendCustomTtlSeconds');
+            var raw = input ? String(input.value || '').trim() : '';
+            var n = parseInt(raw, 10);
+            if (raw !== '' && Number.isFinite(n) && String(n) === raw && n > 0) return n;
+            return 86400; // fallback; submitSend validates the custom value itself
+        }
         return 259200; // default 3 days
     }
 
@@ -1583,12 +1848,23 @@
             recipient ? recipient.value : '',
             provider ? provider.value : '',
             expiry ? expiry.value : 'default',
+            String(sendTtlSeconds()), // custom TTL is part of the semantic form
             comment ? (comment.value || '').trim() : '',
             f ? f.name : '',
             f ? String(f.size) : '',
             f ? (f.type || '') : '',
             f ? String(f.lastModified || '') : '',
-        ].join(' ');
+        ].join('\u0000');
+    }
+
+    // Re-arm the send form after any terminal outcome (success/timeout/failed/
+    // unknown) or a pre-202 error, so the Send button never stays disabled while
+    // the dialog is still open. Send-in-flight is a separate guard from the
+    // button state, so a spurious re-enable cannot trigger a double submit.
+    function unlockSend() {
+        state.sendInFlight = false;
+        var submit = getEl('filesSendSubmit');
+        if (submit) submit.disabled = false;
     }
 
     function submitSend() {
@@ -1621,6 +1897,17 @@
             return;
         }
 
+        // R7: a custom expiry must be a positive whole number of seconds.
+        if ((getEl('filesSendExpiry') || {}).value === 'custom') {
+            var ttlInput = getEl('filesSendCustomTtlSeconds');
+            var raw = ttlInput ? String(ttlInput.value || '').trim() : '';
+            var n = parseInt(raw, 10);
+            if (raw === '' || !Number.isFinite(n) || String(n) !== raw || n <= 0) {
+                toast(t('files.err_ttl_custom', 'Enter a positive whole number of seconds for the custom expiry'), 'error');
+                return;
+            }
+        }
+
         // Idempotency: reuse the client_request_id for an unchanged semantic
         // form; mint a new one on any semantic change (C7 §12.7).
         var sig = sendSignature();
@@ -1639,8 +1926,7 @@
         api('/api/mca/providers/' + encodeURIComponent(provider.value) +
             '/upload-readiness?requested_ttl_seconds=' + ttl).then(function (r) {
             if (!r.data || r.data.ok !== true || !r.data.ready) {
-                state.sendInFlight = false;
-                if (submit) submit.disabled = false;
+                unlockSend();
                 var reason = r.data && r.data.reason ? filesReadinessLabel(r.data.reason) : t('files.err_provider_not_ready', 'Selected provider is not ready');
                 toast(reason, 'error');
                 return;
@@ -1666,28 +1952,36 @@
                         queued: t('files.sending', 'Sending file…'),
                         success: t('files.send_queued', 'Transfer created'),
                         onSuccess: function () {
-                            state.sendInFlight = false;
+                            unlockSend();
                             state.sendSignature = null;
                             state.sendClientRequestId = null;
                             closeModal(false);
                             loadTransfers();
                             if (attachmentId) selectAttachment(attachmentId);
                         },
+                        onFailed: function () {
+                            // Keep the form (and its client_request_id) so the
+                            // user can retry after correcting the error.
+                            unlockSend();
+                        },
+                        onTimeout: function () {
+                            // Same form -> same client_request_id on retry, so
+                            // the server can dedupe the still-pending create.
+                            unlockSend();
+                        },
                         onUnknown: function () {
-                            state.sendInFlight = false;
+                            unlockSend();
                             loadTransfers();
                         },
                     });
                     // Do not claim success yet: the tracker owns the final outcome.
                 } else {
-                    state.sendInFlight = false;
-                    if (submit) submit.disabled = false;
+                    unlockSend();
                     toast(filesErrorCode(r2.data), 'error');
                 }
             });
         }).catch(function () {
-            state.sendInFlight = false;
-            if (submit) submit.disabled = false;
+            unlockSend();
             toast(t('files.error.network_error', 'Network error'), 'error');
         });
     }
@@ -1752,8 +2046,8 @@
                     resourceKey: resourceKey,
                     queued: opts.queued,
                     success: opts.success,
-                    onSuccess: function () { loadProviders(); },
-                    onUnknown: function () { loadProviders(); },
+                    onSuccess: function () { return loadProviders(); },
+                    onUnknown: function () { return loadProviders(); },
                 });
             } else {
                 toast(filesErrorCode(r.data), 'error');
@@ -1791,7 +2085,7 @@
         var name = p ? (p.display_name || p.origin || id) : id;
         confirmDialog({
             title: t('files.confirm_provider_remove_title', 'Remove provider?'),
-            body: tparams('files.confirm_provider_remove_body', { name: name },
+            bodyText: tparams('files.confirm_provider_remove_body', { name: name },
                 'This removes or disables the Relay provider ' + name + '.'),
             confirmLabel: t('files.remove', 'Remove'),
             danger: true,
@@ -1826,6 +2120,155 @@
         });
     }
 
+    // ---- provider editing (R5) ----------------------------------------------
+
+    function providerEditFields(id) {
+        var p = providerById(id);
+        if (!p) return '';
+        var minTtl = (p.min_ttl_seconds === null || p.min_ttl_seconds === undefined) ? '' : String(p.min_ttl_seconds);
+        var maxTtl = (p.max_ttl_seconds === null || p.max_ttl_seconds === undefined) ? '' : String(p.max_ttl_seconds);
+        var ttlPlaceholder = t('files.provider_ttl_unset', 'Unset');
+        return (
+            '<div class="files-edit-field">' +
+                '<label for="filesEditName-' + esc(id) + '">' + esc(t('files.provider_display_name', 'Display name')) + '</label>' +
+                '<input type="text" id="filesEditName-' + esc(id) + '" value="' + esc(p.display_name || '') + '" autocomplete="off" />' +
+            '</div>' +
+            '<div class="files-edit-field files-edit-field--check">' +
+                '<label class="files-edit-check"><input type="checkbox" id="filesEditEnabled-' + esc(id) + '"' + (p.enabled ? ' checked' : '') + ' /> ' +
+                    esc(t('files.provider_enabled', 'Enabled')) + '</label>' +
+            '</div>' +
+            '<div class="files-edit-field files-edit-field--check">' +
+                '<label class="files-edit-check"><input type="checkbox" id="filesEditUpload-' + esc(id) + '"' + (p.upload_allowed ? ' checked' : '') + ' /> ' +
+                    esc(t('files.provider_upload_allowed', 'Upload allowed')) + '</label>' +
+            '</div>' +
+            '<div class="files-edit-field files-edit-field--check">' +
+                '<label class="files-edit-check"><input type="checkbox" id="filesEditDownload-' + esc(id) + '"' + (p.download_allowed ? ' checked' : '') + ' /> ' +
+                    esc(t('files.provider_download_allowed', 'Download allowed')) + '</label>' +
+            '</div>' +
+            '<div class="files-edit-field">' +
+                '<label for="filesEditMinTtl-' + esc(id) + '">' + esc(t('files.provider_ttl_min', 'Min TTL (seconds)')) + '</label>' +
+                '<input type="number" id="filesEditMinTtl-' + esc(id) + '" min="1" step="1" value="' + esc(minTtl) + '" placeholder="' + esc(ttlPlaceholder) + '" autocomplete="off" />' +
+            '</div>' +
+            '<div class="files-edit-field">' +
+                '<label for="filesEditMaxTtl-' + esc(id) + '">' + esc(t('files.provider_ttl_max', 'Max TTL (seconds)')) + '</label>' +
+                '<input type="number" id="filesEditMaxTtl-' + esc(id) + '" min="1" step="1" value="' + esc(maxTtl) + '" placeholder="' + esc(ttlPlaceholder) + '" autocomplete="off" />' +
+            '</div>'
+        );
+    }
+
+    function openProviderEdit(id) {
+        var p = providerById(id);
+        if (!p) return;
+        closeModal();
+        var dialogId = 'files-provider-edit';
+        var html =
+            '<div class="files-modal-backdrop" data-files-action="modal-backdrop-close" role="presentation">' +
+                '<div class="files-modal" role="dialog" aria-modal="true" aria-labelledby="' + dialogId + '-title">' +
+                    '<div class="files-modal-header">' +
+                        '<h3 class="files-modal-title" id="' + dialogId + '-title">✏️ ' + esc(t('files.edit_provider', 'Edit provider')) + '</h3>' +
+                        '<button type="button" class="files-modal-close" data-files-action="modal-close" aria-label="' + esc(t('files.dialog_close', 'Close dialog')) + '">×</button>' +
+                    '</div>' +
+                    '<div class="files-modal-body">' +
+                        '<div class="files-provider-edit-head">' + esc(p.origin || '') + ' <code>' + esc(groupFp(p.service_key_fingerprint)) + '</code></div>' +
+                        providerEditFields(id) +
+                        '<div id="filesProviderEditError" class="files-provider-edit-error" role="alert"></div>' +
+                    '</div>' +
+                    '<div class="files-modal-footer">' +
+                        '<button type="button" class="files-modal-cancel" data-files-action="modal-cancel">' + esc(t('common.cancel', 'Cancel')) + '</button>' +
+                        '<button type="button" class="files-action-btn" data-files-action="provider-save">' + esc(t('common.save', 'Save')) + '</button>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+        var el = openModalHtml(html, function () {});
+        el.dataset.providerId = id;
+    }
+
+    function providerSave() {
+        var el = state.dialog;
+        var id = el && el.dataset ? el.dataset.providerId : null;
+        var p = providerById(id);
+        if (!p) return;
+
+        var nameEl = getEl('filesEditName-' + id);
+        var enabledEl = getEl('filesEditEnabled-' + id);
+        var uploadEl = getEl('filesEditUpload-' + id);
+        var downloadEl = getEl('filesEditDownload-' + id);
+        var minEl = getEl('filesEditMinTtl-' + id);
+        var maxEl = getEl('filesEditMaxTtl-' + id);
+        var errEl = getEl('filesProviderEditError');
+
+        function err(msg) { if (errEl) errEl.textContent = msg; }
+
+        var displayName = nameEl ? nameEl.value.trim() : '';
+        if (!displayName) {
+            err(t('files.err_provider_display_name', 'Display name must not be empty.'));
+            return;
+        }
+
+        var minRaw = minEl ? minEl.value.trim() : '';
+        var maxRaw = maxEl ? maxEl.value.trim() : '';
+        var minPresent = minRaw !== '';
+        var maxPresent = maxRaw !== '';
+        var minVal = null;
+        var maxVal = null;
+
+        if (minPresent) {
+            minVal = parseInt(minRaw, 10);
+            if (!Number.isFinite(minVal) || String(minVal) !== minRaw || minVal <= 0) {
+                err(t('files.err_provider_ttl', 'TTL must be a positive whole number of seconds.'));
+                return;
+            }
+        }
+        if (maxPresent) {
+            maxVal = parseInt(maxRaw, 10);
+            if (!Number.isFinite(maxVal) || String(maxVal) !== maxRaw || maxVal <= 0) {
+                err(t('files.err_provider_ttl', 'TTL must be a positive whole number of seconds.'));
+                return;
+            }
+        }
+        if (minPresent && maxPresent && minVal > maxVal) {
+            err(t('files.err_provider_ttl_min_max', 'Minimum TTL must not exceed maximum TTL.'));
+            return;
+        }
+
+        // Build ONE PATCH body with only the fields that actually changed; a
+        // cleared TTL bound is sent as JSON null so the server clears it.
+        var body = {};
+        if (displayName !== (p.display_name || '')) body.display_name = displayName;
+        if (enabledEl && !!enabledEl.checked !== !!p.enabled) body.enabled = !!enabledEl.checked;
+        if (uploadEl && !!uploadEl.checked !== !!p.upload_allowed) body.upload_allowed = !!uploadEl.checked;
+        if (downloadEl && !!downloadEl.checked !== !!p.download_allowed) body.download_allowed = !!downloadEl.checked;
+
+        var oldMin = (p.min_ttl_seconds === null || p.min_ttl_seconds === undefined) ? null : p.min_ttl_seconds;
+        var oldMax = (p.max_ttl_seconds === null || p.max_ttl_seconds === undefined) ? null : p.max_ttl_seconds;
+        if (minPresent) {
+            if (minVal !== oldMin) body.min_ttl_seconds = minVal;
+        } else if (oldMin !== null) {
+            body.min_ttl_seconds = null; // cleared
+        }
+        if (maxPresent) {
+            if (maxVal !== oldMax) body.max_ttl_seconds = maxVal;
+        } else if (oldMax !== null) {
+            body.max_ttl_seconds = null; // cleared
+        }
+
+        if (Object.keys(body).length === 0) {
+            // Nothing changed — no pointless PATCH; just dismiss.
+            err('');
+            closeModal(false);
+            return;
+        }
+
+        // Poll the PATCH to terminal; on success the command tracker refreshes
+        // the authoritative provider projection before reporting success.
+        providerCommand('/api/mca/providers/' + encodeURIComponent(id), 'PATCH', body, {
+            resourceKey: 'provider:' + id,
+            queued: t('files.provider_updating', 'Updating provider…'),
+            success: t('files.provider_updated', 'Provider updated'),
+        });
+        closeModal(false);
+    }
+
     function renderProviderSettings() {
         var list = getEl('filesProvidersList');
         if (!list) return;
@@ -1858,6 +2301,8 @@
                         providerField('files.provider_token', 'Token', p.upload_token_configured ? '✓' : '—') +
                     '</div>' +
                     '<div class="files-provider-actions">' +
+                        '<button type="button" class="files-action-btn" data-files-action="provider-edit" data-provider="' + esc(p.provider_id) + '"' + enabled + '>' +
+                            esc(t('files.edit', 'Edit')) + '</button>' +
                         (p.is_default ? '' :
                             '<button type="button" class="files-action-btn" data-files-action="provider-set-default" data-provider="' + esc(p.provider_id) + '"' + enabled + '>' +
                                 esc(t('files.set_default', 'Set default')) + '</button>') +
@@ -1947,9 +2392,9 @@
 
         confirmDialog({
             title: t('files.confirm_register_title', 'Register provider?'),
-            body: '<div class="files-provider-probe-line">' + esc(t('files.probe_fingerprint', 'Service key fingerprint')) +
+            bodyHtml: '<div class="files-provider-probe-line">' + esc(t('files.probe_fingerprint', 'Service key fingerprint')) +
                 ': <code>' + esc(groupFp(fingerprint)) + '</code></div>' +
-                t('files.confirm_register_body', 'Verify the fingerprint, then register this provider.'),
+                esc(t('files.confirm_register_body', 'Verify the fingerprint, then register this provider.')),
             confirmLabel: t('files.register', 'Confirm & register'),
             danger: false,
         }).then(function (yes) {
@@ -1996,6 +2441,7 @@
             document.addEventListener('click', onDocumentClick);
             document.addEventListener('keydown', onDocumentKeydown);
             document.addEventListener('input', onDocumentInput);
+            document.addEventListener('change', onDocumentChange);
             document.addEventListener('visibilitychange', onVisibilityChange);
         }
         // Direct input listener for the search box (delegation covers dynamic content,
@@ -2025,4 +2471,11 @@
     window.closeFilesSendDialog = function () { closeModal(false); };
     window.openFilesProviderSettings = openProviderSettings;
     window.closeFilesProviderSettings = function () { closeModal(false); };
+    // Entry point used by the Settings workspace "Relay providers" control: it
+    // navigates to the Files workspace (which activates the module) and reuses
+    // the SAME provider component — no second implementation or cache.
+    window.openFilesRelayProviders = function () {
+        if (typeof window.switchMainTab === 'function') window.switchMainTab('files');
+        openProviderSettings();
+    };
 })();

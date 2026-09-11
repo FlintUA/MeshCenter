@@ -4494,3 +4494,110 @@ def test_two_service_sender_revokes_then_receiver_cancelled(
 
     assert receiver.get_state(receiver_ns.conn, received_id) == receiver.CANCELLED
     assert sender.get_state(sender_ns.conn, attachment_id) == sender.REVOKED
+
+
+# ---- PR 2.5 correction: transaction hygiene at worker exception boundaries ---
+
+
+def test_atomic_refuses_entry_when_an_outer_transaction_is_active(conn, wsm, principal, service):
+    """`_atomic()` is a top-level-only service transaction: if the worker
+    connection already has an outer transaction open (a caller's own DML with
+    no commit), it must fail fast with RuntimeError rather than release the
+    savepoint and then unconditionally commit the caller's uncommitted work."""
+    attachment_id = "01" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=attachment_id, transfer_id=b"\x01" * 16,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    conn.execute("UPDATE attachments SET download_grace_seconds = 9999 WHERE id = ?", (attachment_id,))
+    assert conn.in_transaction is True
+
+    with pytest.raises(RuntimeError):
+        with service._atomic("probe"):
+            pass
+
+    # The guard failed fast and left the caller's outer transaction untouched.
+    assert conn.in_transaction is True
+    conn.rollback()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT download_grace_seconds FROM attachments WHERE id = ?", (attachment_id,)
+    ).fetchone()
+    assert row["download_grace_seconds"] == 3600  # 9999 was never committed
+
+
+def test_step_failure_partial_write_is_not_committed_by_later_expiry_commit(
+    conn, wsm, principal, service, monkeypatch
+):
+    """A `run_step` that writes to the shared connection and then raises leaves
+    no uncommitted residue: the failed row's partial write is rolled back at the
+    row-scan boundary, and the same tick's later expiry sweep (which commits)
+    does not resurrect it."""
+    failing_id, expiry_id = "02" * 16, "03" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=failing_id, transfer_id=b"\x02" * 16,
+        state=receiver.WAITING_PROVIDER, hard_expires_at=int(time.time()) + 3600,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+    _seed_received_row(
+        conn, principal, attachment_id=expiry_id, transfer_id=b"\x03" * 16,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) - 100,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+
+    def failing_run_step(conn, **kwargs):
+        # A database write that precedes the injected failure - the exact
+        # "partial write" shape this test exists to catch.
+        conn.execute(
+            "INSERT INTO attachment_events (id, attachment_id, occurred_at, event_type, detail_json) "
+            "VALUES (?, ?, ?, 'sentinel', '{}')",
+            (uuid.uuid4().hex, kwargs["attachment_id"], int(time.time())),
+        )
+        raise RuntimeError("injected step failure")
+
+    monkeypatch.setattr("meshsrv.attachments.receiver.run_step", failing_run_step)
+
+    service.tick()
+
+    # The failed step's partial write was rolled back and never resurrected ...
+    assert conn.execute(
+        "SELECT 1 FROM attachment_events WHERE event_type = 'sentinel'"
+    ).fetchone() is None
+    # ... even though a later commit in the same tick (the expiry sweep) did run.
+    assert receiver.get_state(conn, expiry_id) == receiver.EXPIRED
+    assert receiver.get_state(conn, failing_id) == receiver.WAITING_PROVIDER  # unchanged
+
+
+def test_inbound_partial_write_is_not_resurrected_by_later_commit(
+    conn, wsm, principal, service, monkeypatch
+):
+    """A failed inbound event's partial write is rolled back at the drain
+    boundary, so a later commit in the same tick (the expiry sweep) cannot
+    resurrect it."""
+    expiry_id = "04" * 16
+    _seed_received_row(
+        conn, principal, attachment_id=expiry_id, transfer_id=b"\x04" * 16,
+        state=receiver.WAITING_CONSENT, hard_expires_at=int(time.time()) - 100,
+        reply=_reply_route("!aaaaaaaa"),
+    )
+
+    def failing_process(event):
+        conn.execute(
+            "INSERT INTO attachment_events (id, attachment_id, occurred_at, event_type, detail_json) "
+            "VALUES (?, ?, ?, 'sentinel', '{}')",
+            (uuid.uuid4().hex, expiry_id, int(time.time())),
+        )
+        raise RuntimeError("injected inbound failure")
+
+    monkeypatch.setattr(service, "_process_one_inbound_event", failing_process)
+    service.enqueue_inbound(
+        InboundEvent(text="dummy", source_address="!aaaaaaaa", packet_id="p1", received_at=time.time())
+    )
+
+    service.tick()
+
+    assert conn.execute(
+        "SELECT 1 FROM attachment_events WHERE event_type = 'sentinel'"
+    ).fetchone() is None
+    assert receiver.get_state(conn, expiry_id) == receiver.EXPIRED

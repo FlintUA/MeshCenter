@@ -646,6 +646,12 @@ class AttachmentsService:
                 else:
                     self._step_received(row)
             except Exception:  # noqa: BLE001 - one bad attachment must not stop the whole tick
+                # PR 2.5 correction (transaction hygiene): a `run_step` that
+                # raised after writing to the shared connection leaves that
+                # partial write uncommitted - roll it back so this same tick's
+                # expiry sweep or reply dispatch (which both commit) cannot
+                # resurrect the failed row's partial write.
+                self._rollback_silently()
                 logger.exception(
                     "AttachmentsService: run_step failed for attachment %s (direction=%s)",
                     row["id"],
@@ -734,6 +740,12 @@ class AttachmentsService:
             try:
                 self._process_one_inbound_event(event)
             except Exception:  # noqa: BLE001 - one bad inbound event must not stop the drain or the worker
+                # PR 2.5 correction (transaction hygiene): whatever this event
+                # wrote before raising is still uncommitted on the shared
+                # connection - roll it back so a later commit (this same tick's
+                # row-scan or expiry sweep) cannot resurrect a partial write
+                # from the failed event.
+                self._rollback_silently()
                 logger.exception(
                     "AttachmentsService: failed to process inbound event from %s", event.source_address
                 )
@@ -1255,22 +1267,36 @@ class AttachmentsService:
     @contextlib.contextmanager
     def _atomic(self, name: str = "op"):
         """PR 2.5 correction (exception-atomic transitions): run a block as one
-        atomic unit on the worker's single SQLite connection. Opens a SAVEPOINT,
-        then on success releases it and commits the outer transaction, and on
-        any exception rolls back *to the savepoint* and releases it - so a
-        partial write from the block (a state UPDATE, an `attachment_events`
-        row, a sender transient/revoke-state DELETE, a half-inserted outbox
-        row) can never leak into a later commit on this connection.
+        atomic unit on the worker's single SQLite connection. This is a
+        **top-level service transaction** - it requires a clean connection on
+        entry and owns the entire transaction it opens. It opens a SAVEPOINT,
+        then on success releases it (which, because the SAVEPOINT is the
+        outermost transaction, commits the block's writes) and on any exception
+        rolls back *to the savepoint* and releases it - so a partial write from
+        the block (a state UPDATE, an `attachment_events` row, a sender
+        transient/revoke-state DELETE, a half-inserted outbox row) can never
+        leak into a later commit on this connection.
+
+        It is deliberately NOT nested-safe: if the connection is already inside
+        an outer transaction (`self._conn.in_transaction` is True) on entry, it
+        raises `RuntimeError` rather than guessing. The previous implementation
+        released only the savepoint but then unconditionally `commit()`ed, which
+        inside a caller-owned outer transaction silently committed *the caller's*
+        uncommitted prior work - a correctness bug. Failing fast is the only
+        safe behavior, and every current caller (the reject/revoke command
+        handlers and the per-row expiry sweep) opens `_atomic` from a clean
+        connection.
 
         Distinct from `_rollback_silently()`, which undoes *everything* since
         the last commit: a SAVEPOINT rollback is scoped to exactly this block,
         so a caller looping over many rows (the expiry sweep) can isolate one
         failing row and keep processing later ones without committing the
-        failed row's partial writes. The worker is single-threaded and every
-        other operation commits or rolls back before yielding, so `_atomic`'s
-        savepoint is normally the outermost transaction - but it is correct
-        even when a caller's own DML opened an outer transaction first (the
-        savepoint is then nested and only the inner block is undone)."""
+        failed row's partial writes."""
+        if self._conn.in_transaction:
+            raise RuntimeError(
+                f"_atomic({name!r}) requires a clean connection, but an outer "
+                "transaction is already active on the worker connection"
+            )
         self._conn.execute(f"SAVEPOINT {name}")
         try:
             yield
@@ -2976,6 +3002,13 @@ class AttachmentsService:
                         commit=False,
                     )
             except Exception as exc:  # noqa: BLE001 - one bad row must not stop the rest of the sweep
+                # PR 2.5 correction (transaction hygiene): `_atomic` normally
+                # rolls the savepoint back and releases it before re-raising,
+                # but if that rollback/release itself failed (a connection in
+                # an unusable state) the partial write may still be uncommitted
+                # here - roll back whatever is left so a later row's commit
+                # cannot resurrect it.
+                self._rollback_silently()
                 # Sanitized: no exception message/traceback (it may embed the
                 # row's transfer id or other untrusted material) - only the
                 # DB-validated attachment id and the exception class name.

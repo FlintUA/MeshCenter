@@ -457,3 +457,18 @@ def test_login_throttle_never_engages_while_auth_is_disabled(tmp_path, monkeypat
     resp = client.post("/login", data={"password": "wrong"}, environ_overrides=overrides)
     assert resp.status_code == 200, "must render the ordinary error form, not be pre-throttled"
     assert b'id="loginError"' not in resp.data
+
+
+# --- Global Security Headers ------------------------------------------------
+
+def test_security_headers_present_on_responses(tmp_path):
+    app, _ = _make_app(tmp_path, enabled=False)
+    client = app.test_client()
+
+    resp = client.get("/api/security")
+    assert resp.headers.get("X-Frame-Options") == "SAMEORIGIN"
+    assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+
+    resp = client.get("/login")
+    assert resp.headers.get("X-Frame-Options") == "SAMEORIGIN"
+    assert resp.headers.get("X-Content-Type-Options") == "nosniff"

@@ -120,6 +120,20 @@ class FakeElement {
         child.parentNode = null;
         return child;
     }
+    // Sibling navigation derived from the parent's child list, so
+    // insertBefore(newNode, node.nextSibling) positions faithfully.
+    get nextSibling() {
+        const p = this.parentNode;
+        if (!p || !p._children) return null;
+        const i = p._children.indexOf(this);
+        return (i >= 0 && i < p._children.length - 1) ? p._children[i + 1] : null;
+    }
+    get previousSibling() {
+        const p = this.parentNode;
+        if (!p || !p._children) return null;
+        const i = p._children.indexOf(this);
+        return (i > 0) ? p._children[i - 1] : null;
+    }
     addEventListener(type, fn) {
         if (!this._listeners[type]) this._listeners[type] = [];
         this._listeners[type].push(fn);
@@ -147,7 +161,17 @@ class FakeElement {
     contains() { return false; }
     matches() { return false; }
     insertAdjacentHTML() { /* no-op */ }
-    insertBefore(child) { this.appendChild(child); return child; }
+    insertBefore(child, ref) {
+        // Move the child out of any current parent (including this one) so a
+        // re-insert never duplicates it, then splice it before `ref` (or append
+        // when `ref` is absent) — matching the browser's insertBefore semantics.
+        if (child.parentNode) child.parentNode.removeChild(child);
+        const i = ref ? this._children.indexOf(ref) : -1;
+        if (i >= 0) this._children.splice(i, 0, child);
+        else this._children.push(child);
+        child.parentNode = this;
+        return child;
+    }
     getBoundingClientRect() { return { top: 0, left: 0, width: 0, height: 0, bottom: 0, right: 0 }; }
     classListFn() { return this.classList; }
 }
@@ -1228,6 +1252,137 @@ async function test_refresh_sidebar_targets_age_limit_join_and_force() {
     console.log('PASS: test_refresh_sidebar_targets_age_limit_join_and_force');
 }
 
+// ---- PR 6: inline node-detail expansion --------------------------------------
+
+// Builds a compact node card whose `data-node-id` attribute is set the way the
+// real renderNodeCard() emits it (in a browser `dataset` is the live view of the
+// data-* attribute; positionNodeDetailSlot reads the attribute form).
+function makeInlineNodeCard(nodeId) {
+    const card = makeNodeCard(nodeId);
+    card.setAttribute('data-node-id', nodeId);
+    return card;
+}
+
+// Arms the #nodeDetails slot so `querySelector(':scope > .node-detail-card')`
+// reports a rendered detail card — the signal positionNodeDetailSlot() uses to
+// decide the card is present and must be kept inline.
+function armDetailSlot(doc) {
+    const slot = doc.getElementById('nodeDetails');
+    const fakeDetailCard = new FakeElement('div', '');
+    fakeDetailCard.className = 'node-detail-card';
+    slot.querySelector = (sel) => (sel === ':scope > .node-detail-card' ? fakeDetailCard : null);
+    return slot;
+}
+
+async function test_position_node_detail_slot_places_inline_after_selected_card() {
+    // The core PR 6 behavior: with a node selected AND its detail card rendered,
+    // the stable slot is moved into #nodesList immediately after that node's
+    // compact card (not before it, not after a different card, not at the end).
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const doc = sandbox._document;
+    const store = sandbox.window.MeshCenterTargets;
+
+    const cardA = makeInlineNodeCard('!aaaaaaaa');
+    const cardB = makeInlineNodeCard('!bbbbbbbb');
+    const cardC = makeInlineNodeCard('!cccccccc');
+    const nodesList = doc.getElementById('nodesList');
+    [cardA, cardB, cardC].forEach((c) => nodesList.appendChild(c));
+    // positionNodeDetailSlot reads the LIST element's own querySelectorAll (not
+    // the document's), so point the list element at the registered cards.
+    nodesList.querySelectorAll = (sel) => (sel === '.node-card' ? [cardA, cardB, cardC] : []);
+
+    const slot = armDetailSlot(doc);
+    store.select('node', '!bbbbbbbb');
+
+    sandbox.positionNodeDetailSlot();
+
+    assert.equal(slot.parentNode, nodesList, 'the detail slot is moved into #nodesList');
+    assert.equal(cardB.nextSibling, slot, 'the slot sits immediately after the selected node B compact card');
+    assert.equal(nodesList._children.indexOf(slot), nodesList._children.indexOf(cardB) + 1,
+        'the slot is not placed after a different card or at the list end');
+    console.log('PASS: test_position_node_detail_slot_places_inline_after_selected_card');
+}
+
+async function test_position_node_detail_slot_removes_slot_without_selection() {
+    // Clearing the selection (or selecting a channel) must pull the slot back out
+    // of the list, not leave a stray placeholder in the node list.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const doc = sandbox._document;
+    const store = sandbox.window.MeshCenterTargets;
+
+    const cardA = makeInlineNodeCard('!aaaaaaaa');
+    const nodesList = doc.getElementById('nodesList');
+    nodesList.appendChild(cardA);
+    nodesList.querySelectorAll = (sel) => (sel === '.node-card' ? [cardA] : []);
+
+    const slot = armDetailSlot(doc);
+    store.select('node', '!aaaaaaaa');
+    sandbox.positionNodeDetailSlot();
+    assert.equal(slot.parentNode, nodesList, 'precondition: slot placed for the selected node');
+
+    store.clearSelection();
+    sandbox.positionNodeDetailSlot();
+    assert.equal(slot.parentNode, null, 'clearing the selection removes the slot from the list');
+    console.log('PASS: test_position_node_detail_slot_removes_slot_without_selection');
+}
+
+async function test_position_node_detail_slot_removes_slot_without_rendered_card() {
+    // A node is selected but its detail card was never rendered (hasCard=false);
+    // the empty slot must not be left floating inside the list.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const doc = sandbox._document;
+    const store = sandbox.window.MeshCenterTargets;
+
+    const cardA = makeInlineNodeCard('!aaaaaaaa');
+    const nodesList = doc.getElementById('nodesList');
+    nodesList.appendChild(cardA);
+    nodesList.querySelectorAll = (sel) => (sel === '.node-card' ? [cardA] : []);
+
+    // No armDetailSlot(): slot.querySelector returns null (the FakeElement default).
+    const slot = doc.getElementById('nodeDetails');
+    store.select('node', '!aaaaaaaa');
+
+    sandbox.positionNodeDetailSlot();
+    assert.equal(slot.parentNode, null, 'an empty slot is not left inside the list');
+    console.log('PASS: test_position_node_detail_slot_removes_slot_without_rendered_card');
+}
+
+async function test_render_sidebar_node_cards_detaches_and_repositions_inline_slot() {
+    // The list rebuild must detach the slot BEFORE the innerHTML wipe (so its
+    // detail-card DOM survives) and re-insert it below the selected node's card
+    // afterward — verified by observing the detach call and the final position.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const doc = sandbox._document;
+    const store = sandbox.window.MeshCenterTargets;
+
+    const cardA = makeInlineNodeCard('!aaaaaaaa');
+    const cardB = makeInlineNodeCard('!bbbbbbbb');
+    const cardC = makeInlineNodeCard('!cccccccc');
+    const nodesList = doc.getElementById('nodesList');
+    [cardA, cardB, cardC].forEach((c) => nodesList.appendChild(c));
+    nodesList.querySelectorAll = (sel) => (sel === '.node-card' ? [cardA, cardB, cardC] : []);
+    doc._nodeCards = [cardA, cardB, cardC];
+
+    const slot = armDetailSlot(doc);
+    store.select('node', '!bbbbbbbb');
+    sandbox.positionNodeDetailSlot();
+    assert.equal(cardB.nextSibling, slot, 'precondition: slot placed below node B');
+
+    let detachCount = 0;
+    const origRemoveChild = nodesList.removeChild.bind(nodesList);
+    nodesList.removeChild = (child) => {
+        if (child === slot) detachCount++;
+        return origRemoveChild(child);
+    };
+
+    sandbox.renderSidebarNodeCards();
+
+    assert.equal(detachCount, 1, 'the rebuild detaches the slot exactly once before wiping the list');
+    assert.equal(slot.parentNode, nodesList, 'the slot is re-inserted after the rebuild');
+    assert.equal(cardB.nextSibling, slot, 'the slot repositions directly below node B after the rebuild');
+    console.log('PASS: test_render_sidebar_node_cards_detaches_and_repositions_inline_slot');
+}
+
 // ---- runner ------------------------------------------------------------------
 
 async function main() {
@@ -1257,7 +1412,11 @@ async function main() {
     await test_node_details_stale_response_after_clear();
     await test_node_details_out_of_order_responses();
     await test_refresh_sidebar_targets_age_limit_join_and_force();
-    console.log('All shared-selection wiring tests passed (26 scenarios).');
+    await test_position_node_detail_slot_places_inline_after_selected_card();
+    await test_position_node_detail_slot_removes_slot_without_selection();
+    await test_position_node_detail_slot_removes_slot_without_rendered_card();
+    await test_render_sidebar_node_cards_detaches_and_repositions_inline_slot();
+    console.log('All shared-selection wiring tests passed (30 scenarios).');
 }
 
 main()

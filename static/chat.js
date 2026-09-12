@@ -5069,6 +5069,12 @@ function renderSidebarNodeCards() {
     const nodesList = document.getElementById('nodesList');
     if (!nodesList) return;
 
+    // PR 6: detach the inline detail slot before the innerHTML wipe so the
+    // detail card's DOM (open tab, scrolled content, focus) survives the rebuild
+    // and is re-inserted below its node's compact card afterward.
+    const slot = getNodeDetailSlot();
+    if (slot && slot.parentNode) slot.parentNode.removeChild(slot);
+
     const allNodes = nodeCache;
     let displayNodes = [];
     if (showFavorites && showIgnored) {
@@ -5104,6 +5110,7 @@ function renderSidebarNodeCards() {
     }
 
     syncSelectedNodeCard();
+    positionNodeDetailSlot();
 }
 
 // PR 5 final correction (section 5): ONE joinable sidebar target refresh
@@ -6744,6 +6751,57 @@ let closedNodeDetailId = null;
 // explicitly selected again.
 let nodeVisualSelectionCleared = false;
 
+// PR 6: the node-details panel expands INLINE inside #nodesList, directly below
+// the selected node's compact card, instead of in a fixed panel above the list.
+// `#nodeDetails` remains the single stable slot element so the detail card's DOM
+// (open tab, scrolled content, focus) survives list rebuilds — renderSidebarNodeCards
+// detaches it before wiping the list and this helper re-inserts it afterward.
+function getNodeDetailSlot() {
+    let slot = document.getElementById('nodeDetails');
+    if (!slot) {
+        slot = document.createElement('div');
+        slot.id = 'nodeDetails';
+        slot.className = 'node-details-placeholder';
+    }
+    return slot;
+}
+
+// Positions the stable detail slot inline. When a node is selected AND its detail
+// card is rendered, the slot is moved into #nodesList immediately after that
+// node's compact card; otherwise it is removed from the list. Idempotent — called
+// from renderNodeDetails, clearNodeDetailsPanel, and the list rebuild.
+function positionNodeDetailSlot() {
+    const nodesList = document.getElementById('nodesList');
+    const slot = getNodeDetailSlot();
+    if (!nodesList) return;
+
+    const hasCard = Boolean(
+        slot.querySelector && slot.querySelector(':scope > .node-detail-card')
+    );
+    const eff = effectiveSelectedTarget();
+    const nodeId = (eff && eff.kind === 'node') ? eff.id : null;
+
+    if (!nodeId || !hasCard) {
+        if (slot.parentNode) slot.parentNode.removeChild(slot);
+        return;
+    }
+
+    const cards = (nodesList.querySelectorAll && nodesList.querySelectorAll('.node-card')) || [];
+    let target = null;
+    for (let i = 0; i < cards.length; i += 1) {
+        const card = cards[i];
+        if (card && card.getAttribute && card.getAttribute('data-node-id') === String(nodeId)) {
+            target = card;
+            break;
+        }
+    }
+    if (!target || !target.parentNode) {
+        if (slot.parentNode) slot.parentNode.removeChild(slot);
+        return;
+    }
+    target.parentNode.insertBefore(slot, target.nextSibling);
+}
+
 // PR 5 final correction (section 4): VISUAL clearing of the node-details panel
 // only. This empties #nodeDetails, removes the node-actions menu, drops the
 // .selected highlight from the sidebar cards, and clears the map selection — but
@@ -6755,11 +6813,9 @@ function clearNodeDetailsPanel() {
     // node-details request, so a delayed response cannot repaint the panel.
     nodeDetailsRequestGeneration++;
 
-    const details = document.getElementById('nodeDetails');
-    if (details) {
-        details.className = 'node-details-placeholder';
-        details.innerHTML = '';
-    }
+    const details = getNodeDetailSlot();
+    details.className = 'node-details-placeholder';
+    details.innerHTML = '';
 
     document.getElementById('nodeActionsMenu')?.remove();
 
@@ -6779,12 +6835,14 @@ function clearNodeDetailsPanel() {
             clearSelection: true
         });
     }
+
+    positionNodeDetailSlot();
 }
 
 // Reports whether the node-details panel is currently showing a node
 // ('details') or is in its placeholder/closed state ('placeholder').
 function nodeDetailPanelMode() {
-    const details = document.getElementById('nodeDetails');
+    const details = getNodeDetailSlot();
     if (!details) return 'placeholder';
     return details.querySelector(':scope > .node-detail-card') ? 'details' : 'placeholder';
 }
@@ -6824,7 +6882,7 @@ function syncNodeDetailsFromSelection() {
 }
 
 function closeNodeDetails() {
-    const currentCard = document.querySelector('#nodeDetails > .node-detail-card');
+    const currentCard = getNodeDetailSlot().querySelector(':scope > .node-detail-card');
     closedNodeDetailId = currentCard?.dataset?.nodeId || null;
     nodeVisualSelectionCleared = true;
     // PR 4 Finding 1: closing node details also clears the shared store's
@@ -6834,12 +6892,12 @@ function closeNodeDetails() {
 }
 
 function renderNodeDetails(node) {
-    const details = document.getElementById('nodeDetails');
-    if (!details) return;
+    const details = getNodeDetailSlot();
 
     if (!node || typeof node !== 'object') {
         details.className = 'node-details-placeholder';
-        details.innerHTML = window.I18N.t('nodes.select_node_below');
+        details.innerHTML = '';
+        positionNodeDetailSlot();
         return;
     }
 
@@ -6847,6 +6905,7 @@ function renderNodeDetails(node) {
     if (closedNodeDetailId && String(closedNodeDetailId) === String(nodeId)) {
         details.className = 'node-details-placeholder';
         details.innerHTML = '';
+        positionNodeDetailSlot();
         return;
     }
     const signature = generateNodeDetailSignature(node);
@@ -6981,6 +7040,10 @@ function renderNodeDetails(node) {
     const savedTab = activeNodeTabs[nodeId] || 'overview';
     switchNodeDetailTab(savedTab, nodeId);
 
+    // Place the now-populated slot inline (below the selected node's compact
+    // card) BEFORE attaching the actions menu, so the menu lands right after it.
+    positionNodeDetailSlot();
+
     // ---- Выпадающее меню Actions (вставляем после карточки) ----
     document.getElementById('nodeActionsMenu')?.remove();
     const actionsMenu = document.createElement('div');
@@ -6996,7 +7059,11 @@ function renderNodeDetails(node) {
             <button onclick="setNodeAsReference('${escapeHtml(nodeId)}')">📍 ${escapeHtml(window.I18N.t('nodes.set_as_reference'))}</button>
         </div>
     `;
-    details.parentNode.insertBefore(actionsMenu, details.nextSibling);
+    if (details.parentNode) {
+        details.parentNode.insertBefore(actionsMenu, details.nextSibling);
+    } else {
+        details.appendChild(actionsMenu);
+    }
     ensureNodeActionsCloser();
 }
 

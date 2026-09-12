@@ -1130,7 +1130,6 @@
     "show_hide_tooltip": "Show or hide received Meshtastic waypoints"
   },
   "nodes": {
-    "select_node_below": "Select a node below to view details",
     "never_seen": "Never",
     "activity_status": "Activity status",
     "close_node_details": "Close node details",

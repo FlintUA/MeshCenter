@@ -906,9 +906,11 @@ body {
 .rescan-nodes-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
 /* ===== NODE DETAILS ===== */
+/* PR 6: #nodeDetails is now the inline detail slot (a child of #nodesList,
+   directly below the selected node's compact card), not a fixed panel above the
+   list. A top margin separates the expanded card from its compact card. */
 #nodeDetails {
-    flex-shrink: 0;
-    margin-bottom: 8px;
+    margin-top: 8px;
 }
 
 .node-details {

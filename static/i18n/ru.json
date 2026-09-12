@@ -1130,7 +1130,6 @@
     "show_hide_tooltip": "Показать или скрыть полученные waypoint Meshtastic"
   },
   "nodes": {
-    "select_node_below": "Выберите узел ниже, чтобы увидеть подробности",
     "never_seen": "Никогда",
     "activity_status": "Статус активности",
     "close_node_details": "Закрыть сведения об узле",

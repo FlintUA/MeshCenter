@@ -965,7 +965,6 @@
     cursor:pointer; opacity:.78;
 }
 .node-detail-close:hover { opacity:1; color:var(--mc-danger,#d94b57); }
-#nodeDetails { margin-top:8px; }
 
 .map-popup-actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; }
 .map-popup-actions button { border:1px solid #3a5973; background:#203b53; color:white; border-radius:7px; padding:7px 8px; cursor:pointer; font-weight:700; font-size:11px; }

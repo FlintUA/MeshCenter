@@ -125,7 +125,6 @@ class FakeDocument {
         this.body = new FakeElement('body', '');
         this.activeElement = null;
         this.hidden = false;
-        this.filterTabButtons = [];
     }
     getElementById(id) {
         if (!this.elements.has(id)) this.elements.set(id, new FakeElement('div', id));
@@ -136,12 +135,7 @@ class FakeDocument {
         if (!this.listeners[type]) this.listeners[type] = [];
         this.listeners[type].push(fn);
     }
-    querySelectorAll(selector) {
-        // Only setFilter() queries the document this way; return the
-        // filter-tab buttons registered by tests so aria-selected asserts run.
-        if (selector === '#filesFilterTabs [data-files-filter]') return this.filterTabButtons;
-        return [];
-    }
+    querySelectorAll() { return []; }
 }
 
 // ---- sandbox -----------------------------------------------------------------
@@ -400,8 +394,11 @@ async function openProviderEditFor(sandbox, id) {
 // ---- tests -------------------------------------------------------------------
 
 async function test_activate_merges_contacts_and_excludes_local() {
-    // V3: a known Meshtastic node without an MCA binding must show "Request
-    // key", and the local node must never be listed as a contact.
+    // V3 (PR 5): the local node must never be a file recipient, and a known
+    // node without an MCA binding is present but NOT sendable. files.js no
+    // longer renders a contact list (that moved to the sidebar node card); this
+    // is observed through the Send dialog's recipient projection, which the
+    // shared store feeds via syncContactsFromStore().
     const nodes = [
         { name: 'Bob', node_id: '!22222222', ignored: false, favorite: false, last_seen: 1 },
         { name: 'Me', node_id: '!11111111', ignored: false, favorite: false, last_seen: 1 },
@@ -415,12 +412,14 @@ async function test_activate_merges_contacts_and_excludes_local() {
     });
 
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('Request key'));
+    const store = sandbox.window.MeshCenterTargets;
+    await waitFor(() => store.getNode('!22222222') !== null);
 
-    const html = sandbox._document.elements.get('filesContactsList').innerHTML;
-    assert.match(html, /!22222222/, 'unbound known node must appear as a contact');
-    assert.match(html, /Request key/, 'unbound known node must offer "Request key"');
-    assert.doesNotMatch(html, /!11111111/, 'the local node must be excluded from the contact list');
+    dispatch(sandbox, { 'data-files-action': 'send' });
+    const sel = sandbox._document.getElementById('filesSendRecipient');
+    assert.ok(sel.innerHTML.includes('!22222222'), 'unbound known node must appear as a recipient');
+    assert.ok(!sel.innerHTML.includes('!11111111'), 'the local node must never be listed as a recipient');
+    assert.ok(sel.innerHTML.includes('disabled'), 'the unbound node is present but not sendable (disabled option)');
 
     console.log('PASS: test_activate_merges_contacts_and_excludes_local');
 }
@@ -439,7 +438,9 @@ async function test_trust_confirm_shows_full_fingerprint() {
     });
 
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('Trust key'));
+    // The confirm dialog resolves the fingerprint via findContact(), which
+    // falls back to the shared store's node target (the contact list is gone).
+    await waitFor(() => sandbox.window.MeshCenterTargets.getNode('!22222222') !== null);
 
     dispatch(sandbox, { 'data-files-action': 'contact-confirm', 'data-contact': '!22222222' });
 
@@ -692,7 +693,7 @@ async function test_confirm_rendering_escapes_untrusted_text() {
     });
 
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('Trust key'));
+    await waitFor(() => sandbox.window.MeshCenterTargets.getNode('!22222222') !== null);
 
     // (1) The trust-confirm dialog: the payload name is an untrusted substitution.
     dispatch(sandbox, { 'data-files-action': 'contact-confirm', 'data-contact': '!22222222' });
@@ -1033,21 +1034,54 @@ async function test_modal_accessibility_and_escape() {
     console.log('PASS: test_modal_accessibility_and_escape');
 }
 
-async function test_filter_tabs_aria_selected() {
-    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
-    const bAll = new FakeElement('button');
-    bAll.setAttribute('data-files-filter', 'all');
-    const bSent = new FakeElement('button');
-    bSent.setAttribute('data-files-filter', 'sent');
-    sandbox._document.filterTabButtons = [bAll, bSent];
+async function test_filter_select_all_six_values_issue_correct_api_request() {
+    // PR 5: the 6-way archive filter is now a single native <select
+    // id="filesFilterSelect"> driven by its 'change' event. Each of the six
+    // values must set the correct direction/filter query, and an unknown value
+    // must be ignored (never issue a request).
+    const queries = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url.startsWith('/api/attachments?')) {
+                queries.push(new URL(url, 'http://x').searchParams);
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            return undefined;
+        }),
+    });
 
-    dispatch(sandbox, { 'data-files-filter': 'sent' });
+    activate(sandbox);
+    await waitFor(() => queries.length >= 1);   // the initial 'all' fetch
 
-    assert.equal(bSent.getAttribute('aria-selected'), 'true', 'the active filter tab must be aria-selected');
-    assert.equal(bAll.getAttribute('aria-selected'), 'false', 'inactive filter tabs must not be aria-selected');
-    assert.equal(bSent.classList.contains('active'), true, 'the active filter tab must carry the active class');
+    const select = sandbox._document.getElementById('filesFilterSelect');
+    const expected = [
+        ['all',      { direction: 'all', filter: 'all' }],
+        ['received', { direction: 'received', filter: 'all' }],
+        ['sent',     { direction: 'sent', filter: 'all' }],
+        ['pending',  { direction: 'all', filter: 'pending' }],
+        ['saved',    { direction: 'all', filter: 'saved' }],
+        ['errors',   { direction: 'all', filter: 'errors' }],
+    ];
 
-    console.log('PASS: test_filter_tabs_aria_selected');
+    for (const [value, want] of expected) {
+        select.value = value;
+        for (const fn of sandbox._document.listeners.change || []) fn({ target: select });
+        await waitFor(() => {
+            const last = queries[queries.length - 1];
+            return last.get('direction') === want.direction && last.get('filter') === want.filter;
+        });
+        assert.equal(select.value, value, 'the select must reflect the chosen filter value');
+    }
+
+    // An unknown value must be ignored — setFilter() bails on a value with no
+    // FILTER_API mapping, so no request is issued.
+    const before = queries.length;
+    select.value = 'bogus';
+    for (const fn of sandbox._document.listeners.change || []) fn({ target: select });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(queries.length, before, 'an unknown filter value must not issue a request');
+
+    console.log('PASS: test_filter_select_all_six_values_issue_correct_api_request');
 }
 
 async function test_transfer_row_aria_pressed() {
@@ -1823,10 +1857,9 @@ async function test_counterparty_filter_out_of_order_responses() {
     });
 
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
 
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!bbbbbbbb' });
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!bbbbbbbb');
 
     await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-b.pdf'));
 
@@ -1876,13 +1909,17 @@ async function test_counterparty_filter_a_b_a_switching() {
     });
 
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    // Let the initial (empty) transfers response render so the list element
+    // exists before the fast switch — a gated A and a dropped B mean no response
+    // paints below, so the list must already be on the page to assert against.
+    await waitFor(() => sandbox._document.elements.get('filesArchiveList') !== undefined);
 
     // Fast switch: dispatch all three without awaiting any response. The first
     // A fetch is gated (in flight) while B and the back-to-A switch happen.
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!bbbbbbbb' });
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!bbbbbbbb');
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
 
     // Let B's fast response resolve while the query is already back to A — it
     // must be dropped and never paint B's list.
@@ -1929,9 +1966,8 @@ async function test_counterparty_filter_refresh_keeps_filter() {
     });
 
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
 
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
     await waitFor(() => cps.includes('!aaaaaaaa'));
 
     dispatch(sandbox, { 'data-files-action': 'refresh' });
@@ -1963,18 +1999,19 @@ async function test_counterparty_filter_reset_returns_full_list() {
     });
 
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
 
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    // Let the initial (empty) transfers response resolve and release its guard
+    // key, so the deselect below issues a FRESH no-counterparty request instead
+    // of coalescing with the still-in-flight initial read.
+    await waitFor(() => sandbox._document.elements.get('filesArchiveList') !== undefined);
+
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
     await waitFor(() => cps.includes('!aaaaaaaa'));
 
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
     await waitFor(() => cps.length >= 3 && cps[cps.length - 1] === null);
 
     assert.equal(cps[cps.length - 1], null, 'reset must issue a request with no counterparty (full list)');
-
-    const html = sandbox._document.elements.get('filesContactsList').innerHTML;
-    assert.ok(!html.includes('is-filtered'), 'reset must clear the is-filtered class');
 
     console.log('PASS: test_counterparty_filter_reset_returns_full_list');
 }
@@ -2008,15 +2045,14 @@ async function test_counterparty_detail_invalidation_on_switch_to_empty() {
     });
 
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
 
     // Select A -> its first transfer is auto-selected and its detail fetch begins (held).
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
     await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
 
     // Switch to B (no transfers) -> the in-flight A detail is invalidated and
     // the panel is cleared immediately.
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!bbbbbbbb' });
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!bbbbbbbb');
     await waitFor(() => !sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
 
     const body = sandbox._document.elements.get('filesDetailBody');
@@ -2069,14 +2105,13 @@ async function test_counterparty_switch_to_nonempty_selects_first_card() {
     });
 
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
 
     // Select A -> its single transfer is auto-selected and its detail fetched.
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
     await waitFor(() => (sandbox._document.elements.get('filesDetailBody')?.innerHTML || '').includes('a-detail.pdf'));
 
     // Switch to B (two transfers) -> the FIRST card (b1) must be selected.
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!bbbbbbbb' });
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!bbbbbbbb');
     await waitFor(() => (sandbox._document.elements.get('filesDetailBody')?.innerHTML || '').includes('b1-detail.pdf'));
 
     const listHtml = sandbox._document.elements.get('filesArchiveList').innerHTML;
@@ -2092,13 +2127,12 @@ async function test_counterparty_switch_to_nonempty_selects_first_card() {
     console.log('PASS: test_counterparty_switch_to_nonempty_selects_first_card');
 }
 
-async function test_contact_select_and_key_actions_are_separate() {
-    // P3 review: the contact select area and the key-management buttons are
-    // distinct sibling interactive elements — the outer item is inert, the
-    // name/id block is its own button, and "Request key" is a sibling button.
-    // Enter/Space on a native button maps to a click on that button, so:
-    // Enter/Space on the select toggles the filter; Enter/Space on "Request
-    // key" must NOT change the filter.
+async function test_key_action_does_not_change_selection() {
+    // Requirement (item 9): key actions (request key / confirm / accept / reject)
+    // live on the right node card as siblings of the node-select button, and a
+    // key-action click must NOT select/deselect the node or reload transfers.
+    // `request key` opens a confirm dialog first, so the POST is deferred — but
+    // neither the store selection nor the transfers list may move on the click.
     const cps = [];
     const sandbox = buildSandbox({
         fetchImpl: defaultRoutes(async (url) => {
@@ -2107,40 +2141,30 @@ async function test_contact_select_and_key_actions_are_separate() {
             }
             if (url.startsWith('/api/attachments?')) {
                 cps.push(new URL(url, 'http://x').searchParams.get('counterparty'));
-                return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT')], total: 1 });
+                return json(200, { ok: true, attachments: [], total: 0 });
             }
             return undefined;
         }),
     });
 
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('files-contact-select'));
+    await waitFor(() => sandbox.window.MeshCenterTargets.getNode('!aaaaaaaa') !== null);
 
-    const contactsHtml = sandbox._document.elements.get('filesContactsList').innerHTML;
-    assert.ok(contactsHtml.includes('class="files-contact-select"'), 'the select area is a real button');
-    assert.ok(!contactsHtml.includes('files-contact-item" role="button"'), 'the outer item is no longer role=button');
-    assert.ok(!contactsHtml.includes('tabindex='), 'the outer item is out of the tab order (native buttons only)');
-    assert.ok(contactsHtml.includes('contact-request-key'), 'the Request key button is rendered');
-    // The Request key button is a sibling of the select button (outside it):
-    // it appears after the select button's closing tag.
-    const selectClose = contactsHtml.indexOf('</button>');
-    assert.ok(
-        selectClose !== -1 && contactsHtml.indexOf('contact-request-key') > selectClose,
-        'Request key must be a sibling, outside the select button',
-    );
-
-    // Enter/Space on the select area == click -> toggles the filter.
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    // Selecting the node is what issues the counterparty request.
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
     await waitFor(() => cps.includes('!aaaaaaaa'));
 
-    // Enter/Space on Request key == click -> must NOT change the filter (no
-    // transfers request is issued).
+    // A key action must not change the selection or reload transfers.
     const before = cps.length;
     dispatch(sandbox, { 'data-files-action': 'contact-request-key', 'data-contact': '!aaaaaaaa' });
     await new Promise((r) => setTimeout(r, 30));
-    assert.equal(cps.length, before, 'Request key must not issue a transfers request (filter unchanged)');
 
-    console.log('PASS: test_contact_select_and_key_actions_are_separate');
+    const sel = sandbox.window.MeshCenterTargets.selected();
+    assert.ok(sel, 'the key action must not clear the selection');
+    assert.equal(sel.id, '!aaaaaaaa', 'the key action must not change the selection');
+    assert.equal(cps.length, before, 'the key action must not issue a transfers request');
+
+    console.log('PASS: test_key_action_does_not_change_selection');
 }
 
 // ---- PR 4 Finding 1: shared-store selection wiring (integration) -----------
@@ -2165,9 +2189,8 @@ async function test_contact_click_routes_through_shared_store() {
         }),
     });
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
 
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
 
     const store = sandbox.window.MeshCenterTargets;
     const sel = store.selected();
@@ -2175,7 +2198,6 @@ async function test_contact_click_routes_through_shared_store() {
     assert.equal(sel.kind, 'node', 'the store selection is a node target');
     assert.equal(sel.id, '!aaaaaaaa', 'the store selection is the clicked node');
     await waitFor(() => cps[cps.length - 1] === '!aaaaaaaa');
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('aria-pressed="true"'));
 
     console.log('PASS: test_contact_click_routes_through_shared_store');
 }
@@ -2198,20 +2220,15 @@ async function test_second_contact_click_deselects_returns_full_list() {
         }),
     });
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
 
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
     await waitFor(() => cps.includes('!aaaaaaaa'));
 
     // Second click on the SAME contact deselects.
-    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
 
     assert.equal(sandbox.window.MeshCenterTargets.selected(), null, 'a second click must clear the store selection');
     await waitFor(() => cps[cps.length - 1] === null);
-    await waitFor(() => {
-        const html = sandbox._document.elements.get('filesContactsList')?.innerHTML || '';
-        return html.includes('!aaaaaaaa') && !html.includes('aria-pressed="true"');
-    });
 
     console.log('PASS: test_second_contact_click_deselects_returns_full_list');
 }
@@ -2235,7 +2252,6 @@ async function test_channel_selection_clears_node_counterparty() {
         }),
     });
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
 
     // Select a node -> counterparty filter applies.
     sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
@@ -2248,12 +2264,57 @@ async function test_channel_selection_clears_node_counterparty() {
     assert.equal(store.selected().kind, 'channel', 'the channel selection is retained by the store');
     assert.equal(store.selected().id, 'longfast', 'the channel id is canonicalized (lowercased)');
     await waitFor(() => cps[cps.length - 1] === null);
-    await waitFor(() => {
-        const html = sandbox._document.elements.get('filesContactsList')?.innerHTML || '';
-        return !html.includes('aria-pressed="true"');
-    });
 
     console.log('PASS: test_channel_selection_clears_node_counterparty');
+}
+
+async function test_no_separate_contacts_or_targets_pane() {
+    // Requirement (item 1): the Files workspace must have NO separate contacts
+    // or targets panel — the only right-side target list is the shared global
+    // sidebar. files.js must not render (or reference) its own contact list.
+    assert.ok(!source.includes('filesContactsList'), 'files.js must not reference a files-local contact list');
+    assert.ok(!source.includes('filesContactsPane'), 'files.js must not reference a files-local contacts pane');
+    assert.ok(!source.includes('filesTargetsPane'), 'files.js must not introduce a files-local targets pane');
+
+    console.log('PASS: test_no_separate_contacts_or_targets_pane');
+}
+
+async function test_channel_selection_shows_unsupported_notice() {
+    // Requirement (item 6): a channel selection stays in the store (no
+    // counterparty) and shows the compact "channel transfers unsupported" notice
+    // above the transfer list; a node or no selection hides it — including the
+    // none→channel and channel→none transitions, where the counterparty itself
+    // does not change.
+    const cps = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url.startsWith('/api/attachments?')) {
+                cps.push(new URL(url, 'http://x').searchParams.get('counterparty'));
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            return undefined;
+        }),
+    });
+    activate(sandbox);
+
+    const notice = sandbox._document.getElementById('filesChannelNotice');
+    assert.equal(notice.style.display, 'none', 'no selection hides the channel notice');
+
+    // none → channel: the notice must appear even though the counterparty stays empty.
+    sandbox.window.MeshCenterTargets.toggleSelect('channel', 'LongFast');
+    assert.equal(sandbox.window.MeshCenterTargets.selected().kind, 'channel', 'the channel stays selected in the store');
+    assert.equal(notice.style.display, '', 'a channel selection shows the notice');
+
+    // channel → none: the notice hides on the no-op counterparty transition.
+    sandbox.window.MeshCenterTargets.toggleSelect('channel', 'LongFast');
+    assert.equal(sandbox.window.MeshCenterTargets.selected(), null, 're-clicking the channel deselects it');
+    assert.equal(notice.style.display, 'none', 'deselecting the channel hides the notice');
+
+    // A node selection also hides it.
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
+    assert.equal(notice.style.display, 'none', 'a node selection hides the channel notice');
+
+    console.log('PASS: test_channel_selection_shows_unsupported_notice');
 }
 
 async function test_send_dialog_preselects_valid_node() {
@@ -2271,7 +2332,7 @@ async function test_send_dialog_preselects_valid_node() {
         }),
     });
     activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+    await waitFor(() => sandbox.window.MeshCenterTargets.getNode('!aaaaaaaa') !== null);
 
     sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
 
@@ -2303,7 +2364,7 @@ async function test_send_dialog_no_fallback_for_invalid_channel_disappeared() {
     {
         const sandbox = build();
         activate(sandbox);
-        await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+        await waitFor(() => sandbox.window.MeshCenterTargets.getNode('!aaaaaaaa') !== null);
         sandbox.window.MeshCenterTargets.toggleSelect('channel', 'LongFast');
         assert.equal(sandbox.window.MeshCenterTargets.selected().kind, 'channel', 'channel selection is retained');
         dispatch(sandbox, { 'data-files-action': 'send' });
@@ -2316,7 +2377,7 @@ async function test_send_dialog_no_fallback_for_invalid_channel_disappeared() {
     {
         const sandbox = build();
         activate(sandbox);
-        await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+        await waitFor(() => sandbox.window.MeshCenterTargets.getNode('!aaaaaaaa') !== null);
         sandbox.window.MeshCenterTargets.toggleSelect('node', '!bbbbbbbb');
         dispatch(sandbox, { 'data-files-action': 'send' });
         const sel = sandbox._document.getElementById('filesSendRecipient');
@@ -2328,7 +2389,7 @@ async function test_send_dialog_no_fallback_for_invalid_channel_disappeared() {
     {
         const sandbox = build();
         activate(sandbox);
-        await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+        await waitFor(() => sandbox.window.MeshCenterTargets.getNode('!aaaaaaaa') !== null);
         sandbox.window.MeshCenterTargets.toggleSelect('node', '!cccccccc');
         dispatch(sandbox, { 'data-files-action': 'send' });
         const sel = sandbox._document.getElementById('filesSendRecipient');
@@ -2506,6 +2567,102 @@ async function test_reactivation_issues_fresh_transfers_request() {
     console.log('PASS: test_reactivation_issues_fresh_transfers_request');
 }
 
+async function test_contact_command_awaits_fresh_store_refresh() {
+    // Finding 2 (PR 5 final correction): a contact command's terminal callback
+    // must join the shared store's in-flight pre-command read, then force ONE
+    // fresh read — success must not announce on a stale projection, and exactly
+    // one fresh /api/mca/contacts fetch must follow the joined read (never a
+    // plain store.refresh() that would re-join the stale in-flight read).
+    let contactsCalls = 0;
+    let releasePre;
+    const gatePre = new Promise((r) => { releasePre = r; });
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                contactsCalls += 1;
+                if (contactsCalls === 1) {
+                    return json(200, { ok: true, contacts: [contact('!22222222', 'confirmation_required')] });
+                }
+                if (contactsCalls === 2) {
+                    await gatePre; // the pre-command store refresh is in flight, held
+                    return json(200, { ok: true, contacts: [contact('!22222222', 'confirmation_required')] });
+                }
+                // The forced fresh read reflects the just-committed confirm.
+                return json(200, { ok: true, contacts: [contact('!22222222', 'trusted')] });
+            }
+            if (url === '/api/mca/contacts/!22222222/confirm') {
+                return json(202, { ok: true, command_id: 'cmd-confirm' });
+            }
+            if (url === '/api/mca/commands/cmd-confirm') {
+                return json(200, { ok: true, command: { command_id: 'cmd-confirm', status: 'succeeded' } });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    // The initial store refresh (#1) resolves the confirmation_required contact.
+    await waitFor(() => sandbox.window.MeshCenterTargets.getNode('!22222222') !== null);
+
+    // Start a pre-command store refresh (#2) whose contacts read is held.
+    const pre = sandbox.window.MeshCenterTargets.refresh();
+    await waitFor(() => contactsCalls === 2);
+
+    // Drive the contact confirm command (POST -> 202 -> poll -> succeeded).
+    dispatch(sandbox, { 'data-files-action': 'contact-confirm', 'data-contact': '!22222222' });
+    dispatch(sandbox, { 'data-files-action': 'modal-confirm' });
+
+    // Wait for the command status poll to have fired (the terminal callback is
+    // now joined on the held pre-command read).
+    await waitFor(() => sandbox._fetchLog.some((e) => e.url === '/api/mca/commands/cmd-confirm'));
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.ok(
+        !sandbox._notifications.some((n) => n.kind === 'update' && n.type === 'success'),
+        'contact success must not announce on the stale pre-command projection',
+    );
+    assert.equal(contactsCalls, 2, 'no fresh read may be issued while the pre-command read is held');
+
+    // Release the pre-command read -> it merges, then exactly one fresh read.
+    releasePre();
+    await pre;
+    await waitFor(() => contactsCalls === 3);
+    await waitFor(() => sandbox._notifications.some((n) => n.kind === 'update' && n.type === 'success'));
+
+    const successes = sandbox._notifications.filter((n) => n.kind === 'update' && n.type === 'success').length;
+    assert.equal(successes, 1, 'contact success must fire exactly once after the fresh read settles');
+    assert.equal(contactsCalls, 3, 'exactly one fresh contacts read follows the joined pre-command read');
+
+    console.log('PASS: test_contact_command_awaits_fresh_store_refresh');
+}
+
+async function test_add_provider_form_wraps_url_and_probe_in_flex_row() {
+    // Finding 3 (PR 5 final correction): the Add-provider URL input and its
+    // Probe button must be wrapped in one .files-provider-probe-row container
+    // (structural markup, not geometry-from-a-fake-DOM), so the input can flex
+    // to fill the row while the button keeps its intrinsic width.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    dispatch(sandbox, { 'data-files-action': 'providers' });
+
+    const dialog = sandbox._document.body._children.find((c) => (c.className || '').includes('files-dialog-root'));
+    assert.ok(dialog, 'providers must open a dialog');
+    const html = dialog.innerHTML;
+
+    // Exactly one flex row wraps the URL input + Probe button, input first.
+    const rows = html.match(/<div class="files-provider-probe-row">([\s\S]*?)<\/div>/g) || [];
+    assert.equal(rows.length, 1, 'exactly one .files-provider-probe-row must wrap the URL input + Probe button');
+    const row = rows[0];
+    assert.match(row, /id="filesProviderOrigin"/, 'the URL input must be inside the flex row');
+    assert.match(row, /type="url"/, 'the URL input must be a url input');
+    assert.match(row, /data-files-action="provider-probe"/, 'the Probe button must be inside the flex row');
+    assert.ok(
+        row.indexOf('filesProviderOrigin') < row.indexOf('data-files-action="provider-probe"'),
+        'the URL input must precede the Probe button inside the flex row',
+    );
+
+    console.log('PASS: test_add_provider_form_wraps_url_and_probe_in_flex_row');
+}
+
 async function main() {
     await test_activate_merges_contacts_and_excludes_local();
     await test_trust_confirm_shows_full_fingerprint();
@@ -2524,7 +2681,7 @@ async function main() {
     await test_provider_edit_rejects_min_gt_max();
     await test_provider_edit_clears_ttl_as_null();
     await test_modal_accessibility_and_escape();
-    await test_filter_tabs_aria_selected();
+    await test_filter_select_all_six_values_issue_correct_api_request();
     await test_transfer_row_aria_pressed();
     await test_send_dialog_renders_custom_ttl_input();
     await test_send_file_feedback_shows_mime();
@@ -2554,7 +2711,10 @@ async function main() {
     await test_counterparty_filter_reset_returns_full_list();
     await test_counterparty_detail_invalidation_on_switch_to_empty();
     await test_counterparty_switch_to_nonempty_selects_first_card();
-    await test_contact_select_and_key_actions_are_separate();
+    await test_key_action_does_not_change_selection();
+    // PR 5: desktop Files workspace redesign.
+    await test_no_separate_contacts_or_targets_pane();
+    await test_channel_selection_shows_unsupported_notice();
     // PR 4 Finding 1: shared-store selection wiring.
     await test_contact_click_routes_through_shared_store();
     await test_second_contact_click_deselects_returns_full_list();
@@ -2564,7 +2724,11 @@ async function main() {
     await test_same_query_detail_invalidation_on_empty_poll();
     await test_same_query_replaces_selection_no_transient_stale_detail();
     await test_reactivation_issues_fresh_transfers_request();
-    console.log('All files UI behavior tests passed (53 scenarios).');
+    // PR 5 final correction (Finding 2): post-command target refresh.
+    await test_contact_command_awaits_fresh_store_refresh();
+    // PR 5 final correction (Finding 3): widened Add-provider form markup.
+    await test_add_provider_form_wraps_url_and_probe_in_flex_row();
+    console.log('All files UI behavior tests passed (57 scenarios).');
 }
 
 main()

@@ -85,6 +85,34 @@ function makeSandbox(fetchImpl) {
     return { store: sandbox.window.MeshCenterTargets, calls };
 }
 
+function deferred() {
+    let resolve;
+    const promise = new Promise((r) => { resolve = r; });
+    return { promise, resolve };
+}
+
+function waitUntil(pred, timeout = 2500) {
+    const start = Date.now();
+    return new Promise((resolve, reject) => {
+        (function tick() {
+            if (pred()) return resolve(true);
+            if (Date.now() - start > timeout) return reject(new Error('waitUntil timeout'));
+            setTimeout(tick, 5);
+        })();
+    });
+}
+
+// A handler that serves the default five sources but lets the caller special-case
+// specific URLs first (used by the refreshAfterCommand ordering tests).
+function delegatingHandler(handle) {
+    const base = defaultHandler();
+    return async (url) => {
+        const overridden = await handle(url);
+        if (overridden !== undefined) return overridden;
+        return base(url);
+    };
+}
+
 // ---- merge / dedup ----------------------------------------------------------
 
 // The store always synthesizes the local node (from base_status) even when the
@@ -467,6 +495,247 @@ async function testNetworkErrorPreservesLastKnownGood() {
     assert.ok(store.getNode('!abcdef12'), 'network error keeps last-known-good');
 }
 
+// ---- PR 5 final correction (Finding 2): post-command refresh join + force ---
+
+async function testRefreshAfterCommandJoinsInFlightThenForcesFreshRead() {
+    // A command's terminal follow-up must (a) join an in-flight pre-command
+    // read and (b) issue exactly one forced fresh read after it — never
+    // resolve on the stale pre-command projection (which a plain refresh()
+    // would return via the per-source join guard).
+    let contactsCalls = 0;
+    let releasePre;
+    const gatePre = new Promise((r) => { releasePre = r; });
+    const { store } = makeSandbox(delegatingHandler(async (url) => {
+        if (url === '/api/mca/contacts') {
+            contactsCalls += 1;
+            if (contactsCalls === 1) await gatePre; // hold the pre-command read
+            return json(contactsBody([{ contact_id: '!abcdef12', status: 'trusted' }]));
+        }
+        return undefined;
+    }));
+
+    // 1. Pre-command refresh starts; its contacts read is held.
+    const pre = store.refresh();
+    // 2. Wait for the pre-command contacts read to be in flight.
+    await waitUntil(() => contactsCalls === 1);
+    // 3. The post-command follow-up joins the in-flight read.
+    const follow = store.refreshAfterCommand();
+    let settled = false;
+    follow.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 25));
+    // 4. It must not issue a fresh read, nor resolve, while the read is held.
+    assert.equal(contactsCalls, 1, 'follow-up must join, not fetch, while a read is in flight');
+    assert.equal(settled, false, 'follow-up must not resolve before the joined read');
+
+    // 5. Release the pre-command read -> it merges (generation 1), then the
+    // follow-up issues exactly one forced fresh read.
+    releasePre();
+    await pre;
+    assert.equal(store.generation(), 1, 'the pre-command read merges first');
+    // 6. Exactly one fresh contacts read follows.
+    await waitUntil(() => contactsCalls === 2);
+    // 7. The follow-up resolves only after the fresh read, at generation 2.
+    const gen = await follow;
+    assert.equal(gen, 2, 'the follow-up resolves at the fresh read generation');
+    assert.equal(contactsCalls, 2, 'exactly one forced fresh read');
+    assert.ok(store.getNode('!abcdef12'), 'the fresh read merged into the store');
+}
+
+async function testRefreshAfterCommandCoalescesConcurrentCallbacks() {
+    // Two terminal callbacks that fire while the same pre-command read is in
+    // flight coalesce onto ONE follow-up — they await the same fresh read, never
+    // chain two sequential fresh reads.
+    let contactsCalls = 0;
+    let releasePre;
+    const gatePre = new Promise((r) => { releasePre = r; });
+    const { store } = makeSandbox(delegatingHandler(async (url) => {
+        if (url === '/api/mca/contacts') {
+            contactsCalls += 1;
+            if (contactsCalls === 1) await gatePre;
+            return json(contactsBody([]));
+        }
+        return undefined;
+    }));
+
+    const pre = store.refresh();
+    await waitUntil(() => contactsCalls === 1);
+    const f1 = store.refreshAfterCommand();
+    const f2 = store.refreshAfterCommand();
+    assert.equal(f1, f2, 'concurrent post-command callbacks coalesce onto the same follow-up');
+
+    releasePre();
+    await pre;
+    const [g1, g2] = await Promise.all([f1, f2]);
+    assert.equal(g1, g2, 'both callbacks observe the same fresh-read generation');
+    await waitUntil(() => contactsCalls === 2);
+    assert.equal(contactsCalls, 2, 'exactly one forced fresh read despite two callbacks');
+}
+
+async function testRefreshAfterCommandPreservesLastKnownGoodOnFreshFailure() {
+    // A failed forced fresh read marks the slice degraded but must not wipe the
+    // last-known-good projection, and the follow-up resolves (never rejects with
+    // raw exception text — the store's api() already normalizes failures).
+    let contactsCalls = 0;
+    let releasePre;
+    const gatePre = new Promise((r) => { releasePre = r; });
+    let failFresh = false;
+    const { store } = makeSandbox(delegatingHandler(async (url) => {
+        if (url === '/api/mca/contacts') {
+            contactsCalls += 1;
+            if (contactsCalls === 1) {
+                await gatePre;
+                return json(contactsBody([{ contact_id: '!abcdef12', status: 'trusted' }]));
+            }
+            if (failFresh) return raw(503, { ok: false, error_code: 'mca_not_ready' });
+            return json(contactsBody([{ contact_id: '!abcdef12', status: 'trusted' }]));
+        }
+        return undefined;
+    }));
+
+    const pre = store.refresh();
+    await waitUntil(() => contactsCalls === 1);
+    failFresh = true; // the forced fresh read will fail with a 503
+    const follow = store.refreshAfterCommand();
+    releasePre();
+    await pre;
+
+    const gen = await follow; // resolves, never rejects with an exception
+    assert.equal(typeof gen, 'number', 'follow-up resolves with a generation, not a thrown error');
+    assert.equal(store.isDegraded('contacts'), true, 'the failed fresh read marks the slice degraded');
+    const t = store.getNode('!abcdef12');
+    assert.ok(t, 'last-known-good contact is preserved through the failed fresh read');
+    assert.equal(t.trust_state, 'ready', 'the valid slice is not wiped by the failed fresh read');
+}
+
+// ---- PR 5 final correction (Finding 2b): wave cutoff for already-running refresh
+
+// A contacts handler whose every read is resolved manually, so a test can hold a
+// forced refresh's response in flight and observe exactly when each read starts
+// and settles. `holds[n]` resolves the (n+1)-th contacts read with a full
+// json()/raw() response object.
+function heldContacts() {
+    let contactsCalls = 0;
+    const holds = [];
+    const handle = (url) => {
+        if (url === '/api/mca/contacts') {
+            contactsCalls += 1;
+            const d = deferred();
+            holds.push(d.resolve);
+            return d.promise.then((resp) => resp);
+        }
+        return undefined;
+    };
+    return { handle, holds, calls: () => contactsCalls };
+}
+
+async function testRefreshAfterCommandDoesNotJoinAlreadyRunningWave() {
+    // A command whose terminal state is reached WHILE a prior command's forced
+    // refresh is already running must NOT resolve on that refresh (it predates
+    // the command) — it must schedule exactly ONE subsequent fresh read and
+    // resolve only after that subsequent projection is applied.
+    const hc = heldContacts();
+    const { store } = makeSandbox(delegatingHandler(hc.handle));
+
+    // 1. Command A completes; its forced refresh starts (contacts read #1 held).
+    const a = store.refreshAfterCommand();
+    await waitUntil(() => hc.calls() === 1);
+
+    // 2. Command B completes while A's forced refresh is already running.
+    let bResolved = false;
+    const b = store.refreshAfterCommand();
+    b.then(() => { bResolved = true; });
+
+    // B must not start a read of its own, nor resolve, while A is still running.
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(hc.calls(), 1, 'B must not start a read while A is running');
+    assert.equal(bResolved, false, 'B must not resolve while A is running');
+
+    // 3. A's forced refresh returns a projection that predates B.
+    hc.holds[0](json(contactsBody([{ contact_id: '!aaaaaaaa', status: 'trusted' }])));
+    await a; // A's wave completes (generation 1).
+
+    // 4. Exactly one subsequent fresh read started for B; B did not resolve on A.
+    await waitUntil(() => hc.calls() === 2);
+    assert.equal(bResolved, false, 'B must not resolve on the projection that predates it');
+    assert.equal(store.getNode('!bbbbbbbb'), null, "B's committed result is not yet applied");
+
+    // 5. Return B's new projection (includes B's result).
+    hc.holds[1](json(contactsBody([
+        { contact_id: '!aaaaaaaa', status: 'trusted' },
+        { contact_id: '!bbbbbbbb', status: 'trusted' },
+    ])));
+
+    // 6. B resolves only after that projection is applied.
+    await b;
+    await waitUntil(() => store.getNode('!bbbbbbbb') !== null);
+    assert.equal(bResolved, true, 'B resolves after its subsequent projection is applied');
+    assert.ok(store.getNode('!aaaaaaaa'), 'the prior projection is preserved');
+    assert.equal(hc.calls(), 2, 'exactly one subsequent forced read, no extra wave');
+}
+
+async function testRefreshAfterCommandCoalescesWithinActiveWave() {
+    // Two commands completed during the SAME already-running wave must share
+    // exactly ONE subsequent fresh read, not two.
+    const hc = heldContacts();
+    const { store } = makeSandbox(delegatingHandler(hc.handle));
+
+    // Wave A starts (contacts read #1 held).
+    const a = store.refreshAfterCommand();
+    await waitUntil(() => hc.calls() === 1);
+
+    // Command B completes during A's active wave -> begins the subsequent wave.
+    const b = store.refreshAfterCommand();
+    // Command C completes during the SAME active wave -> must share B's wave.
+    const c = store.refreshAfterCommand();
+    assert.equal(b, c, 'two commands during one active wave share one subsequent wave');
+
+    // Resolve A -> its projection merges; the subsequent wave's read #2 starts.
+    hc.holds[0](json(contactsBody([{ contact_id: '!aaaaaaaa', status: 'trusted' }])));
+    await a;
+    await waitUntil(() => hc.calls() === 2);
+
+    // Resolve the subsequent read; both B and C resolve on it.
+    hc.holds[1](json(contactsBody([{ contact_id: '!aaaaaaaa', status: 'trusted' }])));
+    const [gb, gc] = await Promise.all([b, c]);
+    assert.equal(gb, gc, 'both commands resolve on the same subsequent generation');
+    assert.equal(hc.calls(), 2, 'exactly one subsequent read for both commands');
+}
+
+async function testRefreshAfterCommandReleasesGuardAfterSettle() {
+    // After a wave settles — success OR failure — the guard is released, so a
+    // NEW command starts a fresh wave (a new read) rather than joining the
+    // already-settled promise (which would resolve instantly on stale data).
+    const hc = heldContacts();
+    const { store } = makeSandbox(delegatingHandler(hc.handle));
+
+    // Success: w1 settles, then w2 must be a NEW wave with a fresh read.
+    const w1 = store.refreshAfterCommand();
+    await waitUntil(() => hc.calls() === 1);
+    hc.holds[0](json(contactsBody([{ contact_id: '!aaaaaaaa', status: 'trusted' }])));
+    await w1;
+
+    const w2 = store.refreshAfterCommand();
+    assert.notEqual(w2, w1, 'a command after a settled wave starts a fresh wave, not the settled promise');
+    await waitUntil(() => hc.calls() === 2);
+    hc.holds[1](json(contactsBody([{ contact_id: '!aaaaaaaa', status: 'trusted' }])));
+    await w2;
+
+    // Failure: w3's fresh read fails (503), the wave still resolves (degraded),
+    // and the guard is still released so w4 starts a fresh read.
+    const w3 = store.refreshAfterCommand();
+    await waitUntil(() => hc.calls() === 3);
+    hc.holds[2](raw(503, { ok: false, error_code: 'mca_not_ready' }));
+    await w3;
+    assert.equal(store.isDegraded('contacts'), true, 'the failed read marks the slice degraded');
+
+    const w4 = store.refreshAfterCommand();
+    assert.notEqual(w4, w3, 'a command after a failed wave still starts a fresh wave');
+    await waitUntil(() => hc.calls() === 4);
+    hc.holds[3](json(contactsBody([{ contact_id: '!aaaaaaaa', status: 'trusted' }])));
+    await w4;
+    assert.equal(store.isDegraded('contacts'), false, 'a subsequent successful read clears the degraded mark');
+}
+
 // ---- runner ------------------------------------------------------------------
 
 const tests = [
@@ -491,6 +760,12 @@ const tests = [
     ['race: refresh never drops responses across generations', testRefreshNeverDropsResponsesAcrossGenerations],
     ['race: transient 503 preserves last-known-good', testTransientFailurePreservesLastKnownGoodAndMarksDegraded],
     ['race: network error preserves last-known-good', testNetworkErrorPreservesLastKnownGood],
+    ['post-command: joins in-flight then forces fresh read', testRefreshAfterCommandJoinsInFlightThenForcesFreshRead],
+    ['post-command: coalesces concurrent callbacks', testRefreshAfterCommandCoalescesConcurrentCallbacks],
+    ['post-command: preserves last-known-good on fresh failure', testRefreshAfterCommandPreservesLastKnownGoodOnFreshFailure],
+    ['post-command: does not join an already-running wave', testRefreshAfterCommandDoesNotJoinAlreadyRunningWave],
+    ['post-command: coalesces within an active wave', testRefreshAfterCommandCoalescesWithinActiveWave],
+    ['post-command: releases guard after success and failure', testRefreshAfterCommandReleasesGuardAfterSettle],
 ];
 
 let failed = 0;

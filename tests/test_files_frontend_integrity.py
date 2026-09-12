@@ -4,9 +4,10 @@ The Files workspace spans three hand-wired, build-step-free files that must
 stay in agreement with each other and with the four i18n catalogs:
 
   * templates/index.html  - the nav button, the #filesView panel (whose filter
-                            tabs / header buttons are dispatched by delegated
-                            `data-files-*` attributes, not inline handlers),
-                            and the <script> tag that pulls in static/files.js
+                            <select> / header buttons are dispatched by
+                            delegated `data-files-*` attributes, not inline
+                            handlers), and the <script> tag that pulls in
+                            static/files.js
   * static/chat.js        - `operationalTabs`, the `tab === 'files'` branch in
                             switchMainTab() that calls `MeshCenterFiles.activate()`,
                             and the switch-away guard that calls
@@ -42,6 +43,7 @@ LOCALES = ("en", "de", "ru", "uk")
 FILES_JS = STATIC / "files.js"
 CHAT_JS = STATIC / "chat.js"
 INDEX_HTML = REPO_ROOT / "templates" / "index.html"
+STYLE_PART4_CSS = STATIC / "style-part4.css"
 
 
 def _read(name: Path) -> str:
@@ -135,13 +137,15 @@ def test_index_html_wires_files_nav_and_panel():
     assert 'data-i18n="nav.files"' in html, "nav.files data-i18n attribute missing from index.html"
 
     # Header buttons are dispatched by delegated data-files-action attributes
-    # (no inline handler with a raw id), and the filter tabs carry the six
-    # supported filters including the Received/Sent splits.
+    # (no inline handler with a raw id), and the transfer filter is a native
+    # <select id="filesFilterSelect"> carrying all six supported values.
     assert 'data-files-action="send"' in html, "Send header button missing data-files-action"
     assert 'data-files-action="providers"' in html, "Providers header button missing data-files-action"
     assert 'data-files-action="refresh"' in html, "Refresh header button missing data-files-action"
-    assert 'data-files-filter="received"' in html, "Received filter tab missing"
-    assert 'data-files-filter="sent"' in html, "Sent filter tab missing"
+    assert 'id="filesFilterSelect"' in html, "filesFilterSelect (native filter <select>) missing"
+    for value in ("all", "received", "sent", "pending", "saved", "errors"):
+        assert f'value="{value}"' in html, f"filter option value={value!r} missing"
+    assert 'id="filesFilterTabs"' not in html, "legacy role=tablist filter buttons must be gone"
 
     # files.js must be loaded (with a cache-busting ?v=), and BEFORE chat.js
     # so chat.js's switchMainTab('files') branch can call it.
@@ -220,3 +224,44 @@ def test_shared_keys_files_js_depends_on_exist_in_all_locales():
     for locale, flat in CATALOGS.items():
         for key in ("nav.files", "common.cancel", "common.close", "common.refresh"):
             assert key in flat, f"{key!r} missing from {locale} catalog"
+
+
+# ---- Finding 3 (PR 5 final correction): widened Add-provider form ----------
+
+
+def test_add_provider_form_width_styles():
+    """The Add-provider form's URL input flexes to fill its row (structural
+    CSS, not geometry-from-a-fake-DOM): the old fixed ``width: 220px`` is gone,
+    the URL input + Probe button sit in a ``display:flex`` row where the input
+    is ``flex:1 1 auto`` / ``min-width:0`` and the button is ``flex:0 0 auto``,
+    and the provider-name field (the probe-confirm block) is full width so it
+    can't overflow on a narrow screen."""
+    css = _read(STYLE_PART4_CSS)
+
+    # The fixed width that caused the Probe button to wrap off-row is gone.
+    assert "width: 220px" not in css, (
+        "the fixed 220px provider-input width must be removed (Finding 3)"
+    )
+
+    # URL input + Probe button share a flex row.
+    assert re.search(r"\.files-provider-probe-row\s*\{[^}]*display\s*:\s*flex", css), (
+        ".files-provider-probe-row must be display:flex"
+    )
+
+    # The URL input flexes to fill the row and is allowed to shrink.
+    assert re.search(r"\.files-provider-probe-row\s+input\s*\{[^}]*flex\s*:\s*1\s+1\s+auto", css), (
+        "the provider URL input must be flex:1 1 auto"
+    )
+    assert re.search(r"\.files-provider-probe-row\s+input\s*\{[^}]*min-width\s*:\s*0", css), (
+        "the provider URL input must set min-width:0 so it can shrink"
+    )
+
+    # The Probe button keeps its intrinsic width.
+    assert re.search(r"\.files-provider-probe-row\s+\.files-action-btn\s*\{[^}]*flex\s*:\s*0\s+0\s+auto", css), (
+        "the Probe button must be flex:0 0 auto"
+    )
+
+    # The provider-name field (inside the probe-confirm block) is full width.
+    assert re.search(r"\.files-provider-probe\s+input\s*\{[^}]*width\s*:\s*100%", css), (
+        "the provider-name input must be full width (width:100%)"
+    )

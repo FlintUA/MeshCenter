@@ -8,9 +8,9 @@
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20260905-theme-correction-pr6">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20260905-theme-correction-pr4">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20260912-files-pr5-corr">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260905-theme-correction-pr6">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20260905-theme-correction-pr6">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20260912-files-pr5-corr">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20260905-theme-correction-pr6">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -718,27 +718,26 @@
                         </div>
                     </header>
                     <div class="files-layout" id="filesLayout">
-                        <aside class="files-contacts" id="filesContactsPane" aria-label="Files contacts">
-                            <div class="files-pane-title">👥 <span data-i18n="files.contacts_title">Contacts</span></div>
-                            <div class="files-contacts-list" id="filesContactsList">
-                                <div class="device-dashboard-loading" data-i18n="files.loading_contacts">Loading contacts...</div>
-                            </div>
-                        </aside>
                         <section class="files-archive" id="filesArchivePane" aria-label="Files transfers">
                             <div class="files-pane-title">🗂️ <span data-i18n="files.archive_title">Transfers</span></div>
-                            <div class="files-filter-tabs" id="filesFilterTabs" role="tablist" aria-label="Transfer filters">
-                                <button class="files-filter-tab active" data-files-filter="all" role="tab" aria-selected="true" data-i18n="files.filter_all">All</button>
-                                <button class="files-filter-tab" data-files-filter="received" role="tab" aria-selected="false" data-i18n="files.filter_received">Received</button>
-                                <button class="files-filter-tab" data-files-filter="sent" role="tab" aria-selected="false" data-i18n="files.filter_sent">Sent</button>
-                                <button class="files-filter-tab" data-files-filter="pending" role="tab" aria-selected="false" data-i18n="files.filter_pending">Pending</button>
-                                <button class="files-filter-tab" data-files-filter="saved" role="tab" aria-selected="false" data-i18n="files.filter_saved">Saved</button>
-                                <button class="files-filter-tab" data-files-filter="errors" role="tab" aria-selected="false" data-i18n="files.filter_errors">Errors</button>
-                            </div>
-                            <div class="files-archive-tools">
+                            <div class="files-filter-row">
+                                <label class="files-filter-label" for="filesFilterSelect">
+                                    <span data-i18n="files.filter_label">Filter</span>
+                                    <select id="filesFilterSelect" class="files-filter-select" aria-label="Transfer filter">
+                                        <option value="all" data-i18n="files.filter_all">All</option>
+                                        <option value="received" data-i18n="files.filter_received">Received</option>
+                                        <option value="sent" data-i18n="files.filter_sent">Sent</option>
+                                        <option value="pending" data-i18n="files.filter_pending">Pending</option>
+                                        <option value="saved" data-i18n="files.filter_saved">Saved</option>
+                                        <option value="errors" data-i18n="files.filter_errors">Errors</option>
+                                    </select>
+                                </label>
                                 <input type="search" id="filesSearch" class="files-search" autocomplete="off"
                                     placeholder="Search transfers" aria-label="Search transfers" data-i18n-placeholder="files.search_placeholder" />
-                                <div class="files-summary" id="filesSummary" aria-live="polite"></div>
                             </div>
+                            <div class="files-channel-notice" id="filesChannelNotice" hidden
+                                data-i18n="files.channel_unsupported_notice">File transfer to channels is not supported. Showing all transfers.</div>
+                            <div class="files-summary" id="filesSummary" aria-live="polite"></div>
                             <div class="files-archive-list" id="filesArchiveList">
                                 <div class="device-dashboard-loading" data-i18n="files.loading_transfers">Loading transfers...</div>
                             </div>
@@ -1797,7 +1796,7 @@
                 <div class="nodes-section">
                     <div class="nodes-controls">
                         <div class="search-container search-row">
-                            <input type="text" id="nodeSearchInput" class="search-input-wide" placeholder="🔍 Search nodes..." data-i18n-placeholder="nodes.search_placeholder">
+                            <input type="text" id="nodeSearchInput" class="search-input-wide" placeholder="🔍 Search channels and nodes..." data-i18n-placeholder="nodes.search_placeholder">
                             <button type="button" id="clearSearchBtn" class="clear-search-btn" onclick="clearNodeSearch()">✕</button>
                         </div>
                         <div class="nodes-actions-row">
@@ -1805,7 +1804,12 @@
                         </div>
                     </div>
                     <div id="nodeDetails"></div>
-                    <div class="nodes-scroll"><div id="nodesList"></div></div>
+                    <div class="nodes-scroll">
+                        <div class="sidebar-section-heading">📡 <span data-i18n="chat.channels_heading">Channels</span></div>
+                        <div id="channelsList"></div>
+                        <div class="sidebar-section-heading">📟 <span data-i18n="nodes.heading">Nodes</span></div>
+                        <div id="nodesList"></div>
+                    </div>
                 </div>
             </div>
 
@@ -2339,7 +2343,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20260904-theme-stage7-1"></script>
+<script src="/static/i18n.js?v=20260912-files-pr5-corr"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above —
@@ -2357,8 +2361,8 @@
 <script src="{{ url_for('static', filename='chat-map.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='targets.js') }}?v=20260911-pr4-shared-target-model"></script>
-<script src="/static/files.js?v=20260910-files-workspace-fixes"></script>
-<script src="/static/chat.js?v=20260904-theme-stage8-2"></script>
+<script src="/static/files.js?v=20260912-files-pr5-corr"></script>
+<script src="/static/chat.js?v=20260912-files-pr5-corr"></script>
 <script src="/static/media.js?v=20260818-xss-fix-delete-onclick"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 

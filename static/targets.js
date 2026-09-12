@@ -50,6 +50,13 @@
 
     var CONTACT_ID_RE = /^![0-9a-f]{8}$/;  // mirrors _CONTACT_ID_RE server-side
 
+    // PR 5 final correction (section 6): a hung /api/* fetch must never leave a
+    // source's in-flight guard pinned forever. Every store read is bounded by
+    // this timeout; on abort (or any network failure) the source is marked
+    // degraded and its last-known-good slice is preserved, never replaced with
+    // empty. ~8s keeps a single dead endpoint from stalling the whole merge.
+    var API_TIMEOUT_MS = 8000;
+
     // The public ContactStatus strings from meshsrv/attachments/contacts.py,
     // mapped to the PR 4 capability-model `trust_state` vocabulary.
     var TRUST_STATE_BY_STATUS = {
@@ -165,11 +172,32 @@
 
     function api(url) {
         var resp;
-        return (typeof fetch === 'function' ? fetch(url, { headers: { 'Cache-Control': 'no-cache' } }) : Promise.reject(new Error('no fetch'))).then(
+        var controller = (typeof AbortController === 'function') ? new AbortController() : null;
+        var timer = null;
+        if (controller) {
+            // Always clear the timer in the finally-style tail below so a
+            // settled fetch never leaves a live timeout behind.
+            timer = setTimeout(function () { controller.abort(); }, API_TIMEOUT_MS);
+        }
+        var opts = { headers: { 'Cache-Control': 'no-cache' } };
+        if (controller) opts.signal = controller.signal;
+        var base = typeof fetch === 'function'
+            ? fetch(url, opts)
+            : Promise.reject(new Error('no fetch'));
+        return base.then(
             function (r) { resp = r; return r.json().catch(function () { return null; }); },
             function () { return null; }
         ).then(function (data) {
             return { status: resp ? resp.status : 0, data: data || null };
+        }).then(function (result) {
+            if (timer) clearTimeout(timer);
+            return result;
+        }, function (err) {
+            if (timer) clearTimeout(timer);
+            // No raw exception text escapes — a timeout/abort or network
+            // failure is reported to the caller as status 0, never as a
+            // thrown message the UI would surface verbatim.
+            return { status: 0, data: null };
         });
     }
 
@@ -182,11 +210,16 @@
     // Load one source slice with its own in-flight guard. On a transient
     // failure the previous good slice is preserved (degraded), never replaced
     // with empty. Returns the in-flight (joinable) promise for that source.
-    function loadSource(name, url, apply) {
+    // `force` bypasses the join guard (a post-command follow-up must issue a
+    // FRESH read even while an earlier read of the same source is still in
+    // flight); the guard release is keyed on identity (`=== promise`) so a
+    // forced read that supersedes an in-flight one never lets the older read's
+    // settle handler delete the newer read's guard entry.
+    function loadSource(name, url, apply, force) {
         var key = sourceKey(name);
-        if (state.loading[key]) return state.loading[key];
-        state.loading[key] = api(url).then(function (r) {
-            delete state.loading[key];
+        if (!force && state.loading[key]) return state.loading[key];
+        var promise = api(url).then(function (r) {
+            if (state.loading[key] === promise) delete state.loading[key];
             if (r.status === 200 && r.data) {
                 state.lastGood[name] = r.data;
                 delete state.degraded[name];
@@ -199,12 +232,13 @@
             if (apply) apply();
             return r;
         }, function () {
-            delete state.loading[key];
+            if (state.loading[key] === promise) delete state.loading[key];
             state.degraded[name] = true;
             if (apply) apply();
             return { status: 0, data: null };
         });
-        return state.loading[key];
+        state.loading[key] = promise;
+        return promise;
     }
 
     // ---- merge -------------------------------------------------------------
@@ -401,7 +435,7 @@
 
     // ---- public surface ----------------------------------------------------
 
-    function refresh() {
+    function refresh(force) {
         // Every merge bumps `generation`; a concurrent refresh joins the
         // in-flight per-source promises (loadSource) rather than issuing its
         // own, and every response is merged — there is no epoch guard that
@@ -411,22 +445,84 @@
         // The local node identity is read from base_status, applied inline
         // during the load so `mergeTargets` sees it; all other slices merge
         // once every source settles.
+        // `force` (internal, used only by refreshAfterCommand) issues a fresh
+        // read of every source regardless of an in-flight one.
         return Promise.all([
-            loadSource('nodes', '/api/nodes_management'),
-            loadSource('contacts', '/api/mca/contacts'),
-            loadSource('keyRequests', '/api/mca/key-requests'),
-            loadSource('channels', '/api/chats'),
+            loadSource('nodes', '/api/nodes_management', undefined, force),
+            loadSource('contacts', '/api/mca/contacts', undefined, force),
+            loadSource('keyRequests', '/api/mca/key-requests', undefined, force),
+            loadSource('channels', '/api/chats', undefined, force),
             loadSource('baseStatus', '/api/base_status', function () {
                 var bs = state.lastGood.baseStatus;
                 if (bs) state.localNodeId = canonicalNodeId(bs.node_id || '');
                 if (bs) state.localNodeName = bs.node_name || '';
-            }),
+            }, force),
         ]).then(function () {
             mergeTargets();
             state.generation++;
             notify();
             return state.generation;
         });
+    }
+
+    // A command's terminal callback (files.js contact confirm/request-key) must
+    // reflect the just-committed change, not a projection that predates it.
+    // `refresh()` is the wrong tool: it JOINs any still-in-flight per-source
+    // read and returns that (stale) projection.
+    //
+    // This runs a "wave": join every source read currently in flight, then issue
+    // exactly one forced fresh refresh that bypasses the per-source join guard.
+    // The cutoff is `followUp.started` — false until the forced refresh actually
+    // issues its HTTP requests, flipped true the instant it does:
+    //   * a command whose terminal state was reached BEFORE the wave starts may
+    //     share that wave (its committed result is included in the fresh read),
+    //     so it joins `followUp.promise`;
+    //   * a command reached WHILE a wave's refresh is already running must not
+    //     join it (that refresh predates the command), so it starts/joins exactly
+    //     ONE subsequent wave instead — `followUp` is replaced by the new wave
+    //     (which joins the running one via `state.loading` below), and further
+    //     commands arriving during it coalesce the same way.
+    // Nothing here loops: a wave only begins when a new terminal callback calls
+    // in, so absent new completions the wave count stays flat, and the guard
+    // clears when each wave settles (success or failure).
+    var followUp = null; // { started: boolean, promise: Promise } | null
+
+    function refreshAfterCommand() {
+        // Join an active wave whose forced refresh has not started yet.
+        if (followUp && !followUp.started) return followUp.promise;
+
+        // Begin a new wave. If a prior wave's refresh is already running, the
+        // `joined` below waits on it (it is still in `state.loading`), so this
+        // subsequent fresh read happens strictly after it settles.
+        var wave = { started: false, promise: null };
+        followUp = wave;
+
+        var inFlight = [];
+        for (var k in state.loading) {
+            if (Object.prototype.hasOwnProperty.call(state.loading, k)) {
+                inFlight.push(state.loading[k]);
+            }
+        }
+        var joined = inFlight.length
+            ? Promise.all(inFlight.map(function (p) {
+                return p.then(function () { return undefined; }, function () { return undefined; });
+            }))
+            : Promise.resolve();
+
+        wave.promise = joined.then(function () {
+            // The forced refresh is about to issue its HTTP requests; a command
+            // completed after this instant needs its own subsequent wave.
+            wave.started = true;
+            return refresh(true);
+        });
+
+        wave.promise.then(function () {
+            if (followUp === wave) followUp = null;
+        }, function () {
+            if (followUp === wave) followUp = null;
+        });
+
+        return wave.promise;
     }
 
     function nodeTargets() { return state.nodeTargets; }
@@ -510,6 +606,7 @@
 
     window.MeshCenterTargets = {
         refresh: refresh,
+        refreshAfterCommand: refreshAfterCommand,
         nodeTargets: nodeTargets,
         channelTargets: channelTargets,
         nodeTotal: nodeTotal,

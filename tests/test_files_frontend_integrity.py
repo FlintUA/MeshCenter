@@ -4,9 +4,10 @@ The Files workspace spans three hand-wired, build-step-free files that must
 stay in agreement with each other and with the four i18n catalogs:
 
   * templates/index.html  - the nav button, the #filesView panel (whose filter
-                            tabs / header buttons are dispatched by delegated
-                            `data-files-*` attributes, not inline handlers),
-                            and the <script> tag that pulls in static/files.js
+                            <select> / header buttons are dispatched by
+                            delegated `data-files-*` attributes, not inline
+                            handlers), and the <script> tag that pulls in
+                            static/files.js
   * static/chat.js        - `operationalTabs`, the `tab === 'files'` branch in
                             switchMainTab() that calls `MeshCenterFiles.activate()`,
                             and the switch-away guard that calls
@@ -135,13 +136,15 @@ def test_index_html_wires_files_nav_and_panel():
     assert 'data-i18n="nav.files"' in html, "nav.files data-i18n attribute missing from index.html"
 
     # Header buttons are dispatched by delegated data-files-action attributes
-    # (no inline handler with a raw id), and the filter tabs carry the six
-    # supported filters including the Received/Sent splits.
+    # (no inline handler with a raw id), and the transfer filter is a native
+    # <select id="filesFilterSelect"> carrying all six supported values.
     assert 'data-files-action="send"' in html, "Send header button missing data-files-action"
     assert 'data-files-action="providers"' in html, "Providers header button missing data-files-action"
     assert 'data-files-action="refresh"' in html, "Refresh header button missing data-files-action"
-    assert 'data-files-filter="received"' in html, "Received filter tab missing"
-    assert 'data-files-filter="sent"' in html, "Sent filter tab missing"
+    assert 'id="filesFilterSelect"' in html, "filesFilterSelect (native filter <select>) missing"
+    for value in ("all", "received", "sent", "pending", "saved", "errors"):
+        assert f'value="{value}"' in html, f"filter option value={value!r} missing"
+    assert 'id="filesFilterTabs"' not in html, "legacy role=tablist filter buttons must be gone"
 
     # files.js must be loaded (with a cache-busting ?v=), and BEFORE chat.js
     # so chat.js's switchMainTab('files') branch can call it.

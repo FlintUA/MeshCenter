@@ -4315,7 +4315,10 @@ html[data-theme="dark"] #notificationsCard {
     min-height: 0;
     padding: var(--mc-page-pad, 14px);
     overflow: hidden;
-    background: var(--color-bg, #f5f7fa);
+    /* PR 5 final correction (section 8): use the workspace token so the Files
+       workspace follows the active theme's ground instead of the hard-coded
+       light #f5f7fa (which left it pale in dark themes). */
+    background: var(--mc-bg-workspace);
 }
 
 .files-panel.mc-workspace-panel {
@@ -4353,13 +4356,15 @@ html[data-theme="dark"] #notificationsCard {
 
 .files-layout {
     display: grid;
-    grid-template-columns: 240px minmax(0, 1fr) 320px;
+    /* PR 5: two panes only — Transfers (flexible) + Details (fixed band). The
+       separate Contacts pane is gone; the right-side target list is the global
+       sidebar. */
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
     gap: 0;
     flex: 1 1 auto;
     min-height: 0;
 }
 
-.files-contacts,
 .files-archive,
 .files-detail {
     min-width: 0;
@@ -4369,7 +4374,6 @@ html[data-theme="dark"] #notificationsCard {
     overflow: hidden;
 }
 
-.files-contacts { border-right: 1px solid var(--mc-border, #d8e1ec); }
 .files-detail { border-left: 1px solid var(--mc-border, #d8e1ec); }
 
 .files-pane-title {
@@ -4381,7 +4385,6 @@ html[data-theme="dark"] #notificationsCard {
     border-bottom: 1px solid var(--mc-border, #d8e1ec);
 }
 
-.files-contacts-list,
 .files-archive-list,
 .files-detail-body {
     flex: 1 1 auto;
@@ -4397,86 +4400,63 @@ html[data-theme="dark"] #notificationsCard {
     text-align: center;
 }
 
-/* contacts */
-
-.files-contact-item {
-    padding: 8px 10px;
-    border: 1px solid var(--mc-border, #d8e1ec);
-    border-radius: 10px;
-    background: var(--mc-surface, #fff);
-    margin-bottom: 8px;
-}
-.files-contact-item.is-trusted { border-color: var(--mc-success, #2f9e63); }
-.files-contact-item.is-filtered { border-color: var(--mc-accent, #2f7bb5); box-shadow: 0 0 0 1px var(--mc-accent, #2f7bb5); }
-/* P3: the outer item is inert; the name/id/fingerprint block is a real button
-   so Enter/Space and screen readers treat it as one interactive element. */
-.files-contact-select {
-    display: block;
-    width: 100%;
-    padding: 0;
-    margin: 0;
-    border: none;
-    background: none;
-    font: inherit;
-    color: inherit;
-    text-align: left;
-    cursor: pointer;
-}
-.files-contact-select:focus-visible {
-    outline: 2px solid var(--mc-accent, #2f7bb5);
-    outline-offset: 2px;
-    border-radius: 6px;
-}
-.files-contact-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-}
-.files-contact-id {
-    font-weight: 700;
-    font-size: var(--mc-body-size, 13px);
-    color: var(--mc-text, #1f2f45);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.files-contact-fp {
-    display: block;
-    margin-top: 4px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11px;
-    color: var(--mc-muted, #5c7290);
-    word-break: break-all;
-}
-.files-contact-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 8px;
-}
-
 /* transfer archive */
 
-.files-filter-tabs {
+/* PR 5: the six filter buttons became one native <select> (same six values +
+   FILTER_API), with a visible label and an aria-label for ATs. */
+.files-filter-row {
     flex: 0 0 auto;
     display: flex;
-    gap: 4px;
+    align-items: center;
+    gap: 10px;
     padding: 8px 10px;
     border-bottom: 1px solid var(--mc-border, #d8e1ec);
 }
-.files-filter-tab {
+.files-filter-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     flex: 1 1 auto;
-    padding: 5px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--mc-muted, #5c7290);
+    white-space: nowrap;
+}
+.files-filter-select {
+    flex: 0 0 auto;
+    min-width: 120px;
+    padding: 6px 8px;
     border: 1px solid var(--mc-border, #d8e1ec);
     border-radius: 8px;
-    background: var(--mc-bg-muted, #f2f6fb);
-    color: var(--mc-muted, #5c7290);
-    font-size: 12px;
-    cursor: pointer;
+    background: var(--mc-surface, #fff);
+    color: var(--mc-text, #1f2f45);
+    font: inherit;
+    font-size: 13px;
 }
-.files-filter-tab.active {
-    background: var(--mc-primary, #1769d2);
-    border-color: var(--mc-primary, #1769d2);
-    color: var(--mc-text-inverse, #fff);
+.files-filter-select:focus-visible {
+    outline: 2px solid var(--mc-accent, #2f7bb5);
+    outline-offset: 1px;
+}
+.files-search {
+    flex: 0 0 auto;
+    width: 180px;
+    padding: 6px 8px;
+    border: 1px solid var(--mc-border, #d8e1ec);
+    border-radius: 8px;
+    background: var(--mc-surface, #fff);
+    color: var(--mc-text, #1f2f45);
+    font: inherit;
+    font-size: 13px;
+}
+.files-channel-notice {
+    flex: 0 0 auto;
+    margin: 8px 10px 0;
+    padding: 8px 10px;
+    border: 1px solid var(--mc-warn, #e0a83a);
+    border-radius: 8px;
+    background: var(--mc-warn-soft, #fff7e6);
+    color: var(--mc-warn-text, #7a5a12);
+    font-size: 12px;
 }
 
 .files-transfer-item {
@@ -4723,7 +4703,6 @@ html[data-theme="dark"] #notificationsCard {
 [data-theme="dark"] .files-header.mc-workspace-header {
     background: var(--mc-workspace-header-bg, linear-gradient(180deg, #1a2b3d 0%, #172638 100%));
 }
-[data-theme="dark"] .files-contact-item,
 [data-theme="dark"] .files-transfer-item,
 [data-theme="dark"] .files-provider-item {
     background: #172638;
@@ -4737,10 +4716,5 @@ html[data-theme="dark"] #notificationsCard {
     background: #16283a;
     border-color: #2a3f54;
     color: #e5eff8;
-}
-[data-theme="dark"] .files-filter-tab {
-    background: #1c2f43;
-    border-color: #2a3f54;
-    color: #9eb3c8;
 }
 [data-theme="dark"] .files-modal-backdrop { background: rgba(4, 8, 16, .65); }

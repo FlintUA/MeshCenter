@@ -68,6 +68,7 @@ from meshsrv.attachments.idempotency import (
     ReservationOutcome,
 )
 from meshsrv.attachments.identity import MCAPrincipal
+from meshsrv.attachments.key_request_snapshot import KeyRequestSnapshot, KeyRequestStatePublisher
 from meshsrv.attachments.probe_registry import ProbeRecord, ProbeRegistry
 from meshsrv.attachments.provider_registry import ProviderProfile
 from meshsrv.attachments.recipient_snapshot import RecipientSnapshot, RecipientSnapshotPublisher
@@ -118,6 +119,7 @@ class AttachmentsFacade:
         principal: MCAPrincipal,
         workspace_manager: MCAWorkspaceManager,
         recipient_snapshot_publisher: RecipientSnapshotPublisher,
+        key_request_snapshot_publisher: KeyRequestStatePublisher,
     ):
         self._command_queue = command_queue
         self._command_registry = command_registry
@@ -130,6 +132,7 @@ class AttachmentsFacade:
         self._principal = principal
         self._workspace_manager = workspace_manager
         self._recipient_snapshot_publisher = recipient_snapshot_publisher
+        self._key_request_snapshot_publisher = key_request_snapshot_publisher
 
     def _require_ready(self) -> None:
         """Gate the snapshot-backed read/write methods: raise `FacadeNotReady`
@@ -205,6 +208,20 @@ class AttachmentsFacade:
         `recipient_not_found`, never a `FacadeNotReady`, at any point."""
         return self._recipient_snapshot_publisher.snapshot()
 
+    def key_request_snapshot(self) -> KeyRequestSnapshot:
+        """The worker-published immutable key-request capability snapshot
+        (PR 4 shared target model) - the request thread's SQLite-free view of
+        which transport addresses have an outgoing KEY_REQUEST in flight
+        (queued/waiting_response/retry_available) and whether a fresh request
+        is currently permitted (`can_request_key`). A pure in-memory read of
+        the publisher's atomically-swapped snapshot, never `conn`, the
+        filesystem, the network, or the tick lock - the same boundary
+        `recipient_snapshot()` draws. Not readiness-gated: the publisher
+        publishes an (empty) snapshot from construction, and an address absent
+        from it is simply the frontend's `idle` default, never a
+        `FacadeNotReady`."""
+        return self._key_request_snapshot_publisher.snapshot()
+
     def evaluate_upload_readiness(
         self,
         provider_id: str,
@@ -247,28 +264,73 @@ class AttachmentsFacade:
     def submit(self, command: Command) -> str:
         """The §3.4 enqueue: record `queued` in the registry *before* the
         queue write (so the worker can never dequeue a command whose entry
-        does not exist, and an immediate `GET` sees `queued`), enqueue
-        without blocking, and wake the worker. Returns `command.command_id`
-        for the caller to hand back as the §7.9 `202` payload.
+        does not exist, and an immediate `GET` sees `queued`), mark the
+        key-request address `queued` in the shared publisher *before* the
+        queue write too (see `_note_key_request_queued` for why that order
+        closes the enqueue/drain race), enqueue without blocking, and wake the
+        worker. Returns `command.command_id` for the caller to hand back as the
+        §7.9 `202` payload.
 
         Raises `FacadeNotReady` before the runtime is ready - the command is
         *not* registered or enqueued, so nothing is left half-submitted for a
         client that retries after the service comes up.
 
-        On a full queue: rolls back the registry entry (`discard_queued`,
+        On a full queue: rolls back both the registry entry (`discard_queued`,
         §3.6 step 5 - the reservation rollback is the *create* path's own
-        concern, not this generic submit's) and re-raises `CommandQueueFull`
-        for the caller to map to `429 command_queue_full`. Never blocks, and
-        never touches `conn`/filesystem/network/tick lock."""
+        concern, not this generic submit's) and the key-request `queued` marker
+        (`_note_key_request_not_queued`), then re-raises `CommandQueueFull`
+        for the caller to map to `429 command_queue_full` - so `queue_full`
+        never leaves a false `queued`. Never blocks, and never touches
+        `conn`/filesystem/network/tick lock."""
         self._require_ready()
         self._command_registry.register(command)
+        self._note_key_request_queued(command)
         try:
             self._command_queue.put_nowait(command)
         except CommandQueueFull:
             self._command_registry.discard_queued(command.command_id)
+            self._note_key_request_not_queued(command)
             raise
         self._wake_event.set()
         return command.command_id
+
+    def _note_key_request_queued(self, command: Command) -> None:
+        """PR 4 (shared target model, Finding 2 / Blocker 2): before a
+        `contact_request_key` command is enqueued, mark its address `queued` in
+        the shared key-request publisher so `GET /api/mca/key-requests` (and the
+        frontend store) observes `queued` immediately - before the worker's next
+        tick drains it.
+
+        The marker is registered *before* `put_nowait` deliberately: the
+        original order (enqueue, then mark) left a window where the worker could
+        dequeue and fully drain the command between the two steps, so its
+        `mark_drained()` ran against a not-yet-marked address and the address was
+        left falsely `queued` forever. Registering the marker first, keyed by
+        `command_id`, means the worker cannot drain *this* command (it is not yet
+        in the queue) until after the marker exists, and the worker's
+        `mark_drained(command_id)` then removes exactly this marker. A full
+        queue is rolled back by `_note_key_request_not_queued`, so `queue_full`
+        never leaves a false `queued`. Pure in-memory (`mark_queued` is a
+        lock-guarded dict insert), never `conn`/filesystem/network/tick lock."""
+        if command.kind != "contact_request_key":
+            return
+        contact_id = command.payload.get("contact_id")
+        if isinstance(contact_id, str) and contact_id:
+            self._key_request_snapshot_publisher.mark_queued(command.command_id, contact_id)
+
+    def _note_key_request_not_queued(self, command: Command) -> None:
+        """PR 4 (shared target model, Finding 2 / Blocker 2): the
+        enqueue-failure rollback for the marker `_note_key_request_queued` just
+        registered. Called only on the `CommandQueueFull` path - the command
+        never entered the queue, so its `queued` marker must be undone exactly
+        as the worker would for a drained command (`mark_drained(command_id)`,
+        which is idempotent and removes only this command id's entry). Pure
+        in-memory, never `conn`/filesystem/network/tick lock."""
+        if command.kind != "contact_request_key":
+            return
+        contact_id = command.payload.get("contact_id")
+        if isinstance(contact_id, str) and contact_id:
+            self._key_request_snapshot_publisher.mark_drained(command.command_id)
 
     # ---- request-thread write: idempotent create (§3.5/§3.6) ---------------
 

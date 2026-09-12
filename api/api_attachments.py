@@ -3,7 +3,8 @@
 The MCAttach REST surface (internal-rest-api.md §7). MIT-licensed Core
 code - never `meshtastic`, never anything under `adapters/meshtastic/`.
 
-The ten read-only `GET` endpoints §7.1 defines:
+The ten read-only `GET` endpoints §7.1 defines (plus the PR 4 key-request
+capability projection `GET /api/mca/key-requests`):
 
     GET /api/attachments
     GET /api/attachments/{attachment_id}
@@ -16,6 +17,7 @@ The ten read-only `GET` endpoints §7.1 defines:
     GET /api/mca/identity
     GET /api/mca/commands/{command_id}
     GET /api/mca/contacts
+    GET /api/mca/key-requests
 
 plus the mutation endpoints implemented so far: the three Step 1.6A.3A
 lifecycle actions — `POST /api/attachments/{id}/retry`, `/download`,
@@ -246,6 +248,22 @@ def _serialize_contact(binding):
         "key_epoch": binding.key_epoch,
         "pending_fingerprint": binding.pending_fingerprint,
         "pending_key_epoch": binding.pending_key_epoch,
+    }
+
+
+def _serialize_key_request(address, capability):
+    """PR 4 (shared target model): the single allowlist serializer for one
+    address's key-request capability on the `GET /api/mca/key-requests` wire.
+    Public non-secret values only: the canonical `contact_id` (transport
+    address), the `KeyRequestState` public string, and the derived
+    `can_request_key` boolean. Never the raw `last_request_sent_at`, the
+    rate-limit window, a public identity, X25519 material, a key path, or any
+    DB row (§11). Addresses with no activity are simply absent from the
+    snapshot (and therefore this wire) - the frontend defaults them to `idle`."""
+    return {
+        "contact_id": address,
+        "key_request_state": capability.key_request_state.value,
+        "can_request_key": capability.can_request_key,
     }
 
 
@@ -1201,6 +1219,30 @@ def register_attachments_routes(app, handle_errors):
             for b in sorted(snapshot.by_address.values(), key=lambda b: b.transport_address)
         ]
         return jsonify({"ok": True, "contacts": contacts_out})
+
+    @app.route("/api/mca/key-requests", methods=["GET"])
+    @handle_errors
+    @_mca_error_boundary
+    def list_key_requests():
+        """PR 4 (shared target model): the key-request capability projection for
+        every address with an outgoing KEY_REQUEST currently in flight -
+        `queued` (a `contact_request_key` command still in the bounded command
+        queue), `waiting_response` (sent, inside the per-address rate-limit
+        window), or `retry_available` (sent, window elapsed, no key yet) - plus
+        the derived `can_request_key` boolean. Deterministic (`contact_id`-
+        ascending) order, allowlist-serialized (§11). Addresses with no
+        activity are absent, so the frontend defaults them to `idle`. Read-only
+        - the request thread reads the worker-published `KeyRequestSnapshot`,
+        never `conn`, the filesystem, the network, or the tick lock."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        snapshot = facade.key_request_snapshot()
+        key_requests_out = [
+            _serialize_key_request(address, capability)
+            for address, capability in sorted(snapshot.by_address.items())
+        ]
+        return jsonify({"ok": True, "key_requests": key_requests_out})
 
     @app.route("/api/mca/contacts/<contact_id>/confirm", methods=["POST"])
     @handle_errors

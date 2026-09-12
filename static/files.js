@@ -126,6 +126,23 @@
         key_unknown: 'Key unknown',
     };
 
+    // PR 4: key-request capability states (worker-published), and the
+    // file-unavailability reasons from the centralized capability matrix.
+    var FILES_KEY_REQUEST_STATE_LABELS = {
+        idle: 'Key unknown',
+        queued: 'Key request sent',
+        waiting_response: 'Waiting for response',
+        retry_available: 'Retry available',
+    };
+
+    var FILES_UNAVAILABLE_REASON_LABELS = {
+        local_node: 'This is your own node',
+        channel_not_supported: 'Channels do not support file transfer',
+        key_unknown: 'Key unknown',
+        key_unverified: 'Key not yet verified',
+        key_changed: 'Key changed',
+    };
+
     var FILES_RELAY_STATE_LABELS = {
         unknown: 'Unknown',
         online: 'Online',
@@ -191,12 +208,12 @@
         detailPending: null,      // coalesced follow-up id, or null (R4)
         detailFingerprint: null,  // signature of the last-rendered detail (R4)
 
-        contacts: [],             // merged contact projection (C3)
-        nodes: [],                // raw /api/nodes_management nodes
+        contacts: [],             // node targets projected from the shared store (PR 4)
         providers: [],
         connectivity: { internet: 'unknown', relays: {} },
         settings: null,
         localNodeId: '',
+        storeSubscribed: false,    // PR 4 Finding 1: one subscription to the shared store
 
         attachments: [],
         total: 0,
@@ -254,6 +271,8 @@
 
     function filesStateLabel(s) { return t('files.state.' + s, FILES_STATE_LABELS[s] || s); }
     function filesContactStatusLabel(s) { return t('files.contact.' + s, FILES_CONTACT_STATUS_LABELS[s] || s); }
+    function filesKeyRequestStateLabel(s) { return t('files.key_request_state.' + s, FILES_KEY_REQUEST_STATE_LABELS[s] || s); }
+    function fileUnavailableReasonLabel(s) { return t('files.unavailable.' + s, FILES_UNAVAILABLE_REASON_LABELS[s] || s || 'Unknown'); }
     function filesRelayStateLabel(s) { return t('files.relay_state.' + s, FILES_RELAY_STATE_LABELS[s] || s); }
     function filesReadinessLabel(s) { return t('files.ready_reason.' + s, FILES_READINESS_LABELS[s] || s || 'Unknown'); }
     function filesUploadReadinessLabel(s) { return t('files.upload_readiness.' + s, FILES_UPLOAD_READINESS_LABELS[s] || s || 'Unknown'); }
@@ -347,10 +366,6 @@
 
     function canonicalNodeId(id) {
         return String(id || '').toLowerCase();
-    }
-
-    function isLocalNode(id) {
-        return state.localNodeId && canonicalNodeId(id) === canonicalNodeId(state.localNodeId);
     }
 
     // ---- notification helpers (delegate to the shared Notification Center) ----
@@ -489,24 +504,49 @@
     }
 
     function refreshContacts() {
-        return guardedLoad('contacts', function () {
-            return Promise.all([
-                api('/api/nodes_management'),
-                api('/api/mca/contacts'),
-                api('/api/base_status'),
-            ]);
-        }, function (results) {
-            var nodesRes = results[0], contactsRes = results[1], baseRes = results[2];
-            state.nodes = (nodesRes.status === 200 && nodesRes.data && Array.isArray(nodesRes.data.nodes))
-                ? nodesRes.data.nodes : [];
-            var bindings = (contactsRes.status === 200 && contactsRes.data && Array.isArray(contactsRes.data.contacts))
-                ? contactsRes.data.contacts : [];
-            if (baseRes.status === 200 && baseRes.data) {
-                state.localNodeId = canonicalNodeId(baseRes.data.node_id || '');
-            }
-            state.contacts = mergeContacts(state.nodes, bindings, state.localNodeId);
-            renderContacts();
+        // PR 4: the contact list is now a projection of the shared target
+        // store (static/targets.js), which merges nodes + MCA bindings +
+        // key-request capability + the cached channel projection + local node
+        // identity into one model. files.js no longer re-merges the raw
+        // endpoints itself.
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        if (!store) return Promise.resolve();
+        return store.refresh().then(function () {
+            syncContactsFromStore();
         });
+    }
+
+    // Map the shared store's node targets onto the legacy `state.contacts`
+    // projection files.js renders, excluding the local node and carrying the
+    // centralized capability fields (can_send_file / can_request_key /
+    // key_request_state / file_unavailable_reason) rather than re-deriving
+    // them per component.
+    function syncContactsFromStore() {
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        if (!store) return;
+        var localId = canonicalNodeId(store.localNodeId());
+        if (localId) state.localNodeId = localId;
+        var targets = store.nodeTargets();
+        state.contacts = targets.filter(function (t) {
+            return !t.is_local;
+        }).map(function (t) {
+            return {
+                contact_id: t.id,
+                status: t.contact_status || 'key_unknown',
+                trust_state: t.trust_state,
+                key_request_state: t.key_request_state,
+                can_send_file: t.can_send_file,
+                can_request_key: t.can_request_key,
+                file_unavailable_reason: t.file_unavailable_reason,
+                fingerprint: t.fingerprint || '',
+                pending_fingerprint: t.pending_fingerprint || '',
+                key_epoch: t.key_epoch,
+                pending_key_epoch: t.pending_key_epoch,
+                name: t.display_name || '',
+                hasBinding: t.hasBinding,
+            };
+        });
+        renderContacts();
     }
 
     function loadProviders() {
@@ -644,61 +684,7 @@
         return refreshAfterCommand('transfers:' + state.epoch + ':' + transfersQueryKey(), loadTransfers);
     }
 
-    // ---- contact merge (C3 §8.1) -------------------------------------------
-
-    function mergeContacts(nodes, bindings, localNodeId) {
-        var byId = {};
-        var order = [];
-
-        bindings.forEach(function (b) {
-            var id = canonicalNodeId(b.contact_id);
-            byId[id] = {
-                contact_id: id,
-                status: b.status,
-                fingerprint: b.fingerprint || '',
-                pending_fingerprint: b.pending_fingerprint || '',
-                key_epoch: b.key_epoch,
-                pending_key_epoch: b.pending_key_epoch,
-                name: '',
-                hasBinding: true,
-            };
-            if (order.indexOf(id) === -1) order.push(id);
-        });
-
-        nodes.forEach(function (n) {
-            var id = canonicalNodeId(n.node_id);
-            if (!id || isLocalNodeId(id, localNodeId)) return;
-            if (!byId[id]) {
-                byId[id] = {
-                    contact_id: id,
-                    status: 'key_unknown',
-                    fingerprint: '',
-                    pending_fingerprint: '',
-                    key_epoch: null,
-                    pending_key_epoch: null,
-                    name: n.name || '',
-                    hasBinding: false,
-                };
-                order.push(id);
-            } else if (!byId[id].name) {
-                byId[id].name = n.name || '';
-            }
-        });
-
-        var merged = order.map(function (id) { return byId[id]; });
-        merged.sort(function (a, b) {
-            var an = (a.name || '').toLowerCase();
-            var bn = (b.name || '').toLowerCase();
-            if (an < bn) return -1;
-            if (an > bn) return 1;
-            return a.contact_id < b.contact_id ? -1 : a.contact_id > b.contact_id ? 1 : 0;
-        });
-        return merged;
-    }
-
-    function isLocalNodeId(id, localNodeId) {
-        return Boolean(localNodeId && canonicalNodeId(id) === localNodeId);
-    }
+    // ---- contact lookup (projection of the shared target store, PR 4) ------
 
     function contactByNameOrId(c, contactId) {
         return canonicalNodeId(c.contact_id) === canonicalNodeId(contactId);
@@ -754,20 +740,28 @@
     }
 
     function contactTrustActions(c) {
+        // PR 4: actions derive from the centralized capability matrix
+        // (trust_state + key_request_state + can_request_key), not re-derived
+        // from the raw status string per component.
         var actions = '';
-        if (c.status === 'confirmation_required') {
+        if (c.trust_state === 'confirmation_required') {
             actions += '<button type="button" class="files-action-btn" data-files-action="contact-confirm" data-contact="' + esc(c.contact_id) + '">' +
                 esc(t('files.trust_confirm', 'Trust key')) + '</button>';
         }
-        if (c.status === 'key_changed') {
+        if (c.trust_state === 'changed') {
             actions += '<button type="button" class="files-action-btn" data-files-action="contact-accept" data-contact="' + esc(c.contact_id) + '">' +
                 esc(t('files.key_change_accept', 'Accept')) + '</button>';
             actions += '<button type="button" class="files-action-btn is-danger" data-files-action="contact-reject" data-contact="' + esc(c.contact_id) + '">' +
                 esc(t('files.key_change_reject', 'Reject')) + '</button>';
         }
-        if (c.status === 'key_unknown') {
-            actions += '<button type="button" class="files-action-btn" data-files-action="contact-request-key" data-contact="' + esc(c.contact_id) + '">' +
-                esc(t('files.request_key', 'Request key')) + '</button>';
+        if (c.trust_state === 'unknown') {
+            if (c.can_request_key) {
+                var again = c.key_request_state === 'retry_available';
+                actions += '<button type="button" class="files-action-btn" data-files-action="contact-request-key" data-contact="' + esc(c.contact_id) + '">' +
+                    esc(again ? t('files.request_key_again', 'Request key again') : t('files.request_key', 'Request key')) + '</button>';
+            } else if (c.key_request_state === 'queued' || c.key_request_state === 'waiting_response') {
+                actions += '<span class="files-contact-kr-state">' + esc(filesKeyRequestStateLabel(c.key_request_state)) + '</span>';
+            }
         }
         if (actions) return '<div class="files-contact-actions">' + actions + '</div>';
         return '';
@@ -1685,9 +1679,27 @@
     // P3: counterparty filter — selects transfers by the stable counterparty id
     // only (canonicalNodeId), never the display name. Toggling the already-active
     // contact clears the filter and returns the full list.
+    //
+    // PR 4 Finding 1: the click routes through the shared target store (ONE
+    // selection source of truth). `store.toggleSelect('node', id)` fires the
+    // store's subscriber synchronously, which updates `state.counterparty`
+    // (onStoreSelection) and reloads the transfer list.
     function toggleCounterpartyFilter(contactId) {
-        var canonical = canonicalNodeId(contactId || '');
-        state.counterparty = (canonical === state.counterparty) ? '' : canonical;
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        if (!store) return;
+        store.toggleSelect('node', contactId || '');
+    }
+
+    // PR 4 Finding 1: the shared store's selection is the single source of
+    // truth for the Files counterparty filter. A node selection becomes the
+    // counterparty; a channel selection (or no selection) clears it — a channel
+    // stays selected in the store but is never a file counterparty.
+    function onStoreSelection(evt) {
+        var sel = evt && evt.selection;
+        var nodeId = (sel && sel.kind === 'node') ? canonicalNodeId(sel.id) : '';
+        if (state.counterparty === nodeId) return; // no change — avoid a reload loop
+        state.counterparty = nodeId;
+        if (!state.active) return; // re-derived on the next activate()→refresh()
         renderContacts();
         loadTransfers();
     }
@@ -1726,6 +1738,18 @@
         state.epoch++;
         state.active = true;
         state.visible = !(typeof document !== 'undefined' && document.hidden);
+        // PR 4 Finding 1: subscribe to the shared target store once, so the
+        // counterparty filter always mirrors the store's selection (node clicks
+        // in the contact list route through store.toggleSelect). The store is a
+        // page singleton and files.js is always loaded, so the subscription
+        // lives for the page; the onStoreSelection guard re-syncs on reactivate.
+        if (!state.storeSubscribed) {
+            var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+            if (store && typeof store.subscribe === 'function') {
+                store.subscribe(onStoreSelection);
+                state.storeSubscribed = true;
+            }
+        }
         refresh();
         schedule();
         loadConnectivity();
@@ -1878,7 +1902,11 @@
     }
 
     function sendTrustedContacts() {
-        return state.contacts.filter(function (c) { return c.status === 'trusted'; });
+        // PR 4: sendability is the centralized capability matrix's verdict —
+        // a node is a valid recipient only when `can_send_file` is true (a
+        // trusted worker-published binding), never merely because it exists in
+        // the node list.
+        return state.contacts.filter(function (c) { return c.can_send_file === true; });
     }
 
     function renderSendRecipients() {
@@ -1888,21 +1916,51 @@
             sel.innerHTML = '<option value="">' + esc(t('files.no_contacts', 'No known contacts yet.')) + '</option>';
             return;
         }
-        var trusted = state.contacts.filter(function (c) { return c.status === 'trusted'; });
+        var trusted = state.contacts.filter(function (c) { return c.can_send_file === true; });
+        // PR 4 Finding 1: pre-select a recipient from the shared store's
+        // selection — but only a valid, still-sendable node. A channel
+        // selection, or a selected node that is no longer a trusted contact
+        // (invalid/disappeared), yields `null`: the select shows an explicit
+        // empty placeholder rather than silently falling back to the first
+        // (different) trusted contact.
+        var preselect = sendRecipientPreselection();
         var options = state.contacts.map(function (c) {
             var name = c.name || c.contact_id;
-            var shortFp = c.fingerprint ? c.fingerprint.slice(0, 8) : '';
             var label = name + ' (' + c.contact_id + ')';
-            if (c.status === 'trusted') {
+            if (c.can_send_file === true) {
                 return '<option value="' + esc(c.contact_id) + '">' + esc(label) + '</option>';
             }
-            var reason = filesContactStatusLabel(c.status);
+            var reason = fileUnavailableReasonLabel(c.file_unavailable_reason);
             return '<option value="' + esc(c.contact_id) + '" disabled>' + esc(label + ' — ' + reason) + '</option>';
         }).join('');
-        if (!trusted.length) {
-            options = '<option value="">' + esc(t('files.no_trusted_contacts', 'No trusted contacts')) + '</option>' + options;
+        if (!trusted.length || preselect === null) {
+            var placeholder = trusted.length
+                ? t('files.send_choose_recipient', 'Choose a trusted contact')
+                : t('files.no_trusted_contacts', 'No trusted contacts');
+            options = '<option value="">' + esc(placeholder) + '</option>' + options;
         }
         sel.innerHTML = options;
+        if (preselect === null) {
+            sel.value = '';         // an invalid/disappeared selection → explicit empty, no fallback
+        } else if (preselect) {
+            sel.value = preselect;  // a valid node selection → pre-select it
+        }
+        // (preselect === '') leaves the browser default (first option) untouched.
+    }
+
+    // PR 4 Finding 1: resolve the shared store's selection to a pre-selected
+    // recipient id, or `null` when a target is selected but is not a valid
+    // recipient (a channel, or an invalid/disappeared/non-sendable node) — the
+    // latter must never silently fall back to a different recipient.
+    function sendRecipientPreselection() {
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        if (!store) return '';
+        var sel = store.selected();
+        if (!sel) return '';                  // nothing selected → normal default
+        if (sel.kind !== 'node') return null; // a channel is never a file recipient
+        var c = findContact(sel.id);
+        if (c && c.can_send_file === true) return c.contact_id;
+        return null;                          // invalid/disappeared/non-sendable node
     }
 
     function uploadReadyProvider(p) {

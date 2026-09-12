@@ -69,6 +69,7 @@ from meshsrv.attachments.dispatch import COMMAND_EXECUTION_FAILED, CommandDispat
 from meshsrv.attachments.identity import MCAPrincipal, compute_key_id
 from meshsrv.attachments.idempotency import PendingReservation, PendingReservations, validate_canonical_hash, validate_client_request_id
 from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator, RateLimited
+from meshsrv.attachments.key_request_snapshot import KeyRequestStatePublisher
 from meshsrv.attachments.probe_registry import (
     PROBE_STATUS_PROBED,
     PROBE_TTL_SECONDS,
@@ -366,6 +367,7 @@ class AttachmentsService:
         ready_event: Optional[threading.Event] = None,
         pending_reservations: Optional[PendingReservations] = None,
         recipient_snapshot_publisher: Optional[RecipientSnapshotPublisher] = None,
+        key_request_snapshot_publisher: Optional[KeyRequestStatePublisher] = None,
     ):
         self._conn = conn
         self._workspace_manager = workspace_manager
@@ -450,6 +452,14 @@ class AttachmentsService:
         # does) omits it; `None` means the per-tick recipient refresh is a
         # no-op (there is no request-facing facade to feed in that case).
         self._recipient_publisher = recipient_snapshot_publisher
+        # PR 4 (shared target model): the worker-refreshed key-request
+        # capability snapshot publisher. `mca_runtime` passes the *same*
+        # instance it handed the facade, so a request thread's read of
+        # `GET /api/mca/key-requests` sees exactly the snapshot this worker
+        # refreshes. Same optional-injection shape as `_recipient_publisher`
+        # (a standalone caller with its own dedicated `conn` omits it; `None`
+        # makes the per-tick key-request refresh a no-op).
+        self._key_request_publisher = key_request_snapshot_publisher
         # Step 1.6A.1 (correction #1): the shared runtime-readiness signal.
         # `mca_runtime` passes the same Event it hands the facade, so the
         # facade's snapshot-backed reads/write are gated on exactly this
@@ -632,6 +642,17 @@ class AttachmentsService:
         # unknown signer. Rate-limited and idempotent - safe on every tick.
         self._auto_request_missing_keys()
 
+        # PR 4 (shared target model): republish the key-request capability
+        # snapshot *after* this tick's command drain and auto-request scan,
+        # both of which can change an address's key-request state - a drained
+        # `contact_request_key` command moves it from `queued` to
+        # `waiting_response` (its `last_request_sent_at` was just persisted),
+        # and `_auto_request_missing_keys()` can enqueue new requests. Placed
+        # here deliberately (not earlier): it must reflect those two passes,
+        # and it needs no other tick state. Never raises - a transient read
+        # failure keeps the last-known-good snapshot.
+        self._refresh_key_request_snapshot()
+
         # The only network I/O this tick performs itself beyond the
         # inbound-event dispatch above - everything after this is either
         # a cheap DB scan or a run_step() call, which does its own I/O
@@ -725,6 +746,20 @@ class AttachmentsService:
         if self._recipient_publisher is not None:
             self._recipient_publisher.refresh()
 
+    def _refresh_key_request_snapshot(self) -> None:
+        """PR 4 (shared target model): refresh the worker-published key-request
+        capability snapshot from the pending queued-marker set and the persisted
+        `last_request_sent_at` table (both worker-thread reads - see
+        `key_request_snapshot.py`). A no-op when no publisher was injected
+        (a standalone service with its own dedicated `conn` and no
+        request-facing facade to feed). Never raises - a transient read failure
+        must not kill the tick; the request thread's read simply keeps the
+        last-known-good snapshot, and the worker's authoritative
+        `check_key_request_rate_limit()` still governs whether a fresh request
+        is actually accepted at send time."""
+        if self._key_request_publisher is not None:
+            self._key_request_publisher.refresh()
+
     def _drain_inbound_events(self) -> None:
         """Up to MAX_INBOUND_EVENTS_PER_TICK events, oldest first - the
         rest simply wait for the next tick/wake(), the same bounded-work-
@@ -757,13 +792,39 @@ class AttachmentsService:
         the same bounded-work-per-tick discipline `_due_rows()`'s own
         `max_per_tick` already uses. One command whose handler raises is
         caught and marked terminal-failed inside `_execute_command()` - it
-        can never stop the rest of this drain or kill the worker thread."""
+        can never stop the rest of this drain or kill the worker thread.
+
+        The key-request `queued` marker is held through `_execute_command()`
+        and cleared in the `finally` (see `_note_key_request_drained`): the
+        address stays `queued` - and therefore non-requestable - for the whole
+        time the request is actually being sent, not just while it sits in the
+        queue (PR #256 review, Finding 2 / Blocker 2)."""
         for _ in range(MAX_COMMANDS_PER_TICK):
             try:
                 command = self._command_queue.get_nowait()
             except queue.Empty:
                 return
-            self._execute_command(command)
+            try:
+                self._execute_command(command)
+            finally:
+                self._note_key_request_drained(command)
+
+    def _note_key_request_drained(self, command: Command) -> None:
+        """PR 4 (shared target model, Finding 2 / Blocker 2): the worker has
+        reached a *terminal* execution outcome for a `contact_request_key`
+        command, so clear its `queued` marker in the shared key-request
+        publisher. Called from `_drain_commands()`'s `finally`, keyed by
+        `command_id` (not by address), so it removes only this command's marker
+        - a sibling same-address command that is still in flight keeps its own
+        marker, and the address stays `queued` until the last of its commands
+        drains. Its state now derives from the persisted `last_request_sent_at`
+        timestamp on the next `refresh()` (a successful send -> `waiting_response`;
+        a failed send leaves no marker *and* no timestamp -> back to
+        `idle`/absent). Runs once per drained command, success or failure, so a
+        failed send can never leave a stuck `queued` marker behind."""
+        if self._key_request_publisher is None or command.kind != "contact_request_key":
+            return
+        self._key_request_publisher.mark_drained(command.command_id)
 
     def _execute_command(self, command: Command) -> None:
         """Step 1.6A.1 (correction #2/#4): execute one dequeued command by

@@ -287,6 +287,101 @@ def test_confirm_command_is_invalid_state_transition_for_a_trusted_binding(tmp_p
         mca_runtime.reset_state_for_tests()
 
 
+# --- PR 4 Finding 2: key-request `queued` observability (integration) --------
+
+
+def test_key_request_submit_then_tick_moves_queued_to_waiting_response(tmp_path):
+    """Finding 2 (integration): a real `facade.submit(contact_request_key)`
+    makes `queued` observable immediately through the facade's key-request
+    snapshot, and a real worker `tick()` (drain -> execute -> refresh)
+    transitions it to `waiting_response` - the actual request-thread sequence,
+    not a queue a test pre-populated before constructing the publisher."""
+    state, _, _ = _started_state(tmp_path, "key-request-queued-flow")
+    try:
+        facade = state.facade
+        contact = "!756f9960"
+
+        # Before any submit there is no key-request activity for this address.
+        assert contact not in facade.key_request_snapshot().by_address
+
+        command = Command(
+            command_id=uuid.uuid4().hex,
+            kind="contact_request_key",
+            payload={"contact_id": contact, "adapter_id": "meshtastic", "route_id": contact},
+            created_at=time.time(),
+        )
+        facade.submit(command)
+
+        # Immediately after submit, before any tick: `queued` is observable.
+        cap = facade.key_request_snapshot().by_address[contact]
+        assert cap.key_request_state.value == "queued"
+        assert cap.can_request_key is False
+
+        # One worker tick drains the command (mark_drained), executes it (a
+        # successful send persists the quota timestamp), then refreshes the
+        # key-request snapshot.
+        state.service.tick()
+
+        # Now the state derives from the persisted timestamp: waiting_response.
+        cap = facade.key_request_snapshot().by_address[contact]
+        assert cap.key_request_state.value == "waiting_response"
+        assert cap.can_request_key is False
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_key_request_stays_queued_during_command_execution(tmp_path):
+    """Blocker 2 (integration): the `queued` marker is held through
+    `_execute_command()` and cleared only in the `finally`. While a
+    `contact_request_key` command is actually executing, its address must
+    still project `queued` (non-requestable); the moment execution reaches a
+    terminal outcome the marker is removed. The old order cleared the marker
+    on dequeue, so the address would briefly - and wrongly - look requestable
+    mid-send."""
+    state, _, _ = _started_state(tmp_path, "hold-marker-during-exec")
+    try:
+        facade = state.facade
+        service = state.service
+        contact = "!756f9960"
+
+        command = Command(
+            command_id=uuid.uuid4().hex,
+            kind="contact_request_key",
+            payload={"contact_id": contact, "adapter_id": "meshtastic", "route_id": contact},
+            created_at=time.time(),
+        )
+        facade.submit(command)
+        assert facade.key_request_snapshot().by_address[contact].key_request_state.value == "queued"
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_execute(_cmd):
+            entered.set()
+            assert release.wait(timeout=5), "test must release the blocked execute"
+
+        service._execute_command = blocking_execute  # noqa: SLF001
+        worker = threading.Thread(target=service._drain_commands)
+        worker.start()
+        assert entered.wait(timeout=5), "worker never reached the command execution"
+
+        # While the command is executing, its address must still be queued
+        # (non-requestable), never briefly re-permitted.
+        cap = facade.key_request_snapshot().by_address[contact]
+        assert cap.key_request_state.value == "queued"
+        assert cap.can_request_key is False
+
+        release.set()
+        worker.join(timeout=5)
+        assert not worker.is_alive(), "worker did not finish draining"
+
+        # Terminal execution cleared the marker (no timestamp persisted here,
+        # so the address is absent = the requestable-by-default idle).
+        assert contact not in facade.key_request_snapshot().by_address
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
 def test_accept_key_change_promotes_pending_and_requires_a_new_confirm(tmp_path):
     state, _, _ = _started_state(tmp_path, "trust-accept")
     try:

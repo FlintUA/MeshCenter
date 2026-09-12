@@ -95,6 +95,7 @@
     "send_comment": "Kommentar (optional)",
     "send_submit": "Senden",
     "err_no_recipient": "Wähle einen vertrauenswürdigen Kontakt",
+    "send_choose_recipient": "Wähle einen vertrauenswürdigen Kontakt",
     "err_no_file": "Wähle eine Datei",
     "err_file_too_large": "Datei überschreitet das 5-MiB-Limit",
     "sending": "Sende Datei…",
@@ -323,7 +324,21 @@
     "relay_state_label": "Relay-Status",
     "upload_ready": "Upload: bereit",
     "upload_not_ready": "Upload: nicht bereit",
-    "err_ttl_custom": "Gib eine positive ganze Zahl an Sekunden für das benutzerdefinierte Ablaufdatum ein"
+    "err_ttl_custom": "Gib eine positive ganze Zahl an Sekunden für das benutzerdefinierte Ablaufdatum ein",
+    "request_key_again": "Schlüssel erneut anfordern",
+    "key_request_state": {
+      "idle": "Schlüssel unbekannt",
+      "queued": "Schlüsselanfrage gesendet",
+      "waiting_response": "Warte auf Antwort",
+      "retry_available": "Erneut möglich"
+    },
+    "unavailable": {
+      "local_node": "Das ist dein eigener Knoten",
+      "channel_not_supported": "Kanäle unterstützen keinen Dateitransfer",
+      "key_unknown": "Schlüssel unbekannt",
+      "key_unverified": "Schlüssel noch nicht verifiziert",
+      "key_changed": "Schlüssel geändert"
+    }
   },
   "about": {
     "tab_overview": "Übersicht",

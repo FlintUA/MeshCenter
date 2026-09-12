@@ -130,6 +130,7 @@ from meshsrv.attachments.facade import AttachmentsFacade
 from meshsrv.attachments.identity import MCAPrincipal, ensure_principal
 from meshsrv.attachments.idempotency import PendingReservations
 from meshsrv.attachments.key_exchange import KeyExchangeCoordinator
+from meshsrv.attachments.key_request_snapshot import KeyRequestStatePublisher
 from meshsrv.attachments.probe_registry import ProbeRegistry
 from meshsrv.attachments.provider_registry import ProviderRegistry
 from meshsrv.attachments.recipient_snapshot import RecipientSnapshotPublisher
@@ -275,6 +276,21 @@ class _MCARuntimeState:
         # a single "started and first snapshot published" truth.
         self.ready_event = threading.Event()
         self.command_queue = CommandQueue()
+        # PR 4 (shared target model): the worker-published immutable
+        # key-request capability snapshot. Constructed eagerly (its own
+        # __init__ does an eager `refresh()`, a SQLite read via
+        # `coordinator.list_bindings()`/`list_key_request_sent_at()` on this
+        # startup thread - safe, same reasoning as the recipient snapshot
+        # publisher above) and handed to *both* the facade (request thread
+        # reads it via `GET /api/mca/key-requests` and marks addresses
+        # `queued` on a successful `contact_request_key` enqueue) and the
+        # service (worker clears the marker on dequeue and refreshes it each
+        # tick), so they share one instance. It no longer reads the command
+        # queue directly (Finding 5) - the facade/service drive its pending
+        # queued-marker set instead.
+        self.key_request_snapshot_publisher = KeyRequestStatePublisher(
+            self.coordinator
+        )
         self.command_registry = CommandRegistry()
         self.pending_reservations = PendingReservations()
         self.probe_registry = ProbeRegistry()
@@ -293,6 +309,7 @@ class _MCARuntimeState:
             principal=self.principal,
             workspace_manager=self.workspace_manager,
             recipient_snapshot_publisher=self.recipient_snapshot_publisher,
+            key_request_snapshot_publisher=self.key_request_snapshot_publisher,
         )
         # Unlike the pieces above, the worker thread itself is not
         # started until ensure_service() runs - see that method's own
@@ -380,6 +397,7 @@ class _MCARuntimeState:
             ready_event=self.ready_event,
             pending_reservations=self.pending_reservations,
             recipient_snapshot_publisher=self.recipient_snapshot_publisher,
+            key_request_snapshot_publisher=self.key_request_snapshot_publisher,
         )
         if self.dispatcher is self._dispatcher_placeholder:
             # The service built its real lifecycle-command dispatcher (we

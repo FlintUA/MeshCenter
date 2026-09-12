@@ -40,25 +40,62 @@ let messageActionTarget = null;
 let renderedMessagesById = new Map();
 let activeReply = null;
 
-// PR 4 Finding 1: chat.js mirrors the shared target store's selection
-// (static/targets.js, `window.MeshCenterTargets`) so that a node/channel
-// selected in any workspace highlights the same card here, and a chat opened
-// here becomes the store's selection for every other workspace. The store is
-// a page singleton loaded before chat.js (see templates/index.html), so these
-// helpers read it defensively and never assume it is present.
+// PR 4 Finding 1 + final correction (Finding 1): chat.js mirrors the shared
+// target store's selection (static/targets.js, `window.MeshCenterTargets`) so
+// that a node/channel selected in any workspace highlights the same card here,
+// and a chat opened here becomes the store's selection for every other
+// workspace. The store is a page singleton loaded before chat.js (see
+// templates/index.html), so these helpers read it defensively and never assume
+// it is present.
+//
+// Two distinct facts, kept separate (final correction, Finding 1):
+//   - whether the shared store EXISTS (older page / targets.js not loaded), and
+//   - what its current selection IS (including an explicit null = cleared).
+// `storeSelectedTarget()` used to collapse "store absent" and "selection
+// cleared" into one null, which wrongly re-fell-back to currentChatId after
+// Files cleared the selection.
 let storeSelectionSubscribed = false;
 
-function storeSelectedTarget() {
-    const store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
-    if (!store || typeof store.selected !== 'function') return null;
+// The shared store singleton, or null when targets.js did not load.
+function targetStore() {
+    return (typeof window !== 'undefined' && window.MeshCenterTargets) ? window.MeshCenterTargets : null;
+}
+
+// Resolves the shared selection into one of three values:
+//   - undefined  -> the store is ABSENT (older page); the caller falls back to
+//                   the local open conversation (currentChatId).
+//   - null       -> the store is PRESENT but its selection was cleared; this is
+//                   AUTHORITATIVE: nothing is selected anywhere, and the caller
+//                   must NOT fall back to currentChatId.
+//   - {kind,id}  -> the store is PRESENT with a live selection.
+function resolveSharedTargetSelection() {
+    const store = targetStore();
+    if (!store || typeof store.selected !== 'function') return undefined;
     return store.selected() || null;
+}
+
+// The effective selected target {kind,id} (or null) for highlight purposes,
+// honoring the store's authority. Store absent -> derive from the open
+// conversation (the legacy fallback); store present with a null selection ->
+// nothing is selected, even though currentChatId may still hold an open
+// conversation (opening a chat and selecting a target are separate facts).
+function effectiveSelectedTarget() {
+    const resolved = resolveSharedTargetSelection();
+    if (resolved !== undefined) return resolved; // {kind,id} or null (authoritative)
+    if (currentChatType === 'channel' && currentChatId) {
+        return { kind: 'channel', id: String(currentChatId) };
+    }
+    if (!nodeVisualSelectionCleared && currentChatType === 'dm' && currentChatId) {
+        return { kind: 'node', id: String(currentChatId) };
+    }
+    return null;
 }
 
 // Pushes chat.js's open-conversation selection into the store (`select`) or
 // clears it (`clearSelection`). Never toggles: opening a chat selects it,
 // closing the chat list clears it.
 function storeSyncSelection(kind, id) {
-    const store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+    const store = targetStore();
     if (!store) return;
     ensureStoreSelectionSubscription();
     if (kind && id) {
@@ -69,15 +106,18 @@ function storeSyncSelection(kind, id) {
 }
 
 // Subscribes chat.js to the store exactly once so a selection made in another
-// workspace (e.g. Files) re-syncs the Node-card / chat-item highlight here
-// without touching the open conversation (currentChatId stays put).
+// workspace (e.g. Files) re-syncs BOTH the Node-card highlight and the
+// channel/DM chat-item highlight here without touching the open conversation
+// (currentChatId stays put). The store's notify() runs subscribers
+// synchronously, so both syncs fire inline with the selection change.
 function ensureStoreSelectionSubscription() {
     if (storeSelectionSubscribed) return;
-    const store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+    const store = targetStore();
     if (!store || typeof store.subscribe !== 'function') return;
     storeSelectionSubscribed = true;
     store.subscribe(function () {
         syncSelectedNodeCard();
+        syncSelectedChatItems();
     });
 }
 
@@ -4073,13 +4113,12 @@ function formatChannelIndexLabel(name, index) {
 // ============================================================
 function renderChatItem(chat) {
     const isDemo = Boolean(chat.is_demo);
-    // PR 4 Finding 1: the card's selected state reads the shared store's
-    // selection (kind + id), falling back to the local open-chat id when the
-    // store is absent (older page / no targets.js loaded).
-    const storeSel = storeSelectedTarget();
-    const isSelected = storeSel
-        ? (storeSel.id === chat.id && storeSel.kind === (chat.is_channel ? 'channel' : 'node'))
-        : (chat.id === currentChatId);
+    // PR 4 Finding 1 + final correction (Finding 1): the card's selected state
+    // reads the shared store's selection (kind + id) via effectiveSelectedTarget
+    // — falling back to the local open-chat id ONLY when the store is absent.
+    const targetKind = chat.is_channel ? 'channel' : 'node';
+    const eff = effectiveSelectedTarget();
+    const isSelected = Boolean(eff && eff.kind === targetKind && eff.id === chat.id);
     const selectedClass = isSelected ? 'selected' : '';
     const icon = chat.is_channel ? (isDemo ? '🔒' : '📡') : getChatNodeShortName(chat);
     const iconClass = chat.is_channel
@@ -4113,7 +4152,7 @@ function renderChatItem(chat) {
         : chat.name;
 
     return `
-        <div class="chat-item ${hasUnread} ${selectedClass} ${demoClass}" data-chat-id="${escapeHtml(chat.id)}" aria-pressed="${isSelected ? 'true' : 'false'}" onclick="${clickHandler}" ${isDemo ? `title="${escapeHtml(window.I18N.t('chat.channel_not_configured_title'))}"` : ''}>
+        <div class="chat-item ${hasUnread} ${selectedClass} ${demoClass}" data-chat-id="${escapeHtml(chat.id)}" data-target-kind="${targetKind}" role="button" tabindex="0" aria-pressed="${isSelected ? 'true' : 'false'}" onclick="${clickHandler}" onkeydown="handleChatItemKeydown(event, this)" ${isDemo ? `title="${escapeHtml(window.I18N.t('chat.channel_not_configured_title'))}"` : ''}>
             <div class="chat-icon ${iconClass}">${icon}</div>
             <div class="chat-info">
                 <div class="chat-name">${ignored}${favorite}${escapeHtml(displayName)}</div>
@@ -4387,14 +4426,13 @@ async function loadMessages() {
                 const { activityClass, displayName } = getNodeActivityPresentation(node);
                 const isIgnored = node.ignored || false;
                 const isFavorite = node.favorite || false;
-                // PR 4 Finding 1: the card highlight follows the shared store's
-                // selection (so a node selected in Files highlights the same
-                // card here), falling back to the local open-DM id when the
-                // store is absent.
-                const storeSel = storeSelectedTarget();
-                const isSelected = storeSel
-                    ? (storeSel.kind === 'node' && storeSel.id === node.node_id)
-                    : (currentChatType === 'dm' && currentChatId === node.node_id);
+                // PR 4 Finding 1 + final correction (Finding 1): the card
+                // highlight follows the shared store's selection via
+                // effectiveSelectedTarget (so a node selected in Files
+                // highlights the same card here), falling back to the local
+                // open-DM id ONLY when the store is absent.
+                const eff = effectiveSelectedTarget();
+                const isSelected = Boolean(eff && eff.kind === 'node' && eff.id === node.node_id);
                 const cardClasses = ['node-card'];
                 if (isIgnored) cardClasses.push('ignored');
                 if (isFavorite) cardClasses.push('favorite');
@@ -4418,7 +4456,7 @@ async function loadMessages() {
                     : '';
 
                 return `
-                    <div class="${cardClass}" data-node-id="${escapeHtml(node.node_id)}" aria-pressed="${isSelected ? 'true' : 'false'}">
+                    <div class="${cardClass}" data-node-id="${escapeHtml(node.node_id)}" data-target-kind="node" role="button" tabindex="0" aria-pressed="${isSelected ? 'true' : 'false'}" onkeydown="handleNodeCardKeydown(event, this)">
                         <div class="node-card-topline">
                             <span class="node-favorite-slot"
                                 title="${isFavorite ? 'Favorite node' : 'Not favorite'}">
@@ -4793,28 +4831,44 @@ function requestSynchronizedListScroll(nodeId, source, options = {}) {
 }
 
 function syncSelectedNodeCard() {
-    // PR 4 Finding 1: the card highlight follows the shared store's selection
-    // (so a node selected in Files highlights the same card here), falling
-    // back to the local open-DM id when the store is absent. The store's
-    // selection wins over `nodeVisualSelectionCleared` — a fresh selection in
-    // another workspace re-selects the card even after the operator closed
-    // node details; `nodeVisualSelectionCleared` only gates the local fallback.
-    const storeSel = storeSelectedTarget();
-    const storeNodeId = (storeSel && storeSel.kind === 'node') ? storeSel.id : '';
-    const fallbackNodeId =
-        !nodeVisualSelectionCleared &&
-        currentChatType === 'dm' &&
-        currentChatId
-            ? String(currentChatId)
-            : '';
-    const selectedNodeId = storeNodeId || fallbackNodeId;
+    // PR 4 Finding 1 + final correction (Finding 1): the card highlight follows
+    // the shared store's selection via effectiveSelectedTarget. A store-present
+    // null selection means NOTHING is selected (no currentChatId fallback); the
+    // open-DM fallback applies ONLY when the store is absent.
+    const eff = effectiveSelectedTarget();
+    const selectedNodeId = (eff && eff.kind === 'node') ? eff.id : null;
 
     document.querySelectorAll('#nodesList .node-card').forEach(card => {
         const isSelected =
-            selectedNodeId !== '' && card.dataset.nodeId === selectedNodeId;
+            selectedNodeId !== null && card.dataset.nodeId === selectedNodeId;
 
         card.classList.toggle('selected', isSelected);
         card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+    });
+}
+
+// PR 4 final correction (Finding 1): the channel/DM chat items must track the
+// shared store's selection too, so a node/channel selected in another
+// workspace (Files) updates the already-rendered chat-item highlight
+// (`selected` class + `aria-pressed`) without reloading /api/chats. Kind is
+// read from `data-target-kind` (never inferred from the display name); a
+// store-present null selection clears every chat item. The open conversation
+// (currentChatId) is only the fallback when the store is absent.
+function syncSelectedChatItems() {
+    const eff = effectiveSelectedTarget();
+
+    document.querySelectorAll('#channelList .chat-item, #dmChatList .chat-item').forEach(item => {
+        const targetKind = item.dataset.targetKind || '';
+        const chatId = item.dataset.chatId || '';
+        const isSelected = Boolean(
+            eff &&
+            targetKind &&
+            eff.kind === targetKind &&
+            eff.id === chatId
+        );
+
+        item.classList.toggle('selected', isSelected);
+        item.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     });
 }
 
@@ -7801,6 +7855,39 @@ function installCompactNodeCardStyles() {
 }
 
 installCompactNodeCardStyles();
+
+// Keyboard activation for the role="button" node/channel/DM target elements.
+// These are <div role="button" tabindex="0"> (not native <button>), so the
+// browser does NOT synthesize a click from Enter/Space — we synthesize exactly
+// one activation here. `preventDefault` stops Space from scrolling the page and
+// Enter from any other default; guarding `event.repeat` prevents auto-repeat
+// double-fire, and `element.click()` routes through the SAME click path a
+// pointer would use (the delegated #nodesList listener for node cards; the
+// inline onclick for chat items), so there is exactly one activation and no
+// double-fire.
+function isTargetActivationKey(event) {
+    return (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') && !event.repeat;
+}
+
+function handleNodeCardKeydown(event, element) {
+    if (!isTargetActivationKey(event)) return;
+    // A nested interactive control focused inside the card must not trigger
+    // parent selection.
+    if (event.target && event.target !== element && typeof event.target.closest === 'function' &&
+        event.target.closest('button, a, input, select, textarea, [data-stop-node-select]')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    element.click();
+}
+
+function handleChatItemKeydown(event, element) {
+    if (!isTargetActivationKey(event)) return;
+    if (event.target && event.target !== element && typeof event.target.closest === 'function' &&
+        event.target.closest('button, a, input, select, textarea')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    element.click();
+}
 
 function installNodeCardClickHandler() {
     const nodesList = document.getElementById('nodesList');

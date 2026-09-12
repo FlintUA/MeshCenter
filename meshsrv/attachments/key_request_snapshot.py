@@ -27,12 +27,24 @@ one table; it is two facts the worker alone can read safely:
     timestamp (a request was already sent) - which the §11 no-secret
     discipline forbids exposing directly.
 
-The publisher folds those two facts into one non-secret `KeyRequestState`
-per address (`idle`/`queued`/`waiting_response`/`retry_available`), plus a
-derived `can_request_key` boolean, and swaps the whole mapping in with one
-reference assignment - atomic under the GIL. A request thread reads only
-`snapshot()`; it never touches `conn`, the filesystem, the network, or the
-tick lock.
+The two facts are *not* merged into one map. The publisher keeps them in two
+layers (PR #256 final correction, Finding 2):
+
+  - `_published` is the **persisted base**: only states derived from
+    persisted worker-owned facts - `waiting_response`, `retry_available`, and
+    absence for `idle`. A live `queued` marker is **never** written into it,
+    because a marker can be removed between a worker's read and its publish
+    and a stale copy would leave the address falsely non-requestable until the
+    next tick.
+  - the **live `queued` overlay** is the lock-guarded, command-id-keyed
+    pending map (`_pending_queued`). `snapshot()` copies it under the lock and
+    overlays `queued` on top of the persisted base at read time, so a removed
+    marker disappears from the very next read without waiting for a tick.
+
+The folded result is one non-secret `KeyRequestState` per address
+(`idle`/`queued`/`waiting_response`/`retry_available`) plus a derived
+`can_request_key` boolean. A request thread reads only `snapshot()`; it never
+touches `conn`, the filesystem, the network, or the tick lock.
 
 No-secret discipline (§11), enforced by construction: the published
 snapshot carries only the enum's public string values and a boolean. It
@@ -50,10 +62,12 @@ State meanings (a single, closed vocabulary - see the enum):
     address once it has real activity (queued or sent), so `idle` never
     appears in the map and the request thread/frontend default to it.
   - `queued` - a `contact_request_key` command for the address has been
-    accepted into the command queue and not yet drained. A request is about
-    to go out, so the action must be disabled. Observable immediately after
-    `AttachmentsFacade.submit()` returns, before any worker tick, via the
-    live overlay `snapshot()` applies (see `mark_queued()`).
+    accepted into the command queue and not yet *terminally* executed. A
+    request is about to go out, so the action must be disabled. Observable
+    immediately after `AttachmentsFacade.submit()` returns, before any worker
+    tick, via the live overlay `snapshot()` applies (see `mark_queued()`). It
+    is a **live overlay only**: it is never stored in `_published`, and it
+    disappears from the next `snapshot()` the moment the marker is removed.
   - `waiting_response` - a request was already sent and the per-address
     rate-limit window (`MIN_SECONDS_BETWEEN_KEY_REQUESTS_TO_SAME_ADDRESS`)
     has not yet elapsed; we are waiting for the contact's KEY_ANNOUNCE.
@@ -127,14 +141,14 @@ class KeyRequestStatePublisher:
     `_profile_snapshot`).
 
     - `refresh()` is the *only* place that reads the persisted
-      `last_request_sent_at` table (worker/startup-thread reads only) plus the
-      pending queued-marker map (`_pending_queued`). It builds a whole new
-      snapshot and swaps it in with one reference assignment - never mutating
-      the previously-published one.
+      `last_request_sent_at` table and bindings (worker/startup-thread reads
+      only). It builds the persisted **base** snapshot - never consulting the
+      pending queued-marker map - and swaps it in with one reference assignment,
+      never mutating the previously-published one.
     - `snapshot()` is the request-thread read: a single lock-guarded read of
-      `_published`, with any addresses marked queued since the last refresh
-      overlaid on top (the live `queued` overlay - see `mark_queued()`), never
-      `conn`.
+      `_published`, with the *current* pending addresses overlaid as `queued`
+      on top (the live overlay - see `mark_queued()`), never `conn`. The
+      overlay lives only here, so a removed marker vanishes from the next read.
 
     Construction performs an eager `refresh()` so the snapshot is populated
     from the moment the object exists, not only after the first tick - the
@@ -162,10 +176,15 @@ class KeyRequestStatePublisher:
         # review, Finding 2 / Blocker 2). Written by `mark_queued()` (request
         # thread, via `AttachmentsFacade.submit()`, *before* the queue write) and
         # `mark_drained()` (worker thread in `_drain_commands()`'s `finally`,
-        # plus the facade's own enqueue-failure rollback), read by `refresh()`
-        # and `snapshot()`. In-memory only, so a restart never fabricates a
-        # `queued` state for a command the new process never accepted.
+        # plus the facade's own enqueue-failure rollback), read only by
+        # `snapshot()` (which overlays it as a live `queued` view - never by
+        # `refresh()`, which publishes only the persisted base). In-memory only,
+        # so a restart never fabricates a `queued` state for a command the new
+        # process never accepted.
         self._pending_queued: Dict[str, str] = {}
+        # `_published` is the persisted base only: waiting_response /
+        # retry_available / absence-for-idle. It NEVER carries a live `queued`
+        # marker (see `refresh()`); `queued` is applied by `snapshot()` alone.
         self._published: KeyRequestSnapshot = KeyRequestSnapshot(by_address={})
         self.refresh()
 
@@ -208,19 +227,28 @@ class KeyRequestStatePublisher:
             self._pending_queued.pop(command_id, None)
 
     def refresh(self) -> KeyRequestSnapshot:
-        """Worker/startup thread only: rebuild the snapshot from the pending
-        queued-marker set and the persisted per-address request timestamps, then
-        swap it in atomically. Returns the fresh snapshot.
+        """Worker/startup thread only: rebuild the *persisted base* snapshot
+        from the persisted per-address request timestamps and bindings, then
+        swap it in atomically. The live `queued` overlay is deliberately NOT
+        folded into `_published` here (see the module docstring / PR #256 final
+        correction, Finding 2): a marker can be removed between the read and the
+        publish, and a stale copy published as `queued` would leave the address
+        falsely non-requestable until the next tick. `_published` therefore
+        holds only states derived from persisted worker-owned facts
+        (`waiting_response` / `retry_available` / absence-for-`idle`); `queued`
+        is applied only by `snapshot()` from the *current* pending map.
+
+        Returns the public current view - the freshly published base plus the
+        live `queued` overlay (i.e. `self.snapshot()`), so a caller relying on
+        the return value sees `queued` for any in-flight request.
 
         Never raises - a transient read failure must not kill the tick; the
-        request thread simply keeps the last-known-good snapshot (plus the live
-        `queued` overlay). `queued` is read from the lock-guarded pending-marker
-        set, which cannot fail, so the only failure mode left is a SQLite read
-        of the persisted timestamps - and that keeps last-known-good rather than
-        silently re-permitting a queued request."""
-        with self._lock:
-            queued: Set[str] = set(self._pending_queued.values())
-
+        request thread simply keeps the last-known-good persisted base (plus the
+        live `queued` overlay, which is derived from the lock-guarded
+        pending-marker map and cannot fail). The only failure mode is a SQLite
+        read of the persisted timestamps/bindings - and that keeps
+        last-known-good rather than silently re-permitting or re-queuing an
+        address."""
         try:
             timestamps: Dict[str, float] = self._coordinator.list_key_request_sent_at()
             bindings: Set[str] = {
@@ -231,11 +259,8 @@ class KeyRequestStatePublisher:
 
         now = self._now()
         by_address: Dict[str, KeyRequestCapability] = {}
-        for address in sorted(queued | set(timestamps)):
-            if address in queued:
-                state = KeyRequestState.QUEUED
-                can_request = False
-            elif now - timestamps[address] < self._min_interval:
+        for address in sorted(timestamps):
+            if now - timestamps[address] < self._min_interval:
                 state = KeyRequestState.WAITING_RESPONSE
                 can_request = False
             else:
@@ -244,19 +269,20 @@ class KeyRequestStatePublisher:
             by_address[address] = KeyRequestCapability(
                 key_request_state=state, can_request_key=can_request
             )
-        fresh = KeyRequestSnapshot(by_address=by_address)
+        base = KeyRequestSnapshot(by_address=by_address)
         with self._lock:
-            self._published = fresh
-        return fresh
+            self._published = base
+        return self.snapshot()
 
     def snapshot(self) -> KeyRequestSnapshot:
-        """The request-thread read: the last published immutable snapshot, with
-        any addresses marked queued since the last `refresh()` overlaid on top
-        (so `queued` is observable immediately after `submit()` returns, before
-        the worker's next tick). A single lock-guarded read - never `conn`, the
-        filesystem, the network, or the tick lock. Never `None`: construction
-        published an (empty) snapshot before any reader could observe the
-        object."""
+        """The request-thread read: the last published persisted base, with the
+        *current* pending `queued` addresses overlaid on top (so `queued` is
+        observable immediately after `submit()` returns, before the worker's
+        next tick, and disappears the moment a marker is removed - no stale
+        `queued` survives in `_published`). A single lock-guarded read - never
+        `conn`, the filesystem, the network, or the tick lock. Never `None`:
+        construction published an (empty) snapshot before any reader could
+        observe the object."""
         with self._lock:
             published = self._published
             # Copy the pending addresses under the lock: the map is mutated by

@@ -141,6 +141,7 @@ class FakeDocument {
         this.hidden = false;
         this.readyState = 'loading';   // defer chat.js's DOMContentLoaded initializers
         this._nodeCards = [];          // registered by tests for #nodesList .node-card
+        this._chatItems = [];          // registered by tests for #channelList/#dmChatList .chat-item
         this._nodeClickHandlerInstalled = false;
     }
     getElementById(id) {
@@ -154,10 +155,11 @@ class FakeDocument {
     }
     querySelector() { return null; }
     querySelectorAll(selector) {
-        // syncSelectedNodeCard() is the one path the tests observe at the DOM
-        // level; return the node cards the test registered for the exact
-        // selector, and nothing elsewhere.
+        // syncSelectedNodeCard()/syncSelectedChatItems() are the paths the tests
+        // observe at the DOM level; return the cards the test registered for the
+        // exact selectors, and nothing elsewhere.
         if (selector === '#nodesList .node-card') return this._nodeCards.slice();
+        if (selector === '#channelList .chat-item, #dmChatList .chat-item') return this._chatItems.slice();
         return [];
     }
 }
@@ -194,6 +196,12 @@ function makeNodeCard(nodeId) {
     return card;
 }
 
+function makeChatItem(chatId, targetKind) {
+    const item = new FakeElement('div', '');
+    item.dataset = { chatId, targetKind };
+    return item;
+}
+
 function json(body) {
     return { status: 200, json: async () => body, ok: true };
 }
@@ -220,7 +228,7 @@ function defaultRoutes(overrides = {}) {
     };
 }
 
-function buildSandbox({ fetchImpl }) {
+function buildSandbox({ fetchImpl, loadStore = true }) {
     const document = new FakeDocument();
     const fetchLog = [];
     const wrappedFetch = async (url, options) => {
@@ -282,8 +290,12 @@ function buildSandbox({ fetchImpl }) {
     // block can resolve them (see EXTERNAL_SPLIT_SYMBOLS above).
     for (const name of EXTERNAL_SPLIT_SYMBOLS) sandbox[name] = () => {};
     // Load order mirrors templates/index.html: targets.js -> files.js -> chat.js.
-    vm.runInContext(targetsSource, sandbox, { filename: 'targets.js' });
-    vm.runInContext(filesSource, sandbox, { filename: 'files.js' });
+    // `loadStore:false` loads chat.js alone (no shared store) to exercise the
+    // store-absent fallback path (final correction, Finding 1).
+    if (loadStore) {
+        vm.runInContext(targetsSource, sandbox, { filename: 'targets.js' });
+        vm.runInContext(filesSource, sandbox, { filename: 'files.js' });
+    }
     vm.runInContext(chatSource, sandbox, { filename: 'chat.js' });
     return sandbox;
 }
@@ -379,10 +391,13 @@ async function test_store_selection_resyncs_cards_without_touching_open_chat() {
     assert.equal(cardA.classList.contains('selected'), false, 'card A must lose the selected class');
     assert.equal(cardA.getAttribute('aria-pressed'), 'false', 'card A must be aria-pressed=false');
 
-    // Clearing the selection drops back to the open-DM fallback (A), proving
-    // syncSelectedNodeCard still tracks currentChatId when the store is empty.
+    // Clearing the selection (store present, selection null) means NOTHING is
+    // selected — the open DM A stays the open conversation but no card
+    // re-highlights. This is the final-correction behavior: no currentChatId
+    // fallback reappears after the store clears.
     store.clearSelection();
-    assert.equal(cardA.classList.contains('selected'), true, 'after clearing the store, the open DM A must be the fallback highlight');
+    assert.equal(cardA.classList.contains('selected'), false, 'after clearing the store, no card may re-highlight (open DM A is not the selection)');
+    assert.equal(cardA.getAttribute('aria-pressed'), 'false');
     assert.equal(cardB.classList.contains('selected'), false);
 
     console.log('PASS: test_store_selection_resyncs_cards_without_touching_open_chat');
@@ -441,6 +456,198 @@ async function test_chat_selection_propagates_to_files_counterparty() {
     console.log('PASS: test_chat_selection_propagates_to_files_counterparty');
 }
 
+// ---- PR #256 final correction (Finding 1) scenarios -------------------------
+
+async function test_open_dm_selects_store_card_and_dm_item() {
+    // (1) Opening DM A must select node A in the store AND highlight card A and
+    // the DM chat item A (aria-pressed="true"), all synchronously.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const store = sandbox.window.MeshCenterTargets;
+
+    const cardA = makeNodeCard('!aaaaaaaa');
+    const dmItemA = makeChatItem('!aaaaaaaa', 'node');
+    sandbox._document._nodeCards = [cardA];
+    sandbox._document._chatItems = [dmItemA];
+
+    sandbox.window.openChat('!aaaaaaaa', 'Alice', 'dm');
+
+    assert.equal(store.selected().kind, 'node');
+    assert.equal(store.selected().id, '!aaaaaaaa');
+    assert.equal(cardA.classList.contains('selected'), true, 'card A must be highlighted');
+    assert.equal(cardA.getAttribute('aria-pressed'), 'true');
+    assert.equal(dmItemA.classList.contains('selected'), true, 'DM item A must be highlighted');
+    assert.equal(dmItemA.getAttribute('aria-pressed'), 'true');
+    console.log('PASS: test_open_dm_selects_store_card_and_dm_item');
+}
+
+async function test_files_toggle_off_clears_selection_without_fallback() {
+    // (2) With DM A open, a Files toggle-off of A clears the store selection
+    // (selection === null). Card A and DM item A must unselect, the open
+    // conversation stays A, and no currentChatId fallback re-highlights A.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const store = sandbox.window.MeshCenterTargets;
+
+    const cardA = makeNodeCard('!aaaaaaaa');
+    const dmItemA = makeChatItem('!aaaaaaaa', 'node');
+    sandbox._document._nodeCards = [cardA];
+    sandbox._document._chatItems = [dmItemA];
+
+    sandbox.window.openChat('!aaaaaaaa', 'Alice', 'dm');
+    assert.equal(cardA.classList.contains('selected'), true, 'precondition: card A highlighted after open');
+    assert.equal(sandbox._document.getElementById('chatTitle').textContent, '💬 Alice', 'precondition: open conversation is DM A');
+
+    // Files toggles A off (the click-to-toggle on the already-selected node).
+    store.toggleSelect('node', '!aaaaaaaa');
+    assert.equal(store.selected(), null, 'toggling the selected node clears the store selection');
+
+    // Nothing selected: card A + DM item A unselected, aria-pressed=false.
+    assert.equal(cardA.classList.contains('selected'), false, 'card A must unselect');
+    assert.equal(cardA.getAttribute('aria-pressed'), 'false');
+    assert.equal(dmItemA.classList.contains('selected'), false, 'DM item A must unselect');
+    assert.equal(dmItemA.getAttribute('aria-pressed'), 'false');
+
+    // The open conversation is untouched (still DM A) — no fallback reappears.
+    assert.equal(sandbox._document.getElementById('chatTitle').textContent, '💬 Alice', 'the open conversation must stay DM A');
+    console.log('PASS: test_files_toggle_off_clears_selection_without_fallback');
+}
+
+async function test_files_selects_node_b_updates_cards_without_network_reload() {
+    // (3) With DM A open, Files selects node B via the store: card B and DM item
+    // B update immediately, A loses highlight, the conversation stays A, and no
+    // extra loadChatList()/api/chats fetch is triggered.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const store = sandbox.window.MeshCenterTargets;
+
+    const cardA = makeNodeCard('!aaaaaaaa');
+    const cardB = makeNodeCard('!bbbbbbbb');
+    const dmItemA = makeChatItem('!aaaaaaaa', 'node');
+    const dmItemB = makeChatItem('!bbbbbbbb', 'node');
+    sandbox._document._nodeCards = [cardA, cardB];
+    sandbox._document._chatItems = [dmItemA, dmItemB];
+
+    sandbox.window.openChat('!aaaaaaaa', 'Alice', 'dm');
+    // Let openChat's own chat-list load settle so we can measure the delta.
+    await waitFor(() => sandbox._fetchLog.some((e) => e.url.startsWith('/api/chats')));
+    const chatsBefore = sandbox._fetchLog.filter((e) => e.url.startsWith('/api/chats')).length;
+
+    store.select('node', '!bbbbbbbb');   // Files selects B
+
+    assert.equal(cardB.classList.contains('selected'), true, 'card B must gain the selected class');
+    assert.equal(cardB.getAttribute('aria-pressed'), 'true');
+    assert.equal(dmItemB.classList.contains('selected'), true, 'DM item B must gain the selected class');
+    assert.equal(dmItemB.getAttribute('aria-pressed'), 'true');
+    assert.equal(cardA.classList.contains('selected'), false, 'card A must lose the selected class');
+    assert.equal(dmItemA.classList.contains('selected'), false, 'DM item A must lose the selected class');
+
+    // The open conversation stays A.
+    assert.equal(sandbox._document.getElementById('chatTitle').textContent, '💬 Alice');
+
+    // Give any (incorrect) async reload a chance to fire, then assert none did.
+    await new Promise((r) => setTimeout(r, 100));
+    const chatsAfter = sandbox._fetchLog.filter((e) => e.url.startsWith('/api/chats')).length;
+    assert.equal(chatsAfter, chatsBefore, 'selecting B from Files must not reload /api/chats');
+    console.log('PASS: test_files_selects_node_b_updates_cards_without_network_reload');
+}
+
+async function test_channel_selection_updates_item_and_never_file_recipient() {
+    // (4) Selecting a channel via the store updates the channel chat item
+    // immediately (via data-target-kind, not display-name inference), a channel
+    // is never a file recipient, and the Files counterparty filter clears.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const store = sandbox.window.MeshCenterTargets;
+
+    const channelItem = makeChatItem('channel', 'channel');
+    const dmItemA = makeChatItem('!aaaaaaaa', 'node');
+    sandbox._document._chatItems = [channelItem, dmItemA];
+
+    // Subscribe chat.js to the store (the harness strips chat.js's own init()
+    // auto-run, which is where the real page subscribes).
+    sandbox.ensureStoreSelectionSubscription();
+
+    // Files activates (subscribes) first so the counterparty clear is observable.
+    sandbox.window.MeshCenterFiles.activate();
+    await waitFor(() => sandbox._fetchLog.some((e) => e.url.startsWith('/api/attachments?')));
+
+    // A node first sets the counterparty filter...
+    store.select('node', '!aaaaaaaa');
+    await waitFor(() => sandbox._fetchLog.some((e) =>
+        e.url.startsWith('/api/attachments') && e.url.includes('counterparty=!aaaaaaaa')
+    ), { timeout: 3000 });
+
+    // ...then a channel selection clears it and highlights the channel item.
+    store.select('channel', 'channel');
+
+    assert.equal(channelItem.classList.contains('selected'), true, 'the channel item must be highlighted');
+    assert.equal(channelItem.getAttribute('aria-pressed'), 'true');
+    assert.equal(dmItemA.classList.contains('selected'), false, 'the node item must not be highlighted');
+
+    assert.equal(store.computeCapability({ kind: 'channel' }).can_send_file, false, 'a channel is never a file recipient');
+
+    await waitFor(() => sandbox._fetchLog.some((e) =>
+        e.url.startsWith('/api/attachments') && !e.url.includes('counterparty=')
+    ), { timeout: 3000 });
+    assert.equal(store.selected().kind, 'channel', 'the channel stays the store selection');
+    console.log('PASS: test_channel_selection_updates_item_and_never_file_recipient');
+}
+
+async function test_chat_js_without_store_falls_back_to_current_chat() {
+    // (5) Running chat.js WITHOUT the shared store (targets.js absent) must not
+    // throw, and must fall back to currentChatId for the highlight.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes(), loadStore: false });
+
+    assert.equal(typeof sandbox.window.MeshCenterTargets, 'undefined', 'precondition: no store present');
+
+    const cardA = makeNodeCard('!aaaaaaaa');
+    sandbox._document._nodeCards = [cardA];
+
+    sandbox.window.openChat('!aaaaaaaa', 'Alice', 'dm');
+
+    assert.equal(cardA.classList.contains('selected'), true, 'without the store, the open DM must highlight via currentChatId');
+    assert.equal(cardA.getAttribute('aria-pressed'), 'true');
+
+    const html = sandbox.renderChatItem({ id: '!aaaaaaaa', is_channel: false, name: 'Alice', type: 'dm' });
+    assert.match(html, /selected/, 'renderChatItem must fall back to currentChatId without the store');
+    console.log('PASS: test_chat_js_without_store_falls_back_to_current_chat');
+}
+
+async function test_keyboard_enter_space_activate_target_controls() {
+    // (6) The role="button" node/channel/DM target controls must activate on
+    // Enter and Space, prevent Space scroll, and not double-fire on auto-repeat
+    // or on non-activation keys.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+
+    let nodeClicks = 0;
+    let chatClicks = 0;
+    let prevented = 0;
+    let stopped = 0;
+
+    const nodeCard = { dataset: { nodeId: '!aaaaaaaa', targetKind: 'node' }, click() { nodeClicks++; } };
+    const chatItem = { dataset: { chatId: '!aaaaaaaa', targetKind: 'node' }, click() { chatClicks++; } };
+
+    function keyEvent(key, repeat = false, target = nodeCard) {
+        return { key, repeat, target, preventDefault() { prevented++; }, stopPropagation() { stopped++; } };
+    }
+
+    sandbox.handleNodeCardKeydown(keyEvent('Enter'), nodeCard);
+    assert.equal(nodeClicks, 1, 'Enter must activate the node card exactly once');
+    assert.equal(prevented, 1, 'Enter must be preventDefault-ed');
+    assert.equal(stopped, 1, 'Enter must be stopPropagation-ed');
+
+    sandbox.handleNodeCardKeydown(keyEvent(' '), nodeCard);
+    assert.equal(nodeClicks, 2, 'Space must activate the node card');
+    assert.equal(prevented, 2, 'Space must be preventDefault-ed (no page scroll)');
+
+    sandbox.handleNodeCardKeydown(keyEvent('Enter', true), nodeCard);
+    assert.equal(nodeClicks, 2, 'an auto-repeated Enter must not double-fire');
+
+    sandbox.handleNodeCardKeydown(keyEvent('Tab'), nodeCard);
+    assert.equal(nodeClicks, 2, 'a non-activation key must not activate');
+
+    sandbox.handleChatItemKeydown(keyEvent('Enter', false, chatItem), chatItem);
+    assert.equal(chatClicks, 1, 'Enter must activate the chat item');
+    console.log('PASS: test_keyboard_enter_space_activate_target_controls');
+}
+
 // ---- runner ------------------------------------------------------------------
 
 async function main() {
@@ -451,7 +658,13 @@ async function main() {
     await test_store_selection_resyncs_cards_without_touching_open_chat();
     await test_render_chat_item_highlight_reads_store();
     await test_chat_selection_propagates_to_files_counterparty();
-    console.log('All shared-selection wiring tests passed (7 scenarios).');
+    await test_open_dm_selects_store_card_and_dm_item();
+    await test_files_toggle_off_clears_selection_without_fallback();
+    await test_files_selects_node_b_updates_cards_without_network_reload();
+    await test_channel_selection_updates_item_and_never_file_recipient();
+    await test_chat_js_without_store_falls_back_to_current_chat();
+    await test_keyboard_enter_space_activate_target_controls();
+    console.log('All shared-selection wiring tests passed (13 scenarios).');
 }
 
 main()

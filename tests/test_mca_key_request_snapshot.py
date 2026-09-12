@@ -76,7 +76,7 @@ def clock():
 def _make_node(tmp_path, name, clock):
     db_dir = tmp_path / name
     db_dir.mkdir()
-    conn = sqlite3.connect(":memory:")
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
     migrate(conn)
     workspace_manager = MCAWorkspaceManager(db_dir)
     principal = create_principal(conn, workspace_manager, f"ws-{name}", now=clock())
@@ -468,3 +468,60 @@ def test_concurrent_snapshot_and_drain_do_not_raise(tmp_path, clock):
         t.join(timeout=30)
     assert not any(t.is_alive() for t in threads), "race threads did not finish"
     assert errors == []
+
+
+def test_removed_marker_cannot_be_resurrected_by_concurrent_refresh(tmp_path, clock, monkeypatch):
+    """Blocker 2 (final correction): a `CommandQueueFull` rollback that removes
+    a marker *while* a worker `refresh()` is mid-flight must not be published
+    as a stale `queued`. `_published` is the persisted base only; `refresh()`
+    never folds the pending marker map into it. So even when the rollback lands
+    after `refresh()` has read the persisted data but before it publishes, the
+    address projects its persisted state (here `retry_available`) - never a
+    resurrected `queued` that falsely disables `can_request_key`.
+
+    This test fails against a82b10a: that build copied the pending set into the
+    snapshot before reading SQLite, so the mid-flight rollback was lost and the
+    stale `queued` was published."""
+    _, _, _, coordinator = _make_node(tmp_path, "a", clock)
+    # Persist a completed request whose rate-limit window has elapsed, so the
+    # persisted base projects `retry_available` / `can_request_key=True`.
+    coordinator.record_key_request_sent("!contact", clock())
+    clock.advance(MIN_SECONDS_BETWEEN_KEY_REQUESTS_TO_SAME_ADDRESS + 1)
+    publisher = _publisher(coordinator, clock)  # construction publishes the base
+
+    publisher.mark_queued("cmd-C", "!contact")  # provisional marker (submit())
+
+    reads_done = threading.Event()
+    continue_refresh = threading.Event()
+    real_list_bindings = coordinator.list_bindings
+
+    def blocking_list_bindings():
+        result = real_list_bindings()
+        # Both persisted reads are complete; publication is the next step.
+        reads_done.set()
+        assert continue_refresh.wait(timeout=5), "test must release the blocked refresh"
+        return result
+
+    monkeypatch.setattr(coordinator, "list_bindings", blocking_list_bindings)
+
+    result = {}
+
+    def run_refresh():
+        result["snap"] = publisher.refresh()
+
+    thread = threading.Thread(target=run_refresh)
+    thread.start()
+    assert reads_done.wait(timeout=5), "refresh never reached the persisted-data read"
+
+    # CommandQueueFull rollback removes the provisional marker mid-refresh.
+    publisher.mark_drained("cmd-C")
+    continue_refresh.set()
+    thread.join(timeout=5)
+    assert not thread.is_alive(), "refresh did not finish"
+
+    snap = publisher.snapshot()
+    assert snap.by_address["!contact"].key_request_state is KeyRequestState.RETRY_AVAILABLE
+    assert snap.by_address["!contact"].can_request_key is True
+    # The refresh() return value (the public view) agrees: not resurrected as queued.
+    assert result["snap"].by_address["!contact"].key_request_state is KeyRequestState.RETRY_AVAILABLE
+    assert result["snap"].by_address["!contact"].can_request_key is True

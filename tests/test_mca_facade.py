@@ -87,19 +87,32 @@ class _StubRecipientPublisher:
 class _StubKeyRequestPublisher:
     """Duck-typed key-request capability surface (PR 4) with no SQLite - the
     one method the facade's `key_request_snapshot()` delegates to, plus the
-    `mark_queued()` hook the facade's `submit()` calls after a successful
-    `contact_request_key` enqueue (Finding 2). Publishes an empty snapshot
+    `mark_queued()`/`mark_drained()` hooks the facade's `submit()` calls
+    (Finding 2 / Blocker 2): `mark_queued(command_id, contact_id)` is recorded
+    *before* the queue write, and `mark_drained(command_id)` on the
+    `CommandQueueFull` rollback path undoes it. Publishes an empty snapshot
     from construction, matching the real publisher's "never None" contract."""
 
     def __init__(self):
         self._snapshot = KeyRequestSnapshot(by_address={})
-        self.marked_queued = []
+        self._pending = {}   # command_id -> contact_id
+        self.mark_queued_calls = 0
+        self.mark_drained_calls = 0
 
     def snapshot(self):
         return self._snapshot
 
-    def mark_queued(self, contact_id):
-        self.marked_queued.append(contact_id)
+    def mark_queued(self, command_id, contact_id):
+        self._pending[command_id] = contact_id
+        self.mark_queued_calls += 1
+
+    def mark_drained(self, command_id):
+        self._pending.pop(command_id, None)
+        self.mark_drained_calls += 1
+
+    @property
+    def marked_queued(self):
+        return list(self._pending.values())
 
 
 class _StubWorkspaceManager:
@@ -310,7 +323,28 @@ def test_submit_full_queue_leaves_no_false_queued_marker():
         facade.submit(_request_key_command(command_id="cmd-kr"))
     # The rejected key request was never accepted, so its address must NOT be
     # marked queued (queue_full leaves no false `queued`).
-    assert facade._key_request_snapshot_publisher.marked_queued == []  # noqa: SLF001
+    publisher = facade._key_request_snapshot_publisher  # noqa: SLF001
+    assert publisher.marked_queued == []
+    # The rollback actually ran: the marker was registered *before* the queue
+    # write (Blocker 2) and then undone by the `mark_drained` rollback - not
+    # simply never registered.
+    assert publisher.mark_queued_calls == 1
+    assert publisher.mark_drained_calls == 1
+
+
+def test_submit_marks_queued_before_enqueue_then_drain_clears():
+    # Blocker 2: the marker is registered *before* `put_nowait`, so by the time
+    # `submit()` returns the address is already observable `queued`, and a
+    # worker drain of that command id (`mark_drained`) clears it. The old order
+    # (enqueue, then mark) left a window where a fast drain cleared a
+    # not-yet-set marker and the address was falsely `queued` forever.
+    facade, _ = _facade()
+    facade.submit(_request_key_command(command_id="cmd-kr"))
+    publisher = facade._key_request_snapshot_publisher  # noqa: SLF001
+    assert publisher.marked_queued == ["!756f9960"]  # marker set at submit-return
+
+    publisher.mark_drained("cmd-kr")  # the worker drains this exact command
+    assert publisher.marked_queued == []
 
 
 # --- no SQLite/filesystem/network/tick-lock surface ------------------------

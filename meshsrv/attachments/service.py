@@ -792,29 +792,39 @@ class AttachmentsService:
         the same bounded-work-per-tick discipline `_due_rows()`'s own
         `max_per_tick` already uses. One command whose handler raises is
         caught and marked terminal-failed inside `_execute_command()` - it
-        can never stop the rest of this drain or kill the worker thread."""
+        can never stop the rest of this drain or kill the worker thread.
+
+        The key-request `queued` marker is held through `_execute_command()`
+        and cleared in the `finally` (see `_note_key_request_drained`): the
+        address stays `queued` - and therefore non-requestable - for the whole
+        time the request is actually being sent, not just while it sits in the
+        queue (PR #256 review, Finding 2 / Blocker 2)."""
         for _ in range(MAX_COMMANDS_PER_TICK):
             try:
                 command = self._command_queue.get_nowait()
             except queue.Empty:
                 return
-            self._note_key_request_drained(command)
-            self._execute_command(command)
+            try:
+                self._execute_command(command)
+            finally:
+                self._note_key_request_drained(command)
 
     def _note_key_request_drained(self, command: Command) -> None:
-        """PR 4 (shared target model, Finding 2): the worker has dequeued a
-        `contact_request_key` command, so clear its `queued` marker in the
-        shared key-request publisher. Its state now derives from the persisted
-        `last_request_sent_at` timestamp on the next `refresh()` (a successful
-        send -> `waiting_response`; a failed send leaves no marker *and* no
-        timestamp -> back to `idle`/absent). Runs once per drained command,
-        success or failure, so a failed send can never leave a stuck `queued`
-        marker behind."""
+        """PR 4 (shared target model, Finding 2 / Blocker 2): the worker has
+        reached a *terminal* execution outcome for a `contact_request_key`
+        command, so clear its `queued` marker in the shared key-request
+        publisher. Called from `_drain_commands()`'s `finally`, keyed by
+        `command_id` (not by address), so it removes only this command's marker
+        - a sibling same-address command that is still in flight keeps its own
+        marker, and the address stays `queued` until the last of its commands
+        drains. Its state now derives from the persisted `last_request_sent_at`
+        timestamp on the next `refresh()` (a successful send -> `waiting_response`;
+        a failed send leaves no marker *and* no timestamp -> back to
+        `idle`/absent). Runs once per drained command, success or failure, so a
+        failed send can never leave a stuck `queued` marker behind."""
         if self._key_request_publisher is None or command.kind != "contact_request_key":
             return
-        contact_id = command.payload.get("contact_id")
-        if isinstance(contact_id, str) and contact_id:
-            self._key_request_publisher.mark_drained(contact_id)
+        self._key_request_publisher.mark_drained(command.command_id)
 
     def _execute_command(self, command: Command) -> None:
         """Step 1.6A.1 (correction #2/#4): execute one dequeued command by

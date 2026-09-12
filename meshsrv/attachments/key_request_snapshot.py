@@ -15,8 +15,9 @@ one table; it is two facts the worker alone can read safely:
 
   - a `contact_request_key` command that has been *accepted* into the
     bounded command queue but not yet drained by the worker (queued). This is
-    tracked by a lock-guarded, in-memory pending-marker set owned by this
-    publisher (`mark_queued()` / `mark_drained()`), not by iterating the
+    tracked by a lock-guarded, in-memory pending-marker map keyed by command
+    id owned by this publisher (`mark_queued()` / `mark_drained()`), not by
+    iterating the
     queue's internal deque (that read raced a concurrent `put_nowait()` and
     could raise `deque mutated during iteration` - see commands.py's own
     `iter_commands()`), and not from `CommandRegistry` (the registry
@@ -127,7 +128,7 @@ class KeyRequestStatePublisher:
 
     - `refresh()` is the *only* place that reads the persisted
       `last_request_sent_at` table (worker/startup-thread reads only) plus the
-      pending queued-marker set (`_pending_queued`). It builds a whole new
+      pending queued-marker map (`_pending_queued`). It builds a whole new
       snapshot and swaps it in with one reference assignment - never mutating
       the previously-published one.
     - `snapshot()` is the request-thread read: a single lock-guarded read of
@@ -152,39 +153,59 @@ class KeyRequestStatePublisher:
         self._now = now_fn
         self._min_interval = min_seconds_between_key_requests
         self._lock = threading.Lock()
-        # The pending queued-marker set: addresses whose `contact_request_key`
-        # command has been accepted into the command queue but not yet drained
-        # by the worker. Written by `mark_queued()` (request thread, via
-        # `AttachmentsFacade.submit()`) and `mark_drained()` (worker thread,
-        # via `AttachmentsService._drain_commands()`), read by `refresh()` and
-        # `snapshot()`. In-memory only, so a restart never fabricates a
+        # The pending queued-marker map, keyed by `command_id -> contact_id`:
+        # one entry per `contact_request_key` command whose request is still in
+        # flight (accepted into the command queue and not yet *terminally*
+        # executed by the worker). Keyed by command id rather than by address so
+        # two distinct commands for the SAME address are two entries - draining
+        # one must not clear the other's still-pending `queued` state (PR #256
+        # review, Finding 2 / Blocker 2). Written by `mark_queued()` (request
+        # thread, via `AttachmentsFacade.submit()`, *before* the queue write) and
+        # `mark_drained()` (worker thread in `_drain_commands()`'s `finally`,
+        # plus the facade's own enqueue-failure rollback), read by `refresh()`
+        # and `snapshot()`. In-memory only, so a restart never fabricates a
         # `queued` state for a command the new process never accepted.
-        self._pending_queued: Set[str] = set()
+        self._pending_queued: Dict[str, str] = {}
         self._published: KeyRequestSnapshot = KeyRequestSnapshot(by_address={})
         self.refresh()
 
-    def mark_queued(self, contact_id: str) -> None:
-        """Request-thread write (called by `AttachmentsFacade.submit()` *after* a
-        `contact_request_key` command has been successfully enqueued): record
-        that this address now has an accepted-but-not-yet-drained request, so
-        `queued` is observable immediately - before any worker tick - via
-        `snapshot()`. Thread-safe (lock-guarded), never touches SQLite/`conn`/
-        the filesystem/network. Only ever set for a successfully-accepted
-        command: a full queue raises `CommandQueueFull` *before* the facade
-        reaches this call, so `queue_full` never leaves a false `queued`."""
-        with self._lock:
-            self._pending_queued.add(contact_id)
+    def mark_queued(self, command_id: str, contact_id: str) -> None:
+        """Request-thread write (called by `AttachmentsFacade.submit()` *before*
+        it enqueues the command - see that method's docstring for why the marker
+        is registered ahead of the queue write): record that this command id's
+        `contact_request_key` request is accepted-but-not-yet-terminally-executed,
+        so its address projects `queued` immediately - before any worker tick -
+        via `snapshot()`. Thread-safe (lock-guarded), never touches SQLite/
+        `conn`/the filesystem/network.
 
-    def mark_drained(self, contact_id: str) -> None:
-        """Worker-thread write (called by `AttachmentsService._drain_commands()`
-        the moment it dequeues a `contact_request_key` command): the worker has
-        picked the request up, so the address is no longer `queued` - its state
-        now derives from the persisted `last_request_sent_at` timestamp (the
-        `waiting_response`/`retry_available` split) on the next `refresh()`.
-        Runs for both a successful and a failed execution: a failed send must
-        never leave a false `queued` marker behind. Thread-safe, in-memory."""
+        Keyed by `command_id`, so two same-address commands are two entries and
+        a same-address drain keeps the address `queued` until the last of its
+        commands drains. A full queue raises `CommandQueueFull` after this call,
+        but the facade rolls the marker back (`mark_drained(command_id)`) on that
+        path, so `queue_full` never leaves a false `queued`."""
         with self._lock:
-            self._pending_queued.discard(contact_id)
+            self._pending_queued[command_id] = contact_id
+
+    def mark_drained(self, command_id: str) -> None:
+        """Remove the pending marker for one `command_id`. Called from two
+        threads, both removing-by-command-id so a same-address command's sibling
+        marker is never dropped:
+
+        - the worker thread, in `AttachmentsService._drain_commands()`'s
+          `finally`, the moment the command reaches a *terminal* execution
+          outcome - the marker is held through `_execute_command()` so the
+          address stays `queued` (non-requestable) while the request is actually
+          being sent, then cleared so its state derives from the persisted
+          `last_request_sent_at` timestamp on the next `refresh()`;
+        - the request thread, in `AttachmentsFacade.submit()`'s enqueue-failure
+          rollback, undoing the `mark_queued()` it just made when the queue was
+          full (so `queue_full` leaves no marker).
+
+        Idempotent (a missing id is a no-op), so it is safe for both a
+        successful and a failed execution - a failed send must never leave a
+        false `queued` marker behind. Thread-safe, in-memory."""
+        with self._lock:
+            self._pending_queued.pop(command_id, None)
 
     def refresh(self) -> KeyRequestSnapshot:
         """Worker/startup thread only: rebuild the snapshot from the pending
@@ -198,7 +219,7 @@ class KeyRequestStatePublisher:
         of the persisted timestamps - and that keeps last-known-good rather than
         silently re-permitting a queued request."""
         with self._lock:
-            queued: Set[str] = set(self._pending_queued)
+            queued: Set[str] = set(self._pending_queued.values())
 
         try:
             timestamps: Dict[str, float] = self._coordinator.list_key_request_sent_at()
@@ -238,14 +259,20 @@ class KeyRequestStatePublisher:
         object."""
         with self._lock:
             published = self._published
-            pending = self._pending_queued
-        if not pending:
+            # Copy the pending addresses under the lock: the map is mutated by
+            # the worker thread (`mark_drained()`) between this read and the
+            # overlay loop below, and iterating a dict that is being mutated
+            # from another thread raises RuntimeError ("dictionary changed size
+            # during iteration"). The copy is also what makes the overlay a
+            # consistent point-in-time view rather than a torn mix.
+            pending_addresses = set(self._pending_queued.values())
+        if not pending_addresses:
             return published
         # The live `queued` overlay: a `queued` address wins over any
         # still-visible `last_request_sent_at` entry in `published` (a fresh
         # request is in flight, superseding the prior one's rate-limit window).
         by_address = dict(published.by_address)
-        for address in pending:
+        for address in pending_addresses:
             by_address[address] = KeyRequestCapability(
                 key_request_state=KeyRequestState.QUEUED,
                 can_request_key=False,

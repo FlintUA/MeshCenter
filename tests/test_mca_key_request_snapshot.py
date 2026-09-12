@@ -7,8 +7,8 @@ Covers, per PR 4's required backend tests (and the PR #256 review's
 Finding 2 / Finding 5 corrections):
 
 1. Capability states - `queued` / `waiting_response` / `retry_available`
-   from the two worker-only sources (the pending queued-marker set driven by
-   `mark_queued()`/`mark_drained()`, and the persisted
+   from the two worker-only sources (the pending queued-marker map keyed by
+   command id driven by `mark_queued()`/`mark_drained()`, and the persisted
    `last_request_sent_at` timestamp), with the `can_request_key` boolean
    following the binding presence, and `queued` taking precedence over a
    still-visible sent timestamp.
@@ -38,6 +38,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sqlite3
+import threading
 
 import pytest
 
@@ -143,7 +144,7 @@ def test_idle_address_is_absent_from_the_snapshot(tmp_path, clock):
 def test_marked_queued_address_projects_queued_and_disabled(tmp_path, clock):
     _, _, _, coordinator = _make_node(tmp_path, "a", clock)
     publisher = _publisher(coordinator, clock)
-    publisher.mark_queued("!contact")
+    publisher.mark_queued("cmd-1", "!contact")
 
     cap = publisher.snapshot().by_address["!contact"]
     assert cap.key_request_state is KeyRequestState.QUEUED
@@ -158,7 +159,7 @@ def test_queued_is_observable_immediately_without_any_refresh(tmp_path, clock):
     _, _, _, coordinator = _make_node(tmp_path, "a", clock)
     publisher = _publisher(coordinator, clock)
 
-    publisher.mark_queued("!contact")
+    publisher.mark_queued("cmd-1", "!contact")
 
     cap = publisher.snapshot().by_address["!contact"]
     assert cap.key_request_state is KeyRequestState.QUEUED
@@ -171,10 +172,10 @@ def test_mark_drained_removes_queued_back_to_absent(tmp_path, clock):
     (no persisted timestamp), i.e. back to the `idle` default."""
     _, _, _, coordinator = _make_node(tmp_path, "a", clock)
     publisher = _publisher(coordinator, clock)
-    publisher.mark_queued("!contact")
+    publisher.mark_queued("cmd-1", "!contact")
     assert "!contact" in publisher.snapshot().by_address
 
-    publisher.mark_drained("!contact")
+    publisher.mark_drained("cmd-1")
 
     assert "!contact" not in publisher.snapshot().by_address
 
@@ -185,10 +186,10 @@ def test_mark_drained_reveals_the_persisted_timestamp_state(tmp_path, clock):
     _, _, _, coordinator = _make_node(tmp_path, "a", clock)
     coordinator.record_key_request_sent("!contact", clock())
     publisher = _publisher(coordinator, clock)
-    publisher.mark_queued("!contact")
+    publisher.mark_queued("cmd-1", "!contact")
     assert publisher.snapshot().by_address["!contact"].key_request_state is KeyRequestState.QUEUED
 
-    publisher.mark_drained("!contact")
+    publisher.mark_drained("cmd-1")
     publisher.refresh()
 
     cap = publisher.snapshot().by_address["!contact"]
@@ -236,7 +237,7 @@ def test_queued_takes_precedence_over_a_still_visible_sent_timestamp(tmp_path, c
     coordinator.record_key_request_sent("!contact", clock())
     publisher = _publisher(coordinator, clock)
 
-    publisher.mark_queued("!contact")
+    publisher.mark_queued("cmd-1", "!contact")
 
     cap = publisher.snapshot().by_address["!contact"]
     assert cap.key_request_state is KeyRequestState.QUEUED
@@ -307,7 +308,7 @@ def test_published_snapshot_never_projects_the_raw_timestamp(tmp_path, clock):
 def test_snapshot_is_frozen_and_read_only(tmp_path, clock):
     _, _, _, coordinator = _make_node(tmp_path, "a", clock)
     publisher = _publisher(coordinator, clock)
-    publisher.mark_queued("!contact")
+    publisher.mark_queued("cmd-1", "!contact")
     snap = publisher.snapshot()
 
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -323,7 +324,7 @@ def test_snapshot_is_frozen_and_read_only(tmp_path, clock):
 def test_coordinator_read_failure_keeps_last_known_good(tmp_path, clock, monkeypatch):
     _, _, _, coordinator = _make_node(tmp_path, "a", clock)
     publisher = _publisher(coordinator, clock)
-    publisher.mark_queued("!contact")
+    publisher.mark_queued("cmd-1", "!contact")
 
     good = publisher.refresh()
     assert good.by_address["!contact"].key_request_state is KeyRequestState.QUEUED
@@ -346,7 +347,7 @@ def test_queued_survives_a_coordinator_read_failure_after_being_published(tmp_pa
     (never wrongly `idle`/requestable), and the refresh never raises."""
     _, _, _, coordinator = _make_node(tmp_path, "a", clock)
     publisher = _publisher(coordinator, clock)
-    publisher.mark_queued("!contact")
+    publisher.mark_queued("cmd-1", "!contact")
 
     # The contact is observably queued (this is what the request thread saw).
     assert publisher.snapshot().by_address["!contact"].can_request_key is False
@@ -370,3 +371,100 @@ def test_refresh_returns_the_published_snapshot(tmp_path, clock):
     coordinator.record_key_request_sent("!contact", clock())
     fresh = publisher.refresh()
     assert fresh is publisher.snapshot()
+
+
+# --- Blocker 2: command-id-keyed pending-marker race semantics ----------------
+
+def test_two_same_address_commands_stay_queued_until_both_drain(tmp_path, clock):
+    """Blocker 2: two distinct `contact_request_key` commands for the SAME
+    address are two pending entries keyed by command id. Draining one must not
+    clear the other's still-in-flight `queued` - the address stays `queued`
+    (non-requestable) until the LAST of its commands drains. The old
+    address-keyed `Set` collapsed both commands into one entry, so draining the
+    first cleared the address even while the second was still queued."""
+    _, _, _, coordinator = _make_node(tmp_path, "a", clock)
+    publisher = _publisher(coordinator, clock)
+
+    publisher.mark_queued("cmd-1", "!contact")
+    publisher.mark_queued("cmd-2", "!contact")
+    assert publisher.snapshot().by_address["!contact"].key_request_state is KeyRequestState.QUEUED
+
+    publisher.mark_drained("cmd-1")
+    assert publisher.snapshot().by_address["!contact"].key_request_state is KeyRequestState.QUEUED
+
+    publisher.mark_drained("cmd-2")
+    assert "!contact" not in publisher.snapshot().by_address
+
+
+def test_drain_of_an_unrelated_command_id_leaves_the_marker_intact(tmp_path, clock):
+    """Blocker 2 (the enqueue/drain race): because the marker is keyed by
+    command id (not address), the worker draining some *other* command can
+    never clear this command's marker before it exists - `mark_drained` only
+    ever removes the id it is handed. This is what makes the facade's
+    mark-before-enqueue order safe: even if the worker drains between the
+    marker registration and the queue write, it is draining a *different*
+    command id, so this command's marker survives until its own drain."""
+    _, _, _, coordinator = _make_node(tmp_path, "a", clock)
+    publisher = _publisher(coordinator, clock)
+
+    publisher.mark_queued("cmd-1", "!contact")
+    publisher.mark_drained("cmd-unrelated")  # worker drained a different command
+    assert publisher.snapshot().by_address["!contact"].key_request_state is KeyRequestState.QUEUED
+
+    publisher.mark_drained("cmd-1")
+    assert "!contact" not in publisher.snapshot().by_address
+
+
+def test_mark_drained_is_idempotent_for_a_missing_command_id(tmp_path, clock):
+    """Blocker 2: a `mark_drained(command_id)` with no matching marker is a
+    no-op (the worker's `finally` can race a facade rollback or a double
+    drain); it must never raise and must never disturb other markers."""
+    _, _, _, coordinator = _make_node(tmp_path, "a", clock)
+    publisher = _publisher(coordinator, clock)
+    publisher.mark_drained("never-marked")
+    assert publisher.snapshot().by_address == {}
+
+
+def test_concurrent_snapshot_and_drain_do_not_raise(tmp_path, clock):
+    """Blocker 2: `snapshot()` must copy the pending addresses under the lock,
+    so a reader thread snapshotting while the worker thread calls
+    `mark_drained()` never iterates a dict that is being mutated (the old code
+    iterated the live set outside the lock and could raise "dictionary changed
+    size during iteration"). Hammering both from two threads must not raise."""
+    _, _, _, coordinator = _make_node(tmp_path, "a", clock)
+    publisher = _publisher(coordinator, clock)
+
+    # Seed enough distinct entries that the writer's add/remove cycle has real
+    # work to do against the reader's snapshot().
+    for i in range(200):
+        publisher.mark_queued(f"cmd-{i}", f"!{i:08x}")
+
+    errors = []
+    go = threading.Event()
+    n_iterations = 2000
+
+    def reader():
+        try:
+            go.wait()
+            for _ in range(n_iterations):
+                publisher.snapshot()
+        except BaseException as exc:  # noqa: BLE001 - asserted empty below
+            errors.append(exc)
+
+    def writer():
+        try:
+            go.wait()
+            for i in range(n_iterations):
+                publisher.mark_queued(f"wcmd-{i}", f"!{i % 100:08x}")
+                publisher.mark_drained(f"wcmd-{i}")
+        except BaseException as exc:  # noqa: BLE001 - asserted empty below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=reader), threading.Thread(target=writer)]
+    for t in threads:
+        t.start()
+    go.set()
+    for t in threads:
+        t.join(timeout=30)
+    assert not any(t.is_alive() for t in threads), "race threads did not finish"
+    assert errors == []

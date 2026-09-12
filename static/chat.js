@@ -40,6 +40,47 @@ let messageActionTarget = null;
 let renderedMessagesById = new Map();
 let activeReply = null;
 
+// PR 4 Finding 1: chat.js mirrors the shared target store's selection
+// (static/targets.js, `window.MeshCenterTargets`) so that a node/channel
+// selected in any workspace highlights the same card here, and a chat opened
+// here becomes the store's selection for every other workspace. The store is
+// a page singleton loaded before chat.js (see templates/index.html), so these
+// helpers read it defensively and never assume it is present.
+let storeSelectionSubscribed = false;
+
+function storeSelectedTarget() {
+    const store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+    if (!store || typeof store.selected !== 'function') return null;
+    return store.selected() || null;
+}
+
+// Pushes chat.js's open-conversation selection into the store (`select`) or
+// clears it (`clearSelection`). Never toggles: opening a chat selects it,
+// closing the chat list clears it.
+function storeSyncSelection(kind, id) {
+    const store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+    if (!store) return;
+    ensureStoreSelectionSubscription();
+    if (kind && id) {
+        store.select(kind, id);
+    } else {
+        store.clearSelection();
+    }
+}
+
+// Subscribes chat.js to the store exactly once so a selection made in another
+// workspace (e.g. Files) re-syncs the Node-card / chat-item highlight here
+// without touching the open conversation (currentChatId stays put).
+function ensureStoreSelectionSubscription() {
+    if (storeSelectionSubscribed) return;
+    const store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+    if (!store || typeof store.subscribe !== 'function') return;
+    storeSelectionSubscribed = true;
+    store.subscribe(function () {
+        syncSelectedNodeCard();
+    });
+}
+
 // Registry for the selected-node card. Future core modules or plugins can
 // register an additional tab without rewriting renderNodeDetails().
 const NODE_DETAIL_TABS = [
@@ -4032,7 +4073,13 @@ function formatChannelIndexLabel(name, index) {
 // ============================================================
 function renderChatItem(chat) {
     const isDemo = Boolean(chat.is_demo);
-    const isSelected = (chat.id === currentChatId);
+    // PR 4 Finding 1: the card's selected state reads the shared store's
+    // selection (kind + id), falling back to the local open-chat id when the
+    // store is absent (older page / no targets.js loaded).
+    const storeSel = storeSelectedTarget();
+    const isSelected = storeSel
+        ? (storeSel.id === chat.id && storeSel.kind === (chat.is_channel ? 'channel' : 'node'))
+        : (chat.id === currentChatId);
     const selectedClass = isSelected ? 'selected' : '';
     const icon = chat.is_channel ? (isDemo ? '🔒' : '📡') : getChatNodeShortName(chat);
     const iconClass = chat.is_channel
@@ -4066,7 +4113,7 @@ function renderChatItem(chat) {
         : chat.name;
 
     return `
-        <div class="chat-item ${hasUnread} ${selectedClass} ${demoClass}" data-chat-id="${escapeHtml(chat.id)}" onclick="${clickHandler}" ${isDemo ? `title="${escapeHtml(window.I18N.t('chat.channel_not_configured_title'))}"` : ''}>
+        <div class="chat-item ${hasUnread} ${selectedClass} ${demoClass}" data-chat-id="${escapeHtml(chat.id)}" aria-pressed="${isSelected ? 'true' : 'false'}" onclick="${clickHandler}" ${isDemo ? `title="${escapeHtml(window.I18N.t('chat.channel_not_configured_title'))}"` : ''}>
             <div class="chat-icon ${iconClass}">${icon}</div>
             <div class="chat-info">
                 <div class="chat-name">${ignored}${favorite}${escapeHtml(displayName)}</div>
@@ -4340,7 +4387,14 @@ async function loadMessages() {
                 const { activityClass, displayName } = getNodeActivityPresentation(node);
                 const isIgnored = node.ignored || false;
                 const isFavorite = node.favorite || false;
-                const isSelected = currentChatType === 'dm' && currentChatId === node.node_id;
+                // PR 4 Finding 1: the card highlight follows the shared store's
+                // selection (so a node selected in Files highlights the same
+                // card here), falling back to the local open-DM id when the
+                // store is absent.
+                const storeSel = storeSelectedTarget();
+                const isSelected = storeSel
+                    ? (storeSel.kind === 'node' && storeSel.id === node.node_id)
+                    : (currentChatType === 'dm' && currentChatId === node.node_id);
                 const cardClasses = ['node-card'];
                 if (isIgnored) cardClasses.push('ignored');
                 if (isFavorite) cardClasses.push('favorite');
@@ -4364,7 +4418,7 @@ async function loadMessages() {
                     : '';
 
                 return `
-                    <div class="${cardClass}" data-node-id="${escapeHtml(node.node_id)}">
+                    <div class="${cardClass}" data-node-id="${escapeHtml(node.node_id)}" aria-pressed="${isSelected ? 'true' : 'false'}">
                         <div class="node-card-topline">
                             <span class="node-favorite-slot"
                                 title="${isFavorite ? 'Favorite node' : 'Not favorite'}">
@@ -4739,18 +4793,28 @@ function requestSynchronizedListScroll(nodeId, source, options = {}) {
 }
 
 function syncSelectedNodeCard() {
-    const selectedNodeId =
+    // PR 4 Finding 1: the card highlight follows the shared store's selection
+    // (so a node selected in Files highlights the same card here), falling
+    // back to the local open-DM id when the store is absent. The store's
+    // selection wins over `nodeVisualSelectionCleared` — a fresh selection in
+    // another workspace re-selects the card even after the operator closed
+    // node details; `nodeVisualSelectionCleared` only gates the local fallback.
+    const storeSel = storeSelectedTarget();
+    const storeNodeId = (storeSel && storeSel.kind === 'node') ? storeSel.id : '';
+    const fallbackNodeId =
         !nodeVisualSelectionCleared &&
         currentChatType === 'dm' &&
         currentChatId
             ? String(currentChatId)
             : '';
+    const selectedNodeId = storeNodeId || fallbackNodeId;
 
     document.querySelectorAll('#nodesList .node-card').forEach(card => {
         const isSelected =
             selectedNodeId !== '' && card.dataset.nodeId === selectedNodeId;
 
         card.classList.toggle('selected', isSelected);
+        card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     });
 }
 
@@ -4806,6 +4870,13 @@ function openChat(chatId, chatName, chatType, selectionSource = 'external') {
     if (currentChatType === 'dm') {
         nodeVisualSelectionCleared = false;
     }
+    // PR 4 Finding 1: opening a chat becomes the shared store's selection, so
+    // the same node/channel highlights across every workspace. A channel chat
+    // is a `channel` target; a DM is a `node` target.
+    storeSyncSelection(
+        currentChatType === 'channel' ? 'channel' : 'node',
+        currentChatId
+    );
     cancelReply();
 
     if (currentChatType === 'dm' && chatId !== 'channel') {
@@ -4874,6 +4945,9 @@ function showChatList() {
     currentChatId = null;
     currentChatName = null;
     currentChatType = null;
+    // PR 4 Finding 1: leaving the chat list clears the shared store's
+    // selection so no workspace keeps a stale highlight.
+    storeSyncSelection(null, null);
     cancelReply();
 
     updateChatHeader();
@@ -6306,6 +6380,9 @@ function closeNodeDetails() {
     const currentCard = document.querySelector('#nodeDetails > .node-detail-card');
     closedNodeDetailId = currentCard?.dataset?.nodeId || null;
     nodeVisualSelectionCleared = true;
+    // PR 4 Finding 1: closing node details also clears the shared store's
+    // node selection (the DM stays open, but no card is selected anywhere).
+    storeSyncSelection(null, null);
 
     const details = document.getElementById('nodeDetails');
     if (details) {
@@ -7779,6 +7856,9 @@ function selectNode(nodeId, nodeName, selectionSource = 'nodes') {
             selectedFromMap ? 'external' : 'nodes'
         );
     } else {
+        // PR 4 Finding 1: re-selecting the already-open node re-syncs the
+        // shared store (a selection made in Files may have moved elsewhere).
+        storeSyncSelection('node', normalizedNodeId);
         syncSelectedNodeCard();
         updateNodeDetails(normalizedNodeId);
     }
@@ -10619,7 +10699,12 @@ async function init() {
     isInitialized = true;
     
     console.log('[INIT] Starting application...');
-    
+
+    // PR 4 Finding 1: subscribe chat.js to the shared target store up front so
+    // a node/channel selected in another workspace (e.g. Files) re-syncs the
+    // Node-card / chat-item highlight even before the operator opens a chat.
+    ensureStoreSelectionSubscription();
+
     await loadSettings();
     
     const statusEl = document.getElementById('statusText');

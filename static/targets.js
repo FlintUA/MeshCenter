@@ -50,6 +50,13 @@
 
     var CONTACT_ID_RE = /^![0-9a-f]{8}$/;  // mirrors _CONTACT_ID_RE server-side
 
+    // PR 5 final correction (section 6): a hung /api/* fetch must never leave a
+    // source's in-flight guard pinned forever. Every store read is bounded by
+    // this timeout; on abort (or any network failure) the source is marked
+    // degraded and its last-known-good slice is preserved, never replaced with
+    // empty. ~8s keeps a single dead endpoint from stalling the whole merge.
+    var API_TIMEOUT_MS = 8000;
+
     // The public ContactStatus strings from meshsrv/attachments/contacts.py,
     // mapped to the PR 4 capability-model `trust_state` vocabulary.
     var TRUST_STATE_BY_STATUS = {
@@ -165,11 +172,32 @@
 
     function api(url) {
         var resp;
-        return (typeof fetch === 'function' ? fetch(url, { headers: { 'Cache-Control': 'no-cache' } }) : Promise.reject(new Error('no fetch'))).then(
+        var controller = (typeof AbortController === 'function') ? new AbortController() : null;
+        var timer = null;
+        if (controller) {
+            // Always clear the timer in the finally-style tail below so a
+            // settled fetch never leaves a live timeout behind.
+            timer = setTimeout(function () { controller.abort(); }, API_TIMEOUT_MS);
+        }
+        var opts = { headers: { 'Cache-Control': 'no-cache' } };
+        if (controller) opts.signal = controller.signal;
+        var base = typeof fetch === 'function'
+            ? fetch(url, opts)
+            : Promise.reject(new Error('no fetch'));
+        return base.then(
             function (r) { resp = r; return r.json().catch(function () { return null; }); },
             function () { return null; }
         ).then(function (data) {
             return { status: resp ? resp.status : 0, data: data || null };
+        }).then(function (result) {
+            if (timer) clearTimeout(timer);
+            return result;
+        }, function (err) {
+            if (timer) clearTimeout(timer);
+            // No raw exception text escapes — a timeout/abort or network
+            // failure is reported to the caller as status 0, never as a
+            // thrown message the UI would surface verbatim.
+            return { status: 0, data: null };
         });
     }
 

@@ -163,7 +163,8 @@
       "trusted": "Довірений",
       "confirmation_required": "Потрібне підтвердження",
       "key_changed": "Ключ змінено",
-      "key_unknown": "Ключ невідомий"
+      "key_unknown": "Ключ невідомий",
+      "files_available": "Файли доступні"
     },
     "error": {
       "mca_not_ready": "Служба MCAttach не готова",
@@ -1295,7 +1296,7 @@
     "no_ignored_nodes_found": "Ігноровані вузли не знайдено",
     "sidebar_tab": "Мережа",
     "heading": "Вузли",
-    "search_placeholder": "Пошук вузлів...",
+    "search_placeholder": "Пошук каналів і вузлів...",
     "rescan_network": "Пересканувати мережу",
     "last_update": "Останнє оновлення",
     "map_library_load_failed": "Не вдалося завантажити бібліотеку карт",

@@ -216,6 +216,15 @@ const EXTERNAL_SPLIT_SYMBOLS = [
 function makeNodeCard(nodeId) {
     const card = new FakeElement('div', '');
     card.dataset = { nodeId };
+    // PR 5 final correction (section 1): aria-pressed lives ONLY on the inner
+    // .node-card-select <button>. Give the fake card that inner button so
+    // syncSelectedNodeCard() has a target for its aria-pressed write; the outer
+    // card itself must end up with NO aria-pressed attribute.
+    const selectBtn = new FakeElement('button', '');
+    selectBtn.classList.add('node-card-select');
+    selectBtn.dataset = { targetId: nodeId };
+    card.selectBtn = selectBtn;
+    card.querySelector = (sel) => (sel === '.node-card-select' ? selectBtn : null);
     return card;
 }
 
@@ -230,6 +239,65 @@ function makeChannelCard(channelId) {
     card.dataset = { channelId };
     return card;
 }
+
+// ---- minimal HTML fragment parser -------------------------------------------
+// Section 12 asks for structure assertions against a real parser, not
+// regex/string-equality (which a malformed nest would also pass). The repo is
+// deliberately dependency-free (no jsdom), so this is a small standards-shaped
+// tokenizer that builds a real FakeElement tree from the well-formed markup
+// chat.js emits (double-quoted attributes, explicit close tags, no void
+// elements). It respects nesting and sibling order, so a structural bug
+// surfaces as a wrong tree here instead of a string that happens to match.
+function parseHtmlFragment(html) {
+    const root = new FakeElement('div', '__root__');
+    const stack = [root];
+    const tagRe = /<(\/)?([a-zA-Z][a-zA-Z0-9-]*)([^>]*)>/g;
+    const attrRe = /([a-zA-Z:-][a-zA-Z0-9:_-]*)(?:\s*=\s*"([^"]*)")?/g;
+    let m;
+    while ((m = tagRe.exec(html)) !== null) {
+        const closing = m[1] === '/';
+        const tagName = m[2].toLowerCase();
+        const attrStr = m[3] || '';
+        if (closing) {
+            if (stack.length > 1 && stack[stack.length - 1].tagName.toLowerCase() === tagName) {
+                stack.pop();
+            }
+            continue;
+        }
+        const el = new FakeElement(tagName, '');
+        attrRe.lastIndex = 0;
+        let am;
+        while ((am = attrRe.exec(attrStr)) !== null) {
+            const name = am[1];
+            const val = am[2] === undefined ? '' : am[2];
+            el.setAttribute(name, val);
+            if (name === 'class') {
+                el.className = val;
+                val.split(/\s+/).filter(Boolean).forEach(c => el.classList.add(c));
+            }
+        }
+        stack[stack.length - 1].appendChild(el);
+        stack.push(el);
+    }
+    return root;
+}
+
+function hasClass(el, cls) {
+    return Boolean(el && el.classList && el.classList.contains(cls));
+}
+
+function descendants(root, pred) {
+    const out = [];
+    (function walk(el) {
+        if (el !== root && pred(el)) out.push(el);
+        (el._children || []).forEach(walk);
+    })(root);
+    return out;
+}
+
+// The tag names that count as "interactive" for the no-nested-controls
+// invariant on the selection button.
+const INTERACTIVE_TAGS = new Set(['button', 'a', 'input', 'select', 'textarea', 'details']);
 
 function json(body) {
     return { status: 200, json: async () => body, ok: true };
@@ -251,6 +319,7 @@ function defaultRoutes(overrides = {}) {
             case '/api/mca/connectivity': return json({ ok: true, internet: 'online', relays: {} });
             case '/api/settings': return json({ ok: true, settings: { meshtastic: { transport: 'serial' } } });
             case '/api/mca/providers': return json({ ok: true, providers: [] });
+            case '/api/toggle_ignore': return json({ ok: true, ignored: true });
         }
         if (url.startsWith('/api/attachments')) return json({ ok: true, attachments: [], total: 0 });
         throw new Error('unexpected fetch: ' + url);
@@ -411,14 +480,16 @@ async function test_store_selection_resyncs_cards_without_touching_open_chat() {
     sandbox.window.openChat('!aaaaaaaa', 'Alice', 'dm');
     // Opening the DM drives the store, which drives the card highlight to A.
     assert.equal(cardA.classList.contains('selected'), true, 'opening DM A must highlight card A');
-    assert.equal(cardA.getAttribute('aria-pressed'), 'true');
+    assert.equal(cardA.selectBtn.getAttribute('aria-pressed'), 'true', 'the inner select button is aria-pressed=true');
+    assert.equal(cardA.getAttribute('aria-pressed'), null, 'the outer card carries NO aria-pressed');
 
     store.select('node', '!bbbbbbbb');   // Files selects B
 
     assert.equal(cardB.classList.contains('selected'), true, 'card B must gain the selected class');
-    assert.equal(cardB.getAttribute('aria-pressed'), 'true', 'card B must be aria-pressed=true');
+    assert.equal(cardB.selectBtn.getAttribute('aria-pressed'), 'true', 'card B select button must be aria-pressed=true');
+    assert.equal(cardB.getAttribute('aria-pressed'), null, 'outer card B carries NO aria-pressed');
     assert.equal(cardA.classList.contains('selected'), false, 'card A must lose the selected class');
-    assert.equal(cardA.getAttribute('aria-pressed'), 'false', 'card A must be aria-pressed=false');
+    assert.equal(cardA.selectBtn.getAttribute('aria-pressed'), 'false', 'card A select button must be aria-pressed=false');
 
     // Clearing the selection (store present, selection null) means NOTHING is
     // selected — the open DM A stays the open conversation but no card
@@ -426,7 +497,7 @@ async function test_store_selection_resyncs_cards_without_touching_open_chat() {
     // fallback reappears after the store clears.
     store.clearSelection();
     assert.equal(cardA.classList.contains('selected'), false, 'after clearing the store, no card may re-highlight (open DM A is not the selection)');
-    assert.equal(cardA.getAttribute('aria-pressed'), 'false');
+    assert.equal(cardA.selectBtn.getAttribute('aria-pressed'), 'false');
     assert.equal(cardB.classList.contains('selected'), false);
 
     console.log('PASS: test_store_selection_resyncs_cards_without_touching_open_chat');
@@ -503,7 +574,8 @@ async function test_open_dm_selects_store_card_and_dm_item() {
     assert.equal(store.selected().kind, 'node');
     assert.equal(store.selected().id, '!aaaaaaaa');
     assert.equal(cardA.classList.contains('selected'), true, 'card A must be highlighted');
-    assert.equal(cardA.getAttribute('aria-pressed'), 'true');
+    assert.equal(cardA.selectBtn.getAttribute('aria-pressed'), 'true', 'card A select button is aria-pressed=true');
+    assert.equal(cardA.getAttribute('aria-pressed'), null, 'outer card A carries NO aria-pressed');
     assert.equal(dmItemA.classList.contains('selected'), true, 'DM item A must be highlighted');
     assert.equal(dmItemA.getAttribute('aria-pressed'), 'true');
     console.log('PASS: test_open_dm_selects_store_card_and_dm_item');
@@ -531,7 +603,8 @@ async function test_files_toggle_off_clears_selection_without_fallback() {
 
     // Nothing selected: card A + DM item A unselected, aria-pressed=false.
     assert.equal(cardA.classList.contains('selected'), false, 'card A must unselect');
-    assert.equal(cardA.getAttribute('aria-pressed'), 'false');
+    assert.equal(cardA.selectBtn.getAttribute('aria-pressed'), 'false', 'card A select button is aria-pressed=false');
+    assert.equal(cardA.getAttribute('aria-pressed'), null, 'outer card A carries NO aria-pressed');
     assert.equal(dmItemA.classList.contains('selected'), false, 'DM item A must unselect');
     assert.equal(dmItemA.getAttribute('aria-pressed'), 'false');
 
@@ -562,7 +635,8 @@ async function test_files_selects_node_b_updates_cards_without_network_reload() 
     store.select('node', '!bbbbbbbb');   // Files selects B
 
     assert.equal(cardB.classList.contains('selected'), true, 'card B must gain the selected class');
-    assert.equal(cardB.getAttribute('aria-pressed'), 'true');
+    assert.equal(cardB.selectBtn.getAttribute('aria-pressed'), 'true', 'card B select button is aria-pressed=true');
+    assert.equal(cardB.getAttribute('aria-pressed'), null, 'outer card B carries NO aria-pressed');
     assert.equal(dmItemB.classList.contains('selected'), true, 'DM item B must gain the selected class');
     assert.equal(dmItemB.getAttribute('aria-pressed'), 'true');
     assert.equal(cardA.classList.contains('selected'), false, 'card A must lose the selected class');
@@ -632,7 +706,8 @@ async function test_chat_js_without_store_falls_back_to_current_chat() {
     sandbox.window.openChat('!aaaaaaaa', 'Alice', 'dm');
 
     assert.equal(cardA.classList.contains('selected'), true, 'without the store, the open DM must highlight via currentChatId');
-    assert.equal(cardA.getAttribute('aria-pressed'), 'true');
+    assert.equal(cardA.selectBtn.getAttribute('aria-pressed'), 'true', 'card A select button is aria-pressed=true');
+    assert.equal(cardA.getAttribute('aria-pressed'), null, 'outer card A carries NO aria-pressed');
 
     const html = sandbox.renderChatItem({ id: '!aaaaaaaa', is_channel: false, name: 'Alice', type: 'dm' });
     assert.match(html, /selected/, 'renderChatItem must fall back to currentChatId without the store');
@@ -774,6 +849,271 @@ async function test_node_card_key_actions_are_siblings_not_nested() {
     console.log('PASS: test_node_card_key_actions_are_siblings_not_nested');
 }
 
+// ---- PR 5 final correction: section 1/2/3/4/5 scenarios ----------------------
+
+function makeTestNode(overrides = {}) {
+    return Object.assign({
+        node_id: '!aaaaaaaa',
+        clean_name: 'Alice',
+        name: 'Alice',
+        long_name: 'Alice Long',
+        short_name: 'AL',
+        hw_model: 'TBEAM',
+        last_text: 'hello world',
+        ignored: true,
+        favorite: true,
+        hops_away: 2,
+        age: '5 min',
+        rssi: -60,
+        snr: 8,
+        position: { latitude: 52.52, longitude: 13.405 },
+    }, overrides);
+}
+
+async function buildStoreSandbox({ contacts = [], key_requests = [] } = {}) {
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes({
+            '/api/mca/contacts': json({ ok: true, contacts }),
+            '/api/mca/key-requests': json({ ok: true, key_requests }),
+        }),
+    });
+    await sandbox.window.MeshCenterTargets.refresh();
+    return sandbox;
+}
+
+async function test_node_card_is_flat_accessible_container() {
+    // Section 1: the outer .node-card is a plain visual container carrying
+    // data-node-id + data-target-kind="node" and NO role/tabindex/aria-pressed;
+    // the only aria-pressed carrier is the inner .node-card-select button, which
+    // has no interactive descendants; the status row / last text / unignore /
+    // map badge are SIBLINGS of that button (never nested inside it).
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes(), loadStore: false });
+    const parsed = parseHtmlFragment(sandbox.renderNodeCard(makeTestNode()));
+    const card = parsed._children.find(el => hasClass(el, 'node-card'));
+
+    assert.ok(card, 'the rendered node card must have a .node-card root');
+    assert.equal(card.getAttribute('data-node-id'), '!aaaaaaaa', 'outer card carries data-node-id');
+    assert.equal(card.getAttribute('data-target-kind'), 'node', 'outer card carries data-target-kind="node"');
+    assert.equal(card.getAttribute('aria-pressed'), null, 'outer card carries NO aria-pressed');
+    assert.equal(card.getAttribute('role'), null, 'outer card carries NO role');
+    assert.equal(card.getAttribute('tabindex'), null, 'outer card carries NO tabindex');
+
+    const selects = descendants(card, el => hasClass(el, 'node-card-select'));
+    assert.equal(selects.length, 1, 'exactly one .node-card-select button');
+    const selectBtn = selects[0];
+    assert.equal(selectBtn.parentNode, card, '.node-card-select is a direct child of the card');
+    assert.equal(selectBtn.getAttribute('data-target-id'), '!aaaaaaaa', 'select button carries data-target-id');
+    assert.equal(selectBtn.getAttribute('aria-pressed'), 'false', 'select button is the aria-pressed carrier (unselected)');
+
+    const interactiveInside = descendants(selectBtn, el => INTERACTIVE_TAGS.has(el.tagName.toLowerCase()));
+    assert.equal(interactiveInside.length, 0, '.node-card-select has no interactive descendants');
+
+    const statusRow = descendants(card, el => hasClass(el, 'node-card-status-row'));
+    assert.equal(statusRow.length, 1, 'one status row');
+    assert.equal(statusRow[0].parentNode, card, 'status row is a sibling of the select button');
+
+    const lastText = descendants(card, el => hasClass(el, 'node-last-text'));
+    assert.equal(lastText.length, 1, 'one last-text row');
+    assert.equal(lastText[0].parentNode, card, 'last text is a sibling of the select button');
+
+    const unignore = descendants(card, el => el.getAttribute('data-action') === 'unignore');
+    assert.equal(unignore.length, 1, 'an ignored node renders one unignore action');
+    assert.equal(unignore[0].parentNode, card, 'unignore is a sibling of the select button');
+
+    const mapBadge = descendants(card, el => hasClass(el, 'node-map-badge'));
+    assert.equal(mapBadge.length, 1, 'one map badge');
+    assert.equal(descendants(selectBtn, el => hasClass(el, 'node-map-badge')).length, 0,
+        'the map badge is not nested in the selection button');
+
+    // No store -> no MCA key row.
+    assert.equal(descendants(card, el => hasClass(el, 'node-card-key-row')).length, 0,
+        'no store means no key row');
+    console.log('PASS: test_node_card_is_flat_accessible_container');
+}
+
+async function test_node_card_key_row_states() {
+    // Section 2: every trust/request state renders the right key row — the ready
+    // state shows the "files available" status, each actionable state renders the
+    // right data-files-action button, and local + no-binding nodes render nothing.
+    const ID = '!aaaaaaaa';
+    const actionButtons = (row) => descendants(row, el => INTERACTIVE_TAGS.has(el.tagName.toLowerCase()));
+    const actionsNamed = (row, name) => descendants(row, el => el.getAttribute('data-files-action') === name);
+
+    let sandbox = await buildStoreSandbox({ contacts: [{ contact_id: ID, status: 'trusted', fingerprint: 'fp', key_epoch: 1 }] });
+    let row = parseHtmlFragment(sandbox.renderNodeCardKeyActions(ID))._children[0];
+    assert.ok(hasClass(row, 'node-card-key-row'), 'ready renders a key row');
+    assert.ok(hasClass(row, 'node-card-key-ready'), 'ready is the "files available" row');
+    assert.equal(actionButtons(row).length, 0, 'ready renders no action button');
+
+    sandbox = await buildStoreSandbox({ contacts: [{ contact_id: ID, status: 'confirmation_required', fingerprint: 'fp', key_epoch: 1 }] });
+    row = parseHtmlFragment(sandbox.renderNodeCardKeyActions(ID))._children[0];
+    assert.equal(actionsNamed(row, 'contact-confirm').length, 1, 'confirmation_required renders a confirm button');
+
+    sandbox = await buildStoreSandbox({ contacts: [{ contact_id: ID, status: 'key_changed', fingerprint: 'fp', key_epoch: 1 }] });
+    row = parseHtmlFragment(sandbox.renderNodeCardKeyActions(ID))._children[0];
+    assert.equal(actionsNamed(row, 'contact-accept').length, 1, 'changed renders an accept button');
+    assert.equal(actionsNamed(row, 'contact-reject').length, 1, 'changed renders a reject button');
+
+    sandbox = await buildStoreSandbox({ contacts: [{ contact_id: ID, status: 'key_unknown', fingerprint: '', key_epoch: null }] });
+    row = parseHtmlFragment(sandbox.renderNodeCardKeyActions(ID))._children[0];
+    assert.equal(actionsNamed(row, 'contact-request-key').length, 1, 'unknown+idle renders a request-key button');
+
+    sandbox = await buildStoreSandbox({
+        contacts: [{ contact_id: ID, status: 'key_unknown', fingerprint: '', key_epoch: null }],
+        key_requests: [{ contact_id: ID, key_request_state: 'queued', can_request_key: false }],
+    });
+    row = parseHtmlFragment(sandbox.renderNodeCardKeyActions(ID))._children[0];
+    assert.equal(actionButtons(row).length, 0, 'queued renders no button (request in flight)');
+
+    sandbox = await buildStoreSandbox({
+        contacts: [{ contact_id: ID, status: 'key_unknown', fingerprint: '', key_epoch: null }],
+        key_requests: [{ contact_id: ID, key_request_state: 'waiting_response', can_request_key: false }],
+    });
+    row = parseHtmlFragment(sandbox.renderNodeCardKeyActions(ID))._children[0];
+    assert.equal(actionButtons(row).length, 0, 'waiting_response renders no button');
+
+    sandbox = await buildStoreSandbox({
+        contacts: [{ contact_id: ID, status: 'key_unknown', fingerprint: '', key_epoch: null }],
+        key_requests: [{ contact_id: ID, key_request_state: 'retry_available', can_request_key: true }],
+    });
+    row = parseHtmlFragment(sandbox.renderNodeCardKeyActions(ID))._children[0];
+    assert.equal(actionsNamed(row, 'contact-request-key').length, 1, 'retry_available renders a request-key-again button');
+
+    sandbox = await buildStoreSandbox({});
+    assert.equal(sandbox.renderNodeCardKeyActions('!11111111'), '', 'the local node renders no key row');
+    console.log('PASS: test_node_card_key_row_states');
+}
+
+async function test_sidebar_delegated_click_routes_and_excludes() {
+    // Section 3: ONE guarded delegated handler reads data-target-id and routes
+    // node/channel selection through store.toggleSelect; map/unignore/key actions
+    // are excluded so they never toggle selection; one activation = one store
+    // transition.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const store = sandbox.window.MeshCenterTargets;
+
+    const selectBtn = new FakeElement('button', '');
+    selectBtn.classList.add('node-card-select');
+    selectBtn.setAttribute('data-target-id', '!aaaaaaaa');
+    sandbox.handleSidebarTargetClick({ target: selectBtn });
+    assert.equal(store.selected().kind, 'node', 'select-button click selects the node');
+    assert.equal(store.selected().id, '!aaaaaaaa', 'select-button click selects the right node id');
+
+    sandbox.handleSidebarTargetClick({ target: selectBtn });
+    assert.equal(store.selected(), null, 'a second click on the same target toggles it off');
+
+    const channelBtn = new FakeElement('button', '');
+    channelBtn.classList.add('channel-card');
+    channelBtn.setAttribute('data-target-id', 'channel');
+    sandbox.handleSidebarTargetClick({ target: channelBtn });
+    assert.equal(store.selected().kind, 'channel', 'channel-card click selects the channel');
+    assert.equal(store.selected().id, 'channel', 'channel-card click selects the right channel id');
+
+    const before = store.selected();
+    const unignoreBtn = new FakeElement('button', '');
+    unignoreBtn.setAttribute('data-action', 'unignore');
+    unignoreBtn.setAttribute('data-node-id', '!aaaaaaaa');
+    sandbox.handleSidebarTargetClick({ target: unignoreBtn });
+    assert.equal(store.selected(), before, 'unignore is a card action, never a selection');
+
+    store.clearSelection();
+    const mapBadge = new FakeElement('button', '');
+    mapBadge.classList.add('node-map-badge');
+    sandbox.handleSidebarTargetClick({ target: mapBadge });
+    assert.equal(store.selected(), null, 'the map badge never toggles selection');
+
+    const keyBtn = new FakeElement('button', '');
+    keyBtn.classList.add('node-card-key-btn');
+    keyBtn.setAttribute('data-files-action', 'contact-request-key');
+    keyBtn.setAttribute('data-contact', '!aaaaaaaa');
+    sandbox.handleSidebarTargetClick({ target: keyBtn });
+    assert.equal(store.selected(), null, 'a key action never toggles selection');
+
+    const sidebar = sandbox._document.getElementById('sidebar');
+    sandbox.installSidebarTargetDelegation();
+    sandbox.installSidebarTargetDelegation();
+    assert.equal((sidebar._listeners.click || []).length, 1, 'the delegated listener is installed exactly once');
+    console.log('PASS: test_sidebar_delegated_click_routes_and_excludes');
+}
+
+async function test_node_details_visual_clear_vs_selection_clear() {
+    // Section 4 refactor: clearNodeDetailsPanel() is VISUAL-only (does not touch
+    // the shared store); closeNodeDetails() clears BOTH the store selection and
+    // the panel. Two distinct responsibilities, one seam.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const store = sandbox.window.MeshCenterTargets;
+    sandbox.ensureStoreSelectionSubscription();
+
+    store.select('channel', 'channel');
+
+    sandbox.clearNodeDetailsPanel();
+    assert.equal(store.selected().kind, 'channel', 'visual clear must not clear the store selection');
+    assert.equal(sandbox._document.getElementById('nodeDetails').className, 'node-details-placeholder');
+    assert.equal(sandbox._document.getElementById('nodeDetails').innerHTML, '');
+
+    sandbox.closeNodeDetails();
+    assert.equal(store.selected(), null, 'the close button clears the shared selection too');
+    assert.equal(sandbox._document.getElementById('nodeDetails').className, 'node-details-placeholder');
+    console.log('PASS: test_node_details_visual_clear_vs_selection_clear');
+}
+
+async function test_node_details_panel_follows_shared_selection() {
+    // Section 4: the node-details panel is driven by the shared store selection
+    // through the subscription — a channel selection closes the panel (keeping
+    // the channel selected), a node selection fetches details WITHOUT auto-
+    // opening a DM, and a toggle-off clears both selection and panel.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const store = sandbox.window.MeshCenterTargets;
+    sandbox.ensureStoreSelectionSubscription();
+
+    store.select('channel', 'channel');
+    assert.equal(sandbox._document.getElementById('nodeDetails').className, 'node-details-placeholder',
+        'a channel selection closes the node-details panel');
+    assert.equal(store.selected().kind, 'channel', 'the channel stays selected');
+
+    const messagesBefore = sandbox._fetchLog.filter(e => e.url.startsWith('/api/messages')).length;
+    store.select('node', '!aaaaaaaa');
+    assert.equal(sandbox._document.getElementById('chatTitle').textContent, '',
+        'selecting a node in the store must NOT auto-open a DM');
+    await waitFor(() => sandbox._fetchLog.filter(e => e.url.startsWith('/api/messages')).length > messagesBefore);
+
+    store.toggleSelect('node', '!aaaaaaaa');
+    assert.equal(store.selected(), null, 'toggle-off clears the selection');
+    assert.equal(sandbox._document.getElementById('nodeDetails').className, 'node-details-placeholder',
+        'clearing the selection closes the node-details panel');
+    console.log('PASS: test_node_details_panel_follows_shared_selection');
+}
+
+async function test_refresh_sidebar_targets_age_limit_join_and_force() {
+    // Section 5: refreshSidebarTargets is the single joinable controller — a
+    // normal call is age-limited to <=1/60s, a forced call bypasses the age
+    // limit, and concurrent calls join one in-flight refresh instead of issuing
+    // their own.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const store = sandbox.window.MeshCenterTargets;
+    let refreshCalls = 0;
+    const origRefresh = store.refresh;
+    store.refresh = function () {
+        refreshCalls++;
+        return origRefresh.apply(this, arguments);
+    };
+
+    await sandbox.refreshSidebarTargets(false);
+    assert.equal(refreshCalls, 1, 'the first normal call refreshes');
+
+    await sandbox.refreshSidebarTargets(false);
+    assert.equal(refreshCalls, 1, 'a second normal call within 60s is suppressed');
+
+    await sandbox.refreshSidebarTargets(true);
+    assert.equal(refreshCalls, 2, 'a forced call bypasses the age limit');
+
+    const p1 = sandbox.refreshSidebarTargets(true);
+    const p2 = sandbox.refreshSidebarTargets(true);
+    await Promise.all([p1, p2]);
+    assert.equal(refreshCalls, 3, 'concurrent forced calls join a single in-flight refresh');
+    console.log('PASS: test_refresh_sidebar_targets_age_limit_join_and_force');
+}
+
 // ---- runner ------------------------------------------------------------------
 
 async function main() {
@@ -793,7 +1133,13 @@ async function main() {
     await test_channel_targets_render_into_sidebar();
     await test_channel_card_aria_pressed_syncs_with_store();
     await test_node_card_key_actions_are_siblings_not_nested();
-    console.log('All shared-selection wiring tests passed (16 scenarios).');
+    await test_node_card_is_flat_accessible_container();
+    await test_node_card_key_row_states();
+    await test_sidebar_delegated_click_routes_and_excludes();
+    await test_node_details_visual_clear_vs_selection_clear();
+    await test_node_details_panel_follows_shared_selection();
+    await test_refresh_sidebar_targets_age_limit_join_and_force();
+    console.log('All shared-selection wiring tests passed (22 scenarios).');
 }
 
 main()

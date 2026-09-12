@@ -163,7 +163,8 @@
       "trusted": "Доверенный",
       "confirmation_required": "Требуется подтверждение",
       "key_changed": "Ключ изменён",
-      "key_unknown": "Ключ неизвестен"
+      "key_unknown": "Ключ неизвестен",
+      "files_available": "Файлы доступны"
     },
     "error": {
       "mca_not_ready": "Служба MCAttach не готова",
@@ -1295,7 +1296,7 @@
     "no_ignored_nodes_found": "Игнорируемые узлы не найдены",
     "sidebar_tab": "Сеть",
     "heading": "Узлы",
-    "search_placeholder": "Поиск узлов...",
+    "search_placeholder": "Поиск каналов и узлов...",
     "rescan_network": "Пересканировать сеть",
     "last_update": "Последнее обновление",
     "map_library_load_failed": "Не удалось загрузить библиотеку карт",

@@ -2918,6 +2918,12 @@
         activate: activate,
         deactivate: deactivate,
         refresh: refresh,
+        // PR 5 final correction (section 2): expose the contact busy state so the
+        // sidebar node-card key row can disable its MCA action buttons while a
+        // confirm/accept/reject/request-key command is in flight for that node.
+        isContactBusy: function (contactId) {
+            return Boolean(state.busy['contact:' + contactId]);
+        },
     };
 
     // Static compatibility entry points referenced by the existing template

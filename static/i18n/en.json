@@ -163,7 +163,8 @@
       "trusted": "Trusted",
       "confirmation_required": "Confirmation required",
       "key_changed": "Key changed",
-      "key_unknown": "Key unknown"
+      "key_unknown": "Key unknown",
+      "files_available": "Files available"
     },
     "error": {
       "mca_not_ready": "MCAttach service is not ready",
@@ -1295,7 +1296,7 @@
     "no_ignored_nodes_found": "No ignored nodes found",
     "sidebar_tab": "Network",
     "heading": "Nodes",
-    "search_placeholder": "Search nodes...",
+    "search_placeholder": "Search channels and nodes...",
     "rescan_network": "Rescan Network",
     "last_update": "Last update",
     "map_library_load_failed": "Map library could not be loaded",

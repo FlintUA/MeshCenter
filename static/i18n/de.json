@@ -163,7 +163,8 @@
       "trusted": "Vertrauenswürdig",
       "confirmation_required": "Bestätigung erforderlich",
       "key_changed": "Schlüssel geändert",
-      "key_unknown": "Schlüssel unbekannt"
+      "key_unknown": "Schlüssel unbekannt",
+      "files_available": "Dateien verfügbar"
     },
     "error": {
       "mca_not_ready": "MCAttach-Dienst ist nicht bereit",
@@ -1295,7 +1296,7 @@
     "no_ignored_nodes_found": "Keine ignorierten Knoten gefunden",
     "sidebar_tab": "Netzwerk",
     "heading": "Knoten",
-    "search_placeholder": "Knoten suchen...",
+    "search_placeholder": "Kanäle und Knoten suchen...",
     "rescan_network": "Netzwerk erneut scannen",
     "last_update": "Letzte Aktualisierung",
     "map_library_load_failed": "Kartenbibliothek konnte nicht geladen werden",

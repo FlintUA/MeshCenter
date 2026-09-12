@@ -4315,7 +4315,10 @@ html[data-theme="dark"] #notificationsCard {
     min-height: 0;
     padding: var(--mc-page-pad, 14px);
     overflow: hidden;
-    background: var(--color-bg, #f5f7fa);
+    /* PR 5 final correction (section 8): use the workspace token so the Files
+       workspace follows the active theme's ground instead of the hard-coded
+       light #f5f7fa (which left it pale in dark themes). */
+    background: var(--mc-bg-workspace);
 }
 
 .files-panel.mc-workspace-panel {

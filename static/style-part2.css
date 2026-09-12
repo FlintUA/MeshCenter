@@ -2134,6 +2134,13 @@ body.context-chat-mode .settings-view {
     text-transform: uppercase;
     color: var(--mc-muted, #5c7290);
 }
+/* PR 5 final correction (section 9): each channel is an independent card with
+   a ~6px vertical gap, not a visually merged list. */
+#channelsList {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
 .channel-card {
     display: flex;
     align-items: center;

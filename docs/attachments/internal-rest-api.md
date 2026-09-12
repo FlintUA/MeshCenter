@@ -1,6 +1,6 @@
 # MCAttach Internal REST API Contract
 
-**Status:** Design contract (Step 1.6A), revised (second pass). The read-only endpoints of sub-stage 1.6A.2 (§5) are implemented in `api/api_attachments.py`. Of the mutation endpoints, the following are implemented (worker handlers in `meshsrv/attachments/service.py`, enqueued from `api/api_attachments.py`): the three Step 1.6A.3A lifecycle actions — `POST /api/attachments/{id}/retry`, `/download`, and `/reject` (§7.3); the Step 1.6A.3B idempotent multipart create — `POST /api/attachments` (§7.2); the two Step 1.6A.3C mutations — `POST /api/attachments/{id}/cancel` (§7.4) and `POST /api/mca/contacts/{contact_id}/request-key` (§7.10); and the eight Step 1.6A.4 provider onboarding & management mutations — `POST /api/mca/providers/probe`, `POST /api/mca/providers`, `PATCH /api/mca/providers/{provider_id}`, `POST /api/mca/providers/{provider_id}/default`, `DELETE /api/mca/providers/{provider_id}`, `PUT`/`DELETE /api/mca/providers/{provider_id}/upload-token`, and `POST /api/mca/providers/{provider_id}/check` (§7.11/§7.12). and the four Step 1.6A.5 content/action endpoints — `GET /api/attachments/{id}/content` (§7.14) plus `POST /api/attachments/{id}/save`, `POST /api/attachments/{id}/revoke`, and `DELETE /api/attachments/{id}/local-content` (§7.3), the latter three as worker commands `attachment_save` / `attachment_revoke` / `attachment_delete_local_content` while content is served synchronously from the internal `ContentDescriptor` (§3.7). The remaining Stage 1 and Multi-transport endpoints (contacts enumeration, manual import, copy-code, add-delivery, connectors) remain design-only and do not exist yet.
+**Status:** Design contract (Step 1.6A), revised (second pass). The read-only endpoints of sub-stage 1.6A.2 (§5) are implemented in `api/api_attachments.py`. Of the mutation endpoints, the following are implemented (worker handlers in `meshsrv/attachments/service.py`, enqueued from `api/api_attachments.py`): the three Step 1.6A.3A lifecycle actions — `POST /api/attachments/{id}/retry`, `/download`, and `/reject` (§7.3); the Step 1.6A.3B idempotent multipart create — `POST /api/attachments` (§7.2); the two Step 1.6A.3C mutations — `POST /api/attachments/{id}/cancel` (§7.4) and `POST /api/mca/contacts/{contact_id}/request-key` (§7.10); and the eight Step 1.6A.4 provider onboarding & management mutations — `POST /api/mca/providers/probe`, `POST /api/mca/providers`, `PATCH /api/mca/providers/{provider_id}`, `POST /api/mca/providers/{provider_id}/default`, `DELETE /api/mca/providers/{provider_id}`, `PUT`/`DELETE /api/mca/providers/{provider_id}/upload-token`, and `POST /api/mca/providers/{provider_id}/check` (§7.11/§7.12). and the four Step 1.6A.5 content/action endpoints — `GET /api/attachments/{id}/content` (§7.14) plus `POST /api/attachments/{id}/save`, `POST /api/attachments/{id}/revoke`, and `DELETE /api/attachments/{id}/local-content` (§7.3), the latter three as worker commands `attachment_save` / `attachment_revoke` / `attachment_delete_local_content` while content is served synchronously from the internal `ContentDescriptor` (§3.7). Also implemented and read-only: `GET /api/mca/contacts` (Step 1.7, the TOFU binding allowlist, §7.1) and `GET /api/mca/key-requests` (PR 4 shared target model, §7.1). The remaining Stage 1 and Multi-transport endpoints (manual import, copy-code, add-delivery, connectors) remain design-only and do not exist yet.
 **Canonical source:** the Russian system design spec (section 18 primary, sections 17/19/20 and the state machines also consulted). That spec is reference-only and is not committed to the repository.
 **Audience:** a future implementation task, split into sub-stages (§5).
 
@@ -327,7 +327,7 @@ Each sub-stage is independently implementable and shippable against the existing
 |---|---|---|---|
 | **1.6A.0** | Project-wide CSRF contract (§2.3). | — (infrastructure) | none — prerequisite for every mutation |
 | **1.6A.1** | Facade plumbing (§3): command queue + `CommandRegistry`, attachments/provider/idempotency/probe snapshots, dedicated snapshot publisher (§3.3), `ContentDescriptor` (§3.7), idempotency migration + unique index (§3.6), `clear_upload_token()`, and a **mandatory snapshot-cost benchmark** (§3.3). | — (infrastructure; `commands/{command_id}` read lands in 1.6A.2) | none |
-| **1.6A.2** | Read-only API | list, detail, deliveries, connectivity, providers, providers/{id}, upload-readiness, identity, delivery-adapters, commands/{command_id} | §3 snapshots |
+| **1.6A.2** | Read-only API | list, detail, deliveries, connectivity, providers, providers/{id}, upload-readiness, identity, delivery-adapters, commands/{command_id}, key-requests | §3 snapshots |
 | **1.6A.3** | Attachment lifecycle — create / download / reject / cancel / retry / request-key | `POST /api/attachments`, `POST /api/attachments/{id}/download`, `POST /api/attachments/{id}/reject`, `POST /api/attachments/{id}/cancel`, `POST /api/attachments/{id}/retry`, `POST /api/mca/contacts/{contact_id}/request-key` | §3 command queue, idempotency (§3.5/§3.6) |
 | **1.6A.4** | Provider onboarding & management | probe, register, patch, default, delete, upload-token (PUT/DELETE), check | two-phase bootstrap via `probe_id` (§7.10/§12), `clear_upload_token()` |
 | **1.6A.5** | Content / save / revoke | content, save, revoke, delete-local-content | `ContentDescriptor` (§3.7) |
@@ -336,7 +336,7 @@ Each sub-stage is independently implementable and shippable against the existing
 
 ---
 
-## 6. Endpoint inventory (33)
+## 6. Endpoint inventory (34)
 
 Legend: **1.6A.N** = sub-stage target; **Stage 1** = later (within MVP but deferred); **Multi-transport** = Stage 3+ (needs a non-Meshtastic/direct transport).
 
@@ -375,8 +375,9 @@ Legend: **1.6A.N** = sub-stage target; **Stage 1** = later (within MVP but defer
 | 31 | PUT | `/api/mca/providers/{id}/upload-token` | mutation | 1.6A.4 |
 | 32 | DELETE | `/api/mca/providers/{id}/upload-token` | mutation | 1.6A.4 |
 | 33 | POST | `/api/mca/providers/{id}/check` | mutation | 1.6A.4 |
+| 34 | GET | `/api/mca/key-requests` | read | 1.6A.2 |
 
-Rows 1–4, 6, 8–10, 14–21, 24–25, 27 (24 rows) correspond to the design spec's section-18 endpoints plus the action lifecycle; 5, 7, 11–13, 22–23, 26, 28–33 (9 rows) are explicit extensions. See §14 for the adaptation list.
+Rows 1–4, 6, 8–10, 14–21, 24–25, 27 (24 rows) correspond to the design spec's section-18 endpoints plus the action lifecycle; 5, 7, 11–13, 22–23, 26, 28–34 (10 rows) are explicit extensions. See §14 for the adaptation list.
 
 ---
 
@@ -399,8 +400,12 @@ Every mutation returns `202` + `command_id` (§3.4) unless a synchronous validat
 - Response: `{"ok": true, "deliveries": [{"id", "adapter_id", "connector_profile_id", "route_type", "route_id", "state", "external_message_id", "sent_at"}]}`.
 - Errors: as above.
 
-**`GET /api/mca/contacts`** — MCA compatibility of known bindings. **Stage 1** (needs a new enumeration method, §13).
-- Response: `{"ok": true, "contacts": [{"source_address", "key_id", "status": "trusted|confirmation_required|key_unknown|key_changed"}]}`.
+**`GET /api/mca/contacts`** — every TOFU recipient binding, deterministic (`contact_id`-ascending) order, allowlist-serialized (§11). Read-only — reads the worker-published recipient snapshot, never `conn`.
+- Response: `{"ok": true, "contacts": [{"contact_id", "adapter_id", "key_id", "status": "trusted|confirmation_required|key_unknown|key_changed", "fingerprint", "key_epoch", "pending_fingerprint", "pending_key_epoch"}]}`. `status` is the public `ContactStatus` string; only public identifiers and non-secret digests are serialized — never the raw `public_identity` bytes (§11).
+
+**`GET /api/mca/key-requests`** — the key-request capability projection (PR 4 shared target model). Deterministic (`contact_id`-ascending) order, allowlist-serialized (§11). Read-only — reads the worker-published `KeyRequestSnapshot`, never `conn`, the filesystem, the network, or the tick lock.
+- Response: `{"ok": true, "key_requests": [{"contact_id", "key_request_state": "queued|waiting_response|retry_available", "can_request_key"}]}`. Only addresses with an in-flight key request are present: `queued` (a `contact_request_key` command still in the bounded command queue), `waiting_response` (sent, inside the per-address rate-limit window), or `retry_available` (sent, window elapsed, no key yet). Addresses with no activity are absent and default to `idle` in the frontend. Carries only the public state string and a derived boolean — never `last_request_sent_at`, the rate-limit window, a public identity, X25519 material, a key path, or a DB row (§11).
+- Feeds the frontend shared target store (`static/targets.js`) alongside `/api/nodes_management`, the cached `/api/chats` channel projection, and `/api/mca/contacts` (ADR-0012).
 
 **`GET /api/mca/delivery-adapters`** — capabilities/state of the one adapter.
 - Response: `{"ok": true, "adapters": [{"adapter_id": "meshtastic", "connector_profile_id": "meshtastic", "capabilities": {"wire_formats": ["MCA1_TEXT"], "max_payload_bytes": 180, "supports_direct": true, "supports_channel": false, "supports_incoming": true, "ack_semantics": "CONFIRMED", "connector_state": "UNKNOWN"}}]}`.
@@ -756,7 +761,7 @@ The trust is thus **operator-confirmed fingerprint + server-side probe-verified 
 3. **Multipart staging — done (Step 1.6A.3B).** `POST /api/attachments` now accepts `multipart/form-data`, stages the plaintext to `spool/outgoing/<uuid>` in bounded 64 KiB chunks (never whole-file buffered), sniffs MIME from magic bytes plus full-stream text/JSON validation and filename normalization, computes `file_sha256` + `canonical_hash`, and enforces the 5 MiB cap with a per-request total-body cap (`413 request_too_large`) (§7.2).
 4. **Cancel orchestration — done (Step 1.6A.3C).** `sender.cancel()` still does not itself clear the spool or revoke an in-flight Relay object; the `attachment_cancel` worker command now composes both halves — the persisted-remote-state Relay revoke (with 404-as-confirmed-absence) followed by the spool unlink + `saved_path` clear + `sender.cancel()` (§7.4).
 5. **`ProbeRegistry` built (Step 1.6A.1); `probe_id`→`register()` wiring done (Step 1.6A.4).** The single-use in-memory `ProbeRecord` store with its TTL/check-and-consume semantics (§7.11) is built and TTL-enforced. The `provider_register` handler now check-and-consumes the probe record (a replay or an expired probe → `probe_id_used` in the command result), and `register()` materializes the profile from the probe's server-fetched identity fields — never re-trusting browser-supplied Relay parameters (§7.11).
-6. **No contact enumeration** — `GET /api/mca/contacts` needs a "list all bindings" method.
+6. **Contact enumeration and key-request projection — done (Step 1.7 + PR 4).** `GET /api/mca/contacts` now lists all TOFU bindings from the worker-published recipient snapshot, and `GET /api/mca/key-requests` lists per-address key-request capability from the worker-published `KeyRequestSnapshot` (§7.1).
 7. **`clear_upload_token()` done (Step 1.6A.1); save-to-files and revoke done (Step 1.6A.5); add-route still open.** `save` (save-to-files) and `revoke`-via-facade are now implemented as worker commands (`attachment_save` / `attachment_revoke`, §7.3). The remaining domain method — `deliveries` POST (add-route) — still needs a worker-executed method (Stage 1, deferred).
 8. **SSRF hardening (§12) — done (Step 1.6A.4).** DNS/IP classification (`is_global` + IPv4-mapped-IPv6), IP pinning with hostname/SNI TLS verification (no independent client-side DNS), redirect pinning (`allow_redirects=False`), and the async onboarding probe now exist in `meshsrv/attachments/relay_http.py` (the shared §12 module — `resolve_host_ips` / `is_globally_routable` / `validate_origin_routable` / `SecureSession` / `_PinnedHTTPSAdapter` / `build_secure_session`), exercised by the `provider_probe`/`provider_check` worker handlers via `RelayClient`.
 9. **No connector registry** — `connector_profile_id` is a fixed `"meshtastic"` string; `GET /api/mca/connectors` is a Multi-transport placeholder.

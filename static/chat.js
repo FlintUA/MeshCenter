@@ -118,7 +118,26 @@ function ensureStoreSelectionSubscription() {
     store.subscribe(function () {
         syncSelectedNodeCard();
         syncSelectedChatItems();
+        syncSelectedChannelCards();
     });
+}
+
+// PR 5: the sidebar node/channel cards are the single selection surface for
+// the shared store — clicking toggles (selects/deselects) the target, never
+// opening a conversation. Opening a chat (openChat) stays a separate act in the
+// central Chats list. These are thin wrappers over store.toggleSelect so the
+// inline onclick handlers stay declarative and the store remains the one source
+// of truth.
+function toggleNodeTarget(nodeId) {
+    const store = targetStore();
+    if (!store) return;
+    store.toggleSelect('node', String(nodeId || ''));
+}
+
+function toggleChannelTarget(channelId) {
+    const store = targetStore();
+    if (!store) return;
+    store.toggleSelect('channel', String(channelId || ''));
 }
 
 // Registry for the selected-node card. Future core modules or plugins can
@@ -4351,6 +4370,16 @@ async function loadMessages() {
         console.log('[MESSAGES] Received', data.nodes ? data.nodes.length : 0, 'nodes');
         notifyFailedOutgoingMessages(data.messages);
 
+        // PR 5: the sidebar Nodes/Channels cards read the shared target store
+        // (MCA capability state + channel list) rather than re-deriving it from
+        // /api/messages. Refresh it before rendering so node-card key actions
+        // and the Channels section reflect the latest slice; the store's own
+        // in-flight dedup makes this cheap on the polling path.
+        const targetStoreForSidebar = targetStore();
+        if (targetStoreForSidebar && typeof targetStoreForSidebar.refresh === 'function') {
+            try { await targetStoreForSidebar.refresh(); } catch (_) { /* keep stale slice */ }
+        }
+
         nodeCache = mergeNodeCachePreservingPosition(
             data.nodes || []
         );
@@ -4403,6 +4432,10 @@ async function loadMessages() {
         const nodesList = document.getElementById('nodesList');
         if (!nodesList) return;
 
+        // PR 5: the sidebar Channels section renders alongside the Nodes cards
+        // from the shared store (same search term filters both sections).
+        renderChannelTargets();
+
         let filteredNodes = displayNodes;
         if (nodeSearchTerm) {
             filteredNodes = filteredNodes.filter(node =>
@@ -4451,44 +4484,51 @@ async function loadMessages() {
                 const hopsText = formatNodeHops(node);
                 const signalSegments = renderNodeSignalSegments(node);
 
+                // PR 5: the unignore control and the MCA key actions are SIBLINGS
+                // of the selection button (never nested inside it), so neither
+                // one toggles the shared selection.
                 const unignoreBtn = isIgnored
-                    ? `<button class="unignore-btn-mini" onclick="event.stopPropagation(); toggleIgnore('${escapeHtml(node.node_id)}')">Unignore</button>`
+                    ? `<button type="button" class="unignore-btn-mini" onclick="toggleIgnore('${escapeHtml(node.node_id)}')">Unignore</button>`
                     : '';
+                const keyRow = renderNodeCardKeyActions(node.node_id);
 
                 return `
-                    <div class="${cardClass}" data-node-id="${escapeHtml(node.node_id)}" data-target-kind="node" role="button" tabindex="0" aria-pressed="${isSelected ? 'true' : 'false'}" onkeydown="handleNodeCardKeydown(event, this)">
-                        <div class="node-card-topline">
-                            <span class="node-favorite-slot"
-                                title="${isFavorite ? 'Favorite node' : 'Not favorite'}">
-                                ${favoriteStatus}
-                            </span>
-                            <span class="node-activity-square ${activityClass}"
-                                  title="Node activity"></span>
-                            <div class="node-card-name-wrap">
-                                <div class="node-card-title">${escapeHtml(displayName)}</div>
+                    <div class="${cardClass}" data-node-id="${escapeHtml(node.node_id)}" data-target-kind="node" aria-pressed="${isSelected ? 'true' : 'false'}">
+                        <button type="button" class="node-card-select" aria-pressed="${isSelected ? 'true' : 'false'}" onclick="toggleNodeTarget('${escapeHtml(node.node_id)}')">
+                            <div class="node-card-topline">
+                                <span class="node-favorite-slot"
+                                    title="${isFavorite ? 'Favorite node' : 'Not favorite'}">
+                                    ${favoriteStatus}
+                                </span>
+                                <span class="node-activity-square ${activityClass}"
+                                      title="Node activity"></span>
+                                <div class="node-card-name-wrap">
+                                    <div class="node-card-title">${escapeHtml(displayName)}</div>
+                                </div>
+                                ${ignoreStatus}
                             </div>
-                            ${ignoreStatus}
-                            ${unignoreBtn}
-                        </div>
 
-                        <div class="node-card-identity-row">
-                            <span class="node-short-name">${escapeHtml(shortName)}</span>
-                            <span class="node-identity-separator">•</span>
-                            <span class="node-hardware-name">${escapeHtml(hardware)}</span>
-                            <span class="node-identity-separator">•</span>
-                            <span class="node-inline-id">${escapeHtml(node.node_id)}</span>
-                        </div>
-
-                        <div class="node-card-status-row">
-                            <span class="node-hop-count" title="Mesh route hops">${escapeHtml(hopsText)}</span>
-                            <div class="node-card-signal-wrap">
-                                ${signalSegments}
+                            <div class="node-card-identity-row">
+                                <span class="node-short-name">${escapeHtml(shortName)}</span>
+                                <span class="node-identity-separator">•</span>
+                                <span class="node-hardware-name">${escapeHtml(hardware)}</span>
+                                <span class="node-identity-separator">•</span>
+                                <span class="node-inline-id">${escapeHtml(node.node_id)}</span>
                             </div>
-                            <span class="node-last-seen">🕒 ${escapeHtml(seenText)}</span>
-                            ${mapBadge}
-                        </div>
 
-                        ${lastText}
+                            <div class="node-card-status-row">
+                                <span class="node-hop-count" title="Mesh route hops">${escapeHtml(hopsText)}</span>
+                                <div class="node-card-signal-wrap">
+                                    ${signalSegments}
+                                </div>
+                                <span class="node-last-seen">🕒 ${escapeHtml(seenText)}</span>
+                                ${mapBadge}
+                            </div>
+
+                            ${lastText}
+                        </button>
+                        ${unignoreBtn}
+                        ${keyRow}
                     </div>
                 `;
             }).join('');
@@ -4844,7 +4884,118 @@ function syncSelectedNodeCard() {
 
         card.classList.toggle('selected', isSelected);
         card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+
+        // PR 5: the real selection <button> inside the card mirrors the same
+        // pressed state (the outer card keeps aria-pressed for the test/DOM
+        // contract; the inner button is what ATs actually announce).
+        const selectBtn = typeof card.querySelector === 'function'
+            ? card.querySelector('.node-card-select')
+            : null;
+        if (selectBtn && selectBtn.setAttribute) {
+            selectBtn.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+            if (selectBtn.classList) selectBtn.classList.toggle('selected', isSelected);
+        }
     });
+}
+
+// PR 5: the sidebar Channels section (#channelsList) mirrors the shared
+// selection exactly like the Nodes cards and the central chat items — a channel
+// selected in Files or the central list highlights its sidebar card here.
+function syncSelectedChannelCards() {
+    const eff = effectiveSelectedTarget();
+    const selectedChannelId = (eff && eff.kind === 'channel') ? eff.id : null;
+
+    document.querySelectorAll('#channelsList .channel-card').forEach(card => {
+        const isSelected =
+            selectedChannelId !== null && String(card.dataset.channelId || '') === selectedChannelId;
+
+        card.classList.toggle('selected', isSelected);
+        card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+    });
+}
+
+// PR 5: the sidebar Channels section (#channelsList) renders from the shared
+// store's channelTargets() (channels are navigation-only targets, never file
+// recipients). The same search term filters both Channels and Nodes; selection
+// is exclusively store.toggleSelect via the inline onclick.
+function renderChannelTargets() {
+    const container = document.getElementById('channelsList');
+    if (!container) return;
+
+    const store = targetStore();
+    if (!store) { container.innerHTML = ''; return; }
+
+    let targets = store.channelTargets();
+    if (nodeSearchTerm) {
+        const term = nodeSearchTerm.toLowerCase();
+        targets = targets.filter(c =>
+            String(c.display_name || '').toLowerCase().includes(term) ||
+            String(c.id || '').toLowerCase().includes(term)
+        );
+    }
+
+    if (!targets.length) {
+        container.innerHTML = `<div class="loading">📡 ${escapeHtml(window.I18N.t('chat.no_configured_channels'))}</div>`;
+        return;
+    }
+
+    const eff = effectiveSelectedTarget();
+    container.innerHTML = targets.map(c => {
+        const isSelected = Boolean(eff && eff.kind === 'channel' && eff.id === c.id);
+        const indexLabel = typeof c.index === 'number' ? `#${c.index}` : '';
+        return (
+            `<button type="button" class="channel-card${isSelected ? ' selected' : ''}"` +
+            ` data-channel-id="${escapeHtml(c.id)}" data-target-kind="channel"` +
+            ` aria-pressed="${isSelected ? 'true' : 'false'}"` +
+            ` onclick="toggleChannelTarget('${escapeHtml(c.id)}')">` +
+                `<span class="channel-card-name">${escapeHtml(c.display_name || c.id)}</span>` +
+                (indexLabel ? `<span class="channel-card-index">${escapeHtml(indexLabel)}</span>` : '') +
+            `</button>`
+        );
+    }).join('');
+}
+
+// PR 5: the minimal file/key capability + actions moved into the sidebar node
+// card. Derives from the store's node target (the same central capability
+// matrix files.js used), NOT from the raw /api/messages node. Returns the
+// bottom key-row HTML, or '' when there is nothing actionable (local node,
+// trusted/sendable node, or no binding). The buttons carry data-files-action +
+// data-contact so files.js's delegated document click handler routes them; they
+// are SIBLINGS of the selection button, so a key action never toggles selection.
+function renderNodeCardKeyActions(nodeId) {
+    const store = targetStore();
+    if (!store) return '';
+    const t = store.getNode(nodeId);
+    if (!t || t.is_local || t.trust_state === 'ready') return '';
+
+    const actions = [];
+    let status = '';
+
+    if (t.trust_state === 'confirmation_required') {
+        status = window.I18N.t('files.contact.confirmation_required');
+        actions.push(`<button type="button" class="node-card-key-btn" data-files-action="contact-confirm" data-contact="${escapeHtml(t.id)}">${escapeHtml(window.I18N.t('files.trust_confirm'))}</button>`);
+    } else if (t.trust_state === 'changed') {
+        status = window.I18N.t('files.contact.key_changed');
+        actions.push(`<button type="button" class="node-card-key-btn" data-files-action="contact-accept" data-contact="${escapeHtml(t.id)}">${escapeHtml(window.I18N.t('files.key_change_accept'))}</button>`);
+        actions.push(`<button type="button" class="node-card-key-btn is-danger" data-files-action="contact-reject" data-contact="${escapeHtml(t.id)}">${escapeHtml(window.I18N.t('files.key_change_reject'))}</button>`);
+    } else {
+        // trust_state === 'unknown': reflect the worker-published key-request
+        // state, and offer "Request key" only when the store says we may.
+        const kr = t.key_request_state;
+        if (t.can_request_key) {
+            status = window.I18N.t('files.contact.key_unknown');
+            const again = kr === 'retry_available';
+            actions.push(`<button type="button" class="node-card-key-btn" data-files-action="contact-request-key" data-contact="${escapeHtml(t.id)}">${escapeHtml(again ? window.I18N.t('files.request_key_again') : window.I18N.t('files.request_key'))}</button>`);
+        } else if (kr === 'queued' || kr === 'waiting_response') {
+            status = window.I18N.t('files.key_request_state.' + kr);
+        } else {
+            status = window.I18N.t('files.contact.key_unknown');
+        }
+    }
+
+    if (!status && !actions.length) return '';
+    const statusHtml = status ? `<span class="node-card-key-status">${escapeHtml(status)}</span>` : '';
+    return `<div class="node-card-key-row">${statusHtml}${actions.join('')}</div>`;
 }
 
 // PR 4 final correction (Finding 1): the channel/DM chat items must track the
@@ -7856,28 +8007,20 @@ function installCompactNodeCardStyles() {
 
 installCompactNodeCardStyles();
 
-// Keyboard activation for the role="button" node/channel/DM target elements.
-// These are <div role="button" tabindex="0"> (not native <button>), so the
-// browser does NOT synthesize a click from Enter/Space — we synthesize exactly
-// one activation here. `preventDefault` stops Space from scrolling the page and
-// Enter from any other default; guarding `event.repeat` prevents auto-repeat
-// double-fire, and `element.click()` routes through the SAME click path a
-// pointer would use (the delegated #nodesList listener for node cards; the
-// inline onclick for chat items), so there is exactly one activation and no
-// double-fire.
+// Keyboard activation for the role="button" channel/DM target elements in the
+// central chat list. Those are <div role="button" tabindex="0"> (not native
+// <button>), so the browser does NOT synthesize a click from Enter/Space — we
+// synthesize exactly one activation here. `preventDefault` stops Space from
+// scrolling the page and Enter from any other default; guarding `event.repeat`
+// prevents auto-repeat double-fire, and `element.click()` routes through the
+// SAME click path a pointer would use (the inline onclick for chat items), so
+// there is exactly one activation and no double-fire.
+//
+// PR 5 note: the sidebar node-card selection is now a REAL <button>
+// (.node-card-select), which the browser keyboard-activates natively, so it no
+// longer needs handleNodeCardKeydown() — only the central chat items do.
 function isTargetActivationKey(event) {
     return (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') && !event.repeat;
-}
-
-function handleNodeCardKeydown(event, element) {
-    if (!isTargetActivationKey(event)) return;
-    // A nested interactive control focused inside the card must not trigger
-    // parent selection.
-    if (event.target && event.target !== element && typeof event.target.closest === 'function' &&
-        event.target.closest('button, a, input, select, textarea, [data-stop-node-select]')) return;
-    event.preventDefault();
-    event.stopPropagation();
-    element.click();
 }
 
 function handleChatItemKeydown(event, element) {
@@ -7887,30 +8030,6 @@ function handleChatItemKeydown(event, element) {
     event.preventDefault();
     event.stopPropagation();
     element.click();
-}
-
-function installNodeCardClickHandler() {
-    const nodesList = document.getElementById('nodesList');
-    if (!nodesList || nodesList.dataset.nodeClickHandlerInstalled === '1') return;
-
-    nodesList.dataset.nodeClickHandlerInstalled = '1';
-    nodesList.addEventListener('click', event => {
-        const card = event.target.closest('.node-card');
-        if (!card || !nodesList.contains(card)) return;
-
-        // Preserve independent controls if interactive elements are added later.
-        if (event.target.closest('button, a, input, select, textarea, [data-stop-node-select]')) {
-            return;
-        }
-
-        const nodeId = card.dataset.nodeId;
-        if (!nodeId) return;
-
-        const node = nodeCache.find(item => String(item.node_id) === String(nodeId));
-        const nodeName = node?.clean_name || node?.name || nodeId;
-
-        selectNode(nodeId, nodeName, 'nodes');
-    });
 }
 
 function selectNode(nodeId, nodeName, selectionSource = 'nodes') {
@@ -11921,6 +12040,8 @@ window.markNotificationRead = markNotificationRead;
 window.toggleIgnore = toggleIgnore;
 window.toggleFavorite = toggleFavorite;
 window.selectNode = selectNode;
+window.toggleNodeTarget = toggleNodeTarget;
+window.toggleChannelTarget = toggleChannelTarget;
 window.clearNodeSearch = clearNodeSearch;
 window.rescanNodes = rescanNodes;
 window.restartListener = restartListener;
@@ -12033,12 +12154,9 @@ document.addEventListener('change', event => {
         updateReferenceLocationSaveButton();
     }
 });
-// Install delegated node-card selection after the DOM is available.
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', installNodeCardClickHandler, { once: true });
-} else {
-    installNodeCardClickHandler();
-}
+// PR 5: the sidebar node-card selection is a native <button class="node-card-select">
+// with an inline onclick (toggleNodeTarget), so there is no delegated
+// #nodesList click handler to install here anymore.
 
 window.updateBatteryCapacitySetting = updateBatteryCapacitySetting;
 

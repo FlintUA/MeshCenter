@@ -718,27 +718,26 @@
                         </div>
                     </header>
                     <div class="files-layout" id="filesLayout">
-                        <aside class="files-contacts" id="filesContactsPane" aria-label="Files contacts">
-                            <div class="files-pane-title">👥 <span data-i18n="files.contacts_title">Contacts</span></div>
-                            <div class="files-contacts-list" id="filesContactsList">
-                                <div class="device-dashboard-loading" data-i18n="files.loading_contacts">Loading contacts...</div>
-                            </div>
-                        </aside>
                         <section class="files-archive" id="filesArchivePane" aria-label="Files transfers">
                             <div class="files-pane-title">🗂️ <span data-i18n="files.archive_title">Transfers</span></div>
-                            <div class="files-filter-tabs" id="filesFilterTabs" role="tablist" aria-label="Transfer filters">
-                                <button class="files-filter-tab active" data-files-filter="all" role="tab" aria-selected="true" data-i18n="files.filter_all">All</button>
-                                <button class="files-filter-tab" data-files-filter="received" role="tab" aria-selected="false" data-i18n="files.filter_received">Received</button>
-                                <button class="files-filter-tab" data-files-filter="sent" role="tab" aria-selected="false" data-i18n="files.filter_sent">Sent</button>
-                                <button class="files-filter-tab" data-files-filter="pending" role="tab" aria-selected="false" data-i18n="files.filter_pending">Pending</button>
-                                <button class="files-filter-tab" data-files-filter="saved" role="tab" aria-selected="false" data-i18n="files.filter_saved">Saved</button>
-                                <button class="files-filter-tab" data-files-filter="errors" role="tab" aria-selected="false" data-i18n="files.filter_errors">Errors</button>
-                            </div>
-                            <div class="files-archive-tools">
+                            <div class="files-filter-row">
+                                <label class="files-filter-label" for="filesFilterSelect">
+                                    <span data-i18n="files.filter_label">Filter</span>
+                                    <select id="filesFilterSelect" class="files-filter-select" aria-label="Transfer filter">
+                                        <option value="all" data-i18n="files.filter_all">All</option>
+                                        <option value="received" data-i18n="files.filter_received">Received</option>
+                                        <option value="sent" data-i18n="files.filter_sent">Sent</option>
+                                        <option value="pending" data-i18n="files.filter_pending">Pending</option>
+                                        <option value="saved" data-i18n="files.filter_saved">Saved</option>
+                                        <option value="errors" data-i18n="files.filter_errors">Errors</option>
+                                    </select>
+                                </label>
                                 <input type="search" id="filesSearch" class="files-search" autocomplete="off"
                                     placeholder="Search transfers" aria-label="Search transfers" data-i18n-placeholder="files.search_placeholder" />
-                                <div class="files-summary" id="filesSummary" aria-live="polite"></div>
                             </div>
+                            <div class="files-channel-notice" id="filesChannelNotice" hidden
+                                data-i18n="files.channel_unsupported_notice">File transfer to channels is not supported. Showing all transfers.</div>
+                            <div class="files-summary" id="filesSummary" aria-live="polite"></div>
                             <div class="files-archive-list" id="filesArchiveList">
                                 <div class="device-dashboard-loading" data-i18n="files.loading_transfers">Loading transfers...</div>
                             </div>
@@ -1805,7 +1804,12 @@
                         </div>
                     </div>
                     <div id="nodeDetails"></div>
-                    <div class="nodes-scroll"><div id="nodesList"></div></div>
+                    <div class="nodes-scroll">
+                        <div class="sidebar-section-heading">📡 <span data-i18n="chat.channels_heading">Channels</span></div>
+                        <div id="channelsList"></div>
+                        <div class="sidebar-section-heading">📟 <span data-i18n="nodes.heading">Nodes</span></div>
+                        <div id="nodesList"></div>
+                    </div>
                 </div>
             </div>
 

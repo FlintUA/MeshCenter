@@ -46,12 +46,24 @@ const chatSource = chatSourceRaw
 
 // ---- minimal fake DOM -------------------------------------------------------
 
+// A faithful-enough HTML escaper for the fake DOM's textContent→innerHTML
+// coupling (see FakeElement.textContent below). Matches the five entities the
+// browser's innerHTML serialization emits for text content.
+function escapeHtmlForTest(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 class FakeElement {
     constructor(tag, id) {
         this.tagName = String(tag || 'div').toUpperCase();
         this.id = id || '';
         this.innerHTML = '';
-        this.textContent = '';
+        this._textContent = '';
         this.disabled = false;
         this.className = '';
         this.style = {};
@@ -74,6 +86,15 @@ class FakeElement {
             remove: (name) => { this._classes.delete(name); },
             contains: (name) => this._classes.has(name),
         };
+    }
+    // Mirror the browser: assigning `textContent` to an element also writes its
+    // HTML-escaped form into `innerHTML`. chat.js's escapeHtml() (and the markup
+    // it produces) relies on exactly this coupling; without it, escapeHtml()
+    // returns '' for every value in the fake DOM.
+    get textContent() { return this._textContent; }
+    set textContent(v) {
+        this._textContent = String(v);
+        this.innerHTML = escapeHtmlForTest(this._textContent);
     }
     setAttribute(name, value) {
         this._attrs[name] = String(value);
@@ -142,6 +163,7 @@ class FakeDocument {
         this.readyState = 'loading';   // defer chat.js's DOMContentLoaded initializers
         this._nodeCards = [];          // registered by tests for #nodesList .node-card
         this._chatItems = [];          // registered by tests for #channelList/#dmChatList .chat-item
+        this._channelCards = [];       // registered by tests for #channelsList .channel-card
         this._nodeClickHandlerInstalled = false;
     }
     getElementById(id) {
@@ -159,6 +181,7 @@ class FakeDocument {
         // observe at the DOM level; return the cards the test registered for the
         // exact selectors, and nothing elsewhere.
         if (selector === '#nodesList .node-card') return this._nodeCards.slice();
+        if (selector === '#channelsList .channel-card') return this._channelCards.slice();
         if (selector === '#channelList .chat-item, #dmChatList .chat-item') return this._chatItems.slice();
         return [];
     }
@@ -200,6 +223,12 @@ function makeChatItem(chatId, targetKind) {
     const item = new FakeElement('div', '');
     item.dataset = { chatId, targetKind };
     return item;
+}
+
+function makeChannelCard(channelId) {
+    const card = new FakeElement('button', '');
+    card.dataset = { channelId };
+    return card;
 }
 
 function json(body) {
@@ -611,41 +640,138 @@ async function test_chat_js_without_store_falls_back_to_current_chat() {
 }
 
 async function test_keyboard_enter_space_activate_target_controls() {
-    // (6) The role="button" node/channel/DM target controls must activate on
-    // Enter and Space, prevent Space scroll, and not double-fire on auto-repeat
-    // or on non-activation keys.
+    // (6) The role="button" channel/DM target controls in the CENTRAL chat list
+    // must activate on Enter and Space, prevent Space scroll, and not double-fire
+    // on auto-repeat or on non-activation keys.
+    //
+    // PR 5: the sidebar node card's selectable area is now a REAL <button>
+    // (.node-card-select) that the browser keyboard-activates natively, so it no
+    // longer routes through handleNodeCardKeydown() (that helper was removed).
+    // Only the central chat items (still <div role="button" tabindex="0">) need
+    // the synthetic handler, which is what this test now exercises.
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
 
-    let nodeClicks = 0;
     let chatClicks = 0;
     let prevented = 0;
     let stopped = 0;
 
-    const nodeCard = { dataset: { nodeId: '!aaaaaaaa', targetKind: 'node' }, click() { nodeClicks++; } };
     const chatItem = { dataset: { chatId: '!aaaaaaaa', targetKind: 'node' }, click() { chatClicks++; } };
 
-    function keyEvent(key, repeat = false, target = nodeCard) {
+    function keyEvent(key, repeat = false, target = chatItem) {
         return { key, repeat, target, preventDefault() { prevented++; }, stopPropagation() { stopped++; } };
     }
 
-    sandbox.handleNodeCardKeydown(keyEvent('Enter'), nodeCard);
-    assert.equal(nodeClicks, 1, 'Enter must activate the node card exactly once');
+    sandbox.handleChatItemKeydown(keyEvent('Enter', false, chatItem), chatItem);
+    assert.equal(chatClicks, 1, 'Enter must activate the chat item exactly once');
     assert.equal(prevented, 1, 'Enter must be preventDefault-ed');
     assert.equal(stopped, 1, 'Enter must be stopPropagation-ed');
 
-    sandbox.handleNodeCardKeydown(keyEvent(' '), nodeCard);
-    assert.equal(nodeClicks, 2, 'Space must activate the node card');
+    sandbox.handleChatItemKeydown(keyEvent(' ', false, chatItem), chatItem);
+    assert.equal(chatClicks, 2, 'Space must activate the chat item');
     assert.equal(prevented, 2, 'Space must be preventDefault-ed (no page scroll)');
 
-    sandbox.handleNodeCardKeydown(keyEvent('Enter', true), nodeCard);
-    assert.equal(nodeClicks, 2, 'an auto-repeated Enter must not double-fire');
+    sandbox.handleChatItemKeydown(keyEvent('Enter', true, chatItem), chatItem);
+    assert.equal(chatClicks, 2, 'an auto-repeated Enter must not double-fire');
 
-    sandbox.handleNodeCardKeydown(keyEvent('Tab'), nodeCard);
-    assert.equal(nodeClicks, 2, 'a non-activation key must not activate');
+    sandbox.handleChatItemKeydown(keyEvent('Tab', false, chatItem), chatItem);
+    assert.equal(chatClicks, 2, 'a non-activation key must not activate');
 
-    sandbox.handleChatItemKeydown(keyEvent('Enter', false, chatItem), chatItem);
-    assert.equal(chatClicks, 1, 'Enter must activate the chat item');
+    // The removed node-card handler must not be present on the vm context.
+    assert.equal(typeof sandbox.handleNodeCardKeydown, 'undefined',
+        'handleNodeCardKeydown must be removed now that node cards are native <button>s');
     console.log('PASS: test_keyboard_enter_space_activate_target_controls');
+}
+
+// ---- PR 5: desktop Files workspace redesign --------------------------------
+
+async function test_channel_targets_render_into_sidebar() {
+    // Requirement (item 2): the global right sidebar renders a Channels section
+    // from the shared store's channelTargets(), alongside the Nodes list — there
+    // is no files-local targets pane. renderChannelTargets() paints each channel
+    // as a native <button class="channel-card"> carrying its canonical channel id.
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes({
+            '/api/chats': json({ chats: [], channels: [
+                { id: 'channel', name: 'LongFast', index: 0 },
+                { id: 'channel:1', name: 'Secondary', index: 1 },
+            ], total_unread: 0 }),
+        }),
+    });
+    const store = sandbox.window.MeshCenterTargets;
+
+    await store.refresh();
+    sandbox.renderChannelTargets();
+
+    const html = sandbox._document.getElementById('channelsList').innerHTML;
+    assert.match(html, /channel-card/, 'channels render as channel cards');
+    assert.match(html, /data-channel-id="channel"/, 'the primary channel renders with its canonical id');
+    assert.match(html, /data-channel-id="channel:1"/, 'a secondary channel renders with its indexed id');
+    assert.match(html, /LongFast/, 'the channel display name renders');
+    assert.doesNotMatch(html, /data-channel-id="node"/, 'channel cards never carry a node identity');
+    console.log('PASS: test_channel_targets_render_into_sidebar');
+}
+
+async function test_channel_card_aria_pressed_syncs_with_store() {
+    // Requirement (item 10): sidebar channel cards mirror the shared store's
+    // selection exactly like node cards and chat items — selecting a channel via
+    // the store toggles aria-pressed on the matching #channelsList .channel-card.
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes({
+            '/api/chats': json({ chats: [], channels: [{ id: 'channel', name: 'LongFast', index: 0 }], total_unread: 0 }),
+        }),
+    });
+    const store = sandbox.window.MeshCenterTargets;
+    await store.refresh();
+    sandbox.renderChannelTargets();
+
+    const card = makeChannelCard('channel');
+    sandbox._document._channelCards = [card];
+
+    sandbox.syncSelectedChannelCards();
+    assert.equal(card.getAttribute('aria-pressed'), 'false', 'no selection means the channel card is unpressed');
+
+    store.select('channel', 'channel');
+    sandbox.syncSelectedChannelCards();
+    assert.equal(card.classList.contains('selected'), true, 'the selected channel card gains the selected class');
+    assert.equal(card.getAttribute('aria-pressed'), 'true', 'the selected channel card is aria-pressed=true');
+
+    store.clearSelection();
+    sandbox.syncSelectedChannelCards();
+    assert.equal(card.getAttribute('aria-pressed'), 'false', 'clearing the selection unpressed the channel card');
+    console.log('PASS: test_channel_card_aria_pressed_syncs_with_store');
+}
+
+async function test_node_card_key_actions_are_siblings_not_nested() {
+    // Requirement (item 13): the MCA key actions render as SIBLING buttons of the
+    // .node-card-select selection button — never nested inside it. The key-row
+    // buttons carry data-files-action + data-contact (for files.js's delegated
+    // handler) with type="button", and the row never wraps the selection button.
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes({
+            '/api/mca/contacts': json({ ok: true, contacts: [
+                { contact_id: '!aaaaaaaa', status: 'key_unknown', fingerprint: 'fp', key_epoch: 1 },
+            ] }),
+        }),
+    });
+    const store = sandbox.window.MeshCenterTargets;
+    await store.refresh();
+
+    const node = store.getNode('!aaaaaaaa');
+    assert.ok(node, 'precondition: the contact is a node target in the store');
+    assert.equal(node.trust_state, 'unknown', 'precondition: unknown trust state');
+
+    const keyRow = sandbox.renderNodeCardKeyActions('!aaaaaaaa');
+
+    assert.match(keyRow, /node-card-key-row/, 'the key row renders');
+    assert.match(keyRow, /data-files-action="contact-request-key"/, 'a request-key button renders for an unknown, requestable node');
+    assert.match(keyRow, /data-contact="!aaaaaaaa"/, 'the key button carries the contact id for the delegated handler');
+    assert.match(keyRow, /type="button"/, 'key buttons are type=button');
+    assert.doesNotMatch(keyRow, /node-card-select/, 'the key row must not contain the selection button');
+
+    // The local node and a ready (trusted) node have nothing actionable.
+    assert.equal(sandbox.renderNodeCardKeyActions('!11111111'), '', 'the local node has no key actions');
+
+    console.log('PASS: test_node_card_key_actions_are_siblings_not_nested');
 }
 
 // ---- runner ------------------------------------------------------------------
@@ -664,7 +790,10 @@ async function main() {
     await test_channel_selection_updates_item_and_never_file_recipient();
     await test_chat_js_without_store_falls_back_to_current_chat();
     await test_keyboard_enter_space_activate_target_controls();
-    console.log('All shared-selection wiring tests passed (13 scenarios).');
+    await test_channel_targets_render_into_sidebar();
+    await test_channel_card_aria_pressed_syncs_with_store();
+    await test_node_card_key_actions_are_siblings_not_nested();
+    console.log('All shared-selection wiring tests passed (16 scenarios).');
 }
 
 main()

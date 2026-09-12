@@ -516,11 +516,12 @@
         });
     }
 
-    // Map the shared store's node targets onto the legacy `state.contacts`
-    // projection files.js renders, excluding the local node and carrying the
-    // centralized capability fields (can_send_file / can_request_key /
-    // key_request_state / file_unavailable_reason) rather than re-deriving
-    // them per component.
+    // Map the shared store's node targets onto the internal `state.contacts`
+    // projection (PR 5: no longer rendered as a list — it backs the Send-dialog
+    // recipients and contactForAttachment() lookups only). The local node is
+    // excluded and the centralized capability fields (can_send_file /
+    // can_request_key / key_request_state / file_unavailable_reason) are carried
+    // through rather than re-derived per component.
     function syncContactsFromStore() {
         var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
         if (!store) return;
@@ -546,7 +547,6 @@
                 hasBinding: t.hasBinding,
             };
         });
-        renderContacts();
     }
 
     function loadProviders() {
@@ -694,84 +694,30 @@
         for (var i = 0; i < state.contacts.length; i++) {
             if (contactByNameOrId(state.contacts[i], contactId)) return state.contacts[i];
         }
-        return null;
-    }
-
-    // ---- rendering: contacts (C3) ------------------------------------------
-
-    function renderContacts() {
-        var list = getEl('filesContactsList');
-        if (!list) return;
-        if (!state.contacts.length) {
-            list.innerHTML = '<div class="files-empty">' + esc(t('files.no_contacts', 'No known contacts yet.')) + '</div>';
-            return;
-        }
-        var rows = state.contacts.map(function (c) {
-            var status = filesContactStatusLabel(c.status);
-            var shortFp = c.fingerprint ? c.fingerprint.slice(0, 16) : '';
-            var trust = contactTrustActions(c);
-            var filtered = state.counterparty === c.contact_id;
-            var name = c.name
-                ? '<span class="files-contact-name">' + esc(c.name) + '</span>'
-                : '';
-            return (
-                '<div class="files-contact-item' +
-                    (c.status === 'trusted' ? ' is-trusted' : '') +
-                    (filtered ? ' is-filtered' : '') +
-                    '" data-contact="' + esc(c.contact_id) + '">' +
-                    // P3: the name/id/fingerprint block is its own button, a
-                    // sibling of the key-management buttons in `trust` — no
-                    // nested interactive elements (the outer item stays inert).
-                    '<button type="button" class="files-contact-select"' +
-                        ' data-files-action="contact-filter" data-contact="' + esc(c.contact_id) + '"' +
-                        ' aria-pressed="' + (filtered ? 'true' : 'false') + '">' +
-                        '<span class="files-contact-head">' +
-                            name +
-                            '<span class="files-contact-id">' + esc(c.contact_id) + '</span>' +
-                            '<span class="files-contact-status files-status-' + esc(c.status) + '">' + esc(status) + '</span>' +
-                        '</span>' +
-                        '<span class="files-contact-fp">' + esc(shortFp) + '</span>' +
-                    '</button>' +
-                    trust +
-                '</div>'
-            );
-        }).join('');
-        list.innerHTML = rows;
-    }
-
-    function contactTrustActions(c) {
-        // PR 4: actions derive from the centralized capability matrix
-        // (trust_state + key_request_state + can_request_key), not re-derived
-        // from the raw status string per component.
-        var actions = '';
-        if (c.trust_state === 'confirmation_required') {
-            actions += '<button type="button" class="files-action-btn" data-files-action="contact-confirm" data-contact="' + esc(c.contact_id) + '">' +
-                esc(t('files.trust_confirm', 'Trust key')) + '</button>';
-        }
-        if (c.trust_state === 'changed') {
-            actions += '<button type="button" class="files-action-btn" data-files-action="contact-accept" data-contact="' + esc(c.contact_id) + '">' +
-                esc(t('files.key_change_accept', 'Accept')) + '</button>';
-            actions += '<button type="button" class="files-action-btn is-danger" data-files-action="contact-reject" data-contact="' + esc(c.contact_id) + '">' +
-                esc(t('files.key_change_reject', 'Reject')) + '</button>';
-        }
-        if (c.trust_state === 'unknown') {
-            if (c.can_request_key) {
-                var again = c.key_request_state === 'retry_available';
-                actions += '<button type="button" class="files-action-btn" data-files-action="contact-request-key" data-contact="' + esc(c.contact_id) + '">' +
-                    esc(again ? t('files.request_key_again', 'Request key again') : t('files.request_key', 'Request key')) + '</button>';
-            } else if (c.key_request_state === 'queued' || c.key_request_state === 'waiting_response') {
-                actions += '<span class="files-contact-kr-state">' + esc(filesKeyRequestStateLabel(c.key_request_state)) + '</span>';
-            }
-        }
-        if (actions) return '<div class="files-contact-actions">' + actions + '</div>';
-        return '';
-    }
-
-    function renderContactsError(message) {
-        var list = getEl('filesContactsList');
-        if (!list) return;
-        state.contacts = [];
-        list.innerHTML = '<div class="files-empty">' + esc(message) + '</div>';
+        // PR 5 fallback: the MCA key actions now live in the sidebar node card
+        // (rendered by chat.js from the shared store), not in a Files list. If
+        // the contact isn't in `state.contacts` yet (Files hasn't refreshed),
+        // resolve name/fingerprint straight from the shared store's node target
+        // so a key action fired from the sidebar still gets the full detail.
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        if (!store || typeof store.getNode !== 'function') return null;
+        var t = store.getNode(contactId);
+        if (!t) return null;
+        return {
+            contact_id: t.id,
+            status: t.contact_status || 'key_unknown',
+            trust_state: t.trust_state,
+            key_request_state: t.key_request_state,
+            can_send_file: t.can_send_file,
+            can_request_key: t.can_request_key,
+            file_unavailable_reason: t.file_unavailable_reason,
+            fingerprint: t.fingerprint || '',
+            pending_fingerprint: t.pending_fingerprint || '',
+            key_epoch: t.key_epoch,
+            pending_key_epoch: t.pending_key_epoch,
+            name: t.display_name || '',
+            hasBinding: t.hasBinding,
+        };
     }
 
     // ---- rendering: archive (C5) -------------------------------------------
@@ -1520,10 +1466,9 @@
     }
 
     function onDocumentKeydown(e) {
-        // P3: the contact select area is a real <button type="button"> now, so
-        // Enter/Space are handled natively by the browser as a click on that
-        // button (dispatched via onDocumentClick → contact-filter). No custom
-        // key handling here — the key-management buttons stay separate siblings.
+        // The Send dialog's controls are native <button>/<select> elements, so
+        // Enter/Space reach them natively as a click. No custom key handling
+        // here — only the modal-level Escape dismiss is intercepted.
         if (!state.dialog) return;
         if (e.key === 'Escape') {
             // "Only when safe" (R6): never dismiss while a send request is in
@@ -1564,10 +1509,6 @@
         var target = e.target || e.srcElement;
         if (!target) return;
 
-        // Filter tabs (archive filters).
-        var filterTab = closestAttr(target, 'data-files-filter');
-        if (filterTab) { setFilter(filterTab.getAttribute('data-files-filter')); return; }
-
         // Modal backdrops / cancel / close / confirm.
         var modal = closestAttr(target, 'data-files-action');
         if (!modal) return;
@@ -1606,8 +1547,14 @@
             if (action === 'attach-download-device') { attachmentDownloadToDevice(attachmentId); return; }
         }
 
-        if (contactId && findContact(contactId)) {
-            if (action === 'contact-filter') { toggleCounterpartyFilter(contactId); return; }
+        // PR 5: the MCA key actions now live in the sidebar node card (chat.js),
+        // not a Files contact list. They route through this delegated handler via
+        // `data-files-action` + `data-contact`; the guard is presence of a
+        // canonical `data-contact` only (the action itself resolves the target
+        // via findContact, which falls back to the shared store). The former
+        // `contact-filter` action is gone — selection is now exclusively the
+        // store's toggleSelect, driven by the node-card select button.
+        if (contactId) {
             if (action === 'contact-request-key') { contactRequestKey(contactId); return; }
             if (action === 'contact-confirm') { contactConfirm(contactId); return; }
             if (action === 'contact-accept') { contactAcceptKeyChange(contactId); return; }
@@ -1660,6 +1607,7 @@
         if (target.id === 'filesSendFile') { renderSendFileFeedback(); return; }
         if (target.id === 'filesSendProvider') { renderSendProviderReadiness(); refreshSendReadiness(); return; }
         if (target.id === 'filesSendRecipient') { renderSendSubmit(); return; }
+        if (target.id === 'filesFilterSelect') { setFilter(target.value); return; }
     }
 
     // ---- filter (C5) -------------------------------------------------------
@@ -1667,27 +1615,20 @@
     function setFilter(filter) {
         if (!FILTER_API[filter]) return;
         state.filter = filter;
-        var tabs = (typeof document !== 'undefined') ? document.querySelectorAll('#filesFilterTabs [data-files-filter]') : [];
-        tabs.forEach ? tabs.forEach(function (btn) {
-            var isActive = btn.getAttribute('data-files-filter') === filter;
-            btn.classList.toggle('active', isActive);
-            if (btn.setAttribute) btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
-        }) : null;
+        var sel = getEl('filesFilterSelect');
+        if (sel && sel.value !== filter) sel.value = filter;
         loadTransfers();
     }
 
-    // P3: counterparty filter — selects transfers by the stable counterparty id
-    // only (canonicalNodeId), never the display name. Toggling the already-active
-    // contact clears the filter and returns the full list.
-    //
-    // PR 4 Finding 1: the click routes through the shared target store (ONE
-    // selection source of truth). `store.toggleSelect('node', id)` fires the
-    // store's subscriber synchronously, which updates `state.counterparty`
-    // (onStoreSelection) and reloads the transfer list.
-    function toggleCounterpartyFilter(contactId) {
-        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
-        if (!store) return;
-        store.toggleSelect('node', contactId || '');
+    // A channel selection shows a compact unsupported-transfer notice above the
+    // transfer list (channels are navigation-only and never file recipients);
+    // any node or no selection hides it.
+    function renderChannelNotice(sel) {
+        var notice = getEl('filesChannelNotice');
+        if (!notice) return;
+        var isChannel = Boolean(sel && sel.kind === 'channel');
+        if (notice.hidden !== undefined) notice.hidden = !isChannel;
+        else notice.style.display = isChannel ? '' : 'none';
     }
 
     // PR 4 Finding 1: the shared store's selection is the single source of
@@ -1697,11 +1638,14 @@
     function onStoreSelection(evt) {
         var sel = evt && evt.selection;
         var nodeId = (sel && sel.kind === 'node') ? canonicalNodeId(sel.id) : '';
-        if (state.counterparty === nodeId) return; // no change — avoid a reload loop
+        var changed = state.counterparty !== nodeId;
         state.counterparty = nodeId;
         if (!state.active) return; // re-derived on the next activate()→refresh()
-        renderContacts();
-        loadTransfers();
+        // The channel notice tracks the selection KIND, not just the counterparty,
+        // so it must update even when the counterparty itself is unchanged
+        // (none→channel and channel→none both leave counterparty empty).
+        renderChannelNotice(sel);
+        if (changed) loadTransfers(); // avoid a reload loop on a no-op counterparty change
     }
 
     // ---- polling lifecycle (C1) --------------------------------------------
@@ -1767,6 +1711,11 @@
     function refresh() {
         if (!state.active) return;
         refreshContacts();
+        // Re-derive the channel notice from the store's *current* selection each
+        // refresh, so an already-selected channel (no new onStoreSelection event)
+        // still shows the unsupported-transfer notice on reactivate/tick.
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        renderChannelNotice(store && typeof store.selected === 'function' ? store.selected() : null);
         loadTransfers();
     }
 

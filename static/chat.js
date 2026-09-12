@@ -8647,31 +8647,43 @@ function switchSidebarTab(tab) {
 async function loadNodesManagement() {
     const container = document.getElementById('nodesManagementList');
     if (!container) return;
-    
+
+    // PR 4: the node-manager list reads the shared target store (the same
+    // normalized node model the Files workspace uses) instead of re-fetching
+    // and re-rendering /api/nodes_management on its own. The store's refresh()
+    // merges every slice and returns the new generation; this list is one
+    // consumer of that model.
+    const store = window.MeshCenterTargets;
+    if (!store) {
+        container.innerHTML = `<div class="loading">⚠️ ${escapeHtml(window.I18N.t('node_manager.error_loading_nodes'))}</div>`;
+        return;
+    }
+
     try {
-        const response = await fetch('/api/nodes_management');
-        const data = await response.json();
-        
-        document.getElementById('totalNodesCount').textContent = data.total || 0;
-        
-        if (data.nodes.length === 0) {
+        await store.refresh();
+        const targets = store.nodeTargets();
+        const total = store.nodeTotal();
+
+        document.getElementById('totalNodesCount').textContent = total || 0;
+
+        if (targets.length === 0) {
             container.innerHTML = `<div class="loading">${escapeHtml(window.I18N.t('nodes.no_nodes_found'))}</div>`;
             return;
         }
 
-        container.innerHTML = data.nodes.map(node => {
-            const statusClass = node.ignored ? 'ignored' : 'normal';
-            const statusText = node.ignored ? window.I18N.t('node_manager.status_ignored') : window.I18N.t('node_manager.status_normal');
-            const activityClass = node.ignored ? 'activity-unknown' : 'activity-online';
+        container.innerHTML = targets.map(t => {
+            const statusClass = t.ignored ? 'ignored' : 'normal';
+            const statusText = t.ignored ? window.I18N.t('node_manager.status_ignored') : window.I18N.t('node_manager.status_normal');
+            const activityClass = t.ignored ? 'activity-unknown' : 'activity-online';
 
             return `
                 <div class="nodes-management-item">
                     <span class="node-activity-square ${activityClass}" title="${escapeHtml(statusText)}"></span>
                     <div class="name-wrapper">
-                        <span class="name">${escapeHtml(node.name)}</span>
-                        <span class="id">${escapeHtml(node.node_id)}</span>
+                        <span class="name">${escapeHtml(t.display_name || t.id)}</span>
+                        <span class="id">${escapeHtml(t.id)}</span>
                     </div>
-                    ${node.ignored ? `<span class="status ${statusClass}">${escapeHtml(statusText)}</span>` : ''}
+                    ${t.ignored ? `<span class="status ${statusClass}">${escapeHtml(statusText)}</span>` : ''}
                 </div>
             `;
         }).join('');

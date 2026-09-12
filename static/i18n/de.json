@@ -323,7 +323,21 @@
     "relay_state_label": "Relay-Status",
     "upload_ready": "Upload: bereit",
     "upload_not_ready": "Upload: nicht bereit",
-    "err_ttl_custom": "Gib eine positive ganze Zahl an Sekunden für das benutzerdefinierte Ablaufdatum ein"
+    "err_ttl_custom": "Gib eine positive ganze Zahl an Sekunden für das benutzerdefinierte Ablaufdatum ein",
+    "request_key_again": "Schlüssel erneut anfordern",
+    "key_request_state": {
+      "idle": "Schlüssel unbekannt",
+      "queued": "Schlüsselanfrage gesendet",
+      "waiting_response": "Warte auf Antwort",
+      "retry_available": "Erneut möglich"
+    },
+    "unavailable": {
+      "local_node": "Das ist dein eigener Knoten",
+      "channel_not_supported": "Kanäle unterstützen keinen Dateitransfer",
+      "key_unknown": "Schlüssel unbekannt",
+      "key_unverified": "Schlüssel noch nicht verifiziert",
+      "key_changed": "Schlüssel geändert"
+    }
   },
   "about": {
     "tab_overview": "Übersicht",

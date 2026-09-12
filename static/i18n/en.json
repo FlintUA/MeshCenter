@@ -323,7 +323,21 @@
     "relay_state_label": "Relay state",
     "upload_ready": "Upload: ready",
     "upload_not_ready": "Upload: not ready",
-    "err_ttl_custom": "Enter a positive whole number of seconds for the custom expiry"
+    "err_ttl_custom": "Enter a positive whole number of seconds for the custom expiry",
+    "request_key_again": "Request key again",
+    "key_request_state": {
+      "idle": "Key unknown",
+      "queued": "Key request sent",
+      "waiting_response": "Waiting for response",
+      "retry_available": "Retry available"
+    },
+    "unavailable": {
+      "local_node": "This is your own node",
+      "channel_not_supported": "Channels do not support file transfer",
+      "key_unknown": "Key unknown",
+      "key_unverified": "Key not yet verified",
+      "key_changed": "Key changed"
+    }
   },
   "about": {
     "tab_overview": "Overview",

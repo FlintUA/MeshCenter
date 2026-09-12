@@ -323,7 +323,21 @@
     "relay_state_label": "Стан ретранслятора",
     "upload_ready": "Завантаження: готове",
     "upload_not_ready": "Завантаження: не готове",
-    "err_ttl_custom": "Введіть ціле додатне число секунд для настроюваного терміну дії"
+    "err_ttl_custom": "Введіть ціле додатне число секунд для настроюваного терміну дії",
+    "request_key_again": "Запитати ключ ще раз",
+    "key_request_state": {
+      "idle": "Ключ невідомий",
+      "queued": "Запит ключа надіслано",
+      "waiting_response": "Очікування відповіді",
+      "retry_available": "Повтор доступний"
+    },
+    "unavailable": {
+      "local_node": "Це ваш власний вузол",
+      "channel_not_supported": "Канали не підтримують передачу файлів",
+      "key_unknown": "Ключ невідомий",
+      "key_unverified": "Ключ ще не перевірено",
+      "key_changed": "Ключ змінено"
+    }
   },
   "about": {
     "tab_overview": "Огляд",

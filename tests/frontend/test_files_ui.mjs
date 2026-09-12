@@ -39,6 +39,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const scriptPath = path.join(__dirname, '..', '..', 'static', 'files.js');
 const source = readFileSync(scriptPath, 'utf8');
 
+// PR 4: files.js now consumes window.MeshCenterTargets (static/targets.js), the
+// shared navigation target store loaded before files.js in index.html. The test
+// harness mirrors that script order so files.js can resolve the store.
+const targetsScriptPath = path.join(__dirname, '..', '..', 'static', 'targets.js');
+const targetsSource = readFileSync(targetsScriptPath, 'utf8');
+
 // ---- minimal fake DOM -------------------------------------------------------
 
 class FakeElement {
@@ -190,6 +196,8 @@ function buildSandbox({ fetchImpl }) {
     };
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
+    // Load order mirrors index.html: targets.js (the shared store) before files.js.
+    vm.runInContext(targetsSource, sandbox, { filename: 'targets.js' });
     vm.runInContext(source, sandbox, { filename: 'files.js' });
     return sandbox;
 }
@@ -280,6 +288,12 @@ function defaultRoutes(extra) {
         }
         if (url === '/api/mca/contacts') {
             return { status: 200, json: async () => ({ ok: true, contacts: [] }) };
+        }
+        if (url === '/api/mca/key-requests') {
+            return { status: 200, json: async () => ({ ok: true, key_requests: [] }) };
+        }
+        if (url === '/api/chats') {
+            return { status: 200, json: async () => ({ chats: [], channels: [], total_unread: 0 }) };
         }
         if (url === '/api/base_status') {
             return { status: 200, json: async () => ({ node_id: '!11111111', node_name: 'Me', profile_id: 'p1' }) };

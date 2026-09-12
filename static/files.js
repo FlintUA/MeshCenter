@@ -516,6 +516,23 @@
         });
     }
 
+    function refreshContactsAfterCommand() {
+        // PR 5 final correction (Finding 2): a contact command's terminal
+        // callback must NOT run through files.js's own refreshAfterCommand key
+        // (that guard is files-local and never tracks the store's in-flight
+        // sources, so `store.refresh()` would JOIN a pre-command read and
+        // announce success on a stale projection). The store owns the joinable
+        // post-command API: join its in-flight sources, then force one fresh
+        // read, then re-sync files.js's local projection.
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        if (!store || typeof store.refreshAfterCommand !== 'function') {
+            return refreshContacts();
+        }
+        return store.refreshAfterCommand().then(function () {
+            syncContactsFromStore();
+        });
+    }
+
     // Map the shared store's node targets onto the internal `state.contacts`
     // projection (PR 5: no longer rendered as a list — it backs the Send-dialog
     // recipients and contactForAttachment() lookups only). The local node is
@@ -1179,8 +1196,8 @@
                     resourceKey: resourceKey,
                     queued: opts.queued,
                     success: opts.success,
-                    onSuccess: function () { return refreshAfterCommand('contacts', refreshContacts); },
-                    onUnknown: function () { return refreshAfterCommand('contacts', refreshContacts); },
+                    onSuccess: function () { return refreshContactsAfterCommand(); },
+                    onUnknown: function () { return refreshContactsAfterCommand(); },
                 });
             } else if (r.status === 429) {
                 var retry = (r.data && r.data.retry_after_seconds) || 600;
@@ -2432,8 +2449,10 @@
                         '</div></div>' +
                         '<div class="files-provider-add">' +
                             '<h4 class="files-provider-add-title">' + esc(t('files.add_provider', 'Add provider')) + '</h4>' +
-                            '<input type="url" id="filesProviderOrigin" placeholder="https://relay.example.com" autocomplete="off" />' +
-                            '<button type="button" class="files-action-btn" data-files-action="provider-probe">' + esc(t('files.probe', 'Probe')) + '</button>' +
+                            '<div class="files-provider-probe-row">' +
+                                '<input type="url" id="filesProviderOrigin" placeholder="https://relay.example.com" autocomplete="off" />' +
+                                '<button type="button" class="files-action-btn" data-files-action="provider-probe">' + esc(t('files.probe', 'Probe')) + '</button>' +
+                            '</div>' +
                             '<div id="filesProviderProbeResult"></div>' +
                         '</div>' +
                     '</div>' +

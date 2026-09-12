@@ -1084,6 +1084,120 @@ async function test_node_details_panel_follows_shared_selection() {
     console.log('PASS: test_node_details_panel_follows_shared_selection');
 }
 
+// ---- PR 5 final correction (Finding 1): stale node-details response guard ----
+
+// A sandbox whose /api/messages requests never settle until the test resolves
+// them, and whose renderNodeDetails is replaced with a spy so the test observes
+// exactly which node (if any) the panel was asked to render. The spy sits at
+// the application boundary — the same seam the guard protects — so the assertion
+// is "what identity/content reached the panel", not a fetch-count proxy.
+function makeDeferredNodeDetailsSandbox() {
+    const pending = [];   // each entry is (body) => resolve that /api/messages request
+    const fetchImpl = async (url) => {
+        if (url === '/api/messages') {
+            return new Promise((resolve) => {
+                pending.push((body) => resolve(json(body)));
+            });
+        }
+        return defaultRoutes()(url);
+    };
+    const sandbox = buildSandbox({ fetchImpl });
+    const store = sandbox.window.MeshCenterTargets;
+    sandbox.ensureStoreSelectionSubscription();
+
+    const rendered = [];
+    sandbox.renderNodeDetails = function (node) {
+        rendered.push(node ? node.node_id : null);
+    };
+
+    return { sandbox, store, pending, rendered };
+}
+
+function flushAsync() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function test_node_details_stale_response_never_renders_after_reselect() {
+    // Scenario 1: select A (delayed), select B, then resolve A — A must never
+    // render after B is selected; B remains selected and displayed.
+    const { store, pending, rendered } = makeDeferredNodeDetailsSandbox();
+
+    store.select('node', '!aaaaaaaa');
+    store.select('node', '!bbbbbbbb');
+    assert.equal(pending.length, 2, 'selecting A then B issues two /api/messages requests');
+
+    pending[0]({ nodes: [{ node_id: '!aaaaaaaa', name: 'Alice' }], messages: [] });
+    await flushAsync();
+    assert.deepEqual(rendered, [], 'the stale A response must never render after B was selected');
+
+    pending[1]({ nodes: [{ node_id: '!bbbbbbbb', name: 'Bob' }], messages: [] });
+    await flushAsync();
+    assert.deepEqual(rendered, ['!bbbbbbbb'], 'only the newest still-valid request (B) may render');
+    assert.equal(store.selected().id, '!bbbbbbbb', 'B remains selected and displayed');
+    console.log('PASS: test_node_details_stale_response_never_renders_after_reselect');
+}
+
+async function test_node_details_stale_response_after_channel_select() {
+    // Scenario 2: select A (delayed), select a channel, resolve A — the node
+    // details stay cleared and the channel selection remains intact.
+    const { sandbox, store, pending, rendered } = makeDeferredNodeDetailsSandbox();
+
+    store.select('node', '!aaaaaaaa');
+    assert.equal(pending.length, 1, 'one /api/messages request for A');
+
+    store.select('channel', 'channel');
+    assert.equal(sandbox._document.getElementById('nodeDetails').className, 'node-details-placeholder',
+        'a channel selection clears the node-details panel');
+
+    pending[0]({ nodes: [{ node_id: '!aaaaaaaa', name: 'Alice' }], messages: [] });
+    await flushAsync();
+    assert.deepEqual(rendered, [], 'the stale A response must not re-open the panel over a channel selection');
+    assert.equal(sandbox._document.getElementById('nodeDetails').className, 'node-details-placeholder',
+        'the panel stays cleared');
+    assert.equal(store.selected().kind, 'channel', 'the channel selection remains intact');
+    console.log('PASS: test_node_details_stale_response_after_channel_select');
+}
+
+async function test_node_details_stale_response_after_clear() {
+    // Scenario 3: select A (delayed), clear the selection, resolve A — details
+    // stay cleared and A does not reappear.
+    const { sandbox, store, pending, rendered } = makeDeferredNodeDetailsSandbox();
+
+    store.select('node', '!aaaaaaaa');
+    assert.equal(pending.length, 1, 'one /api/messages request for A');
+
+    store.clearSelection();
+    assert.equal(sandbox._document.getElementById('nodeDetails').className, 'node-details-placeholder',
+        'clearing the selection closes the node-details panel');
+
+    pending[0]({ nodes: [{ node_id: '!aaaaaaaa', name: 'Alice' }], messages: [] });
+    await flushAsync();
+    assert.deepEqual(rendered, [], 'clearing the selection must invalidate the in-flight A request');
+    assert.equal(sandbox._document.getElementById('nodeDetails').className, 'node-details-placeholder',
+        'the panel stays cleared; A does not reappear');
+    console.log('PASS: test_node_details_stale_response_after_clear');
+}
+
+async function test_node_details_out_of_order_responses() {
+    // Scenario 4: resolve requests out of order — only the newest still-valid
+    // request may update the panel, regardless of arrival order.
+    const { store, pending, rendered } = makeDeferredNodeDetailsSandbox();
+
+    store.select('node', '!aaaaaaaa');
+    store.select('node', '!bbbbbbbb');
+    assert.equal(pending.length, 2, 'two /api/messages requests in flight');
+
+    // Resolve the NEWEST (B) first, then the stale A.
+    pending[1]({ nodes: [{ node_id: '!bbbbbbbb', name: 'Bob' }], messages: [] });
+    await flushAsync();
+    assert.deepEqual(rendered, ['!bbbbbbbb'], 'the newest valid request renders first');
+
+    pending[0]({ nodes: [{ node_id: '!aaaaaaaa', name: 'Alice' }], messages: [] });
+    await flushAsync();
+    assert.deepEqual(rendered, ['!bbbbbbbb'], 'the older A response must not overwrite the panel after B already rendered');
+    console.log('PASS: test_node_details_out_of_order_responses');
+}
+
 async function test_refresh_sidebar_targets_age_limit_join_and_force() {
     // Section 5: refreshSidebarTargets is the single joinable controller — a
     // normal call is age-limited to <=1/60s, a forced call bypasses the age
@@ -1138,8 +1252,12 @@ async function main() {
     await test_sidebar_delegated_click_routes_and_excludes();
     await test_node_details_visual_clear_vs_selection_clear();
     await test_node_details_panel_follows_shared_selection();
+    await test_node_details_stale_response_never_renders_after_reselect();
+    await test_node_details_stale_response_after_channel_select();
+    await test_node_details_stale_response_after_clear();
+    await test_node_details_out_of_order_responses();
     await test_refresh_sidebar_targets_age_limit_join_and_force();
-    console.log('All shared-selection wiring tests passed (22 scenarios).');
+    console.log('All shared-selection wiring tests passed (26 scenarios).');
 }
 
 main()

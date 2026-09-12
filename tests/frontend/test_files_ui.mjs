@@ -2567,6 +2567,102 @@ async function test_reactivation_issues_fresh_transfers_request() {
     console.log('PASS: test_reactivation_issues_fresh_transfers_request');
 }
 
+async function test_contact_command_awaits_fresh_store_refresh() {
+    // Finding 2 (PR 5 final correction): a contact command's terminal callback
+    // must join the shared store's in-flight pre-command read, then force ONE
+    // fresh read — success must not announce on a stale projection, and exactly
+    // one fresh /api/mca/contacts fetch must follow the joined read (never a
+    // plain store.refresh() that would re-join the stale in-flight read).
+    let contactsCalls = 0;
+    let releasePre;
+    const gatePre = new Promise((r) => { releasePre = r; });
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                contactsCalls += 1;
+                if (contactsCalls === 1) {
+                    return json(200, { ok: true, contacts: [contact('!22222222', 'confirmation_required')] });
+                }
+                if (contactsCalls === 2) {
+                    await gatePre; // the pre-command store refresh is in flight, held
+                    return json(200, { ok: true, contacts: [contact('!22222222', 'confirmation_required')] });
+                }
+                // The forced fresh read reflects the just-committed confirm.
+                return json(200, { ok: true, contacts: [contact('!22222222', 'trusted')] });
+            }
+            if (url === '/api/mca/contacts/!22222222/confirm') {
+                return json(202, { ok: true, command_id: 'cmd-confirm' });
+            }
+            if (url === '/api/mca/commands/cmd-confirm') {
+                return json(200, { ok: true, command: { command_id: 'cmd-confirm', status: 'succeeded' } });
+            }
+            return undefined;
+        }),
+    });
+
+    activate(sandbox);
+    // The initial store refresh (#1) resolves the confirmation_required contact.
+    await waitFor(() => sandbox.window.MeshCenterTargets.getNode('!22222222') !== null);
+
+    // Start a pre-command store refresh (#2) whose contacts read is held.
+    const pre = sandbox.window.MeshCenterTargets.refresh();
+    await waitFor(() => contactsCalls === 2);
+
+    // Drive the contact confirm command (POST -> 202 -> poll -> succeeded).
+    dispatch(sandbox, { 'data-files-action': 'contact-confirm', 'data-contact': '!22222222' });
+    dispatch(sandbox, { 'data-files-action': 'modal-confirm' });
+
+    // Wait for the command status poll to have fired (the terminal callback is
+    // now joined on the held pre-command read).
+    await waitFor(() => sandbox._fetchLog.some((e) => e.url === '/api/mca/commands/cmd-confirm'));
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.ok(
+        !sandbox._notifications.some((n) => n.kind === 'update' && n.type === 'success'),
+        'contact success must not announce on the stale pre-command projection',
+    );
+    assert.equal(contactsCalls, 2, 'no fresh read may be issued while the pre-command read is held');
+
+    // Release the pre-command read -> it merges, then exactly one fresh read.
+    releasePre();
+    await pre;
+    await waitFor(() => contactsCalls === 3);
+    await waitFor(() => sandbox._notifications.some((n) => n.kind === 'update' && n.type === 'success'));
+
+    const successes = sandbox._notifications.filter((n) => n.kind === 'update' && n.type === 'success').length;
+    assert.equal(successes, 1, 'contact success must fire exactly once after the fresh read settles');
+    assert.equal(contactsCalls, 3, 'exactly one fresh contacts read follows the joined pre-command read');
+
+    console.log('PASS: test_contact_command_awaits_fresh_store_refresh');
+}
+
+async function test_add_provider_form_wraps_url_and_probe_in_flex_row() {
+    // Finding 3 (PR 5 final correction): the Add-provider URL input and its
+    // Probe button must be wrapped in one .files-provider-probe-row container
+    // (structural markup, not geometry-from-a-fake-DOM), so the input can flex
+    // to fill the row while the button keeps its intrinsic width.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    dispatch(sandbox, { 'data-files-action': 'providers' });
+
+    const dialog = sandbox._document.body._children.find((c) => (c.className || '').includes('files-dialog-root'));
+    assert.ok(dialog, 'providers must open a dialog');
+    const html = dialog.innerHTML;
+
+    // Exactly one flex row wraps the URL input + Probe button, input first.
+    const rows = html.match(/<div class="files-provider-probe-row">([\s\S]*?)<\/div>/g) || [];
+    assert.equal(rows.length, 1, 'exactly one .files-provider-probe-row must wrap the URL input + Probe button');
+    const row = rows[0];
+    assert.match(row, /id="filesProviderOrigin"/, 'the URL input must be inside the flex row');
+    assert.match(row, /type="url"/, 'the URL input must be a url input');
+    assert.match(row, /data-files-action="provider-probe"/, 'the Probe button must be inside the flex row');
+    assert.ok(
+        row.indexOf('filesProviderOrigin') < row.indexOf('data-files-action="provider-probe"'),
+        'the URL input must precede the Probe button inside the flex row',
+    );
+
+    console.log('PASS: test_add_provider_form_wraps_url_and_probe_in_flex_row');
+}
+
 async function main() {
     await test_activate_merges_contacts_and_excludes_local();
     await test_trust_confirm_shows_full_fingerprint();
@@ -2628,7 +2724,11 @@ async function main() {
     await test_same_query_detail_invalidation_on_empty_poll();
     await test_same_query_replaces_selection_no_transient_stale_detail();
     await test_reactivation_issues_fresh_transfers_request();
-    console.log('All files UI behavior tests passed (55 scenarios).');
+    // PR 5 final correction (Finding 2): post-command target refresh.
+    await test_contact_command_awaits_fresh_store_refresh();
+    // PR 5 final correction (Finding 3): widened Add-provider form markup.
+    await test_add_provider_form_wraps_url_and_probe_in_flex_row();
+    console.log('All files UI behavior tests passed (57 scenarios).');
 }
 
 main()

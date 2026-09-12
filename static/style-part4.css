@@ -4677,7 +4677,26 @@ html[data-theme="dark"] #notificationsCard {
 .files-provider-token input { flex: 1 1 auto; min-width: 0; }
 .files-provider-add { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--mc-border, #d8e1ec); }
 .files-provider-add-title { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--mc-text, #1f2f45); }
-.files-provider-add input { margin-bottom: 8px; }
+/* Finding 3 (PR 5 final correction): the Add-provider URL + Probe button live in
+   a flex row so the URL input fills the available width (it is not wrapped in a
+   .files-field, so it would otherwise fall back to the browser's narrow default
+   width). The input flexes and can shrink (min-width: 0) so a narrow screen
+   never overflows; the button keeps its intrinsic width. */
+.files-provider-probe-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.files-provider-probe-row input {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    margin: 0;
+}
+.files-provider-probe-row .files-action-btn {
+    flex: 0 0 auto;
+}
 .files-provider-probe {
     margin-top: 12px;
     padding: 10px;
@@ -4691,7 +4710,14 @@ html[data-theme="dark"] #notificationsCard {
     color: var(--mc-text, #1f2f45);
     word-break: break-all;
 }
-.files-provider-probe input { margin: 4px 8px 4px 0; width: 220px; }
+/* Finding 3 (PR 5 final correction): the provider-name field inside the probe
+   confirm block is full width (box-sizing keeps padding/border inside the box,
+   so it never overflows its container on a narrow screen). */
+.files-provider-probe input {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 8px 0 0;
+}
 
 /* dark theme */
 

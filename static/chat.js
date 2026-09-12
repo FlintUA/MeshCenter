@@ -6521,16 +6521,34 @@ async function toggleFavorite(nodeId) {
     }
 }
 
+// PR 5 final correction (Finding 1): a monotonic token for the async
+// node-details request. `updateNodeDetails` captures the current value before
+// its /api/messages fetch and only applies the response if (a) it is still the
+// latest request AND (b) the shared selection is still that exact node AND
+// (c) the panel was not cleared/redirected (clearNodeDetailsPanel bumps it).
+let nodeDetailsRequestGeneration = 0;
+
 function updateNodeDetails(nodeId) {
     const cachedNode = nodeCache.find(n => n.node_id === nodeId);
     if (cachedNode) {
         renderNodeDetails(cachedNode);
         return;
     }
-    
+
+    const requestGeneration = ++nodeDetailsRequestGeneration;
+
     fetch('/api/messages')
         .then(response => response.json())
         .then(data => {
+            // Stale-guard at the final application boundary: this response may
+            // only touch the panel (and the derived node cache) if it is still
+            // the newest request AND the store still selects this exact node.
+            // Selecting another node, selecting a channel, clearing the
+            // selection, or closing the panel all invalidate it.
+            if (requestGeneration !== nodeDetailsRequestGeneration) return;
+            const resolved = resolveSharedTargetSelection();
+            if (!resolved || resolved.kind !== 'node' || resolved.id !== nodeId) return;
+
             nodeCache = mergeNodeCachePreservingPosition(
                 data.nodes || []
             );
@@ -6547,7 +6565,11 @@ function updateNodeDetails(nodeId) {
             }
         })
         .catch(error => {
-            console.error('Error updating node details:', error);
+            // A stale failure never modified the panel; suppress the noise so a
+            // superseded request doesn't log as if it were the active one.
+            if (requestGeneration === nodeDetailsRequestGeneration) {
+                console.error('Error updating node details:', error);
+            }
         });
 }
 
@@ -6729,6 +6751,10 @@ let nodeVisualSelectionCleared = false;
 // of truth; callers that also want the selection cleared (the close button) do
 // so explicitly via storeSyncSelection(null, null).
 function clearNodeDetailsPanel() {
+    // Finding 1: any visual clear or redirect invalidates an in-flight
+    // node-details request, so a delayed response cannot repaint the panel.
+    nodeDetailsRequestGeneration++;
+
     const details = document.getElementById('nodeDetails');
     if (details) {
         details.className = 'node-details-placeholder';

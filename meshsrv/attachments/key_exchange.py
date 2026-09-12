@@ -581,6 +581,26 @@ class KeyExchangeCoordinator:
         ).fetchall()
         return [_row_to_binding(row) for row in rows]
 
+    def list_key_request_sent_at(self) -> "dict[str, float]":
+        """All (source_address -> last_request_sent_at) pairs that have ever
+        sent an outbound KEY_REQUEST, for the key-request capability
+        projection (`key_request_snapshot.py`). Returns only rows where the
+        timestamp is non-NULL (a NULL means "never asked", which is the
+        caller's `idle` default and therefore absent here). Worker/startup-
+        thread only - it reads `conn`, so the request thread must reach this
+        data only through `KeyRequestStatePublisher.snapshot()`, never this
+        method directly (the same boundary Finding 7 drew for `list_bindings`).
+        The raw timestamps must not be projected onward - they exist solely
+        for the publisher to fold into a `waiting_response`/`retry_available`
+        state string (see the no-secret discipline in that module's
+        docstring)."""
+        rows = self._conn.execute(
+            "SELECT source_address, last_request_sent_at FROM mca_key_exchange_contact_state "
+            "WHERE workspace_id = ? AND adapter_id = ? AND last_request_sent_at IS NOT NULL",
+            (self._principal.workspace_id, self._adapter_id),
+        ).fetchall()
+        return {row["source_address"]: row["last_request_sent_at"] for row in rows}
+
     def get_status(self, source_address: str) -> AddressStatus:
         binding = self.get_binding(source_address)
         return AddressStatus.KEY_UNKNOWN if binding is None else binding.status

@@ -68,6 +68,7 @@ from meshsrv.attachments.idempotency import (
     ReservationOutcome,
 )
 from meshsrv.attachments.identity import MCAPrincipal
+from meshsrv.attachments.key_request_snapshot import KeyRequestSnapshot, KeyRequestStatePublisher
 from meshsrv.attachments.probe_registry import ProbeRecord, ProbeRegistry
 from meshsrv.attachments.provider_registry import ProviderProfile
 from meshsrv.attachments.recipient_snapshot import RecipientSnapshot, RecipientSnapshotPublisher
@@ -118,6 +119,7 @@ class AttachmentsFacade:
         principal: MCAPrincipal,
         workspace_manager: MCAWorkspaceManager,
         recipient_snapshot_publisher: RecipientSnapshotPublisher,
+        key_request_snapshot_publisher: KeyRequestStatePublisher,
     ):
         self._command_queue = command_queue
         self._command_registry = command_registry
@@ -130,6 +132,7 @@ class AttachmentsFacade:
         self._principal = principal
         self._workspace_manager = workspace_manager
         self._recipient_snapshot_publisher = recipient_snapshot_publisher
+        self._key_request_snapshot_publisher = key_request_snapshot_publisher
 
     def _require_ready(self) -> None:
         """Gate the snapshot-backed read/write methods: raise `FacadeNotReady`
@@ -204,6 +207,20 @@ class AttachmentsFacade:
         snapshot from construction, so an unknown recipient is a 400
         `recipient_not_found`, never a `FacadeNotReady`, at any point."""
         return self._recipient_snapshot_publisher.snapshot()
+
+    def key_request_snapshot(self) -> KeyRequestSnapshot:
+        """The worker-published immutable key-request capability snapshot
+        (PR 4 shared target model) - the request thread's SQLite-free view of
+        which transport addresses have an outgoing KEY_REQUEST in flight
+        (queued/waiting_response/retry_available) and whether a fresh request
+        is currently permitted (`can_request_key`). A pure in-memory read of
+        the publisher's atomically-swapped snapshot, never `conn`, the
+        filesystem, the network, or the tick lock - the same boundary
+        `recipient_snapshot()` draws. Not readiness-gated: the publisher
+        publishes an (empty) snapshot from construction, and an address absent
+        from it is simply the frontend's `idle` default, never a
+        `FacadeNotReady`."""
+        return self._key_request_snapshot_publisher.snapshot()
 
     def evaluate_upload_readiness(
         self,

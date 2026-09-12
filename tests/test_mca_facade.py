@@ -31,6 +31,7 @@ from meshsrv.attachments.idempotency import (
     PendingReservation,
     PendingReservations,
 )
+from meshsrv.attachments.key_request_snapshot import KeyRequestSnapshot
 from meshsrv.attachments.probe_registry import ProbeRegistry
 from meshsrv.attachments.recipient_snapshot import RecipientSnapshot
 from meshsrv.attachments.snapshots import AttachmentsSnapshot, AttachmentsSnapshotPublisher
@@ -83,6 +84,19 @@ class _StubRecipientPublisher:
         return self._snapshot
 
 
+class _StubKeyRequestPublisher:
+    """Duck-typed key-request capability surface (PR 4) with no SQLite - the
+    one method the facade's `key_request_snapshot()` delegates to. Publishes
+    an empty snapshot from construction, matching the real publisher's
+    "never None" contract."""
+
+    def __init__(self):
+        self._snapshot = KeyRequestSnapshot(by_address={})
+
+    def snapshot(self):
+        return self._snapshot
+
+
 class _StubWorkspaceManager:
     """Duck-typed workspace path surface for `spool_outgoing_dir()`: `paths()`
     returns a namespace whose `spool_outgoing` is a plain `Path` (never
@@ -122,6 +136,7 @@ def _facade(*, maxsize=64, ready=True, committed=None):
         principal=_principal(),
         workspace_manager=_StubWorkspaceManager(),
         recipient_snapshot_publisher=_StubRecipientPublisher(),
+        key_request_snapshot_publisher=_StubKeyRequestPublisher(),
     )
     return facade, wake_event
 

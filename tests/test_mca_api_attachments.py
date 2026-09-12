@@ -60,6 +60,11 @@ from meshsrv.attachments.provider_registry import (
     normalize_origin,
 )
 from meshsrv.attachments.key_exchange import AddressStatus
+from meshsrv.attachments.key_request_snapshot import (
+    KeyRequestCapability,
+    KeyRequestSnapshot,
+    KeyRequestState,
+)
 from meshsrv.attachments.recipient_snapshot import (
     RecipientBindingSnapshot,
     RecipientSnapshot,
@@ -235,6 +240,7 @@ class _FakeFacade:
         spool_dir=None,
         committed=None,
         recipient=None,
+        key_requests=None,
         probes=None,
         content_files=None,
     ):
@@ -247,6 +253,7 @@ class _FakeFacade:
         self._commands = commands or {}
         self._decisions = decisions or {}
         self._recipient = recipient if recipient is not None else _trusted_recipient_snapshot()
+        self._key_requests = key_requests if key_requests is not None else KeyRequestSnapshot(by_address={})
         self.not_ready = False
         self.queue_full = queue_full
         self.submitted = []  # commands the POST endpoints handed to submit()
@@ -317,6 +324,9 @@ class _FakeFacade:
 
     def recipient_snapshot(self):
         return self._recipient
+
+    def key_request_snapshot(self):
+        return self._key_requests
 
     def connectivity_snapshot(self):
         return self._connectivity
@@ -1809,6 +1819,46 @@ def test_list_contacts_empty_snapshot_is_200_empty_list(monkeypatch):
 def test_list_contacts_is_503_when_facade_missing(monkeypatch):
     c = _client(monkeypatch, None)
     resp = c.get("/api/mca/contacts")
+    assert resp.status_code == 503
+    assert resp.get_json()["error_code"] == "mca_not_ready"
+
+
+# --- GET /api/mca/key-requests (PR 4 shared target model) -------------------
+
+
+def test_list_key_requests_returns_allowlist_serialized_in_order(monkeypatch):
+    facade = _FakeFacade(key_requests=KeyRequestSnapshot(by_address={
+        "!bbbbbbbb": KeyRequestCapability(
+            key_request_state=KeyRequestState.WAITING_RESPONSE, can_request_key=False
+        ),
+        "!aaaaaaaa": KeyRequestCapability(
+            key_request_state=KeyRequestState.RETRY_AVAILABLE, can_request_key=True
+        ),
+    }))
+    c = _client(monkeypatch, facade)
+    resp = c.get("/api/mca/key-requests")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["ok"] is True
+    # Deterministic contact_id-ascending order, and only the three allowlist
+    # fields (§11) - never a timestamp, a raw public identity, or a DB row.
+    assert [x["contact_id"] for x in body["key_requests"]] == ["!aaaaaaaa", "!bbbbbbbb"]
+    assert body["key_requests"] == [
+        {"contact_id": "!aaaaaaaa", "key_request_state": "retry_available", "can_request_key": True},
+        {"contact_id": "!bbbbbbbb", "key_request_state": "waiting_response", "can_request_key": False},
+    ]
+
+
+def test_list_key_requests_empty_snapshot_is_200_empty_list(monkeypatch):
+    c = _client(monkeypatch, _FakeFacade(key_requests=KeyRequestSnapshot(by_address={})))
+    resp = c.get("/api/mca/key-requests")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"ok": True, "key_requests": []}
+
+
+def test_list_key_requests_is_503_when_facade_missing(monkeypatch):
+    c = _client(monkeypatch, None)
+    resp = c.get("/api/mca/key-requests")
     assert resp.status_code == 503
     assert resp.get_json()["error_code"] == "mca_not_ready"
 

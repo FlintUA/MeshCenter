@@ -287,6 +287,49 @@ def test_confirm_command_is_invalid_state_transition_for_a_trusted_binding(tmp_p
         mca_runtime.reset_state_for_tests()
 
 
+# --- PR 4 Finding 2: key-request `queued` observability (integration) --------
+
+
+def test_key_request_submit_then_tick_moves_queued_to_waiting_response(tmp_path):
+    """Finding 2 (integration): a real `facade.submit(contact_request_key)`
+    makes `queued` observable immediately through the facade's key-request
+    snapshot, and a real worker `tick()` (drain -> execute -> refresh)
+    transitions it to `waiting_response` - the actual request-thread sequence,
+    not a queue a test pre-populated before constructing the publisher."""
+    state, _, _ = _started_state(tmp_path, "key-request-queued-flow")
+    try:
+        facade = state.facade
+        contact = "!756f9960"
+
+        # Before any submit there is no key-request activity for this address.
+        assert contact not in facade.key_request_snapshot().by_address
+
+        command = Command(
+            command_id=uuid.uuid4().hex,
+            kind="contact_request_key",
+            payload={"contact_id": contact, "adapter_id": "meshtastic", "route_id": contact},
+            created_at=time.time(),
+        )
+        facade.submit(command)
+
+        # Immediately after submit, before any tick: `queued` is observable.
+        cap = facade.key_request_snapshot().by_address[contact]
+        assert cap.key_request_state.value == "queued"
+        assert cap.can_request_key is False
+
+        # One worker tick drains the command (mark_drained), executes it (a
+        # successful send persists the quota timestamp), then refreshes the
+        # key-request snapshot.
+        state.service.tick()
+
+        # Now the state derives from the persisted timestamp: waiting_response.
+        cap = facade.key_request_snapshot().by_address[contact]
+        assert cap.key_request_state.value == "waiting_response"
+        assert cap.can_request_key is False
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
 def test_accept_key_change_promotes_pending_and_requires_a_new_confirm(tmp_path):
     state, _, _ = _started_state(tmp_path, "trust-accept")
     try:

@@ -183,11 +183,15 @@ class CommandQueue:
         return self._queue.empty()
 
     def iter_commands(self):
-        """A best-effort snapshot of the currently-queued commands, returned
-        in place without dequeueing - the one read the worker's orphan-staging
-        recovery (Finding 5) needs to consult a queued command as a reference
-        source before deleting a staged file. Same approximate semantics as
-        `qsize()`: the request thread may `put_nowait()` concurrently, so the
-        snapshot is a point-in-time view, never a guarantee. Read-only - never
-        mutates the queue, never blocks, never touches the network."""
-        return list(self._queue.queue)
+        """A consistent, thread-safe snapshot of the currently-queued commands,
+        returned in place without dequeueing - the one read the worker's
+        orphan-staging recovery (Finding 5) needs to consult a queued command as
+        a reference source before deleting a staged file. The copy is taken
+        under the underlying `queue.Queue` mutex, so a concurrent request-thread
+        `put_nowait()` can neither be observed half-written nor raise a
+        `deque mutated during iteration` error (a request thread may be mid-`put`
+        while the worker iterates). Read-only - never mutates the queue, never
+        blocks beyond the short mutex hold that a single `put`/`get` also takes,
+        never touches the network."""
+        with self._queue.mutex:
+            return list(self._queue.queue)

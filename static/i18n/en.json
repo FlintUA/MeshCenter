@@ -95,6 +95,7 @@
     "send_comment": "Comment (optional)",
     "send_submit": "Send",
     "err_no_recipient": "Choose a trusted contact",
+    "send_choose_recipient": "Choose a trusted contact",
     "err_no_file": "Choose a file",
     "err_file_too_large": "File exceeds the 5 MiB cap",
     "sending": "Sending file…",

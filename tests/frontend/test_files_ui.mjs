@@ -2143,6 +2143,202 @@ async function test_contact_select_and_key_actions_are_separate() {
     console.log('PASS: test_contact_select_and_key_actions_are_separate');
 }
 
+// ---- PR 4 Finding 1: shared-store selection wiring (integration) -----------
+
+async function test_contact_click_routes_through_shared_store() {
+    // Finding 1: a contact click goes through the ONE shared store, not a
+    // files-local counterparty set directly. The store owns the selection,
+    // files.js mirrors it into `state.counterparty` (observable via the
+    // counterparty query param), and the contact row's aria-pressed reflects
+    // the store's selection.
+    const cps = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                cps.push(new URL(url, 'http://x').searchParams.get('counterparty'));
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            return undefined;
+        }),
+    });
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+
+    const store = sandbox.window.MeshCenterTargets;
+    const sel = store.selected();
+    assert.ok(sel, 'a contact click must leave a store selection');
+    assert.equal(sel.kind, 'node', 'the store selection is a node target');
+    assert.equal(sel.id, '!aaaaaaaa', 'the store selection is the clicked node');
+    await waitFor(() => cps[cps.length - 1] === '!aaaaaaaa');
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('aria-pressed="true"'));
+
+    console.log('PASS: test_contact_click_routes_through_shared_store');
+}
+
+async function test_second_contact_click_deselects_returns_full_list() {
+    // Finding 1: a second click on the already-selected contact deselects it
+    // (store selection cleared) and returns the FULL transfer list (no
+    // counterparty filter), with aria-pressed back to "false".
+    const cps = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                cps.push(new URL(url, 'http://x').searchParams.get('counterparty'));
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            return undefined;
+        }),
+    });
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+    await waitFor(() => cps.includes('!aaaaaaaa'));
+
+    // Second click on the SAME contact deselects.
+    dispatch(sandbox, { 'data-files-action': 'contact-filter', 'data-contact': '!aaaaaaaa' });
+
+    assert.equal(sandbox.window.MeshCenterTargets.selected(), null, 'a second click must clear the store selection');
+    await waitFor(() => cps[cps.length - 1] === null);
+    await waitFor(() => {
+        const html = sandbox._document.elements.get('filesContactsList')?.innerHTML || '';
+        return html.includes('!aaaaaaaa') && !html.includes('aria-pressed="true"');
+    });
+
+    console.log('PASS: test_second_contact_click_deselects_returns_full_list');
+}
+
+async function test_channel_selection_clears_node_counterparty() {
+    // Finding 1: a channel selected in the shared store STAYS selected (the
+    // store retains it, with can_send_file=false) but is never a file
+    // counterparty — Files clears any prior node counterparty rather than
+    // keeping the stale filter.
+    const cps = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
+            }
+            if (url.startsWith('/api/attachments?')) {
+                cps.push(new URL(url, 'http://x').searchParams.get('counterparty'));
+                return json(200, { ok: true, attachments: [], total: 0 });
+            }
+            return undefined;
+        }),
+    });
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    // Select a node -> counterparty filter applies.
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
+    await waitFor(() => cps.includes('!aaaaaaaa'));
+
+    // Select a channel -> the store keeps the channel, Files clears the filter.
+    sandbox.window.MeshCenterTargets.toggleSelect('channel', 'LongFast');
+
+    const store = sandbox.window.MeshCenterTargets;
+    assert.equal(store.selected().kind, 'channel', 'the channel selection is retained by the store');
+    assert.equal(store.selected().id, 'longfast', 'the channel id is canonicalized (lowercased)');
+    await waitFor(() => cps[cps.length - 1] === null);
+    await waitFor(() => {
+        const html = sandbox._document.elements.get('filesContactsList')?.innerHTML || '';
+        return !html.includes('aria-pressed="true"');
+    });
+
+    console.log('PASS: test_channel_selection_clears_node_counterparty');
+}
+
+async function test_send_dialog_preselects_valid_node() {
+    // Finding 1: the Send dialog pre-selects a recipient only when the shared
+    // store's selection is a valid, still-sendable node — here a trusted node.
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') {
+                return json(200, { ok: true, contacts: [
+                    contact('!aaaaaaaa', 'trusted'),
+                    contact('!bbbbbbbb', 'trusted'),
+                ] });
+            }
+            return undefined;
+        }),
+    });
+    activate(sandbox);
+    await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
+
+    dispatch(sandbox, { 'data-files-action': 'send' });
+
+    const sel = sandbox._document.getElementById('filesSendRecipient');
+    assert.equal(sel.value, '!aaaaaaaa', 'the selected valid node must be pre-selected');
+    assert.ok(!sel.innerHTML.includes('Choose a trusted contact'), 'no empty placeholder when a valid node is pre-selected');
+
+    console.log('PASS: test_send_dialog_preselects_valid_node');
+}
+
+async function test_send_dialog_no_fallback_for_invalid_channel_disappeared() {
+    // Finding 1: an invalid / disappeared / channel selection must NOT silently
+    // fall back to another recipient. The recipient select shows an explicit
+    // empty placeholder and no value is pre-selected.
+    const contactsResp = [
+        contact('!aaaaaaaa', 'trusted'),
+        contact('!bbbbbbbb', 'confirmation_required'), // present but NOT sendable
+    ];
+    const build = () => buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') return json(200, { ok: true, contacts: contactsResp });
+            return undefined;
+        }),
+    });
+
+    // (a) a channel selection: a channel is never a file recipient.
+    {
+        const sandbox = build();
+        activate(sandbox);
+        await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+        sandbox.window.MeshCenterTargets.toggleSelect('channel', 'LongFast');
+        assert.equal(sandbox.window.MeshCenterTargets.selected().kind, 'channel', 'channel selection is retained');
+        dispatch(sandbox, { 'data-files-action': 'send' });
+        const sel = sandbox._document.getElementById('filesSendRecipient');
+        assert.equal(sel.value, '', 'a channel selection must not pre-select a recipient');
+        assert.ok(sel.innerHTML.includes('Choose a trusted contact'), 'a channel selection shows the empty placeholder');
+    }
+
+    // (b) a selected node that is present but NOT sendable (confirmation_required).
+    {
+        const sandbox = build();
+        activate(sandbox);
+        await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+        sandbox.window.MeshCenterTargets.toggleSelect('node', '!bbbbbbbb');
+        dispatch(sandbox, { 'data-files-action': 'send' });
+        const sel = sandbox._document.getElementById('filesSendRecipient');
+        assert.equal(sel.value, '', 'a non-sendable node must not be pre-selected');
+        assert.ok(sel.innerHTML.includes('Choose a trusted contact'), 'a non-sendable node shows the empty placeholder');
+    }
+
+    // (c) a selected node that has disappeared (not in the contact list at all).
+    {
+        const sandbox = build();
+        activate(sandbox);
+        await waitFor(() => (sandbox._document.elements.get('filesContactsList')?.innerHTML || '').includes('!aaaaaaaa'));
+        sandbox.window.MeshCenterTargets.toggleSelect('node', '!cccccccc');
+        dispatch(sandbox, { 'data-files-action': 'send' });
+        const sel = sandbox._document.getElementById('filesSendRecipient');
+        assert.equal(sel.value, '', 'a disappeared node must not pre-select a recipient');
+        assert.ok(sel.innerHTML.includes('Choose a trusted contact'), 'a disappeared node shows the empty placeholder');
+    }
+
+    console.log('PASS: test_send_dialog_no_fallback_for_invalid_channel_disappeared');
+}
+
 async function test_same_query_detail_invalidation_on_empty_poll() {
     // P3 review (second pass): the list can change under the SAME query key —
     // the selected transfer completed and left the pending filter, was deleted,
@@ -2359,10 +2555,16 @@ async function main() {
     await test_counterparty_detail_invalidation_on_switch_to_empty();
     await test_counterparty_switch_to_nonempty_selects_first_card();
     await test_contact_select_and_key_actions_are_separate();
+    // PR 4 Finding 1: shared-store selection wiring.
+    await test_contact_click_routes_through_shared_store();
+    await test_second_contact_click_deselects_returns_full_list();
+    await test_channel_selection_clears_node_counterparty();
+    await test_send_dialog_preselects_valid_node();
+    await test_send_dialog_no_fallback_for_invalid_channel_disappeared();
     await test_same_query_detail_invalidation_on_empty_poll();
     await test_same_query_replaces_selection_no_transient_stale_detail();
     await test_reactivation_issues_fresh_transfers_request();
-    console.log('All files UI behavior tests passed (48 scenarios).');
+    console.log('All files UI behavior tests passed (53 scenarios).');
 }
 
 main()

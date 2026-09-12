@@ -748,9 +748,9 @@ class AttachmentsService:
 
     def _refresh_key_request_snapshot(self) -> None:
         """PR 4 (shared target model): refresh the worker-published key-request
-        capability snapshot from the queued `contact_request_key` commands and
-        the persisted `last_request_sent_at` table (both worker-thread reads -
-        see `key_request_snapshot.py`). A no-op when no publisher was injected
+        capability snapshot from the pending queued-marker set and the persisted
+        `last_request_sent_at` table (both worker-thread reads - see
+        `key_request_snapshot.py`). A no-op when no publisher was injected
         (a standalone service with its own dedicated `conn` and no
         request-facing facade to feed). Never raises - a transient read failure
         must not kill the tick; the request thread's read simply keeps the
@@ -798,7 +798,23 @@ class AttachmentsService:
                 command = self._command_queue.get_nowait()
             except queue.Empty:
                 return
+            self._note_key_request_drained(command)
             self._execute_command(command)
+
+    def _note_key_request_drained(self, command: Command) -> None:
+        """PR 4 (shared target model, Finding 2): the worker has dequeued a
+        `contact_request_key` command, so clear its `queued` marker in the
+        shared key-request publisher. Its state now derives from the persisted
+        `last_request_sent_at` timestamp on the next `refresh()` (a successful
+        send -> `waiting_response`; a failed send leaves no marker *and* no
+        timestamp -> back to `idle`/absent). Runs once per drained command,
+        success or failure, so a failed send can never leave a stuck `queued`
+        marker behind."""
+        if self._key_request_publisher is None or command.kind != "contact_request_key":
+            return
+        contact_id = command.payload.get("contact_id")
+        if isinstance(contact_id, str) and contact_id:
+            self._key_request_publisher.mark_drained(contact_id)
 
     def _execute_command(self, command: Command) -> None:
         """Step 1.6A.1 (correction #2/#4): execute one dequeued command by

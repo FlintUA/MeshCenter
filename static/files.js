@@ -213,6 +213,7 @@
         connectivity: { internet: 'unknown', relays: {} },
         settings: null,
         localNodeId: '',
+        storeSubscribed: false,    // PR 4 Finding 1: one subscription to the shared store
 
         attachments: [],
         total: 0,
@@ -1678,9 +1679,27 @@
     // P3: counterparty filter — selects transfers by the stable counterparty id
     // only (canonicalNodeId), never the display name. Toggling the already-active
     // contact clears the filter and returns the full list.
+    //
+    // PR 4 Finding 1: the click routes through the shared target store (ONE
+    // selection source of truth). `store.toggleSelect('node', id)` fires the
+    // store's subscriber synchronously, which updates `state.counterparty`
+    // (onStoreSelection) and reloads the transfer list.
     function toggleCounterpartyFilter(contactId) {
-        var canonical = canonicalNodeId(contactId || '');
-        state.counterparty = (canonical === state.counterparty) ? '' : canonical;
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        if (!store) return;
+        store.toggleSelect('node', contactId || '');
+    }
+
+    // PR 4 Finding 1: the shared store's selection is the single source of
+    // truth for the Files counterparty filter. A node selection becomes the
+    // counterparty; a channel selection (or no selection) clears it — a channel
+    // stays selected in the store but is never a file counterparty.
+    function onStoreSelection(evt) {
+        var sel = evt && evt.selection;
+        var nodeId = (sel && sel.kind === 'node') ? canonicalNodeId(sel.id) : '';
+        if (state.counterparty === nodeId) return; // no change — avoid a reload loop
+        state.counterparty = nodeId;
+        if (!state.active) return; // re-derived on the next activate()→refresh()
         renderContacts();
         loadTransfers();
     }
@@ -1719,6 +1738,18 @@
         state.epoch++;
         state.active = true;
         state.visible = !(typeof document !== 'undefined' && document.hidden);
+        // PR 4 Finding 1: subscribe to the shared target store once, so the
+        // counterparty filter always mirrors the store's selection (node clicks
+        // in the contact list route through store.toggleSelect). The store is a
+        // page singleton and files.js is always loaded, so the subscription
+        // lives for the page; the onStoreSelection guard re-syncs on reactivate.
+        if (!state.storeSubscribed) {
+            var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+            if (store && typeof store.subscribe === 'function') {
+                store.subscribe(onStoreSelection);
+                state.storeSubscribed = true;
+            }
+        }
         refresh();
         schedule();
         loadConnectivity();
@@ -1886,6 +1917,13 @@
             return;
         }
         var trusted = state.contacts.filter(function (c) { return c.can_send_file === true; });
+        // PR 4 Finding 1: pre-select a recipient from the shared store's
+        // selection — but only a valid, still-sendable node. A channel
+        // selection, or a selected node that is no longer a trusted contact
+        // (invalid/disappeared), yields `null`: the select shows an explicit
+        // empty placeholder rather than silently falling back to the first
+        // (different) trusted contact.
+        var preselect = sendRecipientPreselection();
         var options = state.contacts.map(function (c) {
             var name = c.name || c.contact_id;
             var label = name + ' (' + c.contact_id + ')';
@@ -1895,10 +1933,34 @@
             var reason = fileUnavailableReasonLabel(c.file_unavailable_reason);
             return '<option value="' + esc(c.contact_id) + '" disabled>' + esc(label + ' — ' + reason) + '</option>';
         }).join('');
-        if (!trusted.length) {
-            options = '<option value="">' + esc(t('files.no_trusted_contacts', 'No trusted contacts')) + '</option>' + options;
+        if (!trusted.length || preselect === null) {
+            var placeholder = trusted.length
+                ? t('files.send_choose_recipient', 'Choose a trusted contact')
+                : t('files.no_trusted_contacts', 'No trusted contacts');
+            options = '<option value="">' + esc(placeholder) + '</option>' + options;
         }
         sel.innerHTML = options;
+        if (preselect === null) {
+            sel.value = '';         // an invalid/disappeared selection → explicit empty, no fallback
+        } else if (preselect) {
+            sel.value = preselect;  // a valid node selection → pre-select it
+        }
+        // (preselect === '') leaves the browser default (first option) untouched.
+    }
+
+    // PR 4 Finding 1: resolve the shared store's selection to a pre-selected
+    // recipient id, or `null` when a target is selected but is not a valid
+    // recipient (a channel, or an invalid/disappeared/non-sendable node) — the
+    // latter must never silently fall back to a different recipient.
+    function sendRecipientPreselection() {
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        if (!store) return '';
+        var sel = store.selected();
+        if (!sel) return '';                  // nothing selected → normal default
+        if (sel.kind !== 'node') return null; // a channel is never a file recipient
+        var c = findContact(sel.id);
+        if (c && c.can_send_file === true) return c.contact_id;
+        return null;                          // invalid/disappeared/non-sendable node
     }
 
     function uploadReadyProvider(p) {

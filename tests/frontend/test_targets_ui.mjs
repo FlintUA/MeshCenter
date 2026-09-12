@@ -249,6 +249,92 @@ async function testSubscribersNotifiedOnRefreshAndSelect() {
     assert.equal(events.length, 3, 'unsubscribed callback must not fire');
 }
 
+// ---- strict node-id validation (Finding 3) -----------------------------------
+
+async function testCanonicalNodeIdRejectsInvalidForms() {
+    const { store } = makeSandbox(defaultHandler());
+    // empty / nullish
+    assert.equal(store.canonicalNodeId(''), '');
+    assert.equal(store.canonicalNodeId(null), '');
+    assert.equal(store.canonicalNodeId(undefined), '');
+    // short (fewer than 8 hex after `!`)
+    assert.equal(store.canonicalNodeId('!abc'), '');
+    assert.equal(store.canonicalNodeId('!abcdef1'), '');
+    // long (more than 8 hex after `!`)
+    assert.equal(store.canonicalNodeId('!abcdef123'), '');
+    // non-hex
+    assert.equal(store.canonicalNodeId('!abcdefg0'), '');
+    assert.equal(store.canonicalNodeId('!abcdefgh'), '');
+    // leading/trailing whitespace
+    assert.equal(store.canonicalNodeId(' !abcdef12'), '');
+    assert.equal(store.canonicalNodeId('!abcdef12 '), '');
+    // embedded newline / carriage return (a bare `$` matches before `\n`)
+    assert.equal(store.canonicalNodeId('!abcdef12\n'), '');
+    assert.equal(store.canonicalNodeId('!abcdef12\r'), '');
+    assert.equal(store.canonicalNodeId('\n!abcdef12'), '');
+    // valid uppercase accepted and canonicalized to lowercase
+    assert.equal(store.canonicalNodeId('!ABCDEF12'), '!abcdef12');
+    assert.equal(store.canonicalNodeId('!abcdef12'), '!abcdef12');
+}
+
+async function testInvalidNodeIdsInNodeListAreDropped() {
+    const { store } = makeSandbox(defaultHandler({
+        '/api/nodes_management': json(nodesBody([
+            { node_id: '!33333333', name: 'Bob' },
+            { node_id: '!BAD-NODE\n', name: 'Mallory' },  // trailing newline
+            { node_id: 'not-a-node', name: 'Bad' },       // non-address shape
+            { node_id: '', name: 'Empty' },               // empty
+        ])),
+    }));
+    await store.refresh();
+    const ids = nonLocal(store).map((t) => t.id);
+    assert.equal(ids.length, 1, 'only the valid node survives');
+    assert.equal(ids[0], '!33333333');
+    assert.equal(store.getNode('!BAD-NODE\n'), null);
+    assert.equal(store.getNode('not-a-node'), null);
+    assert.equal(store.getNode(''), null);
+}
+
+async function testSelectAndGetRejectInvalidNodeIds() {
+    const { store } = makeSandbox(defaultHandler());
+    await store.refresh();
+
+    // An invalid node id clears selection (returns null) rather than
+    // selecting a non-address identity.
+    assert.equal(store.select('node', '!BAD\n'), null);
+    assert.equal(store.selected(), null);
+    assert.equal(store.select('node', ''), null);
+    assert.equal(store.selected(), null);
+
+    // A valid selection survives, then a subsequent invalid select clears it.
+    store.select('node', '!33333333');
+    assert.equal(store.selected().id, '!33333333');
+    store.select('node', 'not-a-node');
+    assert.equal(store.selected(), null);
+
+    // getNode returns null for invalid ids.
+    assert.equal(store.getNode('!xyz'), null);
+}
+
+async function testChannelIdIsNotNodeRegexValidated() {
+    const { store } = makeSandbox(defaultHandler({
+        '/api/chats': json(channelsBody([
+            { id: 'LongFast', name: 'LongFast', index: 0 },
+            { id: '!12345678', name: 'AddrLike', index: 1 },  // looks like a node address
+            { id: '12', name: 'Short', index: 2 },            // would fail the node length pin
+        ])),
+    }));
+    await store.refresh();
+    assert.equal(store.channelTargets().length, 3);
+    assert.ok(store.getChannel('LongFast'));
+    assert.ok(store.getChannel('!12345678'), 'a channel id that looks like a node address is still a channel');
+    assert.ok(store.getChannel('12'), 'a short channel id is not rejected by the node regex');
+    // canonicalChannelId lowercases but never applies the node shape.
+    assert.equal(store.canonicalChannelId('LongFast'), 'longfast');
+    assert.equal(store.canonicalChannelId('!ABCDEF12'), '!abcdef12');
+    assert.equal(store.canonicalChannelId('12'), '12');
+}
+
 // ---- channel ----------------------------------------------------------------
 
 async function testChannelIsNavigationOnly() {
@@ -323,6 +409,22 @@ async function testGenerationIncrementsPerMerge() {
     assert.equal(store.generation(), 2);
 }
 
+async function testRefreshNeverDropsResponsesAcrossGenerations() {
+    // Finding 4 (epoch/context guard): the store has no epoch guard that drops
+    // "stale" responses — a refresh always merges the responses it awaits. A
+    // second refresh issued mid-flight joins the first's in-flight sources
+    // (no double fetch) and BOTH merge, advancing generation twice. A dropped
+    // response would leave one of these generations unmerged.
+    const { store } = makeSandbox(defaultHandler({
+        '/api/nodes_management': json(nodesBody([{ node_id: '!33333333', name: 'Bob' }])),
+    }));
+    const [g1, g2] = await Promise.all([store.refresh(), store.refresh()]);
+    assert.equal(g1, 1);
+    assert.equal(g2, 2);
+    assert.equal(store.generation(), 2, 'both refreshes merged; neither response was dropped');
+    assert.ok(store.getNode('!33333333'), 'the merged response is observable');
+}
+
 async function testTransientFailurePreservesLastKnownGoodAndMarksDegraded() {
     let failContacts = false;
     const handler = async (url) => {
@@ -377,11 +479,16 @@ const tests = [
     ['selection: select/clear/selected canonicalizes', testSelectClearAndSelected],
     ['selection: null kind clears', testSelectNullKindClears],
     ['selection: subscribers notified on refresh/select', testSubscribersNotifiedOnRefreshAndSelect],
+    ['strict: canonicalNodeId rejects invalid forms', testCanonicalNodeIdRejectsInvalidForms],
+    ['strict: invalid node ids in node list are dropped', testInvalidNodeIdsInNodeListAreDropped],
+    ['strict: select/get reject invalid node ids', testSelectAndGetRejectInvalidNodeIds],
+    ['strict: channel id is not node-regex validated', testChannelIdIsNotNodeRegexValidated],
     ['channel: navigation-only', testChannelIsNavigationOnly],
     ['local node: self unavailable', testLocalNodeIsSelfUnavailable],
     ['local node: total prefers raw total', testNodeTotalPrefersRawTotalOverTargetCount],
     ['race: concurrent refresh joins, no double fetch', testConcurrentRefreshJoinsInFlightAndNeverDoubleFetches],
     ['race: generation increments per merge', testGenerationIncrementsPerMerge],
+    ['race: refresh never drops responses across generations', testRefreshNeverDropsResponsesAcrossGenerations],
     ['race: transient 503 preserves last-known-good', testTransientFailurePreservesLastKnownGoodAndMarksDegraded],
     ['race: network error preserves last-known-good', testNetworkErrorPreservesLastKnownGood],
 ];

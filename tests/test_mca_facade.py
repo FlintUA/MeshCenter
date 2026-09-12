@@ -86,15 +86,20 @@ class _StubRecipientPublisher:
 
 class _StubKeyRequestPublisher:
     """Duck-typed key-request capability surface (PR 4) with no SQLite - the
-    one method the facade's `key_request_snapshot()` delegates to. Publishes
-    an empty snapshot from construction, matching the real publisher's
-    "never None" contract."""
+    one method the facade's `key_request_snapshot()` delegates to, plus the
+    `mark_queued()` hook the facade's `submit()` calls after a successful
+    `contact_request_key` enqueue (Finding 2). Publishes an empty snapshot
+    from construction, matching the real publisher's "never None" contract."""
 
     def __init__(self):
         self._snapshot = KeyRequestSnapshot(by_address={})
+        self.marked_queued = []
 
     def snapshot(self):
         return self._snapshot
+
+    def mark_queued(self, contact_id):
+        self.marked_queued.append(contact_id)
 
 
 class _StubWorkspaceManager:
@@ -264,6 +269,48 @@ def test_submit_full_queue_rolls_back_the_registry_entry():
     assert facade.get_command("cmd-b") is None
     # the first command is untouched.
     assert facade.get_command("cmd-a").status == STATUS_QUEUED
+
+
+# --- key-request queued marker (PR 4 Finding 2) -----------------------------
+
+def _request_key_command(command_id="cmd-kr", contact_id="!756f9960"):
+    return Command(
+        command_id=command_id,
+        kind="contact_request_key",
+        payload={"contact_id": contact_id, "adapter_id": "meshtastic", "route_id": contact_id},
+        created_at=0.0,
+    )
+
+
+def test_submit_marks_contact_request_key_queued():
+    facade, _ = _facade()
+    facade.submit(_request_key_command())
+    # The successful enqueue marked the address queued in the shared publisher,
+    # so `GET /api/mca/key-requests` observes `queued` immediately (Finding 2).
+    assert facade._key_request_snapshot_publisher.marked_queued == ["!756f9960"]  # noqa: SLF001
+
+
+def test_submit_does_not_mark_non_key_request_commands_queued():
+    facade, _ = _facade()
+    facade.submit(_command(kind="attachment_cancel"))
+    facade.submit(_command(command_id="cmd-2", kind="contact_confirm"))
+    assert facade._key_request_snapshot_publisher.marked_queued == []  # noqa: SLF001
+
+
+def test_submit_with_a_missing_contact_id_marks_nothing():
+    facade, _ = _facade()
+    facade.submit(Command(command_id="cmd-x", kind="contact_request_key", payload={}, created_at=0.0))
+    assert facade._key_request_snapshot_publisher.marked_queued == []  # noqa: SLF001
+
+
+def test_submit_full_queue_leaves_no_false_queued_marker():
+    facade, _ = _facade(maxsize=1)
+    facade.submit(_command(command_id="cmd-a"))  # fill the queue
+    with pytest.raises(CommandQueueFull):
+        facade.submit(_request_key_command(command_id="cmd-kr"))
+    # The rejected key request was never accepted, so its address must NOT be
+    # marked queued (queue_full leaves no false `queued`).
+    assert facade._key_request_snapshot_publisher.marked_queued == []  # noqa: SLF001
 
 
 # --- no SQLite/filesystem/network/tick-lock surface ------------------------

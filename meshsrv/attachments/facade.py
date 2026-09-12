@@ -284,8 +284,24 @@ class AttachmentsFacade:
         except CommandQueueFull:
             self._command_registry.discard_queued(command.command_id)
             raise
+        self._note_key_request_queued(command)
         self._wake_event.set()
         return command.command_id
+
+    def _note_key_request_queued(self, command: Command) -> None:
+        """PR 4 (shared target model, Finding 2): after a `contact_request_key`
+        command has been *successfully* enqueued, mark its address `queued` in
+        the shared key-request publisher so `GET /api/mca/key-requests` (and the
+        frontend store) observes `queued` immediately - before the worker's next
+        tick drains it. Runs only on a successful enqueue (a full queue raises
+        `CommandQueueFull` above, before this line), so `queue_full` never
+        leaves a false `queued`. Pure in-memory (`mark_queued` is a lock-guarded
+        set add), never `conn`/filesystem/network/tick lock."""
+        if command.kind != "contact_request_key":
+            return
+        contact_id = command.payload.get("contact_id")
+        if isinstance(contact_id, str) and contact_id:
+            self._key_request_snapshot_publisher.mark_queued(contact_id)
 
     # ---- request-thread write: idempotent create (§3.5/§3.6) ---------------
 

@@ -95,6 +95,7 @@
     "send_comment": "Kommentar (optional)",
     "send_submit": "Senden",
     "err_no_recipient": "Wähle einen vertrauenswürdigen Kontakt",
+    "send_choose_recipient": "Wähle einen vertrauenswürdigen Kontakt",
     "err_no_file": "Wähle eine Datei",
     "err_file_too_large": "Datei überschreitet das 5-MiB-Limit",
     "sending": "Sende Datei…",

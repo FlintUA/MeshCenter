@@ -95,6 +95,7 @@
     "send_comment": "Коментар (необов'язково)",
     "send_submit": "Надіслати",
     "err_no_recipient": "Оберіть довірений контакт",
+    "send_choose_recipient": "Оберіть довірений контакт",
     "err_no_file": "Оберіть файл",
     "err_file_too_large": "Файл перевищує ліміт 5 МіБ",
     "sending": "Надсилання файлу…",

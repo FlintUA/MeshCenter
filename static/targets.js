@@ -3,7 +3,9 @@
  * The shared navigation target store (PR 4): one controller owning the
  * normalized node+channel target model, the MCA capability overlays, the
  * selected {kind,id} target, subscription/event notification, and
- * generation/epoch protection. Loaded before files.js and chat.js so every
+ * generation protection (a `generation` counter consumers guard on; there is
+ * no epoch/context guard — a data-context change is a full page reload, see
+ * ADR-0012 §6). Loaded before files.js and chat.js so every
  * workspace — the Nodes/sidebar area, the Files contact list + Send-dialog
  * recipients, the Files counterparty filter, and future desktop/mobile
  * redesigns — reads the SAME model instead of each re-merging the raw
@@ -68,7 +70,6 @@
 
     var state = {
         generation: 0,          // bumped on every successful merge — consumers guard on it
-        refreshEpoch: 0,        // bumped at the start of each refresh(); stale responses dropped
         loading: {},            // sourceKey -> in-flight Promise (joinable)
         degraded: {},           // sourceKey -> true while serving last-known-good
         lastGood: {
@@ -90,8 +91,26 @@
 
     // ---- small helpers -----------------------------------------------------
 
-    function canonicalId(id) {
-        return String(id || '').toLowerCase();
+    function canonicalNodeId(id) {
+        // A node target's identity is a canonical transport address: `!` + 8
+        // lowercase hex (the backend `_CONTACT_ID_RE` shape). Normalize to
+        // lowercase first (so an uppercase input is accepted-and-canonicalized,
+        // matching the backend's own lowercased emission), then accept ONLY the
+        // canonical shape. The explicit length pin matters: a bare `$` anchor
+        // matches before a trailing newline, so `length !== 9` also rejects a
+        // trailing "\n"/"\r". Anything else — empty, short, long, non-hex,
+        // whitespace, newline — returns '' so it is never keyed, deduped, or
+        // selected as a node identity.
+        var normalized = String(id == null ? '' : id).toLowerCase();
+        if (normalized.length !== 9 || !CONTACT_ID_RE.test(normalized)) return '';
+        return normalized;
+    }
+
+    function canonicalChannelId(id) {
+        // Channel targets are navigation-only and are NOT node addresses, so
+        // the node-id regex must never be applied to them. Their identity is a
+        // lowercase channel id (no shape constraint beyond being a string).
+        return String(id == null ? '' : id).toLowerCase();
     }
 
     function trustStateFromStatus(status) {
@@ -195,7 +214,7 @@
         var map = {};
         if (!raw || !Array.isArray(raw.key_requests)) return map;
         raw.key_requests.forEach(function (kr) {
-            var id = canonicalId(kr.contact_id);
+            var id = canonicalNodeId(kr.contact_id);
             if (!id) return;
             map[id] = {
                 key_request_state: kr.key_request_state || 'idle',
@@ -219,7 +238,7 @@
         // matching node is seen). Bindings carry no display name — the node
         // slice (or the canonical id fallback) supplies it.
         bindings.forEach(function (b) {
-            var id = canonicalId(b.contact_id);
+            var id = canonicalNodeId(b.contact_id);
             if (!id) return;
             byNodeId[id] = {
                 kind: 'node',
@@ -248,7 +267,7 @@
 
         // Pass 2: nodes overlay names + metadata and mark the local node.
         nodes.forEach(function (n) {
-            var id = canonicalId(n.node_id);
+            var id = canonicalNodeId(n.node_id);
             if (!id) return;
             if (!byNodeId[id]) {
                 byNodeId[id] = {
@@ -284,7 +303,7 @@
 
         // Pass 2b: ensure the local node is present even when the node list
         // does not (yet) include it — its identity comes from base_status.
-        var localId = canonicalId(state.localNodeId);
+        var localId = canonicalNodeId(state.localNodeId);
         if (localId && !byNodeId[localId]) {
             byNodeId[localId] = {
                 kind: 'node',
@@ -342,7 +361,7 @@
         var channels = (channelsRaw && Array.isArray(channelsRaw.channels)) ? channelsRaw.channels : [];
         var byChannelId = {};
         var channelTargets = channels.map(function (c) {
-            var id = canonicalId(c.id);
+            var id = canonicalChannelId(c.id);
             var cap = computeCapability({ kind: 'channel' });
             var t = {
                 kind: 'channel',
@@ -383,7 +402,12 @@
     // ---- public surface ----------------------------------------------------
 
     function refresh() {
-        state.refreshEpoch++;
+        // Every merge bumps `generation`; a concurrent refresh joins the
+        // in-flight per-source promises (loadSource) rather than issuing its
+        // own, and every response is merged — there is no epoch guard that
+        // drops a response, because a data-context change (radio profile
+        // switch) is a full process restart + full page reload (ADR-0012 §6),
+        // so no in-flight fetch can outlive its context in-page.
         // The local node identity is read from base_status, applied inline
         // during the load so `mergeTargets` sees it; all other slices merge
         // once every source settles.
@@ -394,7 +418,7 @@
             loadSource('channels', '/api/chats'),
             loadSource('baseStatus', '/api/base_status', function () {
                 var bs = state.lastGood.baseStatus;
-                if (bs) state.localNodeId = canonicalId(bs.node_id || '');
+                if (bs) state.localNodeId = canonicalNodeId(bs.node_id || '');
                 if (bs) state.localNodeName = bs.node_name || '';
             }),
         ]).then(function () {
@@ -418,10 +442,10 @@
     function allTargets() { return state.nodeTargets.concat(state.channelTargets); }
 
     function getNode(id) {
-        return state.byNodeId[canonicalId(id)] || null;
+        return state.byNodeId[canonicalNodeId(id)] || null;
     }
     function getChannel(id) {
-        return state.byChannelId[canonicalId(id)] || null;
+        return state.byChannelId[canonicalChannelId(id)] || null;
     }
     function getTarget(kind, id) {
         if (kind === 'channel') return getChannel(id);
@@ -429,7 +453,17 @@
     }
 
     function select(kind, id) {
-        state.selection = kind ? { kind: kind, id: canonicalId(id) } : null;
+        // Selection canonicalizes and validates by kind. A node selection
+        // passes through canonicalNodeId() (so an invalid/empty/malformed id
+        // — the review's "invalid/disappeared target" case — clears selection
+        // instead of silently selecting a non-address); a channel selection
+        // only lowercases (the node-id regex is never applied to channel ids).
+        var canonical = kind === 'channel'
+            ? canonicalChannelId(id)
+            : kind === 'node'
+                ? canonicalNodeId(id)
+                : '';
+        state.selection = canonical ? { kind: kind, id: canonical } : null;
         notify();
         return state.selection;
     }
@@ -439,6 +473,26 @@
     }
     function selected() {
         return state.selection;
+    }
+
+    function toggleSelect(kind, id) {
+        // Click-to-toggle (Finding 1): a second click on the already-selected
+        // target deselects (returns all transfers); any other target selects.
+        // Kind + canonical id are compared together, so toggling a node never
+        // clears a channel selection (and vice-versa), and an invalid id clears
+        // instead of silently selecting a non-identity.
+        var cur = state.selection;
+        var canonical = kind === 'channel'
+            ? canonicalChannelId(id)
+            : kind === 'node'
+                ? canonicalNodeId(id)
+                : '';
+        if (!canonical) { clearSelection(); return null; }
+        if (cur && cur.kind === kind && cur.id === canonical) {
+            clearSelection();
+            return null;
+        }
+        return select(kind, id);
     }
 
     function subscribe(fn) {
@@ -464,6 +518,7 @@
         getChannel: getChannel,
         getTarget: getTarget,
         select: select,
+        toggleSelect: toggleSelect,
         clearSelection: clearSelection,
         selected: selected,
         subscribe: subscribe,
@@ -474,6 +529,7 @@
         // matrix without touching the store): pure, no hidden state.
         computeCapability: computeCapability,
         trustStateFromStatus: trustStateFromStatus,
-        canonicalId: canonicalId,
+        canonicalNodeId: canonicalNodeId,
+        canonicalChannelId: canonicalChannelId,
     };
 })();

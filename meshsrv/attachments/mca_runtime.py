@@ -282,12 +282,14 @@ class _MCARuntimeState:
         # `coordinator.list_bindings()`/`list_key_request_sent_at()` on this
         # startup thread - safe, same reasoning as the recipient snapshot
         # publisher above) and handed to *both* the facade (request thread
-        # reads it via `GET /api/mca/key-requests`) and the service (worker
-        # refreshes it each tick), so they share one instance. It needs
-        # `command_queue` (to see queued `contact_request_key` commands), so
-        # it is constructed after it, unlike the recipient publisher above.
+        # reads it via `GET /api/mca/key-requests` and marks addresses
+        # `queued` on a successful `contact_request_key` enqueue) and the
+        # service (worker clears the marker on dequeue and refreshes it each
+        # tick), so they share one instance. It no longer reads the command
+        # queue directly (Finding 5) - the facade/service drive its pending
+        # queued-marker set instead.
         self.key_request_snapshot_publisher = KeyRequestStatePublisher(
-            self.coordinator, self.command_queue
+            self.coordinator
         )
         self.command_registry = CommandRegistry()
         self.pending_reservations = PendingReservations()

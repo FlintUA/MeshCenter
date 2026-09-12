@@ -13,11 +13,15 @@ the "request key" action is currently offered - and, if a request is
 already in flight, *why* it is disabled. That state is not a single row in
 one table; it is two facts the worker alone can read safely:
 
-  - a `contact_request_key` command still sitting in the bounded command
-    queue (queued, not yet drained by the worker) - see
-    `commands.CommandQueue.iter_commands()`, the one read that can see a
-    command's *payload* (the registry deliberately discards payloads, so
-    per-address "queued" cannot be derived from `CommandRegistry`);
+  - a `contact_request_key` command that has been *accepted* into the
+    bounded command queue but not yet drained by the worker (queued). This is
+    tracked by a lock-guarded, in-memory pending-marker set owned by this
+    publisher (`mark_queued()` / `mark_drained()`), not by iterating the
+    queue's internal deque (that read raced a concurrent `put_nowait()` and
+    could raise `deque mutated during iteration` - see commands.py's own
+    `iter_commands()`), and not from `CommandRegistry` (the registry
+    deliberately discards payloads, so per-address "queued" cannot be derived
+    from it);
   - the persisted `mca_key_exchange_contact_state.last_request_sent_at`
     timestamp (a request was already sent) - which the §11 no-secret
     discipline forbids exposing directly.
@@ -44,9 +48,11 @@ State meanings (a single, closed vocabulary - see the enum):
     for an address absent from the snapshot; the publisher only lists an
     address once it has real activity (queued or sent), so `idle` never
     appears in the map and the request thread/frontend default to it.
-  - `queued` - a `contact_request_key` command for the address is still in
-    the command queue (not yet drained). A request is about to go out, so
-    the action must be disabled.
+  - `queued` - a `contact_request_key` command for the address has been
+    accepted into the command queue and not yet drained. A request is about
+    to go out, so the action must be disabled. Observable immediately after
+    `AttachmentsFacade.submit()` returns, before any worker tick, via the
+    live overlay `snapshot()` applies (see `mark_queued()`).
   - `waiting_response` - a request was already sent and the per-address
     rate-limit window (`MIN_SECONDS_BETWEEN_KEY_REQUESTS_TO_SAME_ADDRESS`)
     has not yet elapsed; we are waiting for the contact's KEY_ANNOUNCE.
@@ -71,7 +77,6 @@ import time
 import types
 from typing import Dict, Mapping, Set
 
-from meshsrv.attachments.commands import CommandQueue
 from meshsrv.attachments.key_exchange import (
     MIN_SECONDS_BETWEEN_KEY_REQUESTS_TO_SAME_ADDRESS,
     KeyExchangeCoordinator,
@@ -120,12 +125,15 @@ class KeyRequestStatePublisher:
     `RecipientSnapshotPublisher` (and, transitively, `ConnectivityMonitor`'s
     `_profile_snapshot`).
 
-    - `refresh()` is the *only* place that reads the command queue and the
-      persisted `last_request_sent_at` table (worker/startup-thread reads
-      only). It builds a whole new snapshot and swaps it in with one
-      reference assignment - never mutating the previously-published one.
-    - `snapshot()` is the request-thread read: a single reference read under
-      a short lock, never `conn`.
+    - `refresh()` is the *only* place that reads the persisted
+      `last_request_sent_at` table (worker/startup-thread reads only) plus the
+      pending queued-marker set (`_pending_queued`). It builds a whole new
+      snapshot and swaps it in with one reference assignment - never mutating
+      the previously-published one.
+    - `snapshot()` is the request-thread read: a single lock-guarded read of
+      `_published`, with any addresses marked queued since the last refresh
+      overlaid on top (the live `queued` overlay - see `mark_queued()`), never
+      `conn`.
 
     Construction performs an eager `refresh()` so the snapshot is populated
     from the moment the object exists, not only after the first tick - the
@@ -136,36 +144,61 @@ class KeyRequestStatePublisher:
     def __init__(
         self,
         coordinator: KeyExchangeCoordinator,
-        command_queue: CommandQueue,
         *,
         now_fn=time.time,
         min_seconds_between_key_requests: int = MIN_SECONDS_BETWEEN_KEY_REQUESTS_TO_SAME_ADDRESS,
     ):
         self._coordinator = coordinator
-        self._command_queue = command_queue
         self._now = now_fn
         self._min_interval = min_seconds_between_key_requests
         self._lock = threading.Lock()
+        # The pending queued-marker set: addresses whose `contact_request_key`
+        # command has been accepted into the command queue but not yet drained
+        # by the worker. Written by `mark_queued()` (request thread, via
+        # `AttachmentsFacade.submit()`) and `mark_drained()` (worker thread,
+        # via `AttachmentsService._drain_commands()`), read by `refresh()` and
+        # `snapshot()`. In-memory only, so a restart never fabricates a
+        # `queued` state for a command the new process never accepted.
+        self._pending_queued: Set[str] = set()
         self._published: KeyRequestSnapshot = KeyRequestSnapshot(by_address={})
         self.refresh()
 
+    def mark_queued(self, contact_id: str) -> None:
+        """Request-thread write (called by `AttachmentsFacade.submit()` *after* a
+        `contact_request_key` command has been successfully enqueued): record
+        that this address now has an accepted-but-not-yet-drained request, so
+        `queued` is observable immediately - before any worker tick - via
+        `snapshot()`. Thread-safe (lock-guarded), never touches SQLite/`conn`/
+        the filesystem/network. Only ever set for a successfully-accepted
+        command: a full queue raises `CommandQueueFull` *before* the facade
+        reaches this call, so `queue_full` never leaves a false `queued`."""
+        with self._lock:
+            self._pending_queued.add(contact_id)
+
+    def mark_drained(self, contact_id: str) -> None:
+        """Worker-thread write (called by `AttachmentsService._drain_commands()`
+        the moment it dequeues a `contact_request_key` command): the worker has
+        picked the request up, so the address is no longer `queued` - its state
+        now derives from the persisted `last_request_sent_at` timestamp (the
+        `waiting_response`/`retry_available` split) on the next `refresh()`.
+        Runs for both a successful and a failed execution: a failed send must
+        never leave a false `queued` marker behind. Thread-safe, in-memory."""
+        with self._lock:
+            self._pending_queued.discard(contact_id)
+
     def refresh(self) -> KeyRequestSnapshot:
-        """Worker/startup thread only: rebuild the snapshot from the queued
-        `contact_request_key` commands and the persisted per-address request
-        timestamps, then swap it in atomically. Returns the fresh snapshot.
+        """Worker/startup thread only: rebuild the snapshot from the pending
+        queued-marker set and the persisted per-address request timestamps, then
+        swap it in atomically. Returns the fresh snapshot.
 
         Never raises - a transient read failure must not kill the tick; the
-        request thread simply keeps the last-known-good snapshot."""
-        queued: Set[str] = set()
-        try:
-            for command in self._command_queue.iter_commands():
-                if command.kind != "contact_request_key":
-                    continue
-                contact_id = command.payload.get("contact_id")
-                if isinstance(contact_id, str) and contact_id:
-                    queued.add(contact_id)
-        except Exception:  # noqa: BLE001 - a queue read failure keeps last-known-good
-            queued = set()
+        request thread simply keeps the last-known-good snapshot (plus the live
+        `queued` overlay). `queued` is read from the lock-guarded pending-marker
+        set, which cannot fail, so the only failure mode left is a SQLite read
+        of the persisted timestamps - and that keeps last-known-good rather than
+        silently re-permitting a queued request."""
+        with self._lock:
+            queued: Set[str] = set(self._pending_queued)
 
         try:
             timestamps: Dict[str, float] = self._coordinator.list_key_request_sent_at()
@@ -196,9 +229,25 @@ class KeyRequestStatePublisher:
         return fresh
 
     def snapshot(self) -> KeyRequestSnapshot:
-        """The request-thread read: the last published immutable snapshot (a
-        single reference read under a short lock - never `conn`). Never
-        `None`: construction published an (empty) snapshot before any reader
-        could observe the object."""
+        """The request-thread read: the last published immutable snapshot, with
+        any addresses marked queued since the last `refresh()` overlaid on top
+        (so `queued` is observable immediately after `submit()` returns, before
+        the worker's next tick). A single lock-guarded read - never `conn`, the
+        filesystem, the network, or the tick lock. Never `None`: construction
+        published an (empty) snapshot before any reader could observe the
+        object."""
         with self._lock:
-            return self._published
+            published = self._published
+            pending = self._pending_queued
+        if not pending:
+            return published
+        # The live `queued` overlay: a `queued` address wins over any
+        # still-visible `last_request_sent_at` entry in `published` (a fresh
+        # request is in flight, superseding the prior one's rate-limit window).
+        by_address = dict(published.by_address)
+        for address in pending:
+            by_address[address] = KeyRequestCapability(
+                key_request_state=KeyRequestState.QUEUED,
+                can_request_key=False,
+            )
+        return KeyRequestSnapshot(by_address=by_address)

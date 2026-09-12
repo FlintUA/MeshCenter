@@ -468,15 +468,34 @@
     // A command's terminal callback (files.js contact confirm/request-key) must
     // reflect the just-committed change, not a projection that predates it.
     // `refresh()` is the wrong tool: it JOINs any still-in-flight per-source
-    // read and returns that (stale) projection. This instead (a) joins every
-    // source read already in flight, then (b) issues exactly ONE forced fresh
-    // refresh that bypasses the per-source join guard. Concurrent terminal
-    // callbacks coalesce onto the same follow-up via `activeFollowUp` — they
-    // await the same fresh read, never chain unbounded sequential reads.
-    var activeFollowUp = null;
+    // read and returns that (stale) projection.
+    //
+    // This runs a "wave": join every source read currently in flight, then issue
+    // exactly one forced fresh refresh that bypasses the per-source join guard.
+    // The cutoff is `followUp.started` — false until the forced refresh actually
+    // issues its HTTP requests, flipped true the instant it does:
+    //   * a command whose terminal state was reached BEFORE the wave starts may
+    //     share that wave (its committed result is included in the fresh read),
+    //     so it joins `followUp.promise`;
+    //   * a command reached WHILE a wave's refresh is already running must not
+    //     join it (that refresh predates the command), so it starts/joins exactly
+    //     ONE subsequent wave instead — `followUp` is replaced by the new wave
+    //     (which joins the running one via `state.loading` below), and further
+    //     commands arriving during it coalesce the same way.
+    // Nothing here loops: a wave only begins when a new terminal callback calls
+    // in, so absent new completions the wave count stays flat, and the guard
+    // clears when each wave settles (success or failure).
+    var followUp = null; // { started: boolean, promise: Promise } | null
 
     function refreshAfterCommand() {
-        if (activeFollowUp) return activeFollowUp;
+        // Join an active wave whose forced refresh has not started yet.
+        if (followUp && !followUp.started) return followUp.promise;
+
+        // Begin a new wave. If a prior wave's refresh is already running, the
+        // `joined` below waits on it (it is still in `state.loading`), so this
+        // subsequent fresh read happens strictly after it settles.
+        var wave = { started: false, promise: null };
+        followUp = wave;
 
         var inFlight = [];
         for (var k in state.loading) {
@@ -490,14 +509,20 @@
             }))
             : Promise.resolve();
 
-        var follow = joined.then(function () { return refresh(true); });
-        activeFollowUp = follow;
-        follow.then(function () {
-            if (activeFollowUp === follow) activeFollowUp = null;
-        }, function () {
-            if (activeFollowUp === follow) activeFollowUp = null;
+        wave.promise = joined.then(function () {
+            // The forced refresh is about to issue its HTTP requests; a command
+            // completed after this instant needs its own subsequent wave.
+            wave.started = true;
+            return refresh(true);
         });
-        return follow;
+
+        wave.promise.then(function () {
+            if (followUp === wave) followUp = null;
+        }, function () {
+            if (followUp === wave) followUp = null;
+        });
+
+        return wave.promise;
     }
 
     function nodeTargets() { return state.nodeTargets; }

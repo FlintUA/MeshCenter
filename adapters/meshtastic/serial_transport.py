@@ -53,6 +53,7 @@ from meshsrv import meshtastic_transport
 from meshsrv.node_time_sync import try_sync as try_node_time_sync
 from meshsrv.radio_transport import (
     ChannelInfo,
+    CheckedSendResult,
     ConnectionDescriptor,
     ConnectionInfo,
     ConnectionState,
@@ -279,6 +280,39 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
     def send_text(self, message: OutgoingMessage, *, timeout: float = 15.0) -> SendResult:
         results = self.send_messages([message], timeout=timeout)
         return results[0]
+
+    def send_text_checked(self, message: OutgoingMessage, *, timeout: float = 15.0) -> CheckedSendResult:
+        """Resolve `message.channel_index` against the live radio AND send, in
+        ONE exclusive serial session - open the interface once, settle once,
+        read the channel list, validate the requested index, send, close once.
+        This is the single atomic transport call that replaces
+        MeshtasticTextAdapter's old `get_channels()` + `send_text()` sequence
+        (which claimed the port and opened/closed the interface twice)."""
+        def _do_send_checked():
+            with self._supervisor.claim_exclusive_access(timeout=timeout, cooldown=2.0):
+                interface = self._open_interface()
+                try:
+                    self._settle(interface)
+                    channel_name = self._channel_name_for_index(interface, message.channel_index)
+                    sent = interface.sendText(
+                        text=message.text,
+                        destinationId=message.destination_id,
+                        wantAck=message.want_ack,
+                        channelIndex=message.channel_index,
+                        replyId=message.reply_id,
+                    )
+                    packet_id = getattr(sent, "id", None)
+                    return CheckedSendResult(
+                        result=SendResult(accepted=True, packet_id=int(packet_id) if packet_id is not None else None),
+                        channel_name=channel_name,
+                    )
+                finally:
+                    try:
+                        interface.close()
+                    except Exception:
+                        pass
+
+        return self._call_with_timeout(_do_send_checked, timeout=timeout, what="send_text_checked()")
 
     def send_packet(
         self,
@@ -533,6 +567,34 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
             except Exception as e:
                 print(f"[SerialTransport] waitForConfig() warning: {e}", flush=True)
         time.sleep(1.5)
+
+    @staticmethod
+    def _channel_name_for_index(interface, index: int) -> str:
+        """Resolve `index` to the connected radio's channel name, raising
+        `TransportError(UNSUPPORTED)` when the channel is absent or DISABLED -
+        fail-closed, so a configured control-channel index that isn't actually
+        on the radio never silently degrades to channel 0. Returns only the
+        channel *name* (never a PSK/secret - the settings object's name field
+        is all this reads)."""
+        raw_channels = getattr(getattr(interface, "localNode", None), "channels", None) or []
+        for fallback_index, channel in enumerate(raw_channels):
+            idx = getattr(channel, "index", fallback_index)
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                idx = fallback_index
+            if idx < 0 or idx > 7:
+                continue
+            role = getattr(channel, "role", None)
+            if role == 0:
+                continue
+            if idx == index:
+                settings_obj = getattr(channel, "settings", None)
+                return getattr(settings_obj, "name", "") if settings_obj is not None else ""
+        raise TransportError(
+            TransportErrorCode.UNSUPPORTED,
+            f"MCA control channel {index} is not available on the connected radio",
+        )
 
     @staticmethod
     def _to_node_info(node_id: str, data: dict) -> NodeInfo:

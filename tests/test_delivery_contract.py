@@ -251,8 +251,13 @@ def _build_meshtastic_pair(**transport_kwargs):
     ether = InMemoryEther()
     sender_transport = FakeRadioTransport(ether, "!aaaaaaaa", **transport_kwargs)
     receiver_transport = FakeRadioTransport(ether, "!bbbbbbbb")
-    sender = MeshtasticTextAdapter(sender_transport)
-    receiver = MeshtasticTextAdapter(receiver_transport)
+    # control_channel_index=0: explicitly configured (the FakeRadioTransport's
+    # default primary channel). send() now fails closed on an unconfigured
+    # (None) channel index, so the round-trip tests that actually send must
+    # configure one; the None/unconfigured fail-closed case is covered by
+    # tests/test_mca_control_channel.py.
+    sender = MeshtasticTextAdapter(sender_transport, control_channel_index=0)
+    receiver = MeshtasticTextAdapter(receiver_transport, control_channel_index=0)
     return ether, sender, receiver
 
 

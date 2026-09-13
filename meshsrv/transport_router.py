@@ -163,6 +163,9 @@ class TransportRouter(RadioTransport):
     def send_text(self, *args, timeout: float = 15.0, **kwargs):
         return self._delegate("send_text", *args, timeout=timeout, **kwargs)
 
+    def send_text_checked(self, *args, timeout: float = 15.0, **kwargs):
+        return self._delegate("send_text_checked", *args, timeout=timeout, **kwargs)
+
     def send_packet(self, *args, timeout: float = 15.0, **kwargs):
         return self._delegate("send_packet", *args, timeout=timeout, **kwargs)
 

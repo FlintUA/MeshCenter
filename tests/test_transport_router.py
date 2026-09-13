@@ -22,10 +22,15 @@ class _FakeTransport:
     def __init__(self, name):
         self.name = name
         self.send_text_calls = []
+        self.send_text_checked_calls = []
 
     def send_text(self, message, timeout=15.0):
         self.send_text_calls.append(message)
         return f"sent-by-{self.name}"
+
+    def send_text_checked(self, message, timeout=15.0):
+        self.send_text_checked_calls.append(message)
+        return f"checked-by-{self.name}"
 
     def get_connection_info(self):
         return ConnectionInfo(state=ConnectionState.CONNECTED, descriptor=None, node_id=self.name)
@@ -39,6 +44,16 @@ def test_delegates_to_the_active_transport():
 
     assert result == "sent-by-a"
     assert a.send_text_calls == ["hello"]
+
+
+def test_send_text_checked_delegates_to_the_active_transport():
+    a = _FakeTransport("a")
+    router = TransportRouter(a)
+
+    result = router.send_text_checked("ctrl")
+
+    assert result == "checked-by-a"
+    assert a.send_text_checked_calls == ["ctrl"]
 
 
 def test_switch_success_changes_the_active_transport():

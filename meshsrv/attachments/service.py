@@ -363,6 +363,7 @@ class AttachmentsService:
         tick_seconds: float = DEFAULT_TICK_SECONDS,
         max_per_tick: int = MAX_ATTACHMENTS_PER_TICK,
         now_fn=time.time,
+        control_channel_index: Optional[int] = None,
         lock: Optional[threading.Lock] = None,
         inbound_queue: Optional["queue.Queue[InboundEvent]"] = None,
         command_queue: Optional[CommandQueue] = None,
@@ -387,6 +388,12 @@ class AttachmentsService:
         self._tick_seconds = tick_seconds
         self._max_per_tick = max_per_tick
         self._now = now_fn
+        # Finding 2 (control-channel correction): the configured MCA
+        # control-channel index, retained for inbound observability only
+        # (`_log_inbound_channel_observability()`), never for accept/reject.
+        # `None` means "unconfigured". See meshtastic.py's send() for the
+        # fail-closed send-side enforcement of the same value.
+        self._control_channel_index = control_channel_index
         self._pending_reservations = pending_reservations
         # Finding 1 (Correction 3): track committed creates that have not yet
         # been published in the snapshot as *records* (client_request_id ->
@@ -2764,6 +2771,12 @@ class AttachmentsService:
             logger.info("AttachmentsService: malformed MCA message from %s: %s", event.source_address, exc)
             return
 
+        # Finding 2 (control-channel correction): emit a sanitized structured
+        # observability record for every inbound MCA control message BEFORE any
+        # dispatch. Observability only - never a reject gate (trust stays
+        # signature/TOFU), and never logs PSKs/tokens/keys/payloads.
+        self._log_inbound_channel_observability(event, message_type)
+
         if message_type in _INBOUND_ACK_TYPES:
             self._process_inbound_ack(envelope, message_type, source_address=event.source_address)
             return
@@ -2787,6 +2800,45 @@ class AttachmentsService:
         if reply_logical is None:
             return
         self._send_reply_now(reply_logical, event.source_address, idempotency_key=f"mca-reply-{event.packet_id or event.source_address}")
+
+    def _log_inbound_channel_observability(self, event: InboundEvent, message_type) -> None:
+        """Finding 2 (control-channel correction): the received `channel_index`
+        from `MeshtasticTextAdapter.ingest()`'s `transport_metadata` must reach
+        an observable sink, not just sit in the ephemeral envelope. Emits one
+        structured, sanitized record per inbound MCA control message.
+
+        Sanitization contract (finding's own constraint): the record contains
+        only the MCA message type name, the source node id (a `!` hex address,
+        not a secret), the packet id when available, the received channel
+        index, the configured control-channel index, a computed match status,
+        and a timestamp. It never carries PSKs, tokens, keys, payloads, or file
+        contents. A mismatch is logged at warning level; everything else at
+        info. Never rejects a valid message - trust remains signature/TOFU.
+        """
+        received = event.channel_index
+        configured = self._control_channel_index
+        if configured is None:
+            match_status = "unconfigured"
+        elif received is None:
+            match_status = "unknown"
+        elif configured == received:
+            match_status = "match"
+        else:
+            match_status = "mismatch"
+        record = {
+            "event": "mca_inbound_channel",
+            "message_type": getattr(message_type, "name", str(message_type)),
+            "source_node": event.source_address,
+            "packet_id": event.packet_id,
+            "received_channel_index": received,
+            "configured_control_channel_index": configured,
+            "match_status": match_status,
+            "timestamp": self._now(),
+        }
+        if match_status == "mismatch":
+            logger.warning("MCAttach inbound channel mismatch: %r", record)
+        else:
+            logger.info("MCAttach inbound channel: %r", record)
 
     def _process_inbound_offer(self, envelope: DeliveryEnvelope, *, source_address: str) -> None:
         """PR #231 review, section 5: the OFFER's *own* provider_id

@@ -49,14 +49,18 @@ CHANNEL_CHAT_NAME = "LongFast"  # without index — the code appends [0] itself
 # channel *index* the radio transmits them on, exactly like a normal chat
 # message's channel selection. Valid range is 0-7 (Meshtastic's 8 channels).
 # 0 is the primary channel (usually LongFast) - a *public* channel, which is
-# why MCA control traffic should be moved off it. Set this to a private
-# channel's index (e.g. 1 for a "Flint-pvt" secondary channel) so MCA key/
-# transfer control never transmits on the public channel. A value outside
-# 0-7, or an index whose channel does not exist on the connected radio, is a
-# hard error (transmission is blocked) - MCAttach never silently falls back
-# to channel 0. This is a dedicated MCA setting, independent of
+# why MCA control traffic should be moved off it.
+#
+# REQUIRED for MCA DIRECT control: set this to a private channel's index
+# (e.g. 1 for a "Flint-pvt" secondary channel) so MCA key/transfer control
+# never transmits on the public channel. The default is None (unconfigured):
+# MCAttach has NO implicit operational default and a missing/unconfigured
+# value FAILS CLOSED - MCA control transmission is blocked rather than
+# silently falling back to channel 0. A value outside 0-7, or an index whose
+# channel does not exist on the connected radio, is likewise a hard error
+# (transmission is blocked). This is a dedicated MCA setting, independent of
 # CHANNEL_CHAT_ID/CHANNEL_CHAT_NAME (ordinary chat keeps its own channel).
-MCA_CONTROL_CHANNEL_INDEX = 0
+MCA_CONTROL_CHANNEL_INDEX = None
 
 # ===== KNOWN NODES (pre-populated with your mesh) =====
 KNOWN_NODES = {

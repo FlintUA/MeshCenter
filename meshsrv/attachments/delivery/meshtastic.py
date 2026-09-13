@@ -27,7 +27,8 @@ transmits the DIRECT message on, the same selection a normal chat send
 makes. Because channel 0 is the public primary channel, MCA control
 traffic is meant to run on a private channel index; the configured index
 is validated 0-7 and resolved against the live radio at send time, and an
-invalid/unavailable value blocks transmission rather than silently
+invalid/unavailable value - or `None` (missing config, the default, which
+has NO implicit fallback) - blocks transmission rather than silently
 falling back to 0.
 
 BLE ack semantics (spec 19.3): MeshCenter's existing, already-documented
@@ -108,7 +109,7 @@ class MeshtasticTextAdapter(DeliveryAdapter):
         radio_transport: RadioTransport,
         *,
         max_payload_bytes: int = MESHTASTIC_TEXT_MAX_PAYLOAD_BYTES,
-        control_channel_index: int = 0,
+        control_channel_index: Optional[int] = None,
     ):
         self._radio_transport = radio_transport
         self._max_payload_bytes = max_payload_bytes
@@ -117,8 +118,10 @@ class MeshtasticTextAdapter(DeliveryAdapter):
         # a channel) - those remain unsupported (supports_channel=False):
         # this only selects which channel index carries an otherwise
         # ordinary DIRECT node-to-node message, exactly like a normal chat
-        # send's own channel selection. Validated 0-7 and resolved against
-        # the live radio at send time; never silently defaulted back to 0.
+        # send's own channel selection. `None` (the default) means "no
+        # control channel has been configured" and MUST fail closed at send
+        # time rather than silently defaulting to channel 0 (the public
+        # primary channel) - see config.example.py's MCA_CONTROL_CHANNEL_INDEX.
         self._control_channel_index = control_channel_index
 
     def capabilities(self) -> DeliveryCapabilities:
@@ -175,16 +178,29 @@ class MeshtasticTextAdapter(DeliveryAdapter):
             raise UnsupportedRouteError("meshtastic route has no destination_address")
         # The destination remains the specific node (RouteType.DIRECT) - the
         # control-channel index only selects which channel *index* carries it.
-        channel_index, channel_name = self._resolve_control_channel()
+        index = self._control_channel_index
+        if isinstance(index, bool) or not isinstance(index, int) or not (0 <= index <= 7):
+            raise ConnectorUnavailableError(
+                f"MCA control channel index {index!r} is invalid (must be an int 0-7)"
+            )
         message = OutgoingMessage(
             text=wire_payload.decode("ascii"),
             destination_id=route.destination_address,
-            channel_index=channel_index,
+            channel_index=index,
         )
         try:
-            result = self._radio_transport.send_text(message, timeout=15.0)
+            # One exclusive radio-interface session: the transport acquires
+            # exclusive serial access, opens the interface once, waits for
+            # config, reads the channel list, validates the configured index,
+            # resolves its safe name, sends, and closes - atomic at the
+            # adapter boundary (no separate get_channels() call before this,
+            # no stale cache, no time-based delay sync). Raises
+            # TransportError(UNSUPPORTED) when the configured channel is
+            # absent/DISABLED on the live radio.
+            checked = self._radio_transport.send_text_checked(message, timeout=15.0)
         except TransportError as exc:
-            raise ConnectorUnavailableError(str(exc)) from exc
+            raise ConnectorUnavailableError(f"cannot verify MCA control channel {index}: {exc}") from exc
+        result = checked.result
         if not result.accepted:
             reason = str(result.error) if result.error else "send_text() did not accept the message"
             raise ConnectorUnavailableError(reason)
@@ -192,45 +208,13 @@ class MeshtasticTextAdapter(DeliveryAdapter):
         # channel PSK or other secret - ChannelInfo carries none to leak.
         logger.info(
             "MCAttach control message sent on channel %d (%s) to %s",
-            channel_index, channel_name, route.destination_address,
+            index, checked.channel_name, route.destination_address,
         )
         return DeliveryReceipt(
             sent=True,
             idempotency_key=idempotency_key,
             external_message_id=str(result.packet_id) if result.packet_id is not None else None,
             sent_at=time.time(),
-        )
-
-    def _resolve_control_channel(self) -> "tuple[int, str]":
-        """Resolve and validate this adapter's configured MCA control-channel
-        index into the concrete (index, name) the connected radio reports.
-
-        Raises `ConnectorUnavailableError` (mapped by the service to a safe,
-        user-visible `radio_unavailable` outcome) in three fail-closed cases:
-          - the configured index is not an int in Meshtastic's 0-7 range;
-          - the radio's channel list could not be read (`TransportError`);
-          - no channel on the radio has the configured index.
-
-        There is deliberately NO fallback to channel 0: an invalid or
-        unavailable configured control channel blocks MCA transmission rather
-        than silently leaking key/transfer control onto the public channel.
-        """
-        index = self._control_channel_index
-        if isinstance(index, bool) or not isinstance(index, int) or not (0 <= index <= 7):
-            raise ConnectorUnavailableError(
-                f"MCA control channel index {index!r} is invalid (must be an int 0-7)"
-            )
-        try:
-            channels = self._radio_transport.get_channels(timeout=15.0)
-        except TransportError as exc:
-            raise ConnectorUnavailableError(
-                f"cannot verify MCA control channel {index}: {exc}"
-            ) from exc
-        for channel in channels:
-            if channel.index == index:
-                return index, channel.name
-        raise ConnectorUnavailableError(
-            f"MCA control channel {index} is not available on the connected radio"
         )
 
     def ingest(self, transport_event: Any) -> Optional[DeliveryEnvelope]:

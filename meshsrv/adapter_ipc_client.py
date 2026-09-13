@@ -152,6 +152,7 @@ from typing import Callable, Optional, Sequence
 from meshsrv import ipc_protocol
 from meshsrv.radio_transport import (
     ChannelInfo,
+    CheckedSendResult,
     ConnectionDescriptor,
     ConnectionInfo,
     ConnectionState,
@@ -704,6 +705,10 @@ class AdapterIPCTransport(RadioTransport):
     def send_text(self, message: OutgoingMessage, *, timeout: float = 15.0) -> SendResult:
         result = self._call("send_text", {"message": ipc_protocol.outgoing_message_to_dict(message)}, timeout)
         return ipc_protocol.send_result_from_dict(result)
+
+    def send_text_checked(self, message: OutgoingMessage, *, timeout: float = 15.0) -> CheckedSendResult:
+        result = self._call("send_text_checked", {"message": ipc_protocol.outgoing_message_to_dict(message)}, timeout)
+        return ipc_protocol.checked_send_result_from_dict(result)
 
     def send_packet(
         self,

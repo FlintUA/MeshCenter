@@ -35,6 +35,7 @@ import pytest
 from nacl.signing import SigningKey
 
 from meshsrv.attachments import codec
+from meshsrv.attachments import mca_runtime
 from meshsrv.attachments.delivery.base import (
     ConnectorUnavailableError,
     Route,
@@ -42,7 +43,7 @@ from meshsrv.attachments.delivery.base import (
 )
 from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
 from meshsrv.attachments.delivery.meshtastic import MeshtasticTextAdapter
-from meshsrv.radio_transport import ChannelInfo, OutgoingMessage, TransportError, TransportErrorCode
+from meshsrv.radio_transport import ChannelInfo, OutgoingMessage, SendResult, TransportError, TransportErrorCode
 
 
 # A realistic radio with a public primary channel (0) and a private secondary
@@ -212,7 +213,10 @@ def test_invalid_or_unavailable_control_channel_blocks_transmission(control_chan
 
 def test_channel_list_read_failure_blocks_transmission():
     class _FailingTransport(FakeRadioTransport):
-        def get_channels(self, *, timeout: float = 15.0):
+        # Finding 3: the channel list is now read *inside* the single atomic
+        # send (send_text_checked), so the read-failure surface is here, not
+        # a separate get_channels() round-trip.
+        def send_text_checked(self, message, *, timeout: float = 15.0):
             raise TransportError(TransportErrorCode.ADAPTER_UNAVAILABLE, "channel list unavailable")
 
     ether = InMemoryEther()
@@ -319,3 +323,139 @@ def test_inbound_accepted_regardless_of_channel():
             {"text": text, "source_address": "!bbbbbbbb", "channel_index": channel_index}
         )
         assert envelope is not None, f"ingest must accept inbound on channel {channel_index}"
+
+
+# --------------------------------------------------------------------------
+# Finding 1: a missing control-channel config must fail closed (never
+# silently default to the public channel 0).
+# --------------------------------------------------------------------------
+
+def test_missing_control_channel_config_fails_closed_not_channel_0():
+    """Constructing MeshtasticTextAdapter with NO control_channel_index
+    (the fail-closed default) means send() must raise, not transmit on the
+    public channel 0."""
+    ether = InMemoryEther()
+    transport = FakeRadioTransport(ether, "!aaaaaaaa", channels=PRIVATE_CHANNELS)
+    adapter = MeshtasticTextAdapter(transport)  # no control_channel_index -> None
+    route = Route(route_type=RouteType.DIRECT, route_id="!bbbbbbbb", destination_address="!bbbbbbbb")
+    with pytest.raises(ConnectorUnavailableError):
+        adapter.send(_wire_payload(codec.MessageType.KEY_REQUEST, _SIGNING_KEY), route, idempotency_key="idem-1")
+    assert transport._sent_messages == []  # noqa: SLF001
+
+
+# --------------------------------------------------------------------------
+# Finding 3: resolve-and-send must happen in ONE atomic transport session.
+# --------------------------------------------------------------------------
+
+@dataclasses.dataclass(frozen=True)
+class _Checked:
+    result: SendResult
+    channel_name: str
+
+
+def test_send_resolves_and_sends_in_one_atomic_transport_session():
+    """send() must reach the transport through exactly one atomic
+    `send_text_checked` call - never a separate `get_channels()` round-trip
+    immediately before `send_text()`, which would claim/open/close the
+    serial port twice per control message."""
+    class _CountingTransport(FakeRadioTransport):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.calls: list = []
+
+        def get_channels(self, *, timeout: float = 15.0):
+            self.calls.append("get_channels")
+            return super().get_channels(timeout=timeout)
+
+        def send_text(self, message, *, timeout: float = 15.0):
+            self.calls.append("send_text")
+            return super().send_text(message, timeout=timeout)
+
+        def send_text_checked(self, message, *, timeout: float = 15.0):
+            self.calls.append("send_text_checked")
+            name = next((c.name for c in self._channels if c.index == message.channel_index), None)
+            if name is None:
+                raise TransportError(
+                    TransportErrorCode.UNSUPPORTED,
+                    f"MCA control channel {message.channel_index} is not available on the connected radio",
+                )
+            # Inline the send (not through the instrumented send_text) so the
+            # recorded call list reflects only the entry points send() reached.
+            packet_id = self._next_packet_id
+            self._next_packet_id += 1
+            self._sent_messages.append(message)
+            self._ether.deliver(
+                message.destination_id,
+                {
+                    "text": message.text,
+                    "source_address": self._own_address,
+                    "packet_id": packet_id,
+                    "channel_index": message.channel_index,
+                },
+            )
+            return _Checked(result=SendResult(accepted=True, packet_id=packet_id), channel_name=name)
+
+    ether = InMemoryEther()
+    transport = _CountingTransport(ether, "!aaaaaaaa", channels=PRIVATE_CHANNELS)
+    adapter = MeshtasticTextAdapter(transport, control_channel_index=1)
+    route = Route(route_type=RouteType.DIRECT, route_id="!bbbbbbbb", destination_address="!bbbbbbbb")
+    adapter.send(_wire_payload(codec.MessageType.KEY_REQUEST, _SIGNING_KEY), route, idempotency_key="idem-1")
+
+    assert transport.calls == ["send_text_checked"], (
+        f"send() must make exactly one atomic transport call, got {transport.calls}"
+    )
+    assert transport._sent_messages[-1].channel_index == 1  # noqa: SLF001
+
+
+# --------------------------------------------------------------------------
+# Finding 2: the received channel index must reach an observable sink (the
+# log), not only the ephemeral envelope transport_metadata.
+# --------------------------------------------------------------------------
+
+class _AlwaysDownSession:
+    """Same role as tests/test_mca_runtime.py's `_AlwaysDownSession`:
+    feeds ConnectivityMonitor a permanently-unreachable probe so the
+    service's first tick never makes a real network call."""
+
+    def request(self, method, url, json=None, data=None, headers=None, timeout=None):
+        import requests
+
+        raise requests.ConnectionError("down for this test")
+
+
+def test_inbound_channel_observability_record_reaches_a_log_sink(tmp_path, caplog):
+    mca_runtime.reset_state_for_tests()
+    try:
+        caplog.set_level(logging.DEBUG, logger="meshsrv.attachments.service")
+        cases = [
+            (1, 0, "mismatch"),
+            (1, 1, "match"),
+            (None, 1, "unconfigured"),
+            (1, None, "unknown"),
+        ]
+        for idx, (configured, received, expected_status) in enumerate(cases):
+            mca_runtime.reset_state_for_tests()
+            mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+            caplog.clear()
+
+            ether = InMemoryEther()
+            transport = FakeRadioTransport(ether, "!bbbbbbbb")
+            data_dir = str(tmp_path / f"node{idx}")
+            mca_runtime.start_attachments_service(
+                data_dir, transport, control_channel_index=configured
+            )
+            mca_runtime.handle_incoming_meshtastic_text(
+                _request_text(_SIGNING_KEY), "!aaaaaaaa", transport,
+                data_dir=data_dir, packet_id="p1", channel_index=received,
+            )
+            state = mca_runtime._get_state(data_dir)  # noqa: SLF001
+            state.service.tick()
+
+            assert expected_status in caplog.text, caplog.text
+            assert "KEY_REQUEST" in caplog.text
+            assert "!aaaaaaaa" in caplog.text
+            lowered = caplog.text.lower()
+            for secret_marker in ("psk", "token", "secret"):
+                assert secret_marker not in lowered
+    finally:
+        mca_runtime.reset_state_for_tests()

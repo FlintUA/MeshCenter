@@ -35,6 +35,7 @@ from meshsrv.attachments.delivery.base import (
 )
 from meshsrv.radio_transport import (
     ChannelInfo,
+    CheckedSendResult,
     ConnectionDescriptor,
     ConnectionInfo,
     ConnectionState,
@@ -43,6 +44,8 @@ from meshsrv.radio_transport import (
     OutgoingMessage,
     RadioTransport,
     SendResult,
+    TransportError,
+    TransportErrorCode,
     WaypointResult,
 )
 
@@ -324,6 +327,19 @@ class FakeRadioTransport(RadioTransport):
             },
         )
         return SendResult(accepted=True, packet_id=packet_id)
+
+    def send_text_checked(self, message: OutgoingMessage, *, timeout: float = 15.0) -> CheckedSendResult:
+        # Resolve the requested channel against self._channels first, matching
+        # the real transports' fail-closed single-session behavior (UNSUPPORTED
+        # when absent/DISABLED) - then delegate to the ordinary send_text path.
+        name = next((c.name for c in self._channels if c.index == message.channel_index), None)
+        if name is None:
+            raise TransportError(
+                TransportErrorCode.UNSUPPORTED,
+                f"MCA control channel {message.channel_index} is not available on the connected radio",
+            )
+        result = self.send_text(message, timeout=timeout)
+        return CheckedSendResult(result=result, channel_name=name)
 
     def get_connection_info(self) -> ConnectionInfo:
         return ConnectionInfo(

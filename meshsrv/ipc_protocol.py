@@ -21,6 +21,7 @@ from typing import Any, Optional
 
 from meshsrv.radio_transport import (
     ChannelInfo,
+    CheckedSendResult,
     ConnectionDescriptor,
     ConnectionInfo,
     ConnectionState,
@@ -136,6 +137,30 @@ def send_result_from_dict(data: dict) -> SendResult:
         accepted=bool(data.get("accepted", False)),
         packet_id=data.get("packet_id"),
         error=error_from_dict(data.get("error")),
+    )
+
+
+# ---------------------------------------------------------------------------
+# CheckedSendResult (send_text_checked's response - a SendResult plus the
+# radio-reported channel name the message went out on)
+# ---------------------------------------------------------------------------
+def checked_send_result_to_dict(result: CheckedSendResult) -> dict:
+    return {
+        "accepted": result.result.accepted,
+        "packet_id": result.result.packet_id,
+        "error": error_to_dict(result.result.error) if result.result.error else None,
+        "channel_name": result.channel_name,
+    }
+
+
+def checked_send_result_from_dict(data: dict) -> CheckedSendResult:
+    return CheckedSendResult(
+        result=SendResult(
+            accepted=bool(data.get("accepted", False)),
+            packet_id=data.get("packet_id"),
+            error=error_from_dict(data.get("error")),
+        ),
+        channel_name=str(data.get("channel_name", "")),
     )
 
 

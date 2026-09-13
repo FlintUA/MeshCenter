@@ -128,8 +128,9 @@ SESSION_COOKIE_SECURE = globals().get("SESSION_COOKIE_SECURE", False)
 # and passed to start_attachments_service(); MeshtasticTextAdapter validates
 # it (int, 0-7) and resolves it against the live radio at send time, and an
 # invalid/unavailable value blocks MCA transmission rather than silently
-# falling back to channel 0.
-MCA_CONTROL_CHANNEL_INDEX = globals().get("MCA_CONTROL_CHANNEL_INDEX", 0)
+# falling back to channel 0. Default is None (no implicit operational
+# default): missing config must fail closed, never land on channel 0.
+MCA_CONTROL_CHANNEL_INDEX = globals().get("MCA_CONTROL_CHANNEL_INDEX", None)
 
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 # Radio-scoped paths are resolved after the accepted instance identity loads.

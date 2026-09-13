@@ -150,6 +150,10 @@ class _AdapterDispatcher:
             result = target.send_text(ipc_protocol.outgoing_message_from_dict(params["message"]), timeout=timeout)
             return ipc_protocol.send_result_to_dict(result)
 
+        if operation == "send_text_checked":
+            result = target.send_text_checked(ipc_protocol.outgoing_message_from_dict(params["message"]), timeout=timeout)
+            return ipc_protocol.checked_send_result_to_dict(result)
+
         if operation == "send_packet":
             result = target.send_packet(
                 bytes.fromhex(params["payload_hex"]),

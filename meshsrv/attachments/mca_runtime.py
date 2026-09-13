@@ -317,7 +317,7 @@ class _MCARuntimeState:
         # constructor never receives.
         self.service: Optional[AttachmentsService] = None
 
-    def ensure_service(self, radio_transport: RadioTransport, control_channel_index: int = 0) -> AttachmentsService:
+    def ensure_service(self, radio_transport: RadioTransport, control_channel_index: Optional[int] = None) -> AttachmentsService:
         """ADR-0008 decision 1's five-step startup sequence, steps 2-4
         (step 1, migrate(), already happened in __init__ above). Building
         `AttachmentsService` needs a `MeshtasticTextAdapter`, which in
@@ -342,7 +342,7 @@ class _MCARuntimeState:
         with _lock:
             return self._ensure_service_locked(radio_transport, control_channel_index)
 
-    def _ensure_service_locked(self, radio_transport: RadioTransport, control_channel_index: int = 0) -> AttachmentsService:
+    def _ensure_service_locked(self, radio_transport: RadioTransport, control_channel_index: Optional[int] = None) -> AttachmentsService:
         if self.service is not None:
             return self.service
         adapter = MeshtasticTextAdapter(radio_transport, control_channel_index=control_channel_index)
@@ -360,6 +360,11 @@ class _MCARuntimeState:
             # versa - one shared in-memory store, never two divergent ones.
             probe_registry=self.probe_registry,
             delivery_adapter=adapter,
+            # Finding 2 (control-channel correction): thread the configured
+            # index into the service so inbound-channel observability can
+            # compute match/mismatch against the same value the adapter
+            # enforces at send time.
+            control_channel_index=control_channel_index,
             # PR #231 review (2nd pass), requirement 4: this service's OWN
             # dedicated lock (self.tick_lock, constructed in __init__
             # above) - never this module's `_lock`. `self.conn` is
@@ -442,7 +447,7 @@ def _get_state(data_dir: str) -> "_MCARuntimeState":
 
 
 def start_attachments_service(
-    data_dir: str, radio_transport: RadioTransport, control_channel_index: int = 0
+    data_dir: str, radio_transport: RadioTransport, control_channel_index: Optional[int] = None
 ) -> None:
     """Called once from server.py's `start_runtime()`, alongside its
     existing `threading.Thread(target=..., daemon=True).start()` calls
@@ -453,9 +458,11 @@ def start_attachments_service(
 
     `control_channel_index` is the Meshtastic channel *index* MCA DIRECT
     control traffic is transmitted on (config.py's
-    `MCA_CONTROL_CHANNEL_INDEX`, validated 0-7 and resolved against the
-    live radio at send time by MeshtasticTextAdapter - never silently
-    defaulted back to 0)."""
+    `MCA_CONTROL_CHANNEL_INDEX`). `None` (the default) means "no control
+    channel configured" and MUST fail closed at send time rather than
+    silently defaulting to channel 0 (the public primary channel) - see
+    config.example.py's `MCA_CONTROL_CHANNEL_INDEX` comment and
+    `MeshtasticTextAdapter.send()`'s own enforcement."""
     state = _get_state(data_dir)
     state.ensure_service(radio_transport, control_channel_index)
 

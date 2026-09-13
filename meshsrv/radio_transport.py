@@ -198,6 +198,16 @@ class SendResult:
 
 
 @dataclass(frozen=True)
+class CheckedSendResult:
+    """A send whose requested channel was resolved against the live radio
+    in the same atomic transport session (see `send_text_checked`) - carries
+    the ordinary `SendResult` plus the radio-reported name of the channel the
+    message actually went out on (name only, never a PSK/secret)."""
+    result: SendResult
+    channel_name: str
+
+
+@dataclass(frozen=True)
 class OutgoingWaypoint:
     name: str
     description: str
@@ -327,6 +337,24 @@ class RadioTransport(abc.ABC):
         self, message: OutgoingMessage, *, timeout: float = 15.0
     ) -> SendResult:
         ...
+
+    @abc.abstractmethod
+    def send_text_checked(
+        self, message: OutgoingMessage, *, timeout: float = 15.0
+    ) -> CheckedSendResult:
+        """Send a text message AND resolve/validate `message.channel_index`
+        against the live radio's channel list, all in ONE exclusive
+        radio-interface session (acquire exclusive access once, open the
+        interface once, wait-for-config once, read the channel list,
+        validate the requested index, send, close once).
+
+        Raises `TransportError(UNSUPPORTED)` if the requested channel index
+        is not present (or is DISABLED) on the connected radio - the caller
+        (MeshtasticTextAdapter) maps that to a fail-closed
+        `ConnectorUnavailableError` rather than silently falling back to
+        channel 0 (the public primary channel). This replaces the old
+        two-call `get_channels()` + `send_text()` sequence, which claimed
+        and opened the serial port twice per control message."""
 
     @abc.abstractmethod
     def send_packet(

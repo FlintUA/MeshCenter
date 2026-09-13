@@ -35,6 +35,7 @@ from meshsrv.attachments.delivery.base import (
 )
 from meshsrv.radio_transport import (
     ChannelInfo,
+    CheckedSendResult,
     ConnectionDescriptor,
     ConnectionInfo,
     ConnectionState,
@@ -43,6 +44,8 @@ from meshsrv.radio_transport import (
     OutgoingMessage,
     RadioTransport,
     SendResult,
+    TransportError,
+    TransportErrorCode,
     WaypointResult,
 )
 
@@ -267,12 +270,12 @@ class FakeRadioTransport(RadioTransport):
     division `FakeTextAdapter`/`FakeBinaryAdapter` above draw between
     "real adapter logic" and "fake ether".
 
-    Only `send_text()` and `get_connection_info()`/`is_connected()` have
-    real behavior - `MeshtasticTextAdapter` never calls anything else on
-    a `RadioTransport`. Every other abstract method raises
-    `NotImplementedError` outright rather than returning a plausible-
-    looking fake value nothing here actually exercises - a test that
-    somehow reached one of them would fail loudly instead of silently
+    Only `send_text()`, `get_channels()`, and `get_connection_info()`/
+    `is_connected()` have real behavior - `MeshtasticTextAdapter` never
+    calls anything else on a `RadioTransport`. Every other abstract method
+    raises `NotImplementedError` outright rather than returning a
+    plausible-looking fake value nothing here actually exercises - a test
+    that somehow reached one of them would fail loudly instead of silently
     passing against made-up data.
 
     Delivers `{"text": ..., "source_address": ...}` into the shared
@@ -290,22 +293,58 @@ class FakeRadioTransport(RadioTransport):
         *,
         connection_type: ConnectionType = ConnectionType.SERIAL,
         connection_state: ConnectionState = ConnectionState.CONNECTED,
+        channels: Optional[List[ChannelInfo]] = None,
     ):
         self._ether = ether
         self._own_address = own_address
         self._connection_type = connection_type
         self._connection_state = connection_state
         self._next_packet_id = 1
+        # Default mirrors the real radio's primary channel (index 0) so the
+        # existing round-trip contract tests keep working unchanged; a test
+        # that wants a private control channel supplies its own list.
+        self._channels = (
+            list(channels)
+            if channels is not None
+            else [ChannelInfo(index=0, name="LongFast", role="PRIMARY")]
+        )
+        # Records every OutgoingMessage handed to send_text() so tests can
+        # assert which channel_index the adapter actually selected.
+        self._sent_messages: List[OutgoingMessage] = []
         ether.register(own_address)
 
     def send_text(self, message: OutgoingMessage, *, timeout: float = 15.0) -> SendResult:
         packet_id = self._next_packet_id
         self._next_packet_id += 1
+        self._sent_messages.append(message)
         self._ether.deliver(
             message.destination_id,
-            {"text": message.text, "source_address": self._own_address, "packet_id": packet_id},
+            {
+                "text": message.text,
+                "source_address": self._own_address,
+                "packet_id": packet_id,
+                "channel_index": message.channel_index,
+            },
         )
         return SendResult(accepted=True, packet_id=packet_id)
+
+    def send_text_checked(self, message: OutgoingMessage, *, timeout: float = 15.0) -> CheckedSendResult:
+        # Resolve the requested channel against self._channels first, matching
+        # the real transports' fail-closed single-session behavior: UNSUPPORTED
+        # when the index is absent OR the slot is DISABLED - never a silent
+        # fallback to channel 0. The real transports (adapters/meshtastic/
+        # {serial,ble}_transport.py::_channel_name_for_index) skip `role == 0`,
+        # the raw int DISABLED on the meshtastic library object; here
+        # ChannelInfo carries the already-normalized string, so the same
+        # enabled-channel rule is `role != "DISABLED"`.
+        match = next((c for c in self._channels if c.index == message.channel_index), None)
+        if match is None or match.role == "DISABLED":
+            raise TransportError(
+                TransportErrorCode.UNSUPPORTED,
+                f"MCA control channel {message.channel_index} is not available on the connected radio",
+            )
+        result = self.send_text(message, timeout=timeout)
+        return CheckedSendResult(result=result, channel_name=match.name)
 
     def get_connection_info(self) -> ConnectionInfo:
         return ConnectionInfo(
@@ -344,7 +383,7 @@ class FakeRadioTransport(RadioTransport):
         raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
 
     def get_channels(self, *, timeout: float = 15.0) -> List[ChannelInfo]:
-        raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
+        return list(self._channels)
 
     def get_metadata(self, *, timeout: float = 15.0) -> dict:
         raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")

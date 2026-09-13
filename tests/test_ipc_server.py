@@ -55,6 +55,14 @@ class _FakeTarget:
         self.calls.append(("send_text", message, timeout))
         return SendResult(accepted=True, packet_id=42)
 
+    def send_text_checked(self, message, *, timeout):
+        # Lazy import: CheckedSendResult only exists once the send_text_checked
+        # operation is wired through the protocol (this correction).
+        from meshsrv.radio_transport import CheckedSendResult
+
+        self.calls.append(("send_text_checked", message, timeout))
+        return CheckedSendResult(result=SendResult(accepted=True, packet_id=99), channel_name="Flint-pvt")
+
     def get_nodes(self, *, timeout):
         self.calls.append(("get_nodes", timeout))
         return [NodeInfo(node_id="!aaaaaaaa", num=1, user=None), NodeInfo(node_id="!bbbbbbbb", num=2, user=None)]
@@ -147,6 +155,27 @@ def test_send_text_round_trips_through_the_real_serializers():
     op, message, timeout = serial.calls[0]
     assert message.text == "hi"
     assert message.destination_id == "^all"
+
+
+def test_send_text_checked_round_trips_through_the_real_serializers():
+    serial = _FakeTarget()
+    dispatcher = _dispatcher(serial=serial)
+
+    response = dispatcher.handle({
+        "operation": "send_text_checked",
+        "transport_type": "serial",
+        "params": {"message": {"text": "MCA1:...", "destination_id": "!bbbbbbbb", "channel_index": 1, "want_ack": False, "reply_id": None}},
+        "timeout": 15.0,
+    })
+
+    assert response["ok"] is True
+    assert response["result"]["accepted"] is True
+    assert response["result"]["packet_id"] == 99
+    assert response["result"]["channel_name"] == "Flint-pvt"
+
+    op, message, timeout = serial.calls[0]
+    assert op == "send_text_checked"
+    assert message.channel_index == 1
 
 
 def test_get_nodes_returns_a_serialized_list():

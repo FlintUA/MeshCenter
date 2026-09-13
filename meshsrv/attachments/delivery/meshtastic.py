@@ -12,11 +12,24 @@ is injected at construction, exactly like every other consumer of the
 transport layer; this module never constructs one itself.
 
 Stage 1 scope only (spec 19, "MVP"): DIRECT routes over Meshtastic text
-messages, `MCA1-TEXT` wire format. No CHANNEL support yet (a KEY_REQUEST/
+messages, `MCA1-TEXT` wire format. No CHANNEL route support (a KEY_REQUEST/
 KEY_ANNOUNCE broadcast to a channel is explicitly out of scope per
 key_exchange.py's own spec-7.4 comment) - `capabilities().supports_channel`
 is `False` and `encode()`/`resolve_route()` refuse anything but
 `RouteType.DIRECT`, same as `FakeTextAdapter` in tests/fakes.
+
+The one channel-related knob this adapter DOES own is the send-time
+*channel index* MCA control traffic is transmitted on
+(`control_channel_index`, from config.py's `MCA_CONTROL_CHANNEL_INDEX`).
+That is not a CHANNEL route (the destination is still a specific node,
+`RouteType.DIRECT`) - it only selects which channel index the radio
+transmits the DIRECT message on, the same selection a normal chat send
+makes. Because channel 0 is the public primary channel, MCA control
+traffic is meant to run on a private channel index; the configured index
+is validated 0-7 and resolved against the live radio at send time, and an
+invalid/unavailable value - or `None` (missing config, the default, which
+has NO implicit fallback) - blocks transmission rather than silently
+falling back to 0.
 
 BLE ack semantics (spec 19.3): MeshCenter's existing, already-documented
 limitation is that it cannot reliably *receive* over BLE at all (see
@@ -31,6 +44,7 @@ rather than assuming USB-serial-style confirmation universally.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Mapping, Optional
 
@@ -67,6 +81,8 @@ from meshsrv.radio_transport import (
 # new one invented here.
 MESHTASTIC_TEXT_MAX_PAYLOAD_BYTES = 180
 
+logger = logging.getLogger(__name__)
+
 
 class MeshtasticTextAdapter(DeliveryAdapter):
     """Real Meshtastic `DeliveryAdapter`, driven through an injected
@@ -93,9 +109,20 @@ class MeshtasticTextAdapter(DeliveryAdapter):
         radio_transport: RadioTransport,
         *,
         max_payload_bytes: int = MESHTASTIC_TEXT_MAX_PAYLOAD_BYTES,
+        control_channel_index: Optional[int] = None,
     ):
         self._radio_transport = radio_transport
         self._max_payload_bytes = max_payload_bytes
+        # The Meshtastic channel *index* MCA DIRECT control traffic is
+        # transmitted on. Distinct from the CHANNEL route type (broadcast to
+        # a channel) - those remain unsupported (supports_channel=False):
+        # this only selects which channel index carries an otherwise
+        # ordinary DIRECT node-to-node message, exactly like a normal chat
+        # send's own channel selection. `None` (the default) means "no
+        # control channel has been configured" and MUST fail closed at send
+        # time rather than silently defaulting to channel 0 (the public
+        # primary channel) - see config.example.py's MCA_CONTROL_CHANNEL_INDEX.
+        self._control_channel_index = control_channel_index
 
     def capabilities(self) -> DeliveryCapabilities:
         info = self._radio_transport.get_connection_info()
@@ -149,17 +176,40 @@ class MeshtasticTextAdapter(DeliveryAdapter):
     def send(self, wire_payload: bytes, route: Route, idempotency_key: str) -> DeliveryReceipt:
         if route.destination_address is None:
             raise UnsupportedRouteError("meshtastic route has no destination_address")
+        # The destination remains the specific node (RouteType.DIRECT) - the
+        # control-channel index only selects which channel *index* carries it.
+        index = self._control_channel_index
+        if isinstance(index, bool) or not isinstance(index, int) or not (0 <= index <= 7):
+            raise ConnectorUnavailableError(
+                f"MCA control channel index {index!r} is invalid (must be an int 0-7)"
+            )
         message = OutgoingMessage(
             text=wire_payload.decode("ascii"),
             destination_id=route.destination_address,
+            channel_index=index,
         )
         try:
-            result = self._radio_transport.send_text(message, timeout=15.0)
+            # One exclusive radio-interface session: the transport acquires
+            # exclusive serial access, opens the interface once, waits for
+            # config, reads the channel list, validates the configured index,
+            # resolves its safe name, sends, and closes - atomic at the
+            # adapter boundary (no separate get_channels() call before this,
+            # no stale cache, no time-based delay sync). Raises
+            # TransportError(UNSUPPORTED) when the configured channel is
+            # absent/DISABLED on the live radio.
+            checked = self._radio_transport.send_text_checked(message, timeout=15.0)
         except TransportError as exc:
-            raise ConnectorUnavailableError(str(exc)) from exc
+            raise ConnectorUnavailableError(f"cannot verify MCA control channel {index}: {exc}") from exc
+        result = checked.result
         if not result.accepted:
             reason = str(result.error) if result.error else "send_text() did not accept the message"
             raise ConnectorUnavailableError(reason)
+        # Log only the channel index and its radio-reported name, never any
+        # channel PSK or other secret - ChannelInfo carries none to leak.
+        logger.info(
+            "MCAttach control message sent on channel %d (%s) to %s",
+            index, checked.channel_name, route.destination_address,
+        )
         return DeliveryReceipt(
             sent=True,
             idempotency_key=idempotency_key,
@@ -174,7 +224,9 @@ class MeshtasticTextAdapter(DeliveryAdapter):
         protobuf type, keeping this method's input shape identical to
         `FakeTextAdapter.ingest()`'s for the contract tests. Expected
         keys: `text` (str), `source_address` (the sender's `!node_id`),
-        optionally `packet_id` and `received_at`.
+        optionally `packet_id`, `received_at`, and `channel_index` (the
+        channel index the message actually arrived on - retained in the
+        envelope's `transport_metadata`, never used to accept/reject).
         """
         if not isinstance(transport_event, dict):
             return None
@@ -186,6 +238,14 @@ class MeshtasticTextAdapter(DeliveryAdapter):
         except codec.CodecError as exc:
             raise DeliveryError(f"meshtastic ingest: malformed MCA1-TEXT payload: {exc}") from exc
         source_address = transport_event.get("source_address")
+        # The received channel index (when the listener knows it) is retained
+        # for observability only - inbound trust is signature/TOFU-based, so
+        # arrival channel is NOT an accept/reject gate here (the channel is a
+        # send-time selection; see AttachmentsService._process_one_inbound_event).
+        received_channel_index = transport_event.get("channel_index")
+        metadata: dict = {}
+        if received_channel_index is not None:
+            metadata["channel_index"] = received_channel_index
         return DeliveryEnvelope(
             logical_message=logical_message,
             wire_format=WireFormat.MCA1_TEXT,
@@ -196,5 +256,5 @@ class MeshtasticTextAdapter(DeliveryAdapter):
             source_address=source_address,
             external_message_id=transport_event.get("packet_id"),
             received_at=transport_event.get("received_at", time.time()),
-            transport_metadata={},
+            transport_metadata=metadata,
         )

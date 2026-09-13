@@ -47,6 +47,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import hashlib
+import json
 import logging
 import os
 import queue
@@ -269,6 +270,12 @@ class InboundEvent:
     source_address: str
     packet_id: Optional[str]
     received_at: float
+    # The channel index the message actually arrived on, when the listener
+    # knows it (server.py's extract_optional_channel_index). Retained for
+    # observability only - see _process_one_inbound_event(): arrival channel
+    # is never an accept/reject gate for MCA inbound traffic (trust is
+    # signature/TOFU-based), the channel is a send-time selection.
+    channel_index: Optional[int] = None
 
 
 class AttachmentsServiceError(RuntimeError):
@@ -357,6 +364,7 @@ class AttachmentsService:
         tick_seconds: float = DEFAULT_TICK_SECONDS,
         max_per_tick: int = MAX_ATTACHMENTS_PER_TICK,
         now_fn=time.time,
+        control_channel_index: Optional[int] = None,
         lock: Optional[threading.Lock] = None,
         inbound_queue: Optional["queue.Queue[InboundEvent]"] = None,
         command_queue: Optional[CommandQueue] = None,
@@ -381,6 +389,12 @@ class AttachmentsService:
         self._tick_seconds = tick_seconds
         self._max_per_tick = max_per_tick
         self._now = now_fn
+        # Finding 2 (control-channel correction): the configured MCA
+        # control-channel index, retained for inbound observability only
+        # (`_log_inbound_channel_observability()`), never for accept/reject.
+        # `None` means "unconfigured". See meshtastic.py's send() for the
+        # fail-closed send-side enforcement of the same value.
+        self._control_channel_index = control_channel_index
         self._pending_reservations = pending_reservations
         # Finding 1 (Correction 3): track committed creates that have not yet
         # been published in the snapshot as *records* (client_request_id ->
@@ -2714,6 +2728,14 @@ class AttachmentsService:
         transport_event = {
             "text": event.text, "source_address": event.source_address, "packet_id": event.packet_id,
         }
+        if event.channel_index is not None:
+            transport_event["channel_index"] = event.channel_index
+        # Inbound-channel policy (explicit): an MCA message is accepted on
+        # whatever channel it arrives on. The control-channel index is a
+        # send-time selection only - inbound trust is signature/TOFU-based,
+        # so arrival channel is NOT a reject gate here. The received index
+        # is still retained (above) so the envelope's transport_metadata
+        # records it for observability. See MeshtasticTextAdapter.ingest().
         envelope = self._delivery_adapter.ingest(transport_event)
         if envelope is None:
             return
@@ -2750,6 +2772,12 @@ class AttachmentsService:
             logger.info("AttachmentsService: malformed MCA message from %s: %s", event.source_address, exc)
             return
 
+        # Finding 2 (control-channel correction): emit a sanitized structured
+        # observability record for every inbound MCA control message BEFORE any
+        # dispatch. Observability only - never a reject gate (trust stays
+        # signature/TOFU), and never logs PSKs/tokens/keys/payloads.
+        self._log_inbound_channel_observability(event, message_type)
+
         if message_type in _INBOUND_ACK_TYPES:
             self._process_inbound_ack(envelope, message_type, source_address=event.source_address)
             return
@@ -2773,6 +2801,57 @@ class AttachmentsService:
         if reply_logical is None:
             return
         self._send_reply_now(reply_logical, event.source_address, idempotency_key=f"mca-reply-{event.packet_id or event.source_address}")
+
+    def _log_inbound_channel_observability(self, event: InboundEvent, message_type) -> None:
+        """Finding 2 (control-channel correction): the received `channel_index`
+        from `MeshtasticTextAdapter.ingest()`'s `transport_metadata` must reach
+        an observable sink, not just sit in the ephemeral envelope. Emits one
+        structured, sanitized record per inbound MCA control message.
+
+        Final-correction shape: the record dict is attached to the LogRecord
+        via `extra={"mca_event": record}` (so consumers can read the fields as
+        structured data, not re-parse a message string) AND rendered as a
+        stable, machine-readable JSON string in the message itself
+        (`sort_keys=True`, `separators=(",", ":")`, `ensure_ascii=True`).
+        Timestamps are split into `received_at` (the authoritative listener
+        time from `event.received_at`) and `processed_at` (worker time, from
+        `self._now()`).
+
+        Sanitization contract (finding's own constraint): the record contains
+        only the MCA message type name, the source node id (a `!` hex address,
+        not a secret), the packet id when available, the received channel
+        index, the configured control-channel index, a computed match status,
+        and the two timestamps. It never carries PSKs, tokens, keys, payloads,
+        or file contents. A mismatch is logged at warning level; everything
+        else at info. Never rejects a valid message - trust remains
+        signature/TOFU.
+        """
+        received = event.channel_index
+        configured = self._control_channel_index
+        if configured is None:
+            match_status = "unconfigured"
+        elif received is None:
+            match_status = "unknown"
+        elif configured == received:
+            match_status = "match"
+        else:
+            match_status = "mismatch"
+        record = {
+            "event": "mca_inbound_channel",
+            "message_type": getattr(message_type, "name", str(message_type)),
+            "source_node": event.source_address,
+            "packet_id": event.packet_id,
+            "received_channel_index": received,
+            "configured_control_channel_index": configured,
+            "match_status": match_status,
+            "received_at": event.received_at,
+            "processed_at": self._now(),
+        }
+        payload = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        if match_status == "mismatch":
+            logger.warning("MCAttach inbound channel mismatch: %s", payload, extra={"mca_event": record})
+        else:
+            logger.info("MCAttach inbound channel: %s", payload, extra={"mca_event": record})
 
     def _process_inbound_offer(self, envelope: DeliveryEnvelope, *, source_address: str) -> None:
         """PR #231 review, section 5: the OFFER's *own* provider_id

@@ -82,7 +82,12 @@ def _started_state(tmp_path, tag):
     ether = InMemoryEther()
     transport = FakeRadioTransport(ether, "!aaaaaaaa")
     data_dir = str(tmp_path / tag)
-    mca_runtime.start_attachments_service(data_dir, transport)
+    # control_channel_index=0: explicitly configured (the FakeRadioTransport's
+    # default primary channel) so command-executed KEY_REQUEST sends reach the
+    # real adapter. send() now fails closed on an unconfigured (None) channel
+    # index; the None/unconfigured case is covered by
+    # tests/test_mca_control_channel.py.
+    mca_runtime.start_attachments_service(data_dir, transport, control_channel_index=0)
     state = mca_runtime._get_state(data_dir)  # noqa: SLF001
     assert state.service.stop(), "worker did not stop - cannot drive ticks deterministically"
     state.ready_event.set()

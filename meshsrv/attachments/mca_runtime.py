@@ -317,7 +317,7 @@ class _MCARuntimeState:
         # constructor never receives.
         self.service: Optional[AttachmentsService] = None
 
-    def ensure_service(self, radio_transport: RadioTransport) -> AttachmentsService:
+    def ensure_service(self, radio_transport: RadioTransport, control_channel_index: Optional[int] = None) -> AttachmentsService:
         """ADR-0008 decision 1's five-step startup sequence, steps 2-4
         (step 1, migrate(), already happened in __init__ above). Building
         `AttachmentsService` needs a `MeshtasticTextAdapter`, which in
@@ -340,12 +340,12 @@ class _MCARuntimeState:
         radio listener's own hot path.
         """
         with _lock:
-            return self._ensure_service_locked(radio_transport)
+            return self._ensure_service_locked(radio_transport, control_channel_index)
 
-    def _ensure_service_locked(self, radio_transport: RadioTransport) -> AttachmentsService:
+    def _ensure_service_locked(self, radio_transport: RadioTransport, control_channel_index: Optional[int] = None) -> AttachmentsService:
         if self.service is not None:
             return self.service
-        adapter = MeshtasticTextAdapter(radio_transport)
+        adapter = MeshtasticTextAdapter(radio_transport, control_channel_index=control_channel_index)
         self.service = AttachmentsService(
             self.conn,
             workspace_manager=self.workspace_manager,
@@ -360,6 +360,11 @@ class _MCARuntimeState:
             # versa - one shared in-memory store, never two divergent ones.
             probe_registry=self.probe_registry,
             delivery_adapter=adapter,
+            # Finding 2 (control-channel correction): thread the configured
+            # index into the service so inbound-channel observability can
+            # compute match/mismatch against the same value the adapter
+            # enforces at send time.
+            control_channel_index=control_channel_index,
             # PR #231 review (2nd pass), requirement 4: this service's OWN
             # dedicated lock (self.tick_lock, constructed in __init__
             # above) - never this module's `_lock`. `self.conn` is
@@ -441,15 +446,25 @@ def _get_state(data_dir: str) -> "_MCARuntimeState":
         return _state
 
 
-def start_attachments_service(data_dir: str, radio_transport: RadioTransport) -> None:
+def start_attachments_service(
+    data_dir: str, radio_transport: RadioTransport, control_channel_index: Optional[int] = None
+) -> None:
     """Called once from server.py's `start_runtime()`, alongside its
     existing `threading.Thread(target=..., daemon=True).start()` calls
     for `radio_health_worker` etc. (ADR-0008 decision 1's "Startup
     sequence"). Safe to call more than once (e.g. a hypothetical future
     profile-swap re-init path) - `ensure_service()` is idempotent and
-    self-locking (its own docstring)."""
+    self-locking (its own docstring).
+
+    `control_channel_index` is the Meshtastic channel *index* MCA DIRECT
+    control traffic is transmitted on (config.py's
+    `MCA_CONTROL_CHANNEL_INDEX`). `None` (the default) means "no control
+    channel configured" and MUST fail closed at send time rather than
+    silently defaulting to channel 0 (the public primary channel) - see
+    config.example.py's `MCA_CONTROL_CHANNEL_INDEX` comment and
+    `MeshtasticTextAdapter.send()`'s own enforcement."""
     state = _get_state(data_dir)
-    state.ensure_service(radio_transport)
+    state.ensure_service(radio_transport, control_channel_index)
 
 
 def get_attachments_facade() -> Optional[AttachmentsFacade]:
@@ -518,6 +533,7 @@ def handle_incoming_meshtastic_text(
     *,
     data_dir: str,
     packet_id: Optional[str] = None,
+    channel_index: Optional[int] = None,
 ) -> bool:
     """Called by server.py's listener immediately after a normal
     incoming direct-message text has already been saved (spec 19.1:
@@ -578,6 +594,10 @@ def handle_incoming_meshtastic_text(
         )
         return False
     event = InboundEvent(
-        text=text, source_address=source_address, packet_id=packet_id, received_at=time.time()
+        text=text,
+        source_address=source_address,
+        packet_id=packet_id,
+        received_at=time.time(),
+        channel_index=channel_index,
     )
     return state.service.enqueue_inbound(event)

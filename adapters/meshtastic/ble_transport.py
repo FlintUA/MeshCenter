@@ -44,6 +44,7 @@ from adapters.meshtastic._timeout_support import TimeoutEnforced
 from meshsrv.node_time_sync import try_sync as try_node_time_sync
 from meshsrv.radio_transport import (
     ChannelInfo,
+    CheckedSendResult,
     ConnectionDescriptor,
     ConnectionInfo,
     ConnectionState,
@@ -375,6 +376,32 @@ class BLETransport(TimeoutEnforced, RadioTransport):
         results = self.send_messages([message], timeout=timeout)
         return results[0]
 
+    def send_text_checked(self, message: OutgoingMessage, *, timeout: float = 15.0) -> CheckedSendResult:
+        """Resolve `message.channel_index` against the live radio AND send, in
+        ONE session under this transport's already-open persistent interface
+        (BLE has no per-call open/close - see the module docstring's OWNERSHIP
+        MODEL). Raises `TransportError(UNSUPPORTED)` via _channel_name_for_index
+        when the requested channel is absent/DISABLED, matching the serial
+        transport's fail-closed single-session behavior."""
+        def _do_send_checked():
+            with self._lock:
+                self._require_connected()
+                channel_name = self._channel_name_for_index(self._interface, message.channel_index)
+                sent = self._interface.sendText(
+                    text=message.text,
+                    destinationId=message.destination_id,
+                    wantAck=message.want_ack,
+                    channelIndex=message.channel_index,
+                    replyId=message.reply_id,
+                )
+                packet_id = getattr(sent, "id", None)
+                return CheckedSendResult(
+                    result=SendResult(accepted=True, packet_id=int(packet_id) if packet_id is not None else None),
+                    channel_name=channel_name,
+                )
+
+        return self._call_with_timeout(_do_send_checked, timeout=timeout, what="send_text_checked()")
+
     def send_packet(
         self,
         payload: bytes,
@@ -532,6 +559,33 @@ class BLETransport(TimeoutEnforced, RadioTransport):
                 return channels
 
         return self._call_with_timeout(_do_get, timeout=timeout, what="get_channels()")
+
+    @staticmethod
+    def _channel_name_for_index(interface, index: int) -> str:
+        """Resolve `index` to the connected radio's channel name, raising
+        `TransportError(UNSUPPORTED)` when the channel is absent or DISABLED -
+        fail-closed, so a configured control-channel index that isn't actually
+        on the radio never silently degrades to channel 0. Returns only the
+        channel *name* (never a PSK/secret)."""
+        raw_channels = getattr(getattr(interface, "localNode", None), "channels", None) or []
+        for fallback_index, channel in enumerate(raw_channels):
+            idx = getattr(channel, "index", fallback_index)
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                idx = fallback_index
+            if idx < 0 or idx > 7:
+                continue
+            role = getattr(channel, "role", None)
+            if role == 0:
+                continue
+            if idx == index:
+                settings_obj = getattr(channel, "settings", None)
+                return getattr(settings_obj, "name", "") if settings_obj is not None else ""
+        raise TransportError(
+            TransportErrorCode.UNSUPPORTED,
+            f"MCA control channel {index} is not available on the connected radio",
+        )
 
     def get_metadata(self, *, timeout: float = 15.0) -> dict:
         """Unlike SerialTransport.get_metadata() (which shells out to a

@@ -121,6 +121,17 @@ AUTH_PASSWORD_HASH = globals().get("AUTH_PASSWORD_HASH", "")
 # SameSite=Lax are always on regardless of this flag (see app.config below).
 SESSION_COOKIE_SECURE = globals().get("SESSION_COOKIE_SECURE", False)
 
+# MCAttach control-channel index (see config.example.py): the Meshtastic
+# channel *index* MCA DIRECT control traffic is transmitted on. A dedicated
+# MCA setting, independent of CHANNEL_CHAT_ID/CHANNEL_CHAT_NAME (ordinary
+# chat keeps its own channel). Read here verbatim - NOT coerced/clamped -
+# and passed to start_attachments_service(); MeshtasticTextAdapter validates
+# it (int, 0-7) and resolves it against the live radio at send time, and an
+# invalid/unavailable value blocks MCA transmission rather than silently
+# falling back to channel 0. Default is None (no implicit operational
+# default): missing config must fail closed, never land on channel 0.
+MCA_CONTROL_CHANNEL_INDEX = globals().get("MCA_CONTROL_CHANNEL_INDEX", None)
+
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 # Radio-scoped paths are resolved after the accepted instance identity loads.
 WAYPOINTS_DB_FILE = ""
@@ -2653,6 +2664,24 @@ def extract_channel_index(line):
 def channel_chat_id(index):
     return CHANNEL_CHAT_ID if int(index or 0) == 0 else f"channel:{int(index)}"
 
+def extract_optional_channel_index(line):
+    """Like extract_channel_index(), but returns None (not 0) when the line
+    carries no channel field at all - the distinction matters for MCA
+    inbound retention, where "no channel known" must stay distinguishable
+    from "arrived on channel 0". Still clamped to 0-7 when present."""
+    patterns = (
+        r"['\"]channel['\"]\s*:\s*(\d+)",
+        r"['\"]channelIndex['\"]\s*:\s*(\d+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, line)
+        if match:
+            try:
+                return max(0, min(7, int(match.group(1))))
+            except (TypeError, ValueError):
+                return None
+    return None
+
 def extract_reply_id(line):
     """Return the Meshtastic packet ID referenced by an incoming reply."""
     patterns = [
@@ -3900,6 +3929,7 @@ def _handle_listener_line(line):
             try:
                 mca_runtime.handle_incoming_meshtastic_text(
                     text, node_id, transport_router, data_dir=DATA_DIR, packet_id=pid,
+                    channel_index=extract_optional_channel_index(line),
                 )
             except Exception as e:
                 print(f"[MCA] listener dispatch error: {e}", flush=True)
@@ -6076,7 +6106,7 @@ def start_runtime():
     # Best-effort like every other block here - a failure to start the MCA
     # worker must not prevent the rest of start_runtime() from coming up.
     try:
-        mca_runtime.start_attachments_service(DATA_DIR, transport_router)
+        mca_runtime.start_attachments_service(DATA_DIR, transport_router, MCA_CONTROL_CHANNEL_INDEX)
     except Exception as e:
         print(f"[MCA] failed to start AttachmentsService: {e}", flush=True)
 

@@ -92,7 +92,11 @@ def test_key_request_to_key_announce_round_trip_through_the_real_glue(tmp_path):
         from meshsrv.attachments.delivery.meshtastic import MeshtasticTextAdapter
         from meshsrv.attachments.identity import load_signing_key
 
-        adapter_a = MeshtasticTextAdapter(transport_a)
+        # control_channel_index=0: these round-trip tests exercise the real
+        # glue under an explicitly-configured channel (the FakeRadioTransport's
+        # default primary channel). The unconfigured/None fail-closed case is a
+        # distinct scenario, covered by tests/test_mca_control_channel.py.
+        adapter_a = MeshtasticTextAdapter(transport_a, control_channel_index=0)
         state_a = mca_runtime._get_state(data_dir_a)  # noqa: SLF001 - test needs the sender's own principal/signing key
         signing_key_a = load_signing_key(state_a.workspace_manager, state_a.principal)
         key_request = codec.encode_key_request(
@@ -110,7 +114,7 @@ def test_key_request_to_key_announce_round_trip_through_the_real_glue(tmp_path):
         # This mirrors server.py's own startup ordering (start_
         # attachments_service() now runs before the radio listener
         # starts).
-        mca_runtime.start_attachments_service(data_dir_b, transport_b)
+        mca_runtime.start_attachments_service(data_dir_b, transport_b, control_channel_index=0)
 
         # Node B's listener "receives" it - this is the exact call
         # server.py's process_message_line() makes after saving the
@@ -180,7 +184,7 @@ def test_ordinary_chat_message_is_not_recognized_as_mca(tmp_path):
         ether = InMemoryEther()
         transport_b = FakeRadioTransport(ether, "!bbbbbbbb")
         data_dir_b = str(tmp_path / "b")
-        mca_runtime.start_attachments_service(data_dir_b, transport_b)
+        mca_runtime.start_attachments_service(data_dir_b, transport_b, control_channel_index=0)
         queued = mca_runtime.handle_incoming_meshtastic_text(
             "hey, got your message",
             "!aaaaaaaa",
@@ -220,7 +224,11 @@ def test_offer_from_unknown_provider_is_routed_to_receiver_not_dropped(tmp_path)
 
         from meshsrv.attachments.delivery.meshtastic import MeshtasticTextAdapter
 
-        adapter_a = MeshtasticTextAdapter(transport_a)
+        # control_channel_index=0: these round-trip tests exercise the real
+        # glue under an explicitly-configured channel (the FakeRadioTransport's
+        # default primary channel). The unconfigured/None fail-closed case is a
+        # distinct scenario, covered by tests/test_mca_control_channel.py.
+        adapter_a = MeshtasticTextAdapter(transport_a, control_channel_index=0)
         state_a = mca_runtime._get_state(data_dir_a)  # noqa: SLF001
         signing_key_a = load_signing_key(state_a.workspace_manager, state_a.principal)
 
@@ -240,7 +248,7 @@ def test_offer_from_unknown_provider_is_routed_to_receiver_not_dropped(tmp_path)
         wire_payload = adapter_a.encode(offer, route)
         adapter_a.send(wire_payload, route, idempotency_key="test-offer")
 
-        mca_runtime.start_attachments_service(data_dir_b, transport_b)
+        mca_runtime.start_attachments_service(data_dir_b, transport_b, control_channel_index=0)
 
         events = ether.drain("!bbbbbbbb")
         assert len(events) == 1
@@ -301,11 +309,15 @@ def test_offer_wakes_the_attachments_service_when_one_is_running(tmp_path, monke
 
         from meshsrv.attachments.delivery.meshtastic import MeshtasticTextAdapter
 
-        adapter_a = MeshtasticTextAdapter(transport_a)
+        # control_channel_index=0: these round-trip tests exercise the real
+        # glue under an explicitly-configured channel (the FakeRadioTransport's
+        # default primary channel). The unconfigured/None fail-closed case is a
+        # distinct scenario, covered by tests/test_mca_control_channel.py.
+        adapter_a = MeshtasticTextAdapter(transport_a, control_channel_index=0)
         state_a = mca_runtime._get_state(data_dir_a)  # noqa: SLF001
         signing_key_a = load_signing_key(state_a.workspace_manager, state_a.principal)
 
-        mca_runtime.start_attachments_service(data_dir_b, transport_b)
+        mca_runtime.start_attachments_service(data_dir_b, transport_b, control_channel_index=0)
         state_b = mca_runtime._get_state(data_dir_b)  # noqa: SLF001
         assert isinstance(state_b.service, AttachmentsService)
 

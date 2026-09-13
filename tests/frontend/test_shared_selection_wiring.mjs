@@ -61,8 +61,10 @@ function escapeHtmlForTest(value) {
 class FakeElement {
     constructor(tag, id) {
         this.tagName = String(tag || 'div').toUpperCase();
-        this.id = id || '';
-        this.innerHTML = '';
+        this._id = id || '';
+        this._ownerDocument = null;
+        this._innerHTML = '';
+        this._connected = false;
         this._textContent = '';
         this.disabled = false;
         this.className = '';
@@ -86,6 +88,36 @@ class FakeElement {
             remove: (name) => { this._classes.delete(name); },
             contains: (name) => this._classes.has(name),
         };
+    }
+    // The browser keeps an element's `id` as a live property that also registers
+    // the element with its document. Mirroring that here (instead of a plain
+    // field) is what lets getElementById() resolve a detached element's id to
+    // null — the exact real-browser behavior the PR 6 correction guards against.
+    get id() { return this._id; }
+    set id(value) {
+        this._id = String(value);
+        if (this._ownerDocument && this._id) this._ownerDocument.elements.set(this._id, this);
+    }
+    // Assigning innerHTML in a browser REPLACES the element's child nodes (they
+    // become detached). The old fake stored it as an opaque string and never
+    // touched `_children`, which masked rebuild bugs: this setter clears the
+    // child list and marks removed children disconnected, so a
+    // `nodesList.innerHTML = ...` wipe really does destroy its real children.
+    get innerHTML() { return this._innerHTML; }
+    set innerHTML(value) {
+        this._innerHTML = String(value);
+        for (const child of this._children.slice()) {
+            child.parentNode = null;
+            child._markConnected(false);
+        }
+        this._children = [];
+    }
+    // A node is "connected" to the document iff it is reachable from a connected
+    // root by following parent links. getElementById() only returns connected
+    // elements, matching the live DOM (a detached element is not found by id).
+    _markConnected(connected) {
+        this._connected = connected;
+        for (const child of this._children) child._markConnected(connected);
     }
     // Mirror the browser: assigning `textContent` to an element also writes its
     // HTML-escaped form into `innerHTML`. chat.js's escapeHtml() (and the markup
@@ -113,11 +145,20 @@ class FakeElement {
         delete this._attrs[name];
         if (name === 'id') this.id = '';
     }
-    appendChild(child) { child.parentNode = this; this._children.push(child); return child; }
+    appendChild(child) {
+        // Like the browser, re-appending an already-parented node MOVES it (out
+        // of any current parent) so a move never leaves a stale child behind.
+        if (child.parentNode && child.parentNode !== this) child.parentNode.removeChild(child);
+        child.parentNode = this;
+        this._children.push(child);
+        child._markConnected(this._connected);
+        return child;
+    }
     removeChild(child) {
         const i = this._children.indexOf(child);
         if (i >= 0) this._children.splice(i, 1);
         child.parentNode = null;
+        child._markConnected(false);
         return child;
     }
     // Sibling navigation derived from the parent's child list, so
@@ -156,7 +197,10 @@ class FakeElement {
             const i = this.parentNode._children.indexOf(this);
             if (i >= 0) this.parentNode._children.splice(i, 1, node);
             node.parentNode = this.parentNode;
+            node._markConnected(this.parentNode._connected);
         }
+        this.parentNode = null;
+        this._markConnected(false);
     }
     contains() { return false; }
     matches() { return false; }
@@ -170,6 +214,7 @@ class FakeElement {
         if (i >= 0) this._children.splice(i, 0, child);
         else this._children.push(child);
         child.parentNode = this;
+        child._markConnected(this._connected);
         return child;
     }
     getBoundingClientRect() { return { top: 0, left: 0, width: 0, height: 0, bottom: 0, right: 0 }; }
@@ -182,6 +227,10 @@ class FakeDocument {
         this.listeners = {};
         this.body = new FakeElement('body', '');
         this.head = new FakeElement('head', '');
+        this.body._ownerDocument = this;
+        this.head._ownerDocument = this;
+        this.body._connected = true;
+        this.head._connected = true;
         this.activeElement = null;
         this.hidden = false;
         this.readyState = 'loading';   // defer chat.js's DOMContentLoaded initializers
@@ -191,10 +240,26 @@ class FakeDocument {
         this._nodeClickHandlerInstalled = false;
     }
     getElementById(id) {
-        if (!this.elements.has(id)) this.elements.set(id, new FakeElement('div', id));
-        return this.elements.get(id);
+        // A detached element is NOT returned by getElementById() in a real
+        // browser — this is the exact gap the PR 6 correction closes. Only
+        // return a memoized element that is still connected to the document; a
+        // detached one resolves to null, forcing the caller to re-own it rather
+        // than silently re-adopting a stale node.
+        if (this.elements.has(id)) {
+            const el = this.elements.get(id);
+            return el._connected ? el : null;
+        }
+        const fresh = new FakeElement('div', id);
+        fresh._ownerDocument = this;
+        fresh._connected = true;
+        this.elements.set(id, fresh);
+        return fresh;
     }
-    createElement(tag) { return new FakeElement(tag); }
+    createElement(tag) {
+        const el = new FakeElement(tag);
+        el._ownerDocument = this;
+        return el;
+    }
     addEventListener(type, fn) {
         if (!this.listeners[type]) this.listeners[type] = [];
         this.listeners[type].push(fn);
@@ -1265,65 +1330,212 @@ function makeInlineNodeCard(nodeId) {
 
 // Arms the #nodeDetails slot so `querySelector(':scope > .node-detail-card')`
 // reports a rendered detail card — the signal positionNodeDetailSlot() uses to
-// decide the card is present and must be kept inline.
+// decide the card is present and must be kept inline. The detail card is a REAL
+// child of the slot (not just a querySelector mock) so the tests can assert its
+// subtree survives a detach/reinsert unchanged.
 function armDetailSlot(doc) {
     const slot = doc.getElementById('nodeDetails');
     const fakeDetailCard = new FakeElement('div', '');
     fakeDetailCard.className = 'node-detail-card';
+    fakeDetailCard.dataset = { nodeId: '' };
+    slot.appendChild(fakeDetailCard);
     slot.querySelector = (sel) => (sel === ':scope > .node-detail-card' ? fakeDetailCard : null);
     return slot;
 }
 
-async function test_position_node_detail_slot_places_inline_after_selected_card() {
-    // The core PR 6 behavior: with a node selected AND its detail card rendered,
-    // the stable slot is moved into #nodesList immediately after that node's
-    // compact card (not before it, not after a different card, not at the end).
+// A node shaped to pass computeDisplayNodes()'s default (non-ignored) filter and
+// carry the fields renderNodeCard() reads. Reused to seed the node cache for the
+// rebuild tests without pulling in the store's contact/key state.
+function makeDisplayNode(nodeId, name) {
+    return {
+        node_id: nodeId,
+        clean_name: name,
+        name,
+        short_name: name.slice(0, 2).toUpperCase(),
+        hw_model: 'TBEAM',
+        ignored: false,
+        favorite: false,
+    };
+}
+
+// Seeds chat.js's module-level `nodeCache` (a top-level `let` binding, not a
+// sandbox property) with the given nodes so computeDisplayNodes() and
+// renderSidebarNodeCards() render real cards from them. Must go through
+// vm.runInContext because `sandbox.nodeCache = ...` would create a NEW property
+// rather than rebind chat.js's lexical binding.
+function seedNodeCache(sandbox, nodes) {
+    vm.runInContext('nodeCache = ' + JSON.stringify(nodes) + ';', sandbox);
+}
+
+// Registers a set of connected compact cards as the #nodesList children that
+// positionNodeDetailSlot()/syncSelectedNodeCard() discover. The cards are marked
+// connected (parentNode === nodesList) but are NOT appended to nodesList's own
+// child list — in a real browser the rebuild's `nodesList.innerHTML = ...` parses
+// fresh cards as connected children, which the fake DOM's string-only innerHTML
+// cannot reproduce; this fixture stands in for those parsed children so they
+// survive the wipe the way the browser's would.
+function setupRebuildFixture(sandbox, nodeIds) {
+    const doc = sandbox._document;
+    const nodesList = doc.getElementById('nodesList');
+    const cards = nodeIds.map((id) => {
+        const card = makeInlineNodeCard(id);
+        card.parentNode = nodesList;
+        card._connected = true;
+        return card;
+    });
+    nodesList.querySelectorAll = (sel) => (sel === '.node-card' ? cards : []);
+    doc._nodeCards = cards;
+    return { doc, nodesList, cards };
+}
+
+// Counts elements with a given id in the REAL child tree under `root`. The fake
+// document keeps an id registry (`elements`) that includes phantom auto-created
+// nodes; walking the actual child tree is what detects a genuine duplicate DOM
+// node versus a stale registry entry.
+function countById(root, id) {
+    let count = 0;
+    (function walk(el) {
+        if (el !== root && el.id === id) count += 1;
+        (el._children || []).forEach(walk);
+    })(root);
+    return count;
+}
+
+// ---- harness meta-tests -----------------------------------------------------
+// The rebuild tests below only have teeth if the fake DOM models the two real-
+// browser behaviors the PR 6 correction depends on. These guard the guard.
+
+async function test_fake_dom_innerhtml_assignment_removes_real_child_nodes() {
+    const doc = new FakeDocument();
+    const list = doc.createElement('div');
+    doc.body.appendChild(list);           // connect the list so the child is connected
+    const child = doc.createElement('span');
+    list.appendChild(child);
+
+    assert.equal(child._connected, true, 'precondition: the child is connected under a connected parent');
+
+    list.innerHTML = '<p>rebuilt</p>';
+
+    assert.equal(list._children.length, 0, 'innerHTML assignment removes the element child nodes');
+    assert.equal(child.parentNode, null, 'the removed child is detached');
+    assert.equal(child._connected, false, 'the removed child is marked disconnected');
+    console.log('PASS: test_fake_dom_innerhtml_assignment_removes_real_child_nodes');
+}
+
+async function test_fake_dom_get_element_by_id_returns_null_for_detached() {
+    const doc = new FakeDocument();
+    const list = doc.createElement('div');
+    doc.body.appendChild(list);
+    const slot = doc.createElement('div');
+    slot.id = 'nodeDetails';
+    list.appendChild(slot);
+
+    assert.equal(doc.getElementById('nodeDetails'), slot, 'precondition: a connected element is found by id');
+
+    list.removeChild(slot);
+    assert.equal(slot._connected, false, 'the detached element is disconnected');
+    assert.equal(doc.getElementById('nodeDetails'), null,
+        'a detached element is NOT returned by getElementById (matches the real DOM)');
+
+    assert.ok(doc.getElementById('brand-new-id'), 'an absent id is still auto-created for test convenience');
+    console.log('PASS: test_fake_dom_get_element_by_id_returns_null_for_detached');
+}
+
+// ---- PR 6 correction: stable-slot / same-card expansion tests ----------------
+
+async function test_position_node_detail_slot_descendant_not_sibling() {
+    // Same-card expansion: with a node selected AND its detail card rendered, the
+    // stable slot is appended INSIDE the selected node's compact card — one outer
+    // boundary — never as a sibling of the card or at the list end.
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
     const doc = sandbox._document;
     const store = sandbox.window.MeshCenterTargets;
 
     const cardA = makeInlineNodeCard('!aaaaaaaa');
     const cardB = makeInlineNodeCard('!bbbbbbbb');
-    const cardC = makeInlineNodeCard('!cccccccc');
     const nodesList = doc.getElementById('nodesList');
-    [cardA, cardB, cardC].forEach((c) => nodesList.appendChild(c));
-    // positionNodeDetailSlot reads the LIST element's own querySelectorAll (not
-    // the document's), so point the list element at the registered cards.
-    nodesList.querySelectorAll = (sel) => (sel === '.node-card' ? [cardA, cardB, cardC] : []);
+    [cardA, cardB].forEach((c) => nodesList.appendChild(c));
+    nodesList.querySelectorAll = (sel) => (sel === '.node-card' ? [cardA, cardB] : []);
 
     const slot = armDetailSlot(doc);
     store.select('node', '!bbbbbbbb');
-
     sandbox.positionNodeDetailSlot();
 
-    assert.equal(slot.parentNode, nodesList, 'the detail slot is moved into #nodesList');
-    assert.equal(cardB.nextSibling, slot, 'the slot sits immediately after the selected node B compact card');
-    assert.equal(nodesList._children.indexOf(slot), nodesList._children.indexOf(cardB) + 1,
-        'the slot is not placed after a different card or at the list end');
-    console.log('PASS: test_position_node_detail_slot_places_inline_after_selected_card');
+    assert.equal(slot.parentNode, cardB, 'the slot is a descendant (child) of the selected card');
+    assert.ok(cardB._children.includes(slot), 'the slot is inside the selected card child list');
+    assert.notEqual(cardB.nextSibling, slot, 'the slot is NOT a sibling of the selected card');
+    assert.equal(nodesList._children.includes(slot), false, 'the slot is not a direct child of #nodesList');
+    assert.equal(doc.getElementById('nodeDetails'), slot, 'the slot is still the stable #nodeDetails element');
+    console.log('PASS: test_position_node_detail_slot_descendant_not_sibling');
 }
 
-async function test_position_node_detail_slot_removes_slot_without_selection() {
-    // Clearing the selection (or selecting a channel) must pull the slot back out
-    // of the list, not leave a stray placeholder in the node list.
+async function test_position_node_detail_slot_moves_on_node_change() {
+    // Selecting a different node moves the SAME slot into that node's card —
+    // never creating a second slot, never leaving a copy behind in the old card.
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
     const doc = sandbox._document;
     const store = sandbox.window.MeshCenterTargets;
 
     const cardA = makeInlineNodeCard('!aaaaaaaa');
+    const cardB = makeInlineNodeCard('!bbbbbbbb');
     const nodesList = doc.getElementById('nodesList');
-    nodesList.appendChild(cardA);
-    nodesList.querySelectorAll = (sel) => (sel === '.node-card' ? [cardA] : []);
+    [cardA, cardB].forEach((c) => nodesList.appendChild(c));
+    nodesList.querySelectorAll = (sel) => (sel === '.node-card' ? [cardA, cardB] : []);
 
     const slot = armDetailSlot(doc);
     store.select('node', '!aaaaaaaa');
     sandbox.positionNodeDetailSlot();
-    assert.equal(slot.parentNode, nodesList, 'precondition: slot placed for the selected node');
+    assert.equal(slot.parentNode, cardA, 'precondition: slot inside card A');
 
+    store.select('node', '!bbbbbbbb');
+    sandbox.positionNodeDetailSlot();
+
+    assert.equal(slot.parentNode, cardB, 'the slot moves into the newly selected card B');
+    assert.ok(cardB._children.includes(slot), 'card B now owns the slot');
+    assert.equal(cardA._children.includes(slot), false, 'card A no longer owns the slot (moved, not copied)');
+    assert.equal(doc.getElementById('nodeDetails'), slot, 'the exact same slot object is reused');
+    console.log('PASS: test_position_node_detail_slot_moves_on_node_change');
+}
+
+async function test_position_node_detail_slot_collapses_on_channel_deselect_reactivate() {
+    // Channel selection, re-clicking the same node (toggle-off), and clearing the
+    // selection all collapse the expansion; re-selecting re-expands it.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const doc = sandbox._document;
+    const store = sandbox.window.MeshCenterTargets;
+
+    const cardB = makeInlineNodeCard('!bbbbbbbb');
+    const nodesList = doc.getElementById('nodesList');
+    nodesList.appendChild(cardB);
+    nodesList.querySelectorAll = (sel) => (sel === '.node-card' ? [cardB] : []);
+
+    const slot = armDetailSlot(doc);
+
+    store.select('node', '!bbbbbbbb');
+    sandbox.positionNodeDetailSlot();
+    assert.equal(slot.parentNode, cardB, 'precondition: expanded under card B');
+
+    // Re-click the same node toggles the selection off -> collapses.
+    store.toggleSelect('node', '!bbbbbbbb');
+    sandbox.positionNodeDetailSlot();
+    assert.equal(slot.parentNode, null, 're-clicking the selected node collapses the expansion');
+
+    store.select('node', '!bbbbbbbb');
+    sandbox.positionNodeDetailSlot();
+    assert.equal(slot.parentNode, cardB, 're-selecting re-expands');
+
+    // Selecting a channel collapses (a channel is never a node target).
+    store.select('channel', 'channel');
+    sandbox.positionNodeDetailSlot();
+    assert.equal(slot.parentNode, null, 'selecting a channel collapses the expansion');
+
+    store.select('node', '!bbbbbbbb');
+    sandbox.positionNodeDetailSlot();
+    assert.equal(slot.parentNode, cardB, 'precondition: expanded again');
     store.clearSelection();
     sandbox.positionNodeDetailSlot();
-    assert.equal(slot.parentNode, null, 'clearing the selection removes the slot from the list');
-    console.log('PASS: test_position_node_detail_slot_removes_slot_without_selection');
+    assert.equal(slot.parentNode, null, 'clearing the selection collapses the expansion');
+    console.log('PASS: test_position_node_detail_slot_collapses_on_channel_deselect_reactivate');
 }
 
 async function test_position_node_detail_slot_removes_slot_without_rendered_card() {
@@ -1347,40 +1559,155 @@ async function test_position_node_detail_slot_removes_slot_without_rendered_card
     console.log('PASS: test_position_node_detail_slot_removes_slot_without_rendered_card');
 }
 
-async function test_render_sidebar_node_cards_detaches_and_repositions_inline_slot() {
-    // The list rebuild must detach the slot BEFORE the innerHTML wipe (so its
-    // detail-card DOM survives) and re-insert it below the selected node's card
-    // afterward — verified by observing the detach call and the final position.
+async function test_render_sidebar_node_cards_rebuild_preserves_slot_and_detail_card() {
+    // The list rebuild must detach the stable slot BEFORE the innerHTML wipe (so
+    // its detail-card subtree survives) and re-insert the SAME slot inside the
+    // selected node's card afterward.
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
     const doc = sandbox._document;
     const store = sandbox.window.MeshCenterTargets;
 
-    const cardA = makeInlineNodeCard('!aaaaaaaa');
+    seedNodeCache(sandbox, [
+        makeDisplayNode('!aaaaaaaa', 'Alice'),
+        makeDisplayNode('!bbbbbbbb', 'Bob'),
+    ]);
+    const { nodesList, cards } = setupRebuildFixture(sandbox, ['!aaaaaaaa', '!bbbbbbbb']);
+    const cardB = cards[1];
+
+    const slot = armDetailSlot(doc);
+    const detailCard = slot._children[0];
+    nodesList.appendChild(slot);   // a REAL child of #nodesList — destroyed unless detached first
+    store.select('node', '!bbbbbbbb');
+
+    sandbox.renderSidebarNodeCards();
+
+    assert.equal(sandbox.getNodeDetailSlot(), slot, 'the exact same slot object survives the rebuild');
+    assert.ok(slot._children.includes(detailCard), 'the detail-card child survives the innerHTML wipe');
+    assert.equal(slot.parentNode, cardB, 'the slot is re-inserted inside the selected card');
+    assert.ok(cardB._children.includes(slot), 'the slot is a descendant of the selected card');
+    console.log('PASS: test_render_sidebar_node_cards_rebuild_preserves_slot_and_detail_card');
+}
+
+async function test_load_messages_rebuild_preserves_slot_and_detail_card() {
+    // The second list-rendering source (loadMessages, the /api/messages poll)
+    // must funnel through the SAME shared renderSidebarNodeCards path, so its
+    // rebuild also preserves the slot and repositions it inside the card.
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes({
+            '/api/messages': json({
+                messages: [],
+                nodes: [
+                    makeDisplayNode('!aaaaaaaa', 'Alice'),
+                    makeDisplayNode('!bbbbbbbb', 'Bob'),
+                ],
+            }),
+        }),
+    });
+    const doc = sandbox._document;
+    const store = sandbox.window.MeshCenterTargets;
+
+    // loadMessages' trailing sync re-renders node details; stub it so the real
+    // morph/template path (out of scope here) never runs in the fake DOM.
+    sandbox.renderNodeDetails = () => {};
+
+    const { nodesList, cards } = setupRebuildFixture(sandbox, ['!aaaaaaaa', '!bbbbbbbb']);
+    const cardB = cards[1];
+
+    const slot = armDetailSlot(doc);
+    const detailCard = slot._children[0];
+    nodesList.appendChild(slot);
+    store.select('node', '!bbbbbbbb');
+
+    await sandbox.loadMessages();
+
+    assert.equal(sandbox.getNodeDetailSlot(), slot, 'the same slot object survives loadMessages');
+    assert.ok(slot._children.includes(detailCard), 'the detail-card child survives the loadMessages rebuild');
+    assert.equal(slot.parentNode, cardB, 'the slot is re-inserted inside the selected card');
+    console.log('PASS: test_load_messages_rebuild_preserves_slot_and_detail_card');
+}
+
+// ---- PR 6 correction: Actions menu ownership ---------------------------------
+
+async function test_node_actions_menu_owned_inside_slot_and_opens() {
+    // The ⋮ Actions menu is created INSIDE the stable slot (never a document-
+    // level orphan) and opens on toggle; re-rendering never duplicates it.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const doc = sandbox._document;
+    const slot = armDetailSlot(doc);
+
+    const menu = sandbox.renderNodeActionsMenu('!aaaaaaaa', 'Alice');
+
+    assert.equal(menu.parentNode, slot, 'the menu is appended inside the stable slot');
+    assert.ok(slot._children.includes(menu), 'the menu is a descendant of the slot');
+    assert.equal(doc.getElementById('nodeActionsMenu'), menu, 'the menu is reachable by id');
+
+    const menu2 = sandbox.renderNodeActionsMenu('!aaaaaaaa', 'Alice');
+    assert.equal(menu2.parentNode, slot, 're-rendering still owns the menu inside the slot');
+    assert.equal(countById(slot, 'nodeActionsMenu'), 1, 'exactly one #nodeActionsMenu exists in the slot');
+
+    assert.equal(menu2.style.display, 'none', 'the menu starts hidden');
+    sandbox.toggleNodeActionsMenu({ stopPropagation() {} });
+    assert.equal(menu2.style.display, 'block', 'the ⋮ menu opens on toggle');
+    console.log('PASS: test_node_actions_menu_owned_inside_slot_and_opens');
+}
+
+async function test_node_actions_menu_survives_and_opens_after_rebuild() {
+    // Because the menu is owned inside the stable slot, a node-list rebuild (which
+    // preserves the slot) must not destroy the menu — it must still exist and open.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const doc = sandbox._document;
+    const store = sandbox.window.MeshCenterTargets;
+
+    seedNodeCache(sandbox, [makeDisplayNode('!bbbbbbbb', 'Bob')]);
+    const { nodesList, cards } = setupRebuildFixture(sandbox, ['!bbbbbbbb']);
+    const cardB = cards[0];
+
+    const slot = armDetailSlot(doc);
+    nodesList.appendChild(slot);
+    store.select('node', '!bbbbbbbb');
+    sandbox.positionNodeDetailSlot();
+    sandbox.renderNodeActionsMenu('!bbbbbbbb', 'Bob');
+
+    sandbox.renderSidebarNodeCards();
+
+    const menu = doc.getElementById('nodeActionsMenu');
+    assert.ok(menu, 'the actions menu still exists after the rebuild');
+    assert.equal(menu.parentNode, slot, 'the menu is still owned inside the stable slot');
+    assert.ok(slot._children.includes(menu), 'the menu is still a descendant of the slot');
+    assert.equal(slot.parentNode, cardB, 'the slot (with menu) is repositioned inside the card');
+
+    sandbox.toggleNodeActionsMenu({ stopPropagation() {} });
+    assert.equal(menu.style.display, 'block', 'the ⋮ menu opens after a rebuild');
+    console.log('PASS: test_node_actions_menu_survives_and_opens_after_rebuild');
+}
+
+async function test_no_duplicate_node_details_or_actions_menu() {
+    // After positioning and menu creation, the whole document tree must contain
+    // exactly one #nodeDetails and one #nodeActionsMenu — no phantom duplicates
+    // from re-discovery or re-render.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const doc = sandbox._document;
+    const store = sandbox.window.MeshCenterTargets;
+
     const cardB = makeInlineNodeCard('!bbbbbbbb');
-    const cardC = makeInlineNodeCard('!cccccccc');
     const nodesList = doc.getElementById('nodesList');
-    [cardA, cardB, cardC].forEach((c) => nodesList.appendChild(c));
-    nodesList.querySelectorAll = (sel) => (sel === '.node-card' ? [cardA, cardB, cardC] : []);
-    doc._nodeCards = [cardA, cardB, cardC];
+    nodesList.appendChild(cardB);
+    nodesList.querySelectorAll = (sel) => (sel === '.node-card' ? [cardB] : []);
 
     const slot = armDetailSlot(doc);
     store.select('node', '!bbbbbbbb');
     sandbox.positionNodeDetailSlot();
-    assert.equal(cardB.nextSibling, slot, 'precondition: slot placed below node B');
+    sandbox.renderNodeActionsMenu('!bbbbbbbb', 'Bob');
 
-    let detachCount = 0;
-    const origRemoveChild = nodesList.removeChild.bind(nodesList);
-    nodesList.removeChild = (child) => {
-        if (child === slot) detachCount++;
-        return origRemoveChild(child);
-    };
+    assert.equal(countById(doc.body, 'nodeDetails'), 0, 'the slot is not under <body> in this fixture (it lives in the card)');
+    assert.equal(countById(slot, 'nodeActionsMenu'), 1, 'exactly one #nodeActionsMenu inside the slot');
+    assert.equal(countById(cardB, 'nodeDetails'), 1, 'exactly one #nodeDetails inside the selected card');
 
-    sandbox.renderSidebarNodeCards();
-
-    assert.equal(detachCount, 1, 'the rebuild detaches the slot exactly once before wiping the list');
-    assert.equal(slot.parentNode, nodesList, 'the slot is re-inserted after the rebuild');
-    assert.equal(cardB.nextSibling, slot, 'the slot repositions directly below node B after the rebuild');
-    console.log('PASS: test_render_sidebar_node_cards_detaches_and_repositions_inline_slot');
+    // Re-render the menu twice more: still one, not three.
+    sandbox.renderNodeActionsMenu('!bbbbbbbb', 'Bob');
+    sandbox.renderNodeActionsMenu('!bbbbbbbb', 'Bob');
+    assert.equal(countById(slot, 'nodeActionsMenu'), 1, 're-rendering never accumulates #nodeActionsMenu nodes');
+    console.log('PASS: test_no_duplicate_node_details_or_actions_menu');
 }
 
 // ---- runner ------------------------------------------------------------------
@@ -1412,11 +1739,18 @@ async function main() {
     await test_node_details_stale_response_after_clear();
     await test_node_details_out_of_order_responses();
     await test_refresh_sidebar_targets_age_limit_join_and_force();
-    await test_position_node_detail_slot_places_inline_after_selected_card();
-    await test_position_node_detail_slot_removes_slot_without_selection();
+    await test_fake_dom_innerhtml_assignment_removes_real_child_nodes();
+    await test_fake_dom_get_element_by_id_returns_null_for_detached();
+    await test_position_node_detail_slot_descendant_not_sibling();
+    await test_position_node_detail_slot_moves_on_node_change();
+    await test_position_node_detail_slot_collapses_on_channel_deselect_reactivate();
     await test_position_node_detail_slot_removes_slot_without_rendered_card();
-    await test_render_sidebar_node_cards_detaches_and_repositions_inline_slot();
-    console.log('All shared-selection wiring tests passed (30 scenarios).');
+    await test_render_sidebar_node_cards_rebuild_preserves_slot_and_detail_card();
+    await test_load_messages_rebuild_preserves_slot_and_detail_card();
+    await test_node_actions_menu_owned_inside_slot_and_opens();
+    await test_node_actions_menu_survives_and_opens_after_rebuild();
+    await test_no_duplicate_node_details_or_actions_menu();
+    console.log('All shared-selection wiring tests passed (37 scenarios).');
 }
 
 main()

@@ -906,9 +906,12 @@ body {
 .rescan-nodes-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
 /* ===== NODE DETAILS ===== */
+/* PR 6 correction: #nodeDetails is the inline detail slot — a child of the
+   selected .node-card (same-card expansion), so the compact card and its detail
+   card share one outer border. No top margin: the compact card's key row already
+   carries a border-top/padding separating the two portions. */
 #nodeDetails {
-    flex-shrink: 0;
-    margin-bottom: 8px;
+    margin: 0;
 }
 
 .node-details {

@@ -124,6 +124,9 @@ jobs:
       - name: server.py startup-call regression check
         run: python scripts/check_startup_calls.py
 
+      - name: browser asset cache-busting check
+        run: python scripts/check_asset_cache_busting.py
+
       - name: Run pytest
         run: python -m pytest
 

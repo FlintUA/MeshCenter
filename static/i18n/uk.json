@@ -1130,7 +1130,6 @@
     "show_hide_tooltip": "Показати або приховати отримані waypoint Meshtastic"
   },
   "nodes": {
-    "select_node_below": "Виберіть вузол нижче, щоб побачити деталі",
     "never_seen": "Ніколи",
     "activity_status": "Статус активності",
     "close_node_details": "Закрити відомості про вузол",

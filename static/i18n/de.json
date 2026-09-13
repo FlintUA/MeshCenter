@@ -1130,7 +1130,6 @@
     "show_hide_tooltip": "Empfangene Meshtastic-Waypoints anzeigen oder ausblenden"
   },
   "nodes": {
-    "select_node_below": "Wähle unten einen Knoten aus, um Details anzuzeigen",
     "never_seen": "Nie",
     "activity_status": "Aktivitätsstatus",
     "close_node_details": "Knotendetails schließen",

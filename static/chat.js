@@ -4452,18 +4452,8 @@ async function loadMessages() {
             favoritesCountEl.textContent = window.I18N.t('nodes.favorites_count', { count: favoriteNodes.length });
         }
         
-        let displayNodes = [];
-        
-        if (showFavorites && showIgnored) {
-            displayNodes = allNodes.filter(n => n.favorite && n.ignored);
-        } else if (showFavorites) {
-            displayNodes = allNodes.filter(n => n.favorite && !n.ignored);
-        } else if (showIgnored) {
-            displayNodes = allNodes.filter(n => n.ignored);
-        } else {
-            displayNodes = allNodes.filter(n => !n.ignored);
-        }
-        
+        const displayNodes = computeDisplayNodes();
+
         if (nodeCountEl) {
             const totalDisplay = displayNodes.length;
             nodeCountEl.innerHTML = '🖥️ ' + escapeHtml(window.I18N.t('nodes.nodes_count', { count: totalDisplay }));
@@ -4476,30 +4466,11 @@ async function loadMessages() {
         // from the shared store (same search term filters both sections).
         renderChannelTargets();
 
-        let filteredNodes = displayNodes;
-        if (nodeSearchTerm) {
-            filteredNodes = filteredNodes.filter(node =>
-                node.clean_name.toLowerCase().includes(nodeSearchTerm.toLowerCase()) ||
-                node.node_id.toLowerCase().includes(nodeSearchTerm.toLowerCase())
-            );
-        }
+        // PR 6 correction: render the node list through the SAME shared path the
+        // store subscription uses (renderSidebarNodeCards), so the detail slot is
+        // detached/re-inserted identically by both rebuild sources.
+        renderSidebarNodeCards();
 
-        if (filteredNodes.length === 0) {
-            let message = `🔍 ${window.I18N.t('nodes.no_nodes_found')}`;
-            if (showFavorites && showIgnored) {
-                message = `⚑ ${window.I18N.t('nodes.no_favorite_ignored_nodes_found')}`;
-            } else if (showFavorites) {
-                message = `⚑ ${window.I18N.t('nodes.no_favorite_nodes_found')}`;
-            } else if (showIgnored) {
-                message = `🚫 ${window.I18N.t('nodes.no_ignored_nodes_found')}`;
-            }
-            nodesList.innerHTML = `<div class="loading" style="padding: 16px;">${escapeHtml(message)}</div>`;
-        } else {
-            nodesList.innerHTML = filteredNodes.map(node => renderNodeCard(node)).join('');
-        }
-
-        // Повторная синхронизация после полной перерисовки списка.
-        syncSelectedNodeCard();
         flushPendingSynchronizedScroll();
 
         // PR 5 final correction (section 4): the #nodeDetails panel follows the
@@ -5061,39 +5032,43 @@ function renderNodeCard(node) {
     `;
 }
 
+// The favorite/ignored display filter, shared by the count summary and the list
+// render so the two can never drift.
+function computeDisplayNodes() {
+    const allNodes = nodeCache;
+    if (showFavorites && showIgnored) return allNodes.filter(n => n.favorite && n.ignored);
+    if (showFavorites) return allNodes.filter(n => n.favorite && !n.ignored);
+    if (showIgnored) return allNodes.filter(n => n.ignored);
+    return allNodes.filter(n => !n.ignored);
+}
+
+// Applies the search term on top of computeDisplayNodes().
+function computeFilteredNodeCards() {
+    const displayNodes = computeDisplayNodes();
+    if (!nodeSearchTerm) return displayNodes;
+    const term = nodeSearchTerm.toLowerCase();
+    return displayNodes.filter(node =>
+        node.clean_name.toLowerCase().includes(term) ||
+        node.node_id.toLowerCase().includes(term)
+    );
+}
+
 // Re-render the Nodes section from the already-loaded nodeCache (NO
-// /api/messages fetch). Called by the store subscription when the store's data
-// slices change, so the MCA key rows and pressed states track the latest
-// capability state without a message reload.
+// /api/messages fetch). This is the SINGLE node-list rendering path: both
+// loadMessages() and the store subscription call it, so the detail slot is
+// detached/re-inserted through exactly ONE code path, never two divergent
+// rebuild implementations.
 function renderSidebarNodeCards() {
     const nodesList = document.getElementById('nodesList');
     if (!nodesList) return;
 
-    // PR 6: detach the inline detail slot before the innerHTML wipe so the
-    // detail card's DOM (open tab, scrolled content, focus) survives the rebuild
-    // and is re-inserted below its node's compact card afterward.
+    // Detach the stable detail slot BEFORE the innerHTML wipe so its detail-card
+    // subtree (open tab, scrolled content, active tab) survives, then re-position
+    // it inside the freshly rendered node card afterward.
     const slot = getNodeDetailSlot();
     if (slot && slot.parentNode) slot.parentNode.removeChild(slot);
 
-    const allNodes = nodeCache;
-    let displayNodes = [];
-    if (showFavorites && showIgnored) {
-        displayNodes = allNodes.filter(n => n.favorite && n.ignored);
-    } else if (showFavorites) {
-        displayNodes = allNodes.filter(n => n.favorite && !n.ignored);
-    } else if (showIgnored) {
-        displayNodes = allNodes.filter(n => n.ignored);
-    } else {
-        displayNodes = allNodes.filter(n => !n.ignored);
-    }
-
-    let filteredNodes = displayNodes;
-    if (nodeSearchTerm) {
-        filteredNodes = filteredNodes.filter(node =>
-            node.clean_name.toLowerCase().includes(nodeSearchTerm.toLowerCase()) ||
-            node.node_id.toLowerCase().includes(nodeSearchTerm.toLowerCase())
-        );
-    }
+    const filteredNodes = computeFilteredNodeCards();
 
     if (filteredNodes.length === 0) {
         let message = `🔍 ${window.I18N.t('nodes.no_nodes_found')}`;
@@ -6751,25 +6726,37 @@ let closedNodeDetailId = null;
 // explicitly selected again.
 let nodeVisualSelectionCleared = false;
 
-// PR 6: the node-details panel expands INLINE inside #nodesList, directly below
-// the selected node's compact card, instead of in a fixed panel above the list.
-// `#nodeDetails` remains the single stable slot element so the detail card's DOM
-// (open tab, scrolled content, focus) survives list rebuilds — renderSidebarNodeCards
-// detaches it before wiping the list and this helper re-inserts it afterward.
+// PR 6 correction: the node-details panel expands INLINE inside the selected
+// .node-card (same-card expansion) — the compact card is the header and the
+// detail card is the body, sharing one outer border.
+//
+// `nodeDetailSlot` is an explicit module-level reference to the single stable
+// slot. It must NOT be re-discovered via document.getElementById() after a
+// rebuild: a detached element is not returned by getElementById, so re-querying
+// would mint a fresh slot and silently drop the detail card's DOM (open tab,
+// scrolled content). Holding the reference here is what lets the exact same slot
+// and its detail-card subtree survive every #nodesList rebuild.
+let nodeDetailSlot = null;
+
 function getNodeDetailSlot() {
-    let slot = document.getElementById('nodeDetails');
-    if (!slot) {
-        slot = document.createElement('div');
-        slot.id = 'nodeDetails';
-        slot.className = 'node-details-placeholder';
+    if (!nodeDetailSlot) {
+        // Adopt a pre-existing #nodeDetails if one exists (legacy/static markup);
+        // otherwise create the slot. Either way the reference is memoized once.
+        nodeDetailSlot = document.getElementById('nodeDetails');
+        if (!nodeDetailSlot) {
+            nodeDetailSlot = document.createElement('div');
+            nodeDetailSlot.id = 'nodeDetails';
+        }
+        nodeDetailSlot.className = 'node-details-placeholder';
     }
-    return slot;
+    return nodeDetailSlot;
 }
 
-// Positions the stable detail slot inline. When a node is selected AND its detail
-// card is rendered, the slot is moved into #nodesList immediately after that
-// node's compact card; otherwise it is removed from the list. Idempotent — called
-// from renderNodeDetails, clearNodeDetailsPanel, and the list rebuild.
+// Positions the stable detail slot. When a node is selected AND its detail card
+// is rendered, the slot is appended INSIDE that node's compact .node-card (so the
+// detail card is a descendant of the card, not a sibling — one outer boundary);
+// otherwise the slot is removed from the list. Idempotent — called from
+// renderNodeDetails, clearNodeDetailsPanel, and the shared list rebuild.
 function positionNodeDetailSlot() {
     const nodesList = document.getElementById('nodesList');
     const slot = getNodeDetailSlot();
@@ -6799,7 +6786,8 @@ function positionNodeDetailSlot() {
         if (slot.parentNode) slot.parentNode.removeChild(slot);
         return;
     }
-    target.parentNode.insertBefore(slot, target.nextSibling);
+    // Same-card expansion: the slot is a CHILD of the selected .node-card.
+    if (slot.parentNode !== target) target.appendChild(slot);
 }
 
 // PR 5 final correction (section 4): VISUAL clearing of the node-details panel
@@ -6815,9 +6803,9 @@ function clearNodeDetailsPanel() {
 
     const details = getNodeDetailSlot();
     details.className = 'node-details-placeholder';
+    // Clearing the slot's innerHTML also drops its detail card and any
+    // #nodeActionsMenu owned inside it — no separate menu removal needed.
     details.innerHTML = '';
-
-    document.getElementById('nodeActionsMenu')?.remove();
 
     // Remove the visual focus from the compact card immediately and prevent
     // the next node-list refresh from restoring it automatically.
@@ -7040,12 +7028,27 @@ function renderNodeDetails(node) {
     const savedTab = activeNodeTabs[nodeId] || 'overview';
     switchNodeDetailTab(savedTab, nodeId);
 
-    // Place the now-populated slot inline (below the selected node's compact
-    // card) BEFORE attaching the actions menu, so the menu lands right after it.
+    // Place the now-populated slot INSIDE the selected node's compact card
+    // before attaching the actions menu, so the menu is owned by the stable slot.
     positionNodeDetailSlot();
 
-    // ---- Выпадающее меню Actions (вставляем после карточки) ----
-    document.getElementById('nodeActionsMenu')?.remove();
+    // ---- Выпадающее меню Actions (owned inside the stable slot) ----
+    renderNodeActionsMenu(nodeId, displayName);
+}
+
+// PR 6 correction: the node actions menu (⋮ dropdown) is owned INSIDE the stable
+// detail slot, so a #nodesList rebuild — which detaches and re-inserts the slot —
+// does not destroy it, and the ⋮ button keeps working after any store/message
+// refresh. It is anchored to the detail card's status row (position: relative) so
+// the absolute `top:100%; right:0` drops it right below the ⋮ button; it falls
+// back to the slot itself when the row isn't available (early render / test DOM).
+function renderNodeActionsMenu(nodeId, displayName) {
+    const details = getNodeDetailSlot();
+
+    // Never allow a duplicate #nodeActionsMenu.
+    const prior = document.getElementById('nodeActionsMenu');
+    if (prior && prior.parentNode) prior.remove();
+
     const actionsMenu = document.createElement('div');
     actionsMenu.className = 'node-actions-menu';
     actionsMenu.id = 'nodeActionsMenu';
@@ -7059,12 +7062,11 @@ function renderNodeDetails(node) {
             <button onclick="setNodeAsReference('${escapeHtml(nodeId)}')">📍 ${escapeHtml(window.I18N.t('nodes.set_as_reference'))}</button>
         </div>
     `;
-    if (details.parentNode) {
-        details.parentNode.insertBefore(actionsMenu, details.nextSibling);
-    } else {
-        details.appendChild(actionsMenu);
-    }
+
+    const anchor = details.querySelector('.node-detail-status-row') || details;
+    anchor.appendChild(actionsMenu);
     ensureNodeActionsCloser();
+    return actionsMenu;
 }
 
 // ============================================================

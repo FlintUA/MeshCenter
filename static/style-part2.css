@@ -3638,9 +3638,12 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     background: #ffffff;
     border-radius: 12px;
     padding: 16px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    /* PR 6 correction: the detail card is now the body of the expanded node
+       card (sharing one outer border with its compact header), not a floating
+       panel below it — no drop shadow or bottom margin. */
+    box-shadow: none;
     border: 1px solid #e8eaed;
-    margin-bottom: 12px;
+    margin-bottom: 0;
 }
 
 .node-detail-header {
@@ -3741,6 +3744,9 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
 }
 
 .node-detail-status-row {
+    /* PR 6 correction: positioning containing block for the ⋮ actions menu,
+       which is absolutely positioned (right:0; top:100%) against this row. */
+    position: relative;
     display: flex;
     align-items: center;
     gap: 12px;

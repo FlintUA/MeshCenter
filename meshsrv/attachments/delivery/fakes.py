@@ -267,12 +267,12 @@ class FakeRadioTransport(RadioTransport):
     division `FakeTextAdapter`/`FakeBinaryAdapter` above draw between
     "real adapter logic" and "fake ether".
 
-    Only `send_text()` and `get_connection_info()`/`is_connected()` have
-    real behavior - `MeshtasticTextAdapter` never calls anything else on
-    a `RadioTransport`. Every other abstract method raises
-    `NotImplementedError` outright rather than returning a plausible-
-    looking fake value nothing here actually exercises - a test that
-    somehow reached one of them would fail loudly instead of silently
+    Only `send_text()`, `get_channels()`, and `get_connection_info()`/
+    `is_connected()` have real behavior - `MeshtasticTextAdapter` never
+    calls anything else on a `RadioTransport`. Every other abstract method
+    raises `NotImplementedError` outright rather than returning a
+    plausible-looking fake value nothing here actually exercises - a test
+    that somehow reached one of them would fail loudly instead of silently
     passing against made-up data.
 
     Delivers `{"text": ..., "source_address": ...}` into the shared
@@ -290,20 +290,38 @@ class FakeRadioTransport(RadioTransport):
         *,
         connection_type: ConnectionType = ConnectionType.SERIAL,
         connection_state: ConnectionState = ConnectionState.CONNECTED,
+        channels: Optional[List[ChannelInfo]] = None,
     ):
         self._ether = ether
         self._own_address = own_address
         self._connection_type = connection_type
         self._connection_state = connection_state
         self._next_packet_id = 1
+        # Default mirrors the real radio's primary channel (index 0) so the
+        # existing round-trip contract tests keep working unchanged; a test
+        # that wants a private control channel supplies its own list.
+        self._channels = (
+            list(channels)
+            if channels is not None
+            else [ChannelInfo(index=0, name="LongFast", role="PRIMARY")]
+        )
+        # Records every OutgoingMessage handed to send_text() so tests can
+        # assert which channel_index the adapter actually selected.
+        self._sent_messages: List[OutgoingMessage] = []
         ether.register(own_address)
 
     def send_text(self, message: OutgoingMessage, *, timeout: float = 15.0) -> SendResult:
         packet_id = self._next_packet_id
         self._next_packet_id += 1
+        self._sent_messages.append(message)
         self._ether.deliver(
             message.destination_id,
-            {"text": message.text, "source_address": self._own_address, "packet_id": packet_id},
+            {
+                "text": message.text,
+                "source_address": self._own_address,
+                "packet_id": packet_id,
+                "channel_index": message.channel_index,
+            },
         )
         return SendResult(accepted=True, packet_id=packet_id)
 
@@ -344,7 +362,7 @@ class FakeRadioTransport(RadioTransport):
         raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
 
     def get_channels(self, *, timeout: float = 15.0) -> List[ChannelInfo]:
-        raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")
+        return list(self._channels)
 
     def get_metadata(self, *, timeout: float = 15.0) -> dict:
         raise NotImplementedError("FakeRadioTransport is send/ingest-only - not exercised by these tests")

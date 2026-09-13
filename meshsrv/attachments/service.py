@@ -269,6 +269,12 @@ class InboundEvent:
     source_address: str
     packet_id: Optional[str]
     received_at: float
+    # The channel index the message actually arrived on, when the listener
+    # knows it (server.py's extract_optional_channel_index). Retained for
+    # observability only - see _process_one_inbound_event(): arrival channel
+    # is never an accept/reject gate for MCA inbound traffic (trust is
+    # signature/TOFU-based), the channel is a send-time selection.
+    channel_index: Optional[int] = None
 
 
 class AttachmentsServiceError(RuntimeError):
@@ -2714,6 +2720,14 @@ class AttachmentsService:
         transport_event = {
             "text": event.text, "source_address": event.source_address, "packet_id": event.packet_id,
         }
+        if event.channel_index is not None:
+            transport_event["channel_index"] = event.channel_index
+        # Inbound-channel policy (explicit): an MCA message is accepted on
+        # whatever channel it arrives on. The control-channel index is a
+        # send-time selection only - inbound trust is signature/TOFU-based,
+        # so arrival channel is NOT a reject gate here. The received index
+        # is still retained (above) so the envelope's transport_metadata
+        # records it for observability. See MeshtasticTextAdapter.ingest().
         envelope = self._delivery_adapter.ingest(transport_event)
         if envelope is None:
             return

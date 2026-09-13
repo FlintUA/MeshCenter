@@ -317,7 +317,7 @@ class _MCARuntimeState:
         # constructor never receives.
         self.service: Optional[AttachmentsService] = None
 
-    def ensure_service(self, radio_transport: RadioTransport) -> AttachmentsService:
+    def ensure_service(self, radio_transport: RadioTransport, control_channel_index: int = 0) -> AttachmentsService:
         """ADR-0008 decision 1's five-step startup sequence, steps 2-4
         (step 1, migrate(), already happened in __init__ above). Building
         `AttachmentsService` needs a `MeshtasticTextAdapter`, which in
@@ -340,12 +340,12 @@ class _MCARuntimeState:
         radio listener's own hot path.
         """
         with _lock:
-            return self._ensure_service_locked(radio_transport)
+            return self._ensure_service_locked(radio_transport, control_channel_index)
 
-    def _ensure_service_locked(self, radio_transport: RadioTransport) -> AttachmentsService:
+    def _ensure_service_locked(self, radio_transport: RadioTransport, control_channel_index: int = 0) -> AttachmentsService:
         if self.service is not None:
             return self.service
-        adapter = MeshtasticTextAdapter(radio_transport)
+        adapter = MeshtasticTextAdapter(radio_transport, control_channel_index=control_channel_index)
         self.service = AttachmentsService(
             self.conn,
             workspace_manager=self.workspace_manager,
@@ -441,15 +441,23 @@ def _get_state(data_dir: str) -> "_MCARuntimeState":
         return _state
 
 
-def start_attachments_service(data_dir: str, radio_transport: RadioTransport) -> None:
+def start_attachments_service(
+    data_dir: str, radio_transport: RadioTransport, control_channel_index: int = 0
+) -> None:
     """Called once from server.py's `start_runtime()`, alongside its
     existing `threading.Thread(target=..., daemon=True).start()` calls
     for `radio_health_worker` etc. (ADR-0008 decision 1's "Startup
     sequence"). Safe to call more than once (e.g. a hypothetical future
     profile-swap re-init path) - `ensure_service()` is idempotent and
-    self-locking (its own docstring)."""
+    self-locking (its own docstring).
+
+    `control_channel_index` is the Meshtastic channel *index* MCA DIRECT
+    control traffic is transmitted on (config.py's
+    `MCA_CONTROL_CHANNEL_INDEX`, validated 0-7 and resolved against the
+    live radio at send time by MeshtasticTextAdapter - never silently
+    defaulted back to 0)."""
     state = _get_state(data_dir)
-    state.ensure_service(radio_transport)
+    state.ensure_service(radio_transport, control_channel_index)
 
 
 def get_attachments_facade() -> Optional[AttachmentsFacade]:
@@ -518,6 +526,7 @@ def handle_incoming_meshtastic_text(
     *,
     data_dir: str,
     packet_id: Optional[str] = None,
+    channel_index: Optional[int] = None,
 ) -> bool:
     """Called by server.py's listener immediately after a normal
     incoming direct-message text has already been saved (spec 19.1:
@@ -578,6 +587,10 @@ def handle_incoming_meshtastic_text(
         )
         return False
     event = InboundEvent(
-        text=text, source_address=source_address, packet_id=packet_id, received_at=time.time()
+        text=text,
+        source_address=source_address,
+        packet_id=packet_id,
+        received_at=time.time(),
+        channel_index=channel_index,
     )
     return state.service.enqueue_inbound(event)

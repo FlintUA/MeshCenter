@@ -41,6 +41,23 @@ MAX_HISTORY_MESSAGES = 1000
 CHANNEL_CHAT_ID = "channel"
 CHANNEL_CHAT_NAME = "LongFast"  # without index — the code appends [0] itself
 
+# ===== MCAttach CONTROL CHANNEL =====
+# The Meshtastic channel index MCAttach's DIRECT control traffic uses
+# (KEY_REQUEST / KEY_ANNOUNCE / OFFER / ACK / CANCEL / REJECTED / EXPIRED).
+# These are still DIRECT node-to-node messages (RouteType.DIRECT, a specific
+# destination node, not a channel broadcast) - this only selects which
+# channel *index* the radio transmits them on, exactly like a normal chat
+# message's channel selection. Valid range is 0-7 (Meshtastic's 8 channels).
+# 0 is the primary channel (usually LongFast) - a *public* channel, which is
+# why MCA control traffic should be moved off it. Set this to a private
+# channel's index (e.g. 1 for a "Flint-pvt" secondary channel) so MCA key/
+# transfer control never transmits on the public channel. A value outside
+# 0-7, or an index whose channel does not exist on the connected radio, is a
+# hard error (transmission is blocked) - MCAttach never silently falls back
+# to channel 0. This is a dedicated MCA setting, independent of
+# CHANNEL_CHAT_ID/CHANNEL_CHAT_NAME (ordinary chat keeps its own channel).
+MCA_CONTROL_CHANNEL_INDEX = 0
+
 # ===== KNOWN NODES (pre-populated with your mesh) =====
 KNOWN_NODES = {
     "!xxxxxxxx": "My Node",

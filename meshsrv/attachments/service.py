@@ -47,6 +47,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import hashlib
+import json
 import logging
 import os
 import queue
@@ -2807,13 +2808,23 @@ class AttachmentsService:
         an observable sink, not just sit in the ephemeral envelope. Emits one
         structured, sanitized record per inbound MCA control message.
 
+        Final-correction shape: the record dict is attached to the LogRecord
+        via `extra={"mca_event": record}` (so consumers can read the fields as
+        structured data, not re-parse a message string) AND rendered as a
+        stable, machine-readable JSON string in the message itself
+        (`sort_keys=True`, `separators=(",", ":")`, `ensure_ascii=True`).
+        Timestamps are split into `received_at` (the authoritative listener
+        time from `event.received_at`) and `processed_at` (worker time, from
+        `self._now()`).
+
         Sanitization contract (finding's own constraint): the record contains
         only the MCA message type name, the source node id (a `!` hex address,
         not a secret), the packet id when available, the received channel
         index, the configured control-channel index, a computed match status,
-        and a timestamp. It never carries PSKs, tokens, keys, payloads, or file
-        contents. A mismatch is logged at warning level; everything else at
-        info. Never rejects a valid message - trust remains signature/TOFU.
+        and the two timestamps. It never carries PSKs, tokens, keys, payloads,
+        or file contents. A mismatch is logged at warning level; everything
+        else at info. Never rejects a valid message - trust remains
+        signature/TOFU.
         """
         received = event.channel_index
         configured = self._control_channel_index
@@ -2833,12 +2844,14 @@ class AttachmentsService:
             "received_channel_index": received,
             "configured_control_channel_index": configured,
             "match_status": match_status,
-            "timestamp": self._now(),
+            "received_at": event.received_at,
+            "processed_at": self._now(),
         }
+        payload = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         if match_status == "mismatch":
-            logger.warning("MCAttach inbound channel mismatch: %r", record)
+            logger.warning("MCAttach inbound channel mismatch: %s", payload, extra={"mca_event": record})
         else:
-            logger.info("MCAttach inbound channel: %r", record)
+            logger.info("MCAttach inbound channel: %s", payload, extra={"mca_event": record})
 
     def _process_inbound_offer(self, envelope: DeliveryEnvelope, *, source_address: str) -> None:
         """PR #231 review, section 5: the OFFER's *own* provider_id

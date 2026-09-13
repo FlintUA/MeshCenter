@@ -29,6 +29,7 @@ The tests prove four things:
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 
 import pytest
@@ -43,6 +44,7 @@ from meshsrv.attachments.delivery.base import (
 )
 from meshsrv.attachments.delivery.fakes import FakeRadioTransport, InMemoryEther
 from meshsrv.attachments.delivery.meshtastic import MeshtasticTextAdapter
+from meshsrv.attachments.service import InboundEvent
 from meshsrv.radio_transport import ChannelInfo, OutgoingMessage, SendResult, TransportError, TransportErrorCode
 
 
@@ -196,6 +198,7 @@ def test_supports_channel_remains_false():
         (-1, PRIVATE_CHANNELS, "invalid"),         # out of range (low)
         ("x", PRIVATE_CHANNELS, "invalid"),        # wrong type
         (True, PRIVATE_CHANNELS, "invalid"),       # bool is not a channel index
+        (1.0, PRIVATE_CHANNELS, "invalid"),        # float is not a channel index
         (5, PRIVATE_CHANNELS, "not available"),    # in range but not on the radio
     ],
 )
@@ -408,6 +411,88 @@ def test_send_resolves_and_sends_in_one_atomic_transport_session():
 
 
 # --------------------------------------------------------------------------
+# Finding 3 (float + fake parity): an invalid control-channel config must be
+# rejected before any transport method is invoked, and the fake transport
+# must enforce the same enabled-channel rule (reject DISABLED) as the real
+# Serial/BLE transports.
+# --------------------------------------------------------------------------
+
+class _CallCountingTransport(FakeRadioTransport):
+    """Records every transport entry point send() could reach, so tests can
+    prove which methods were (or were not) invoked. Delegates the real
+    behavior back to FakeRadioTransport."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.calls: list = []
+
+    def get_channels(self, *, timeout: float = 15.0):
+        self.calls.append("get_channels")
+        return super().get_channels(timeout=timeout)
+
+    def send_text(self, message, *, timeout: float = 15.0):
+        self.calls.append("send_text")
+        return super().send_text(message, timeout=timeout)
+
+    def send_text_checked(self, message, *, timeout: float = 15.0):
+        self.calls.append("send_text_checked")
+        return super().send_text_checked(message, timeout=timeout)
+
+
+@pytest.mark.parametrize("control_channel_index", [None, True, 1.0, -1, 8, "x"])
+def test_invalid_control_channel_config_never_reaches_the_transport(control_channel_index):
+    """A non-int (or out-of-range) control-channel config is rejected by the
+    adapter's own validation before any transport method is invoked - proven
+    by a counting transport whose call list stays empty. This is the
+    fail-closed front gate: bad config never reaches send_text_checked(), let
+    alone get_channels()/send_text()."""
+    ether = InMemoryEther()
+    transport = _CallCountingTransport(ether, "!aaaaaaaa", channels=PRIVATE_CHANNELS)
+    adapter = MeshtasticTextAdapter(transport, control_channel_index=control_channel_index)
+    route = Route(route_type=RouteType.DIRECT, route_id="!bbbbbbbb", destination_address="!bbbbbbbb")
+    with pytest.raises(ConnectorUnavailableError):
+        adapter.send(_wire_payload(codec.MessageType.KEY_REQUEST, _SIGNING_KEY), route, idempotency_key="idem-1")
+    assert transport.calls == []  # no transport method was ever invoked
+    assert transport._sent_messages == []  # noqa: SLF001
+
+
+def test_fake_transport_rejects_disabled_control_channel_without_fallback():
+    """Finding 3 parity rule: FakeRadioTransport.send_text_checked() enforces
+    the same enabled-channel rule as the real Serial/BLE transports - a
+    configured channel whose slot is DISABLED raises UNSUPPORTED, nothing is
+    delivered to the ether, and there is no fallback to channel 0."""
+    ether = InMemoryEther()
+    channels = [
+        ChannelInfo(index=0, name="LongFast", role="PRIMARY"),
+        ChannelInfo(index=1, name="Flint-pvt", role="DISABLED"),
+    ]
+    transport = FakeRadioTransport(ether, "!aaaaaaaa", channels=channels)
+    message = OutgoingMessage(text="MCA1:...", destination_id="!bbbbbbbb", channel_index=1)
+    with pytest.raises(TransportError) as exc_info:
+        transport.send_text_checked(message)
+    assert exc_info.value.code == TransportErrorCode.UNSUPPORTED
+    assert transport._sent_messages == []  # noqa: SLF001
+    assert ether.drain("!bbbbbbbb") == []
+
+
+def test_configured_disabled_control_channel_blocks_transmission():
+    """End-to-end through the adapter: a control channel whose slot is
+    DISABLED (present, but role=DISABLED) must fail closed at send time, not
+    silently fall back onto channel 0."""
+    ether = InMemoryEther()
+    channels = [
+        ChannelInfo(index=0, name="LongFast", role="PRIMARY"),
+        ChannelInfo(index=1, name="Flint-pvt", role="DISABLED"),
+    ]
+    transport = FakeRadioTransport(ether, "!aaaaaaaa", channels=channels)
+    adapter = MeshtasticTextAdapter(transport, control_channel_index=1)
+    route = Route(route_type=RouteType.DIRECT, route_id="!bbbbbbbb", destination_address="!bbbbbbbb")
+    with pytest.raises(ConnectorUnavailableError):
+        adapter.send(_wire_payload(codec.MessageType.KEY_REQUEST, _SIGNING_KEY), route, idempotency_key="idem-1")
+    assert transport._sent_messages == []  # noqa: SLF001
+
+
+# --------------------------------------------------------------------------
 # Finding 2: the received channel index must reach an observable sink (the
 # log), not only the ephemeral envelope transport_metadata.
 # --------------------------------------------------------------------------
@@ -423,39 +508,129 @@ class _AlwaysDownSession:
         raise requests.ConnectionError("down for this test")
 
 
-def test_inbound_channel_observability_record_reaches_a_log_sink(tmp_path, caplog):
+_RECEIVED_AT = 1_700_000_000.25
+_PROCESSED_AT = 1_700_000_001.75
+
+_OBSERVABILITY_FIELDS = {
+    "event", "message_type", "source_node", "packet_id",
+    "received_channel_index", "configured_control_channel_index",
+    "match_status", "received_at", "processed_at",
+}
+
+
+@pytest.mark.parametrize(
+    "configured,received,expected_status",
+    [
+        (1, 0, "mismatch"),
+        (1, 1, "match"),
+        (None, 1, "unconfigured"),
+        (1, None, "unknown"),
+    ],
+)
+def test_inbound_channel_observability_record_reaches_a_log_sink(
+    tmp_path, caplog, configured, received, expected_status
+):
+    """The received channel index must reach the log as a *structured* record:
+    the dict is attached to the LogRecord via `extra={"mca_event": record}`
+    AND rendered as stable, machine-parseable JSON in the message - not a
+    Python repr(). `received_at` comes from the event, `processed_at` from the
+    worker's now_fn; both are asserted distinct to prove provenance."""
     mca_runtime.reset_state_for_tests()
     try:
         caplog.set_level(logging.DEBUG, logger="meshsrv.attachments.service")
-        cases = [
-            (1, 0, "mismatch"),
-            (1, 1, "match"),
-            (None, 1, "unconfigured"),
-            (1, None, "unknown"),
-        ]
-        for idx, (configured, received, expected_status) in enumerate(cases):
-            mca_runtime.reset_state_for_tests()
-            mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
-            caplog.clear()
+        mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
 
-            ether = InMemoryEther()
-            transport = FakeRadioTransport(ether, "!bbbbbbbb")
-            data_dir = str(tmp_path / f"node{idx}")
-            mca_runtime.start_attachments_service(
-                data_dir, transport, control_channel_index=configured
-            )
-            mca_runtime.handle_incoming_meshtastic_text(
-                _request_text(_SIGNING_KEY), "!aaaaaaaa", transport,
-                data_dir=data_dir, packet_id="p1", channel_index=received,
-            )
-            state = mca_runtime._get_state(data_dir)  # noqa: SLF001
-            state.service.tick()
+        ether = InMemoryEther()
+        transport = FakeRadioTransport(ether, "!bbbbbbbb")
+        data_dir = str(tmp_path / "node")
+        mca_runtime.start_attachments_service(data_dir, transport, control_channel_index=configured)
+        state = mca_runtime._get_state(data_dir)  # noqa: SLF001
+        # Control both timestamps: received_at comes from the event (set at
+        # enqueue time), processed_at from the worker's now_fn. Force them
+        # distinct so each field's provenance is proven, not just that they
+        # are floats.
+        state.service._now = lambda: _PROCESSED_AT  # noqa: SLF001
+        event = InboundEvent(
+            text=_request_text(_SIGNING_KEY),
+            source_address="!aaaaaaaa",
+            packet_id="p1",
+            received_at=_RECEIVED_AT,
+            channel_index=received,
+        )
+        state.service.enqueue_inbound(event)
+        state.service.tick()
 
-            assert expected_status in caplog.text, caplog.text
-            assert "KEY_REQUEST" in caplog.text
-            assert "!aaaaaaaa" in caplog.text
-            lowered = caplog.text.lower()
-            for secret_marker in ("psk", "token", "secret"):
-                assert secret_marker not in lowered
+        mca_records = [r for r in caplog.records if getattr(r, "mca_event", None) is not None]
+        assert len(mca_records) == 1, f"expected exactly one structured mca_event record, got {len(mca_records)}"
+        rec = mca_records[0].mca_event
+
+        # Exact allowlist: no field beyond the nine documented ones (proves no
+        # PSK/token/key/payload/file-content leaked in).
+        assert set(rec) == _OBSERVABILITY_FIELDS
+        assert rec["event"] == "mca_inbound_channel"
+        assert rec["message_type"] == "KEY_REQUEST"
+        assert rec["source_node"] == "!aaaaaaaa"
+        assert rec["packet_id"] == "p1"
+        assert rec["received_channel_index"] == received
+        assert rec["configured_control_channel_index"] == configured
+        assert rec["match_status"] == expected_status
+        assert rec["received_at"] == _RECEIVED_AT
+        assert rec["processed_at"] == _PROCESSED_AT
+        assert _RECEIVED_AT != _PROCESSED_AT
+
+        # The message itself carries the same record as stable JSON (sorted
+        # keys, compact separators) - machine-parseable, not a repr().
+        message_json = mca_records[0].getMessage().split(": ", 1)[1]
+        assert json.loads(message_json) == rec
+
+        # Level: mismatch is a warning, everything else info.
+        if expected_status == "mismatch":
+            assert mca_records[0].levelno == logging.WARNING
+        else:
+            assert mca_records[0].levelno == logging.INFO
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_inbound_channel_observability_record_excludes_secrets_and_payload(tmp_path, caplog):
+    """The structured record must contain ONLY the allowlisted fields - never
+    a channel PSK, upload token, message payload, or the raw MCA1-TEXT wire
+    bytes. Proved by asserting the actual wire text and a set of recognizable
+    secret markers appear nowhere in the emitted record (message + extra dict),
+    and that the extra dict has exactly the allowlisted keys."""
+    mca_runtime.reset_state_for_tests()
+    try:
+        caplog.set_level(logging.DEBUG, logger="meshsrv.attachments.service")
+        mca_runtime.set_connectivity_session_for_tests(_AlwaysDownSession())
+
+        ether = InMemoryEther()
+        transport = FakeRadioTransport(ether, "!bbbbbbbb")
+        data_dir = str(tmp_path / "node")
+        mca_runtime.start_attachments_service(data_dir, transport, control_channel_index=1)
+        state = mca_runtime._get_state(data_dir)  # noqa: SLF001
+        raw_text = _request_text(_SIGNING_KEY)
+        event = InboundEvent(
+            text=raw_text,
+            source_address="!aaaaaaaa",
+            packet_id="p1",
+            received_at=_RECEIVED_AT,
+            channel_index=0,
+        )
+        state.service.enqueue_inbound(event)
+        state.service.tick()
+
+        mca_records = [r for r in caplog.records if getattr(r, "mca_event", None) is not None]
+        assert len(mca_records) == 1
+        record_text = mca_records[0].getMessage()
+        record_dict = mca_records[0].mca_event
+
+        # The raw MCA1-TEXT payload never appears in the record.
+        assert raw_text not in record_text
+        assert "MCA1:" not in record_text
+        lowered = record_text.lower()
+        for secret_marker in ("psk", "token", "secret", "payload", "private_key", "signing_key"):
+            assert secret_marker not in lowered
+        # No field beyond the allowlist can exist in the structured dict.
+        assert set(record_dict) == _OBSERVABILITY_FIELDS
     finally:
         mca_runtime.reset_state_for_tests()

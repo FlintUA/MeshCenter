@@ -330,16 +330,21 @@ class FakeRadioTransport(RadioTransport):
 
     def send_text_checked(self, message: OutgoingMessage, *, timeout: float = 15.0) -> CheckedSendResult:
         # Resolve the requested channel against self._channels first, matching
-        # the real transports' fail-closed single-session behavior (UNSUPPORTED
-        # when absent/DISABLED) - then delegate to the ordinary send_text path.
-        name = next((c.name for c in self._channels if c.index == message.channel_index), None)
-        if name is None:
+        # the real transports' fail-closed single-session behavior: UNSUPPORTED
+        # when the index is absent OR the slot is DISABLED - never a silent
+        # fallback to channel 0. The real transports (adapters/meshtastic/
+        # {serial,ble}_transport.py::_channel_name_for_index) skip `role == 0`,
+        # the raw int DISABLED on the meshtastic library object; here
+        # ChannelInfo carries the already-normalized string, so the same
+        # enabled-channel rule is `role != "DISABLED"`.
+        match = next((c for c in self._channels if c.index == message.channel_index), None)
+        if match is None or match.role == "DISABLED":
             raise TransportError(
                 TransportErrorCode.UNSUPPORTED,
                 f"MCA control channel {message.channel_index} is not available on the connected radio",
             )
         result = self.send_text(message, timeout=timeout)
-        return CheckedSendResult(result=result, channel_name=name)
+        return CheckedSendResult(result=result, channel_name=match.name)
 
     def get_connection_info(self) -> ConnectionInfo:
         return ConnectionInfo(

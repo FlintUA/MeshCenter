@@ -206,6 +206,7 @@ serial-access checklist that trips up most first installs: see
 - [Architecture Overview](#application-architecture)
 - [Development Roadmap](#roadmap)
 - [Privacy: Installation ID](PRIVACY.md)
+- [MCAttach Relay server (optional self-hosting)](relay-server/README.md)
 
 ## Switching to another Meshtastic radio
 
@@ -677,6 +678,7 @@ meshcenter/
 ├── hardware/           # I2C bus detection, RTC (DS3231) and BME280 drivers
 ├── meshsrv/            # Core-side radio abstraction: RadioTransport interface, IPC client, router
 ├── modules/display/    # e-Paper display rendering, pages and drivers
+├── relay-server/       # MCAttach Relay server source (PHP, MIT) - optional self-hosting, see relay-server/README.md
 ├── storage/            # JSON storage helpers
 ├── system/             # System/CPU history collection
 ├── telemetry/          # Telemetry processing

@@ -77,6 +77,12 @@
     "detail_recipient": "Контакт",
     "detail_created": "Создано",
     "detail_expires": "Истекает",
+    "detail_saved": "Сохранено",
+    "detail_provider": "Используемый Relay",
+    "detail_route": "Маршрут",
+    "detail_grace": "Отсрочка загрузки",
+    "detail_content": "Содержимое доступно",
+    "advanced_details": "Расширенные сведения",
     "download_started": "Загрузка начата",
     "rejected": "Передача отклонена",
     "saving": "Сохранение на Pi…",
@@ -158,6 +164,13 @@
       "AVAILABLE": "Доступно",
       "REJECTED": "Отклонено",
       "FAILED": "Ошибка"
+    },
+    "simple_state": {
+      "preparing": "Подготовка",
+      "uploading": "Загрузка",
+      "waiting": "Ожидание",
+      "receiving": "Получение",
+      "ready": "Готово"
     },
     "contact": {
       "trusted": "Доверенный",
@@ -251,6 +264,11 @@
     "send_without_confirm": "Отправить без подтверждения",
     "setting_default": "Установка по умолчанию…",
     "state_changed": "Передача изменилась — обновляем",
+    "tech_id": "ID",
+    "tech_cipher_size": "Размер шифротекста",
+    "tech_provider_id": "ID провайдера",
+    "tech_delivery_id": "Основная доставка",
+    "tech_error_code": "Исходный код ошибки",
     "technical_details": "Технические детали",
     "transport_bluetooth": "Транспорт: Bluetooth",
     "transport_serial": "Транспорт: USB-серийный",

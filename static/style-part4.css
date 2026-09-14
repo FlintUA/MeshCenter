@@ -4504,6 +4504,17 @@ html[data-theme="dark"] #notificationsCard {
     font-size: 14px;
     word-break: break-word;
 }
+/* Step 5: the always-visible plain-language error - never inside a
+   collapsed <details> section, regardless of detail level (see
+   detailMarkup()'s own comment on the "never hide real errors" rule). */
+.files-detail-error {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: var(--mc-body-size, 13px);
+    color: var(--mc-danger, #e6505d);
+    background: var(--mc-danger-soft, #fdecee);
+}
 .files-detail-table { margin-top: 10px; }
 .files-detail-row {
     display: flex;

@@ -19,7 +19,7 @@
     var FALLBACK_LOCALE = 'en';
     // Bumped manually alongside catalog content changes, same convention as
     // the ?v= query strings on <script>/<link> tags in index.html.
-    var CATALOG_VERSION = '20260912-pr6-inline-node-card';
+    var CATALOG_VERSION = '20260914-transfer-card-levels';
 
     var catalogs = {};      // locale -> flattened {dottedKey: value}
     var loadPromises = {};  // locale -> in-flight/completed fetch promise

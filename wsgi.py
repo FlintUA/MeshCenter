@@ -2,6 +2,22 @@
 """
 WSGI entry point for production servers (Gunicorn, uWSGI, etc.)
 """
+import logging
+
+# server.py itself still logs via print() (unchanged here), but modules such
+# as meshsrv/attachments/service.py use the standard `logging` module
+# (logger = logging.getLogger(__name__)) and emit nothing without a
+# configured handler - Python's logging falls back to a "handler of last
+# resort" that only surfaces WARNING and above, silently dropping the
+# INFO-level structured MCA observability records
+# (_log_inbound_channel_observability()). `python server.py` never hit this
+# in practice because nothing called basicConfig() there either; it's only
+# being fixed here, at the actual production entry point gunicorn imports.
+# No timestamp/PID in the format - journald (StandardOutput=journal in
+# deploy/meshcenter.service) already stamps every line, so repeating that
+# here would just duplicate it in `journalctl` output.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
 from server import app, start_runtime
 
 # `from server import app` alone only registers Flask routes - every

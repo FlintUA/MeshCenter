@@ -407,7 +407,7 @@ This is the most common cause of USB detection failure.
 MeshCenter uses four main areas:
 
 - **Base panel on the left** - local-node status, sensor values, battery estimate, telemetry charts and weather.
-- **Main workspace in the center** - Chats, Camera, Media and Devices.
+- **Main workspace in the center** - Chats, Files, Camera, Media and Devices.
 - **Nodes and Tools panel on the right** - discovered nodes, node details and database tools.
 - **Status dock at the bottom** - panel controls, Map, Workspace, notifications and radio status.
 
@@ -440,7 +440,47 @@ Deleting or clearing a message removes only the local stored copy. It cannot rec
 
 Favorites make important contacts easier to find. Ignored nodes are hidden from the normal list but can be displayed from the Tools filters. Ignoring a node changes local presentation and does not reconfigure the remote radio.
 
-## 7. Nodes and node tools
+## 7. Files (MCAttach)
+
+Files is MeshCenter's end-to-end encrypted file-transfer feature over the mesh - MCAttach.
+
+### Sending a file
+
+1. Open `Files`, press `Send`, choose a trusted recipient and a file (up to 5 MiB), and press `Send` again.
+2. The first time you send to a new contact, MeshCenter shows one plain-language screen explaining that a secure connection is being set up with them - confirm it once. Sending to the same contact again afterward needs no extra step.
+
+If a contact's key ever changes later (for example, they reset their device), MeshCenter shows a separate, explicit warning before trusting the new key. That warning is never skipped or automated away, for your protection.
+
+### Receiving a file
+
+A file someone sends you appears under `Files` waiting for your decision. Open it and choose `Accept and download` or `Reject`. Once it's downloaded, use `Save to Files`, `Open preview` (for images), or `Download to device`.
+
+### Checking on a transfer
+
+Tap any transfer to see its status in plain language - Preparing, Uploading, Waiting, Receiving, or Ready. If something needs attention (for example, no Relay configured, or a lost connection), MeshCenter says so plainly - never just a spinner and never a raw technical code. Open `Advanced details` or `Technical diagnostics` only if you want to dig further; most people never need to.
+
+### Relay providers
+
+A file transfer passes through a small server called a Relay, which temporarily stores the encrypted file until the recipient downloads it. **By default, MeshCenter uses the project's own Relay at `https://mcattach.elektroniker.help` - almost nobody needs to change this.** If you do want to add or switch a Relay, use `Workspace > Settings > Files / MCAttach > Set up a Relay`.
+
+### For administrators: self-hosting a Relay
+
+MeshCenter publishes the full source of its Relay server, for transparency and for anyone who wants to run their own instance, under [`relay-server/`](../relay-server/README.md) in this repository - see that document for installation steps and requirements.
+
+What you get:
+
+- The Relay only ever stores already-encrypted data - it cannot read file contents, filenames, or file types.
+- Your own instance is fully independent of the default one - no shared data, tokens, or traffic with `mcattach.elektroniker.help`.
+
+Honest limitations (the full list is in [`relay-server/SECURITY.md`](../relay-server/SECURITY.md)):
+
+- This is a `0.1.0` pilot build - it has not had an independent security audit.
+- The Relay still sees technical metadata it cannot avoid seeing: the uploader's/downloader's IP address (via your host's own web logs), timestamps, exact file sizes, and how many recipients a transfer has. None of that should be treated as anonymous.
+- There is no built-in backup, monitoring, or abuse-handling process - if you self-host, that is on you.
+
+Self-hosting is entirely optional. If you are not sure whether you need it, you probably don't - the default Relay is the recommended choice for anyone who doesn't specifically want the extra maintenance.
+
+## 8. Nodes and node tools
 
 Select a node in the right panel to inspect available information such as node ID, hardware model, role, last-heard time, RSSI, SNR, hops, position and telemetry.
 
@@ -455,7 +495,7 @@ Use `Rescan Network` when recently heard nodes do not appear. The Tools tab also
 
 Remote node actions can request telemetry, position or traceroute information. A request may fail when the node is offline, sleeping, out of range or not supported by its firmware configuration.
 
-## 8. Map and reference location
+## 9. Map and reference location
 
 Open the Map menu in the bottom dock and choose:
 
@@ -472,7 +512,7 @@ To calculate distance and bearing, open `Workspace > Settings > Reference locati
 
 The external map-provider option controls links that open a saved location. The integrated map uses its own Leaflet view. Internet access is normally required to load external map tiles.
 
-## 9. Telemetry, weather and battery estimate
+## 10. Telemetry, weather and battery estimate
 
 The Base panel shows the most recent available environmental, power and battery values. Open the Environment or Power chart to select a range from one hour to 30 days.
 
@@ -482,7 +522,7 @@ The battery-capacity value under `Workspace > Settings` is used only for an appr
 
 Weather requires an API key for the active provider (`Workspace > Settings > Weather Provider`) and a valid reference location. Click the weather status badge to request a refresh.
 
-## 10. Camera and Media
+## 11. Camera and Media
 
 The Camera workspace provides live view, video settings, photo settings, image controls and Screenshot capture. On Raspberry Pi Zero 2 W, begin with conservative settings such as 640 x 480 or 800 x 600 at 8 to 15 FPS.
 
@@ -490,7 +530,7 @@ Captured images are stored locally under `data/screenshots/` and appear in the M
 
 Turning the camera off releases resources when it is not required.
 
-## 11. System, Wi-Fi and Workspace
+## 12. System, Wi-Fi and Workspace
 
 Open `Workspace > System` to inspect:
 
@@ -543,7 +583,7 @@ The browser's Notification API requires a secure context (HTTPS or `localhost`).
 
 This is a local, per-browser setting — it does not change anything on the Raspberry Pi, and needs repeating on each device/browser you want notifications on.
 
-## 12. Back up MeshCenter
+## 13. Back up MeshCenter
 
 Persistent data is stored in `data/`. The most important items are `config.py`, the optional `weather_secrets.py` and the complete `data/` directory.
 
@@ -560,7 +600,7 @@ sudo systemctl is-active meshcenter.service
 
 Store the archive on another device. It can contain message history, node positions, images, settings and the private weather API key.
 
-## 13. Update MeshCenter safely
+## 14. Update MeshCenter safely
 
 If you don't need or want the command line, use the **Updates** card in `Workspace > System` instead - see "System, Wi-Fi and Workspace" above. It checks GitHub for a new release, shows the changelog, and only offers to update after confirming the working tree is clean and can fast-forward safely; if it isn't safe, it explains why instead of guessing. The command-line procedure below is the fallback for when the web interface itself is unreachable, or if you prefer the terminal.
 
@@ -623,7 +663,7 @@ Expected results:
 > An `Author identity unknown` message matters only when creating a new
 > Git commit on that Raspberry Pi. It does not prevent normal `git pull` updates.
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 ### Service does not start
 
@@ -680,7 +720,7 @@ Confirm that the rendered sudoers files contain the actual service username.
 
 Use `Ctrl+F5`, clear the browser cache or open MeshCenter in a private browser window.
 
-## 15. Security notes
+## 16. Security notes
 
 MeshCenter is intended for a trusted local network. The current interface has no built-in user authentication and uses unencrypted HTTP by default. Anyone who can reach the service can potentially send messages, manage Wi-Fi or invoke enabled system actions.
 
@@ -690,7 +730,7 @@ MeshCenter is intended for a trusted local network. The current interface has no
 - Back up local data before updates or hardware migration.
 - Remove Wi-Fi credentials, channel keys and personal message content before sharing logs or backups.
 
-## 16. Getting help
+## 17. Getting help
 
 When reporting an issue, include:
 

@@ -82,6 +82,7 @@
     "detail_route": "Route",
     "detail_grace": "Download-Karenzzeit",
     "detail_content": "Inhalt verfügbar",
+    "detail_waiting_provider_hint": "Warte, bis ein Relay erreichbar wird. Das kann bei einer schlechten Verbindung eine Weile dauern.",
     "advanced_details": "Erweiterte Details",
     "download_started": "Download gestartet",
     "rejected": "Übertragung abgelehnt",
@@ -196,7 +197,9 @@
       "file_too_large": "Datei überschreitet das 5-MiB-Limit",
       "mime_not_allowed": "Dateityp ist nicht erlaubt",
       "key_already_known": "Schlüssel bereits bekannt",
-      "network_error": "Netzwerkfehler"
+      "network_error": "Netzwerkfehler",
+      "radio_send_failed": "Konnte gerade nicht per Funk senden — wird automatisch erneut versucht",
+      "relay_unavailable": "Relay nicht erreichbar — wird automatisch erneut versucht"
     },
     "accept_download": "Akzeptieren und herunterladen",
     "accepting_key_change": "Akzeptiere Schlüsselwechsel…",

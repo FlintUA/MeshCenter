@@ -82,6 +82,7 @@
     "detail_route": "Route",
     "detail_grace": "Download grace",
     "detail_content": "Content available",
+    "detail_waiting_provider_hint": "Waiting for a Relay to become reachable. This can take a while on a degraded connection.",
     "advanced_details": "Advanced details",
     "download_started": "Download started",
     "rejected": "Transfer rejected",
@@ -196,7 +197,9 @@
       "file_too_large": "File exceeds the 5 MiB cap",
       "mime_not_allowed": "File type is not allowed",
       "key_already_known": "Key already known",
-      "network_error": "Network error"
+      "network_error": "Network error",
+      "radio_send_failed": "Couldn't send over the radio right now — retrying automatically",
+      "relay_unavailable": "Couldn't reach the Relay — retrying automatically"
     },
     "accept_download": "Accept and download",
     "accepting_key_change": "Accepting key change…",

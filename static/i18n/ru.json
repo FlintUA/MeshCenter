@@ -82,6 +82,7 @@
     "detail_route": "Маршрут",
     "detail_grace": "Отсрочка загрузки",
     "detail_content": "Содержимое доступно",
+    "detail_waiting_provider_hint": "Ожидание доступности Relay. При нестабильном соединении это может занять некоторое время.",
     "advanced_details": "Расширенные сведения",
     "download_started": "Загрузка начата",
     "rejected": "Передача отклонена",
@@ -199,7 +200,9 @@
       "file_too_large": "Файл превышает лимит 5 МиБ",
       "mime_not_allowed": "Тип файла не разрешён",
       "key_already_known": "Ключ уже известен",
-      "network_error": "Ошибка сети"
+      "network_error": "Ошибка сети",
+      "radio_send_failed": "Не удалось отправить по радиоканалу — повтор выполняется автоматически",
+      "relay_unavailable": "Relay недоступен — повтор выполняется автоматически"
     },
     "accept_download": "Принять и скачать",
     "accepting_key_change": "Принятие смены ключа…",

@@ -397,7 +397,15 @@
 
     function isAttention(a) {
         if (ATTENTION_STATES[a.state]) return true;
-        return a.error_code === 'recipient_provider_unknown';
+        // Step 6 regression finding: a genuine send-side failure
+        // (radio_send_failed, relay_unavailable, ...) bounces the attachment
+        // back into an ordinary in-progress state (READY_TO_SEND,
+        // QUEUED_UPLOAD) rather than a terminal FAILED_* one, and gets
+        // retried indefinitely - none of those in-progress states are in
+        // ATTENTION_STATES, so without this the archive's "N need attention"
+        // count would never reflect it. Any transfer carrying a genuine
+        // error_code counts, regardless of which state it's currently in.
+        return Boolean(a.error_code);
     }
 
     function hasActiveCommand() {
@@ -1083,7 +1091,18 @@
 
         var errorMarkup = a.error_code
             ? '<div class="files-detail-error" role="alert">' + esc(filesErrorCode({ error_code: a.error_code })) + '</div>'
-            : '';
+            // Step 6 regression finding: a receiver-side transfer waiting on a
+            // Relay it cannot currently resolve carries no error_code at all
+            // (receiver.py never sets one for this branch) - without this,
+            // the Normal block would show nothing beyond the generic
+            // "Waiting" bucket label, indefinitely, with zero explanation.
+            // Deliberately neutral styling (not the red error box above) -
+            // this is not necessarily a failure, just something that can
+            // take a while and deserves an honest, calm word about why.
+            : (a.state === 'WAITING_PROVIDER'
+                ? '<div class="files-detail-info">' + esc(t('files.detail_waiting_provider_hint',
+                    'Waiting for a Relay to become reachable. This can take a while on a degraded connection.')) + '</div>'
+                : '');
 
         var advancedRows = [
             ['files.detail_created', 'Created', fmtDate(a.created_at)],

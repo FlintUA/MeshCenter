@@ -1,0 +1,26 @@
+DirectoryIndex index.php
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+RewriteEngine On
+
+# Preserve bearer tokens for PHP on Apache/LiteSpeed configurations that
+# otherwise remove the Authorization header.
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+# Never serve source, maintenance scripts, documentation, or installation key.
+RewriteRule ^(?:src|bin|docs|tests)(?:/|$) - [F,L,NC]
+RewriteRule ^(?:SETUP_KEY\.txt|README_RU\.md|SECURITY\.md|CHECKSUMS\.sha256|LICENSE)$ - [F,L,NC]
+RewriteRule (^|/)\. - [F,L]
+
+# Existing public files are served directly. Everything else uses the API
+# front controller.
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+<FilesMatch "^(?:SETUP_KEY\.txt|README_RU\.md|SECURITY\.md|CHECKSUMS\.sha256|LICENSE)$">
+    Require all denied
+</FilesMatch>

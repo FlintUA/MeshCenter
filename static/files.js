@@ -236,6 +236,7 @@
         dialogReturnFocus: null,  // element to restore focus to on close (C11)
         modalSeq: 0,              // id suffix for auto-wired aria-describedby (R6)
         providerProbe: null,      // last successful probe result (pending registration)
+        relayWizard: null,        // active step-by-step Relay setup wizard, or null when closed
     };
 
     // ---- small helpers ------------------------------------------------------
@@ -1543,6 +1544,7 @@
         // Workspace header actions.
         if (action === 'send') { openSendDialog(); return; }
         if (action === 'providers') { openProviderSettings(); return; }
+        if (action === 'relay-wizard') { openRelayWizard(); return; }
         if (action === 'refresh') { refresh(); return; }
 
         // Attachment + contact + provider actions carry a data-attachment /
@@ -1593,6 +1595,16 @@
         if (action === 'provider-register') { providerRegister(); return; }
         if (action === 'send-submit') { submitSend(); return; }
         if (action === 'send-cancel') { closeModal(false); return; }
+
+        // Relay setup wizard.
+        if (action === 'wizard-probe') { relayWizardProbe(); return; }
+        if (action === 'wizard-back-url') { renderRelayWizardStep('url'); return; }
+        if (action === 'wizard-confirm') { relayWizardConfirm(); return; }
+        if (action === 'wizard-skip-token') { renderRelayWizardStep('readiness'); return; }
+        if (action === 'wizard-save-token') { relayWizardSaveToken(); return; }
+        if (action === 'wizard-check-readiness') { renderRelayWizardStep('readiness'); return; }
+        if (action === 'wizard-advanced') { openProviderSettings(); return; }
+        if (action === 'wizard-finish') { closeModal(false); return; }
     }
 
     function onDocumentInput(e) {
@@ -2707,7 +2719,9 @@
         var list = getEl('filesProvidersList');
         if (!list) return;
         if (!state.providers.length) {
-            list.innerHTML = '<div class="files-empty">' + esc(t('files.no_providers', 'No Relay providers configured.')) + '</div>';
+            list.innerHTML = '<div class="files-empty">' + esc(t('files.no_providers', 'No Relay providers configured.')) +
+                '<br/><button type="button" class="files-action-btn" data-files-action="relay-wizard">' +
+                    esc(t('files.wizard_setup_relay', 'Set up a Relay')) + '</button></div>';
             return;
         }
         list.innerHTML = state.providers.map(function (p) {
@@ -2911,6 +2925,262 @@
         });
     }
 
+    // ---- Relay setup wizard (URL -> fingerprint -> token -> readiness -> done) --
+    //
+    // Step-by-step onboarding for the Relay probe/register/token/readiness flow
+    // that `openProviderSettings()` already exposes as one flat dialog. This
+    // wizard is a pure frontend re-sequencing of the SAME existing endpoints
+    // (POST /api/mca/providers/probe, POST /api/mca/providers, PUT
+    // /api/mca/providers/{id}/upload-token, GET .../upload-readiness) - no new
+    // backend contract. Adding a second/third Relay stays reachable only from
+    // the existing "Relay providers" advanced dialog (the wizard's "done" step
+    // links there), never from this wizard itself.
+
+    var DEFAULT_RELAY_URL = 'https://mcattach.elektroniker.help';
+
+    function relayWizardBody() { return getEl('filesWizardBody'); }
+    function relayWizardFooter() { return getEl('filesWizardFooter'); }
+    function relayWizardError(msg) {
+        var el = getEl('filesWizardError');
+        if (el) el.textContent = msg || '';
+    }
+
+    function openRelayWizard() {
+        if (typeof document === 'undefined') return;
+        closeModal();
+        state.relayWizard = { step: 'url', origin: DEFAULT_RELAY_URL, probe: null, providerId: null, ready: false, reason: null };
+        var id = 'files-relay-wizard';
+        var html =
+            '<div class="files-modal-backdrop" data-files-action="modal-backdrop-close" role="presentation">' +
+                '<div class="files-modal" role="dialog" aria-modal="true" aria-labelledby="' + id + '-title">' +
+                    '<div class="files-modal-header">' +
+                        '<h3 class="files-modal-title" id="' + id + '-title">🧭 ' + esc(t('files.wizard_title', 'Connect a Relay')) + '</h3>' +
+                        '<button type="button" class="files-modal-close" data-files-action="modal-close" aria-label="' + esc(t('files.dialog_close', 'Close dialog')) + '">×</button>' +
+                    '</div>' +
+                    '<div class="files-modal-body" id="filesWizardBody"></div>' +
+                    '<div class="files-modal-footer" id="filesWizardFooter"></div>' +
+                '</div>' +
+            '</div>';
+        openModalHtml(html, function () { state.relayWizard = null; });
+        renderRelayWizardStep('url');
+    }
+
+    function renderRelayWizardStep(step) {
+        var w = state.relayWizard;
+        if (!w) return;
+        w.step = step;
+        var body = relayWizardBody();
+        var footer = relayWizardFooter();
+        if (!body || !footer) return;
+
+        if (step === 'url') {
+            body.innerHTML =
+                '<p class="files-wizard-hint">' + esc(t('files.wizard_intro', 'Add a Relay so this device can send and receive files with MCAttach.')) + '</p>' +
+                '<div class="files-field">' +
+                    '<label for="filesWizardUrl">' + esc(t('files.wizard_url_label', 'Relay URL')) + '</label>' +
+                    '<input type="url" id="filesWizardUrl" value="' + esc(w.origin || DEFAULT_RELAY_URL) + '" autocomplete="off" />' +
+                '</div>' +
+                '<p class="files-wizard-hint">' + esc(t('files.wizard_url_hint', "Most people can leave this as-is — it's already set to the project's default Relay.")) + '</p>' +
+                '<div id="filesWizardError" class="files-provider-edit-error" role="alert"></div>';
+            footer.innerHTML =
+                '<button type="button" class="files-modal-cancel" data-files-action="modal-cancel">' + esc(t('common.cancel', 'Cancel')) + '</button>' +
+                '<button type="button" class="files-action-btn" data-files-action="wizard-probe">' + esc(t('files.wizard_next', 'Next')) + '</button>';
+            return;
+        }
+
+        if (step === 'fingerprint') {
+            var probe = w.probe || {};
+            var fp = probe.service_key_fingerprint || '';
+            body.innerHTML =
+                '<h4 class="files-provider-add-title">' + esc(t('files.wizard_step_fingerprint_title', "Confirm the Relay's identity")) + '</h4>' +
+                '<div class="files-provider-probe-line">' + esc(t('files.probe_origin', 'Origin')) + ': ' + esc(probe.origin || '') + '</div>' +
+                '<div class="files-provider-probe-line">' + esc(t('files.probe_fingerprint', 'Service key fingerprint')) + ': <code>' + esc(groupFp(fp)) + '</code></div>' +
+                '<p class="files-wizard-hint">' + esc(t('files.wizard_fingerprint_hint', "Compare this fingerprint with the one published by the Relay's operator. Only continue if they match exactly.")) + '</p>' +
+                '<div class="files-field">' +
+                    '<label for="filesWizardName">' + esc(t('files.provider_name', 'Provider name')) + '</label>' +
+                    '<input type="text" id="filesWizardName" value="' + esc(w.displayName || probe.origin || '') + '" autocomplete="off" />' +
+                '</div>' +
+                '<label class="files-field files-field-inline"><select id="filesWizardKind">' +
+                    '<option value="own"' + (w.kind !== 'third_party' ? ' selected' : '') + '>' + esc(t('files.provider_kind_own', 'Own')) + '</option>' +
+                    '<option value="third_party"' + (w.kind === 'third_party' ? ' selected' : '') + '>' + esc(t('files.provider_kind_third_party', 'Third-party')) + '</option>' +
+                '</select></label>' +
+                '<div id="filesWizardError" class="files-provider-edit-error" role="alert"></div>';
+            footer.innerHTML =
+                '<button type="button" class="files-modal-cancel" data-files-action="wizard-back-url">' + esc(t('files.wizard_back', 'Back')) + '</button>' +
+                '<button type="button" class="files-action-btn" data-files-action="wizard-confirm">' + esc(t('files.register', 'Confirm & register')) + '</button>';
+            return;
+        }
+
+        if (step === 'token') {
+            body.innerHTML =
+                '<h4 class="files-provider-add-title">' + esc(t('files.wizard_step_token_title', 'Upload access token')) + '</h4>' +
+                '<p class="files-wizard-hint">' + esc(t('files.wizard_token_hint', 'If you have an upload access token for this Relay, enter it now. You can add or change it later in advanced settings.')) + '</p>' +
+                '<input type="password" id="filesWizardToken" autocomplete="off" placeholder="' + esc(t('files.wizard_token_placeholder', 'Upload access token (optional)')) + '" />' +
+                '<div id="filesWizardError" class="files-provider-edit-error" role="alert"></div>';
+            footer.innerHTML =
+                '<button type="button" class="files-modal-cancel" data-files-action="wizard-skip-token">' + esc(t('files.wizard_skip_token', 'Skip for now')) + '</button>' +
+                '<button type="button" class="files-action-btn" data-files-action="wizard-save-token">' + esc(t('files.wizard_save_continue', 'Save & continue')) + '</button>';
+            return;
+        }
+
+        if (step === 'readiness') {
+            body.innerHTML = '<p class="files-wizard-hint">' + esc(t('files.wizard_checking', 'Checking the Relay…')) + '</p>';
+            footer.innerHTML = '';
+            relayWizardCheckReadiness();
+            return;
+        }
+
+        if (step === 'done') {
+            var ready = !!w.ready;
+            var title = ready ? t('files.wizard_ready_title', 'Relay ready') : t('files.wizard_not_ready_title', 'Not ready yet');
+            var bodyMsg = ready ? t('files.wizard_ready_body', 'This Relay is registered and ready to send files.')
+                : t('files.wizard_not_ready_body', "The Relay is registered, but sending isn't ready yet:");
+            body.innerHTML =
+                '<h4 class="files-provider-add-title">' + esc(title) + '</h4>' +
+                '<p>' + esc(bodyMsg) + '</p>' +
+                (ready ? '' : '<p class="files-wizard-hint">' + esc(filesReadinessLabel(w.reason)) + '</p>');
+            footer.innerHTML =
+                (ready ? '' : '<button type="button" class="files-modal-cancel" data-files-action="wizard-check-readiness">' + esc(t('files.wizard_retry_check', 'Check again')) + '</button>') +
+                '<button type="button" class="files-action-btn" data-files-action="wizard-advanced">' + esc(t('files.wizard_manage_advanced', 'Manage Relays (advanced)')) + '</button>' +
+                '<button type="button" class="files-modal-submit" data-files-action="wizard-finish">' + esc(t('files.wizard_finish', 'Finish')) + '</button>';
+            return;
+        }
+    }
+
+    function relayWizardProbe() {
+        var w = state.relayWizard;
+        if (!w) return;
+        var input = getEl('filesWizardUrl');
+        var origin = input ? input.value.trim() : '';
+        if (!origin) {
+            relayWizardError(t('files.err_no_origin', 'Enter a provider URL'));
+            return;
+        }
+        w.origin = origin;
+        relayWizardError('');
+        api('/api/mca/providers/probe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ base_url: origin }),
+        }).then(function (r) {
+            if (r.status !== 202 || !r.data || !r.data.command_id) {
+                relayWizardError(filesErrorCode(r.data));
+                return;
+            }
+            trackCommand(r.data.command_id, {
+                resourceKey: 'relay-wizard',
+                queued: t('files.probing', 'Probing provider…'),
+                success: t('files.probe_ok', 'Provider reached'),
+                onSuccess: function (cmd) {
+                    if (!state.relayWizard) return;
+                    state.relayWizard.probe = (cmd && cmd.result) || {};
+                    renderRelayWizardStep('fingerprint');
+                },
+                onFailed: function (cmd) { relayWizardError(filesErrorCode(cmd)); },
+            });
+        }).catch(function () {
+            relayWizardError(t('files.error.network_error', 'Network error'));
+        });
+    }
+
+    function relayWizardConfirm() {
+        var w = state.relayWizard;
+        if (!w || !w.probe || !w.probe.probe_id) return;
+        var nameInput = getEl('filesWizardName');
+        var kindInput = getEl('filesWizardKind');
+        w.displayName = (nameInput && nameInput.value.trim()) ? nameInput.value.trim() : (w.probe.origin || '');
+        w.kind = (kindInput && kindInput.value) ? kindInput.value : 'own';
+        var fingerprint = w.probe.service_key_fingerprint || '';
+        relayWizardError('');
+
+        api('/api/mca/providers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                probe_id: w.probe.probe_id,
+                fingerprint_confirmation: fingerprint,
+                display_name: w.displayName,
+                policy: { kind: w.kind, upload_allowed: true, download_allowed: true },
+            }),
+        }).then(function (r) {
+            if (r.status !== 202 || !r.data || !r.data.command_id) {
+                relayWizardError(filesErrorCode(r.data));
+                return;
+            }
+            trackCommand(r.data.command_id, {
+                resourceKey: 'relay-wizard',
+                queued: t('files.registering', 'Registering provider…'),
+                success: t('files.provider_registered', 'Provider registered'),
+                onSuccess: function (cmd) {
+                    if (!state.relayWizard) return;
+                    state.relayWizard.providerId = (cmd && cmd.result) ? cmd.result.provider_id : null;
+                    return refreshAfterCommand('providers', loadProviders).then(function () {
+                        if (state.relayWizard) renderRelayWizardStep('token');
+                    });
+                },
+                onFailed: function (cmd) { relayWizardError(filesErrorCode(cmd)); },
+            });
+        }).catch(function () {
+            relayWizardError(t('files.error.network_error', 'Network error'));
+        });
+    }
+
+    function relayWizardSaveToken() {
+        var w = state.relayWizard;
+        if (!w || !w.providerId) return;
+        var input = getEl('filesWizardToken');
+        var token = input ? input.value.trim() : '';
+        if (!token) {
+            renderRelayWizardStep('readiness');
+            return;
+        }
+        relayWizardError('');
+        api('/api/mca/providers/' + encodeURIComponent(w.providerId) + '/upload-token', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ upload_token: token }),
+        }).then(function (r) {
+            if (r.status !== 202 || !r.data || !r.data.command_id) {
+                relayWizardError(filesErrorCode(r.data));
+                return;
+            }
+            trackCommand(r.data.command_id, {
+                resourceKey: 'relay-wizard',
+                queued: t('files.saving_token', 'Saving token…'),
+                success: t('files.token_saved', 'Upload token saved'),
+                onSuccess: function () {
+                    return refreshAfterCommand('providers', loadProviders).then(function () {
+                        if (state.relayWizard) renderRelayWizardStep('readiness');
+                    });
+                },
+                onFailed: function (cmd) { relayWizardError(filesErrorCode(cmd)); },
+            });
+        }).catch(function () {
+            relayWizardError(t('files.error.network_error', 'Network error'));
+        });
+    }
+
+    function relayWizardCheckReadiness() {
+        var w = state.relayWizard;
+        if (!w || !w.providerId) return;
+        api('/api/mca/providers/' + encodeURIComponent(w.providerId) + '/upload-readiness').then(function (r) {
+            if (!state.relayWizard) return;
+            if (r.status === 200 && r.data && r.data.ok) {
+                state.relayWizard.ready = !!r.data.ready;
+                state.relayWizard.reason = r.data.reason;
+            } else {
+                state.relayWizard.ready = false;
+                state.relayWizard.reason = null;
+            }
+            renderRelayWizardStep('done');
+        }).catch(function () {
+            if (!state.relayWizard) return;
+            state.relayWizard.ready = false;
+            state.relayWizard.reason = null;
+            renderRelayWizardStep('done');
+        });
+    }
+
     // ---- bootstrap: register delegated listeners + module surface ----------
 
     function bindListeners() {
@@ -2955,6 +3225,13 @@
     window.closeFilesSendDialog = function () { closeModal(false); };
     window.openFilesProviderSettings = openProviderSettings;
     window.closeFilesProviderSettings = function () { closeModal(false); };
+    // Step-by-step onboarding wizard (Settings "Set up a Relay" button) - a
+    // distinct entry point from the flat "Relay providers" advanced dialog
+    // above; both operate on the same state and the same backend endpoints.
+    window.openFilesRelaySetupWizard = function () {
+        if (typeof window.switchMainTab === 'function') window.switchMainTab('files');
+        openRelayWizard();
+    };
     // Entry point used by the Settings workspace "Relay providers" control: it
     // navigates to the Files workspace (which activates the module) and reuses
     // the SAME provider component — no second implementation or cache.

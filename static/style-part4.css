@@ -4704,6 +4704,9 @@ html[data-theme="dark"] #notificationsCard {
     background: var(--mc-surface, #fff);
 }
 .files-provider-probe-line { margin-bottom: 6px; font-size: 12px; color: var(--mc-muted, #5c7290); }
+/* Relay setup wizard: contextual per-step hint text (same muted treatment as
+   the probe-confirm lines above, just as a <p> rather than a label line). */
+.files-wizard-hint { margin: 0 0 10px; font-size: 12px; color: var(--mc-muted, #5c7290); }
 .files-provider-probe-line code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     color: var(--mc-text, #1f2f45);

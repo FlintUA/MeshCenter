@@ -69,4 +69,7 @@ timeout = 120
 # StandardOutput=journal / PYTHONUNBUFFERED=1 in the systemd unit already
 # get server.py's own print() logging into journalctl - gunicorn's own
 # access/error logs go to stderr by default, which the unit also captures,
-# so no separate logging config is added here.
+# so no separate gunicorn logging config is added here. The stdlib
+# `logging` module (used by e.g. meshsrv/attachments/service.py, unlike
+# server.py's print() calls) is configured separately in wsgi.py, since
+# that module is what gunicorn actually imports before running anything.

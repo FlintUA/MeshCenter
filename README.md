@@ -1830,6 +1830,7 @@ Possible future integrations include:
 
 | Version | Highlights |
 |----------|------------|
+| v1.8.4 | MCAttach control-channel index fix; production logging (`wsgi.py`); Relay server source published under `relay-server/` for optional self-hosting; a guided "Connect a Relay" setup wizard and automatic one-time secure-connection setup for new contacts; the transfer detail card collapses into Normal/Advanced/Technical levels with honest, never-silent configuration/connectivity error messages; new Files (MCAttach) section in the User Guide |
 | v1.8.1 | Installation ID: a per-install, privacy-conscious identifier (`PRIVACY.md`) shown on the System card with copy-to-clipboard, plus a `manage_installation_id.py` CLI to inspect/regenerate it; System Log, Activity and the Notifications popover gain Copy and Export buttons on a new unified `.btn` sizing system; the "MeshCenter Instance" card no longer shows raw exception text on a radio identity check failure (now routed to the System Log/Notifications instead); system log entries use the real device model instead of a hardcoded "Raspberry Pi" label |
 | v1.8.0 | I2C device support (RTC + BME280), e-Paper display redesign with auto-rotation, stored-XSS fix, gunicorn in production |
 | v1.7.0 | Auto-Installer (cloud-init), redesigned Time card, channel name/discovery fixes |

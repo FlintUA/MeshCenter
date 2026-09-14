@@ -553,6 +553,7 @@
         if (!store) return Promise.resolve();
         return store.refresh().then(function () {
             syncContactsFromStore();
+            refreshSendRecipientsIfOpen();
         });
     }
 
@@ -570,6 +571,7 @@
         }
         return store.refreshAfterCommand().then(function () {
             syncContactsFromStore();
+            refreshSendRecipientsIfOpen();
         });
     }
 
@@ -1298,15 +1300,34 @@
         });
     }
 
+    // Step 4: the single confirmation screen for the whole "establish a
+    // secure connection" step, shared by every entry point (sidebar node
+    // card AND the Send dialog's own banner) - one implementation, one
+    // screen, plain-language copy explaining WHY rather than naming the
+    // wire protocol. Deliberately still an explicit confirm (a real network
+    // action), not a silent auto-fire; what changed for Step 4 is that the
+    // USER no longer has to go find and trigger this separately before
+    // sending — the Send dialog surfaces it automatically for the selected
+    // recipient. The reply-trust screen (contactConfirm) and the key-change
+    // screens below stay untouched and manual, as required.
     function contactRequestKey(contactId) {
         var c = findContact(contactId);
         var name = c && c.name ? c.name : contactId;
+        // confirmDialog() replaces whatever modal is currently open with its
+        // own — if this was triggered from the Send dialog's banner, that
+        // dialog is gone the instant the confirm prompt appears. Remember to
+        // restore it once the user has answered, whichever way, so "Cancel"
+        // and "Continue" both land the user back where they were rather than
+        // dropping them with no dialog at all.
+        var reopenSend = isSendDialogOpen();
         confirmDialog({
-            title: t('files.request_key_title', 'Request MCA key?'),
-            bodyText: tparams('files.request_key_body', { name: name }, 'Ask ' + name + ' for their MCA encryption key.'),
-            confirmLabel: t('files.request_key', 'Request key'),
+            title: t('files.request_key_title', 'Set up a secure connection'),
+            bodyText: tparams('files.request_key_body', { name: name },
+                'A secure, encrypted connection is being set up with ' + name + ' — this happens automatically and only once. Once it is done, you can send files to them normally.'),
+            confirmLabel: t('files.request_key_confirm', 'Continue'),
             danger: false,
         }).then(function (yes) {
+            if (reopenSend) openSendDialog();
             if (!yes) return;
             contactCommand(contactId, 'request-key', {
                 queued: t('files.requesting_key', 'Requesting key…'),
@@ -1661,6 +1682,11 @@
             if (action === 'contact-confirm') { contactConfirm(contactId); return; }
             if (action === 'contact-accept') { contactAcceptKeyChange(contactId); return; }
             if (action === 'contact-reject') { contactRejectKeyChange(contactId); return; }
+            // Step 4: the Send dialog's own "Connect securely" banner button —
+            // same single confirmation screen as the sidebar node card's
+            // "Request key" action (contactRequestKey is the one implementation
+            // both entry points share).
+            if (action === 'send-request-key') { contactRequestKey(contactId); return; }
         }
 
         if (providerId && providerById(providerId)) {
@@ -1843,6 +1869,7 @@
                             '<span class="files-field-label">' + esc(t('files.send_recipient', 'Recipient')) + '</span>' +
                             '<select id="filesSendRecipient"></select>' +
                         '</label>' +
+                        '<div class="files-provider-probe" id="filesSendKeyStatus" aria-live="polite"></div>' +
                         '<label class="files-field">' +
                             '<span class="files-field-label">' + esc(t('files.send_provider', 'Relay provider')) + '</span>' +
                             '<select id="filesSendProvider"></select>' +
@@ -1884,6 +1911,7 @@
         // Render recipients/status/ttl first, then start the generation-scoped
         // loads; each settles and updates the open dialog independently.
         renderSendRecipients();
+        renderSendKeyStatus();
         renderSendProvidersLoading();
         renderSendStatus();
         renderSendCustomTtl();
@@ -2012,6 +2040,51 @@
         var c = findContact(sel.id);
         if (c && c.can_send_file === true) return c.contact_id;
         return null;                          // invalid/disappeared/non-sendable node
+    }
+
+    // Step 4: the currently store-selected node, when it is the reason the
+    // recipient list can't be used yet (key_unknown) — the single, automatic
+    // entry point that replaces "go find the sidebar node card and click
+    // Request key". Only `key_unknown` is handled here; `confirmation_required`
+    // and `key_changed` stay exclusively on the sidebar node card's explicit,
+    // never-automated screens (per the task's own constraint).
+    function sendKeyStatusContact() {
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        var sel = store && typeof store.selected === 'function' ? store.selected() : null;
+        if (!sel || sel.kind !== 'node') return null;
+        var c = findContact(sel.id);
+        return (c && c.status === 'key_unknown') ? c : null;
+    }
+
+    function renderSendKeyStatus() {
+        var el = getEl('filesSendKeyStatus');
+        if (!el) return;
+        var c = sendKeyStatusContact();
+        if (!c) { el.innerHTML = ''; return; }
+        var name = c.name || c.contact_id;
+        if (c.key_request_state === 'queued' || c.key_request_state === 'waiting_response') {
+            el.innerHTML = '<div class="files-provider-probe-line">' +
+                esc(tparams('files.send_key_waiting', { name: name }, 'Waiting for ' + name + ' to respond…')) +
+                '</div>';
+            return;
+        }
+        if (!c.can_request_key) { el.innerHTML = ''; return; }
+        el.innerHTML =
+            '<div class="files-provider-probe-line">' + esc(tparams('files.send_key_banner_body', { name: name },
+                'Files can only be sent once a secure connection is set up with ' + name + '.')) + '</div>' +
+            '<button type="button" class="files-action-btn" data-files-action="send-request-key" data-contact="' + esc(c.contact_id) + '">' +
+                esc(t('files.send_key_banner_action', 'Connect securely')) + '</button>';
+    }
+
+    // Step 4: re-render the open Send dialog's recipient list + key-status
+    // banner whenever the contact projection changes underneath it (a normal
+    // poll tick, or a just-completed contact command) — without this, a
+    // request that gets answered while the dialog is still open would never
+    // surface as "now sendable" until the user closed and reopened it.
+    function refreshSendRecipientsIfOpen() {
+        if (!isSendDialogOpen()) return;
+        renderSendRecipients();
+        renderSendKeyStatus();
     }
 
     function uploadReadyProvider(p) {

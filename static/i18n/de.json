@@ -77,6 +77,12 @@
     "detail_recipient": "Kontakt",
     "detail_created": "Erstellt",
     "detail_expires": "Läuft ab",
+    "detail_saved": "Gespeichert",
+    "detail_provider": "Verwendeter Relay",
+    "detail_route": "Route",
+    "detail_grace": "Download-Karenzzeit",
+    "detail_content": "Inhalt verfügbar",
+    "advanced_details": "Erweiterte Details",
     "download_started": "Download gestartet",
     "rejected": "Übertragung abgelehnt",
     "saving": "Speichere auf dem Pi…",
@@ -161,6 +167,13 @@
       "AVAILABLE": "Verfügbar",
       "REJECTED": "Abgelehnt",
       "FAILED": "Fehlgeschlagen"
+    },
+    "simple_state": {
+      "preparing": "Wird vorbereitet",
+      "uploading": "Wird hochgeladen",
+      "waiting": "Wartet",
+      "receiving": "Wird empfangen",
+      "ready": "Fertig"
     },
     "contact": {
       "trusted": "Vertrauenswürdig",
@@ -255,6 +268,11 @@
     "send_without_confirm": "Ohne Bestätigung senden",
     "setting_default": "Setze Standard…",
     "state_changed": "Diese Übertragung hat sich geändert — aktualisiere",
+    "tech_id": "ID",
+    "tech_cipher_size": "Chiffretext-Größe",
+    "tech_provider_id": "Anbieter-ID",
+    "tech_delivery_id": "Primäre Zustellung",
+    "tech_error_code": "Roher Fehlercode",
     "technical_details": "Technische Details",
     "transport_bluetooth": "Transport: Bluetooth",
     "transport_serial": "Transport: USB seriell",

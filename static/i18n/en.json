@@ -77,6 +77,12 @@
     "detail_recipient": "Contact",
     "detail_created": "Created",
     "detail_expires": "Expires",
+    "detail_saved": "Saved",
+    "detail_provider": "Relay used",
+    "detail_route": "Route",
+    "detail_grace": "Download grace",
+    "detail_content": "Content available",
+    "advanced_details": "Advanced details",
     "download_started": "Download started",
     "rejected": "Transfer rejected",
     "saving": "Saving to Pi…",
@@ -161,6 +167,13 @@
       "AVAILABLE": "Available",
       "REJECTED": "Rejected",
       "FAILED": "Failed"
+    },
+    "simple_state": {
+      "preparing": "Preparing",
+      "uploading": "Uploading",
+      "waiting": "Waiting",
+      "receiving": "Receiving",
+      "ready": "Ready"
     },
     "contact": {
       "trusted": "Trusted",
@@ -255,6 +268,11 @@
     "send_without_confirm": "Send without confirmation",
     "setting_default": "Setting default…",
     "state_changed": "This transfer changed — refreshing",
+    "tech_id": "ID",
+    "tech_cipher_size": "Ciphertext size",
+    "tech_provider_id": "Provider ID",
+    "tech_delivery_id": "Primary delivery",
+    "tech_error_code": "Raw error code",
     "technical_details": "Technical details",
     "transport_bluetooth": "Transport: Bluetooth",
     "transport_serial": "Transport: USB serial",

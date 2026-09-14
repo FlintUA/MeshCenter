@@ -119,6 +119,35 @@
         FAILED: 'Failed',
     };
 
+    // Step 5 ("Normal" detail level): the plan's 5-bucket plain-language
+    // status, collapsing the raw backend state machine for a normal user.
+    // Terminal/error states are deliberately NOT bucketed here - the plan
+    // wants those "as-is, separate clear statuses" (they're already
+    // plain-language via FILES_STATE_LABELS: "Rejected", "Expired",
+    // "Cancelled", "Validation failed", etc.) rather than merged into one
+    // generic "Failed"/"Done" bucket that would lose the distinction.
+    var FILES_SIMPLE_STATE_BUCKET = {
+        DRAFT: 'preparing', VALIDATING: 'preparing', ENCRYPTING: 'preparing',
+        QUEUED_UPLOAD: 'uploading', UPLOADING: 'uploading', READY_TO_SEND: 'uploading',
+        SENT: 'waiting', RECEIVED: 'waiting',
+        OFFER_RECEIVED: 'waiting', WAITING_KEY: 'waiting', WAITING_PROVIDER: 'waiting',
+        WAITING_NETWORK: 'waiting', WAITING_CONSENT: 'waiting',
+        DOWNLOADING: 'receiving', VERIFYING: 'receiving',
+        DOWNLOADED: 'ready', AVAILABLE: 'ready',
+    };
+    var FILES_SIMPLE_STATE_LABELS = {
+        preparing: 'Preparing',
+        uploading: 'Uploading',
+        // Shared by a sender's SENT/RECEIVED (waiting on the recipient) and a
+        // receiver's own pre-download states (waiting on key exchange/relay/
+        // network/consent) - a single direction-neutral label rather than
+        // two near-duplicate keys, since the viewer IS the recipient in the
+        // second case and "waiting for recipient" would be wrong there.
+        waiting: 'Waiting',
+        receiving: 'Receiving',
+        ready: 'Ready',
+    };
+
     var FILES_CONTACT_STATUS_LABELS = {
         trusted: 'Trusted',
         confirmation_required: 'Confirmation required',
@@ -270,6 +299,17 @@
     }
 
     function filesStateLabel(s) { return t('files.state.' + s, FILES_STATE_LABELS[s] || s); }
+
+    // Step 5: the "Normal" detail level's plain-language status - the raw
+    // backend state stays available (unchanged) in the Technical tier via
+    // filesStateLabel(). Falls back to the raw state's own label for any
+    // state this module doesn't know how to bucket, rather than showing
+    // nothing or an unbucketed placeholder.
+    function simpleStatusLabel(a) {
+        var bucket = FILES_SIMPLE_STATE_BUCKET[a.state];
+        if (!bucket) return filesStateLabel(a.state);
+        return t('files.simple_state.' + bucket, FILES_SIMPLE_STATE_LABELS[bucket] || bucket);
+    }
     function filesContactStatusLabel(s) { return t('files.contact.' + s, FILES_CONTACT_STATUS_LABELS[s] || s); }
     function filesKeyRequestStateLabel(s) { return t('files.key_request_state.' + s, FILES_KEY_REQUEST_STATE_LABELS[s] || s); }
     function fileUnavailableReasonLabel(s) { return t('files.unavailable.' + s, FILES_UNAVAILABLE_REASON_LABELS[s] || s || 'Unknown'); }
@@ -818,7 +858,7 @@
                         '<span class="files-transfer-sub">' + contactLabel + '</span>' +
                     '</span>' +
                     '<span class="files-transfer-provider">' + providerLabel + '</span>' +
-                    '<span class="files-transfer-state files-state-' + esc(a.state) + '">' + esc(filesStateLabel(a.state)) + '</span>' +
+                    '<span class="files-transfer-state files-state-' + esc(a.state) + '" title="' + esc(filesStateLabel(a.state)) + '">' + esc(simpleStatusLabel(a)) + '</span>' +
                     '<span class="files-transfer-size">' + esc(fmtBytes(a.plain_size)) + '</span>' +
                     '<span class="files-transfer-date">' + esc(fmtDate(a.created_at)) + '</span>' +
                     expiry +
@@ -941,44 +981,57 @@
         });
     }
 
+    // Step 5: split into { basic, advanced } rather than one joined string -
+    // Revoke and Delete-local-copy are the plan's named "advanced" actions
+    // (administrative/destructive, not part of the normal flow), everything
+    // else (Retry/Cancel/Accept/Reject/Save/Open/Download) stays basic. The
+    // underlying eligibility logic - which state gets which button at all -
+    // is UNCHANGED: still driven entirely by the existing
+    // SENDER_AUTOMATIC/SENDER_REVOKABLE/RECEIVER_AUTOMATIC classification,
+    // per the task's own instruction to reuse it rather than invent a new
+    // UI-side retryability heuristic.
     function detailActions(a) {
-        var actions = [];
+        var basic = [];
+        var advanced = [];
         if (a.direction === 'sent') {
             if (SENDER_AUTOMATIC.indexOf(a.state) !== -1) {
-                actions.push(actionBtn(a.id, 'attach-retry', t('files.retry', 'Retry'), false));
-                actions.push(actionBtn(a.id, 'attach-cancel', t('files.cancel', 'Cancel'), true));
+                basic.push(actionBtn(a.id, 'attach-retry', t('files.retry', 'Retry'), false));
+                basic.push(actionBtn(a.id, 'attach-cancel', t('files.cancel', 'Cancel'), true));
             } else if (SENDER_REVOKABLE.indexOf(a.state) !== -1) {
-                actions.push(actionBtn(a.id, 'attach-revoke', t('files.revoke', 'Revoke'), true));
+                advanced.push(actionBtn(a.id, 'attach-revoke', t('files.revoke', 'Revoke'), true));
             }
             // terminal FAILED_* / EXPIRED / REVOKED / CANCELLED -> no unsupported Retry (C4 §9.1)
         } else {
             if (RECEIVER_AUTOMATIC.indexOf(a.state) !== -1) {
-                actions.push(actionBtn(a.id, 'attach-retry', t('files.retry', 'Retry'), false));
+                basic.push(actionBtn(a.id, 'attach-retry', t('files.retry', 'Retry'), false));
             } else if (a.state === 'WAITING_CONSENT') {
-                actions.push(actionBtn(a.id, 'attach-download', t('files.accept_download', 'Accept and download'), false));
-                actions.push(actionBtn(a.id, 'attach-reject', t('files.reject', 'Reject'), true));
+                basic.push(actionBtn(a.id, 'attach-download', t('files.accept_download', 'Accept and download'), false));
+                basic.push(actionBtn(a.id, 'attach-reject', t('files.reject', 'Reject'), true));
             } else if (a.state === 'AVAILABLE') {
-                actions = actions.concat(contentActions(a));
+                var content = contentActions(a);
+                basic = basic.concat(content.basic);
+                advanced = advanced.concat(content.advanced);
             }
             // OFFER_RECEIVED / VERIFYING / EXPIRED / REJECTED / FAILED -> no mutation
         }
-        return actions.join('');
+        return { basic: basic.join(''), advanced: advanced.join('') };
     }
 
     function contentActions(a) {
-        var actions = [];
+        var basic = [];
+        var advanced = [];
         if (a.saved) {
-            actions.push(actionBtn(a.id, 'attach-delete-local', t('files.delete_local', 'Delete local copy'), true));
+            advanced.push(actionBtn(a.id, 'attach-delete-local', t('files.delete_local', 'Delete local copy'), true));
         } else {
-            actions.push(actionBtn(a.id, 'attach-save', t('files.save_to_files', 'Save to Files'), false));
+            basic.push(actionBtn(a.id, 'attach-save', t('files.save_to_files', 'Save to Files'), false));
         }
         if (a.content_available) {
             if (IMAGE_MIME[a.mime_type]) {
-                actions.push(actionBtn(a.id, 'attach-open', t('files.open_preview', 'Open preview'), false));
+                basic.push(actionBtn(a.id, 'attach-open', t('files.open_preview', 'Open preview'), false));
             }
-            actions.push(actionBtn(a.id, 'attach-download-device', t('files.download_to_device', 'Download to device'), false));
+            basic.push(actionBtn(a.id, 'attach-download-device', t('files.download_to_device', 'Download to device'), false));
         }
-        return actions;
+        return { basic: basic, advanced: advanced };
     }
 
     function actionBtn(id, action, label, danger) {
@@ -989,39 +1042,73 @@
             esc(label) + '</button>';
     }
 
+    function detailRowsHtml(rows) {
+        return rows.map(function (r) {
+            return '<div class="files-detail-row"><span class="files-detail-label">' +
+                esc(t(r[0], r[1])) + '</span><span class="files-detail-value">' + esc(r[2]) + '</span></div>';
+        }).join('');
+    }
+
+    // Step 5: the transfer card collapses into three levels.
+    //   - Normal (always visible, no expansion): identity of the transfer,
+    //     the plain-language status, the plain-language error (if any,
+    //     see below), and the primary action.
+    //   - Advanced details (<details>, closed by default): timing/lifecycle
+    //     facts and the Relay used, plus the plan's own named "advanced"
+    //     actions (Revoke, Delete local copy).
+    //   - Technical diagnostics (<details>, closed by default): everything
+    //     raw - ids, route, per-delivery state, the timeline, mime type,
+    //     ciphertext size.
+    // Hard requirement, independent of level: a genuine configuration/
+    // security error is never left as a raw, unlocalized backend code (the
+    // previous behavior) and never demoted into a collapsed section - it is
+    // rendered in the always-visible Normal block, through the SAME
+    // plain-language reason mapping (filesErrorCode()) used for every other
+    // error surface in this module (toasts, the archive "errors" filter).
     function detailMarkup(a, timeline) {
         var contact = contactForAttachment(a);
-        var recipientId = contact ? contact.contact_id : (a.counterparty_contact_id || '');
+        var recipientLabel = contact ? (contact.name || contact.contact_id) : (a.counterparty_contact_id || '—');
         var provider = providerById(a.provider_id);
         var providerLabel = provider ? (provider.display_name || provider.origin || a.provider_id) : (a.provider_id || '—');
-        var route = a.primary_delivery_id ? t('files.detail_direct', 'Direct') : t('files.detail_direct', 'Direct');
+        var route = t('files.detail_direct', 'Direct');
         var deliveries = (Array.isArray(a.deliveries) && a.deliveries.length) ? a.deliveries : [];
+        var actions = detailActions(a);
 
-        var rows = [
+        var basicRows = [
             ['files.detail_direction', 'Direction', a.direction === 'sent' ? t('files.sent', 'Sent') : t('files.received', 'Received')],
-            ['files.detail_state', 'State', filesStateLabel(a.state)],
             ['files.detail_file', 'File', a.file_name || '—'],
-            ['files.detail_type', 'Type', a.mime_type || '—'],
+            ['files.detail_recipient', 'Contact', recipientLabel],
             ['files.detail_size', 'Size', fmtBytes(a.plain_size)],
-            ['files.detail_recipient', 'Contact', recipientId || '—'],
-            ['files.detail_provider', 'Provider', providerLabel],
-            ['files.detail_route', 'Route', route],
+        ];
+
+        var errorMarkup = a.error_code
+            ? '<div class="files-detail-error" role="alert">' + esc(filesErrorCode({ error_code: a.error_code })) + '</div>'
+            : '';
+
+        var advancedRows = [
             ['files.detail_created', 'Created', fmtDate(a.created_at)],
             ['files.detail_expires', 'Expires', fmtDate(a.hard_expires_at) + ' (' + fmtRel(a.hard_expires_at) + ')'],
-            ['files.detail_grace', 'Download grace', fmtGrace(a.download_grace_seconds)],
             ['files.detail_saved', 'Saved', a.saved ? t('files.yes', 'Yes') : t('files.no', 'No')],
-            ['files.detail_content', 'Content available', a.content_available ? t('files.yes', 'Yes') : t('files.no', 'No')],
+            ['files.detail_provider', 'Relay used', providerLabel],
         ];
-        if (a.error_code) {
-            rows.push(['files.detail_error', 'Error', a.error_code]);
-        }
 
         var techRows = [
             ['files.tech_id', 'ID', a.id],
+            ['files.detail_type', 'Type', a.mime_type || '—'],
+            ['files.detail_route', 'Route', route],
+            ['files.detail_grace', 'Download grace', fmtGrace(a.download_grace_seconds)],
+            ['files.detail_content', 'Content available', a.content_available ? t('files.yes', 'Yes') : t('files.no', 'No')],
             ['files.tech_cipher_size', 'Ciphertext size', fmtBytes(a.cipher_size)],
             ['files.tech_provider_id', 'Provider ID', a.provider_id || '—'],
             ['files.tech_delivery_id', 'Primary delivery', a.primary_delivery_id || '—'],
         ];
+        if (a.error_code) {
+            // The technical tier additionally carries the raw code for
+            // diagnosis - but never as the ONLY place the error is visible;
+            // errorMarkup above already put the plain-language version in
+            // the always-visible Normal block.
+            techRows.push(['files.tech_error_code', 'Raw error code', a.error_code]);
+        }
 
         var timelineMarkup = timeline.length
             ? '<div class="files-detail-timeline">' + timeline.map(function (e) {
@@ -1045,23 +1132,21 @@
 
         return '<div class="files-detail-head">' +
                 '<div class="files-detail-name">' + esc(a.file_name || a.id) + '</div>' +
-                '<div class="files-detail-state files-state-' + esc(a.state) + '">' + esc(filesStateLabel(a.state)) + '</div>' +
+                '<div class="files-detail-state files-state-' + esc(a.state) + '" title="' + esc(filesStateLabel(a.state)) + '">' + esc(simpleStatusLabel(a)) + '</div>' +
             '</div>' +
-            '<div class="files-detail-table">' +
-                rows.map(function (r) {
-                    return '<div class="files-detail-row"><span class="files-detail-label">' +
-                        esc(t(r[0], r[1])) + '</span><span class="files-detail-value">' + esc(r[2]) + '</span></div>';
-                }).join('') +
-            '</div>' +
-            '<div class="files-detail-actions">' + detailActions(a) + '</div>' +
-            deliveriesMarkup +
-            timelineMarkup +
+            errorMarkup +
+            '<div class="files-detail-table">' + detailRowsHtml(basicRows) + '</div>' +
+            '<div class="files-detail-actions">' + actions.basic + '</div>' +
+            '<details class="files-detail-advanced">' +
+                '<summary>' + esc(t('files.advanced_details', 'Advanced details')) + '</summary>' +
+                '<div class="files-detail-table">' + detailRowsHtml(advancedRows) + '</div>' +
+                (actions.advanced ? '<div class="files-detail-actions">' + actions.advanced + '</div>' : '') +
+            '</details>' +
             '<details class="files-detail-tech">' +
                 '<summary>' + esc(t('files.technical_details', 'Technical details')) + '</summary>' +
-                '<div class="files-detail-table">' + techRows.map(function (r) {
-                    return '<div class="files-detail-row"><span class="files-detail-label">' +
-                        esc(t(r[0], r[1])) + '</span><span class="files-detail-value">' + esc(r[2]) + '</span></div>';
-                }).join('') + '</div>' +
+                '<div class="files-detail-table">' + detailRowsHtml(techRows) + '</div>' +
+                deliveriesMarkup +
+                timelineMarkup +
             '</details>';
     }
 

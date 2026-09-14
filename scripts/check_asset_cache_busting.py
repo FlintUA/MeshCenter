@@ -25,7 +25,7 @@ INDEX_HTML = Path(__file__).parent.parent / 'templates' / 'index.html'
 I18N_JS = Path(__file__).parent.parent / 'static' / 'i18n.js'
 
 # The single canonical cache-busting token for the current frontend release.
-CURRENT_VERSION = '20260912-pr6-inline-node-card'
+CURRENT_VERSION = '20260914-transfer-card-levels'
 
 # Browser assets changed in the current release. Every entry must be referenced
 # in index.html with CURRENT_VERSION (and, for i18n.js, its CATALOG_VERSION must
@@ -33,6 +33,7 @@ CURRENT_VERSION = '20260912-pr6-inline-node-card'
 # stale from cache. Keys are the `static/`-relative path.
 CURRENT_ASSETS = {
     'static/chat.js',
+    'static/files.js',
     'static/i18n.js',
     'static/style-part1.css',
     'static/style-part2.css',

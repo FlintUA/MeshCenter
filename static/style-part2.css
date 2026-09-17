@@ -3775,7 +3775,7 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     margin-top: 8px;
     box-shadow: none;
     border: none;
-    border-top: 1px solid #e2e6ea;
+    border-top: 1px solid var(--mc-border-soft, #eef1f4);
     margin-bottom: 0;
 }
 

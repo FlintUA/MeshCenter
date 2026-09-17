@@ -115,8 +115,26 @@ class FakeElement {
     // A node is "connected" to the document iff it is reachable from a connected
     // root by following parent links. getElementById() only returns connected
     // elements, matching the live DOM (a detached element is not found by id).
+    //
+    // A subtree parsed by parseHtmlFragment() (or built via the `template`
+    // fake below) has no _ownerDocument on any of its elements - in a real
+    // browser, a <template>.content fragment (or any detached node built via
+    // createElement/innerHTML) is exactly as un-owned until it's actually
+    // inserted into a document. Connecting it here (appendChild ->
+    // _markConnected(true)) is that insertion moment: inherit the parent's
+    // _ownerDocument down the newly-attached subtree and register any id it
+    // carries, so document.getElementById() (which real product code -
+    // toggleNodeActionsMenu(), switchNodeDetailTab() - actually calls) can
+    // find elements that arrived via the template/content path, not just
+    // ones built by document.createElement() directly.
     _markConnected(connected) {
         this._connected = connected;
+        if (connected && !this._ownerDocument && this.parentNode && this.parentNode._ownerDocument) {
+            this._ownerDocument = this.parentNode._ownerDocument;
+        }
+        if (connected && this._ownerDocument && this._id) {
+            this._ownerDocument.elements.set(this._id, this);
+        }
         for (const child of this._children) child._markConnected(connected);
     }
     // Mirror the browser: assigning `textContent` to an element also writes its
@@ -228,6 +246,20 @@ class FakeElement {
         child._markConnected(this._connected);
         return child;
     }
+    // renderOrPatchNodeDetailCard()'s no-existing-card branch
+    // (details.replaceChildren(nextCard)) is the real entry point's first-
+    // render path - wipe the current children (same disconnect bookkeeping
+    // as the innerHTML setter above) and attach the given ones in order.
+    replaceChildren(...nodes) {
+        for (const child of this._children.slice()) {
+            child.parentNode = null;
+            child._markConnected(false);
+        }
+        this._children = [];
+        for (const node of nodes) {
+            if (node) this.appendChild(node);
+        }
+    }
     getBoundingClientRect() { return { top: 0, left: 0, width: 0, height: 0, bottom: 0, right: 0 }; }
     classListFn() { return this.classList; }
 }
@@ -324,7 +356,7 @@ let counter = 0;
 const EXTERNAL_SPLIT_SYMBOLS = [
     'capturePhotoPreview', 'closeCustomTelemetryExport', 'closeTelemetryExportMenu',
     'closeTelemetryModal', 'downloadTelemetryExport', 'exportTelemetryData',
-    'fitMeshMapToNodes', 'loadPhotoSettings', 'loadTelemetry',
+    'fetchTelemetryHistoryData', 'fitMeshMapToNodes', 'loadPhotoSettings', 'loadTelemetry',
     'openCustomTelemetryExport', 'openEmbeddedNodeMap', 'openNodeMap',
     'openTelemetryModal', 'refreshPhoto', 'refreshVideoFeed', 'renderMeshMap',
     'restoreCameraImageDefaults', 'runCustomTelemetryExport', 'savePhoto',
@@ -395,6 +427,20 @@ function parseHtmlFragment(html) {
             if (name === 'class') {
                 el.className = val;
                 val.split(/\s+/).filter(Boolean).forEach(c => el.classList.add(c));
+            }
+            // A real browser parses a `style="..."` attribute straight into
+            // the element's live CSSStyleDeclaration - chat.js's own markup
+            // relies on exactly this (nodeActionsMenuHtml()'s
+            // style="display:none;" must be readable as menu.style.display,
+            // the same property toggleNodeActionsMenu() reads/writes).
+            if (name === 'style') {
+                val.split(';').forEach((decl) => {
+                    const i = decl.indexOf(':');
+                    if (i === -1) return;
+                    const prop = decl.slice(0, i).trim().replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+                    const value = decl.slice(i + 1).trim();
+                    if (prop) el.style[prop] = value;
+                });
             }
         }
         stack[stack.length - 1].appendChild(el);
@@ -483,6 +529,12 @@ function buildSandbox({ fetchImpl, loadStore = true }) {
         sessionStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
         navigator: { clipboard: { writeText: async () => {} } },
         crypto: { randomUUID: () => `test-${++counter}` },
+        // switchNodeDetailTab()/toggleNodeDetailCollapse() use CSS.escape() to
+        // build an attribute selector from a node id (`!aaaaaaaa` etc.) - a
+        // minimal escape (not the full spec algorithm) is enough here since
+        // FakeDocument.querySelector() never actually parses the resulting
+        // selector string, it only needs to exist as a callable global.
+        CSS: { escape: (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => '\\' + c) },
         FormData: class {
             constructor() { this._parts = []; }
             append(key, value) { this._parts.push([key, value]); }
@@ -506,8 +558,12 @@ function buildSandbox({ fetchImpl, loadStore = true }) {
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
     // Seed the split-file globals before chat.js loads so its top-level export
-    // block can resolve them (see EXTERNAL_SPLIT_SYMBOLS above).
-    for (const name of EXTERNAL_SPLIT_SYMBOLS) sandbox[name] = () => {};
+    // block can resolve them (see EXTERNAL_SPLIT_SYMBOLS above). Returns a
+    // resolved Promise rather than undefined - a safe superset of a plain
+    // no-op (any caller that ignores the return value is unaffected) that
+    // also tolerates a caller chaining .then()/.catch() on it, e.g.
+    // renderNodeDetails()'s deferred fetchTelemetryHistoryData(nodeId).catch(...).
+    for (const name of EXTERNAL_SPLIT_SYMBOLS) sandbox[name] = () => Promise.resolve();
     // Load order mirrors templates/index.html: targets.js -> files.js -> chat.js.
     // `loadStore:false` loads chat.js alone (no shared store) to exercise the
     // store-absent fallback path (final correction, Finding 1).
@@ -1375,6 +1431,25 @@ function armDetailSlot(doc) {
     return slot;
 }
 
+// Like armDetailSlot(), but for tests that render through the REAL
+// renderNodeDetails(node) entry point instead of manually constructing a
+// stand-in card. armDetailSlot()'s override always returns the SAME
+// pre-built fakeDetailCard, which is wrong here: renderNodeDetails() itself
+// calls `details.querySelector(':scope > .node-detail-card')` BEFORE any
+// card exists (to decide "no existing card -> build fresh" vs. "existing
+// card with an unchanged signature -> skip") - a static override would
+// make the very first render see a phantom "existing" card. This override
+// reads slot._children[0] live, at call time, so it correctly reports
+// "nothing yet" before the first render and "the real, just-rendered card"
+// after it - the same class-level querySelector() stub (always null) still
+// applies to every other element, this is a per-instance override on this
+// one slot only, exactly like armDetailSlot()'s.
+function armDetailSlotForRealRender(doc) {
+    const slot = doc.getElementById('nodeDetails');
+    slot.querySelector = (sel) => (sel === ':scope > .node-detail-card' ? (slot._children[0] || null) : null);
+    return slot;
+}
+
 // A node shaped to pass computeDisplayNodes()'s default (non-ignored) filter and
 // carry the fields renderNodeCard() reads. Reused to seed the node cache for the
 // rebuild tests without pulling in the store's contact/key state.
@@ -1660,53 +1735,73 @@ async function test_load_messages_rebuild_preserves_slot_and_detail_card() {
 
 // ---- PR 6 correction: Actions menu ownership ---------------------------------
 
+// Rewritten against the real renderNodeDetails(node) entry point:
+// renderNodeActionsMenu(), which these three tests used to call directly,
+// no longer exists - chat.js's "Point 6 (tab-bar flicker) root-cause fix"
+// (see its own comment above nodeActionsMenuHtml(), chat.js:~7254)
+// deliberately replaced it with nodeActionsMenuHtml(), a plain string
+// generator now baked into renderNodeDetails()'s own template
+// (chat.js:7198) rather than a standalone create-or-reuse-and-append
+// function. The guarantees these tests protect - one menu, owned inside
+// the stable slot, surviving a rebuild, opening on toggle - are unchanged
+// and still real regressions to catch; only the entry point changed.
 async function test_node_actions_menu_owned_inside_slot_and_opens() {
     // The ⋮ Actions menu is created INSIDE the stable slot (never a document-
-    // level orphan) and opens on toggle; re-rendering never duplicates it.
+    // level orphan) and opens on toggle; re-rendering the same node never
+    // duplicates it.
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
     const doc = sandbox._document;
-    const slot = armDetailSlot(doc);
+    const store = sandbox.window.MeshCenterTargets;
 
-    const menu = sandbox.renderNodeActionsMenu('!aaaaaaaa', 'Alice');
+    seedNodeCache(sandbox, [makeDisplayNode('!aaaaaaaa', 'Alice')]);
+    setupRebuildFixture(sandbox, ['!aaaaaaaa']);
+    const slot = armDetailSlotForRealRender(doc);
 
-    assert.equal(menu.parentNode, slot, 'the menu is appended inside the stable slot');
-    assert.ok(slot._children.includes(menu), 'the menu is a descendant of the slot');
-    assert.equal(doc.getElementById('nodeActionsMenu'), menu, 'the menu is reachable by id');
+    store.select('node', '!aaaaaaaa');
+    const node = makeDisplayNode('!aaaaaaaa', 'Alice');
+    sandbox.renderNodeDetails(node);
 
-    const menu2 = sandbox.renderNodeActionsMenu('!aaaaaaaa', 'Alice');
-    assert.equal(menu2.parentNode, slot, 're-rendering still owns the menu inside the slot');
-    assert.equal(countById(slot, 'nodeActionsMenu'), 1, 'exactly one #nodeActionsMenu exists in the slot');
+    const menu = doc.getElementById('nodeActionsMenu');
+    assert.ok(menu, 'the actions menu exists after rendering node details');
+    assert.equal(countById(slot, 'nodeActionsMenu'), 1,
+        'exactly one #nodeActionsMenu exists as a descendant of the stable slot');
+    assert.equal(menu.style.display, 'none', 'the menu starts hidden');
 
-    assert.equal(menu2.style.display, 'none', 'the menu starts hidden');
+    // Re-render the SAME node object: generateNodeDetailSignature() is
+    // unchanged, so renderNodeDetails() hits its own signature-cache
+    // short-circuit and never rebuilds the card - still exactly one menu.
+    sandbox.renderNodeDetails(node);
+    assert.equal(countById(slot, 'nodeActionsMenu'), 1, 're-rendering the same node never duplicates the menu');
+
     sandbox.toggleNodeActionsMenu({ stopPropagation() {} });
-    assert.equal(menu2.style.display, 'block', 'the ⋮ menu opens on toggle');
+    assert.equal(menu.style.display, 'block', 'the ⋮ menu opens on toggle');
     console.log('PASS: test_node_actions_menu_owned_inside_slot_and_opens');
 }
 
 async function test_node_actions_menu_survives_and_opens_after_rebuild() {
     // Because the menu is owned inside the stable slot, a node-list rebuild (which
-    // preserves the slot) must not destroy the menu — it must still exist and open.
+    // preserves the slot) must not destroy the menu — it must still exist, still
+    // live inside the repositioned slot, and still open.
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
     const doc = sandbox._document;
     const store = sandbox.window.MeshCenterTargets;
 
     seedNodeCache(sandbox, [makeDisplayNode('!bbbbbbbb', 'Bob')]);
-    const { nodesList, cards } = setupRebuildFixture(sandbox, ['!bbbbbbbb']);
+    const { cards } = setupRebuildFixture(sandbox, ['!bbbbbbbb']);
     const cardB = cards[0];
+    const slot = armDetailSlotForRealRender(doc);
 
-    const slot = armDetailSlot(doc);
-    nodesList.appendChild(slot);
     store.select('node', '!bbbbbbbb');
-    sandbox.positionNodeDetailSlot();
-    sandbox.renderNodeActionsMenu('!bbbbbbbb', 'Bob');
+    sandbox.renderNodeDetails(makeDisplayNode('!bbbbbbbb', 'Bob'));
+    assert.equal(slot.parentNode, cardB, 'sanity: the slot starts inside the selected card');
 
     sandbox.renderSidebarNodeCards();
 
     const menu = doc.getElementById('nodeActionsMenu');
     assert.ok(menu, 'the actions menu still exists after the rebuild');
-    assert.equal(menu.parentNode, slot, 'the menu is still owned inside the stable slot');
-    assert.ok(slot._children.includes(menu), 'the menu is still a descendant of the slot');
-    assert.equal(slot.parentNode, cardB, 'the slot (with menu) is repositioned inside the card');
+    assert.equal(sandbox.getNodeDetailSlot(), slot, 'the exact same slot object survives the rebuild');
+    assert.equal(countById(slot, 'nodeActionsMenu'), 1, 'still exactly one #nodeActionsMenu, inside the slot');
+    assert.equal(slot.parentNode, cardB, 'the slot (with the menu inside it) is repositioned inside the same card');
 
     sandbox.toggleNodeActionsMenu({ stopPropagation() {} });
     assert.equal(menu.style.display, 'block', 'the ⋮ menu opens after a rebuild');
@@ -1714,30 +1809,32 @@ async function test_node_actions_menu_survives_and_opens_after_rebuild() {
 }
 
 async function test_no_duplicate_node_details_or_actions_menu() {
-    // After positioning and menu creation, the whole document tree must contain
-    // exactly one #nodeDetails and one #nodeActionsMenu — no phantom duplicates
-    // from re-discovery or re-render.
+    // After rendering (and re-rendering) through the real entry point, the whole
+    // document tree must contain exactly one #nodeDetails and one
+    // #nodeActionsMenu — no phantom duplicates from re-discovery or re-render.
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
     const doc = sandbox._document;
     const store = sandbox.window.MeshCenterTargets;
 
-    const cardB = makeInlineNodeCard('!bbbbbbbb');
-    const nodesList = doc.getElementById('nodesList');
-    nodesList.appendChild(cardB);
-    nodesList.querySelectorAll = (sel) => (sel === '.node-card' ? [cardB] : []);
+    seedNodeCache(sandbox, [makeDisplayNode('!bbbbbbbb', 'Bob')]);
+    const { cards } = setupRebuildFixture(sandbox, ['!bbbbbbbb']);
+    const cardB = cards[0];
+    const slot = armDetailSlotForRealRender(doc);
 
-    const slot = armDetailSlot(doc);
     store.select('node', '!bbbbbbbb');
-    sandbox.positionNodeDetailSlot();
-    sandbox.renderNodeActionsMenu('!bbbbbbbb', 'Bob');
+    const node = makeDisplayNode('!bbbbbbbb', 'Bob');
+    sandbox.renderNodeDetails(node);
 
-    assert.equal(countById(doc.body, 'nodeDetails'), 0, 'the slot is not under <body> in this fixture (it lives in the card)');
-    assert.equal(countById(slot, 'nodeActionsMenu'), 1, 'exactly one #nodeActionsMenu inside the slot');
+    assert.equal(countById(doc.body, 'nodeDetails'), 0, 'the slot is not under <body> (it lives inside the card)');
     assert.equal(countById(cardB, 'nodeDetails'), 1, 'exactly one #nodeDetails inside the selected card');
+    assert.equal(countById(slot, 'nodeActionsMenu'), 1, 'exactly one #nodeActionsMenu inside the slot');
 
-    // Re-render the menu twice more: still one, not three.
-    sandbox.renderNodeActionsMenu('!bbbbbbbb', 'Bob');
-    sandbox.renderNodeActionsMenu('!bbbbbbbb', 'Bob');
+    // Re-render twice more (same node, same signature - and once more via a
+    // full list rebuild): still one of each, never accumulating.
+    sandbox.renderNodeDetails(node);
+    sandbox.renderNodeDetails(node);
+    sandbox.renderSidebarNodeCards();
+    assert.equal(countById(cardB, 'nodeDetails'), 1, 're-rendering never accumulates #nodeDetails nodes');
     assert.equal(countById(slot, 'nodeActionsMenu'), 1, 're-rendering never accumulates #nodeActionsMenu nodes');
     console.log('PASS: test_no_duplicate_node_details_or_actions_menu');
 }

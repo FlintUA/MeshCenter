@@ -4275,6 +4275,16 @@ async function loadChatList() {
     try {
         const controller = new AbortController();
         const forceChannelRefresh = initialChannelRefreshPending;
+        if (forceChannelRefresh) {
+            // Ровно одна попытка форсированного обновления за всё время жизни
+            // страницы, независимо от исхода - если сбрасывать только на успехе,
+            // любой таймаут/AbortError/ошибка сети оставляет флаг true навсегда,
+            // и каждый следующий 10-секундный тик снова шлёт тяжёлый
+            // refresh_channels=1, накладывая новые radio_session()-вызовы поверх
+            // ещё не завершившихся - см. диагностику "Listener stop requested"
+            // спама на Flint Base, 17.09.2026.
+            initialChannelRefreshPending = false;
+        }
         const chatsUrl = forceChannelRefresh
             ? '/api/chats?refresh_channels=1'
             : '/api/chats';
@@ -4291,9 +4301,6 @@ async function loadChatList() {
             signal: controller.signal,
             headers: { 'Cache-Control': 'no-cache' }
         });
-        if (forceChannelRefresh && response.ok) {
-            initialChannelRefreshPending = false;
-        }
         clearTimeout(timeoutId);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 

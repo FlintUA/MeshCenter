@@ -124,6 +124,19 @@ body {
     box-shadow: var(--mc-shadow-panel);
 }
 
+/* Step 3 regression fix: .node-detail-card opts back out of the shared
+   "panel" look above. It is the body of the expanded .node-card (which
+   already supplies the panel-like background/border), not its own nested
+   panel - the shared rule's background/shadow would put the boxed-card
+   look right back. This file loads last, so it must be undone here, not
+   just at the style-part2.css base rule (same specificity, source order
+   would otherwise let this shared rule win). See style-part2.css's
+   .node-detail-card rule for the full rationale. */
+.node-detail-card {
+    background: transparent;
+    box-shadow: none;
+}
+
 .system-card,
 .node-detail-pane .node-detail-section,
 .node-detail-overview-card,
@@ -256,17 +269,44 @@ body {
     background: var(--mc-bg-panel);
     border-color: var(--mc-border);
     box-shadow: none;
+    /* Point 5 flicker fix: style-part1.css's .node-card carries
+       "transition: all 0.2s", which was animating outline-color on every
+       hover start/end. At rest, outline-style is "none" so outline-color
+       resolves to currentColor (the card's own text color - near-white in
+       dark themes), and the transition interpolated from THAT to
+       --mc-accent below, i.e. a real white-to-blue sweep, not a rendering
+       artifact. Declaring the same width/offset here with a transparent
+       color means the hover rule only ever crossfades color, never width
+       or currentColor. */
+    outline: 2px solid transparent;
+    outline-offset: -2px;
 }
 
-.node-card:hover {
-    background: var(--mc-bg-panel);
-    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #b9c8d8, one of
-       ~9 near-duplicate copy-pasted hover-border grays across the 5
-       theming files, none tracking theme/family. Shadows style-part1.css
-       :1129's own .node-card:hover border-color (equal specificity, this
-       file loads later) - that one is genuinely dead, left untouched. */
-    border-color: var(--mc-border-hover);
-    box-shadow: var(--mc-shadow-hover);
+/* Node list task (point 1, revised for point 5): brightness + inset outline
+   instead of position-shift + background/border/shadow swap. filter:
+   brightness() lightens whatever background is already painted (plain gray,
+   favorite yellow, selected red/blue, ignored) instead of replacing it with
+   a fixed color - which is what was silently reverting favorite cards to
+   plain gray on hover before (see the removed .node-card:hover /
+   .node-card.favorite:hover declarations in style-part1.css and the
+   dark-theme !important override below). outline (not border/box-shadow)
+   draws inward via a negative outline-offset, so it never shifts the layout
+   of neighboring cards.
+   Point 5 follow-up: the mockup's outline is named "--accent" (a deliberate
+   brand/accent color), not a generic hover-gray. --mc-border-hover was the
+   wrong token for that role - it's a plain gray/blue reused at ~20 other
+   sites across the app (buttons, transfer items, channel cards) for
+   ordinary hover borders, so changing ITS value would have recolored all of
+   those too. --mc-accent already exists and is already used for exactly
+   this "this is the accent-highlighted thing" role elsewhere (--mc-tab-line
+   -active, and --mc-border-active in several theme families) - reused
+   as-is, no new token introduced, and left --mc-border-hover's own value
+   and every other consumer untouched. */
+.node-card:hover,
+.node-card:active {
+    filter: brightness(1.12);
+    outline: 2px solid var(--mc-accent);
+    outline-offset: -2px;
 }
 
 .node-card.selected {
@@ -737,18 +777,29 @@ a:focus-visible,
     border-color: var(--mc-border-soft);
 }
 
-/* Shared scrollbar geometry and blue-grey UI Kit palette. */
-.media-content,
-.system-layout,
-.settings-grid,
-.nodes-scroll,
-.chat-list-panel,
-.messages-panel,
-.chat-list-container,
-.messages-container {
-    scrollbar-width: thin;
-    scrollbar-color: var(--mc-scrollbar-thumb) var(--mc-scrollbar-track);
-}
+/* Shared scrollbar geometry and blue-grey UI Kit palette.
+   Node list task (point 4, reopened): .chat-list (shared base class of both
+   #dmChatList and the Channels list) and .base-sidebar added - live
+   measurement on 104 showed neither had ANY custom scrollbar rule matching
+   before, so both rendered the browser's native scrollbar instead of this
+   shared style. See --mc-scrollbar-size's own comment for the measurement
+   details.
+   `scrollbar-width`/`scrollbar-color` (the Firefox-originated standard
+   property pair) DELIBERATELY removed from this rule - live-confirmed on
+   104's actual Chrome build that once an element explicitly declares
+   `scrollbar-width` (even to its own initial value, `auto`), that same
+   Chrome build stops honoring `::-webkit-scrollbar{width:...}` on it
+   entirely and falls back to the native scrollbar width, which is exactly
+   the "still different/still native" bug this reopened point 4 is about.
+   Confirmed via a throwaway test element: identical ::-webkit-scrollbar
+   rule rendered at the declared width with no `scrollbar-width` touched at
+   all, and fell back to native the moment `scrollbar-width` was set
+   (to `thin` OR explicitly to `auto`) - so this is an explicit-declaration
+   trigger, not a `thin`-specific quirk. Trade-off: Firefox (which has no
+   `::-webkit-scrollbar` support at all) now gets its own native scrollbar
+   instead of this palette, since there's no color to give it without the
+   property this rule used to set - acceptable given the project's primary
+   target is Chromium-based. */
 
 .media-content::-webkit-scrollbar,
 .system-layout::-webkit-scrollbar,
@@ -757,7 +808,9 @@ a:focus-visible,
 .chat-list-panel::-webkit-scrollbar,
 .messages-panel::-webkit-scrollbar,
 .chat-list-container::-webkit-scrollbar,
-.messages-container::-webkit-scrollbar {
+.messages-container::-webkit-scrollbar,
+.chat-list::-webkit-scrollbar,
+.base-sidebar::-webkit-scrollbar {
     width: var(--mc-scrollbar-size);
     height: var(--mc-scrollbar-size);
 }
@@ -769,7 +822,9 @@ a:focus-visible,
 .chat-list-panel::-webkit-scrollbar-track,
 .messages-panel::-webkit-scrollbar-track,
 .chat-list-container::-webkit-scrollbar-track,
-.messages-container::-webkit-scrollbar-track {
+.messages-container::-webkit-scrollbar-track,
+.chat-list::-webkit-scrollbar-track,
+.base-sidebar::-webkit-scrollbar-track {
     background: var(--mc-scrollbar-track);
     border-radius: 999px;
 }
@@ -781,7 +836,9 @@ a:focus-visible,
 .chat-list-panel::-webkit-scrollbar-thumb,
 .messages-panel::-webkit-scrollbar-thumb,
 .chat-list-container::-webkit-scrollbar-thumb,
-.messages-container::-webkit-scrollbar-thumb {
+.messages-container::-webkit-scrollbar-thumb,
+.chat-list::-webkit-scrollbar-thumb,
+.base-sidebar::-webkit-scrollbar-thumb {
     min-height: 34px;
     background: var(--mc-scrollbar-thumb);
     border: 2px solid var(--mc-scrollbar-track);
@@ -796,7 +853,9 @@ a:focus-visible,
 .chat-list-panel::-webkit-scrollbar-thumb:hover,
 .messages-panel::-webkit-scrollbar-thumb:hover,
 .chat-list-container::-webkit-scrollbar-thumb:hover,
-.messages-container::-webkit-scrollbar-thumb:hover {
+.messages-container::-webkit-scrollbar-thumb:hover,
+.chat-list::-webkit-scrollbar-thumb:hover,
+.base-sidebar::-webkit-scrollbar-thumb:hover {
     background: var(--mc-scrollbar-thumb-hover);
     border-color: var(--mc-scrollbar-track);
 }
@@ -2039,9 +2098,13 @@ html[data-theme="dark"] .about-resource-card:hover {
     background: #233346 !important;
 }
 
-html[data-theme="dark"] .node-card:hover {
-    background: var(--mc-surface-2) !important;
-}
+/* Node list task (point 1): this dark-theme !important override is gone -
+   it was the actual, confirmed root cause of favorite/selected/ignored node
+   cards losing their tinted background on hover in dark mode specifically
+   (it beat .node-card.favorite's own !important background rule above by
+   source order at equal specificity). The new .node-card:hover rule in this
+   file's "Nodes panel" section never touches background at all, so there is
+   nothing left for a dark-theme override to fix. */
 
 html[data-theme="dark"] .chat-item:hover {
     background: var(--mc-chat-surface-raised) !important;
@@ -2447,11 +2510,13 @@ html[data-theme="dark"] .nodes-tools-total {
 html[data-theme="dark"] {
 }
 
-/* Position action buttons: keep labels readable and use the standard dark control surface. */
+/* Position action buttons: keep labels readable and use the standard dark control surface.
+   Step 3 redesign: .node-detail-quick-actions/.quick-action are gone (that
+   row moved to the card-level .node-detail-toolbar-btn, styled via
+   var(--mc-*) tokens directly, no dark-theme override needed). */
 html[data-theme="dark"] .position-actions button,
 html[data-theme="dark"] .position-no-data button,
-html[data-theme="dark"] .node-position-map-btn,
-html[data-theme="dark"] .node-detail-quick-actions .quick-action {
+html[data-theme="dark"] .node-position-map-btn {
     background: var(--mc-dark-control-bg) !important;
     color: var(--mc-dark-control-text) !important;
     border-color: var(--mc-dark-control-border) !important;
@@ -2466,17 +2531,10 @@ html[data-theme="dark"] .node-detail-quick-actions .quick-action {
    light/dark asymmetry, unrelated to this token). */
 html[data-theme="dark"] .position-actions button:hover,
 html[data-theme="dark"] .position-no-data button:hover,
-html[data-theme="dark"] .node-position-map-btn:hover,
-html[data-theme="dark"] .node-detail-quick-actions .quick-action:hover:not(:disabled) {
+html[data-theme="dark"] .node-position-map-btn:hover {
     background: var(--mc-dark-control-bg-hover) !important;
     color: #ffffff !important;
     border-color: var(--mc-border-hover) !important;
-}
-
-html[data-theme="dark"] .node-detail-quick-actions .quick-action:disabled {
-    background: #1a2736 !important;
-    color: #718399 !important;
-    border-color: #2d3d50 !important;
 }
 
 /* Position values and separators should remain legible on the node card. */
@@ -2667,17 +2725,6 @@ html[data-theme="dark"] .node-card .node-card-title {
     color: var(--mc-text-primary) !important;
     font-weight: 700 !important;
     text-shadow: none !important;
-}
-
-/* ==========================================================
-   DARK THEME — Selected node header and Radio values
-   Exact selectors used by renderNodeDetails()/renderRadioPane().
-   ========================================================== */
-html[data-theme="dark"] #nodeDetails .node-detail-card .node-detail-name {
-    color: #f4f8ff !important;
-    -webkit-text-fill-color: #f4f8ff !important;
-    opacity: 1 !important;
-    font-weight: 700 !important;
 }
 
 html[data-theme="dark"] #nodeDetails .node-detail-radio .radio-param .value {
@@ -3851,7 +3898,21 @@ body[data-theme="dark"] .workspace-popover::after {
     --mc-workspace-header-padding-x: 16px;
     --mc-workspace-header-padding-y: 14px;
     --mc-camera-control-label-offset: 18px;
-    --mc-scrollbar-size: 8px;
+    /* Node list task (point 4, reopened): re-measured every real scroll
+       container on live 104 (offsetWidth-clientWidth, not CSS-source
+       reading) - .nodes-scroll was correctly 8px+2px thumb-border=10px via
+       this token, but the "reference" the owner pointed at (#dmChatList,
+       .chat-list.dm-list) turned out to have NO custom scrollbar rule
+       matching it at all (its actual class never appeared in the
+       consolidated ::-webkit-scrollbar selector list below) - it was
+       rendering the browser's native 15px scrollbar the whole time, which
+       is why it looked wider even though this token said 8px everywhere it
+       DID apply. 15px native was the true widest value; 14px here (+2px
+       thumb border = 16px rendered) matches it. .chat-list now added to
+       the selector list below so both Channels and Direct Messages (it's
+       their shared base class) get the SAME styled scrollbar instead of a
+       native one that happened to be a similar width by coincidence. */
+    --mc-scrollbar-size: 14px;
 }
 
 html[data-theme="dark"] {

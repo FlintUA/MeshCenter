@@ -205,7 +205,9 @@
       "confirmation_required": "Bestätigung erforderlich",
       "key_changed": "Schlüssel geändert",
       "key_unknown": "Schlüssel unbekannt",
-      "files_available": "Dateien verfügbar"
+      "files_available": "Dateien verfügbar",
+      "last_sent": "Zuletzt gesendet:",
+      "last_received": "Zuletzt empfangen:"
     },
     "error": {
       "mca_not_ready": "MCAttach-Dienst ist nicht bereit",
@@ -1207,6 +1209,11 @@
     "message_button": "Nachricht",
     "external_map": "Externe Karte",
     "more": "Mehr",
+    "favorite": "Favorit",
+    "ignore": "Ignorieren",
+    "map": "Karte",
+    "collapse_details": "Einklappen",
+    "expand_details": "Ausklappen",
     "signal_history_unavailable": "Signalverlauf ist noch nicht verfügbar",
     "signal_quality": "Signalqualität",
     "last_relay": "Letztes Relais",

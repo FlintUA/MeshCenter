@@ -236,6 +236,7 @@
         detailInFlight: false,    // at most one detail fetch at a time (R4)
         detailPending: null,      // coalesced follow-up id, or null (R4)
         detailFingerprint: null,  // signature of the last-rendered detail (R4)
+        detailOpen: { advanced: false, tech: false }, // <details> open state, survives a poll-driven re-render (Step 2 regression fix)
 
         contacts: [],             // node targets projected from the shared store (PR 4)
         providers: [],
@@ -866,11 +867,13 @@
                         '<span class="files-transfer-name">' + esc(a.file_name || t('files.encrypted_file', 'Encrypted file')) + '</span>' +
                         '<span class="files-transfer-sub">' + contactLabel + '</span>' +
                     '</span>' +
-                    '<span class="files-transfer-provider">' + providerLabel + '</span>' +
-                    '<span class="files-transfer-state files-state-' + esc(a.state) + '" title="' + esc(filesStateLabel(a.state)) + '">' + esc(simpleStatusLabel(a)) + '</span>' +
-                    '<span class="files-transfer-size">' + esc(fmtBytes(a.plain_size)) + '</span>' +
-                    '<span class="files-transfer-date">' + esc(fmtDate(a.created_at)) + '</span>' +
-                    expiry +
+                    '<span class="files-transfer-meta">' +
+                        '<span class="files-transfer-provider">' + providerLabel + '</span>' +
+                        '<span class="files-transfer-state files-state-' + esc(a.state) + '" title="' + esc(filesStateLabel(a.state)) + '">' + esc(simpleStatusLabel(a)) + '</span>' +
+                        '<span class="files-transfer-size">' + esc(fmtBytes(a.plain_size)) + '</span>' +
+                        '<span class="files-transfer-date">' + esc(fmtDate(a.created_at)) + '</span>' +
+                        expiry +
+                    '</span>' +
                 '</button>'
             );
         }).join('');
@@ -909,6 +912,7 @@
     function selectAttachment(id) {
         state.selectedId = id;
         state.detailSeq++;
+        state.detailOpen = { advanced: false, tech: false };
         renderTransfers();
         renderDetail(id, false);
     }
@@ -916,6 +920,28 @@
     function clearDetailPanel() {
         var body = getEl('filesDetailBody');
         if (body) body.innerHTML = '';
+    }
+
+    // Step 2 regression fix: a poll-driven re-render replaces the whole detail
+    // panel's innerHTML (fresh <details>, closed by default), so without this
+    // an expanded "Advanced"/"Technical" section would snap shut on the next
+    // poll tick. state.detailOpen is kept in sync by onDetailToggle() below
+    // and reapplied here after every (re-)render.
+    function applyDetailOpenState(body) {
+        var advancedEl = body.querySelector('.files-detail-advanced');
+        var techEl = body.querySelector('.files-detail-tech');
+        if (advancedEl && state.detailOpen.advanced) advancedEl.open = true;
+        if (techEl && state.detailOpen.tech) techEl.open = true;
+    }
+
+    function onDetailToggle(e) {
+        var target = e.target;
+        if (!target || !target.classList) return;
+        if (target.classList.contains('files-detail-advanced')) {
+            state.detailOpen.advanced = target.open;
+        } else if (target.classList.contains('files-detail-tech')) {
+            state.detailOpen.tech = target.open;
+        }
     }
 
     // P3: invalidate any in-flight or already-rendered detail (and the
@@ -928,6 +954,7 @@
         state.detailSeq++;
         state.detailPending = null;
         state.detailFingerprint = null;
+        state.detailOpen = { advanced: false, tech: false };
         clearDetailPanel();
     }
 
@@ -981,6 +1008,7 @@
             }
             body.innerHTML = detailMarkup(r.data.attachment, Array.isArray(r.data.timeline) ? r.data.timeline : []);
             state.detailFingerprint = detailFingerprint(r.data.attachment);
+            applyDetailOpenState(body);
             settle();
         }).catch(function () {
             if (token !== state.detailSeq || epoch !== state.epoch) { settle(); return; }
@@ -3368,6 +3396,9 @@
             document.addEventListener('input', onDocumentInput);
             document.addEventListener('change', onDocumentChange);
             document.addEventListener('visibilitychange', onVisibilityChange);
+            // 'toggle' does not bubble, so only the capture phase reaches a
+            // delegated listener for the dynamically-rendered <details> below.
+            document.addEventListener('toggle', onDetailToggle, true);
         }
         // Direct input listener for the search box (delegation covers dynamic content,
         // but the search box is static markup so bind it directly too for clarity).

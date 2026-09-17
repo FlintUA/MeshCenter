@@ -205,7 +205,9 @@
       "confirmation_required": "Требуется подтверждение",
       "key_changed": "Ключ изменён",
       "key_unknown": "Ключ неизвестен",
-      "files_available": "Файлы доступны"
+      "files_available": "Файлы доступны",
+      "last_sent": "Отправлен:",
+      "last_received": "Получен:"
     },
     "error": {
       "mca_not_ready": "Служба MCAttach не готова",
@@ -1207,6 +1209,11 @@
     "message_button": "Сообщение",
     "external_map": "Внешняя карта",
     "more": "Ещё",
+    "favorite": "Избранное",
+    "ignore": "Игнорировать",
+    "map": "Карта",
+    "collapse_details": "Свернуть",
+    "expand_details": "Развернуть",
     "signal_history_unavailable": "История сигнала пока недоступна",
     "signal_quality": "Качество сигнала",
     "last_relay": "Последний ретранслятор",

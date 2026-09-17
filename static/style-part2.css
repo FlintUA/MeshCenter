@@ -3115,6 +3115,85 @@ body.context-chat-mode .settings-view {
     color: var(--mc-danger, #d96a73);
 }
 
+/* Node card follow-up (point 2): "Files available" replacement for the
+   selected node - two full-width tappable rows instead of one static line,
+   each naming the actual last-sent/last-received file. */
+.node-card-key-files {
+    display: flex;
+    flex-direction: column;
+    margin-top: 8px;
+    padding-top: 7px;
+    border-top: 1px solid rgba(120, 135, 150, .16);
+}
+
+.node-card-key-file-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    width: 100%;
+    /* Generous vertical padding - a real touch target, not just the text. */
+    padding: 7px 4px;
+    margin: 0;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    color: var(--mc-muted, #5c7290);
+}
+
+.node-card-key-file-row:hover {
+    background: var(--mc-bg-muted, #f2f6fb);
+    color: var(--mc-text, #1f2f45);
+}
+
+.node-card-key-file-icon {
+    flex: 0 0 auto;
+    width: 11px;
+    height: 11px;
+    margin-top: 2px;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    background: currentColor;
+}
+
+.node-card-key-file-icon-sent {
+    color: var(--mc-accent, #1769d2);
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5'/%3E%3Cpolyline points='6 11 12 5 18 11'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5'/%3E%3Cpolyline points='6 11 12 5 18 11'/%3E%3C/svg%3E");
+}
+
+.node-card-key-file-icon-received {
+    color: var(--mc-success, #2f9e5c);
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5v14'/%3E%3Cpolyline points='6 13 12 19 18 13'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5v14'/%3E%3Cpolyline points='6 13 12 19 18 13'/%3E%3C/svg%3E");
+}
+
+.node-card-key-file-label {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.node-card-key-file-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    font-size: 11px;
+    text-decoration: underline;
+    text-decoration-color: rgba(120, 135, 150, .35);
+    text-underline-offset: 2px;
+}
+
+.node-card-key-file-row:hover .node-card-key-file-name {
+    text-decoration-color: currentColor;
+}
+
 .node-card-topline {
     display: flex;
     align-items: center;
@@ -3326,7 +3405,10 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
    #617386 -> --mc-text-secondary (d=13.1, already passes AA 4.88:1). */
 .node-card .node-last-text {
     display: flex;
-    align-items: center;
+    /* Node card follow-up (point 1): flex-start (not center) so the icon
+       sits at the top of the first line once the text wraps to more than
+       one line, instead of drifting to the vertical middle of the block. */
+    align-items: flex-start;
     gap: 5px;
     margin-top: 7px;
     padding-left: 25px;
@@ -3338,6 +3420,13 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
 .node-last-text-icon {
     flex: 0 0 auto;
     font-size: 10px;
+    margin-top: 1px;
+}
+
+.node-last-text-body {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 @media (max-width: 520px) {
@@ -3502,6 +3591,43 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     color: var(--mc-text-muted);
 }
 
+/* Step 3 redesign (Option C): the selected node's breadcrumb line adds a
+   role label and turns the node-ID text into a copy-to-clipboard button -
+   both real interactive/extra content, so (per renderNodeCard()'s own
+   accessibility note) it renders as a SIBLING of .node-card-select rather
+   than nested inside it, and gets room to wrap instead of the unselected
+   row's single-line truncation - Step 1 of this engagement was specifically
+   about not letting content get clipped when there's room to wrap. */
+.node-card-identity-row-expanded {
+    white-space: normal;
+    flex-wrap: wrap;
+    padding: 4px 6px 0;
+    margin-top: 0;
+}
+
+.node-card-identity-row .node-role-name {
+    flex: 0 0 auto;
+    color: var(--mc-text-secondary);
+}
+
+.node-inline-id-badge {
+    flex: 0 0 auto;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--mc-text-secondary, #3a4a5a);
+    background: var(--mc-surface-alt, #f5f7fa);
+    border: 1px solid var(--mc-border, #d8e1ec);
+    border-radius: 6px;
+    padding: 1px 6px;
+    cursor: pointer;
+}
+
+.node-inline-id-badge:hover {
+    border-color: var(--mc-border-hover, #9fb6d0);
+    color: var(--mc-text, #1a2a4a);
+}
+
 /* Rounded square node state indicator */
 /* theme-registry Stage 2.2 scope note: .node-state-square (redefined twice
    in this file with DIFFERENT color sets - see the second "Rounded square
@@ -3635,140 +3761,90 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
    НОВАЯ ДЕТАЛЬНАЯ КАРТОЧКА НОДЫ
    ============================================================ */
 .node-detail-card {
-    background: #ffffff;
-    border-radius: 12px;
-    padding: 16px;
-    /* PR 6 correction: the detail card is now the body of the expanded node
-       card (sharing one outer border with its compact header), not a floating
-       panel below it — no drop shadow or bottom margin. */
+    /* Step 3 regression fix: PR 6's own comment below already called this the
+       BODY of the expanded node card, sharing one outer border with its
+       compact header above — but it kept the old standalone component's own
+       background/border/radius, which visually drew a second, independent
+       box nested inside .node-card instead of one shared block. The compact
+       .node-card above already supplies the background/border/radius for
+       the whole expanded row; this is now just its continuation, separated
+       by a divider line. */
+    background: transparent;
+    border-radius: 0;
+    padding: 10px 0 0;
+    margin-top: 8px;
     box-shadow: none;
-    border: 1px solid #e8eaed;
+    border: none;
+    border-top: 1px solid var(--mc-border-soft, #eef1f4);
     margin-bottom: 0;
 }
 
-.node-detail-header {
+/* Step 3 redesign (Option C): the old detail-slot header/subheader/status-row
+   (name, role, node-ID badge, last-seen, hop count) are gone - that
+   information now lives once, in the compact .node-card above (see
+   renderNodeCard()'s node-card-identity-row-expanded / node-card-status-row).
+   .node-detail-toolbar (below) replaces both the old header's close button
+   and the old status-row's Favorite/Ignore/More group, and is also the new
+   positioning containing block for the ⋮ actions menu. */
+.node-detail-toolbar {
+    position: relative;
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 6px;
+    align-items: stretch;
+    border-bottom: 1px solid var(--mc-border-soft, #eef1f4);
 }
 
-.node-detail-title-wrap {
+.node-detail-toolbar-btn {
+    flex: 1 1 0;
     display: flex;
     align-items: center;
-    gap: 8px;
-    flex: 1;
-    min-width: 0;
-}
-
-.node-detail-favorite {
-    font-size: 18px;
+    justify-content: center;
+    gap: 5px;
+    padding: 8px 4px;
+    background: none;
+    border: none;
+    border-right: 1px solid var(--mc-border-soft, #eef1f4);
+    color: var(--mc-text-secondary, #667085);
+    font-size: 11px;
+    font-weight: 600;
     cursor: pointer;
-    color: #f5c542;
-}
-
-.node-detail-activity {
-    font-size: 16px;
-}
-
-.node-detail-name {
-    font-size: 18px;
-    font-weight: 700;
-    color: #1a2a4a;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.node-detail-short-id {
-    font-size: 12px;
-    color: #7a8aa0;
-    background: #f0f2f5;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-weight: 600;
+.node-detail-toolbar-btn:last-child {
+    border-right: none;
 }
 
-.node-detail-actions-btn {
-    background: none;
-    border: none;
-    font-size: 20px;
-    cursor: pointer;
-    padding: 0 4px;
-    color: #6a7a8a;
-    transition: background 0.2s;
+.node-detail-toolbar-btn:hover {
+    background: var(--mc-surface-alt, #f5f7fa);
+    color: var(--mc-text, #1a2a4a);
 }
 
-.node-detail-actions-btn:hover {
-    background: #eef2f5;
-    border-radius: 4px;
+.node-detail-toolbar-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
-.node-detail-subheader {
+.node-detail-collapse-chevron {
+    display: inline-block;
+    transition: transform 0.16s ease;
+    transform: rotate(180deg);
+}
+
+.node-detail-collapsible.is-collapsed .node-detail-collapse-chevron {
+    transform: rotate(0deg);
+}
+
+.node-detail-collapsible.is-collapsed .node-detail-tabs,
+.node-detail-collapsible.is-collapsed .node-detail-content,
+.node-detail-collapsible.is-collapsed .node-detail-bottom-actions {
+    display: none;
+}
+
+.node-detail-bottom-actions {
     display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: #5a6a7a;
-    flex-wrap: wrap;
-    margin-bottom: 4px;
-}
-
-.node-detail-role {
-    font-weight: 600;
-}
-
-.node-detail-separator {
-    color: #c0c8d0;
-}
-
-.node-detail-hw {
-    color: #4a5a6a;
-}
-
-.node-detail-id {
-    font-family: monospace;
-    background: #f5f7fa;
-    padding: 0 6px;
-    border-radius: 4px;
-    color: #3a4a5a;
-}
-
-.node-detail-copy-id {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 12px;
-    color: #7a8aa0;
-    padding: 0 2px;
-}
-
-.node-detail-status-row {
-    /* PR 6 correction: positioning containing block for the ⋮ actions menu,
-       which is absolutely positioned (right:0; top:100%) against this row. */
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    font-size: 12px;
-    color: #6a7a8a;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
-}
-
-.node-detail-last-seen {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.node-detail-hops {
-    font-weight: 500;
-}
-
-.node-detail-ignored {
-    color: #c62828;
-    font-weight: 600;
+    align-items: stretch;
+    border-top: 1px solid var(--mc-border-soft, #eef1f4);
+    margin-top: 4px;
 }
 
 /* Вкладки */
@@ -3818,88 +3894,61 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     gap: 12px;
 }
 
-.node-detail-tiles {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    gap: 10px;
-}
-
-.tile {
-    background: #f8fafc;
-    padding: 10px;
-    border-radius: 8px;
-    text-align: center;
-    border: 1px solid #e5e8ec;
-}
-
-.tile-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    color: #8a9aa8;
-    letter-spacing: 0.4px;
-}
-
-.tile-value {
-    display: block;
-    font-size: 16px;
-    font-weight: 700;
-    color: #1a2a4a;
-    margin-top: 2px;
-}
-
-.node-detail-last-msg {
-    background: #f5f8fc;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border-left: 4px solid #1a73e8;
-}
-
-.last-msg-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    color: #6a7a8a;
-    display: block;
-}
-
-.last-msg-text {
-    font-size: 14px;
-    color: #1a2a4a;
-    font-weight: 500;
-}
-
-.last-msg-time {
-    font-size: 11px;
-    color: #8a9aa8;
-    margin-left: 8px;
-}
-
-.node-detail-quick-actions {
+/* Step 3 redesign (Option C): a dense label/value list replaces the tile
+   grid - one row per metric, hairline between rows instead of a boxed tile
+   per value, matching the rest of the card's "hairlines, not nested boxes"
+   language. */
+.node-detail-metric-list {
     display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
+    flex-direction: column;
 }
 
-.quick-action {
-    padding: 6px 14px;
-    border: 1px solid #d5d8dd;
-    border-radius: 20px;
-    background: white;
-    font-size: 12px;
+.node-detail-metric-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--mc-border-soft, #eef1f4);
+}
+
+.node-detail-metric-row:last-child {
+    border-bottom: none;
+}
+
+.node-detail-metric-label {
+    font-size: 11px;
     font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    color: var(--mc-text-muted, #8a9aa8);
+}
+
+.node-detail-metric-value {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--mc-text, #1a2a4a);
+    text-align: right;
+}
+
+/* Node card follow-up: DISTANCE/BEARING's value is a button (internal map),
+   styled to still read as a plain metric value until hovered. */
+.node-detail-metric-value-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
     cursor: pointer;
-    transition: all 0.2s;
-    color: #3a4a5a;
 }
 
-.quick-action:hover {
-    background: #eef2f5;
-    /* theme-registry Stage 9.3 - fix bug 1.4: was raw #b0b8c5, generic hover border. */
-    border-color: var(--mc-border-hover);
+.node-detail-metric-value-btn:hover:not(:disabled) {
+    color: var(--mc-primary, #1a73e8);
+    text-decoration: underline;
 }
 
-.quick-action:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+.node-detail-metric-value-btn:disabled {
+    cursor: default;
+    opacity: 0.7;
 }
 
 /* Radio */
@@ -3932,10 +3981,13 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     color: #1a2a4a;
 }
 
+/* Node card follow-up (point 5): flat surface with a hairline divider
+   instead of its own contrasting boxed background - matches the rest of
+   the Option C card (content/buttons/labels unchanged, only the box is
+   gone). */
 .radio-history {
-    background: #f8fafc;
-    padding: 10px;
-    border-radius: 8px;
+    border-top: 1px solid var(--mc-border-soft, #eef1f4);
+    padding-top: 10px;
 }
 
 .radio-history-header {
@@ -4056,10 +4108,16 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     gap: 16px;
 }
 
+/* Node card follow-up (point 5): flat surface - a hairline between adjacent
+   groups instead of each one being its own boxed panel. */
 .data-group {
-    background: #f8fafc;
-    padding: 12px;
-    border-radius: 8px;
+    padding: 0;
+}
+
+.data-group + .data-group {
+    border-top: 1px solid var(--mc-border-soft, #eef1f4);
+    padding-top: 12px;
+    margin-top: 4px;
 }
 
 .data-group-title {
@@ -4139,9 +4197,6 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 4px 20px;
-    background: #f8fafc;
-    padding: 10px;
-    border-radius: 8px;
 }
 
 .log-summary-item {
@@ -4162,9 +4217,8 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
 }
 
 .log-events {
-    background: #f8fafc;
-    padding: 10px;
-    border-radius: 8px;
+    border-top: 1px solid var(--mc-border-soft, #eef1f4);
+    padding-top: 10px;
 }
 
 .log-events-title {

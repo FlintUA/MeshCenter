@@ -205,7 +205,9 @@
       "confirmation_required": "Confirmation required",
       "key_changed": "Key changed",
       "key_unknown": "Key unknown",
-      "files_available": "Files available"
+      "files_available": "Files available",
+      "last_sent": "Last sent:",
+      "last_received": "Last received:"
     },
     "error": {
       "mca_not_ready": "MCAttach service is not ready",
@@ -1207,6 +1209,11 @@
     "message_button": "Message",
     "external_map": "External Map",
     "more": "More",
+    "favorite": "Favorite",
+    "ignore": "Ignore",
+    "map": "Map",
+    "collapse_details": "Collapse",
+    "expand_details": "Expand",
     "signal_history_unavailable": "Signal history is not available yet",
     "signal_quality": "Signal quality",
     "last_relay": "Last relay",

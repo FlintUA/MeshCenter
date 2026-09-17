@@ -205,7 +205,9 @@
       "confirmation_required": "Потрібне підтвердження",
       "key_changed": "Ключ змінено",
       "key_unknown": "Ключ невідомий",
-      "files_available": "Файли доступні"
+      "files_available": "Файли доступні",
+      "last_sent": "Надіслано:",
+      "last_received": "Отримано:"
     },
     "error": {
       "mca_not_ready": "Служба MCAttach не готова",
@@ -1207,6 +1209,11 @@
     "message_button": "Повідомлення",
     "external_map": "Зовнішня карта",
     "more": "Ще",
+    "favorite": "Обране",
+    "ignore": "Ігнорувати",
+    "map": "Карта",
+    "collapse_details": "Згорнути",
+    "expand_details": "Розгорнути",
     "signal_history_unavailable": "Історія сигналу поки недоступна",
     "signal_quality": "Якість сигналу",
     "last_relay": "Останній ретранслятор",

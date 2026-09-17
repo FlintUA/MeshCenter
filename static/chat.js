@@ -33,6 +33,9 @@ let radioCommandRunning = false;
 let nodeToolResultTimer = null;
 let nodeToolResults = {};
 let activeNodeTabs = {}; // Active tab per node.
+let collapsedNodeDetails = {}; // Step 3 redesign: whether the tabs/content body is collapsed, per node.
+let nodeFileSummaryCache = {}; // Node card follow-up: {[contactId]: {sent: name|null, received: name|null}}, selected node only.
+let nodeFileSummaryInFlight = {}; // contactId -> true while its fetch is in flight (avoid duplicate requests).
 let nodeRenderCache = {}; // Last rendered signature per node.
 let referenceLocationInitialState = '';
 let referenceLocationSaving = false;
@@ -173,6 +176,29 @@ function handleSidebarTargetClick(event) {
     }
 }
 
+// Node list task (point 3): start the Last sent/received fetch as early as
+// possible - on mousedown/touchstart, before the click that actually selects
+// the node (and re-renders it expanded) has even finished. Doesn't change
+// the "fetch only for the selected card" strategy from the node-card task
+// (still gated on trust_state==='ready', still cached/in-flight-guarded by
+// loadNodeFileSummary itself) - just moves the trigger earlier in the
+// pointer-down-to-expanded-view timeline so the data has a head start.
+function handleSidebarTargetPointerDown(event) {
+    const store = targetStore();
+    let el = event && event.target;
+    while (el && el !== document && el !== document.body) {
+        if (el.classList && el.classList.contains('node-card-select')) {
+            const id = el.getAttribute('data-target-id');
+            const t = id && store && store.getNode(id);
+            if (t && t.trust_state === 'ready' && !nodeFileSummaryCache[id] && !nodeFileSummaryInFlight[id]) {
+                loadNodeFileSummary(id);
+            }
+            return;
+        }
+        el = el.parentNode;
+    }
+}
+
 // Installs the single delegated sidebar click handler exactly once.
 function installSidebarTargetDelegation() {
     const sidebar = document.getElementById('sidebar');
@@ -180,6 +206,8 @@ function installSidebarTargetDelegation() {
     if (sidebar.dataset.targetDelegationInstalled === 'true') return;
     sidebar.dataset.targetDelegationInstalled = 'true';
     sidebar.addEventListener('click', handleSidebarTargetClick);
+    sidebar.addEventListener('mousedown', handleSidebarTargetPointerDown);
+    sidebar.addEventListener('touchstart', handleSidebarTargetPointerDown, { passive: true });
 }
 
 // Registry for the selected-node card. Future core modules or plugins can
@@ -4899,7 +4927,7 @@ function renderChannelTargets() {
 // MCA binding). The buttons carry data-files-action + data-contact so files.js's
 // delegated document click handler routes them; they are SIBLINGS of the
 // selection button, so a key action never toggles selection.
-function renderNodeCardKeyActions(nodeId) {
+function renderNodeCardKeyActions(nodeId, isSelected) {
     const store = targetStore();
     if (!store) return '';
     const t = store.getNode(nodeId);
@@ -4911,9 +4939,20 @@ function renderNodeCardKeyActions(nodeId) {
     // PR 5 final correction (section 2): the ready (trusted/sendable) state is a
     // real row — it shows "Files available" so the operator can see at a glance
     // which contacts accept files, rather than collapsing to nothing.
+    //
+    // Node card follow-up: for the SELECTED node, "Files available" becomes two
+    // clickable rows naming the actual last-sent/last-received file (reusing
+    // GET /api/attachments?counterparty=&direction= - no new endpoint). Scoped
+    // to the selected node only, same reasoning as the role/ID-badge addition
+    // in the Step 3 redesign: fetching this per node would mean one extra
+    // request pair for every "ready" contact in the sidebar on every render.
+    // Unselected rows keep the original, free (already-loaded) status text.
     if (t.trust_state === 'ready') {
-        const status = window.I18N.t('files.contact.files_available');
-        return `<div class="node-card-key-row node-card-key-ready"><span class="node-card-key-status">${escapeHtml(status)}</span></div>`;
+        if (!isSelected) {
+            const status = window.I18N.t('files.contact.files_available');
+            return `<div class="node-card-key-row node-card-key-ready"><span class="node-card-key-status">${escapeHtml(status)}</span></div>`;
+        }
+        return renderNodeCardFileSummaryRow(nodeId);
     }
 
     const actions = [];
@@ -4944,6 +4983,68 @@ function renderNodeCardKeyActions(nodeId) {
     if (!status && !actions.length) return '';
     const statusHtml = status ? `<span class="node-card-key-status">${escapeHtml(status)}</span>` : '';
     return `<div class="node-card-key-row">${statusHtml}${actions.join('')}</div>`;
+}
+
+// Node card follow-up (point 2): the "Files available" replacement for the
+// selected node. Reads nodeFileSummaryCache; if this contact hasn't been
+// fetched yet, kicks off loadNodeFileSummary() and renders without a file
+// name for this pass (the fetch's completion re-renders the sidebar, which
+// picks the cached value up next time through this same function).
+function renderNodeCardFileSummaryRow(nodeId) {
+    const cached = nodeFileSummaryCache[nodeId];
+    if (!cached && !nodeFileSummaryInFlight[nodeId]) {
+        loadNodeFileSummary(nodeId);
+    }
+
+    const sentName = cached ? cached.sent : null;
+    const receivedName = cached ? cached.received : null;
+
+    const row = (directionFilter, iconClass, label, fileName) => `
+        <button type="button" class="node-card-key-file-row node-card-key-file-${escapeHtml(directionFilter)}"
+                onclick="event.stopPropagation(); openNodeFilesFiltered('${escapeHtml(directionFilter)}')"
+                title="${escapeHtml(label)} ${escapeHtml(fileName || '')}">
+            <span class="node-card-key-file-icon ${iconClass}" aria-hidden="true"></span>
+            <span class="node-card-key-file-label">${escapeHtml(label)}</span>
+            <span class="node-card-key-file-name">${escapeHtml(fileName || '…')}</span>
+        </button>`;
+
+    return `<div class="node-card-key-files">` +
+        row('sent', 'node-card-key-file-icon-sent', window.I18N.t('files.contact.last_sent'), sentName) +
+        row('received', 'node-card-key-file-icon-received', window.I18N.t('files.contact.last_received'), receivedName) +
+        `</div>`;
+}
+
+async function loadNodeFileSummary(nodeId) {
+    if (nodeFileSummaryInFlight[nodeId]) return;
+    nodeFileSummaryInFlight[nodeId] = true;
+    try {
+        const [sentRes, receivedRes] = await Promise.all([
+            fetch(`/api/attachments?direction=sent&counterparty=${encodeURIComponent(nodeId)}&limit=1`).then(r => r.json()).catch(() => null),
+            fetch(`/api/attachments?direction=received&counterparty=${encodeURIComponent(nodeId)}&limit=1`).then(r => r.json()).catch(() => null),
+        ]);
+        const sent = sentRes && sentRes.ok && sentRes.attachments && sentRes.attachments[0];
+        const received = receivedRes && receivedRes.ok && receivedRes.attachments && receivedRes.attachments[0];
+        nodeFileSummaryCache[nodeId] = {
+            sent: sent ? (sent.file_name || null) : null,
+            received: received ? (received.file_name || null) : null,
+        };
+    } finally {
+        delete nodeFileSummaryInFlight[nodeId];
+        // Re-render so the now-cached row replaces the placeholder. Only
+        // useful if this node is still selected/rendered; renderSidebarNodeCards()
+        // is the same safe, idempotent entry point loadMessages() itself uses.
+        renderSidebarNodeCards();
+    }
+}
+
+// Node card follow-up (point 2): both Last sent/Last received rows route
+// through the exact mechanism files.js's own sidebar-selection flow already
+// uses (state.counterparty tracks the shared store's selection automatically
+// via files.js's onStoreSelection) - setting the direction filter and
+// switching to the Files workspace is the only extra step needed.
+function openNodeFilesFiltered(direction) {
+    if (typeof window.setFilesFilter === 'function') window.setFilesFilter(direction);
+    if (typeof window.switchMainTab === 'function') window.switchMainTab('files');
 }
 
 // PR 5 final correction (section 2): a node's MCA action buttons disable while
@@ -4977,8 +5078,11 @@ function renderNodeCard(node) {
     if (isSelected) cardClasses.push('selected');
     const cardClass = cardClasses.join(' ');
 
+    // Node card follow-up (point 1): shown in full, wrapped by CSS
+    // (overflow-wrap: anywhere) instead of hard-truncated with "..." - the
+    // card grows as tall as the message needs, never clips or overflows.
     const lastText = node.last_text
-        ? `<div class="node-last-text"><span class="node-last-text-icon">💬</span><span>${escapeHtml(truncateText(node.last_text, 60))}</span></div>`
+        ? `<div class="node-last-text"><span class="node-last-text-icon">💬</span><span class="node-last-text-body">${escapeHtml(node.last_text)}</span></div>`
         : '';
 
     const mapBadge = renderNodeMapBadge(node);
@@ -4993,9 +5097,28 @@ function renderNodeCard(node) {
     const unignoreBtn = isIgnored
         ? `<button type="button" class="unignore-btn-mini" data-action="unignore" data-node-id="${escapeHtml(node.node_id)}">Unignore</button>`
         : '';
-    const keyRow = renderNodeCardKeyActions(node.node_id);
+    const keyRow = renderNodeCardKeyActions(node.node_id, isSelected);
 
     const pressed = isSelected ? 'true' : 'false';
+
+    // Step 3 redesign (Option C): the selected node's breadcrumb line also
+    // carries its role and a copy-to-clipboard node-ID badge - both real
+    // <button>s. Per this function's own header comment, .node-card-select
+    // may not contain nested interactive markup, so for the selected node
+    // that breadcrumb line moves OUT of the button (a sibling, same as the
+    // status row below) instead of living inside it like the unselected
+    // identity-row does.
+    const role = node.role || 'CLIENT';
+    const identityRowInner = `
+                    <span class="node-short-name">${escapeHtml(shortName)}</span>
+                    <span class="node-identity-separator">•</span>
+                    <span class="node-hardware-name">${escapeHtml(hardware)}</span>
+                    <span class="node-identity-separator">•</span>
+                    ${isSelected ? `<span class="node-role-name">${escapeHtml(role)}</span><span class="node-identity-separator">•</span>` : ''}
+                    ${isSelected
+                        ? `<button type="button" class="node-inline-id node-inline-id-badge" onclick="event.stopPropagation(); copyNodeId('${escapeHtml(node.node_id)}')" title="${escapeHtml(window.I18N.t('nodes.click_to_copy_node_id'))}" aria-label="${escapeHtml(window.I18N.t('nodes.copy_node_id'))}">${escapeHtml(node.node_id)}</button>`
+                        : `<span class="node-inline-id">${escapeHtml(node.node_id)}</span>`}
+    `;
 
     return `
         <div class="${cardClass}" data-node-id="${escapeHtml(node.node_id)}" data-target-kind="node">
@@ -5009,14 +5132,10 @@ function renderNodeCard(node) {
                     ${ignoreStatus}
                 </div>
 
-                <div class="node-card-identity-row">
-                    <span class="node-short-name">${escapeHtml(shortName)}</span>
-                    <span class="node-identity-separator">•</span>
-                    <span class="node-hardware-name">${escapeHtml(hardware)}</span>
-                    <span class="node-identity-separator">•</span>
-                    <span class="node-inline-id">${escapeHtml(node.node_id)}</span>
-                </div>
+                ${isSelected ? '' : `<div class="node-card-identity-row">${identityRowInner}</div>`}
             </button>
+
+            ${isSelected ? `<div class="node-card-identity-row node-card-identity-row-expanded">${identityRowInner}</div>` : ''}
 
             <div class="node-card-status-row">
                 <span class="node-hop-count" title="Mesh route hops">${escapeHtml(hopsText)}</span>
@@ -5053,24 +5172,70 @@ function computeFilteredNodeCards() {
     );
 }
 
+// Node list task follow-up (p.5/p.6): everything renderNodeCard() actually
+// reads for one card, boiled into a comparable string - reuses
+// generateNodeDetailSignature() (already exhaustive: identity, radio,
+// position, telemetry, reference location) and adds the sidebar-only
+// inputs it doesn't cover (selection state, and the MCA key-row's
+// trust_state/key_request_state/busy/file-summary-cache, since those come
+// from the shared target store and nodeFileSummaryCache, not the node
+// object itself).
+function generateNodeCardSignature(node, isSelected) {
+    const store = targetStore();
+    const t = store && typeof store.getNode === 'function' ? store.getNode(node.node_id) : null;
+    return JSON.stringify([
+        generateNodeDetailSignature(node),
+        isSelected,
+        t ? t.trust_state : null,
+        t ? t.key_request_state : null,
+        t ? t.can_request_key : null,
+        isContactCommandBusy(node.node_id),
+        isSelected ? (nodeFileSummaryCache[node.node_id] || null) : null,
+    ]);
+}
+
 // Re-render the Nodes section from the already-loaded nodeCache (NO
 // /api/messages fetch). This is the SINGLE node-list rendering path: both
 // loadMessages() and the store subscription call it, so the detail slot is
 // detached/re-inserted through exactly ONE code path, never two divergent
 // rebuild implementations.
+//
+// Node list task follow-up (p.5/p.6): this used to do
+// `nodesList.innerHTML = ...` unconditionally on every call - and it's
+// called on every ~10s poll tick (loadMessages()) regardless of whether
+// anything about the node list actually changed. Confirmed via
+// MutationObserver on a live 104 instance: the SAME node's compact
+// .node-card was fully destroyed and recreated (847 nodes removed, 847
+// added covering the whole #nodesList) on every tick - explaining both p.5
+// (the element receiving :hover gets swapped out from under the cursor, so
+// the outline drops and re-applies on the browser's next hit-test - a real
+// flicker, not a CSS bug) and the general "blinking" impression in p.6.
+//
+// FIRST attempt was a single whole-list signature gate (skip the entire
+// rebuild if nothing changed) - reverted after live-testing showed it
+// doesn't help: with dozens of nodes on a live mesh, SOME node's RSSI/age
+// is essentially always ticking between two 10s polls, so the combined
+// list signature differs almost every time anyway, and the fix degenerated
+// to "rebuild everything, same as before" in practice (re-confirmed via the
+// same MutationObserver: still 847/847 on every tick after deploying that
+// version). Replaced with real keyed reconciliation instead: each node's
+// OWN signature is compared individually, and only the cards that actually
+// changed get rebuilt - a card for a node whose data didn't change keeps
+// its exact DOM identity (and, if it happens to be hosting the stable
+// detail slot, the slot never needs to move at all).
+let nodeCardRenderCache = {}; // node_id -> last rendered signature for its COMPACT card.
+
 function renderSidebarNodeCards() {
     const nodesList = document.getElementById('nodesList');
     if (!nodesList) return;
 
-    // Detach the stable detail slot BEFORE the innerHTML wipe so its detail-card
-    // subtree (open tab, scrolled content, active tab) survives, then re-position
-    // it inside the freshly rendered node card afterward.
-    const slot = getNodeDetailSlot();
-    if (slot && slot.parentNode) slot.parentNode.removeChild(slot);
-
     const filteredNodes = computeFilteredNodeCards();
+    const eff = effectiveSelectedTarget();
+    const selectedNodeId = (eff && eff.kind === 'node') ? eff.id : null;
 
     if (filteredNodes.length === 0) {
+        const slot = getNodeDetailSlot();
+        if (slot && slot.parentNode) slot.parentNode.removeChild(slot);
         let message = `🔍 ${window.I18N.t('nodes.no_nodes_found')}`;
         if (showFavorites && showIgnored) {
             message = `⚑ ${window.I18N.t('nodes.no_favorite_ignored_nodes_found')}`;
@@ -5080,9 +5245,76 @@ function renderSidebarNodeCards() {
             message = `🚫 ${window.I18N.t('nodes.no_ignored_nodes_found')}`;
         }
         nodesList.innerHTML = `<div class="loading" style="padding: 16px;">${escapeHtml(message)}</div>`;
-    } else {
-        nodesList.innerHTML = filteredNodes.map(node => renderNodeCard(node)).join('');
+        nodeCardRenderCache = {};
+        syncSelectedNodeCard();
+        positionNodeDetailSlot();
+        return;
     }
+
+    const existingByNodeId = {};
+    Array.from(nodesList.children).forEach(child => {
+        if (child.classList && child.classList.contains('node-card') && child.dataset.nodeId) {
+            existingByNodeId[child.dataset.nodeId] = child;
+        }
+    });
+
+    // Drop cards for node_ids no longer in the filtered list (aged out,
+    // filtered out by search/favorites/ignored) BEFORE reconciling order,
+    // so the cursor walk below only ever sees cards that belong.
+    const keepIds = new Set(filteredNodes.map(n => n.node_id));
+    Object.keys(existingByNodeId).forEach(nodeId => {
+        if (!keepIds.has(nodeId)) {
+            const el = existingByNodeId[nodeId];
+            if (el.parentNode === nodesList) nodesList.removeChild(el);
+            delete existingByNodeId[nodeId];
+            delete nodeCardRenderCache[nodeId];
+        }
+    });
+
+    let cursor = nodesList.firstElementChild;
+    filteredNodes.forEach(node => {
+        const nodeId = node.node_id;
+        const isSelected = nodeId === selectedNodeId;
+        const signature = generateNodeCardSignature(node, isSelected);
+        const existing = existingByNodeId[nodeId];
+
+        let cardEl;
+        if (existing && nodeCardRenderCache[nodeId] === signature) {
+            // Nothing this card displays has changed - reuse the exact DOM
+            // node so it (and anything nested inside it, including the
+            // stable detail slot) never gets torn down.
+            cardEl = existing;
+        } else {
+            // New card, or this one's own data genuinely changed. If it
+            // currently hosts the stable detail slot, detach the slot first
+            // so the old markup can be discarded without destroying it,
+            // then reattach it into the freshly built replacement.
+            const slot = getNodeDetailSlot();
+            const hostsSlot = Boolean(existing && slot && slot.parentNode === existing);
+            if (hostsSlot) existing.removeChild(slot);
+
+            // The stale card is being replaced wholesale - detach it so it
+            // doesn't linger as an orphaned duplicate (same node_id, no
+            // longer reachable via existingByNodeId on the next pass).
+            if (existing && existing.parentNode === nodesList) {
+                if (existing === cursor) cursor = cursor.nextElementSibling;
+                nodesList.removeChild(existing);
+            }
+
+            const template = document.createElement('template');
+            template.innerHTML = renderNodeCard(node).trim();
+            cardEl = template.content.firstElementChild;
+            nodeCardRenderCache[nodeId] = signature;
+
+            if (hostsSlot) cardEl.appendChild(slot);
+        }
+
+        if (cardEl === cursor) {
+            cursor = cursor.nextElementSibling;
+        } else {
+            nodesList.insertBefore(cardEl, cursor);
+        }
+    });
 
     syncSelectedNodeCard();
     positionNodeDetailSlot();
@@ -5192,6 +5424,18 @@ function updateChatHeader() {
 // OPEN CHAT (MODIFIED)
 // ============================================================
 function openChat(chatId, chatName, chatType, selectionSource = 'external') {
+    // Node card follow-up (point 4) bug fix: Full Map mode hides the chat
+    // header/panels via hideOperationalViewsForFullMap() (applyMapLayout()),
+    // and nothing here ever undid that - so opening a chat (e.g. the node
+    // card's Message button) while Full Map was showing updated all the
+    // chat state below but left chatHeader/.chat-panels display:none,
+    // silently showing nothing. Exiting full map mode restores them via
+    // setMapLayoutMode()'s own applyMapLayout() -> restoreOperationalView()
+    // call. Split map mode is untouched - it doesn't hide the chat panels.
+    if (typeof MapLayout !== 'undefined' && MapLayout.state.mode === 'full') {
+        setMapLayoutMode('off');
+    }
+
     currentChatId = chatId;
     currentChatName = chatName || chatId;
     currentChatType = chatType || 'dm';
@@ -6652,9 +6896,11 @@ function generateNodeDetailSignature(node) {
 function resetNodeRenderCache(nodeId = null) {
     if (nodeId) {
         delete nodeRenderCache[nodeId];
+        delete nodeCardRenderCache[nodeId];
         return;
     }
     nodeRenderCache = {};
+    nodeCardRenderCache = {};
 }
 
 // Small DOM morphing helper. It updates text and attributes in the existing
@@ -6904,97 +7150,55 @@ function renderNodeDetails(node) {
     }
 
     const displayName = node.clean_name || node.name || nodeId;
-    const shortName = node.short_name || '-';
-    const hwModel = node.hw_model || '-';
-    const role = node.role || 'CLIENT';
-    const lastSeen = node.age || window.I18N.t('nodes.never_seen');
-    const hops = node.hop_start || node.hops_away || '?';
-    const rssi = node.rssi || '--';
-    const snr = node.snr || '--';
     const isIgnored = node.ignored || false;
     const isFavorite = node.favorite || false;
-
-    // ---- Позиция ----
     const position = node.position || {};
     const hasPosition = Number.isFinite(position.latitude) && Number.isFinite(position.longitude);
-    let distanceText = '--', bearingText = '--';
-    if (hasPosition) {
-        const ref = getReferenceLocation();
-        if (ref && Number.isFinite(ref.latitude) && Number.isFinite(ref.longitude)) {
-            const distM = calculateDistanceMeters(ref.latitude, ref.longitude, position.latitude, position.longitude);
-            distanceText = formatNodeDistance(distM);
-            const bearing = calculateBearingDegrees(ref.latitude, ref.longitude, position.latitude, position.longitude);
-            bearingText = `${Math.round(bearing)}° ${getBearingDirection(bearing)}`;
-        }
-    }
-
-    // ---- Батарея / телеметрия ----
-    const battery = node.battery_level ?? '--';
-    const voltage = node.voltage ?? '--';
-
-    // ---- Последнее сообщение ----
-    const lastText = node.last_text || '';
 
     // ---- Строим HTML ----
+    // Step 3 redesign (Option C, see MCAttach_UI_Regressions_PostSimplification.md
+    // step 3): the compact .node-card above already carries name/short-id/
+    // hw-model/role/node-ID/hop-count/signal/last-seen/distance+bearing
+    // (renderNodeCard()) - this slot is now ONLY the collapsible body: a
+    // toolbar (Favorite/Ignore/More/Collapse), the tabs, and their content.
+    // No header/name/close-button duplication left to remove.
+    const isCollapsed = Boolean(collapsedNodeDetails[nodeId]);
     const html = `
         <div class="node-detail-card" data-node-id="${escapeHtml(nodeId)}">
-            <!-- Верхняя панель -->
-            <div class="node-detail-header">
-                <div class="node-detail-title-wrap">
-                    <span class="node-detail-activity ${getNodeActivityPresentation(node).activityClass}" title="${escapeHtml(window.I18N.t('nodes.activity_status'))}" aria-hidden="true"></span>
-                    <span class="node-detail-name">${escapeHtml(displayName)}</span>
-                </div>
-                <button type="button" class="node-detail-close" onclick="closeNodeDetails()" title="${escapeHtml(window.I18N.t('nodes.close_node_details'))}" aria-label="${escapeHtml(window.I18N.t('nodes.close_node_details'))}">×</button>
+            <div class="node-detail-toolbar">
+                <button type="button"
+                        class="node-detail-toolbar-btn node-detail-favorite-btn ${isFavorite ? 'active' : ''}"
+                        onclick="toggleFavorite('${escapeHtml(nodeId)}')"
+                        title="${escapeHtml(isFavorite ? window.I18N.t('nodes.remove_from_favorites') : window.I18N.t('nodes.add_to_favorites'))}"
+                        aria-label="${escapeHtml(isFavorite ? window.I18N.t('nodes.remove_node_from_favorites') : window.I18N.t('nodes.add_node_to_favorites'))}"
+                        aria-pressed="${isFavorite ? 'true' : 'false'}">
+                    <span aria-hidden="true">⚑</span> ${escapeHtml(window.I18N.t('nodes.favorite'))}
+                </button>
+                <button type="button"
+                        class="node-detail-toolbar-btn node-detail-ignore-btn ${isIgnored ? 'active' : ''}"
+                        onclick="toggleIgnore('${escapeHtml(nodeId)}')"
+                        title="${escapeHtml(isIgnored ? window.I18N.t('nodes.stop_ignoring_node') : window.I18N.t('nodes.ignore_node'))}"
+                        aria-label="${escapeHtml(isIgnored ? window.I18N.t('nodes.stop_ignoring_node') : window.I18N.t('nodes.ignore_node'))}"
+                        aria-pressed="${isIgnored ? 'true' : 'false'}">
+                    <span aria-hidden="true">🚫</span> ${escapeHtml(window.I18N.t('nodes.ignore'))}
+                </button>
+                <button type="button" class="node-detail-toolbar-btn node-detail-actions-btn"
+                        onclick="toggleNodeActionsMenu(event)"
+                        aria-label="${escapeHtml(window.I18N.t('nodes.more_node_actions'))}"
+                        title="${escapeHtml(window.I18N.t('nodes.more_actions'))}">
+                    <span aria-hidden="true">⋮</span> ${escapeHtml(window.I18N.t('nodes.more'))}
+                </button>
+                <button type="button" class="node-detail-toolbar-btn node-detail-collapse-btn"
+                        onclick="toggleNodeDetailCollapse('${escapeHtml(nodeId)}')"
+                        aria-expanded="${isCollapsed ? 'false' : 'true'}"
+                        title="${escapeHtml(isCollapsed ? window.I18N.t('nodes.expand_details') : window.I18N.t('nodes.collapse_details'))}"
+                        aria-label="${escapeHtml(isCollapsed ? window.I18N.t('nodes.expand_details') : window.I18N.t('nodes.collapse_details'))}">
+                    <span class="node-detail-collapse-chevron" aria-hidden="true">⌄</span> ${escapeHtml(isCollapsed ? window.I18N.t('nodes.expand_details') : window.I18N.t('nodes.collapse_details'))}
+                </button>
+                ${nodeActionsMenuHtml(nodeId, displayName)}
             </div>
 
-            <!-- Вторая строка: ID, модель, роль + node actions -->
-            <div class="node-detail-subheader">
-                <div class="node-detail-identity-line">
-                    <span class="node-detail-short-id">${escapeHtml(shortName)}</span>
-                    <span class="node-detail-separator">•</span>
-                    <span class="node-detail-role">${escapeHtml(role)}</span>
-                    <span class="node-detail-separator">•</span>
-                    <span class="node-detail-hw">${escapeHtml(hwModel)}</span>
-                    <span class="node-detail-separator">•</span>
-                    <button type="button" class="node-detail-id" onclick="copyNodeId('${escapeHtml(nodeId)}')" title="${escapeHtml(window.I18N.t('nodes.click_to_copy_node_id'))}" aria-label="${escapeHtml(window.I18N.t('nodes.copy_node_id'))}">${escapeHtml(truncateText(nodeId, 12))}</button>
-                </div>
-            </div>
-
-            <!-- Третья строка: статус + segmented actions -->
-            <div class="node-detail-status-row">
-                <div class="node-detail-status-copy">
-                    <span class="node-detail-last-seen">🕒 ${escapeHtml(lastSeen)}</span>
-                    <span class="node-detail-hops">${escapeHtml(window.I18N.t('nodes.hops', { value: hops }))}</span>
-                </div>
-                <div class="node-detail-header-actions node-detail-action-group">
-                    <button type="button"
-                            class="node-detail-state-btn node-detail-favorite-btn ${isFavorite ? 'active' : ''}"
-                            onclick="toggleFavorite('${escapeHtml(nodeId)}')"
-                            title="${escapeHtml(isFavorite ? window.I18N.t('nodes.remove_from_favorites') : window.I18N.t('nodes.add_to_favorites'))}"
-                            aria-label="${escapeHtml(isFavorite ? window.I18N.t('nodes.remove_node_from_favorites') : window.I18N.t('nodes.add_node_to_favorites'))}"
-                            aria-pressed="${isFavorite ? 'true' : 'false'}">
-                        <span aria-hidden="true">⚑</span>
-                    </button>
-
-                    <button type="button"
-                            class="node-detail-state-btn node-detail-ignore-btn ${isIgnored ? 'active' : ''}"
-                            onclick="toggleIgnore('${escapeHtml(nodeId)}')"
-                            title="${escapeHtml(isIgnored ? window.I18N.t('nodes.stop_ignoring_node') : window.I18N.t('nodes.ignore_node'))}"
-                            aria-label="${escapeHtml(isIgnored ? window.I18N.t('nodes.stop_ignoring_node') : window.I18N.t('nodes.ignore_node'))}"
-                            aria-pressed="${isIgnored ? 'true' : 'false'}">
-                        <span aria-hidden="true">🚫</span>
-                    </button>
-
-                    <button class="node-detail-actions-btn"
-                            onclick="toggleNodeActionsMenu(event)"
-                            aria-label="${escapeHtml(window.I18N.t('nodes.more_node_actions'))}"
-                            title="${escapeHtml(window.I18N.t('nodes.more_actions'))}">
-                        ⋮
-                    </button>
-                </div>
-            </div>
-
-            <!-- Вкладки -->
+            <div class="node-detail-collapsible${isCollapsed ? ' is-collapsed' : ''}">
             <div class="node-detail-tabs" role="tablist" aria-label="${escapeHtml(window.I18N.t('nodes.node_details_aria'))}">
                 ${NODE_DETAIL_TABS.map((tab, index) => `
                     <button type="button"
@@ -7017,6 +7221,19 @@ function renderNodeDetails(node) {
                     </div>
                 `).join('')}
             </div>
+
+            <div class="node-detail-bottom-actions">
+                <button type="button" class="node-detail-toolbar-btn" onclick="openChat('${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', 'dm')">
+                    <span aria-hidden="true">💬</span> ${escapeHtml(window.I18N.t('nodes.message_button'))}
+                </button>
+                <button type="button" class="node-detail-toolbar-btn" onclick="openExternalNodeMap(${hasPosition ? position.latitude : 0}, ${hasPosition ? position.longitude : 0})" ${hasPosition ? '' : 'disabled'} title="${escapeHtml(window.I18N.t('nodes.external_map'))}">
+                    <span aria-hidden="true">📍</span> ${escapeHtml(window.I18N.t('nodes.map'))}
+                </button>
+                <button type="button" class="node-detail-toolbar-btn" onclick="toggleNodeActionsMenu(event)">
+                    <span aria-hidden="true">⋮</span> ${escapeHtml(window.I18N.t('nodes.more'))}
+                </button>
+            </div>
+            </div>
         </div>
     `;
 
@@ -7028,114 +7245,94 @@ function renderNodeDetails(node) {
     const savedTab = activeNodeTabs[nodeId] || 'overview';
     switchNodeDetailTab(savedTab, nodeId);
 
-    // Place the now-populated slot INSIDE the selected node's compact card
-    // before attaching the actions menu, so the menu is owned by the stable slot.
+    // Place the now-populated slot INSIDE the selected node's compact card.
     positionNodeDetailSlot();
 
-    // ---- Выпадающее меню Actions (owned inside the stable slot) ----
-    renderNodeActionsMenu(nodeId, displayName);
+    ensureNodeActionsCloser();
 }
 
-// PR 6 correction: the node actions menu (⋮ dropdown) is owned INSIDE the stable
-// detail slot, so a #nodesList rebuild — which detaches and re-inserts the slot —
-// does not destroy it, and the ⋮ button keeps working after any store/message
-// refresh. It is anchored to the detail card's status row (position: relative) so
-// the absolute `top:100%; right:0` drops it right below the ⋮ button; it falls
-// back to the slot itself when the row isn't available (early render / test DOM).
-function renderNodeActionsMenu(nodeId, displayName) {
-    const details = getNodeDetailSlot();
-
-    // Never allow a duplicate #nodeActionsMenu.
-    const prior = document.getElementById('nodeActionsMenu');
-    if (prior && prior.parentNode) prior.remove();
-
-    const actionsMenu = document.createElement('div');
-    actionsMenu.className = 'node-actions-menu';
-    actionsMenu.id = 'nodeActionsMenu';
-    actionsMenu.style.display = 'none';
-    actionsMenu.innerHTML = `
-        <div class="node-actions-menu-inner">
-            <button onclick="openChat('${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', 'dm')">📨 ${escapeHtml(window.I18N.t('nodes.send_message'))}</button>
-            <button onclick="runNodeTool('request_position', '${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', this)">📍 ${escapeHtml(window.I18N.t('nodes.request_position'))}</button>
-            <button onclick="runNodeTool('request_telemetry', '${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', this)">📊 ${escapeHtml(window.I18N.t('nodes.request_telemetry'))}</button>
-            <button onclick="runNodeTool('traceroute', '${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', this)">🔍 ${escapeHtml(window.I18N.t('nodes.traceroute'))}</button>
-            <button onclick="setNodeAsReference('${escapeHtml(nodeId)}')">📍 ${escapeHtml(window.I18N.t('nodes.set_as_reference'))}</button>
+// Point 6 (tab-bar flicker) root-cause fix: #nodeActionsMenu used to be built
+// as a plain DOM node appended OUTSIDE the templated `html` string, AFTER
+// renderOrPatchNodeDetailCard() had already patched the card. That made it a
+// 5th child of .node-detail-toolbar in the LIVE DOM that the FRESH template
+// (only ever 4 buttons) didn't know about. On every render that actually
+// changed content, patchNodeDetailDom()'s child-count-mismatch cleanup (it
+// diffs childNodes by index, then trims any of the CURRENT node's children
+// beyond the fresh template's count) deleted that 5th child - and the
+// renderNodeActionsMenu() call right after found no #nodeActionsMenu to
+// reuse, so it built a brand new one and appended it again. Confirmed via
+// MutationObserver on a live 104 instance: .node-detail-toolbar took a
+// matching removeChild+appendChild pair on every content-changing render,
+// even though the menu's own 5 buttons never differ for the same node - pure
+// unnecessary churn, and the visible flicker this session was investigating.
+// Fix: the menu is now generated as PART of the same `html` template (a real
+// 5th child from the start), so patchNodeDetailDom() diffs it like any other
+// static content - text-node comparisons that are no-ops when the buttons
+// haven't changed, never a remove+recreate.
+function nodeActionsMenuHtml(nodeId, displayName) {
+    return `
+        <div class="node-actions-menu" id="nodeActionsMenu" style="display:none;">
+            <div class="node-actions-menu-inner">
+                <button onclick="openChat('${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', 'dm')">📨 ${escapeHtml(window.I18N.t('nodes.send_message'))}</button>
+                <button onclick="runNodeTool('request_position', '${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', this)">📍 ${escapeHtml(window.I18N.t('nodes.request_position'))}</button>
+                <button onclick="runNodeTool('request_telemetry', '${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', this)">📊 ${escapeHtml(window.I18N.t('nodes.request_telemetry'))}</button>
+                <button onclick="runNodeTool('traceroute', '${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', this)">🔍 ${escapeHtml(window.I18N.t('nodes.traceroute'))}</button>
+                <button onclick="setNodeAsReference('${escapeHtml(nodeId)}')">📍 ${escapeHtml(window.I18N.t('nodes.set_as_reference'))}</button>
+            </div>
         </div>
     `;
-
-    const anchor = details.querySelector('.node-detail-status-row') || details;
-    anchor.appendChild(actionsMenu);
-    ensureNodeActionsCloser();
-    return actionsMenu;
 }
 
 // ============================================================
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ РЕНДЕРИНГА
 // ============================================================
 
+// Step 3 redesign (Option C): a dense label/value metric list instead of a
+// tile grid, distance+bearing combined into one row, and the quick-actions
+// row moved out to the card-level bottom action row (renderNodeDetails()) -
+// that row is shared across all tabs now, not Overview-only.
 function renderOverviewPane(node) {
     const rssi = node.rssi ?? '--';
     const snr = node.snr ?? '--';
     const hops = node.hop_start ?? node.hops_away ?? '?';
     const battery = formatBatteryPercent(node.battery_level);
     const voltage = node.voltage ?? '--';
-    const lastText = node.last_text || '';
     const hasPosition = Number.isFinite(node.position?.latitude) && Number.isFinite(node.position?.longitude);
-    let distanceText = '--', bearingText = '--';
+    let distanceBearingText = '--';
     if (hasPosition) {
         const ref = getReferenceLocation();
         if (ref && Number.isFinite(ref.latitude) && Number.isFinite(ref.longitude)) {
             const distM = calculateDistanceMeters(ref.latitude, ref.longitude, node.position.latitude, node.position.longitude);
-            distanceText = formatNodeDistance(distM);
             const bearing = calculateBearingDegrees(ref.latitude, ref.longitude, node.position.latitude, node.position.longitude);
-            bearingText = `${Math.round(bearing)}° ${getBearingDirection(bearing)}`;
+            distanceBearingText = `${formatNodeDistance(distM)} · ${Math.round(bearing)}° ${getBearingDirection(bearing)}`;
         }
     }
 
+    const metricRow = (label, value) => `
+                <div class="node-detail-metric-row">
+                    <span class="node-detail-metric-label">${escapeHtml(label)}</span>
+                    <span class="node-detail-metric-value">${escapeHtml(value)}</span>
+                </div>`;
+
+    // Node card follow-up: DISTANCE/BEARING's value is itself a button (same
+    // internal openNodeMap() as the status-row pill above), matching the
+    // node-card mockup's #distValueBtn - not a plain text row like the
+    // other metrics.
+    const distanceBearingRow = `
+                <div class="node-detail-metric-row">
+                    <span class="node-detail-metric-label">${escapeHtml(window.I18N.t('nodes.distance'))} / ${escapeHtml(window.I18N.t('nodes.bearing'))}</span>
+                    <button type="button" class="node-detail-metric-value node-detail-metric-value-btn" onclick="openNodeMap(${hasPosition ? node.position.latitude : 0}, ${hasPosition ? node.position.longitude : 0}, '${escapeHtml(node.node_id)}')" ${hasPosition ? '' : 'disabled'}>${escapeHtml(distanceBearingText)}</button>
+                </div>`;
+
     return `
         <div class="node-detail-overview">
-            <div class="node-detail-tiles">
-                <div class="tile">
-                    <span class="tile-label">RSSI</span>
-                    <span class="tile-value">${escapeHtml(rssi)} dBm</span>
-                </div>
-                <div class="tile">
-                    <span class="tile-label">SNR</span>
-                    <span class="tile-value">${escapeHtml(snr)} dB</span>
-                </div>
-                <div class="tile">
-                    <span class="tile-label">${escapeHtml(window.I18N.t('nodes.hops_label'))}</span>
-                    <span class="tile-value">${escapeHtml(hops)}</span>
-                </div>
-                <div class="tile">
-                    <span class="tile-label">${escapeHtml(window.I18N.t('nodes.distance'))}</span>
-                    <span class="tile-value">${escapeHtml(distanceText)}</span>
-                </div>
-                <div class="tile">
-                    <span class="tile-label">${escapeHtml(window.I18N.t('nodes.bearing'))}</span>
-                    <span class="tile-value">${escapeHtml(bearingText)}</span>
-                </div>
-                ${battery !== '--' ? `
-                <div class="tile">
-                    <span class="tile-label">${escapeHtml(window.I18N.t('node_panel.battery'))}</span>
-                    <span class="tile-value">${escapeHtml(battery)}%</span>
-                </div>` : ''}
-                ${voltage !== '--' ? `
-                <div class="tile">
-                    <span class="tile-label">${escapeHtml(window.I18N.t('node_panel.voltage'))}</span>
-                    <span class="tile-value">${escapeHtml(voltage)} V</span>
-                </div>` : ''}
-            </div>
-            ${lastText ? `
-            <div class="node-detail-last-msg">
-                <span class="last-msg-label">${escapeHtml(window.I18N.t('nodes.last_message_label'))}</span>
-                <span class="last-msg-text">${escapeHtml(truncateText(lastText, 80))}</span>
-                <span class="last-msg-time">${escapeHtml(node.last_time || '')}</span>
-            </div>` : ''}
-            <div class="node-detail-quick-actions">
-                <button class="quick-action" onclick="openChat('${escapeHtml(node.node_id)}', '${escapeJsString(node.clean_name || node.name || node.node_id)}', 'dm')">💬 ${escapeHtml(window.I18N.t('nodes.message_button'))}</button>
-                <button class="quick-action" onclick="openExternalNodeMap(${node.position?.latitude || 0}, ${node.position?.longitude || 0})" ${!hasPosition ? 'disabled' : ''}>🗺 ${escapeHtml(window.I18N.t('nodes.external_map'))}</button>
-                <button class="quick-action" onclick="toggleNodeActionsMenu(event)">⚡ ${escapeHtml(window.I18N.t('nodes.more'))}</button>
+            <div class="node-detail-metric-list">
+                ${metricRow('RSSI', `${rssi} dBm`)}
+                ${metricRow('SNR', `${snr} dB`)}
+                ${metricRow(window.I18N.t('nodes.hops_label'), String(hops))}
+                ${distanceBearingRow}
+                ${battery !== '--' ? metricRow(window.I18N.t('node_panel.battery'), `${battery}%`) : ''}
+                ${voltage !== '--' ? metricRow(window.I18N.t('node_panel.voltage'), `${voltage} V`) : ''}
             </div>
         </div>
     `;
@@ -7422,6 +7619,35 @@ function switchNodeDetailTab(tabName, nodeId) {
         tab.classList.toggle('active', active);
         tab.setAttribute('aria-selected', active ? 'true' : 'false');
     });
+}
+
+// Step 3 redesign: Collapse hides the tabs/content body while the toolbar
+// (Favorite/Ignore/More/Collapse) stays visible - a different state than
+// closing (closeNodeDetails()), which deselects the node entirely. Toggled
+// directly on the DOM (like switchNodeDetailTab above) rather than through a
+// full renderNodeDetails() re-render, since collapsedNodeDetails isn't part
+// of generateNodeDetailSignature() and wouldn't by itself invalidate the
+// render cache. renderNodeDetails() still reads collapsedNodeDetails when it
+// DOES re-render for another reason, so the two stay consistent.
+function toggleNodeDetailCollapse(nodeId) {
+    if (!nodeId) return;
+    const collapsed = !collapsedNodeDetails[nodeId];
+    collapsedNodeDetails[nodeId] = collapsed;
+
+    const card = document.querySelector(`.node-detail-card[data-node-id="${CSS.escape(nodeId)}"]`);
+    if (!card) return;
+
+    const body = card.querySelector('.node-detail-collapsible');
+    if (body) body.classList.toggle('is-collapsed', collapsed);
+
+    const btn = card.querySelector('.node-detail-collapse-btn');
+    if (btn) {
+        const label = collapsed ? window.I18N.t('nodes.expand_details') : window.I18N.t('nodes.collapse_details');
+        btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        btn.setAttribute('title', label);
+        btn.setAttribute('aria-label', label);
+        btn.innerHTML = `<span class="node-detail-collapse-chevron" aria-hidden="true">⌄</span> ${escapeHtml(label)}`;
+    }
 }
 
 // ============================================================
@@ -12428,6 +12654,8 @@ window.toggleCameraPower = toggleCameraPower;
 window.renderNodeDetails = renderNodeDetails;
 window.registerNodeDetailTab = registerNodeDetailTab;
 window.switchNodeDetailTab = switchNodeDetailTab;
+window.toggleNodeDetailCollapse = toggleNodeDetailCollapse;
+window.openNodeFilesFiltered = openNodeFilesFiltered;
 window.toggleNodeActionsMenu = toggleNodeActionsMenu;
 window.copyNodeId = copyNodeId;
 window.copyCoordinates = copyCoordinates;

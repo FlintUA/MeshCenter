@@ -958,14 +958,6 @@
 .chat-area.map-layout-full > .map-view { display:flex !important; flex:1 1 auto; order:1; }
 .chat-area.map-layout-full > .main-content-tabs { order:0; }
 
-.node-detail-header { position:relative; padding-right:22px; }
-.node-detail-close {
-    position:absolute; right:0; top:-4px; width:22px; height:22px; padding:0; border:0;
-    background:transparent; color:var(--mc-muted,#708399); font-size:20px; line-height:1;
-    cursor:pointer; opacity:.78;
-}
-.node-detail-close:hover { opacity:1; color:var(--mc-danger,#d94b57); }
-
 .map-popup-actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; }
 .map-popup-actions button { border:1px solid #3a5973; background:#203b53; color:white; border-radius:7px; padding:7px 8px; cursor:pointer; font-weight:700; font-size:11px; }
 .map-popup-actions button:hover { background:#285071; }
@@ -2717,7 +2709,11 @@ body[data-theme="dark"] .waypoint-create-footer .primary {
 
 [data-theme="dark"] .node-detail-card,
 body[data-theme="dark"] .node-detail-card {
-    background: var(--mc-card-bg) !important;
+    /* Step 3 regression fix: stays transparent so it reads as the body of
+       the compact .node-card above it (see the base rule's own comment),
+       not a second nested box — only the divider line gets a dark-theme
+       color. */
+    background: transparent !important;
     border-color: var(--mc-border) !important;
     color: var(--mc-text-primary) !important;
 }
@@ -2747,35 +2743,28 @@ body[data-theme="dark"] .node-detail-tab.active {
     border-bottom-color: var(--mc-primary) !important;
 }
 
-/* Main cards across all detail tabs. */
-[data-theme="dark"] .node-detail-card .tile,
-[data-theme="dark"] .node-detail-card .node-detail-last-msg,
+/* Main cards across all detail tabs. Step 3 redesign: .tile is gone
+   (Overview is a metric list now, styled entirely via var(--mc-*) tokens so
+   it needs no dark-theme override of its own). Node card follow-up (point
+   5): .radio-history/.data-group/.log-summary/.log-events are flat now too
+   (hairline dividers, see style-part2.css) - only their border/text colors
+   need a dark-theme pass, no boxed background left to override. */
 [data-theme="dark"] .node-detail-card .radio-history,
-[data-theme="dark"] .node-detail-card .data-group,
-[data-theme="dark"] .node-detail-card .log-summary,
+[data-theme="dark"] .node-detail-card .data-group + .data-group,
 [data-theme="dark"] .node-detail-card .log-events,
-body[data-theme="dark"] .node-detail-card .tile,
-body[data-theme="dark"] .node-detail-card .node-detail-last-msg,
 body[data-theme="dark"] .node-detail-card .radio-history,
-body[data-theme="dark"] .node-detail-card .data-group,
-body[data-theme="dark"] .node-detail-card .log-summary,
+body[data-theme="dark"] .node-detail-card .data-group + .data-group,
 body[data-theme="dark"] .node-detail-card .log-events {
-    background: var(--mc-bg-panel) !important;
-    border-color: var(--mc-border) !important;
-    color: var(--mc-text-primary) !important;
+    border-color: var(--mc-border-soft) !important;
 }
 
 /* Titles and values. */
-[data-theme="dark"] .node-detail-card .tile-value,
-[data-theme="dark"] .node-detail-card .last-msg-text,
 [data-theme="dark"] .node-detail-card .radio-param .value,
 [data-theme="dark"] .node-detail-card .coord .value,
 [data-theme="dark"] .node-detail-card .data-group-title,
 [data-theme="dark"] .node-detail-card .data-grid .value,
 [data-theme="dark"] .node-detail-card .log-summary-item .value,
 [data-theme="dark"] .node-detail-card .log-event strong,
-body[data-theme="dark"] .node-detail-card .tile-value,
-body[data-theme="dark"] .node-detail-card .last-msg-text,
 body[data-theme="dark"] .node-detail-card .radio-param .value,
 body[data-theme="dark"] .node-detail-card .coord .value,
 body[data-theme="dark"] .node-detail-card .data-group-title,
@@ -2786,9 +2775,6 @@ body[data-theme="dark"] .node-detail-card .log-event strong {
 }
 
 /* Labels, secondary information and empty states. */
-[data-theme="dark"] .node-detail-card .tile-label,
-[data-theme="dark"] .node-detail-card .last-msg-label,
-[data-theme="dark"] .node-detail-card .last-msg-time,
 [data-theme="dark"] .node-detail-card .radio-param .label,
 [data-theme="dark"] .node-detail-card .radio-history-header,
 [data-theme="dark"] .node-detail-card .radio-history-range,
@@ -2800,9 +2786,6 @@ body[data-theme="dark"] .node-detail-card .log-event strong {
 [data-theme="dark"] .node-detail-card .data-no-data,
 [data-theme="dark"] .node-detail-card .log-summary-item .label,
 [data-theme="dark"] .node-detail-card .log-event,
-body[data-theme="dark"] .node-detail-card .tile-label,
-body[data-theme="dark"] .node-detail-card .last-msg-label,
-body[data-theme="dark"] .node-detail-card .last-msg-time,
 body[data-theme="dark"] .node-detail-card .radio-param .label,
 body[data-theme="dark"] .node-detail-card .radio-history-header,
 body[data-theme="dark"] .node-detail-card .radio-history-range,
@@ -2829,14 +2812,14 @@ body[data-theme="dark"] .node-detail-card .log-summary-item {
     border-bottom-color: var(--mc-border-soft) !important;
 }
 
-/* Action buttons at the bottom of Overview, Radio, Position and Data. */
-[data-theme="dark"] .node-detail-card .quick-action,
+/* Action buttons at the bottom of Radio, Position and Data (Overview's own
+   quick-actions row moved out to the card-level bottom action row in the
+   Step 3 redesign - styled via .node-detail-toolbar-btn, not .quick-action). */
 [data-theme="dark"] .node-detail-card .radio-action,
 [data-theme="dark"] .node-detail-card .position-actions button,
 [data-theme="dark"] .node-detail-card .data-actions button,
 [data-theme="dark"] .node-detail-card .data-request,
 [data-theme="dark"] .node-detail-card .position-no-data button,
-body[data-theme="dark"] .node-detail-card .quick-action,
 body[data-theme="dark"] .node-detail-card .radio-action,
 body[data-theme="dark"] .node-detail-card .position-actions button,
 body[data-theme="dark"] .node-detail-card .data-actions button,
@@ -2847,13 +2830,11 @@ body[data-theme="dark"] .node-detail-card .position-no-data button {
     color: var(--mc-text-primary) !important;
 }
 
-[data-theme="dark"] .node-detail-card .quick-action:hover:not(:disabled),
 [data-theme="dark"] .node-detail-card .radio-action:hover:not(:disabled),
 [data-theme="dark"] .node-detail-card .position-actions button:hover:not(:disabled),
 [data-theme="dark"] .node-detail-card .data-actions button:hover:not(:disabled),
 [data-theme="dark"] .node-detail-card .data-request:hover:not(:disabled),
 [data-theme="dark"] .node-detail-card .position-no-data button:hover:not(:disabled),
-body[data-theme="dark"] .node-detail-card .quick-action:hover:not(:disabled),
 body[data-theme="dark"] .node-detail-card .radio-action:hover:not(:disabled),
 body[data-theme="dark"] .node-detail-card .position-actions button:hover:not(:disabled),
 body[data-theme="dark"] .node-detail-card .data-actions button:hover:not(:disabled),
@@ -2862,12 +2843,6 @@ body[data-theme="dark"] .node-detail-card .position-no-data button:hover:not(:di
     background: var(--mc-button-secondary-bg) !important;
     border-color: var(--focus-ring-color) !important;
     color: var(--mc-text-primary) !important;
-}
-
-/* Preserve blue informational emphasis without returning to a light card. */
-[data-theme="dark"] .node-detail-card .node-detail-last-msg,
-body[data-theme="dark"] .node-detail-card .node-detail-last-msg {
-    border-left-color: var(--mc-primary) !important;
 }
 
 [data-theme="dark"] .node-detail-card .data-request,
@@ -2884,17 +2859,6 @@ body[data-theme="dark"] .node-detail-card button:disabled {
     border-color: var(--mc-border-soft) !important;
     color: var(--mc-text-muted) !important;
     opacity: .66;
-}
-
-/* Light theme keeps the inverse relationship explicitly. */
-:root:not([data-theme="dark"]) .node-detail-card .data-group,
-:root:not([data-theme="dark"]) .node-detail-card .radio-history,
-:root:not([data-theme="dark"]) .node-detail-card .log-summary,
-:root:not([data-theme="dark"]) .node-detail-card .log-events,
-:root:not([data-theme="dark"]) .node-detail-card .tile {
-    background: var(--mc-bg-panel, #ffffff);
-    border-color: var(--mc-border, #d5dfeb);
-    color: var(--mc-text-primary, #14243a);
 }
 
 /* ============================================================
@@ -4460,9 +4424,11 @@ html[data-theme="dark"] #notificationsCard {
 
 .files-transfer-item {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
+    gap: 4px 10px;
     width: 100%;
+    max-width: 100%;
     padding: 9px 10px;
     margin-bottom: 6px;
     text-align: left;
@@ -4473,10 +4439,20 @@ html[data-theme="dark"] #notificationsCard {
 }
 .files-transfer-item:hover { border-color: var(--mc-border-hover, #9fb6d0); }
 .files-transfer-item.is-selected { border-color: var(--mc-accent, #1769d2); background: var(--mc-primary-soft, #edf5ff); }
+.files-transfer-icon { flex: 0 0 auto; }
 .files-transfer-dir { flex: 0 0 auto; color: var(--mc-muted, #5c7290); }
-.files-transfer-name {
-    flex: 1 1 auto;
+.files-transfer-main {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 160px;
     min-width: 0;
+    max-width: 100%;
+    gap: 2px;
+}
+.files-transfer-name {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -4484,9 +4460,32 @@ html[data-theme="dark"] #notificationsCard {
     color: var(--mc-text, #1f2f45);
     font-size: var(--mc-body-size, 13px);
 }
+.files-transfer-sub {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--mc-muted, #5c7290);
+}
+/* PR post-simplification regression fix: provider/state/size/date/expiry are
+   grouped into one wrapping row so they never fight the file name for width
+   on narrow panels — see MCAttach_UI_Regressions_PostSimplification.md step 1. */
+.files-transfer-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    flex: 1 0 100%;
+    min-width: 0;
+}
+.files-transfer-provider { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--mc-muted, #5c7290); }
 .files-transfer-state { flex: 0 0 auto; font-size: 11px; }
 .files-transfer-size,
-.files-transfer-date { flex: 0 0 auto; font-size: 11px; color: var(--mc-muted, #5c7290); }
+.files-transfer-date,
+.files-transfer-expiry { flex: 0 0 auto; font-size: 11px; color: var(--mc-muted, #5c7290); }
 
 /* detail */
 

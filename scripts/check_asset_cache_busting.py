@@ -25,7 +25,7 @@ INDEX_HTML = Path(__file__).parent.parent / 'templates' / 'index.html'
 I18N_JS = Path(__file__).parent.parent / 'static' / 'i18n.js'
 
 # The single canonical cache-busting token for the current frontend release.
-CURRENT_VERSION = '20260914-relay-wizard'
+CURRENT_VERSION = '20260917-nodecard-optionc-followup'
 
 # Browser assets changed in the current release. Every entry must be referenced
 # in index.html with CURRENT_VERSION (and, for i18n.js, its CATALOG_VERSION must
@@ -37,7 +37,9 @@ CURRENT_ASSETS = {
     'static/i18n.js',
     'static/style-part1.css',
     'static/style-part2.css',
+    'static/style-part3.css',
     'static/style-part4.css',
+    'static/ui-kit.css',
 }
 
 # `<link rel="stylesheet" href="{{ url_for('static', filename='X') }}?v=TOKEN">`

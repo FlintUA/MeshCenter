@@ -8,31 +8,6 @@
 /* ============================================================
    TABBED SELECTED NODE CARD — MeshCenter Sprint 2.3 adjustments
    ============================================================ */
-.node-detail-activity {
-    display: inline-block;
-    width: 7px;
-    height: 18px;
-    flex: 0 0 7px;
-    border-radius: 2px;
-    background: var(--mc-text-muted, #9aa4b2);
-}
-.node-detail-activity.activity-online { background: var(--mc-success, #22a559); }
-.node-detail-activity.activity-away { background: var(--mc-warning, #e7af27); }
-.node-detail-activity.activity-offline { background: var(--mc-danger, #db5a63); }
-.node-detail-activity.activity-unknown { background: var(--mc-text-muted, #9aa4b2); }
-.node-detail-favorite:empty { display: none; }
-.node-detail-favorite {
-    font-size: 18px;
-    line-height: 1;
-}
-
-[data-theme="light"] .node-detail-favorite{
-    color:#165CBA;
-}
-
-[data-theme="dark"] .node-detail-favorite{
-    color:#f5c542;
-}
 .radio-history-range { opacity: .55; cursor: help; }
 .log-history-placeholder {
     padding: var(--space-lg, 16px);

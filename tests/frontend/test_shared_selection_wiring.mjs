@@ -175,6 +175,17 @@ class FakeElement {
         const i = p._children.indexOf(this);
         return (i > 0) ? p._children[i - 1] : null;
     }
+    // node-card keyed reconciliation (renderSidebarNodeCards) walks
+    // Element.children/.firstElementChild/.nextElementSibling. This fake only
+    // ever stores elements in `_children` (no text nodes modeled), so the
+    // Element-only views are identical to the Node views above - `children`
+    // is a defensive copy (same reasoning as the existing innerHTML setter
+    // comment: callers must not mutate the live array by holding this
+    // reference), and nextElementSibling reuses nextSibling's own logic
+    // rather than duplicating it.
+    get children() { return this._children.slice(); }
+    get firstElementChild() { return this._children.length ? this._children[0] : null; }
+    get nextElementSibling() { return this.nextSibling; }
     addEventListener(type, fn) {
         if (!this._listeners[type]) this._listeners[type] = [];
         this._listeners[type].push(fn);
@@ -256,6 +267,27 @@ class FakeDocument {
         return fresh;
     }
     createElement(tag) {
+        // node-card keyed reconciliation builds a replacement card via the
+        // browser's actual pattern - `template.innerHTML = markup;
+        // template.content.firstElementChild` - rather than `nodesList.
+        // innerHTML += markup`, specifically so the parsed element is never
+        // attached anywhere until the caller inserts it. Reuses the same
+        // parseHtmlFragment() tokenizer already used everywhere else in this
+        // file for structural assertions, rather than a second parser.
+        if (String(tag).toLowerCase() === 'template') {
+            const content = new FakeElement('#document-fragment', '');
+            content._ownerDocument = this;
+            return {
+                tagName: 'TEMPLATE',
+                content,
+                get innerHTML() { return ''; },
+                set innerHTML(html) {
+                    const parsed = parseHtmlFragment(html);
+                    content._children = parsed._children.slice();
+                    content._children.forEach(child => { child.parentNode = content; });
+                },
+            };
+        }
         const el = new FakeElement(tag);
         el._ownerDocument = this;
         return el;

@@ -103,6 +103,24 @@ class FakeElement {
         this._listeners[type].push(fn);
     }
     querySelectorAll() { return []; }
+    // Step 2 regressions' applyDetailOpenState(body) calls
+    // body.querySelector('.files-detail-advanced') /
+    // '.files-detail-tech' to restore <details> open state across a
+    // poll re-render. Minimal single-class-selector support only (no
+    // combinators/attribute selectors) - a recursive depth-first walk of
+    // _children, same traversal shape as parseHtmlFragment's own
+    // descendant walk elsewhere in this test suite's sibling file
+    // (test_shared_selection_wiring.mjs's descendants()).
+    querySelector(selector) {
+        if (typeof selector !== 'string' || !selector.startsWith('.')) return null;
+        const cls = selector.slice(1);
+        for (const child of this._children) {
+            if (child.classList && child.classList.contains(cls)) return child;
+            const found = child.querySelector(selector);
+            if (found) return found;
+        }
+        return null;
+    }
     focus() { /* no-op */ }
     classList() { return this; }
     toggle(name, force) {

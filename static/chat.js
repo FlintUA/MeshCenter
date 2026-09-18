@@ -129,13 +129,22 @@ function ensureStoreSelectionSubscription() {
         syncSelectedChannelCards();
         syncNodeDetailsFromSelection();
 
-        // A generation bump means the store re-merged its data slices (fresh MCA
-        // /channel state). Re-render only the sidebar's data-derived DOM — the
-        // Channels section and the node-card key rows — never a fresh
-        // /api/messages fetch, and never the open conversation.
+        // renderSidebarNodeCards() runs on EVERY notification, selection changes
+        // included: a node's own compact-card template branches on isSelected
+        // (role span, interactive ID button, file-summary row), so that content
+        // must appear the instant a card is selected — not wait for the next
+        // store data refresh or the 10s loadMessages() poll tick. The per-node
+        // signature diff inside renderSidebarNodeCards() keeps this cheap: only
+        // the previously-selected and the newly-selected card actually differ,
+        // every other card's signature is unchanged and is skipped.
+        //
+        // renderChannelTargets() stays gated on dataChanged - a full channel-list
+        // rebuild is only needed when the store re-merged fresh backend data;
+        // the channel highlight itself already updates via syncSelectedChannelCards()
+        // above regardless.
+        renderSidebarNodeCards();
         if (dataChanged) {
             renderChannelTargets();
-            renderSidebarNodeCards();
         }
     });
 }
@@ -5511,6 +5520,7 @@ function openChat(chatId, chatName, chatType, selectionSource = 'external') {
 
     // Синхронизируем подсветку и положение в обоих списках.
     syncSelectedNodeCard();
+    renderSidebarNodeCards();
     flushPendingSynchronizedScroll();
 
     // Обновляем список чатов для подсветки выбранного

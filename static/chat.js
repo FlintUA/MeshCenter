@@ -5130,7 +5130,8 @@ function renderNodeCard(node) {
                     <span class="node-identity-separator">•</span>
                     <span class="node-hardware-name">${escapeHtml(hardware)}</span>
                     <span class="node-identity-separator">•</span>
-                    ${isSelected ? `<span class="node-role-name">${escapeHtml(role)}</span><span class="node-identity-separator">•</span>` : ''}
+                    <span class="node-role-name">${escapeHtml(role)}</span>
+                    <span class="node-identity-separator">•</span>
                     ${isSelected
                         ? `<button type="button" class="node-inline-id node-inline-id-badge" onclick="event.stopPropagation(); copyNodeId('${escapeHtml(node.node_id)}')" title="${escapeHtml(window.I18N.t('nodes.click_to_copy_node_id'))}" aria-label="${escapeHtml(window.I18N.t('nodes.copy_node_id'))}">${escapeHtml(node.node_id)}</button>`
                         : `<span class="node-inline-id">${escapeHtml(node.node_id)}</span>`}

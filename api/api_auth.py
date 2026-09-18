@@ -349,6 +349,15 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
             "error_code": "csrf_invalid",
         }), 403
 
+    @app.after_request
+    def _add_security_headers(response):
+        # Enforce basic security headers across all responses (defense in depth):
+        # - X-Frame-Options: SAMEORIGIN prevents clickjacking attacks
+        # - X-Content-Type-Options: nosniff prevents MIME-type sniffing
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        return response
+
     @app.context_processor
     def _csrf_context():
         # Exposes {{ csrf_token }} to templates so index.html can embed it in

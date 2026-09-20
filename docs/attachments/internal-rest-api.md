@@ -41,7 +41,7 @@ A single shared password (no usernames/roles). `api/api_auth.py`'s `before_reque
 {"ok": false, "error": "Authentication required", "error_code": "auth_required"}
 ```
 
-with HTTP **401**. Every MCAttach endpoint is an `/api/` path and inherits this with **no extra work** — do not add a second auth layer. Exempt paths are only `/login` and `/static/`, so no MCAttach endpoint is reachable unauthenticated.
+with HTTP **401**. Every MCAttach endpoint is an `/api/` path and inherits this with **no extra work** — do not add a second auth layer. Exempt paths are only `/login`, `/setup`, and `/static/`, so no MCAttach endpoint is reachable unauthenticated.
 
 ### 2.3 CSRF — finalized (one mechanism, no alternatives)
 

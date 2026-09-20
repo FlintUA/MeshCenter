@@ -318,6 +318,8 @@ Open the interface from another computer on the same local network:
 http://<raspberry-pi-ip>:5000
 ```
 
+> 🔐 With `AUTH_ENABLED = True` (the default), the first visit shows a create-your-password screen (`/setup`) instead of the app — choose a password of at least 12 characters and you're signed in immediately. Nothing is generated or written to disk in plaintext.
+
 Stop the manual server with `Ctrl+C` before installing the system service.
 
 ## 3. Run MeshCenter as a system service

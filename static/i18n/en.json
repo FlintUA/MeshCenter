@@ -1519,7 +1519,15 @@
     "password_label": "Password",
     "login_error": "Incorrect password.",
     "login_throttled": "Too many attempts. Try again in {seconds} seconds.",
-    "login_submit": "Sign in"
+    "login_submit": "Sign in",
+    "setup_title": "Welcome to MeshCenter",
+    "setup_subtitle": "This is a new installation. Create a password to protect it before continuing.",
+    "setup_password_label": "New password",
+    "setup_confirm_label": "Confirm password",
+    "setup_hint": "Use at least {min} characters.",
+    "setup_submit": "Create password",
+    "setup_error_mismatch": "The passwords do not match.",
+    "setup_error_too_short": "Password must be at least {min} characters."
   },
   "csrf": {
     "expired_reload": "Security check expired. Please reload the page to continue.",

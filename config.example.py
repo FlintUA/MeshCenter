@@ -106,18 +106,18 @@ EPAPER_ENABLED = False
 # On by default - MeshCenter is intended for a trusted local network, but a
 # guest Wi-Fi/VPN/accidental port-forward can expose it, so a single shared
 # password guards the whole app out of the box. With AUTH_ENABLED=True and
-# no AUTH_PASSWORD_HASH set (the case here), MeshCenter generates a random
-# one-time password the first time it starts with no data/auth.json yet -
-# printed once to the console/log and saved to data/initial_password.txt
-# (owner-only permissions) - log in with it and change it via
-# Settings -> Security. AUTH_PASSWORD_HASH is only ever used to seed
+# no AUTH_PASSWORD_HASH set (the case here), the first browser visit after
+# the first start with no data/auth.json yet shows a "create your password"
+# page (/setup) - nothing is generated or written to disk in plaintext.
+# Once created, the password can be changed via Settings -> Security.
+# AUTH_PASSWORD_HASH is only ever used to seed
 # data/auth.json (it becomes the source of truth afterwards, editable from
 # Settings -> Security) - once auth.json exists these two variables are
 # ignored, including on every later restart.
-# Set AUTH_ENABLED = False here to skip protection (and generation)
+# Set AUTH_ENABLED = False here to skip protection (and the setup page)
 # entirely - the old, still-supported opt-out. Set AUTH_PASSWORD_HASH
 # explicitly only if you want to pre-seed a specific password instead of
-# getting a generated one; leaving it set on an existing install (one
+# using the setup page; leaving it set on an existing install (one
 # that already has data/auth.json) does nothing either way, per above.
 # Generate a hash with:
 #   python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('your-password'))"

@@ -2,8 +2,11 @@
 
 On by default as of config.example.py's AUTH_ENABLED=True (P1 #5
 stabilization follow-up) - a fresh install with no data/auth.json yet
-gets a randomly generated initial password (see load_auth_state()'s
-generation branch below), not silent no-protection. Single shared
+persists {"enabled": True, "password_hash": ""} (see load_auth_state()'s
+first-run branch below) and the first browser visit is sent to a
+mandatory /setup wizard to create the password (see needs_setup() and
+setup() below) - never silent no-protection, and no password is ever
+generated or written to disk in plaintext. Single shared
 password, no usernames/roles - a Flask session cookie is set on
 successful login and checked in a before_request hook. State (enabled
 flag + password hash) lives in its own data/auth.json rather than
@@ -16,7 +19,6 @@ _is_safe_redirect_target() - see that function's own docstring for the
 open-redirect vulnerability independently reproduced and fixed there.
 """
 
-import os
 import secrets
 import time
 from urllib.parse import quote, urlsplit
@@ -33,9 +35,11 @@ from storage.json_store import safe_read_json, safe_write_json
 MIN_PASSWORD_LENGTH = 12
 
 # Paths that must stay reachable without a session so the login page itself
-# (and the assets it needs) can render.
+# (and the assets it needs) can render. /setup is exempt for the same reason:
+# it is the only page a not-yet-configured instance can show (see
+# needs_setup()) - once setup is done the route itself redirects away.
 _EXEMPT_PATH_PREFIXES = ("/static/",)
-_EXEMPT_PATHS = ("/login",)
+_EXEMPT_PATHS = ("/login", "/setup")
 
 # Project-wide CSRF (docs/attachments/internal-rest-api.md §2.3): one
 # session-bound token, minted with secrets, sent back as an X-CSRF-Token
@@ -157,38 +161,6 @@ def _login_throttle_delay(fail_count):
     return min(_LOGIN_THROTTLE_BASE_SECONDS * (2 ** exponent), _LOGIN_THROTTLE_MAX_SECONDS)
 
 
-def _generate_initial_password():
-    """16 hex characters, 64 bits of entropy - easy to read and retype
-    from a terminal or log line, no ambiguous 0/O or 1/l/I characters
-    since hex digits are only 0-9a-f. A separate, patchable function so
-    tests can spy on whether generation was ever attempted, not just
-    inspect its result."""
-    return secrets.token_hex(8)
-
-
-def _write_initial_password_file(auth_file, plaintext_password):
-    """One-time plaintext copy of a freshly generated password, next to
-    auth.json. auth.json itself only ever stores the hash (fine to be
-    world-readable, same as before this change) - this file is the
-    actual credential in recoverable form, so unlike safe_write_json()'s
-    default permissions it must be locked down explicitly. Never
-    overwritten by anything else - deleting it (or its content no longer
-    matching the live password) is the user's own signal that they've
-    saved/changed the password elsewhere.
-    """
-    directory = os.path.dirname(auth_file) or "."
-    path = os.path.join(directory, "initial_password.txt")
-    try:
-        os.makedirs(directory, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(plaintext_password + "\n")
-        os.chmod(path, 0o600)
-        return path
-    except OSError as error:
-        print(f"[AUTH] Could not write {path}: {error}", flush=True)
-        return None
-
-
 def load_auth_state(auth_file, bootstrap_enabled=False, bootstrap_password_hash=""):
     data = safe_read_json(auth_file, default=None)
     if isinstance(data, dict) and ("password_hash" in data or "enabled" in data):
@@ -203,29 +175,22 @@ def load_auth_state(auth_file, bootstrap_enabled=False, bootstrap_password_hash=
 
     if bool(bootstrap_enabled) and not bootstrap_password_hash.strip():
         # New install with AUTH_ENABLED=True and no hash set - the normal
-        # case now that config.example.py defaults to True. Generate a
-        # real one-time password and persist it immediately (unlike the
-        # plain bootstrap-in-memory below, which nothing ever writes to
-        # disk) instead of silently staying unprotected - covers every
-        # startup path uniformly (install.sh, meshcenter-firstboot.sh,
-        # and CLAUDE.md's own documented manual `cp config.example.py
-        # config.py` path, which installer-side generation alone would
-        # have missed).
-        plaintext_password = _generate_initial_password()
-        state = {
-            "enabled": True,
-            "password_hash": generate_password_hash(plaintext_password),
-        }
+        # case now that config.example.py defaults to True. No password is
+        # generated or shown anywhere: persist the "enabled + empty hash"
+        # combination immediately (unlike the plain bootstrap-in-memory
+        # below, which nothing ever writes to disk), which needs_setup()
+        # reads as "show the /setup wizard" - the owner picks their own
+        # password in the browser on first visit. Covers every startup
+        # path uniformly (install.sh, meshcenter-firstboot.sh, and
+        # CLAUDE.md's own documented manual `cp config.example.py
+        # config.py` path).
+        state = {"enabled": True, "password_hash": ""}
         safe_write_json(auth_file, state)
-        password_file = _write_initial_password_file(auth_file, plaintext_password)
-
-        print(f"[AUTH] No password configured - generated one: {plaintext_password}", flush=True)
-        if password_file:
-            print(
-                f"[AUTH] Saved to {password_file} (readable only by this service's own "
-                "user) - log in and change it via Settings -> Security.",
-                flush=True,
-            )
+        print(
+            "[AUTH] No password configured yet - open http://<this-device>:5000/setup "
+            "to create one before using MeshCenter.",
+            flush=True,
+        )
         return state
 
     return {
@@ -272,6 +237,20 @@ def is_protected(auth_state):
     return bool(auth_state.get("enabled")) and bool(str(auth_state.get("password_hash") or "").strip())
 
 
+def needs_setup(auth_state):
+    """True when protection is enabled but no password has been created yet.
+
+    This intentionally reinterprets the "enabled + empty hash" combination.
+    is_protected() (unchanged) still treats it as "access is open" - the
+    original anti-lockout fallback for a corrupted auth.json - but the app
+    no longer serves it that way: _enforce_auth() sends every request to the
+    /setup wizard instead, so a corrupted/wiped hash forces re-setup rather
+    than silently exposing the app unauthenticated. `enabled=False` never
+    needs setup (AUTH_ENABLED=False / protection switched off by the owner).
+    """
+    return bool(auth_state.get("enabled")) and not bool(str(auth_state.get("password_hash") or "").strip())
+
+
 def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, resolve_ui_language=None):
     # Closure-local, not module-level: a fresh dict per register_auth_routes()
     # call means each test (and each real app instance) starts with a clean
@@ -308,7 +287,21 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
             return None
 
         with state_lock:
+            setup_needed = needs_setup(auth_state)
             protected = is_protected(auth_state)
+
+        # Checked before `protected`: a fresh install (enabled, no password
+        # yet) has nothing to log in against, so every non-exempt path is
+        # sent to the setup wizard - see needs_setup() for why this no
+        # longer falls through to "open access".
+        if setup_needed:
+            if path.startswith("/api/"):
+                return jsonify({
+                    "ok": False,
+                    "error": "Setup required",
+                    "error_code": "setup_required",
+                }), 401
+            return redirect("/setup")
 
         if not protected or session.get("authenticated"):
             return None
@@ -420,6 +413,51 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
             error=error,
             retry_after=retry_after,
             next=next_url,
+            ui_language=_ui_language(),
+        )
+
+    @app.route("/setup", methods=["GET", "POST"])
+    def setup():
+        with state_lock:
+            setup_needed = needs_setup(auth_state)
+
+        # Nothing to set up (already configured, or protection is off) - let
+        # _enforce_auth() decide on the next hop whether "/" needs /login.
+        if not setup_needed:
+            return redirect("/")
+
+        error = None
+        if request.method == "POST":
+            password = request.form.get("password", "")
+            confirm_password = request.form.get("confirm_password", "")
+
+            if password != confirm_password:
+                error = "setup_error_mismatch"
+            elif len(password) < MIN_PASSWORD_LENGTH:
+                error = "setup_error_too_short"
+            else:
+                with state_lock:
+                    # Re-checked under the lock: two browsers submitting at
+                    # once must not let the second silently overwrite the
+                    # first one's password. No login throttle here - unlike
+                    # /login there is no fixed secret to brute-force, this
+                    # is a one-time action.
+                    if not needs_setup(auth_state):
+                        return redirect("/")
+                    auth_state["password_hash"] = generate_password_hash(password)
+                    auth_state["enabled"] = True
+                    _save()
+                # Same session grant as a successful login().
+                session.clear()
+                session.permanent = True
+                session["authenticated"] = True
+                session[_CSRF_SESSION_KEY] = _generate_csrf_token()
+                return redirect("/")
+
+        return render_template(
+            "setup.html",
+            error=error,
+            min_length=MIN_PASSWORD_LENGTH,
             ui_language=_ui_language(),
         )
 

@@ -78,6 +78,12 @@
             color: var(--text-secondary, #506983);
             margin-bottom: 6px;
         }
+        .login-field + .login-field { margin-top: 14px; }
+        .login-hint {
+            margin-top: 10px;
+            font-size: 12px;
+            color: var(--text-secondary, #506983);
+        }
         .login-field input[type="password"] {
             width: 100%;
             padding: 10px 12px;
@@ -117,23 +123,27 @@
 <body>
     <div class="login-page">
         <div class="login-card">
-            <div class="login-title">🔒 <span data-i18n="auth.login_title">MeshCenter</span></div>
-            <div class="login-subtitle" data-i18n="auth.login_subtitle">This MeshCenter is password protected.</div>
+            <div class="login-title">🔒 <span data-i18n="auth.setup_title">Welcome to MeshCenter</span></div>
+            <div class="login-subtitle" data-i18n="auth.setup_subtitle">This is a new installation. Create a password to protect it before continuing.</div>
 
-            <form method="post" action="/login">
-                <input type="hidden" name="next" value="{{ next }}">
+            <form method="post" action="/setup">
                 <div class="login-field">
-                    <label for="loginPassword" data-i18n="auth.password_label">Password</label>
-                    <input type="password" id="loginPassword" name="password" autofocus autocomplete="current-password" required>
+                    <label for="setupPassword" data-i18n="auth.setup_password_label">New password</label>
+                    <input type="password" id="setupPassword" name="password" autofocus autocomplete="new-password" minlength="{{ min_length }}" required>
                 </div>
+                <div class="login-field">
+                    <label for="setupConfirm" data-i18n="auth.setup_confirm_label">Confirm password</label>
+                    <input type="password" id="setupConfirm" name="confirm_password" autocomplete="new-password" required>
+                </div>
+                <div class="login-hint" id="setupHint" data-i18n="auth.setup_hint" data-min-length="{{ min_length }}">Use at least {{ min_length }} characters.</div>
 
-                {% if error == 'login_throttled' %}
-                <div class="login-error" id="loginError" data-i18n="auth.login_throttled" data-retry-after="{{ retry_after }}">Too many attempts. Try again in {{ retry_after }} seconds.</div>
-                {% elif error %}
-                <div class="login-error" data-i18n="auth.login_error">Incorrect password.</div>
+                {% if error == 'setup_error_mismatch' %}
+                <div class="login-error" data-i18n="auth.setup_error_mismatch">The passwords do not match.</div>
+                {% elif error == 'setup_error_too_short' %}
+                <div class="login-error" id="setupError" data-i18n="auth.setup_error_too_short" data-min-length="{{ min_length }}">Password must be at least {{ min_length }} characters.</div>
                 {% endif %}
 
-                <button type="submit" class="login-submit" data-i18n="auth.login_submit">Sign in</button>
+                <button type="submit" class="login-submit" data-i18n="auth.setup_submit">Create password</button>
             </form>
         </div>
     </div>
@@ -153,14 +163,35 @@
             } catch (error) { /* default light theme */ }
         })();
     </script>
-    <script src="/static/i18n.js?v=20260806-6"></script>
+    <script src="/static/i18n.js?v=20260920-setup-wizard"></script>
     <script>
         window.I18N.init("{{ ui_language }}").then(function () {
             window.I18N.applyStaticDom();
-            var throttledError = document.getElementById('loginError');
-            if (throttledError && throttledError.dataset.retryAfter) {
-                throttledError.textContent = window.I18N.t('auth.login_throttled', { seconds: throttledError.dataset.retryAfter });
+
+            // {min} params: applyStaticDom() only sets the bare catalog
+            // text, so fill the placeholder in afterwards (same pattern as
+            // login.html's throttled-error {seconds}).
+            ['setupHint', 'setupError'].forEach(function (id) {
+                var el = document.getElementById(id);
+                if (el && el.dataset.minLength) {
+                    el.textContent = window.I18N.t(el.getAttribute('data-i18n'), { min: el.dataset.minLength });
+                }
+            });
+
+            // Optional live match-check: uses the browser's native
+            // validation bubble on submit, so it needs no extra markup. The
+            // server re-validates everything regardless.
+            var password = document.getElementById('setupPassword');
+            var confirm = document.getElementById('setupConfirm');
+            function checkMatch() {
+                confirm.setCustomValidity(
+                    confirm.value && confirm.value !== password.value
+                        ? window.I18N.t('auth.setup_error_mismatch')
+                        : ''
+                );
             }
+            password.addEventListener('input', checkMatch);
+            confirm.addEventListener('input', checkMatch);
         });
     </script>
 </body>

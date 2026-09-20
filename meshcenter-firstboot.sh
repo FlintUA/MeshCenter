@@ -843,16 +843,11 @@ IP_ADDR="$(hostname -I 2>/dev/null | awk '{print $1}')"
 HOST_NAME="$(hostname)"
 
 # config.example.py defaults AUTH_ENABLED=True with no hash, so
-# api/api_auth.py's load_auth_state() generates a one-time password the
-# first time the service starts (already happened above, before the HTTP
-# check passed) and saves it to data/initial_password.txt (owner-only).
-# Read it here rather than duplicating the generation logic in bash - this
-# script only surfaces what server.py already did.
-INITIAL_PASSWORD_FILE="$INSTALL_DIR/data/initial_password.txt"
-INITIAL_PASSWORD=""
-if [[ -f "$INITIAL_PASSWORD_FILE" ]]; then
-    INITIAL_PASSWORD="$(cat "$INITIAL_PASSWORD_FILE" 2>/dev/null)"
-fi
+# api/api_auth.py's load_auth_state() persists "enabled + no password yet"
+# the first time the service starts (already happened above, before the
+# HTTP check passed), and the first browser visit is sent to the /setup
+# wizard to create a password. No password is generated, stored or logged
+# here - this script only points the user at that page.
 
 log "============================================================"
 log "MeshCenter installation completed successfully"
@@ -864,11 +859,7 @@ log "Radio port: $RADIO_PORT"
 log "SSH:        ssh ${TARGET_USER}@${IP_ADDR:-<IP-address>}"
 log "Web:        http://${IP_ADDR:-<IP-address>}:${APP_PORT}"
 log "mDNS:       http://${HOST_NAME}.local:${APP_PORT}"
-if [[ -n "$INITIAL_PASSWORD" ]]; then
-    log "Password:   $INITIAL_PASSWORD  (also saved to $INITIAL_PASSWORD_FILE - change it via Settings -> Security)"
-else
-    log "Password:   see $INITIAL_PASSWORD_FILE or $LOG_FILE (AUTH_ENABLED=False or a password was already set)"
-fi
+log "Setup:      open http://${HOST_NAME}.local:${APP_PORT}/setup to create your password"
 log "Log:        $LOG_FILE"
 log "============================================================"
 

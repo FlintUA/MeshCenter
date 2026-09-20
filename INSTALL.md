@@ -162,6 +162,15 @@ http://meshcenter.local:5000
 
 or use the IP address shown on the progress page before the reboot.
 
+> 🔐 **First visit:** when password protection is enabled (`AUTH_ENABLED = True`,
+> the default), a brand-new installation shows a **"Welcome to MeshCenter —
+> create a password"** screen instead of a login form. Choose a password
+> (at least 12 characters), confirm it, and you're signed in straight away —
+> no password is generated for you and there is nothing to look up over SSH.
+> The installer's final log also prints this page's address
+> (`http://meshcenter.local:5000/setup`). From then on, opening MeshCenter
+> shows the normal login form.
+
 > ⚙️ Configure OpenWeather API key and other settings in
 > **Settings → Weather** after installation.
 
@@ -289,6 +298,13 @@ of this automatically.
    Look for `Identity: MATCH` in the startup banner, then open
    `http://<raspberry-pi-ip>:5000` from another device. `Ctrl+C` once
    confirmed — don't leave it running outside systemd.
+
+   With `AUTH_ENABLED = True` (the default in `config.example.py`), the first
+   visit to a fresh install (no `data/auth.json` yet) shows a **create-your-
+   password** screen (`/setup`), not a login form — pick a password of at
+   least 12 characters and you're logged in immediately. The startup log also
+   prints a `[AUTH] No password configured yet - open http://<this-device>:5000/setup`
+   line. Nothing is generated or written to disk in plaintext.
 
 8. [ ] **systemd service**
    ```bash

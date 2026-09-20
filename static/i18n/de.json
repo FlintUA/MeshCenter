@@ -1519,7 +1519,15 @@
     "password_label": "Passwort",
     "login_error": "Falsches Passwort.",
     "login_throttled": "Zu viele Versuche. Versuche es in {seconds} Sekunden erneut.",
-    "login_submit": "Anmelden"
+    "login_submit": "Anmelden",
+    "setup_title": "Willkommen bei MeshCenter",
+    "setup_subtitle": "Das ist eine neue Installation. Lege ein Passwort fest, um sie zu schützen, bevor du fortfährst.",
+    "setup_password_label": "Neues Passwort",
+    "setup_confirm_label": "Passwort bestätigen",
+    "setup_hint": "Verwende mindestens {min} Zeichen.",
+    "setup_submit": "Passwort festlegen",
+    "setup_error_mismatch": "Die Passwörter stimmen nicht überein.",
+    "setup_error_too_short": "Das Passwort muss mindestens {min} Zeichen lang sein."
   },
   "csrf": {
     "expired_reload": "Sicherheitsprüfung abgelaufen. Bitte lade die Seite neu, um fortzufahren.",

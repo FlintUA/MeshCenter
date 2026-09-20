@@ -1519,7 +1519,15 @@
     "password_label": "Пароль",
     "login_error": "Невірний пароль.",
     "login_throttled": "Забагато спроб. Спробуйте ще раз через {seconds} с.",
-    "login_submit": "Увійти"
+    "login_submit": "Увійти",
+    "setup_title": "Ласкаво просимо до MeshCenter",
+    "setup_subtitle": "Це нова інсталяція. Створіть пароль для її захисту, перш ніж продовжити.",
+    "setup_password_label": "Новий пароль",
+    "setup_confirm_label": "Підтвердьте пароль",
+    "setup_hint": "Використовуйте щонайменше {min} символів.",
+    "setup_submit": "Створити пароль",
+    "setup_error_mismatch": "Паролі не збігаються.",
+    "setup_error_too_short": "Пароль має містити щонайменше {min} символів."
   },
   "csrf": {
     "expired_reload": "Термін дії перевірки безпеки минув. Будь ласка, перезавантажте сторінку, щоб продовжити.",

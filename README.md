@@ -166,7 +166,7 @@ For the full technical detail (timeout contracts, subprocess supervision, IPC pr
 
 The fastest path is **Automatic Installation**:
 
-1. Flash an SD card with Raspberry Pi Imager (Raspberry Pi OS Lite 64-bit).
+1. Flash an SD card with Raspberry Pi Imager (Raspberry Pi OS Lite 64-bit). While you're in the imager's ⚙️ settings, set a hostname — it decides the `.local` address everything below uses. This guide says `meshcenter`, but if you name your Pi `MeshCenterTest`, you'll reach it at `http://meshcentertest.local` instead. Case doesn't matter: hostnames are case-insensitive, so lowercase always works no matter how you typed it.
 2. Copy [`meshcenter-firstboot.sh`](https://github.com/FlintUA/MeshCenter/releases/latest/download/meshcenter-firstboot.sh) to the **root** of the bootfs drive.
 3. Open the `user-data` file on the bootfs drive (it already exists after flashing) and add this at the end:
    ```yaml

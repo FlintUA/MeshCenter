@@ -20,6 +20,25 @@
             user-select: auto;
             background: var(--theme-app-bg, #eef3f8);
         }
+        html[data-theme="dark"] {
+            /* Same values as static/ui-kit.css's html[data-theme="dark"] block
+               (--mc-bg-app / --mc-card-bg / --mc-border / --mc-primary /
+               --mc-text-primary / --mc-text-secondary / --mc-input-bg /
+               --mc-shadow-panel) - this page deliberately doesn't load ui-kit.css
+               (see the comment above), so these custom properties are redefined
+               directly here, under the exact names every rule below already reads
+               via var(..., <light fallback>). Redefining the properties once is
+               enough - no other rule in this file needs to change. */
+            color-scheme: dark;
+            --theme-app-bg: #0d1723;
+            --card-bg: #162433;
+            --border-color: #2f3e50;
+            --primary-color: #66a8ff;
+            --text-primary: #f2f7fc;
+            --text-secondary: #c3d1df;
+            --theme-panel-bg: #172535;
+            --theme-shadow: 0 3px 10px rgba(0, 0, 0, .24);
+        }
         .login-page {
             min-height: 100vh;
             display: flex;

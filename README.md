@@ -175,7 +175,7 @@ The fastest path is **Automatic Installation**:
    ```
    If `runcmd:` already exists in the file, add only the `- [ bash, ... ]` line under it. **This step is required** — without it the script just sits on the SD card and never runs.
 4. Connect your Meshtastic radio via USB **before** first boot.
-5. Power on. MeshCenter installs itself unattended (~5-20 min depending on hardware and whether camera support is requested) and is reachable at `http://meshcenter.local:5000` once it reboots.
+5. Power on. MeshCenter installs itself unattended (~5-20 min depending on hardware and whether camera support is requested). While it installs, open `http://meshcenter.local` (port 80) to watch a live step-by-step progress page. Once installation finishes and the Pi reboots, MeshCenter itself is reachable at `http://meshcenter.local:5000`.
 
 Prefer to install over SSH on an already-running Pi (or any Debian/Ubuntu
 Linux box) instead? That's **Manual Installation** — `curl -sSL

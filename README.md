@@ -1490,6 +1490,8 @@ GET    /api/security
 POST   /api/security
 GET    /login
 POST   /login
+GET    /setup
+POST   /setup
 POST   /api/logout
 ```
 

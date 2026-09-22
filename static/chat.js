@@ -2730,7 +2730,7 @@ function _meshtasticRenderConnectionStatus(connection) {
             : 'reference-location-status');
 }
 
-async function loadMeshtasticConnectionStatus() {
+async function loadMeshtasticConnectionStatus(syncButtons = true) {
     const statusEl = document.getElementById('meshtasticConnectionStatus');
     if (!statusEl) return;
 
@@ -2741,7 +2741,14 @@ async function loadMeshtasticConnectionStatus() {
 
         const connection = data.connection || {};
         _meshtasticRenderConnectionStatus(connection);
-        _meshtasticUpdateTransportButtons(connection.type);
+        // syncButtons=false: refresh the status text only, leave the
+        // segmented buttons/Connect-form sections exactly as they are -
+        // used after a failed BLE/TCP *connect* attempt, where the form
+        // the user is actively filling in must stay open (pixel-111 live
+        // finding: this used to also re-hide the just-opened form,
+        // reverting the whole panel back to whatever the backend's real
+        // active transport still was).
+        if (syncButtons) _meshtasticUpdateTransportButtons(connection.type);
     } catch (error) {
         console.warn('[MESHTASTIC] Failed to load connection status:', error);
         statusEl.textContent = window.I18N.t('settings.meshtastic_status_unavailable');
@@ -2770,7 +2777,11 @@ async function setMeshtasticTransport(type) {
             body: JSON.stringify({ type }),
         });
         const data = await response.json();
-        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+        if (!response.ok || !data.ok) {
+            const err = new Error(data.error || 'Request failed');
+            err.code = data.error_code || '';
+            throw err;
+        }
 
         _meshtasticRenderConnectionStatus(data.connection || {});
         _meshtasticUpdateTransportButtons(data.connection?.type);
@@ -2782,6 +2793,28 @@ async function setMeshtasticTransport(type) {
         loadSettings();
     } catch (error) {
         console.error('[MESHTASTIC] Transport switch failed:', error);
+
+        // Nothing saved to reconnect to yet (first-ever use of this
+        // transport, or its saved device/endpoint was cleared) - this is
+        // an expected "not configured yet" state, not a real failure.
+        // Reveal the Connect form instead of reverting the whole panel
+        // back to whatever's actually active (pixel-111 live finding:
+        // the generic revert below used to hide the form before the
+        // user had a chance to see or use it).
+        const notYetConfigured =
+            (type === 'tcp' && error.code === 'tcp_host_required') ||
+            (type === 'bluetooth' && error.code === 'ble_address_required');
+        if (notYetConfigured) {
+            _meshtasticUpdateTransportButtons(type);
+            if (statusEl) {
+                statusEl.textContent = window.I18N.t(
+                    type === 'tcp' ? 'settings.meshtastic_tcp_not_configured' : 'settings.meshtastic_ble_not_configured'
+                );
+                statusEl.className = 'reference-location-status';
+            }
+            return;
+        }
+
         if (statusEl) {
             statusEl.textContent = `${window.I18N.t('settings.meshtastic_switch_failed')}: ${error.message || error}`;
             statusEl.className = 'reference-location-status reference-location-status-error';
@@ -2894,7 +2927,10 @@ async function meshtasticBleConnect(address, name, button) {
             statusEl.className = 'reference-location-status reference-location-status-error';
         }
         showToast(window.I18N.t('settings.meshtastic_ble_connect_failed'), 'error');
-        loadMeshtasticConnectionStatus();
+        // syncButtons=false - a failed connect attempt must not hide the
+        // scan/connect section the user is actively working in (see
+        // loadMeshtasticConnectionStatus()'s own comment).
+        loadMeshtasticConnectionStatus(false);
     } finally {
         if (button) button.disabled = false;
     }
@@ -2954,7 +2990,10 @@ async function meshtasticTcpConnect(button) {
             statusEl.className = 'reference-location-status reference-location-status-error';
         }
         showToast(window.I18N.t('settings.meshtastic_tcp_connect_failed'), 'error');
-        loadMeshtasticConnectionStatus();
+        // syncButtons=false - a failed connect attempt must not hide the
+        // Host/Port form the user is actively working in (see
+        // loadMeshtasticConnectionStatus()'s own comment).
+        loadMeshtasticConnectionStatus(false);
     } finally {
         if (button) button.disabled = false;
     }

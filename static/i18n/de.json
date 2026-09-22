@@ -1032,6 +1032,8 @@
     "meshtastic_switch_in_progress": "Verbindung wird gewechselt…",
     "meshtastic_switch_success": "Verbindung gewechselt",
     "meshtastic_switch_failed": "Verbindungswechsel nicht möglich",
+    "meshtastic_tcp_not_configured": "Noch kein gespeicherter TCP-Endpunkt - gib unten einen Host ein und verbinde dich.",
+    "meshtastic_ble_not_configured": "Noch kein gespeichertes Bluetooth-Gerät - suche unten und verbinde dich.",
     "meshtastic_ble_scanning": "Suche läuft…",
     "meshtastic_ble_no_devices": "Keine Geräte gefunden",
     "meshtastic_ble_scan_failed": "Suche fehlgeschlagen",

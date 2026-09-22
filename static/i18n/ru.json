@@ -1032,6 +1032,8 @@
     "meshtastic_switch_in_progress": "Переключение соединения…",
     "meshtastic_switch_success": "Соединение переключено",
     "meshtastic_switch_failed": "Не удалось переключить соединение",
+    "meshtastic_tcp_not_configured": "Ещё нет сохранённого TCP-адреса - введите хост ниже и подключитесь.",
+    "meshtastic_ble_not_configured": "Ещё нет сохранённого Bluetooth-устройства - выполните поиск и подключитесь ниже.",
     "meshtastic_ble_scanning": "Поиск…",
     "meshtastic_ble_no_devices": "Устройства не найдены",
     "meshtastic_ble_scan_failed": "Поиск не удался",

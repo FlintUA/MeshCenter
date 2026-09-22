@@ -1032,6 +1032,8 @@
     "meshtastic_switch_in_progress": "Switching connection…",
     "meshtastic_switch_success": "Connection switched",
     "meshtastic_switch_failed": "Unable to switch connection",
+    "meshtastic_tcp_not_configured": "No saved TCP endpoint yet - enter a host below and connect.",
+    "meshtastic_ble_not_configured": "No saved Bluetooth device yet - scan and connect below.",
     "meshtastic_ble_scanning": "Scanning…",
     "meshtastic_ble_no_devices": "No devices found",
     "meshtastic_ble_scan_failed": "Scan failed",

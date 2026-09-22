@@ -76,6 +76,54 @@ class TransportErrorCode(str, Enum):
     # (a real owner was found) so a caller/UI can tell "we don't know"
     # apart from "something is actually holding it".
     PORT_CHECK_INCONCLUSIVE = "port_check_inconclusive"
+    # Radio TCP Transport (part 1): five new codes, all specific to
+    # TCPTransport's explicit two-stage connect (raw TCP socket open,
+    # THEN the Meshtastic protocol handshake/config sync) - see
+    # adapters/meshtastic/tcp_transport.py's module docstring for the
+    # full state machine these map onto. Not reused by Serial/BLE: Serial
+    # has no networking layer to fail at this granularity, and BLE has no
+    # DNS/refused-connection concept - a slow/failed BLE GATT connect is
+    # already covered by the generic CONNECT_FAILED/TIMEOUT path there.
+    DNS_ERROR = "dns_error"
+    CONNECT_REFUSED = "connect_refused"
+    CONNECT_TIMEOUT = "connect_timeout"
+    # The raw TCP socket connected successfully (proven either by
+    # TCPTransport's own pre-flight probe or by the meshtastic library's
+    # own internal connect succeeding) but the Meshtastic protocol layer
+    # then raised an error IMMEDIATELY - a fast, synchronous rejection,
+    # not a hang. Distinct from PROTOCOL_SYNC_TIMEOUT (below), which
+    # means the handshake never returned at all within the caller's
+    # budget and had to be reported by TCPTransport's own external
+    # timeout watchdog instead of a raised exception. A caller/UI can
+    # tell "the host:port is reachable but immediately rejected the
+    # Meshtastic handshake" (this code - e.g. something other than a
+    # Meshtastic radio is listening on that port) apart from "the radio
+    # accepted the TCP connection but the handshake never completes"
+    # (PROTOCOL_SYNC_TIMEOUT - the exact regression-firmware shape this
+    # feature was built to diagnose cleanly instead of hanging on).
+    TCP_CONNECTED = "tcp_connected"
+    # The Meshtastic protocol handshake was already in progress
+    # (TCPTransport's own internal state was SYNCING - see that module's
+    # state machine) when the caller's overall timeout budget ran out,
+    # per tier 1 of the RadioTransport timeout contract (watched from
+    # OUTSIDE the blocking library call - see
+    # adapters/meshtastic/_timeout_support.py, the same mechanism every
+    # other TransportError(TIMEOUT) in this codebase already relies on).
+    # This is the code a firmware that accepts the TCP connection, sends
+    # some FromRadio traffic, and then never reaches config_complete is
+    # expected to produce - a self-reported sync timeout, reported
+    # cleanly, never left as an indefinite hang and never collapsed into
+    # the generic TIMEOUT code that doesn't say which stage got stuck.
+    PROTOCOL_SYNC_TIMEOUT = "protocol_sync_timeout"
+    # A previously READY (fully synced) TCP link stopped working during
+    # normal use - a send_*/get_* call hit a socket-level error
+    # (connection reset, broken pipe, EOF) rather than a connect()/
+    # reconnect() attempt itself failing outright. Distinct from
+    # CONNECT_FAILED/TIMEOUT (both mean "a connect attempt itself never
+    # succeeded") - this means a link that WAS working stopped being
+    # usable, which is what actually drives TCPTransport's own reconnect
+    # backoff rather than requiring a caller-initiated reconnect() call.
+    REMOTE_DISCONNECT = "remote_disconnect"
 
 
 # ---------------------------------------------------------------------------

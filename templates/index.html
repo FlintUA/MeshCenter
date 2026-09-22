@@ -1500,6 +1500,10 @@
                                         <span data-i18n="settings.meshtastic_transport_bluetooth">Bluetooth</span>
                                         <span class="settings-experimental-badge" data-i18n="settings.meshtastic_transport_experimental_badge">Experimental</span>
                                     </button>
+                                    <button id="meshtasticTransportTcpBtn" onclick="setMeshtasticTransport('tcp')">
+                                        <span data-i18n="settings.meshtastic_transport_tcp">TCP</span>
+                                        <span class="settings-experimental-badge" data-i18n="settings.meshtastic_transport_experimental_badge">Experimental</span>
+                                    </button>
                                 </div>
                             </div>
 
@@ -1507,6 +1511,10 @@
 
                             <div id="meshtasticBleReceiveWarning" class="settings-card-note settings-card-note--warning" style="display:none;">
                                 ⚠️ <span data-i18n="settings.meshtastic_ble_receive_warning">Incoming messages are not received while Bluetooth is active - you can send, but not receive. Switch back to USB to receive messages again.</span>
+                            </div>
+
+                            <div id="meshtasticTcpReceiveWarning" class="settings-card-note settings-card-note--warning" style="display:none;">
+                                ⚠️ <span data-i18n="settings.meshtastic_tcp_receive_warning">TCP mode is active. Incoming live messages and telemetry are not yet supported in this mode.</span>
                             </div>
 
                             <div id="meshtasticBleScanSection" style="display:none;">
@@ -1520,6 +1528,25 @@
                                 <div id="meshtasticBleDeviceList" class="meshtastic-ble-device-list"></div>
 
                                 <div id="meshtasticBleStatus" class="reference-location-status"></div>
+                            </div>
+
+                            <div id="meshtasticTcpConnectSection" style="display:none;">
+                                <div class="settings-option">
+                                    <label class="settings-option-label" for="meshtasticTcpHostInput" data-i18n="settings.meshtastic_tcp_host_label">Host / IP address</label>
+                                    <input type="text" id="meshtasticTcpHostInput" placeholder="192.168.2.34" autocomplete="off">
+                                </div>
+                                <div class="settings-option">
+                                    <label class="settings-option-label" for="meshtasticTcpPortInput" data-i18n="settings.meshtastic_tcp_port_label">Port</label>
+                                    <input type="number" id="meshtasticTcpPortInput" placeholder="4403" min="1" max="65535" autocomplete="off">
+                                </div>
+                                <button type="button"
+                                        id="meshtasticTcpConnectButton"
+                                        class="mc-refresh-btn"
+                                        onclick="meshtasticTcpConnect(this)">
+                                    🔌 <span data-i18n="settings.meshtastic_tcp_connect">Connect</span>
+                                </button>
+
+                                <div id="meshtasticTcpStatus" class="reference-location-status"></div>
                             </div>
                         </div>
 
@@ -2343,7 +2370,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20260920-setup-wizard"></script>
+<script src="/static/i18n.js?v=20260922-tcp-transport-runtime"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above —
@@ -2362,7 +2389,7 @@
 <script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='targets.js') }}?v=20260911-pr4-shared-target-model"></script>
 <script src="/static/files.js?v=20260917-nodecard-optionc-followup"></script>
-<script src="/static/chat.js?v=20260918-node-card-role-always-visible"></script>
+<script src="/static/chat.js?v=20260922-tcp-transport-runtime"></script>
 <script src="/static/media.js?v=20260818-xss-fix-delete-onclick"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 

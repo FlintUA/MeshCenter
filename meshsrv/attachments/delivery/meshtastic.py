@@ -136,13 +136,23 @@ class MeshtasticTextAdapter(DeliveryAdapter):
             # a send target.
             connector_state = ConnectorState.UNAVAILABLE
 
-        is_ble = info.descriptor is not None and info.descriptor.type == ConnectionType.BLUETOOTH
         # spec 19.3: BLE cannot reliably receive at all on current
         # MeshCenter (CLAUDE.md's own documented, pre-existing
         # receive-blindness trade-off) - BEST_EFFORT, never CONFIRMED,
-        # whenever the live transport is BLE. USB serial is the only mode
-        # this adapter's own hardware acceptance test exercises.
-        ack_semantics = AckSemantics.BEST_EFFORT if is_ble else AckSemantics.CONFIRMED
+        # whenever the live transport is BLE. Radio TCP Transport part 2
+        # gives TCP the exact same limitation for the exact same reason
+        # (no inbound relay from the adapter subprocess back to Core yet -
+        # see that feature's own scope decision, mirrored in the
+        # settings.meshtastic_tcp_receive_warning UI banner) - this is
+        # the reachability-underlying, not the transport type, so it must
+        # be checked the same way. Only serial (the one transport with a
+        # real, working inbound listener) gets CONFIRMED, which is what
+        # this adapter's own hardware acceptance test actually exercises.
+        receive_blind_transport = info.descriptor is not None and info.descriptor.type in (
+            ConnectionType.BLUETOOTH,
+            ConnectionType.TCP,
+        )
+        ack_semantics = AckSemantics.BEST_EFFORT if receive_blind_transport else AckSemantics.CONFIRMED
 
         return DeliveryCapabilities(
             wire_formats=frozenset({WireFormat.MCA1_TEXT}),

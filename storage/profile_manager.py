@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from meshsrv.radio_endpoint import normalize_radio_record
 from storage.json_store import safe_read_json, safe_write_json
 
 PROFILE_SCHEMA_VERSION = 1
@@ -81,6 +82,16 @@ class ProfileManager:
     def _profile_metadata(self, profile_id: str, radio: Mapping[str, Any], existing: Mapping[str, Any] | None = None) -> dict[str, Any]:
         existing = dict(existing or {})
         created_at = str(existing.get("created_at") or "").strip() or now_iso()
+        # normalize_radio_record() defaults a missing/legacy transport to
+        # "serial" with endpoint={"port": <the flat `port` field below>} -
+        # self-normalizing here (rather than trusting every caller to have
+        # done it already) means create_clean_profile()/ensure_profile()
+        # are safe to call with a bare detected-radio dict (no transport/
+        # endpoint keys at all) exactly as every existing call site already
+        # does, and still get a correctly-shaped stored record. See
+        # meshsrv/radio_endpoint.py's own module docstring for the full
+        # backward-compatibility contract this preserves.
+        normalized = normalize_radio_record(radio)
         return {
             "schema_version": PROFILE_SCHEMA_VERSION,
             "profile_id": profile_id,
@@ -91,6 +102,8 @@ class ProfileManager:
                 "hardware": str(radio.get("hardware") or "").strip(),
                 "role": str(radio.get("role") or "").strip(),
                 "port": str(radio.get("port") or "").strip(),
+                "transport": normalized["transport"],
+                "endpoint": normalized["endpoint"],
             },
             "created_at": created_at,
             "last_used_at": now_iso(),

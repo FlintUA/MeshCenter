@@ -82,3 +82,43 @@ def test_create_clean_profile_initializes_empty_state_files(tmp_path):
     assert (profile_dir / "messages.json").read_text(encoding="utf-8").strip() == "[]"
     assert (profile_dir / "nodes.json").read_text(encoding="utf-8").strip() == "{}"
     assert profile["profile_id"] == "75fea2aa"
+
+
+def test_legacy_radio_dict_with_no_transport_key_normalizes_to_serial(tmp_path):
+    """Every existing call site (detect_connected_radio()'s output,
+    INSTANCE_IDENTITY.radio before this feature) hands ensure_profile() a
+    bare dict with a flat `port` field and no transport/endpoint keys at
+    all - must still produce a correctly-shaped stored record."""
+    manager = ProfileManager(tmp_path)
+
+    context = manager.ensure_profile(_radio(), migrate_legacy=False)
+
+    assert context["metadata"]["radio"]["transport"] == "serial"
+    assert context["metadata"]["radio"]["endpoint"] == {"port": "/dev/ttyACM0"}
+    # The legacy flat field is preserved unchanged, not removed.
+    assert context["metadata"]["radio"]["port"] == "/dev/ttyACM0"
+
+
+def test_tcp_radio_profile_persists_transport_and_endpoint(tmp_path):
+    manager = ProfileManager(tmp_path)
+    radio = {
+        "node_id": "!1fa065f0",
+        "long_name": "T-Beam",
+        "short_name": "TBM",
+        "hardware": "TBEAM",
+        "role": "CLIENT",
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+    }
+
+    context = manager.ensure_profile(radio, migrate_legacy=False)
+
+    assert context["profile_id"] == "1fa065f0"
+    assert context["metadata"]["radio"]["transport"] == "tcp"
+    assert context["metadata"]["radio"]["endpoint"] == {"host": "192.168.2.34", "port": 4403}
+
+    # Round-trips through get_profile() too, not just the ensure_profile()
+    # return value.
+    reloaded = manager.get_profile("1fa065f0")
+    assert reloaded["metadata"]["radio"]["transport"] == "tcp"
+    assert reloaded["metadata"]["radio"]["endpoint"] == {"host": "192.168.2.34", "port": 4403}

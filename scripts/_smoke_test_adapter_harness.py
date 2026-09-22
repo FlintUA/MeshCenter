@@ -33,13 +33,17 @@ from adapters.meshtastic.serial_transport import SerialTransport  # noqa: E402
 print("==> importing adapters.meshtastic.ble_transport")
 from adapters.meshtastic.ble_transport import BLETransport  # noqa: E402
 
+print("==> importing adapters.meshtastic.tcp_transport")
+from adapters.meshtastic.tcp_transport import TCPTransport  # noqa: E402
+
 print("==> importing adapters.meshtastic.ipc_server")
 from adapters.meshtastic import ipc_server  # noqa: E402,F401
 
-print("==> checking both transport classes actually implement RadioTransport (Backend Protocol v1)")
+print("==> checking all three transport classes actually implement RadioTransport (Backend Protocol v1)")
 from meshsrv.radio_transport import RadioTransport  # noqa: E402
 
 assert issubclass(SerialTransport, RadioTransport), "SerialTransport no longer implements RadioTransport"
 assert issubclass(BLETransport, RadioTransport), "BLETransport no longer implements RadioTransport"
+assert issubclass(TCPTransport, RadioTransport), "TCPTransport no longer implements RadioTransport"
 
 print("==> adapter smoke test OK - archive is self-sufficient (adapters/ + its meshsrv/hardware closure)")

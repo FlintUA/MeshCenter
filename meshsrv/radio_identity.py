@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from meshsrv import meshtastic_transport
+from meshsrv.radio_transport import ConnectionDescriptor, ConnectionType, RadioTransport, TransportError
 from meshsrv.runtime_identity import discover_serial_ports
 
 IDENTITY_MATCH = "MATCH"
@@ -256,4 +257,108 @@ def detect_connected_radio(
             "No serial radio ports were found."
         ),
     }
+
+
+def detect_tcp_radio_identity(
+    transport: RadioTransport,
+    host: str,
+    port: int,
+    timeout: float = 25,
+) -> tuple[dict[str, Any], str]:
+    """TCP counterpart to detect_radio_identity() - same return shape
+    ((result_dict, raw_output_str)), so verify_radio_identity() and the
+    node-manager profile routes in server.py don't need two different
+    shapes to handle. Detection here goes through the real
+    RadioTransport/AdapterIPCTransport boundary (a live connect() +
+    get_local_node()/get_metadata(), via the adapter subprocess) rather
+    than shelling out to a CLI - there is no `meshtastic --host ...
+    --info` equivalent this project's Meshtastic CLI dependency provides
+    the way `--port ... --info` does for serial (see
+    meshsrv/meshtastic_transport.py), so TCP identity detection has
+    always gone through the same transport boundary the rest of Core's
+    TCP traffic uses, never a second, parallel CLI-based path.
+
+    `result_dict["error_code"]` is a new, additive field (always None on
+    the serial detect_radio_identity() path above) carrying the raw
+    TransportErrorCode value (dns_error/connect_refused/connect_timeout/
+    protocol_sync_timeout/tcp_connected/remote_disconnect/...) so a
+    caller/UI can surface PR #277's specific diagnostic codes instead of
+    a squashed generic "detection failed" message.
+
+    Does not leave the connection open on failure - the caller
+    (verify_radio_identity() at startup, or a node-manager profile route)
+    decides separately whether to keep or discard this connection.
+    Deliberately does NOT close it on success either: identity detection
+    for TCP unavoidably *is* the same connect a caller may want to keep
+    using afterward (unlike serial's one-shot `--info` CLI probe, which
+    is process-isolated from the real, separate --listen subprocess) -
+    the caller is responsible for deciding whether to disconnect().
+    """
+    checked_at = utc_now_iso()
+    host = str(host or "").strip()
+    configured = {"host": host, "port": int(port) if port else 0}
+
+    if not host:
+        return ({
+            "status": IDENTITY_DETECTION_ERROR,
+            "checked_at": checked_at,
+            "configured": configured,
+            "detected": {},
+            "error": "No TCP host configured",
+            "error_code": None,
+        }, "")
+
+    descriptor = ConnectionDescriptor(type=ConnectionType.TCP, address=f"{host}:{int(port) if port else 0}")
+    try:
+        transport.connect(descriptor, timeout=timeout)
+        local_node = transport.get_local_node(timeout=timeout)
+    except TransportError as error:
+        return ({
+            "status": IDENTITY_DETECTION_ERROR,
+            "checked_at": checked_at,
+            "configured": configured,
+            "detected": {},
+            "error": str(error),
+            "error_code": error.code.value,
+        }, "")
+
+    user = local_node.user
+    firmware_version = ""
+    try:
+        metadata = transport.get_metadata(timeout=timeout)
+        metadata_json = json.loads(metadata.get("metadata_json") or "{}")
+        firmware_version = str(metadata_json.get("firmwareVersion") or "").strip()
+    except Exception:
+        # Metadata is a best-effort extra, never fatal to identity
+        # detection itself - a radio that answers get_local_node() but
+        # not get_metadata() cleanly still has a confirmed node_id.
+        pass
+
+    detected = {
+        "node_id": local_node.node_id,
+        "long_name": user.long_name if user else "",
+        "short_name": user.short_name if user else "",
+        "hardware": user.hw_model if user else "",
+        # NodeUser (meshsrv/radio_transport.py) carries no `role` field at
+        # all - neither BLETransport's nor SerialTransport's own
+        # _to_node_info() populate one either (confirmed by reading both).
+        # Kept as an always-empty key purely so this dict has the same
+        # shape as detect_radio_identity()'s (CLI-sourced, which does have
+        # a real "role" value) - callers that read radio.get("role", "")
+        # keep working unchanged, just never populated for TCP.
+        "role": "",
+        "port": "",
+        "host": host,
+        "tcp_port": int(port) if port else 0,
+        "firmware_version": firmware_version,
+    }
+    status = IDENTITY_MATCH if detected.get("node_id") else IDENTITY_NOT_FOUND
+    return ({
+        "status": status,
+        "checked_at": checked_at,
+        "configured": configured,
+        "detected": detected,
+        "error": None if detected.get("node_id") else "TCP radio responded but reported no node ID",
+        "error_code": None,
+    }, "")
 

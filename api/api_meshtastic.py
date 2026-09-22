@@ -1,4 +1,5 @@
-"""Meshtastic transport switching (Serial <-> Bluetooth) REST API - Task 46.
+"""Meshtastic transport switching (Serial <-> Bluetooth <-> TCP) REST API -
+Task 46, extended by Radio TCP Transport part 2.
 
 Talks to the radio only through meshsrv.transport_router.TransportRouter /
 adapters/meshtastic/*.py - no `import meshtastic` here, same rule as every
@@ -6,24 +7,13 @@ other Core file since Task 44/45.
 """
 from flask import jsonify, request
 
-from meshsrv.radio_transport import ConnectionDescriptor, ConnectionType, TransportError
-
-# Live-measured on TAP2 (Task 45): a real BLE connect() took 71.5-71.8s
-# twice. Switch operations use the same margin as BLETransport's own
-# raised default, not the ABC's 30.0.
-_SWITCH_CONNECT_TIMEOUT_S = 90.0
-_SWITCH_DISCONNECT_TIMEOUT_S = 30.0
-
-# TEMPORARY ESTIMATE, needs live verification in Task 47: how long the
-# old (usually serial) transport's recovery reconnect gets, after a
-# failed switch, before giving up. Deliberately NOT _SWITCH_CONNECT_
-# TIMEOUT_S (90.0) - that figure was calibrated from live BLE connect()
-# measurements specifically, and carrying it over unexamined to
-# SerialTransport.connect(force=True) would repeat the exact mistake
-# the 30.0s BLE default was (Task 45: an untested number copied from
-# the ABC's docstring, not the real hardware). 45.0 is a margin over
-# the already-accepted disconnect() default (30.0s), not a measurement.
-_RECOVERY_CONNECT_TIMEOUT_S = 45.0
+from meshsrv.radio_endpoint import (
+    DEFAULT_TCP_PORT,
+    SWITCH_CONNECT_TIMEOUT_S as _SWITCH_CONNECT_TIMEOUT_S,
+    SWITCH_DISCONNECT_TIMEOUT_S as _SWITCH_DISCONNECT_TIMEOUT_S,
+    build_transport_connect_new,
+)
+from meshsrv.radio_transport import TransportError
 
 
 def register_meshtastic_routes(
@@ -35,23 +25,33 @@ def register_meshtastic_routes(
     transport_router,
     serial_transport,
     ble_transport,
+    tcp_transport,
     serial_port,
     local_node_id,
     core_serial_transport,
+    instance_manager,
 ):
-    """Task 48: `serial_transport`/`ble_transport` here are Core-side IPC
-    proxies (meshsrv.adapter_ipc_client.AdapterIPCTransport) talking to
-    the adapter subprocess - everything below that calls .connect()/
-    .disconnect()/.scan() on them is unchanged in structure from Task 46/
-    47, just now crossing a process boundary underneath. `core_serial_
-    transport` is a DIFFERENT object - server.py's own
+    """Task 48: `serial_transport`/`ble_transport`/`tcp_transport` here are
+    Core-side IPC proxies (meshsrv.adapter_ipc_client.AdapterIPCTransport)
+    talking to the adapter subprocess - everything below that calls
+    .connect()/.disconnect()/.scan() on them is unchanged in structure
+    from Task 46/47, just now crossing a process boundary underneath.
+    `core_serial_transport` is a DIFFERENT object - server.py's own
     SerialPortSupervisor instance (meshsrv/serial_port_supervisor.py,
     see its construction site for why it's kept around) - used here for
     exactly one thing, get_listener_pid(), never for a real send/connect/get
     operation. Keeping these as two distinct parameters, not one object
     doing double duty, is deliberate: it makes "this route never
     accidentally calls a real radio operation on the Core-owned instance"
-    checkable by reading the parameter list, not just by convention."""
+    checkable by reading the parameter list, not just by convention.
+
+    `instance_manager` (Radio TCP Transport part 2, new): every
+    successful switch below also writes INSTANCE_IDENTITY.radio.transport/
+    endpoint through _persist_choice(), not just settings.meshtastic -
+    that's the boot-time source of truth server.py's start_runtime()
+    TRANSPORT RESTORE block reads to reconnect the right transport after
+    a restart (see that block's own comment for the pre-existing gap this
+    closes, uniformly for serial/bluetooth/tcp)."""
 
     def _connection_payload():
         info = transport_router.get_connection_info()
@@ -85,17 +85,91 @@ def register_meshtastic_routes(
             "listener_pid": core_serial_transport.get_listener_pid(),
         }
 
-    def _persist_choice(transport_name, ble_address="", ble_name=""):
+    def _persist_choice(transport_name, ble_address="", ble_name="", tcp_host="", tcp_port=None):
         with state_lock:
             section = dict(settings.get("meshtastic") or {})
             section["transport"] = transport_name
             if transport_name == "bluetooth":
                 section["ble_address"] = ble_address
                 section["ble_name"] = ble_name
+            if transport_name == "tcp":
+                section["tcp_host"] = tcp_host
+                section["tcp_port"] = tcp_port
             settings["meshtastic"] = section
             save_settings()
 
-    def _switch(connect_new, target_transport_name, ble_address="", ble_name=""):
+        # Radio TCP Transport part 2: also keep INSTANCE_IDENTITY.radio.
+        # transport/endpoint in sync, not just settings.meshtastic - this
+        # is the boot-time source of truth server.py's start_runtime()
+        # TRANSPORT RESTORE block reads to reconnect the right transport
+        # after a restart (see that block's own comment - a pre-existing
+        # gap this fixes uniformly for serial/bluetooth/tcp, previously
+        # settings.meshtastic was written here but never read at boot at
+        # all). Best-effort: a failure here must not fail the switch
+        # itself (settings.meshtastic above already reflects the new
+        # choice, and the live transport_router is already correct) - it
+        # only means the NEXT restart might not restore correctly.
+        try:
+            identity = instance_manager.get()
+            updated = dict(identity)
+            radio = dict(updated.get("radio") or {})
+            radio["transport"] = transport_name
+            if transport_name == "bluetooth":
+                radio["endpoint"] = {"address": ble_address, "label": ble_name}
+            elif transport_name == "tcp":
+                radio["endpoint"] = {"host": tcp_host, "port": tcp_port}
+            else:
+                radio["port"] = serial_port
+                radio["endpoint"] = {"port": serial_port}
+            updated["radio"] = radio
+            instance_manager.save(updated)
+        except Exception as error:
+            print(f"[MESHTASTIC] Could not persist transport choice to instance identity: {error}", flush=True)
+
+    def _previous_transport_recovery(exclude):
+        """Builds a recovery connect_new() callable for whichever
+        transport was last known-good (settings.meshtastic.transport,
+        written by _persist_choice() on every previous successful
+        switch) - or (None, None) if that transport isn't actually
+        available to recover to (no serial port configured on a Server
+        Mode host, or no saved BLE/TCP address/host to reconnect with).
+        `exclude` skips returning a recovery for the transport that just
+        failed to connect - recovering "to itself" makes no sense.
+        Returns (transport_name, connect_new) or (None, None)."""
+        with state_lock:
+            saved = dict(settings.get("meshtastic") or {})
+        previous = str(saved.get("transport") or "serial").strip().lower()
+        if previous == exclude:
+            return None, None
+
+        kwargs = dict(
+            serial_transport=serial_transport,
+            ble_transport=ble_transport,
+            tcp_transport=tcp_transport,
+            connect_timeout=_SWITCH_CONNECT_TIMEOUT_S,
+            disconnect_timeout=_SWITCH_DISCONNECT_TIMEOUT_S,
+        )
+        if previous == "serial":
+            if not serial_port:
+                return None, None
+            return previous, build_transport_connect_new("serial", serial_port=serial_port, **kwargs)
+        if previous == "bluetooth":
+            address = str(saved.get("ble_address") or "").strip()
+            if not address:
+                return None, None
+            return previous, build_transport_connect_new(
+                "bluetooth", ble_address=address, ble_name=str(saved.get("ble_name") or ""), **kwargs
+            )
+        if previous == "tcp":
+            host = str(saved.get("tcp_host") or "").strip()
+            if not host:
+                return None, None
+            return previous, build_transport_connect_new(
+                "tcp", tcp_host=host, tcp_port=int(saved.get("tcp_port") or DEFAULT_TCP_PORT), **kwargs
+            )
+        return None, None
+
+    def _switch(connect_new, target_transport_name, ble_address="", ble_name="", tcp_host="", tcp_port=None):
         """Runs connect_new() through transport_router.switch() (see
         meshsrv/transport_router.py - the whole disconnect-old/connect-
         new/reassign sequence is mutually exclusive with any other call
@@ -111,10 +185,20 @@ def register_meshtastic_routes(
         raised out of connect_new(), so there is exactly one recovery
         branch below, not two to keep in sync.
 
-        On any such failure, the old (usually serial) transport may
-        already be mid-disconnect or fully disconnected - attempt to
-        bring it back so the system doesn't end up with neither
-        transport usable.
+        RECOVER THE PREVIOUS TRANSPORT, NOT ALWAYS SERIAL (Radio TCP
+        Transport part 2 - the task's own explicit requirement): the
+        original version of this always attempted to reconnect serial on
+        any failure, regardless of what was actually active before the
+        switch - wrong on a Server Mode host with no serial radio at all
+        (attempting to "recover" a transport that was never configured,
+        against a MESHTASTIC_PORT that may not even resolve to a real
+        device). _previous_transport_recovery() determines what was
+        ACTUALLY active (bluetooth/tcp/serial, whichever it was) and
+        whether recovering to it is even viable (a saved address/host
+        exists) - when it isn't, no recovery is attempted at all, and
+        transport_router is left exactly as connect_new() left it
+        (disconnected/ERROR) - "expose disconnected/degraded radio
+        state; never silently bind another physical radio."
 
         RECOVERY MUST GO THROUGH THE ROUTER TOO (live Task 47 finding on
         TAP2, second bug caught by the same forced-failure test): the
@@ -127,31 +211,24 @@ def register_meshtastic_routes(
         connected" even though the serial listener was genuinely running
         with a real PID). Wrapping the recovery connect in its own
         transport_router.switch() call fixes this the same way the
-        primary switch already works: self._active only moves to
-        serial_transport if the recovery connect succeeds, atomically,
-        under the router's own lock - never a second, ad-hoc path that
-        can desync the router's bookkeeping from physical reality."""
+        primary switch already works: self._active only moves to the
+        recovery transport if that connect succeeds, atomically, under
+        the router's own lock - never a second, ad-hoc path that can
+        desync the router's bookkeeping from physical reality."""
         try:
             transport_router.switch(connect_new)
         except TransportError as error:
             recovery_error = None
-            if target_transport_name != "serial":
-                def _recover_serial():
-                    serial_transport.connect(
-                        ConnectionDescriptor(type=ConnectionType.SERIAL, address=serial_port),
-                        force=True,
-                        timeout=_RECOVERY_CONNECT_TIMEOUT_S,
-                    )
-                    return serial_transport
-
+            recovery_name, recovery_connect_new = _previous_transport_recovery(exclude=target_transport_name)
+            if recovery_connect_new is not None:
                 try:
-                    transport_router.switch(_recover_serial)
+                    transport_router.switch(recovery_connect_new)
                 except TransportError as recon_err:
                     recovery_error = recon_err
             if recovery_error is not None:
                 return jsonify({
                     "ok": False,
-                    "error": f"{error}; serial reconnect also failed: {recovery_error}",
+                    "error": f"{error}; {recovery_name} reconnect also failed: {recovery_error}",
                     "error_code": "transport_switch_failed_both_down",
                 }), 503
             return jsonify({
@@ -160,7 +237,7 @@ def register_meshtastic_routes(
                 "error_code": "transport_switch_failed",
             }), 503
 
-        _persist_choice(target_transport_name, ble_address, ble_name)
+        _persist_choice(target_transport_name, ble_address, ble_name, tcp_host, tcp_port)
         return jsonify({"ok": True, "connection": _connection_payload()})
 
     @app.route("/api/meshtastic/connection", methods=["GET"])
@@ -177,6 +254,24 @@ def register_meshtastic_routes(
             return jsonify({"ok": False, "error": str(error), "error_code": "ble_scan_failed"}), 503
         return jsonify({"ok": True, "devices": devices})
 
+    def _connect_new_for(transport_name, **endpoint_kwargs):
+        """Thin wrapper around build_transport_connect_new() binding this
+        module's own transport instances/timeouts - the ONE place every
+        route below builds a connect_new() callable, so there is exactly
+        one implementation of "how to connect to transport X" shared with
+        _previous_transport_recovery()'s recovery path and server.py's
+        startup transport-restore path (meshsrv/radio_endpoint.py)."""
+        return build_transport_connect_new(
+            transport_name,
+            serial_transport=serial_transport,
+            ble_transport=ble_transport,
+            tcp_transport=tcp_transport,
+            serial_port=serial_port,
+            connect_timeout=_SWITCH_CONNECT_TIMEOUT_S,
+            disconnect_timeout=_SWITCH_DISCONNECT_TIMEOUT_S,
+            **endpoint_kwargs,
+        )
+
     @app.route("/api/meshtastic/bluetooth/connect", methods=["POST"])
     @handle_errors
     def api_meshtastic_bluetooth_connect():
@@ -190,47 +285,84 @@ def register_meshtastic_routes(
                 "error_code": "ble_address_required",
             }), 400
 
-        def _connect_new():
-            serial_transport.disconnect(timeout=_SWITCH_DISCONNECT_TIMEOUT_S)
-            ble_transport.connect(
-                ConnectionDescriptor(type=ConnectionType.BLUETOOTH, address=address, label=name),
-                force=True,
-                timeout=_SWITCH_CONNECT_TIMEOUT_S,
-            )
-            return ble_transport
+        connect_new = _connect_new_for("bluetooth", ble_address=address, ble_name=name)
+        return _switch(connect_new, "bluetooth", ble_address=address, ble_name=name)
 
-        return _switch(_connect_new, "bluetooth", ble_address=address, ble_name=name)
+    @app.route("/api/meshtastic/tcp/connect", methods=["POST"])
+    @handle_errors
+    def api_meshtastic_tcp_connect():
+        """Connects to (and switches the active transport to) a
+        Meshtastic radio reachable over TCP - the TCP counterpart to
+        /bluetooth/connect. Body: {"host": ..., "port": ...} (port
+        optional, defaults to the radio's own standard 4403)."""
+        data = request.get_json(silent=True) or {}
+        host = str(data.get("host") or "").strip()
+        port_raw = data.get("port")
+
+        if not host:
+            return jsonify({
+                "ok": False,
+                "error": "TCP host is required",
+                "error_code": "tcp_host_required",
+            }), 400
+
+        if port_raw in (None, ""):
+            port = DEFAULT_TCP_PORT
+        else:
+            try:
+                port = int(port_raw)
+            except (TypeError, ValueError):
+                return jsonify({
+                    "ok": False,
+                    "error": "TCP port must be an integer",
+                    "error_code": "tcp_port_invalid",
+                }), 400
+            if not (1 <= port <= 65535):
+                return jsonify({
+                    "ok": False,
+                    "error": "TCP port must be between 1 and 65535",
+                    "error_code": "tcp_port_invalid",
+                }), 400
+
+        connect_new = _connect_new_for("tcp", tcp_host=host, tcp_port=port)
+        return _switch(connect_new, "tcp", tcp_host=host, tcp_port=port)
 
     @app.route("/api/meshtastic/transport", methods=["POST"])
     @handle_errors
     def api_meshtastic_set_transport():
-        """Generic switch, driven by settings.meshtastic for Bluetooth
-        (reconnects to whichever device was last used via /bluetooth/
-        connect) - use /bluetooth/connect directly to connect to a
-        newly-scanned device instead."""
+        """Generic switch, driven by settings.meshtastic for Bluetooth/TCP
+        (reconnects to whichever device/endpoint was last used via
+        /bluetooth/connect or /tcp/connect) - use those routes directly
+        to connect to a newly-scanned device or a new TCP endpoint
+        instead."""
         data = request.get_json(silent=True) or {}
         target = str(data.get("type") or "").strip().lower()
-        if target not in ("serial", "bluetooth"):
+        if target not in ("serial", "bluetooth", "tcp"):
             return jsonify({
                 "ok": False,
-                "error": "type must be 'serial' or 'bluetooth'",
+                "error": "type must be 'serial', 'bluetooth', or 'tcp'",
                 "error_code": "invalid_transport_type",
             }), 400
 
         if target == "serial":
-            def _connect_new():
-                ble_transport.disconnect(timeout=_SWITCH_DISCONNECT_TIMEOUT_S)
-                serial_transport.connect(
-                    ConnectionDescriptor(type=ConnectionType.SERIAL, address=serial_port),
-                    force=True,
-                    timeout=_SWITCH_CONNECT_TIMEOUT_S,
-                )
-                return serial_transport
-
-            return _switch(_connect_new, "serial")
+            connect_new = _connect_new_for("serial")
+            return _switch(connect_new, "serial")
 
         with state_lock:
             saved = dict(settings.get("meshtastic") or {})
+
+        if target == "tcp":
+            host = str(saved.get("tcp_host") or "").strip()
+            if not host:
+                return jsonify({
+                    "ok": False,
+                    "error": "No previously-connected TCP endpoint - use Connect first",
+                    "error_code": "tcp_host_required",
+                }), 400
+            port = int(saved.get("tcp_port") or DEFAULT_TCP_PORT)
+            connect_new = _connect_new_for("tcp", tcp_host=host, tcp_port=port)
+            return _switch(connect_new, "tcp", tcp_host=host, tcp_port=port)
+
         address = str(saved.get("ble_address") or "").strip()
         name = str(saved.get("ble_name") or "").strip()
         if not address:
@@ -240,16 +372,8 @@ def register_meshtastic_routes(
                 "error_code": "ble_address_required",
             }), 400
 
-        def _connect_new():
-            serial_transport.disconnect(timeout=_SWITCH_DISCONNECT_TIMEOUT_S)
-            ble_transport.connect(
-                ConnectionDescriptor(type=ConnectionType.BLUETOOTH, address=address, label=name),
-                force=True,
-                timeout=_SWITCH_CONNECT_TIMEOUT_S,
-            )
-            return ble_transport
-
-        return _switch(_connect_new, "bluetooth", ble_address=address, ble_name=name)
+        connect_new = _connect_new_for("bluetooth", ble_address=address, ble_name=name)
+        return _switch(connect_new, "bluetooth", ble_address=address, ble_name=name)
 
     @app.route("/api/meshtastic/reconnect", methods=["POST"])
     @handle_errors

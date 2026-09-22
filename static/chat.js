@@ -2671,13 +2671,18 @@ async function epaperShowPage(page, button) {
 function _meshtasticUpdateTransportButtons(activeType) {
     const usbBtn = document.getElementById('meshtasticTransportUsbBtn');
     const bleBtn = document.getElementById('meshtasticTransportBleBtn');
+    const tcpBtn = document.getElementById('meshtasticTransportTcpBtn');
     const type = activeType || appSettings?.meshtastic?.transport || 'serial';
 
     usbBtn?.classList.toggle('active', type === 'serial');
     bleBtn?.classList.toggle('active', type === 'bluetooth');
+    tcpBtn?.classList.toggle('active', type === 'tcp');
 
     const scanSection = document.getElementById('meshtasticBleScanSection');
     if (scanSection) scanSection.style.display = type === 'bluetooth' ? '' : 'none';
+
+    const tcpSection = document.getElementById('meshtasticTcpConnectSection');
+    if (tcpSection) tcpSection.style.display = type === 'tcp' ? '' : 'none';
 
     // Permanent, not a one-time confirm dialog (would be annoying on
     // every switch) - visible for as long as Bluetooth is the selected
@@ -2688,6 +2693,14 @@ function _meshtasticUpdateTransportButtons(activeType) {
     // closes this, not a UI fix - see Task 47 live finding.
     const receiveWarning = document.getElementById('meshtasticBleReceiveWarning');
     if (receiveWarning) receiveWarning.style.display = type === 'bluetooth' ? '' : 'none';
+
+    // TCP has the identical receive gap, for the identical reason (no
+    // inbound relay from the adapter subprocess back to Core yet - Radio
+    // TCP Transport part 2's own explicit scope decision) - own banner,
+    // own i18n key, since a future inbound-relay fix may land for TCP
+    // and BLE on different schedules.
+    const tcpReceiveWarning = document.getElementById('meshtasticTcpReceiveWarning');
+    if (tcpReceiveWarning) tcpReceiveWarning.style.display = type === 'tcp' ? '' : 'none';
 }
 
 function _meshtasticRenderConnectionStatus(connection) {
@@ -2696,7 +2709,9 @@ function _meshtasticRenderConnectionStatus(connection) {
 
     const typeLabel = connection.type === 'bluetooth'
         ? window.I18N.t('settings.meshtastic_transport_bluetooth')
-        : window.I18N.t('settings.meshtastic_transport_usb');
+        : (connection.type === 'tcp'
+            ? window.I18N.t('settings.meshtastic_transport_tcp')
+            : window.I18N.t('settings.meshtastic_transport_usb'));
 
     const stateKey = {
         connected: 'settings.meshtastic_state_connected',
@@ -2737,10 +2752,12 @@ async function loadMeshtasticConnectionStatus() {
 async function setMeshtasticTransport(type) {
     const usbBtn = document.getElementById('meshtasticTransportUsbBtn');
     const bleBtn = document.getElementById('meshtasticTransportBleBtn');
+    const tcpBtn = document.getElementById('meshtasticTransportTcpBtn');
     const statusEl = document.getElementById('meshtasticConnectionStatus');
 
     if (usbBtn) usbBtn.disabled = true;
     if (bleBtn) bleBtn.disabled = true;
+    if (tcpBtn) tcpBtn.disabled = true;
     if (statusEl) {
         statusEl.textContent = window.I18N.t('settings.meshtastic_switch_in_progress');
         statusEl.className = 'reference-location-status';
@@ -2779,6 +2796,7 @@ async function setMeshtasticTransport(type) {
     } finally {
         if (usbBtn) usbBtn.disabled = false;
         if (bleBtn) bleBtn.disabled = false;
+        if (tcpBtn) tcpBtn.disabled = false;
     }
 }
 
@@ -2876,6 +2894,66 @@ async function meshtasticBleConnect(address, name, button) {
             statusEl.className = 'reference-location-status reference-location-status-error';
         }
         showToast(window.I18N.t('settings.meshtastic_ble_connect_failed'), 'error');
+        loadMeshtasticConnectionStatus();
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+async function meshtasticTcpConnect(button) {
+    const hostInput = document.getElementById('meshtasticTcpHostInput');
+    const portInput = document.getElementById('meshtasticTcpPortInput');
+    const statusEl = document.getElementById('meshtasticTcpStatus');
+
+    const host = (hostInput?.value || '').trim();
+    const portText = (portInput?.value || '').trim();
+    const port = portText ? parseInt(portText, 10) : undefined;
+
+    if (!host) {
+        if (statusEl) {
+            statusEl.textContent = window.I18N.t('settings.meshtastic_tcp_host_required');
+            statusEl.className = 'reference-location-status reference-location-status-error';
+        }
+        return;
+    }
+
+    if (button) button.disabled = true;
+    if (statusEl) {
+        statusEl.textContent = window.I18N.t('settings.meshtastic_tcp_connecting');
+        statusEl.className = 'reference-location-status';
+    }
+
+    try {
+        const response = await fetch('/api/meshtastic/tcp/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(port ? { host, port } : { host }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+
+        _meshtasticRenderConnectionStatus(data.connection || {});
+        _meshtasticUpdateTransportButtons(data.connection?.type);
+        if (statusEl) {
+            statusEl.textContent = window.I18N.t('settings.meshtastic_tcp_connect_success');
+            statusEl.className = 'reference-location-status reference-location-status-ok';
+        }
+        showToast(window.I18N.t('settings.meshtastic_tcp_connect_success'), 'success');
+        loadSettings();
+    } catch (error) {
+        console.error('[MESHTASTIC] TCP connect failed:', error);
+        if (statusEl) {
+            // Existing generic error-display pattern (error.message ||
+            // error), same as every other transport error in this file -
+            // deliberately not a separate localized lookup table keyed by
+            // PR #277's specific diagnostic codes (dns_error/
+            // connect_refused/connect_timeout/protocol_sync_timeout/
+            // remote_disconnect/identity_mismatch); the server-supplied
+            // `error` string already names the problem in plain English.
+            statusEl.textContent = `${window.I18N.t('settings.meshtastic_tcp_connect_failed')}: ${error.message || error}`;
+            statusEl.className = 'reference-location-status reference-location-status-error';
+        }
+        showToast(window.I18N.t('settings.meshtastic_tcp_connect_failed'), 'error');
         loadMeshtasticConnectionStatus();
     } finally {
         if (button) button.disabled = false;

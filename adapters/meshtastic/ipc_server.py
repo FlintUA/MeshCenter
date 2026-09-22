@@ -21,12 +21,13 @@ write loop is sufficient.
 
 STATELESS ROUTING (deliberate small addition to the documented wire
 shape, not a redesign): every request carries a `transport_type`
-("serial"/"bluetooth") field alongside `operation`/`params`/`timeout`,
-telling this process which of its two transport instances to use for
-THIS call. Core's TransportRouter already knows which transport is
-active - forwarding that on every request keeps this process
-completely stateless about "which one is active", so Core and the
-adapter can never disagree about it after a partial failure the way two
+("serial"/"bluetooth"/"tcp" - Radio TCP Transport, part 2, added the
+third) field alongside `operation`/`params`/`timeout`, telling this
+process which of its three transport instances to use for THIS call.
+Core's TransportRouter already knows which transport is active -
+forwarding that on every request keeps this process completely
+stateless about "which one is active", so Core and the adapter can
+never disagree about it after a partial failure the way three
 independently-tracked "active" flags could.
 
 Wired into server.py: `AdapterSupervisor` spawns this module as
@@ -45,6 +46,7 @@ import threading
 
 from adapters.meshtastic.ble_transport import BLETransport
 from adapters.meshtastic.serial_transport import SerialTransport
+from adapters.meshtastic.tcp_transport import TCPTransport
 from meshsrv import ipc_protocol
 from meshsrv.radio_transport import (
     ConnectionType,
@@ -75,37 +77,40 @@ def _adapter_side_timeout(core_timeout) -> float:
 
 
 class _AdapterDispatcher:
-    """Owns one SerialTransport and one BLETransport instance for the
-    lifetime of this subprocess, and dispatches each incoming request to
-    whichever one `transport_type` names. This process only ever
-    exercises the connect/disconnect/send_*/get_* half of each class's
-    surface - SerialTransport no longer even has a run_listener() method
-    to call (stabilization follow-up, P0 #1 of the independent audit:
-    that logic moved to meshsrv/serial_port_supervisor.py, used directly
-    by Core, never composed here); Stage A keeps the listener in Core
-    either way."""
+    """Owns one SerialTransport, one BLETransport, and one TCPTransport
+    instance for the lifetime of this subprocess, and dispatches each
+    incoming request to whichever one `transport_type` names. This
+    process only ever exercises the connect/disconnect/send_*/get_* half
+    of each class's surface - SerialTransport no longer even has a
+    run_listener() method to call (stabilization follow-up, P0 #1 of the
+    independent audit: that logic moved to
+    meshsrv/serial_port_supervisor.py, used directly by Core, never
+    composed here); Stage A keeps the listener in Core either way."""
 
-    def __init__(self, *, serial_transport, ble_transport):
-        # Takes both transports by DI (matching this project's convention
-        # everywhere else) rather than constructing them internally - lets
-        # tests exercise the real dispatch/serialization logic against
-        # fake stand-ins without needing meshtastic/bleak installed. See
-        # main() for the production construction (real SerialTransport/
-        # BLETransport, each composing their own local-only
-        # SerialPortSupervisor/radio_lock/pause_listen - Task 48
-        # investigation report: these no longer coordinate with anything
-        # cross-process, Core owns that via claim_exclusive_access() on
-        # its OWN SerialPortSupervisor instance before ever sending a
-        # request here; they only provide intra-process safety for this
-        # instance's own _call_with_timeout watchdog threads now).
+    def __init__(self, *, serial_transport, ble_transport, tcp_transport):
+        # Takes all three transports by DI (matching this project's
+        # convention everywhere else) rather than constructing them
+        # internally - lets tests exercise the real dispatch/serialization
+        # logic against fake stand-ins without needing meshtastic/bleak
+        # installed. See main() for the production construction (real
+        # SerialTransport/BLETransport/TCPTransport, each composing their
+        # own local-only state - Task 48 investigation report: these no
+        # longer coordinate with anything cross-process, Core owns that
+        # via claim_exclusive_access() on its OWN SerialPortSupervisor
+        # instance before ever sending a request here; they only provide
+        # intra-process safety for this instance's own _call_with_timeout
+        # watchdog threads now).
         self._serial = serial_transport
         self._ble = ble_transport
+        self._tcp = tcp_transport
 
     def _target(self, transport_type: str):
         if transport_type == ConnectionType.SERIAL.value:
             return self._serial
         if transport_type == ConnectionType.BLUETOOTH.value:
             return self._ble
+        if transport_type == ConnectionType.TCP.value:
+            return self._tcp
         raise TransportError(TransportErrorCode.UNSUPPORTED, f"unknown transport_type: {transport_type!r}")
 
     def handle(self, request: dict) -> dict:
@@ -320,6 +325,11 @@ def main() -> None:
             pause_listen=threading.Event(),
         ),
         ble_transport=BLETransport(address=""),
+        # Placeholder host, same pattern as BLETransport(address="") above
+        # - the real host/port are supplied per-connect() via the request's
+        # descriptor (see TCPTransport.connect()'s own handling of this),
+        # never needed at adapter-startup time.
+        tcp_transport=TCPTransport(host=""),
     )
 
     serve_forever(dispatcher)

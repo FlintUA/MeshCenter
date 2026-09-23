@@ -212,11 +212,19 @@ def test_migration_preserves_every_pre_existing_field(instance_path):
 
     for key in ("instance_name", "hostname", "active_profile_id", "runtime"):
         assert identity[key] == canonical_v1[key], f"{key} changed during migration"
-    # "radio" gains transport/endpoint (Radio TCP Transport part 2 - added
-    # after this v1 shape was written) - a v1 file predates both, so they
-    # normalize to empty rather than being fabricated; every other v1
-    # field must still survive the migration unchanged.
-    assert identity["radio"] == {**canonical_v1["radio"], "transport": "", "endpoint": {}}
+    # "radio" gains transport/endpoint (Radio TCP Transport part 2) and
+    # connections/preferred_transport/last_successful_transport (Radio
+    # Profiles & Connections Model, PR 1) - a v1 file predates all of
+    # them, so they normalize to empty rather than being fabricated;
+    # every other v1 field must still survive the migration unchanged.
+    assert identity["radio"] == {
+        **canonical_v1["radio"],
+        "transport": "",
+        "endpoint": {},
+        "connections": {},
+        "preferred_transport": "",
+        "last_successful_transport": "",
+    }
     assert identity["schema_version"] == 2
     assert "installation" in identity
 
@@ -282,6 +290,92 @@ def test_a_radio_dict_that_omits_transport_does_not_inherit_a_stale_prior_one(in
     assert saved["radio"]["node_id"] == "!aabbccdd"
     assert saved["radio"]["transport"] == ""
     assert saved["radio"]["endpoint"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Radio Profiles & Connections Model, PR 1
+# ---------------------------------------------------------------------------
+
+def test_radio_connections_fields_survive_a_save_round_trip(instance_path):
+    manager = InstanceManager(instance_path)
+    identity = manager.load_or_create({})
+    updated = dict(identity)
+    updated["radio"] = {
+        "node_id": "!1fa065f0",
+        "long_name": "T-Beam",
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+        "connections": {
+            "tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}, "last_successful_at": "2026-09-23T12:00:00+00:00"},
+            "serial": {"endpoint": {"port": "/dev/ttyACM0"}},
+        },
+        "preferred_transport": "tcp",
+        "last_successful_transport": "tcp",
+    }
+
+    saved = manager.save(updated)
+
+    assert set(saved["radio"]["connections"].keys()) == {"tcp", "serial"}
+    assert saved["radio"]["preferred_transport"] == "tcp"
+    assert saved["radio"]["last_successful_transport"] == "tcp"
+
+    reloaded = InstanceManager(instance_path).load_or_create({})
+    assert set(reloaded["radio"]["connections"].keys()) == {"tcp", "serial"}
+    assert reloaded["radio"]["preferred_transport"] == "tcp"
+
+
+def test_radio_connections_fields_default_to_empty_not_fabricated(instance_path):
+    # Same "no business-rule defaulting duplicated in this module" contract
+    # as transport/endpoint above - meshsrv/radio_endpoint.py's
+    # normalize_radio_record() is the single source of truth for
+    # synthesizing `connections` from the legacy singular fields.
+    identity = InstanceManager(instance_path).load_or_create({})
+    assert identity["radio"]["connections"] == {}
+    assert identity["radio"]["preferred_transport"] == ""
+    assert identity["radio"]["last_successful_transport"] == ""
+
+
+def test_load_or_create_does_not_rewrite_an_already_new_schema_file_with_connections(instance_path, monkeypatch):
+    """The core "not rewritten just because read" guarantee, extended to
+    the new fields: a file already carrying `connections` must not be
+    touched by a second load_or_create() call that changes nothing."""
+    manager = InstanceManager(instance_path)
+    manager.save({"radio": {
+        "node_id": "!1fa065f0", "long_name": "T-Beam",
+        "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403},
+        "connections": {"tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}}},
+        "preferred_transport": "tcp", "last_successful_transport": "tcp",
+    }})
+
+    before_mtime = instance_path.stat().st_mtime_ns
+    before_content = instance_path.read_bytes()
+
+    InstanceManager(instance_path).load_or_create({})
+
+    assert instance_path.stat().st_mtime_ns == before_mtime
+    assert instance_path.read_bytes() == before_content
+
+
+def test_active_profile_id_is_unaffected_by_a_radio_transport_change(instance_path):
+    """Switching which transport is preferred/current for the accepted
+    radio must never change WHICH profile is active - those are
+    independent concerns (api/api_meshtastic.py's _persist_choice() only
+    ever touches "radio", never "active_profile_id")."""
+    manager = InstanceManager(instance_path)
+    identity = manager.load_or_create({"active_profile_id": "1fa065f0"})
+    assert identity["active_profile_id"] == "1fa065f0"
+
+    updated = dict(identity)
+    updated["radio"] = {
+        "node_id": "!1fa065f0", "long_name": "T-Beam",
+        "transport": "serial", "endpoint": {"port": "/dev/ttyACM0"},
+        "connections": {"serial": {"endpoint": {"port": "/dev/ttyACM0"}}},
+        "preferred_transport": "serial", "last_successful_transport": "serial",
+    }
+    saved = manager.save(updated)
+
+    assert saved["active_profile_id"] == "1fa065f0"
+    assert saved["radio"]["transport"] == "serial"
 
 
 def test_concurrent_fresh_installs_produce_exactly_one_id(instance_path):

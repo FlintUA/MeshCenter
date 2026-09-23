@@ -112,6 +112,24 @@ class InstanceManager:
         if not isinstance(endpoint_raw, dict):
             endpoint_raw = {}
 
+        # connections/preferred_transport/last_successful_transport (Radio
+        # Profiles & Connections Model, PR 1): same treatment as transport/
+        # endpoint immediately above, for the same reason - passthrough
+        # only, no defaulting/merging logic duplicated in this module and
+        # deliberately NOT falling back to default_radio (a save that
+        # omits these means exactly that: the caller already has the full
+        # picture, e.g. via meshsrv/radio_connections.py's remember_
+        # connection() - which itself synthesizes `connections` from
+        # whatever singular transport/endpoint this save's own INPUT
+        # already carried, so the "first time" migration still happens
+        # correctly without this module needing to know anything about
+        # it). meshsrv/radio_endpoint.py's normalize_radio_record() is the
+        # single source of truth for defaulting/synthesizing all three,
+        # applied by every real reader of INSTANCE_IDENTITY.radio.
+        connections_raw = nested_radio.get("connections")
+        if not isinstance(connections_raw, dict):
+            connections_raw = {}
+
         radio = {
             "node_id": first_text(
                 nested_radio.get("node_id"), raw.get("node_id"), configured.get("node_id"), default_radio.get("node_id")
@@ -130,6 +148,9 @@ class InstanceManager:
             ),
             "transport": first_text(nested_radio.get("transport"), raw.get("transport")),
             "endpoint": dict(endpoint_raw),
+            "connections": dict(connections_raw),
+            "preferred_transport": first_text(nested_radio.get("preferred_transport")),
+            "last_successful_transport": first_text(nested_radio.get("last_successful_transport")),
         }
 
         detected_radio = nested_runtime.get("last_detected_radio")

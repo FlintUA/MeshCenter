@@ -4,6 +4,9 @@ CLAUDE.md's "Multi-radio profiles" section). Pure filesystem + dict logic,
 no server.py/hardware dependency of its own - takes a plain data_dir.
 """
 
+import json
+from pathlib import Path
+
 import pytest
 
 from storage.profile_manager import ProfileManager
@@ -122,3 +125,160 @@ def test_tcp_radio_profile_persists_transport_and_endpoint(tmp_path):
     reloaded = manager.get_profile("1fa065f0")
     assert reloaded["metadata"]["radio"]["transport"] == "tcp"
     assert reloaded["metadata"]["radio"]["endpoint"] == {"host": "192.168.2.34", "port": 4403}
+
+
+# ---------------------------------------------------------------------------
+# Radio Profiles & Connections Model, PR 1
+# ---------------------------------------------------------------------------
+
+def _tcp_radio(node_id="!1fa065f0", long_name="T-Beam", firmware_version="2.7.15.567b8ea"):
+    return {
+        "node_id": node_id,
+        "long_name": long_name,
+        "short_name": "TBM",
+        "hardware": "TBEAM",
+        "role": "CLIENT",
+        "firmware_version": firmware_version,
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+    }
+
+
+def test_one_node_id_over_tcp_gets_a_connections_entry(tmp_path):
+    manager = ProfileManager(tmp_path)
+
+    context = manager.ensure_profile(_tcp_radio(), migrate_legacy=False)
+
+    radio = context["metadata"]["radio"]
+    assert radio["connections"] == {"tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}}}
+    assert radio["preferred_transport"] == "tcp"
+    assert radio["firmware_version"] == "2.7.15.567b8ea"
+
+
+def test_same_node_id_later_over_serial_reuses_the_profile_and_keeps_both_connections(tmp_path):
+    """The actual scenario this PR fixes: accepting a radio over TCP,
+    later connecting to the SAME physical radio over serial, must land
+    in the same profile.json - not a duplicate, and not losing the
+    earlier TCP connection either (the pre-existing directory-per-
+    node_id behavior already prevented a duplicate profile; it never
+    preserved the other transport's connections entry)."""
+    manager = ProfileManager(tmp_path)
+
+    tcp_context = manager.ensure_profile(_tcp_radio(), migrate_legacy=False)
+
+    serial_radio = {
+        "node_id": "!1fa065f0",
+        "long_name": "T-Beam",
+        "short_name": "TBM",
+        "hardware": "TBEAM",
+        "role": "CLIENT",
+        "port": "/dev/ttyACM0",
+    }
+    serial_context = manager.ensure_profile(serial_radio, migrate_legacy=False)
+
+    assert serial_context["profile_id"] == tcp_context["profile_id"] == "1fa065f0"
+    radio = serial_context["metadata"]["radio"]
+    assert radio["connections"]["tcp"] == {"endpoint": {"host": "192.168.2.34", "port": 4403}}
+    assert radio["connections"]["serial"] == {"endpoint": {"port": "/dev/ttyACM0"}}
+    # The most recent call's transport becomes current/preferred, matching
+    # this function's pre-existing "last write wins" behavior for the
+    # legacy singular fields.
+    assert radio["preferred_transport"] == "serial"
+    assert radio["transport"] == "serial"
+
+
+def test_different_node_id_on_the_same_tcp_endpoint_gets_a_separate_profile_not_a_swap(tmp_path):
+    """Persistence-layer guarantee only: this does NOT test radio
+    identity verification (meshsrv/radio_identity.py's MISMATCH
+    detection is a separate, unrelated concern, out of this PR's scope)
+    - it tests that ProfileManager itself never lets a second node_id
+    overwrite or merge into a first node_id's profile just because they
+    share the same TCP address."""
+    manager = ProfileManager(tmp_path)
+
+    first = manager.ensure_profile(_tcp_radio(node_id="!1fa065f0", long_name="Real Radio"), migrate_legacy=False)
+    second = manager.ensure_profile(_tcp_radio(node_id="!deadbeef", long_name="Different Radio"), migrate_legacy=False)
+
+    assert first["profile_id"] != second["profile_id"]
+    assert first["profile_dir"] != second["profile_dir"]
+
+    reloaded_first = manager.get_profile(first["profile_id"])
+    assert reloaded_first["metadata"]["radio"]["node_id"] == "!1fa065f0"
+    assert reloaded_first["metadata"]["radio"]["long_name"] == "Real Radio"
+
+
+def test_legacy_serial_profile_with_no_transport_key_normalizes_connections_correctly(tmp_path):
+    manager = ProfileManager(tmp_path)
+
+    context = manager.ensure_profile(_radio(), migrate_legacy=False)
+
+    radio = context["metadata"]["radio"]
+    assert radio["connections"] == {"serial": {"endpoint": {"port": "/dev/ttyACM0"}}}
+    assert radio["preferred_transport"] == "serial"
+
+
+def test_legacy_flat_tcp_profile_from_before_pr1_normalizes_into_connections_tcp(tmp_path):
+    """Simulates a profile.json written by the pre-PR1 code (PR #278 era):
+    flat `transport`/`endpoint`, no `connections` key at all. The next
+    ensure_profile() call against it must synthesize connections.tcp
+    correctly rather than treating the profile as brand new."""
+    manager = ProfileManager(tmp_path)
+    profile_dir = tmp_path / "profiles" / "1fa065f0"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "profile.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "profile_id": "1fa065f0",
+            "radio": {
+                "node_id": "!1fa065f0",
+                "long_name": "T-Beam",
+                "short_name": "TBM",
+                "hardware": "TBEAM",
+                "role": "CLIENT",
+                "port": "",
+                "transport": "tcp",
+                "endpoint": {"host": "192.168.2.34", "port": 4403},
+            },
+            "created_at": "2026-09-01T00:00:00+00:00",
+            "last_used_at": "2026-09-01T00:00:00+00:00",
+            "migration": {},
+        }),
+        encoding="utf-8",
+    )
+
+    context = manager.ensure_profile(_tcp_radio(), migrate_legacy=False)
+
+    radio = context["metadata"]["radio"]
+    assert radio["connections"] == {"tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}}}
+    assert radio["preferred_transport"] == "tcp"
+    assert context["metadata"]["created_at"] == "2026-09-01T00:00:00+00:00"
+
+
+def test_preferred_transport_survives_a_simulated_restart(tmp_path):
+    """ensure_profile() is called once per server.py boot with the
+    already-accepted radio (see server.py's module-level PROFILE_CONTEXT
+    assignment) - calling it again with the SAME transport (simulating a
+    second boot) must not lose or reset preferred_transport."""
+    manager = ProfileManager(tmp_path)
+
+    manager.ensure_profile(_tcp_radio(), migrate_legacy=False)
+    second_boot = manager.ensure_profile(_tcp_radio(), migrate_legacy=False)
+
+    assert second_boot["metadata"]["radio"]["preferred_transport"] == "tcp"
+    assert second_boot["metadata"]["radio"]["connections"]["tcp"] == {
+        "endpoint": {"host": "192.168.2.34", "port": 4403}
+    }
+
+
+def test_get_profile_does_not_rewrite_the_file(tmp_path):
+    manager = ProfileManager(tmp_path)
+    context = manager.ensure_profile(_tcp_radio(), migrate_legacy=False)
+    metadata_path = Path(context["profile_dir"]) / "profile.json"
+
+    before_mtime = metadata_path.stat().st_mtime_ns
+    before_content = metadata_path.read_bytes()
+
+    manager.get_profile(context["profile_id"])
+
+    assert metadata_path.stat().st_mtime_ns == before_mtime
+    assert metadata_path.read_bytes() == before_content

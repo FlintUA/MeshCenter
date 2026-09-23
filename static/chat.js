@@ -10120,7 +10120,25 @@ async function loadNodeManagerDashboard(showFeedback = false) {
                             onclick="detectAndAddNodeManagerRadio()">
                             ${escapeHtml(window.I18N.t('node_manager.detect_radio'))}
                         </button>
+                        <button type="button"
+                            class="node-manager-detect-radio-btn"
+                            onclick="toggleNodeManagerTcpDiscovery()">
+                            🌐 ${escapeHtml(window.I18N.t('node_manager.detect_radio_tcp'))}
+                        </button>
                     </div>
+                </div>
+                <div id="nodeManagerTcpDiscoverySection" style="display:none;">
+                    <div class="settings-option">
+                        <label class="settings-option-label" for="nodeManagerTcpHostInput">${escapeHtml(window.I18N.t('node_manager.tcp_host_label'))}</label>
+                        <input type="text" id="nodeManagerTcpHostInput" placeholder="192.168.2.34" autocomplete="off">
+                    </div>
+                    <div class="settings-option">
+                        <label class="settings-option-label" for="nodeManagerTcpPortInput">${escapeHtml(window.I18N.t('node_manager.tcp_port_label'))}</label>
+                        <input type="number" id="nodeManagerTcpPortInput" placeholder="4403" min="1" max="65535" autocomplete="off">
+                    </div>
+                    <button type="button" class="mc-refresh-btn" onclick="detectNodeManagerRadioViaTcp()">
+                        🔌 ${escapeHtml(window.I18N.t('node_manager.tcp_find_button'))}
+                    </button>
                 </div>
                 <div class="node-profile-list">${profileCards}</div>
             </section>
@@ -10242,17 +10260,55 @@ async function waitForNodeManagerProfile(profileId, timeoutMs = 60000) {
 }
 
 
-async function detectAndAddNodeManagerRadio() {
-    const confirmed = window.confirm(window.I18N.t('node_manager.detect_radio_confirm'));
+function toggleNodeManagerTcpDiscovery() {
+    const section = document.getElementById('nodeManagerTcpDiscoverySection');
+    if (section) section.style.display = section.style.display === 'none' ? '' : 'none';
+}
+
+async function detectNodeManagerRadioViaTcp() {
+    const hostInput = document.getElementById('nodeManagerTcpHostInput');
+    const portInput = document.getElementById('nodeManagerTcpPortInput');
+    const host = (hostInput?.value || '').trim();
+
+    if (!host) {
+        showToast(window.I18N.t('node_manager.tcp_host_required'), 'error');
+        return;
+    }
+
+    const portText = (portInput?.value || '').trim();
+    const port = portText ? parseInt(portText, 10) : undefined;
+    await detectAndAddNodeManagerRadio({ host, port });
+}
+
+async function detectAndAddNodeManagerRadio(tcpEndpoint) {
+    // Radio TCP Transport part 2 correction pass #5: `tcpEndpoint`
+    // ({host, port}) means "search for a NEW radio at this TCP
+    // endpoint", independent of whatever the currently accepted
+    // profile's own transport is - the gap correction pass #3 alone
+    // left (an accepted-serial profile had no way to discover a new
+    // radio over TCP at all). No argument = the original, unchanged
+    // "reprobe whatever's currently accepted" behavior.
+    const isTcp = !!(tcpEndpoint && tcpEndpoint.host);
+    const confirmed = window.confirm(
+        isTcp
+            ? window.I18N.t('node_manager.detect_radio_confirm_tcp', { host: tcpEndpoint.host, port: tcpEndpoint.port || 4403 })
+            : window.I18N.t('node_manager.detect_radio_confirm')
+    );
     if (!confirmed) return;
 
-    showToast(window.I18N.t('node_manager.releasing_and_scanning'), 'info');
+    showToast(
+        isTcp
+            ? window.I18N.t('node_manager.searching_radio_tcp')
+            : window.I18N.t('node_manager.releasing_and_scanning'),
+        'info'
+    );
 
     try {
         const response = await fetch('/api/node-manager/radio/detect', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            cache: 'no-store'
+            cache: 'no-store',
+            body: JSON.stringify(isTcp ? { host: tcpEndpoint.host, port: tcpEndpoint.port } : {}),
         });
         const data = await response.json().catch(() => ({}));
 
@@ -10302,14 +10358,20 @@ async function detectAndAddNodeManagerRadio() {
             'info'
         );
 
+        // For the TCP-discovery path, radio.host/radio.tcp_port (from
+        // /detect's own response) name the endpoint that was actually
+        // probed - reused here rather than tcpEndpoint's raw user input,
+        // so accept confirms exactly what detect found (e.g. the real
+        // port after a default substitution), not what was merely typed.
+        const acceptBody = isTcp
+            ? { node_id: radio.node_id, host: radio.host, tcp_port: radio.tcp_port }
+            : { node_id: radio.node_id, port: radio.port };
+
         const acceptResponse = await fetch('/api/node-manager/radio/accept', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             cache: 'no-store',
-            body: JSON.stringify({
-                node_id: radio.node_id,
-                port: radio.port
-            })
+            body: JSON.stringify(acceptBody)
         });
         const accepted = await acceptResponse.json().catch(() => ({}));
         if (!acceptResponse.ok || !accepted.ok) {

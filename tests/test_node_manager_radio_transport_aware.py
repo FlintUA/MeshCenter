@@ -6,6 +6,16 @@ a live TCP connection and TCP profile activation (api_activate_radio_profile())
 were already working elsewhere. See api_detect_new_radio()/
 api_accept_detected_radio()'s own docstrings in server.py for the fix.
 
+Correction pass #5 (below, "explicit TCP endpoint" section): pass #3
+alone only ever reprobed the ACCEPTED radio's own transport - an
+accepted-serial (or accepted-TCP-at-a-different-endpoint) profile had
+no way to search for a genuinely NEW radio over TCP at all. An explicit
+{"host": ..., "port"/"tcp_port": ...} request body now means "look for
+a radio at THIS TCP endpoint", independent of the accepted profile's
+own transport - see _detect_tcp_radio_response()/_accept_tcp_radio()'s
+own docstrings in server.py.
+
+
 Uses the server_module fixture (server.py already imported, start_runtime()
 never called) with Flask's test_request_context() to call the route
 functions directly with a real request context (so request.get_json()
@@ -269,3 +279,140 @@ def test_bluetooth_accept_is_explicitly_unsupported(server_module, _preserve_nod
 
     assert status == 501
     assert data["code"] == "TRANSPORT_NOT_SUPPORTED"
+
+
+# ---------------------------------------------------------------------------
+# Correction pass #5: explicit TCP endpoint in the request body - searching
+# a genuinely NEW radio over TCP, independent of the accepted profile's own
+# transport (the gap pass #3 alone left: accepted=serial had no way to
+# discover a new radio over TCP at all).
+# ---------------------------------------------------------------------------
+
+def test_explicit_tcp_detect_probes_that_endpoint_when_accepted_is_serial(server_module, _preserve_node_manager_state, monkeypatch):
+    """Regression #1: accepted profile = serial, discover with an
+    explicit TCP host/port probes THAT endpoint, not a USB scan."""
+    _set_accepted_radio(server_module, {
+        "node_id": "!067a40fa", "transport": "serial", "endpoint": {"port": "/dev/ttyACM0"},
+    })
+
+    def _fail_if_called(*a, **k):
+        raise AssertionError("USB scan must not run when an explicit TCP host/port is given")
+
+    monkeypatch.setattr(server_module, "detect_connected_radio", _fail_if_called)
+    calls = []
+
+    def _fake_detect_tcp(transport, host, port, timeout=25):
+        calls.append((host, port))
+        return _fake_tcp_detection(node_id="!f00dcafe")(transport, host, port, timeout)
+
+    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
+
+    data, status = _call(
+        server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect",
+        {"host": "192.168.2.34", "port": 4403},
+    )
+
+    assert status == 200
+    assert data["ok"] is True
+    assert data["detected"]["node_id"] == "!f00dcafe"
+    assert calls == [("192.168.2.34", 4403)]
+
+
+def test_detect_without_host_still_reprobes_the_accepted_transport(server_module, _preserve_node_manager_state, monkeypatch):
+    """Regression #2: no host/port given -> unchanged pass-#3 behavior
+    (reprobe the accepted radio's own transport)."""
+    _set_accepted_radio(server_module, {
+        "node_id": "!deadc0de", "transport": "tcp", "endpoint": {"host": "10.0.0.5", "port": 4403},
+    })
+    calls = []
+
+    def _fake_detect_tcp(transport, host, port, timeout=25):
+        calls.append((host, port))
+        return _fake_tcp_detection(node_id="!deadc0de")(transport, host, port, timeout)
+
+    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
+
+    data, status = _call(server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect")
+
+    assert status == 200
+    assert calls == [("10.0.0.5", 4403)]  # the ACCEPTED endpoint, not a new one
+
+
+def test_explicit_tcp_port_defaults_and_validates(server_module, _preserve_node_manager_state, monkeypatch):
+    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_tcp_detection(node_id="!f00dcafe"))
+
+    data, status = _call(
+        server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect",
+        {"host": "192.168.2.34"},
+    )
+    assert status == 200  # defaults to 4403, no error
+
+    data, status = _call(
+        server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect",
+        {"host": "192.168.2.34", "port": "not-a-number"},
+    )
+    assert status == 400
+    assert data["error_code"] == "tcp_port_invalid"
+
+    data, status = _call(
+        server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect",
+        {"host": "192.168.2.34", "port": 70000},
+    )
+    assert status == 400
+    assert data["error_code"] == "tcp_port_invalid"
+
+
+def test_explicit_tcp_accept_creates_profile_for_that_endpoint_while_serial_is_accepted(server_module, _preserve_node_manager_state, monkeypatch):
+    """Regression #3: accept with an explicitly-passed TCP endpoint
+    creates/confirms a profile for exactly that endpoint, not the
+    currently-accepted (serial) profile's own transport."""
+    before = _set_accepted_radio(server_module, {
+        "node_id": "!067a40fa", "long_name": "Flint Base", "transport": "serial", "endpoint": {"port": "/dev/ttyACM0"},
+    }, active_profile_id="067a40fa")
+    calls = []
+
+    def _fake_detect_tcp(transport, host, port, timeout=25):
+        calls.append((host, port))
+        return _fake_tcp_detection(node_id="!f00dcafe", long_name="T-Beam")(transport, host, port, timeout)
+
+    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
+
+    data, status = _call(
+        server_module, server_module.api_accept_detected_radio, "/api/node-manager/radio/accept",
+        {"host": "192.168.2.34", "tcp_port": 4403, "node_id": "!f00dcafe"},
+    )
+
+    assert status == 202
+    assert data["ok"] is True
+    assert calls == [("192.168.2.34", 4403)]
+    assert data["radio"]["node_id"] == "!f00dcafe"
+    assert data["radio"]["transport"] == "tcp"
+    assert data["radio"]["endpoint"] == {"host": "192.168.2.34", "port": 4403}
+
+    profile = server_module.profile_manager.get_profile(data["profile_id"])
+    assert profile["metadata"]["radio"]["node_id"] == "!f00dcafe"
+    assert profile["metadata"]["radio"]["transport"] == "tcp"
+
+    # Regression #4: the NEW radio becomes the active profile only because
+    # this was an explicit, confirmed /accept call (never automatic) -
+    # before this call, the accepted identity was still Flint Base/serial.
+    assert before["radio"]["node_id"] == "!067a40fa"
+    assert server_module.INSTANCE_IDENTITY["active_profile_id"] == data["profile_id"]
+
+
+def test_explicit_tcp_detect_does_not_touch_the_currently_accepted_profile(server_module, _preserve_node_manager_state, monkeypatch):
+    """Regression #4 (detect half): provisional discovery via an explicit
+    TCP endpoint never mutates the currently-accepted profile/identity -
+    only /accept (an explicit, separate confirmation) can."""
+    before = _set_accepted_radio(server_module, {
+        "node_id": "!067a40fa", "long_name": "Flint Base", "transport": "serial", "endpoint": {"port": "/dev/ttyACM0"},
+    }, active_profile_id="067a40fa")
+    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_tcp_detection(node_id="!f00dcafe"))
+
+    _call(
+        server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect",
+        {"host": "192.168.2.34", "port": 4403},
+    )
+
+    assert server_module.INSTANCE_IDENTITY["radio"] == before["radio"]
+    assert server_module.INSTANCE_IDENTITY["active_profile_id"] == before["active_profile_id"]

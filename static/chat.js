@@ -2844,11 +2844,27 @@ async function setMeshtasticTransport(type) {
         }
         showToast(window.I18N.t('settings.meshtastic_switch_failed'), 'error');
 
-        // Switch failed - re-sync with whatever the backend actually
-        // landed on (recovery may have restored serial, or left both
-        // transports down - see api/api_meshtastic.py's fail-closed
-        // recovery path) instead of trusting the button just clicked.
-        loadMeshtasticConnectionStatus();
+        // Re-sync the segmented buttons with whatever the backend
+        // actually landed on (recovery may have restored serial, or left
+        // both transports down - see api/api_meshtastic.py's fail-closed
+        // recovery path), WITHOUT touching statusEl - pixel-111 live
+        // finding: loadMeshtasticConnectionStatus() always re-renders the
+        // status text too (syncButtons=false only skips the button/form
+        // resync, not this), so the detailed error message set above
+        // (e.g. an identity_mismatch explanation naming both radios) was
+        // getting overwritten by the generic "USB - Disconnected" text
+        // within one fetch round-trip - visible as a message that
+        // "flashes and is gone before you can read it".
+        try {
+            const statusResponse = await fetch('/api/meshtastic/connection', { cache: 'no-store' });
+            const statusData = await statusResponse.json();
+            if (statusResponse.ok && statusData.ok) {
+                _meshtasticUpdateTransportButtons(statusData.connection?.type);
+            }
+        } catch (_) {
+            // Best-effort - stale button highlighting is harmless, and
+            // the detailed error message above must survive regardless.
+        }
     } finally {
         if (usbBtn) usbBtn.disabled = false;
         if (bleBtn) bleBtn.disabled = false;

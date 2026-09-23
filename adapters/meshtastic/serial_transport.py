@@ -48,6 +48,7 @@ import threading
 import time
 from typing import Callable, Optional, Sequence
 
+from adapters.meshtastic._json_safe import json_safe
 from adapters.meshtastic._timeout_support import TimeoutEnforced
 from meshsrv import meshtastic_transport
 from meshsrv.node_time_sync import try_sync as try_node_time_sync
@@ -618,7 +619,7 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
             device_metrics=data.get("deviceMetrics") or {},
             environment_metrics=data.get("environmentMetrics") or {},
             power_metrics=data.get("powerMetrics") or {},
-            position=data.get("position"),
+            position=json_safe(data.get("position")),
         )
 
     # ------------------------------------------------------------------

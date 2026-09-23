@@ -7,6 +7,7 @@ other Core file since Task 44/45.
 """
 from flask import jsonify, request
 
+from meshsrv.radio_connections import record_success, remember_connection, set_preferred_transport
 from meshsrv.radio_endpoint import (
     DEFAULT_TCP_PORT,
     SWITCH_CONNECT_TIMEOUT_S as _SWITCH_CONNECT_TIMEOUT_S,
@@ -127,29 +128,50 @@ def register_meshtastic_routes(
             identity = instance_manager.get()
             updated = dict(identity)
             radio = dict(updated.get("radio") or {})
-            radio["transport"] = transport_name
+
             if transport_name == "bluetooth":
-                radio["endpoint"] = {"address": ble_address, "label": ble_name}
+                endpoint = {"address": ble_address, "label": ble_name}
             elif transport_name == "tcp":
-                radio["endpoint"] = {"host": tcp_host, "port": tcp_port}
-                if tcp_identity:
-                    radio["node_id"] = tcp_identity.get("node_id", "")
-                    radio["long_name"] = tcp_identity.get("long_name", "")
-                    radio["short_name"] = tcp_identity.get("short_name", "")
-                    radio["hardware"] = tcp_identity.get("hardware", "")
-                    radio["role"] = tcp_identity.get("role", "")
-                    radio["firmware_version"] = tcp_identity.get("firmware_version", "")
-                # The legacy flat "port" field means a serial device path -
-                # never meaningful for a TCP record (the real connection
-                # info is "endpoint" above). Cleared rather than left
-                # carrying over a stale serial port from whatever this
-                # radio record was before, which must not influence TCP
-                # behavior/UI (schema-compat only, some old readers still
-                # touch radio.get("port")).
-                radio["port"] = ""
+                endpoint = {"host": tcp_host, "port": tcp_port}
             else:
-                radio["port"] = serial_port
-                radio["endpoint"] = {"port": serial_port}
+                endpoint = {"port": serial_port}
+
+            # Multi-connection model (Radio Profiles & Connections Model,
+            # PR 1): remember_connection() merges this endpoint into
+            # connections[transport_name] WITHOUT dropping whatever other
+            # transports this radio already had remembered - the previous
+            # plain-assignment version below did drop them (Serial -> TCP
+            # -> back to Serial used to silently forget the TCP endpoint
+            # entirely, not just here on disk but for good, since nothing
+            # else remembered it either). set_preferred_transport() then
+            # mirrors the legacy singular transport/endpoint fields (every
+            # call site not yet touched by this PR - restore_active_
+            # transport(), verify_radio_identity(), etc. - still reads
+            # those directly) and record_success() records that this
+            # switch's connect() call already succeeded by the time
+            # _persist_choice() runs (see _switch() below) as this radio's
+            # latest known-good connection.
+            radio = remember_connection(radio, transport_name, endpoint)
+            radio = set_preferred_transport(radio, transport_name)
+            radio = record_success(radio, transport_name)
+
+            if transport_name == "tcp" and tcp_identity:
+                radio["node_id"] = tcp_identity.get("node_id", "")
+                radio["long_name"] = tcp_identity.get("long_name", "")
+                radio["short_name"] = tcp_identity.get("short_name", "")
+                radio["hardware"] = tcp_identity.get("hardware", "")
+                radio["role"] = tcp_identity.get("role", "")
+                radio["firmware_version"] = tcp_identity.get("firmware_version", "")
+
+            # The legacy flat "port" field means a serial device path -
+            # never meaningful for a non-serial record (the real
+            # connection info is "endpoint" above). Set/cleared per
+            # transport rather than left carrying over a stale value from
+            # whatever this radio record was before, which must not
+            # influence non-serial behavior/UI (schema-compat only, some
+            # old readers still touch radio.get("port")).
+            radio["port"] = serial_port if transport_name == "serial" else ""
+
             updated["radio"] = radio
             instance_manager.save(updated)
         except Exception as error:

@@ -668,6 +668,34 @@ def test_tcp_connect_to_the_same_accepted_node_persists_a_coherent_record():
     assert saved_radio["port"] == ""
 
 
+def test_tcp_connect_preserves_a_previously_remembered_serial_connection():
+    """Multi-connection model (Radio Profiles & Connections Model, PR 1):
+    switching to TCP for a radio that was previously connected over
+    serial must not drop the earlier serial connections entry -
+    _persist_choice() now merges via remember_connection() instead of
+    plainly overwriting radio["endpoint"], which used to silently forget
+    every other transport on each switch."""
+    accepted_radio = {
+        "node_id": "!1fa065f0", "long_name": "T-Beam", "port": "/dev/ttyACM0",
+        "transport": "serial", "endpoint": {"port": "/dev/ttyACM0"},
+        "connections": {"serial": {"endpoint": {"port": "/dev/ttyACM0"}}},
+        "preferred_transport": "serial", "last_successful_transport": "serial",
+    }
+    env = _accepted_env(
+        accepted_radio,
+        identity_node_id="!1fa065f0", identity_long_name="T-Beam",
+    )
+
+    response = env["client"].post("/api/meshtastic/tcp/connect", json={"host": "192.168.2.34", "port": 4403})
+    assert response.get_json()["ok"] is True
+
+    saved_radio = env["instance_manager"].get()["radio"]
+    assert saved_radio["connections"]["serial"] == {"endpoint": {"port": "/dev/ttyACM0"}}
+    assert saved_radio["connections"]["tcp"]["endpoint"] == {"host": "192.168.2.34", "port": 4403}
+    assert saved_radio["preferred_transport"] == "tcp"
+    assert saved_radio["last_successful_transport"] == "tcp"
+
+
 def test_tcp_connect_to_a_different_node_is_rejected_not_silently_persisted():
     """Regression #3: connecting to a DIFFERENT node than the accepted
     one over TCP must not silently mutate the current profile - explicit

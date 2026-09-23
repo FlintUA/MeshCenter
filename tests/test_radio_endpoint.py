@@ -71,6 +71,88 @@ def test_transport_key_present_but_no_endpoint_defaults_sensibly_for_bluetooth()
 
 
 # ---------------------------------------------------------------------------
+# normalize_radio_record() - multi-connection model (PR 1): connections/
+# preferred_transport/last_successful_transport
+# ---------------------------------------------------------------------------
+
+def test_legacy_record_with_no_connections_gets_one_synthesized():
+    legacy = {"node_id": "!1fa065f0", "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403}}
+
+    normalized = normalize_radio_record(legacy)
+
+    assert normalized["connections"] == {"tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}}}
+    assert normalized["preferred_transport"] == "tcp"
+    assert normalized["last_successful_transport"] == "tcp"
+
+
+def test_fully_legacy_serial_only_record_synthesizes_a_serial_connection():
+    legacy = {"node_id": "!756f9960", "port": "/dev/ttyACM0"}
+
+    normalized = normalize_radio_record(legacy)
+
+    assert normalized["connections"] == {"serial": {"endpoint": {"port": "/dev/ttyACM0"}}}
+    assert normalized["preferred_transport"] == "serial"
+    assert normalized["last_successful_transport"] == "serial"
+
+
+def test_an_already_multi_connection_record_is_kept_as_is_not_re_derived():
+    record = {
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+        "connections": {
+            "tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}, "last_successful_at": "2026-09-23T12:00:00+00:00"},
+            "serial": {"endpoint": {"port": "/dev/ttyACM0"}},
+        },
+        "preferred_transport": "tcp",
+        "last_successful_transport": "serial",
+    }
+
+    normalized = normalize_radio_record(record)
+
+    assert set(normalized["connections"].keys()) == {"tcp", "serial"}
+    assert normalized["connections"]["tcp"]["last_successful_at"] == "2026-09-23T12:00:00+00:00"
+    # last_successful_transport is NOT re-derived from the singular
+    # transport field once it's already explicitly set - real history,
+    # not just a mirror of "transport".
+    assert normalized["last_successful_transport"] == "serial"
+
+
+def test_malformed_connections_entries_are_dropped_not_propagated():
+    record = {
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+        "connections": {
+            "tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}},
+            "bogus": "not a dict",
+            "serial": {"no_endpoint_key": True},
+        },
+    }
+
+    normalized = normalize_radio_record(record)
+
+    assert normalized["connections"] == {"tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}}}
+
+
+def test_normalize_radio_record_is_idempotent():
+    legacy = {"node_id": "!1fa065f0", "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403}}
+
+    once = normalize_radio_record(legacy)
+    twice = normalize_radio_record(once)
+
+    assert once == twice
+
+
+def test_normalize_radio_record_does_not_mutate_its_input():
+    legacy = {"node_id": "!1fa065f0", "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403}}
+    original = dict(legacy)
+
+    normalize_radio_record(legacy)
+
+    assert legacy == original
+    assert "connections" not in legacy
+
+
+# ---------------------------------------------------------------------------
 # descriptor_from_radio_record()
 # ---------------------------------------------------------------------------
 

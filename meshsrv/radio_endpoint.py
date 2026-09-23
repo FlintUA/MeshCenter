@@ -21,10 +21,32 @@ call it instead of re-deriving "is this record legacy" logic themselves.
 Existing records are never rewritten merely by reading them; a record
 only gains the new fields the next time it's naturally saved (a profile
 accept/activate, or a live transport switch).
+
+MULTI-CONNECTION MODEL (Radio Profiles & Connections Model, PR 1): the
+same normalization now also guarantees `connections` (a dict keyed by
+transport - "serial"/"tcp"/"bluetooth" - each holding at minimum an
+`endpoint`, so more than one transport's endpoint can be remembered for
+the same radio at once), `preferred_transport`, and
+`last_successful_transport`. Same lazy/on-read migration strategy as
+`transport`/`endpoint` above: a legacy record missing `connections`
+gets ONE synthesized from its (now-normalized) singular `transport`/
+`endpoint` - never rewritten to disk just by being read, only on the
+next natural save. If `connections` is already present, it's kept as-is
+(filtered/defensively copied) rather than re-derived from the singular
+fields every time - once a record has real multi-connection history,
+the singular `transport`/`endpoint` become a MIRROR of
+`preferred_transport`'s own connection (kept in sync by
+meshsrv/radio_connections.py's set_preferred_transport(), not by this
+function), not the other way around.
+
+meshsrv/radio_connections.py is the actual read/write API for the
+`connections` dict (get/remember/prefer/record-success) - this module
+stays limited to the record *shape* and defaulting; see that module's
+own docstring for why the split.
 """
 from __future__ import annotations
 
-from typing import Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from meshsrv.radio_transport import ConnectionDescriptor, ConnectionType, RadioTransport
 
@@ -51,7 +73,9 @@ SWITCH_DISCONNECT_TIMEOUT_S = 30.0
 
 
 def normalize_radio_record(radio: Optional[Mapping]) -> dict:
-    """Returns `radio` with `transport` and `endpoint` guaranteed present.
+    """Returns `radio` with `transport`/`endpoint` (legacy singular) AND
+    `connections`/`preferred_transport`/`last_successful_transport`
+    (multi-connection model) all guaranteed present.
 
     A record with no `transport` key is legacy-serial: normalizes to
     transport="serial", endpoint={"port": <the existing `port` value>}.
@@ -64,41 +88,66 @@ def normalize_radio_record(radio: Optional[Mapping]) -> dict:
     transport = str(radio.get("transport") or "").strip().lower()
     endpoint = radio.get("endpoint")
 
-    if transport and isinstance(endpoint, Mapping):
-        radio["transport"] = transport
-        radio["endpoint"] = dict(endpoint)
-        return radio
+    if not (transport and isinstance(endpoint, Mapping)):
+        if not transport:
+            transport = "serial"
 
-    if not transport:
-        transport = "serial"
-
-    if not isinstance(endpoint, Mapping):
-        if transport == "tcp":
-            # A TCP record missing its endpoint has no meaningful default
-            # (unlike serial, there's no historical flat field to recover
-            # a host from) - host empty, port DEFAULT_TCP_PORT. Callers
-            # that need a connectable endpoint must check for a blank
-            # host themselves (see descriptor_from_radio_record()).
-            endpoint = {"host": "", "port": DEFAULT_TCP_PORT}
-        elif transport == "bluetooth":
-            endpoint = {"address": str(radio.get("port") or "").strip(), "label": ""}
-        else:
-            endpoint = {"port": str(radio.get("port") or "").strip()}
+        if not isinstance(endpoint, Mapping):
+            if transport == "tcp":
+                # A TCP record missing its endpoint has no meaningful
+                # default (unlike serial, there's no historical flat
+                # field to recover a host from) - host empty, port
+                # DEFAULT_TCP_PORT. Callers that need a connectable
+                # endpoint must check for a blank host themselves (see
+                # descriptor_from_radio_record()).
+                endpoint = {"host": "", "port": DEFAULT_TCP_PORT}
+            elif transport == "bluetooth":
+                endpoint = {"address": str(radio.get("port") or "").strip(), "label": ""}
+            else:
+                endpoint = {"port": str(radio.get("port") or "").strip()}
 
     radio["transport"] = transport
     radio["endpoint"] = dict(endpoint)
+
+    radio["connections"] = _normalize_connections(radio.get("connections"), transport, radio["endpoint"])
+    radio["preferred_transport"] = str(radio.get("preferred_transport") or "").strip().lower() or transport
+    radio["last_successful_transport"] = str(radio.get("last_successful_transport") or "").strip().lower() or transport
+
     return radio
 
 
-def descriptor_from_radio_record(radio: Optional[Mapping]) -> ConnectionDescriptor:
-    """Builds the ConnectionDescriptor TransportRouter/AdapterIPCTransport
-    need from a (possibly legacy) stored radio record. Normalizes first,
-    so this is safe to call directly on raw INSTANCE_IDENTITY.radio /
-    profile metadata without a separate normalize_radio_record() call."""
-    normalized = normalize_radio_record(radio)
-    transport = normalized["transport"]
-    endpoint = normalized["endpoint"]
+def _normalize_connections(raw_connections: Any, transport: str, endpoint: Mapping) -> dict:
+    """The `connections` half of normalize_radio_record()'s migration:
+    kept as-is (defensively filtered/copied) if already present and
+    non-empty, otherwise synthesized as a single entry from the
+    (already-normalized) singular transport/endpoint - the same lazy,
+    read-time-only migration strategy the rest of this function already
+    uses. Malformed entries (not a dict, or missing their own `endpoint`)
+    are dropped rather than propagated - defensive, since this dict may
+    have been hand-edited or come from an older, less-validated writer."""
+    if isinstance(raw_connections, Mapping) and raw_connections:
+        result: dict = {}
+        for key, value in raw_connections.items():
+            key = str(key or "").strip().lower()
+            if not key or not isinstance(value, Mapping) or not isinstance(value.get("endpoint"), Mapping):
+                continue
+            entry = dict(value)
+            entry["endpoint"] = dict(entry["endpoint"])
+            result[key] = entry
+        if result:
+            return result
 
+    return {transport: {"endpoint": dict(endpoint)}}
+
+
+def endpoint_descriptor(transport: str, endpoint: Mapping) -> ConnectionDescriptor:
+    """Shared tcp/bluetooth/serial branching for turning one (transport,
+    endpoint) pair into a ConnectionDescriptor - used both by
+    descriptor_from_radio_record() below (the legacy singular record)
+    and by meshsrv/radio_connections.py's connection_descriptor() (one
+    specific transport out of a multi-connection record), so the two
+    never drift into slightly different endpoint-shape assumptions."""
+    endpoint = endpoint or {}
     if transport == "tcp":
         host = str(endpoint.get("host") or "").strip()
         port = int(endpoint.get("port") or DEFAULT_TCP_PORT)
@@ -110,6 +159,15 @@ def descriptor_from_radio_record(radio: Optional[Mapping]) -> ConnectionDescript
             label=str(endpoint.get("label") or "").strip(),
         )
     return ConnectionDescriptor(type=ConnectionType.SERIAL, address=str(endpoint.get("port") or "").strip())
+
+
+def descriptor_from_radio_record(radio: Optional[Mapping]) -> ConnectionDescriptor:
+    """Builds the ConnectionDescriptor TransportRouter/AdapterIPCTransport
+    need from a (possibly legacy) stored radio record. Normalizes first,
+    so this is safe to call directly on raw INSTANCE_IDENTITY.radio /
+    profile metadata without a separate normalize_radio_record() call."""
+    normalized = normalize_radio_record(radio)
+    return endpoint_descriptor(normalized["transport"], normalized["endpoint"])
 
 
 def build_transport_connect_new(

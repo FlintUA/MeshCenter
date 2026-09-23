@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from meshsrv.radio_connections import remember_connection, set_preferred_transport
 from meshsrv.radio_endpoint import normalize_radio_record
 from storage.json_store import safe_read_json, safe_write_json
 
@@ -82,6 +83,8 @@ class ProfileManager:
     def _profile_metadata(self, profile_id: str, radio: Mapping[str, Any], existing: Mapping[str, Any] | None = None) -> dict[str, Any]:
         existing = dict(existing or {})
         created_at = str(existing.get("created_at") or "").strip() or now_iso()
+        existing_radio = existing.get("radio") if isinstance(existing.get("radio"), dict) else {}
+
         # normalize_radio_record() defaults a missing/legacy transport to
         # "serial" with endpoint={"port": <the flat `port` field below>} -
         # self-normalizing here (rather than trusting every caller to have
@@ -91,7 +94,47 @@ class ProfileManager:
         # does, and still get a correctly-shaped stored record. See
         # meshsrv/radio_endpoint.py's own module docstring for the full
         # backward-compatibility contract this preserves.
-        normalized = normalize_radio_record(radio)
+        #
+        # MERGE, not overwrite (Radio Profiles & Connections Model, PR 1):
+        # `radio` here is only ever THIS call's single freshly-detected
+        # transport/endpoint (ensure_profile() is called with exactly one
+        # at a time - boot-time restore, or one Node Manager accept). A
+        # plain normalize_radio_record(radio) would know nothing about a
+        # DIFFERENT transport this same profile already remembered from an
+        # earlier accept - remember_connection() against the EXISTING
+        # stored record is what preserves it instead of silently dropping
+        # it (the actual fix behind "accept over TCP, later also connect
+        # over serial, must remember both, not just avoid a duplicate
+        # profile dir" - the dir-per-node_id behavior below already
+        # prevented the duplicate; it never preserved the other transport).
+        #
+        # set_preferred_transport() (not record_success()): this call
+        # doesn't know whether a real connect just succeeded (boot-time
+        # restore calls this with the already-accepted radio before ever
+        # attempting to connect) - only that `radio`'s transport is the
+        # one now being treated as current/accepted, matching this
+        # function's own pre-existing "last write wins" behavior for the
+        # legacy singular transport/endpoint fields. Recording an actual
+        # connection SUCCESS is the caller's job, once it knows one
+        # occurred (see api/api_meshtastic.py's _persist_choice()).
+        incoming = normalize_radio_record(radio)
+        if existing_radio:
+            merged = remember_connection(existing_radio, incoming["transport"], incoming["endpoint"])
+            merged = set_preferred_transport(merged, incoming["transport"])
+        else:
+            # Brand new profile - nothing to merge WITH yet.
+            # remember_connection(existing_radio, ...) would otherwise run
+            # normalize_radio_record({}) internally, which synthesizes its
+            # own phantom "serial" connections entry (empty
+            # existing_radio's own pre-existing default-to-serial
+            # behavior - see meshsrv/radio_endpoint.py's
+            # normalize_radio_record() docstring) alongside the real one
+            # being remembered here - live-caught by this PR's own tests
+            # (a first-ever TCP profile ended up with a bogus
+            # connections["serial"] = {"endpoint": {"port": ""}} entry
+            # that was never real).
+            merged = incoming
+
         return {
             "schema_version": PROFILE_SCHEMA_VERSION,
             "profile_id": profile_id,
@@ -101,9 +144,13 @@ class ProfileManager:
                 "short_name": str(radio.get("short_name") or "").strip(),
                 "hardware": str(radio.get("hardware") or "").strip(),
                 "role": str(radio.get("role") or "").strip(),
+                "firmware_version": str(radio.get("firmware_version") or "").strip(),
                 "port": str(radio.get("port") or "").strip(),
-                "transport": normalized["transport"],
-                "endpoint": normalized["endpoint"],
+                "transport": merged["transport"],
+                "endpoint": merged["endpoint"],
+                "connections": merged["connections"],
+                "preferred_transport": merged["preferred_transport"],
+                "last_successful_transport": merged["last_successful_transport"],
             },
             "created_at": created_at,
             "last_used_at": now_iso(),

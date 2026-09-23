@@ -13,6 +13,7 @@ from meshsrv.radio_endpoint import (
     SWITCH_DISCONNECT_TIMEOUT_S as _SWITCH_DISCONNECT_TIMEOUT_S,
     build_transport_connect_new,
 )
+from meshsrv.radio_identity import compare_radio_identity, fetch_connected_tcp_identity
 from meshsrv.radio_transport import TransportError
 
 
@@ -85,7 +86,20 @@ def register_meshtastic_routes(
             "listener_pid": core_serial_transport.get_listener_pid(),
         }
 
-    def _persist_choice(transport_name, ble_address="", ble_name="", tcp_host="", tcp_port=None):
+    def _persist_choice(transport_name, ble_address="", ble_name="", tcp_host="", tcp_port=None, tcp_identity=None):
+        """`tcp_identity` (Radio TCP Transport part 2 correction pass #4):
+        the real node identity just read from the connected radio (via
+        fetch_connected_tcp_identity(), called by _switch() below BEFORE
+        this function ever runs) - only ever passed for transport_name
+        == "tcp", and only once _switch() has already confirmed it's
+        either a fresh onboarding (no accepted identity yet) or a
+        confirmed MATCH against the accepted one. A bare transport/
+        endpoint write with no identity update (the pre-correction
+        behavior) would leave a stale node_id/long_name/etc. from
+        whatever was accepted before - exactly the inconsistency a live
+        pixel-111 test caught (transport+endpoint said "TCP to the
+        T-Beam", but node_id still said a different, previously-accepted
+        radio)."""
         with state_lock:
             section = dict(settings.get("meshtastic") or {})
             section["transport"] = transport_name
@@ -118,6 +132,21 @@ def register_meshtastic_routes(
                 radio["endpoint"] = {"address": ble_address, "label": ble_name}
             elif transport_name == "tcp":
                 radio["endpoint"] = {"host": tcp_host, "port": tcp_port}
+                if tcp_identity:
+                    radio["node_id"] = tcp_identity.get("node_id", "")
+                    radio["long_name"] = tcp_identity.get("long_name", "")
+                    radio["short_name"] = tcp_identity.get("short_name", "")
+                    radio["hardware"] = tcp_identity.get("hardware", "")
+                    radio["role"] = tcp_identity.get("role", "")
+                    radio["firmware_version"] = tcp_identity.get("firmware_version", "")
+                # The legacy flat "port" field means a serial device path -
+                # never meaningful for a TCP record (the real connection
+                # info is "endpoint" above). Cleared rather than left
+                # carrying over a stale serial port from whatever this
+                # radio record was before, which must not influence TCP
+                # behavior/UI (schema-compat only, some old readers still
+                # touch radio.get("port")).
+                radio["port"] = ""
             else:
                 radio["port"] = serial_port
                 radio["endpoint"] = {"port": serial_port}
@@ -168,6 +197,47 @@ def register_meshtastic_routes(
                 "tcp", tcp_host=host, tcp_port=int(saved.get("tcp_port") or DEFAULT_TCP_PORT), **kwargs
             )
         return None, None
+
+    def _revert_after_tcp_check_failure(message, error_code):
+        """A TCP connect that succeeded at the transport level but then
+        failed its post-connect identity check (Radio TCP Transport part
+        2 correction pass #4 - either the identity read itself failed,
+        or it came back a genuine MISMATCH against the accepted radio)
+        must not be left "live" on the just-connected endpoint - that
+        would mean outbound sends silently going through an unaccepted
+        radio despite the response below saying the switch failed.
+        Reuses the exact same recovery-to-previous-transport path a
+        connect() failure already goes through in _switch() (never a
+        second, ad-hoc recovery mechanism); when there's nothing viable
+        to recover to (e.g. a Server Mode host with no serial ever
+        configured), disconnects the TCP transport directly instead of
+        leaving it connected-but-rejected. _persist_choice() is never
+        called for this attempt either way - settings/instance identity
+        stay exactly as they were before it started."""
+        recovery_error = None
+        recovery_name, recovery_connect_new = _previous_transport_recovery(exclude="tcp")
+        if recovery_connect_new is not None:
+            try:
+                transport_router.switch(recovery_connect_new)
+            except TransportError as recon_err:
+                recovery_error = recon_err
+        else:
+            try:
+                tcp_transport.disconnect(timeout=_SWITCH_DISCONNECT_TIMEOUT_S)
+            except TransportError:
+                pass
+
+        if recovery_error is not None:
+            return jsonify({
+                "ok": False,
+                "error": f"{message}; {recovery_name} reconnect also failed: {recovery_error}",
+                "error_code": f"{error_code}_both_down",
+            }), 503
+        return jsonify({
+            "ok": False,
+            "error": message,
+            "error_code": error_code,
+        }), 409
 
     def _switch(connect_new, target_transport_name, ble_address="", ble_name="", tcp_host="", tcp_port=None):
         """Runs connect_new() through transport_router.switch() (see
@@ -237,7 +307,47 @@ def register_meshtastic_routes(
                 "error_code": "transport_switch_failed",
             }), 503
 
-        _persist_choice(target_transport_name, ble_address, ble_name, tcp_host, tcp_port)
+        # IDENTITY CHECK, TCP ONLY (Radio TCP Transport part 2 correction
+        # pass #4): "Settings -> TCP Connect" reconnects the SAME accepted
+        # profile over TCP - it is not an onboarding flow (that's Node
+        # Manager -> Discover radio, already transport-aware since
+        # correction pass #3). A bare transport/endpoint persist with no
+        # identity check (the pre-correction behavior) let this route
+        # silently point the accepted profile at whatever radio happens
+        # to answer at the given host:port, with no verification at all -
+        # live-caught on pixel-111 as a stale node_id that no longer
+        # matched the configured TCP endpoint. Bluetooth/serial have no
+        # such check (matching their own existing, accepted scope
+        # boundary elsewhere in this file/server.py) - only TCP gets one
+        # here, since only TCP can name an arbitrary new endpoint by IP.
+        tcp_identity = None
+        if target_transport_name == "tcp":
+            try:
+                tcp_identity = fetch_connected_tcp_identity(tcp_transport, tcp_host, tcp_port, timeout=15)
+            except TransportError as error:
+                return _revert_after_tcp_check_failure(
+                    f"Connected, but could not verify the radio's identity over TCP: {error}",
+                    "tcp_identity_check_failed",
+                )
+
+            accepted_radio = dict(instance_manager.get().get("radio") or {})
+            identity_status = compare_radio_identity(accepted_radio, tcp_identity)
+            if identity_status == "MISMATCH":
+                detected_label = tcp_identity.get("long_name") or tcp_identity.get("node_id") or "the radio"
+                accepted_label = accepted_radio.get("long_name") or accepted_radio.get("node_id") or "the accepted radio"
+                return _revert_after_tcp_check_failure(
+                    f"The radio reachable at {tcp_host}:{tcp_port} ({detected_label}) does not match "
+                    f"{accepted_label}. Use Node Manager -> Discover radio to onboard a different radio.",
+                    "identity_mismatch",
+                )
+            # MATCH (a re-connect to the already-accepted radio) or
+            # NOT_CHECKED (no accepted identity yet - fresh install, this
+            # connect establishes it as first onboarding) both proceed -
+            # compare_radio_identity() never returns NOT_FOUND here since
+            # fetch_connected_tcp_identity() already raised above on any
+            # read failure, and a successful read always has a node_id.
+
+        _persist_choice(target_transport_name, ble_address, ble_name, tcp_host, tcp_port, tcp_identity=tcp_identity)
         return jsonify({"ok": True, "connection": _connection_payload()})
 
     @app.route("/api/meshtastic/connection", methods=["GET"])

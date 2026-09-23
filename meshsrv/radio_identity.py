@@ -259,6 +259,76 @@ def detect_connected_radio(
     }
 
 
+def _tcp_identity_from_connected_transport(
+    transport: RadioTransport,
+    host: str,
+    port: int,
+    timeout: float,
+) -> dict[str, Any]:
+    """Reads node_id/long_name/short_name/hardware/role/firmware_version
+    from a TCP transport that's ALREADY connected - shared by
+    detect_tcp_radio_identity() (connects itself first) and
+    fetch_connected_tcp_identity() (assumes the caller already holds a
+    live connection, e.g. api/api_meshtastic.py's post-connect identity
+    check right after transport_router.switch() succeeds - calling
+    connect() a second time there would be redundant at best and is not
+    this function's job). Raises TransportError straight through on a
+    failed get_local_node() - matches that method's own contract,
+    callers decide what a failed read means for their own flow."""
+    local_node = transport.get_local_node(timeout=timeout)
+    user = local_node.user
+    firmware_version = ""
+    try:
+        metadata = transport.get_metadata(timeout=timeout)
+        metadata_json = json.loads(metadata.get("metadata_json") or "{}")
+        firmware_version = str(metadata_json.get("firmwareVersion") or "").strip()
+    except Exception:
+        # Metadata is a best-effort extra, never fatal to identity
+        # detection itself - a radio that answers get_local_node() but
+        # not get_metadata() cleanly still has a confirmed node_id.
+        pass
+
+    return {
+        "node_id": local_node.node_id,
+        "long_name": user.long_name if user else "",
+        "short_name": user.short_name if user else "",
+        "hardware": user.hw_model if user else "",
+        # NodeUser (meshsrv/radio_transport.py) carries no `role` field at
+        # all - neither BLETransport's nor SerialTransport's own
+        # _to_node_info() populate one either (confirmed by reading both).
+        # Kept as an always-empty key purely so this dict has the same
+        # shape as detect_radio_identity()'s (CLI-sourced, which does have
+        # a real "role" value) - callers that read radio.get("role", "")
+        # keep working unchanged, just never populated for TCP.
+        "role": "",
+        "port": "",
+        "host": host,
+        "tcp_port": int(port) if port else 0,
+        "firmware_version": firmware_version,
+    }
+
+
+def fetch_connected_tcp_identity(
+    transport: RadioTransport,
+    host: str,
+    port: int,
+    timeout: float = 15,
+) -> dict[str, Any]:
+    """Public entry point for a caller that already holds a live TCP
+    connection (unlike detect_tcp_radio_identity(), which connects
+    itself) and just wants to read what's actually on the other end -
+    e.g. api/api_meshtastic.py's post-connect identity check, run right
+    after transport_router.switch() has already established the link
+    (Radio TCP Transport part 2 correction pass #4: "Settings -> TCP
+    Connect" must verify the connected radio's real identity against
+    the accepted one, not just persist transport/endpoint blindly).
+    Raises TransportError on a failed read - the caller is already in
+    its own try/except around this exact call, unlike
+    detect_tcp_radio_identity()'s boot-time/discovery callers, which
+    want a squashed result dict instead."""
+    return _tcp_identity_from_connected_transport(transport, host, port, timeout)
+
+
 def detect_tcp_radio_identity(
     transport: RadioTransport,
     host: str,
@@ -311,7 +381,7 @@ def detect_tcp_radio_identity(
     descriptor = ConnectionDescriptor(type=ConnectionType.TCP, address=f"{host}:{int(port) if port else 0}")
     try:
         transport.connect(descriptor, timeout=timeout)
-        local_node = transport.get_local_node(timeout=timeout)
+        detected = _tcp_identity_from_connected_transport(transport, host, port, timeout)
     except TransportError as error:
         return ({
             "status": IDENTITY_DETECTION_ERROR,
@@ -322,36 +392,6 @@ def detect_tcp_radio_identity(
             "error_code": error.code.value,
         }, "")
 
-    user = local_node.user
-    firmware_version = ""
-    try:
-        metadata = transport.get_metadata(timeout=timeout)
-        metadata_json = json.loads(metadata.get("metadata_json") or "{}")
-        firmware_version = str(metadata_json.get("firmwareVersion") or "").strip()
-    except Exception:
-        # Metadata is a best-effort extra, never fatal to identity
-        # detection itself - a radio that answers get_local_node() but
-        # not get_metadata() cleanly still has a confirmed node_id.
-        pass
-
-    detected = {
-        "node_id": local_node.node_id,
-        "long_name": user.long_name if user else "",
-        "short_name": user.short_name if user else "",
-        "hardware": user.hw_model if user else "",
-        # NodeUser (meshsrv/radio_transport.py) carries no `role` field at
-        # all - neither BLETransport's nor SerialTransport's own
-        # _to_node_info() populate one either (confirmed by reading both).
-        # Kept as an always-empty key purely so this dict has the same
-        # shape as detect_radio_identity()'s (CLI-sourced, which does have
-        # a real "role" value) - callers that read radio.get("role", "")
-        # keep working unchanged, just never populated for TCP.
-        "role": "",
-        "port": "",
-        "host": host,
-        "tcp_port": int(port) if port else 0,
-        "firmware_version": firmware_version,
-    }
     status = IDENTITY_MATCH if detected.get("node_id") else IDENTITY_NOT_FOUND
     return ({
         "status": status,

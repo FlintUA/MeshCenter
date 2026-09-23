@@ -32,6 +32,8 @@ from meshsrv.radio_transport import (
     ConnectionInfo,
     ConnectionState,
     ConnectionType,
+    NodeInfo,
+    NodeUser,
     TransportError,
     TransportErrorCode,
 )
@@ -118,12 +120,24 @@ class _FakeBleTransport:
 
 class _FakeTcpTransport:
     """connect() succeeds for any (host, port) except `bad_host` - mirrors
-    _FakeBleTransport's shape for the TCP counterpart."""
+    _FakeBleTransport's shape for the TCP counterpart.
 
-    def __init__(self, bad_host=None):
+    `identity_node_id`/`identity_long_name` (Radio TCP Transport part 2
+    correction pass #4) are what get_local_node() reports post-connect -
+    defaults match get_connection_info()'s own node_id so a fresh env is
+    self-consistent unless a test deliberately wants a mismatch.
+    `fail_identity_read` simulates the connect succeeding but the
+    identity-check round-trip itself failing (radio disappeared right
+    after connect)."""
+
+    def __init__(self, bad_host=None, identity_node_id="!1fa065f0", identity_long_name="T-Beam", fail_identity_read=False):
         self.bad_host = bad_host
         self._state = ConnectionState.CONNECTED
         self.connect_calls = []
+        self.get_local_node_calls = 0
+        self.identity_node_id = identity_node_id
+        self.identity_long_name = identity_long_name
+        self.fail_identity_read = fail_identity_read
 
     def connect(self, descriptor, *, force=False, timeout=30.0):
         self.connect_calls.append(descriptor)
@@ -141,8 +155,23 @@ class _FakeTcpTransport:
         return ConnectionInfo(
             state=self._state,
             descriptor=ConnectionDescriptor(type=ConnectionType.TCP, address="192.168.2.34:4403"),
-            node_id="!1fa065f0",
+            node_id=self.identity_node_id,
         )
+
+    def get_local_node(self, *, timeout=15.0):
+        self.get_local_node_calls += 1
+        if self.fail_identity_read:
+            raise TransportError(TransportErrorCode.TIMEOUT, "identity read timed out")
+        return NodeInfo(
+            node_id=self.identity_node_id,
+            num=0,
+            user=NodeUser(
+                id=self.identity_node_id, long_name=self.identity_long_name, short_name="TST", hw_model="TBEAM"
+            ),
+        )
+
+    def get_metadata(self, *, timeout=15.0):
+        return {"metadata_json": "{}"}
 
     def send_text(self, *a, **kw):
         return "sent-by-tcp"
@@ -577,3 +606,141 @@ def test_set_transport_rejects_unknown_type(tcp_env):
     data = response.get_json()
     assert data["ok"] is False
     assert data["error_code"] == "invalid_transport_type"
+
+
+# ---------------------------------------------------------------------------
+# TCP post-connect identity check (Radio TCP Transport part 2, correction
+# pass #4) - "Settings -> TCP Connect" reconnects the SAME accepted profile
+# over TCP, it is not an onboarding flow. Regression items #4 (restart
+# reaches MATCH and restores TCP) and #5 (stale serial data never causes
+# serial probing when transport=tcp) are covered by the pre-existing
+# tests/test_server_startup_tcp_transport.py suite (verify_radio_identity()'s
+# transport branching, restore_active_transport()) - untouched by this
+# correction, not re-tested here.
+# ---------------------------------------------------------------------------
+
+def _accepted_env(accepted_radio, **tcp_kwargs):
+    serial_transport = _FakeSerialTransport()
+    ble_transport = _FakeBleTransport(bad_address="00:00:00:00:00:00")
+    tcp_transport = _FakeTcpTransport(**tcp_kwargs)
+    transport_router = TransportRouter(serial_transport)
+    settings = {"meshtastic": {"transport": "serial"}}
+    instance_manager = _FakeInstanceManager(initial={"radio": accepted_radio})
+
+    env = _register(
+        transport_router=transport_router,
+        serial_transport=serial_transport,
+        ble_transport=ble_transport,
+        tcp_transport=tcp_transport,
+        settings=settings,
+        instance_manager=instance_manager,
+    )
+    env.update({
+        "transport_router": transport_router,
+        "serial_transport": serial_transport,
+        "tcp_transport": tcp_transport,
+        "settings": settings,
+        "instance_manager": instance_manager,
+    })
+    return env
+
+
+def test_tcp_connect_to_the_same_accepted_node_persists_a_coherent_record():
+    """Regression #1: a successful TCP connect to the already-accepted
+    node persists identity + transport + endpoint TOGETHER, not just
+    transport/endpoint with a stale identity left over (the pixel-111
+    live finding this correction fixes)."""
+    env = _accepted_env(
+        {"node_id": "!1fa065f0", "long_name": "Old Name", "port": "/dev/ttyACM0"},
+        identity_node_id="!1fa065f0", identity_long_name="T-Beam",
+    )
+    response = env["client"].post("/api/meshtastic/tcp/connect", json={"host": "192.168.2.34", "port": 4403})
+    data = response.get_json()
+
+    assert data["ok"] is True
+    saved_radio = env["instance_manager"].get()["radio"]
+    assert saved_radio["node_id"] == "!1fa065f0"
+    assert saved_radio["long_name"] == "T-Beam"  # refreshed from the live TCP read, not the stale accepted value
+    assert saved_radio["transport"] == "tcp"
+    assert saved_radio["endpoint"] == {"host": "192.168.2.34", "port": 4403}
+    # Regression #2 (this record's shape is what a restart reads back):
+    # legacy serial "port" must not carry stale meaning for a TCP record.
+    assert saved_radio["port"] == ""
+
+
+def test_tcp_connect_to_a_different_node_is_rejected_not_silently_persisted():
+    """Regression #3: connecting to a DIFFERENT node than the accepted
+    one over TCP must not silently mutate the current profile - explicit
+    refusal, nothing persisted, and the router is reverted (not left
+    "live" on the mismatched radio)."""
+    env = _accepted_env(
+        {"node_id": "!756f9960", "long_name": "Flint TAP2", "port": "/dev/ttyACM0"},
+        identity_node_id="!1fa065f0", identity_long_name="T-Beam",
+    )
+    transport_router = env["transport_router"]
+    serial_transport = env["serial_transport"]
+
+    response = env["client"].post("/api/meshtastic/tcp/connect", json={"host": "192.168.2.34", "port": 4403})
+    data = response.get_json()
+
+    assert data["ok"] is False
+    assert data["error_code"] == "identity_mismatch"
+    assert env["instance_manager"].saved == []  # _persist_choice() never ran
+    # Reverted to the previous transport (serial) via the router, not left
+    # pointed at the just-connected-but-rejected TCP transport.
+    assert transport_router._active is serial_transport
+
+
+def test_tcp_identity_read_failure_after_connect_is_also_rejected_and_reverted():
+    """A TCP connect that succeeds at the socket/protocol level but whose
+    post-connect identity read itself fails must be treated the same as
+    a mismatch - not silently persisted as if it were verified."""
+    env = _accepted_env(
+        {"node_id": "!1fa065f0", "long_name": "T-Beam", "port": "/dev/ttyACM0"},
+        fail_identity_read=True,
+    )
+    transport_router = env["transport_router"]
+    serial_transport = env["serial_transport"]
+
+    response = env["client"].post("/api/meshtastic/tcp/connect", json={"host": "192.168.2.34", "port": 4403})
+    data = response.get_json()
+
+    assert data["ok"] is False
+    assert data["error_code"] == "tcp_identity_check_failed"
+    assert env["instance_manager"].saved == []
+    assert transport_router._active is serial_transport
+
+
+def test_tcp_acceptance_does_not_touch_active_profile_id():
+    """Regression #6: instance.json's active_profile_id (and by extension
+    whatever profile metadata it points at) stays exactly as it was -
+    _persist_choice() only ever touches the "radio" sub-record, never
+    active_profile_id, for either the MATCH or fresh-onboarding case."""
+    env = _accepted_env(
+        {"node_id": "!1fa065f0", "long_name": "T-Beam", "port": "/dev/ttyACM0"},
+        identity_node_id="!1fa065f0", identity_long_name="T-Beam",
+    )
+    env["instance_manager"].save({
+        **env["instance_manager"].get(),
+        "active_profile_id": "1fa065f0",
+    })
+
+    response = env["client"].post("/api/meshtastic/tcp/connect", json={"host": "192.168.2.34", "port": 4403})
+
+    assert response.get_json()["ok"] is True
+    assert env["instance_manager"].get()["active_profile_id"] == "1fa065f0"
+
+
+def test_fresh_install_tcp_connect_establishes_identity_as_onboarding():
+    """Regression #7: no accepted identity yet (node_id empty) -> TCP
+    connect establishes it as first onboarding, no mismatch rejection."""
+    env = _accepted_env({}, identity_node_id="!1fa065f0", identity_long_name="T-Beam")
+
+    response = env["client"].post("/api/meshtastic/tcp/connect", json={"host": "192.168.2.34", "port": 4403})
+    data = response.get_json()
+
+    assert data["ok"] is True
+    saved_radio = env["instance_manager"].get()["radio"]
+    assert saved_radio["node_id"] == "!1fa065f0"
+    assert saved_radio["long_name"] == "T-Beam"
+    assert saved_radio["transport"] == "tcp"

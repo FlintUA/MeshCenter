@@ -76,15 +76,36 @@ class _FakePacket:
     id = 12345
 
 
+class _FakeReaderThread:
+    """Stands in for StreamInterface's own self._rxThread - `alive`
+    controls what is_alive() reports AFTER the fake interface's close()
+    has already been called, simulating whether the library's own
+    GRACEFUL_CLOSE_TIMEOUT-bounded wait actually succeeded in stopping
+    it (see _detach_and_close_async()'s own hard-close-fallback logic,
+    the thing under test in the "reader thread survives close()"
+    section below)."""
+
+    def __init__(self, alive: bool):
+        self._alive = alive
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+
 class _FakeTCPInterface:
     """Stands in for meshtastic.tcp_interface.TCPInterface. Records
     close() calls and the hostname/port it was constructed with, and can
     be told to raise/hang on construction to simulate the acceptance
-    tests' regression firmware."""
+    tests' regression firmware. `rx_thread_survives_close` (class-level,
+    defaults False = the common/expected case) controls whether the fake
+    reader thread reports itself still alive() after close() - simulates
+    the live-caught pixel-111 gap where the real library's own close()
+    doesn't always actually stop it."""
 
     instances = []
     construct_delay_s = 0.0
     construct_exception = None
+    rx_thread_survives_close = False
 
     def __init__(self, hostname, portNumber=DEFAULT_TCP_PORT, connectNow=True):
         if _FakeTCPInterface.construct_delay_s:
@@ -98,6 +119,8 @@ class _FakeTCPInterface:
         self.localNode = types.SimpleNamespace(nodeNum=0x756F9960, channels=[])
         self.metadata = None
         self.closed = False
+        self._rxThread = _FakeReaderThread(alive=_FakeTCPInterface.rx_thread_survives_close)
+        self.socket = _FakeSocket()
         _FakeTCPInterface.instances.append(self)
 
     def sendText(self, **kwargs):
@@ -118,6 +141,7 @@ def _fake_tcp_interface_module(monkeypatch):
     _FakeTCPInterface.instances = []
     _FakeTCPInterface.construct_delay_s = 0.0
     _FakeTCPInterface.construct_exception = None
+    _FakeTCPInterface.rx_thread_survives_close = False
     fake_module = types.ModuleType("meshtastic.tcp_interface")
     fake_module.TCPInterface = _FakeTCPInterface
     monkeypatch.setitem(sys.modules, "meshtastic.tcp_interface", fake_module)
@@ -416,6 +440,52 @@ def test_disconnect_closes_interface_and_resets_state(monkeypatch):
     assert transport.is_connected() is False
     assert transport.get_connection_info().state == ConnectionState.DISCONNECTED
     assert transport.internal_state == "disconnected"
+
+
+def test_disconnect_hard_closes_the_socket_when_the_reader_thread_survives_close(monkeypatch):
+    """Adapter-watchdog follow-up (live-caught on pixel-111, T-Beam
+    firmware 2.7.15.567b8ea): the real meshtastic library's own
+    TCPInterface.close() only waits a short, hardcoded interval for its
+    background reader thread to exit, and that depends on the remote
+    radio reacting to a half-close promptly - a radio that doesn't
+    leaves the thread blocked in a blocking recv() forever, silently
+    keeping the raw socket (and the radio's single-TCP-client slot)
+    held even though close() itself already returned. Reproduced live
+    as a clean alternating pattern: every successful connect-then-
+    disconnect cycle left the NEXT connect attempt failing, every other
+    one succeeding. _detach_and_close_async() must notice the reader
+    thread is still alive after the library's own close() attempt and
+    force a hard close of the raw socket itself."""
+    _patch_create_connection(monkeypatch)
+    _FakeTCPInterface.rx_thread_survives_close = True
+    transport = TCPTransport(host="192.168.2.34")
+    transport.connect(_descriptor(), timeout=5)
+    interface = _FakeTCPInterface.instances[0]
+
+    transport.disconnect(timeout=5)
+
+    assert interface.closed is True  # the library's own close() was still tried first
+    assert interface.socket.closed is True, (
+        "the raw socket must be force-closed when the reader thread survives the library's own close()"
+    )
+
+
+def test_disconnect_does_not_force_close_the_socket_when_the_reader_thread_exits_cleanly(monkeypatch):
+    """Negative test guarding the fallback's own scope: when the
+    library's close() already stopped the reader thread (the common
+    case), the extra hard-close must not run - nothing to guard against
+    double-closing an already-closed socket cleanly, but this keeps the
+    fallback's trigger condition honest and observable."""
+    _patch_create_connection(monkeypatch)
+    _FakeTCPInterface.rx_thread_survives_close = False
+    transport = TCPTransport(host="192.168.2.34")
+    transport.connect(_descriptor(), timeout=5)
+    interface = _FakeTCPInterface.instances[0]
+
+    transport.disconnect(timeout=5)
+
+    assert interface.closed is True
+    assert interface.socket.closed is False, "no reason to force-close a socket the reader thread already released"
 
 
 def test_disconnect_state_is_correct_even_when_close_never_returns(monkeypatch):

@@ -249,6 +249,76 @@ def test_ordinary_adapter_domain_error_does_not_kill_the_subprocess():
     assert supervisor._proc.pid == pid_before, "same OS process must still be running, not killed and respawned"
 
 
+@pytest.mark.parametrize("error_code", ["tcp_connected", "protocol_sync_timeout"])
+def test_tcp_connect_failure_kills_and_respawns_the_subprocess(error_code):
+    """P0-A extended (Radio TCP Transport follow-up, live-caught twice on
+    pixel-111 - a long-lived adapter subprocess degraded after several
+    TCP connect attempts, and every SUBSEQUENT attempt through the SAME
+    process failed identically with this exact error code, even though a
+    standalone script and a direct TCPTransport call both succeeded in
+    isolation every time). TCP_CONNECTED/PROTOCOL_SYNC_TIMEOUT both mean
+    a connect() attempt got as far as opening a raw socket + starting the
+    underlying library's own background reader thread before failing -
+    the third-party library's own best-effort close() cleanup on that
+    path is time-bounded and can leave that thread orphaned, silently
+    occupying the radio's single-TCP-client slot. Recycling the adapter
+    on this specific error class (mirroring the existing TIMEOUT-only
+    P0-A fix immediately above) is what actually resolved it live -
+    killing the process is the only cleanup thorough enough to reliably
+    reclaim a leaked socket/thread the library's own close() couldn't."""
+    supervisor = _make_supervisor()
+    transport = AdapterIPCTransport(ConnectionType.TCP, supervisor)
+
+    first = supervisor.call(
+        {"operation": "get_metadata", "transport_type": "tcp", "params": {}, "timeout": 5.0},
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+    first_pid = first["result"]["_pid"]
+    assert first_pid is not None
+
+    with pytest.raises(TransportError) as excinfo:
+        transport._call("connect", {"_test_behavior": f"adapter_error:{error_code}"}, 5.0)
+    assert excinfo.value.code.value == error_code
+
+    third = supervisor.call(
+        {"operation": "get_metadata", "transport_type": "tcp", "params": {}, "timeout": 5.0},
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+    third_pid = third["result"]["_pid"]
+    assert third_pid is not None
+    assert third_pid != first_pid, (
+        f"adapter must be killed+respawned after self-reporting {error_code}, not silently reused - "
+        "otherwise a leaked reader thread/socket from the failed connect can keep occupying the "
+        "radio's single-TCP-client slot for every subsequent attempt"
+    )
+
+
+def test_other_tcp_domain_errors_still_do_not_kill_the_subprocess():
+    """Negative test guarding the extended scope: an ordinary TCP domain
+    error that does NOT represent "socket+reader thread already opened
+    before failing" (e.g. a clean pre-flight-probe failure, or an
+    unrelated NOT_CONNECTED) must not trigger a kill - only TIMEOUT/
+    TCP_CONNECTED/PROTOCOL_SYNC_TIMEOUT do."""
+    supervisor = _make_supervisor()
+    transport = AdapterIPCTransport(ConnectionType.TCP, supervisor)
+
+    supervisor.call(
+        {"operation": "get_metadata", "transport_type": "tcp", "params": {}, "timeout": 5.0},
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+    pid_before = supervisor._proc.pid
+
+    with pytest.raises(TransportError) as excinfo:
+        transport._call("connect", {"_test_behavior": "adapter_error:connect_refused"}, 5.0)
+    assert excinfo.value.code == TransportErrorCode.CONNECT_REFUSED
+
+    assert supervisor._proc is not None
+    assert supervisor._proc.pid == pid_before, "a clean pre-flight-probe-style failure must not kill the subprocess"
+
+
 def test_crashed_adapter_raises_adapter_unavailable_not_a_raw_exception():
     supervisor = _make_supervisor()
 

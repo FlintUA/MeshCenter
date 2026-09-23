@@ -57,6 +57,7 @@ from meshsrv.radio_endpoint import (
     SWITCH_CONNECT_TIMEOUT_S,
     DEFAULT_TCP_PORT,
 )
+from meshsrv.connection_status import connection_payload
 from meshsrv.time_service import start_background_thread as start_time_service
 from meshsrv.node_time_sync import STARTUP_SYNC_DELAY_S
 from meshsrv.serial_port_supervisor import SerialPortSupervisor
@@ -4978,19 +4979,105 @@ def api_devices_dashboard():
         or {}
     )
 
-    # Not read inside the state_lock block below: it acquires
-    # listener_supervisor's own radio_lock internally, and nothing
-    # elsewhere in this codebase acquires radio_lock while already
-    # holding state_lock - keeping that ordering absent here too avoids
-    # introducing a new deadlock-risk lock nesting that didn't exist
-    # before this migration.
-    listener_pid = listener_supervisor.get_listener_pid()
-
     with state_lock:
         listener_running = bool(radio_health.get("listener_running", False))
         last_restart = float(radio_health.get("last_restart", 0) or 0)
 
-    connection = radio_connection_manager.status(listener_running)
+    connected_since = None
+    if listener_running and last_restart:
+        connected_since = datetime.fromtimestamp(last_restart).astimezone().isoformat(timespec="seconds")
+
+    # Radio Profiles & Connections Model, PR 2: this used to be
+    # unconditionally radio_connection_manager.status(listener_running) -
+    # RadioConnectionManager only ever tracks the serial "release the port
+    # for an external app" workflow, so its own steady "connected" state
+    # (nothing in progress) was being shown here as if it were the
+    # radio's ACTUAL connection state, regardless of which transport was
+    # really active. A genuinely-connected TCP/Bluetooth radio therefore
+    # always showed serial-flavored status (and, since listener_running
+    # above is itself sourced from the serial listener's own health flag
+    # - always False when a non-serial transport is active, since the
+    # serial listener never even starts then - it specifically showed as
+    # "listener stopped", implying broken, for a perfectly working TCP
+    # link). connection_payload() (meshsrv/connection_status.py, shared
+    # with api/api_meshtastic.py's own _connection_payload()) is the
+    # already-correct, transport-aware source - TransportRouter.
+    # get_connection_info() reports whichever transport is actually live.
+    #
+    # `active_transport` prefers the LIVE descriptor's own type (most
+    # authoritative - what TransportRouter is actually pointing at right
+    # now) and only falls back to the persisted preferred_transport (PR 1)
+    # if that's ever unavailable (e.g. never successfully connected yet).
+    transport_state = connection_payload(transport_router, LOCAL_NODE_ID, listener_supervisor)
+    configured_normalized = normalize_radio_record(configured)
+    active_transport = transport_state.get("type") or configured_normalized["preferred_transport"]
+
+    if active_transport == "serial":
+        # Byte-for-byte the pre-existing behavior - RadioConnectionManager
+        # legitimately owns this vocabulary (releasing/released/
+        # reconnecting have no equivalent for TCP/Bluetooth) when serial
+        # really is the active transport. Not read inside the state_lock
+        # block above: it acquires listener_supervisor's own radio_lock
+        # internally, and nothing elsewhere in this codebase acquires
+        # radio_lock while already holding state_lock - keeping that
+        # ordering absent here too avoids introducing a new deadlock-risk
+        # lock nesting that didn't exist before this migration.
+        connection = {
+            **radio_connection_manager.status(listener_running),
+            "listener_pid": listener_supervisor.get_listener_pid(),
+            "connected_since": connected_since,
+            "type": "serial",
+            "address": transport_state.get("address"),
+        }
+    else:
+        # No release-workflow equivalent for TCP/Bluetooth - `mode` is
+        # the real ConnectionState value (connected/error/connecting/
+        # disconnected), not RadioConnectionManager's own 5-state
+        # vocabulary. This does mean the frontend's existing Release/
+        # Reconnect button-enablement logic (static/chat.js's canRelease/
+        # canReconnect, computed from mode+listener_running) can look
+        # technically "available" for a connected non-serial radio -
+        # accepted deliberately for this PR (clicking either only ever
+        # touches the serial listener/RadioConnectionManager's own state,
+        # never TransportRouter/TCP - harmless if clicked, just
+        # misleading) rather than inventing a distinct mode string that
+        # would also defeat deviceStatusClass()'s exact `mode==='connected'`
+        # check and show a red/danger pill for a perfectly working TCP
+        # link, which would be a worse bug than the one being fixed here.
+        # Properly hiding those buttons for non-serial transports is
+        # PR 3's UI work, not this one's.
+        state = transport_state.get("state") or "disconnected"
+        # ConnectionInfo.connected_since (meshsrv/radio_transport.py) is a
+        # raw time.time()-style Unix-seconds float, not the ISO-8601
+        # string the serial branch above builds and the frontend's
+        # formatDeviceDashboardDate() -> `new Date(value)` expects -
+        # JS's Date constructor treats a bare number as MILLISECONDS
+        # since epoch, so passing the float straight through would
+        # render a garbled ~1970 date instead of the real connection
+        # time. Converted here the same way the serial branch already
+        # does, so both branches produce the same wire format.
+        raw_transport_connected_since = transport_state.get("connected_since")
+        transport_connected_since = (
+            datetime.fromtimestamp(raw_transport_connected_since).astimezone().isoformat(timespec="seconds")
+            if raw_transport_connected_since
+            else None
+        )
+        connection = {
+            "mode": state,
+            "released": False,
+            "commands_allowed": state == "connected",
+            "listener_running": state == "connected",
+            "message": "",
+            "serial_port": "",
+            "updated_at": time.time(),
+            "released_at": None,
+            "last_error": transport_state.get("last_error"),
+            "listener_pid": transport_state.get("listener_pid"),
+            "connected_since": transport_connected_since,
+            "type": active_transport,
+            "address": transport_state.get("address"),
+        }
+
     profile_metadata = {}
     profile_json = os.path.join(PROFILE_DATA_DIR, "profile.json")
     try:
@@ -5010,10 +5097,6 @@ def api_devices_dashboard():
         "telemetry_records": _json_item_count(paths.get("telemetry_history", "")),
         "waypoints": _waypoint_count(paths.get("waypoints_db", "")),
     }
-
-    connected_since = None
-    if listener_running and last_restart:
-        connected_since = datetime.fromtimestamp(last_restart).astimezone().isoformat(timespec="seconds")
 
     profiles = []
     profiles_root = os.path.join(DATA_DIR, "profiles")
@@ -5046,7 +5129,11 @@ def api_devices_dashboard():
                 },
                 "connection": {
                     "mode": connection.get("mode", "unknown") if active else "offline",
-                    "listener_running": listener_running if active else False,
+                    # Was the raw (serial-only) `listener_running` var -
+                    # same bug as the top-level connection block above,
+                    # now reads the already transport-aware `connection`
+                    # dict instead.
+                    "listener_running": connection.get("listener_running", False) if active else False,
                 },
             })
     except FileNotFoundError:
@@ -5070,12 +5157,17 @@ def api_devices_dashboard():
                 or runtime.get("identity_status", "NOT_CHECKED"),
             "identity_checked_at": RADIO_IDENTITY_RESULT.get("checked_at")
                 or runtime.get("last_detected_at"),
+            # Radio Profiles & Connections Model, PR 1 data, additive:
+            # every transport this radio has a remembered endpoint for
+            # (not just the currently active one), plus which one the
+            # user prefers vs which one last actually succeeded - lets a
+            # future frontend show "connected via X, Y also available"
+            # without assembling it from multiple endpoints itself.
+            "connections": configured_normalized["connections"],
+            "preferred_transport": configured_normalized["preferred_transport"],
+            "last_successful_transport": configured_normalized["last_successful_transport"],
         },
-        "connection": {
-            **connection,
-            "listener_pid": listener_pid,
-            "connected_since": connected_since,
-        },
+        "connection": connection,
         "profiles": profiles,
         "profile": {
             "profile_id": identity.get("active_profile_id", ""),

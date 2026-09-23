@@ -25,7 +25,7 @@ INDEX_HTML = Path(__file__).parent.parent / 'templates' / 'index.html'
 I18N_JS = Path(__file__).parent.parent / 'static' / 'i18n.js'
 
 # The single canonical cache-busting token for the current frontend release.
-CURRENT_VERSION = '20260923-nodemgr-connection-card'
+CURRENT_VERSION = '20260923-nodemgr-connections-list'
 
 # Browser assets changed in the current release. Every entry must be referenced
 # in index.html with CURRENT_VERSION (and, for i18n.js, its CATALOG_VERSION must
@@ -34,6 +34,7 @@ CURRENT_VERSION = '20260923-nodemgr-connection-card'
 CURRENT_ASSETS = {
     'static/i18n.js',
     'static/chat.js',
+    'static/style-part4.css',
 }
 
 # `<link rel="stylesheet" href="{{ url_for('static', filename='X') }}?v=TOKEN">`

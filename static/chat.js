@@ -10154,6 +10154,184 @@ async function reconnectActiveTransport(type) {
     }
 }
 
+// Radio Profiles & Connections Model, PR 3b: "Available connections" - one
+// row per transport this radio has EVER had a working endpoint remembered
+// for (radio.connections, from PR 1/PR 2's dashboard response), not just
+// whichever one is live right now. Lets the same physical radio be reached
+// over USB and TCP (say) without losing either endpoint every time you
+// switch - see meshsrv/radio_connections.py's remember_connection() for
+// the persistence side this renders.
+
+function nodeManagerTransportLabel(transport) {
+    if (transport === 'tcp') return window.I18N.t('node_manager.connection_type_tcp');
+    if (transport === 'bluetooth') return window.I18N.t('node_manager.connection_type_bluetooth');
+    return window.I18N.t('node_manager.connection_type_serial');
+}
+
+function nodeManagerConnectionEndpointLabel(transport, endpoint) {
+    endpoint = endpoint || {};
+    if (transport === 'tcp') {
+        return deviceDashboardValue(endpoint.host ? `${endpoint.host}:${endpoint.port || 4403}` : '');
+    }
+    if (transport === 'bluetooth') {
+        return endpoint.label
+            ? `${escapeHtml(endpoint.label)} (${deviceDashboardValue(endpoint.address)})`
+            : deviceDashboardValue(endpoint.address);
+    }
+    return deviceDashboardValue(endpoint.port);
+}
+
+function renderNodeManagerConnectionsList(radio, connection) {
+    const connections = radio.connections || {};
+    const activeTransport = connection.type || radio.preferred_transport || 'serial';
+    const order = ['tcp', 'serial', 'bluetooth'].filter(t => connections[t]);
+
+    if (!order.length) {
+        return `<p class="node-connections-empty">${escapeHtml(window.I18N.t('node_manager.no_saved_connections'))}</p>`;
+    }
+
+    return order.map(transport => {
+        const isActive = transport === activeTransport;
+        const endpoint = connections[transport]?.endpoint || {};
+        const escapedTransport = transport.replace(/'/g, "\\'");
+        // Edit is TCP-only for now - a Bluetooth "endpoint" is a scanned
+        // device address (re-scan, don't hand-edit a MAC) and serial's
+        // port is fixed by this installation's own hardware/config, not
+        // something a saved-connection row can meaningfully change. The
+        // full discovery/edit rework is PR 3c's job.
+        const actions = [];
+        if (!isActive) {
+            actions.push(`<button type="button" class="node-connection-action-btn" onclick="useRadioConnection('${escapedTransport}')">${escapeHtml(window.I18N.t('node_manager.connection_use'))}</button>`);
+        }
+        if (transport === 'tcp') {
+            actions.push(`<button type="button" class="node-connection-action-btn" onclick="editRadioConnection('${escapedTransport}')">${escapeHtml(window.I18N.t('node_manager.connection_edit'))}</button>`);
+        }
+        if (!isActive) {
+            actions.push(`<button type="button" class="node-connection-action-btn is-danger" onclick="removeRadioConnection('${escapedTransport}')">${escapeHtml(window.I18N.t('node_manager.connection_remove'))}</button>`);
+        }
+
+        return `
+            <div class="node-connection-row ${isActive ? 'is-active' : ''}">
+                <span class="node-connection-dot">${isActive ? '●' : '○'}</span>
+                <span class="node-connection-main">
+                    <span class="node-connection-type">${escapeHtml(nodeManagerTransportLabel(transport))}</span>
+                    <span class="node-connection-endpoint device-monospace">${nodeManagerConnectionEndpointLabel(transport, endpoint)}</span>
+                </span>
+                <span class="node-connection-actions">${actions.join('')}</span>
+            </div>`;
+    }).join('');
+}
+
+async function _fetchCurrentRadioConnections() {
+    const response = await fetch('/api/node-manager/dashboard', { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || window.I18N.t('node_manager.unable_to_load'));
+    return data.radio?.connections || {};
+}
+
+async function connectToSavedTransport(transport, endpoint) {
+    // Reuses the SAME live-connect routes Settings' own Meshtastic panel
+    // uses - not a Node-Manager-specific "switch" endpoint, and NOT
+    // /api/node-manager/radio/accept (which always restarts MeshCenter,
+    // even when the target is already the active profile - see that
+    // route's own docstring in server.py) or /profiles/<id>/activate
+    // (a different-profile switch, also a restart). This never creates
+    // or activates a profile - only api/api_meshtastic.py's own
+    // _persist_choice() runs, merging into the ALREADY-active profile's
+    // radio.connections via remember_connection() (PR 1).
+    let url;
+    let body;
+    if (transport === 'tcp') {
+        url = '/api/meshtastic/tcp/connect';
+        body = { host: endpoint.host, port: endpoint.port };
+    } else if (transport === 'bluetooth') {
+        url = '/api/meshtastic/bluetooth/connect';
+        body = { address: endpoint.address, name: endpoint.label || '' };
+    } else {
+        // Serial has no per-endpoint connect route (there's only one
+        // configured port per installation) - reuse the generic switch,
+        // same as reconnectActiveTransport('serial') would.
+        url = '/api/meshtastic/transport';
+        body = { type: 'serial' };
+    }
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+        throw new Error(data.error || window.I18N.t('node_manager.connection_switch_failed'));
+    }
+}
+
+async function useRadioConnection(transport) {
+    try {
+        const connections = await _fetchCurrentRadioConnections();
+        const endpoint = connections[transport]?.endpoint;
+        if (!endpoint) {
+            showToast(window.I18N.t('node_manager.connection_not_found'), 'error');
+            return;
+        }
+        await connectToSavedTransport(transport, endpoint);
+        showToast(window.I18N.t('node_manager.connection_switched'), 'success');
+        await loadNodeManagerDashboard();
+    } catch (error) {
+        console.error('[NODE MANAGER] Use connection failed:', error);
+        showToast(error.message || window.I18N.t('node_manager.connection_switch_failed'), 'error');
+    }
+}
+
+async function editRadioConnection(transport) {
+    if (transport !== 'tcp') return;
+
+    try {
+        const connections = await _fetchCurrentRadioConnections();
+        const currentEndpoint = connections.tcp?.endpoint || {};
+
+        const newHost = window.prompt(window.I18N.t('node_manager.edit_tcp_host_prompt'), currentEndpoint.host || '');
+        if (newHost === null) return;
+        const trimmedHost = newHost.trim();
+        if (!trimmedHost) {
+            showToast(window.I18N.t('node_manager.tcp_host_required'), 'error');
+            return;
+        }
+
+        const newPortText = window.prompt(window.I18N.t('node_manager.edit_tcp_port_prompt'), String(currentEndpoint.port || 4403));
+        if (newPortText === null) return;
+        const newPort = parseInt(newPortText.trim(), 10);
+
+        await connectToSavedTransport('tcp', { host: trimmedHost, port: Number.isFinite(newPort) && newPort > 0 ? newPort : 4403 });
+        showToast(window.I18N.t('node_manager.connection_switched'), 'success');
+        await loadNodeManagerDashboard();
+    } catch (error) {
+        console.error('[NODE MANAGER] Edit connection failed:', error);
+        showToast(error.message || window.I18N.t('node_manager.connection_switch_failed'), 'error');
+    }
+}
+
+async function removeRadioConnection(transport) {
+    const confirmed = window.confirm(window.I18N.t('node_manager.remove_connection_confirm', { transport: nodeManagerTransportLabel(transport) }));
+    if (!confirmed) return;
+
+    try {
+        const response = await fetch(`/api/meshtastic/connections/${encodeURIComponent(transport)}/forget`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || window.I18N.t('node_manager.remove_connection_failed'));
+        }
+        showToast(window.I18N.t('node_manager.connection_removed'), 'success');
+        await loadNodeManagerDashboard();
+    } catch (error) {
+        console.error('[NODE MANAGER] Remove connection failed:', error);
+        showToast(error.message || window.I18N.t('node_manager.remove_connection_failed'), 'error');
+    }
+}
+
 async function loadNodeManagerDashboard(showFeedback = false) {
     const container = document.getElementById('nodeManagerDashboard');
     if (!container) return;
@@ -10181,6 +10359,7 @@ async function loadNodeManagerDashboard(showFeedback = false) {
         const canReconnect = connection.mode === 'released' || connection.mode === 'error' || (!connection.listener_running && connection.mode !== 'reconnecting');
         const iconSrc = window.MeshCenterNodeAvatar?.current?.() || '/static/meshcenter_logo.png';
         const { connectionDetailRows, connectionActionsHtml } = renderNodeManagerConnectionCard(connection, radio, connectionLabel, canRelease, canReconnect);
+        const availableConnectionsRows = renderNodeManagerConnectionsList(radio, connection);
 
         const profileCards = profiles.map(item => {
             const itemRadio = item.radio || {};
@@ -10284,6 +10463,11 @@ async function loadNodeManagerDashboard(showFeedback = false) {
                         ${connectionDetailRows}
                     </dl>
                     ${connectionActionsHtml}
+                </section>
+
+                <section class="device-info-card node-connections-card">
+                    <div class="device-card-title">🗺 ${escapeHtml(window.I18N.t('node_manager.available_connections_title'))}</div>
+                    <div class="node-connections-list">${availableConnectionsRows}</div>
                 </section>
 
                 <section class="device-info-card">

@@ -5,6 +5,7 @@ is `radio: Mapping in, dict out`.
 """
 from meshsrv.radio_connections import (
     connection_descriptor,
+    forget_connection,
     get_connection,
     get_connections,
     record_success,
@@ -229,3 +230,63 @@ def test_connection_descriptor_for_a_never_remembered_transport_uses_default_end
 
     assert descriptor.type == ConnectionType.TCP
     assert descriptor.address == ":4403"
+
+
+# ---------------------------------------------------------------------------
+# forget_connection()
+# ---------------------------------------------------------------------------
+
+def test_forget_connection_removes_only_the_named_transport():
+    radio = {
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+        "connections": {
+            "tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}},
+            "serial": {"endpoint": {"port": "/dev/ttyACM0"}},
+        },
+    }
+
+    updated = forget_connection(radio, "serial")
+
+    assert updated["connections"] == {"tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}}}
+
+
+def test_forget_connection_for_a_never_remembered_transport_is_a_safe_no_op():
+    radio = {"transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403}}
+
+    updated = forget_connection(radio, "bluetooth")
+
+    assert updated["connections"] == {"tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}}}
+
+
+def test_forget_connection_does_not_touch_preferred_transport():
+    radio = {
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+        "connections": {
+            "tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}},
+            "serial": {"endpoint": {"port": "/dev/ttyACM0"}},
+        },
+        "preferred_transport": "serial",
+    }
+
+    updated = forget_connection(radio, "serial")
+
+    # Mechanical only - forget_connection() itself does not guard against
+    # removing the preferred transport's own connection; that's the HTTP
+    # route's job (see tests/test_api_meshtastic.py).
+    assert updated["preferred_transport"] == "serial"
+    assert "serial" not in updated["connections"]
+
+
+def test_forget_connection_does_not_mutate_its_input():
+    radio = {
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+        "connections": {"tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}}, "serial": {"endpoint": {"port": "/dev/ttyACM0"}}},
+    }
+    original_connections = dict(radio["connections"])
+
+    forget_connection(radio, "serial")
+
+    assert radio["connections"] == original_connections

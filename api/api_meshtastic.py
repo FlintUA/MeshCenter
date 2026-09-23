@@ -7,6 +7,7 @@ other Core file since Task 44/45.
 """
 from flask import jsonify, request
 
+from meshsrv.connection_status import connection_payload
 from meshsrv.radio_connections import record_success, remember_connection, set_preferred_transport
 from meshsrv.radio_endpoint import (
     DEFAULT_TCP_PORT,
@@ -56,36 +57,16 @@ def register_meshtastic_routes(
     closes, uniformly for serial/bluetooth/tcp)."""
 
     def _connection_payload():
-        info = transport_router.get_connection_info()
-        return {
-            "state": info.state.value,
-            "type": info.descriptor.type.value if info.descriptor else None,
-            "address": info.descriptor.address if info.descriptor else None,
-            "label": info.descriptor.label if info.descriptor else None,
-            # SerialTransport.get_connection_info() hard-codes node_id=None
-            # (adapters/meshtastic/serial_transport.py - the protocol
-            # doesn't hand this back on the --listen path the way BLE's
-            # config stream does, and adding it there would mean scraping
-            # NODEINFO_APP output just for a value Core already knows from
-            # its own startup config). This is our own node either way -
-            # substitute the configured LOCAL_NODE_ID whenever the
-            # transport itself didn't supply one, instead of showing a
-            # blank in the UI.
-            "node_id": info.node_id or local_node_id,
-            "connected_since": info.connected_since,
-            "last_error": str(info.last_error) if info.last_error else None,
-            # Serial-specific, not part of RadioTransport - deliberately
-            # read from core_serial_transport (server.py's Core-owned
-            # SerialPortSupervisor - see this function's own docstring),
-            # never from the IPC-backed `serial_transport` param above,
-            # since only the Core-owned instance's run_listener() thread
-            # actually knows the real listener subprocess PID
-            # (meshsrv/serial_port_supervisor.py's get_listener_pid()
-            # docstring). None whenever Bluetooth is the active
-            # transport, which is the correct answer, not a missing
-            # value.
-            "listener_pid": core_serial_transport.get_listener_pid(),
-        }
+        # Radio Profiles & Connections Model, PR 2: the actual logic moved
+        # to meshsrv/connection_status.py's connection_payload() so
+        # server.py's api_devices_dashboard() can call the SAME
+        # transport-aware source instead of building its own picture from
+        # RadioConnectionManager (a serial-only "release for external app"
+        # status tracker previously shown as if it were the radio's real
+        # connection state regardless of which transport was active). This
+        # closure is kept as a thin wrapper so the 3 existing call sites
+        # below don't need to change.
+        return connection_payload(transport_router, local_node_id, core_serial_transport)
 
     def _persist_choice(transport_name, ble_address="", ble_name="", tcp_host="", tcp_port=None, tcp_identity=None):
         """`tcp_identity` (Radio TCP Transport part 2 correction pass #4):

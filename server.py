@@ -5139,7 +5139,87 @@ def _save_detected_radio_runtime(detection, status=None, error=None):
 
 @app.route("/api/node-manager/radio/detect", methods=["POST"])
 def api_detect_new_radio():
-    """Release the listener and inspect any currently connected serial radio."""
+    """Release the listener and inspect any currently connected serial
+    radio - transport-aware (Radio TCP Transport part 2 correction pass
+    #3): branches on the ACCEPTED radio's own normalized transport (the
+    same normalize_radio_record()-derived source api_activate_radio_profile()/
+    verify_radio_identity() already use), not a hardcoded serial
+    assumption. There is no USB-style multi-port scan for TCP - unlike
+    serial, the endpoint to check is already known (the accepted radio's
+    own configured host/port), so TCP re-probes that directly via
+    detect_tcp_radio_identity() (same pattern already used by
+    api_activate_radio_profile()'s tcp branch - not reinvented here).
+    Bluetooth has no discovery mechanism yet, matching
+    api_activate_radio_profile()'s own scope boundary - refused rather
+    than silently falling through to a USB scan that would probe the
+    wrong thing entirely. The serial branch below is unchanged."""
+    accepted_radio = normalize_radio_record(INSTANCE_IDENTITY.get("radio", {}))
+    active_transport = accepted_radio["transport"]
+
+    if active_transport == "bluetooth":
+        return jsonify({
+            "ok": False,
+            "code": "TRANSPORT_NOT_SUPPORTED",
+            "error": "Radio discovery is not supported for Bluetooth yet.",
+        }), 501
+
+    if active_transport == "tcp":
+        endpoint = accepted_radio["endpoint"]
+        detection, _tcp_output = detect_tcp_radio_identity(
+            tcp_ipc_transport, endpoint.get("host", ""), endpoint.get("port", 0), timeout=25
+        )
+        detected = dict(detection.get("detected") or {})
+
+        if not detected.get("node_id"):
+            log_system_event(
+                "Radio detection failed",
+                "WARNING",
+                detection.get("error") or "No Meshtastic radio identity could be read over TCP.",
+                source="radio",
+            )
+            return jsonify({
+                "ok": False,
+                "code": "RADIO_NOT_FOUND",
+                "error": detection.get("error"),
+                "error_code": detection.get("error_code"),
+                # No candidates/attempts (serial multi-port-scan concept)
+                # and no RadioConnectionManager "connection" status
+                # (serial-only release/reconnect concept, per its own
+                # module docstring) - a single already-known endpoint was
+                # probed directly, so there's nothing real to report here
+                # instead of faking an empty list/status.
+            }), 409
+
+        profile_id = profile_manager.profile_id_from_node_id(detected.get("node_id"))
+        profile_exists = True
+        try:
+            existing = profile_manager.get_profile(profile_id)
+            profile = {
+                "profile_id": existing["profile_id"],
+                "metadata": existing["metadata"],
+            }
+        except FileNotFoundError:
+            profile_exists = False
+            profile = None
+
+        configured = dict(INSTANCE_IDENTITY.get("radio", {}))
+        identity_status = compare_radio_identity(configured, detected)
+
+        return jsonify({
+            "ok": True,
+            "detected": detected,
+            "profile_id": profile_id,
+            "profile_exists": profile_exists,
+            "profile": profile,
+            "identity_status": identity_status,
+            "message": (
+                "Known radio detected."
+                if profile_exists else
+                "New radio detected. A clean profile can now be created."
+            ),
+        })
+
+    # active_transport == "serial" - unchanged from before this correction.
     with state_lock:
         listener_running = bool(radio_health.get("listener_running", False))
 
@@ -5213,13 +5293,137 @@ def api_detect_new_radio():
 
 @app.route("/api/node-manager/radio/accept", methods=["POST"])
 def api_accept_detected_radio():
-    """Verify the connected radio again, create/use its profile and restart."""
+    """Verify the connected radio again, create/use its profile and
+    restart - transport-aware (Radio TCP Transport part 2 correction pass
+    #3): TCP re-probes the exact same already-configured endpoint
+    api_detect_new_radio() just used - both derive it the same way, from
+    the accepted radio's own normalized record (normalize_radio_record()
+    on INSTANCE_IDENTITY.radio), never from a client-submitted host/port,
+    so "confirm the same endpoint that was used during provisional
+    detection" holds without threading anything through the request body
+    (nothing else can have changed that endpoint between the two calls
+    except a live Settings transport switch, a distinct user action).
+    Bluetooth is refused the same way api_detect_new_radio() already
+    refuses it. Serial branch below is unchanged."""
     global INSTANCE_IDENTITY
 
     data = request.get_json(silent=True) or {}
     requested_node_id = str(data.get("node_id") or "").strip().lower()
     requested_port = str(data.get("port") or "").strip()
 
+    accepted_radio = normalize_radio_record(INSTANCE_IDENTITY.get("radio", {}))
+    active_transport = accepted_radio["transport"]
+
+    if active_transport == "bluetooth":
+        return jsonify({
+            "ok": False,
+            "code": "TRANSPORT_NOT_SUPPORTED",
+            "error": "Radio acceptance is not supported for Bluetooth yet.",
+        }), 501
+
+    if active_transport == "tcp":
+        endpoint = accepted_radio["endpoint"]
+        detection, _tcp_output = detect_tcp_radio_identity(
+            tcp_ipc_transport, endpoint.get("host", ""), endpoint.get("port", 0), timeout=25
+        )
+        detected = dict(detection.get("detected") or {})
+        detected_node_id = str(detected.get("node_id") or "").strip().lower()
+
+        if not detected_node_id:
+            log_system_event(
+                "Radio confirmation failed",
+                "WARNING",
+                detection.get("error") or "The radio could not be verified over TCP.",
+                source="radio",
+            )
+            return jsonify({
+                "ok": False,
+                "code": "RADIO_NOT_FOUND",
+                "error": detection.get("error"),
+                "error_code": detection.get("error_code"),
+            }), 409
+
+        if requested_node_id and requested_node_id != detected_node_id:
+            return jsonify({
+                "ok": False,
+                "code": "RADIO_CHANGED",
+                "error": (
+                    "The radio reachable at the configured TCP endpoint changed during "
+                    f"confirmation. Expected {requested_node_id}, detected {detected_node_id}."
+                ),
+                "detected": detected,
+            }), 409
+
+        # normalize_radio_record() (called on the profile-manager side by
+        # _profile_metadata()) defaults a `transport`-less record to
+        # "serial" - detect_tcp_radio_identity()'s own `detected` dict
+        # never carries transport/endpoint keys, so without this the
+        # profile it creates below would be silently mis-tagged serial.
+        detected_for_profile = dict(detected)
+        detected_for_profile["transport"] = "tcp"
+        detected_for_profile["endpoint"] = dict(endpoint)
+
+        profile_id = profile_manager.profile_id_from_node_id(detected_node_id)
+        created = False
+        try:
+            profile = profile_manager.get_profile(profile_id)
+        except FileNotFoundError:
+            profile = profile_manager.create_clean_profile(detected_for_profile)
+            created = True
+
+        identity = instance_manager.get()
+        updated = dict(identity)
+        updated["active_profile_id"] = profile_id
+        updated["radio"] = {
+            "node_id": detected.get("node_id", ""),
+            "long_name": detected.get("long_name", ""),
+            "short_name": detected.get("short_name", ""),
+            "hardware": detected.get("hardware", ""),
+            "role": detected.get("role", ""),
+            "port": "",
+            "transport": "tcp",
+            "endpoint": dict(endpoint),
+        }
+        runtime = dict(updated.get("runtime") or {})
+        runtime.update({
+            "last_detected_at": detection.get("checked_at"),
+            "identity_status": "MATCH",
+            "last_error": None,
+            "last_detected_radio": dict(updated["radio"]),
+        })
+        updated["runtime"] = runtime
+        INSTANCE_IDENTITY = instance_manager.save(updated)
+        _save_detected_radio_runtime(detection, status="MATCH")
+
+        log_system_event(
+            "New radio profile created" if created else "Radio profile selected",
+            "ACTION",
+            (
+                f"{updated['radio'].get('long_name') or detected_node_id} "
+                f"({detected_node_id}) over TCP"
+            ),
+            source="radio",
+        )
+
+        threading.Thread(
+            target=_restart_meshcenter_after_profile_switch,
+            daemon=True,
+        ).start()
+
+        return jsonify({
+            "ok": True,
+            "created": created,
+            "profile_id": profile_id,
+            "radio": updated["radio"],
+            "restart_required": True,
+            "message": (
+                "A clean radio profile was created. MeshCenter is restarting."
+                if created else
+                "The saved radio profile was selected. MeshCenter is restarting."
+            ),
+        }), 202
+
+    # active_transport == "serial" - unchanged from before this correction.
     detection = detect_connected_radio(
         MESHTASTIC_CMD,
         preferred_port=requested_port or MESHTASTIC_PORT,

@@ -210,10 +210,78 @@ def test_migration_preserves_every_pre_existing_field(instance_path):
 
     identity = InstanceManager(instance_path).load_or_create({})
 
-    for key in ("instance_name", "hostname", "active_profile_id", "radio", "runtime"):
+    for key in ("instance_name", "hostname", "active_profile_id", "runtime"):
         assert identity[key] == canonical_v1[key], f"{key} changed during migration"
+    # "radio" gains transport/endpoint (Radio TCP Transport part 2 - added
+    # after this v1 shape was written) - a v1 file predates both, so they
+    # normalize to empty rather than being fabricated; every other v1
+    # field must still survive the migration unchanged.
+    assert identity["radio"] == {**canonical_v1["radio"], "transport": "", "endpoint": {}}
     assert identity["schema_version"] == 2
     assert "installation" in identity
+
+
+def test_radio_transport_and_endpoint_survive_a_save_round_trip(instance_path):
+    # Regression (Radio TCP Transport part 2 correction pass #3 - live
+    # finding): _normalize()'s "radio" dict predated transport/endpoint
+    # and rebuilt the sub-dict from a fixed schema that didn't list them,
+    # so every instance_manager.save() call was silently stripping a
+    # persisted "tcp" choice - data/instance.json on disk never actually
+    # carried it, regardless of what was passed to save().
+    manager = InstanceManager(instance_path)
+    identity = manager.load_or_create({})
+    updated = dict(identity)
+    updated["radio"] = {
+        "node_id": "!1fa065f0",
+        "long_name": "T-Beam",
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+    }
+
+    saved = manager.save(updated)
+
+    assert saved["radio"]["transport"] == "tcp"
+    assert saved["radio"]["endpoint"] == {"host": "192.168.2.34", "port": 4403}
+
+    # And a fresh load from disk (not just the in-memory return value)
+    # must reflect the same thing - this is what would actually run on
+    # the next server restart.
+    reloaded = InstanceManager(instance_path).load_or_create({})
+    assert reloaded["radio"]["transport"] == "tcp"
+    assert reloaded["radio"]["endpoint"] == {"host": "192.168.2.34", "port": 4403}
+
+
+def test_radio_transport_defaults_to_empty_not_fabricated(instance_path):
+    # No "default to serial" business rule duplicated in this module -
+    # that's meshsrv/radio_endpoint.py's normalize_radio_record() job,
+    # applied by every real reader of INSTANCE_IDENTITY.radio.
+    identity = InstanceManager(instance_path).load_or_create({})
+    assert identity["radio"]["transport"] == ""
+    assert identity["radio"]["endpoint"] == {}
+
+
+def test_a_radio_dict_that_omits_transport_does_not_inherit_a_stale_prior_one(instance_path):
+    # Regression: unlike node_id/long_name/etc., transport/endpoint must
+    # NOT fall back to the previously-saved state when the incoming
+    # "radio" dict simply omits them - api_accept_detected_radio()'s
+    # serial branch (server.py) does exactly this (byte-for-byte
+    # unchanged, predates transport/endpoint entirely), and a user who
+    # previously had TCP configured then onboards a fresh serial radio
+    # through it must not have that new, genuinely-serial profile
+    # silently mislabeled "tcp" from the stale prior save.
+    manager = InstanceManager(instance_path)
+    manager.save({"radio": {
+        "node_id": "!1fa065f0", "long_name": "T-Beam",
+        "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403},
+    }})
+
+    saved = manager.save({"radio": {
+        "node_id": "!aabbccdd", "long_name": "New USB Radio", "port": "/dev/ttyACM0",
+    }})
+
+    assert saved["radio"]["node_id"] == "!aabbccdd"
+    assert saved["radio"]["transport"] == ""
+    assert saved["radio"]["endpoint"] == {}
 
 
 def test_concurrent_fresh_installs_produce_exactly_one_id(instance_path):

@@ -34,25 +34,40 @@ from meshsrv.transport_router import TransportRouter
 
 class _FakeTransport:
     """Minimal RadioTransport stand-in - connects successfully unless
-    `fail` is set, records connect() calls."""
+    `fail` is set, records connect() calls. `initial_descriptor`
+    (default None, preserving every existing test's behavior) lets a
+    test simulate "already connected to a specific endpoint" WITHOUT a
+    connect() call ever happening - the double-connect-fix regression
+    tests below need this to prove restore_active_transport() reuses an
+    already-live connection instead of tearing it down and redoing the
+    handshake."""
 
-    def __init__(self, fail=False, node_id="!1fa065f0", nodes=None):
+    def __init__(self, fail=False, node_id="!1fa065f0", nodes=None, initial_descriptor=None, initial_state=None):
         self.fail = fail
         self.node_id = node_id
         self.connect_calls = []
         self._nodes = nodes or []
+        self._descriptor = initial_descriptor
+        # Defaults to CONNECTED (preserving every existing test's
+        # behavior) unless a test explicitly wants to simulate a link
+        # that dropped between verify_radio_identity()'s own connect and
+        # restore_active_transport()'s reuse check - see the "connection
+        # disappeared between checks" regression test below.
+        self._state = initial_state if initial_state is not None else ConnectionState.CONNECTED
 
     def connect(self, descriptor, *, force=False, timeout=30.0):
         self.connect_calls.append(descriptor)
         if self.fail:
             raise TransportError(TransportErrorCode.CONNECT_FAILED, "simulated failure")
+        self._descriptor = descriptor
+        self._state = ConnectionState.CONNECTED
         return self.get_connection_info()
 
     def disconnect(self, *, timeout=15.0):
         pass
 
     def get_connection_info(self):
-        return ConnectionInfo(state=ConnectionState.CONNECTED, descriptor=None, node_id=self.node_id)
+        return ConnectionInfo(state=self._state, descriptor=self._descriptor, node_id=self.node_id)
 
     def get_nodes(self, *, timeout=15.0):
         return self._nodes
@@ -157,6 +172,106 @@ def test_restore_active_transport_switches_router_to_tcp_and_seeds_nodes(server_
     # One-time node seed from the TCP transport's own initial NodeDB.
     assert "!11223344" in server_module.nodes
     assert server_module.nodes["!11223344"]["name"] == "Remote Node"
+
+
+def test_restore_active_transport_reuses_an_already_connected_tcp_link_without_reconnecting(
+    server_module, _preserve_transport_router_state, monkeypatch
+):
+    """Double-connect fix (follow-up investigation after PR #279):
+    verify_radio_identity() (called earlier in start_runtime(), moments
+    before restore_active_transport()) already connected tcp_ipc_transport
+    to this exact endpoint as part of its own identity probe -
+    reconnecting from scratch here would tear down a perfectly good,
+    seconds-old link and redo the entire handshake for no reason,
+    doubling the number of TCP connect attempts on every single boot.
+    A fake already reporting CONNECTED with a matching descriptor (no
+    connect() call simulated at all) proves restore_active_transport()
+    detects and reuses it - zero connect_calls, router still correctly
+    points at it."""
+    fake_serial = _FakeTransport()
+    fake_ble = _FakeTransport()
+    remote_node = NodeInfo(
+        node_id="!11223344",
+        num=0x11223344,
+        user=NodeUser(id="!11223344", long_name="Remote Node", short_name="RMT", hw_model="TBEAM"),
+    )
+    fake_tcp = _FakeTransport(
+        node_id="!1fa065f0",
+        nodes=[remote_node],
+        initial_descriptor=ConnectionDescriptor(type=ConnectionType.TCP, address="192.168.2.34:4403"),
+    )
+    monkeypatch.setattr(server_module, "transport_router", TransportRouter(fake_serial))
+    monkeypatch.setattr(server_module, "serial_ipc_transport", fake_serial)
+    monkeypatch.setattr(server_module, "ble_ipc_transport", fake_ble)
+    monkeypatch.setattr(server_module, "tcp_ipc_transport", fake_tcp)
+
+    server_module.restore_active_transport({
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+    }, identity_match=True)
+
+    assert server_module.transport_router._active is fake_tcp
+    assert fake_tcp.connect_calls == [], "must reuse the already-connected link, not call connect() again"
+    # The one-time node seed must still happen even on the reuse path -
+    # it's the whole reason a TCP restore needs to run at all.
+    assert "!11223344" in server_module.nodes
+
+
+def test_restore_active_transport_reconnects_when_the_cached_endpoint_does_not_match(
+    server_module, _preserve_transport_router_state, monkeypatch
+):
+    """Negative test guarding the reuse fast-path's own scope: a
+    tcp_ipc_transport that's connected to a DIFFERENT endpoint (or has
+    no descriptor at all) must not be trusted - falls through to a real
+    connect() against the actual restore target, same as before this fix."""
+    fake_serial = _FakeTransport()
+    fake_ble = _FakeTransport()
+    fake_tcp = _FakeTransport(
+        node_id="!1fa065f0",
+        initial_descriptor=ConnectionDescriptor(type=ConnectionType.TCP, address="10.0.0.5:4403"),
+    )
+    monkeypatch.setattr(server_module, "transport_router", TransportRouter(fake_serial))
+    monkeypatch.setattr(server_module, "serial_ipc_transport", fake_serial)
+    monkeypatch.setattr(server_module, "ble_ipc_transport", fake_ble)
+    monkeypatch.setattr(server_module, "tcp_ipc_transport", fake_tcp)
+
+    server_module.restore_active_transport({
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+    }, identity_match=True)
+
+    assert len(fake_tcp.connect_calls) == 1
+    assert fake_tcp.connect_calls[0].address == "192.168.2.34:4403"
+
+
+def test_restore_active_transport_reconnects_when_the_connection_no_longer_shows_connected(
+    server_module, _preserve_transport_router_state, monkeypatch
+):
+    """Negative test distinct from the wrong-endpoint one above: same
+    target endpoint as verify_radio_identity() just probed, but the link
+    no longer reports CONNECTED (e.g. it dropped in the moments between
+    that probe and this restore step running) - must not be trusted as
+    reusable either. Falls through to a real connect(), same as any other
+    not-actually-connected case."""
+    fake_serial = _FakeTransport()
+    fake_ble = _FakeTransport()
+    fake_tcp = _FakeTransport(
+        node_id="!1fa065f0",
+        initial_descriptor=ConnectionDescriptor(type=ConnectionType.TCP, address="192.168.2.34:4403"),
+        initial_state=ConnectionState.DISCONNECTED,
+    )
+    monkeypatch.setattr(server_module, "transport_router", TransportRouter(fake_serial))
+    monkeypatch.setattr(server_module, "serial_ipc_transport", fake_serial)
+    monkeypatch.setattr(server_module, "ble_ipc_transport", fake_ble)
+    monkeypatch.setattr(server_module, "tcp_ipc_transport", fake_tcp)
+
+    server_module.restore_active_transport({
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+    }, identity_match=True)
+
+    assert len(fake_tcp.connect_calls) == 1
+    assert fake_tcp.connect_calls[0].address == "192.168.2.34:4403"
 
 
 def test_restore_active_transport_skips_tcp_entirely_on_identity_mismatch(

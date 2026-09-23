@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Callable
+from typing import Callable, Optional
 
 from meshsrv.radio_transport import (
     ConnectionInfo,
@@ -88,9 +88,18 @@ class TransportRouter(RadioTransport):
     # to then run its own full duration on top.
     _SWITCH_LOCK_TIMEOUT_S = 5.0
 
-    def __init__(self, initial: RadioTransport) -> None:
+    def __init__(self, initial: RadioTransport, *, on_log: Optional[Callable[[str, str], None]] = None) -> None:
         self._lock = threading.Lock()
         self._active = initial
+        # Follow-up investigation after PR #279 (pixel-111 live finding:
+        # a manual reconnect attempt got a suspiciously small remaining
+        # budget, and the NEXT attempt right after hit BUSY - suggesting
+        # the router lock was held far longer than any single connect()
+        # attempt should take). Opt-in (defaults to a no-op, so every
+        # existing caller/test is unaffected) - server.py wires this to
+        # log_system_event/print so lock-wait and lock-hold durations are
+        # actually visible instead of inferred from response timing.
+        self._on_log = on_log or (lambda msg, level="INFO": None)
 
     def switch(self, connect_new: Callable[[], RadioTransport]) -> RadioTransport:
         """`connect_new` is a zero-arg callable provided by the caller
@@ -110,18 +119,33 @@ class TransportRouter(RadioTransport):
         Raises TransportError(BUSY) instead of blocking indefinitely if
         another switch or long-running delegated call already holds the
         lock - see class docstring's BOUNDED WAIT note."""
-        if not self._lock.acquire(timeout=self._SWITCH_LOCK_TIMEOUT_S):
+        wait_start = time.monotonic()
+        acquired = self._lock.acquire(timeout=self._SWITCH_LOCK_TIMEOUT_S)
+        wait_elapsed = time.monotonic() - wait_start
+        if not acquired:
+            self._on_log(
+                f"switch() BUSY: could not acquire the router lock within "
+                f"{self._SWITCH_LOCK_TIMEOUT_S}s (waited {wait_elapsed:.1f}s) - "
+                "another switch or long-running call is still holding it",
+                "WARNING",
+            )
             raise TransportError(
                 TransportErrorCode.BUSY,
                 f"switch() could not acquire the router lock within {self._SWITCH_LOCK_TIMEOUT_S}s "
                 "- another switch or long-running call is already in progress",
             )
+        if wait_elapsed > 0.5:
+            self._on_log(f"switch() waited {wait_elapsed:.1f}s to acquire the router lock", "INFO")
+        call_start = time.monotonic()
         try:
             old = self._active
             new = connect_new()
             self._active = new
             return old
         finally:
+            call_elapsed = time.monotonic() - call_start
+            if call_elapsed > 3.0:
+                self._on_log(f"switch()'s connect_new() held the router lock for {call_elapsed:.1f}s", "INFO")
             self._lock.release()
 
     def _delegate(self, name: str, *args, timeout: float, **kwargs):
@@ -131,16 +155,29 @@ class TransportRouter(RadioTransport):
         bounded by `timeout`, not `timeout` twice over. See class
         docstring's BOUNDED WAIT note - this is the Task 47.5 fix."""
         start = time.monotonic()
-        if not self._lock.acquire(timeout=timeout):
+        acquired = self._lock.acquire(timeout=timeout)
+        wait_elapsed = time.monotonic() - start
+        if acquired and wait_elapsed > 0.5:
+            self._on_log(f"{name}() waited {wait_elapsed:.1f}s to acquire the router lock", "INFO")
+        if not acquired:
+            self._on_log(
+                f"{name}() BUSY: could not acquire the router lock within {timeout}s "
+                f"(waited {wait_elapsed:.1f}s) - a switch or another long-running call is still holding it",
+                "WARNING",
+            )
             raise TransportError(
                 TransportErrorCode.BUSY,
                 f"{name}() could not acquire the router lock within {timeout}s "
                 "- a switch or another long-running call is in progress",
             )
+        call_start = time.monotonic()
         try:
             remaining = max(0.0, timeout - (time.monotonic() - start))
             return getattr(self._active, name)(*args, timeout=remaining, **kwargs)
         finally:
+            call_elapsed = time.monotonic() - call_start
+            if call_elapsed > 3.0:
+                self._on_log(f"{name}() held the router lock for {call_elapsed:.1f}s", "INFO")
             self._lock.release()
 
     # ------------------------------------------------------------------

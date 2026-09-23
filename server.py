@@ -60,7 +60,7 @@ from meshsrv.radio_endpoint import (
 from meshsrv.time_service import start_background_thread as start_time_service
 from meshsrv.node_time_sync import STARTUP_SYNC_DELAY_S
 from meshsrv.serial_port_supervisor import SerialPortSupervisor
-from meshsrv.radio_transport import ConnectionType
+from meshsrv.radio_transport import ConnectionState, ConnectionType
 from meshsrv.adapter_ipc_client import AdapterIPCTransport, AdapterSupervisor
 from meshsrv.transport_router import TransportRouter
 from meshsrv.schedule_engine import start as start_schedule_engine
@@ -1000,7 +1000,20 @@ tcp_ipc_transport = AdapterIPCTransport(ConnectionType.TCP, adapter_supervisor)
 # correct one (serial/bluetooth/tcp) as part of restoring the persisted
 # INSTANCE_IDENTITY.radio.transport choice on every boot, not just at
 # import time (see start_runtime()'s own "TRANSPORT RESTORE" comment).
-transport_router = TransportRouter(serial_ipc_transport)
+def _transport_router_on_log(msg, level="INFO"):
+    # Follow-up investigation after PR #279 - see TransportRouter's own
+    # on_log docstring note. Printed immediately (matching this file's
+    # existing [TRANSPORT]-prefixed diagnostics) and persisted to the
+    # System Log so a lock-contention event is visible after the fact,
+    # not just in whatever console happened to be attached at the time.
+    print(f"[TRANSPORT] {msg}", flush=True)
+    try:
+        log_system_event(msg, level, "", source="radio")
+    except Exception:
+        pass
+
+
+transport_router = TransportRouter(serial_ipc_transport, on_log=_transport_router_on_log)
 
 # Attempt-level throttle for _attempt_node_time_sync(): the sync itself
 # pauses/resumes the listener (via radio_session()), which produces its
@@ -6556,21 +6569,58 @@ def restore_active_transport(accepted_radio, identity_match):
         return
 
     endpoint = accepted_radio["endpoint"]
-    restore_connect_new = build_transport_connect_new(
-        active_transport,
-        serial_transport=serial_ipc_transport,
-        ble_transport=ble_ipc_transport,
-        tcp_transport=tcp_ipc_transport,
-        serial_port=MESHTASTIC_PORT,
-        ble_address=endpoint.get("address", ""),
-        ble_name=endpoint.get("label", ""),
-        tcp_host=endpoint.get("host", ""),
-        tcp_port=endpoint.get("port") or 4403,
-        connect_timeout=SWITCH_CONNECT_TIMEOUT_S,
-    )
+
+    # TCP DOUBLE-CONNECT FIX (follow-up investigation after PR #279):
+    # for TCP specifically, verify_radio_identity() moments earlier
+    # already established and PROVED this exact connection (a live
+    # identity-check probe doubles as the real TCP connect - see
+    # detect_tcp_radio_identity()'s own docstring: "Deliberately does
+    # NOT close it on success" - the caller decides whether to keep
+    # using it). Reconnecting from scratch here via build_transport_
+    # connect_new()'s unconditional force=True would tear down a
+    # perfectly good, seconds-old link and redo the entire handshake
+    # for no reason - doubling the number of TCP connect operations on
+    # every single boot, back-to-back, each one carrying the same real
+    # risk of hitting the underlying library's own handshake
+    # instability (confirmed live - see PR #279 and its own follow-up
+    # investigation). tcp_ipc_transport.get_connection_info() is a free,
+    # local cache read (AdapterIPCTransport's own cache, updated by the
+    # connect() call verify_radio_identity() just made) - no extra IPC
+    # round-trip needed to check it. Confirms the cached endpoint
+    # genuinely matches THIS restore's target before trusting it, in
+    # case something else changed it in between (unlikely within the
+    # same start_runtime() call, but cheap to check rather than assume).
+    reused_tcp_connection = False
+    if active_transport == "tcp":
+        cached_info = tcp_ipc_transport.get_connection_info()
+        target_address = f"{endpoint.get('host', '')}:{endpoint.get('port') or 4403}"
+        if (
+            cached_info.state == ConnectionState.CONNECTED
+            and cached_info.descriptor is not None
+            and cached_info.descriptor.address == target_address
+        ):
+            reused_tcp_connection = True
+
+    if reused_tcp_connection:
+        def restore_connect_new():
+            return tcp_ipc_transport
+    else:
+        restore_connect_new = build_transport_connect_new(
+            active_transport,
+            serial_transport=serial_ipc_transport,
+            ble_transport=ble_ipc_transport,
+            tcp_transport=tcp_ipc_transport,
+            serial_port=MESHTASTIC_PORT,
+            ble_address=endpoint.get("address", ""),
+            ble_name=endpoint.get("label", ""),
+            tcp_host=endpoint.get("host", ""),
+            tcp_port=endpoint.get("port") or 4403,
+            connect_timeout=SWITCH_CONNECT_TIMEOUT_S,
+        )
     try:
         transport_router.switch(restore_connect_new)
-        print(f"[TRANSPORT] Restored {active_transport} as the active transport on startup", flush=True)
+        reuse_note = " (reused the identity-check connection, no second connect)" if reused_tcp_connection else ""
+        print(f"[TRANSPORT] Restored {active_transport} as the active transport on startup{reuse_note}", flush=True)
         if active_transport == "tcp":
             try:
                 seed_nodes_from_transport(tcp_ipc_transport)

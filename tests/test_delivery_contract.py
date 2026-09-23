@@ -290,6 +290,19 @@ def test_meshtastic_ack_semantics_is_confirmed_over_serial_best_effort_over_ble(
     assert ble_sender.capabilities().ack_semantics == AckSemantics.BEST_EFFORT
 
 
+def test_meshtastic_ack_semantics_is_best_effort_over_tcp_too(monkeypatch):
+    """Radio TCP Transport part 2: TCP has the exact same receive-
+    blindness limitation as BLE (no inbound relay from the adapter
+    subprocess back to Core yet - see that feature's own scope decision),
+    for the same underlying reason - the adapter must never claim
+    CONFIRMED delivery when the live transport is TCP either, even though
+    a naive check would only special-case BLUETOOTH."""
+    from meshsrv.attachments.delivery.base import AckSemantics
+
+    _ether, tcp_sender, _r = _build_meshtastic_pair(connection_type=ConnectionType.TCP)
+    assert tcp_sender.capabilities().ack_semantics == AckSemantics.BEST_EFFORT
+
+
 def test_meshtastic_connector_state_reflects_connection_state():
     from meshsrv.attachments.delivery.base import ConnectorState
 

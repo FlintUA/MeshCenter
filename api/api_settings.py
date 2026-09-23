@@ -6,6 +6,8 @@ from urllib.request import Request, urlopen
 import json
 import re
 
+from meshsrv.radio_endpoint import DEFAULT_TCP_PORT
+
 
 DEFAULT_SETTINGS = {
     # "auto" resolves from the browser's language client-side; an explicit
@@ -81,6 +83,14 @@ DEFAULT_SETTINGS = {
         "transport": "serial",
         "ble_address": "",
         "ble_name": "",
+        # Radio TCP Transport part 2 correction: previously missing here
+        # entirely - normalize_settings() rebuilds this section from
+        # scratch on every save (see api_update_settings()), so any field
+        # not listed here/below was being silently dropped from disk on
+        # the next unrelated settings save, even though _persist_choice()
+        # (api/api_meshtastic.py) had just written it directly.
+        "tcp_host": "",
+        "tcp_port": DEFAULT_TCP_PORT,
     },
 
     "browser_notifications": {
@@ -254,11 +264,24 @@ def normalize_settings(settings):
         meshtastic_settings.get("transport", "serial")
     ).strip().lower()
 
-    if meshtastic_transport_name not in ("serial", "bluetooth"):
+    if meshtastic_transport_name not in ("serial", "bluetooth", "tcp"):
+        # Radio TCP Transport part 2 correction: this used to silently
+        # downgrade a persisted "tcp" choice to "serial" on every settings
+        # normalization (including every POST /api/settings save for any
+        # unrelated field) - "tcp" is a real, supported value now, not a
+        # typo/legacy value to correct.
         meshtastic_transport_name = "serial"
 
     meshtastic_ble_address = str(meshtastic_settings.get("ble_address", "") or "").strip()
     meshtastic_ble_name = str(meshtastic_settings.get("ble_name", "") or "").strip()
+
+    meshtastic_tcp_host = str(meshtastic_settings.get("tcp_host", "") or "").strip()
+    try:
+        meshtastic_tcp_port = int(meshtastic_settings.get("tcp_port", DEFAULT_TCP_PORT))
+    except (TypeError, ValueError):
+        meshtastic_tcp_port = DEFAULT_TCP_PORT
+    if not (1 <= meshtastic_tcp_port <= 65535):
+        meshtastic_tcp_port = DEFAULT_TCP_PORT
 
     # ---------------- Reference location ----------------
 
@@ -510,6 +533,8 @@ def normalize_settings(settings):
             "transport": meshtastic_transport_name,
             "ble_address": meshtastic_ble_address,
             "ble_name": meshtastic_ble_name,
+            "tcp_host": meshtastic_tcp_host,
+            "tcp_port": meshtastic_tcp_port,
         },
 
         "weather": {

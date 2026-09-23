@@ -2135,6 +2135,8 @@ function updateSettingsUi() {
         batteryCapacityInput.value = appSettings?.power?.battery_capacity_mah || 3000;
     }
 
+    _meshtasticApplyTcpFieldsFromSettings();
+
     const recovery = appSettings?.listener_autorecovery || {};
 
     const enabled = !!recovery.enabled;
@@ -2668,16 +2670,42 @@ async function epaperShowPage(page, button) {
 // stay disabled and the status line reflects "in progress" for the
 // whole wait rather than looking stuck.
 
+function _meshtasticApplyTcpFieldsFromSettings() {
+    // Fills the Host/Port INPUT VALUES from persisted settings - never
+    // relies on the HTML placeholder to stand in for a real value (PR
+    // #278 correction pass #2, live finding: the placeholder showed
+    // 192.168.2.34 as if it were the saved host, but meshtasticTcpConnect()
+    // correctly reads .value, which was empty - Connect silently failed
+    // until the user retyped the exact placeholder text). Port defaults
+    // to a real .value of 4403 when nothing is saved yet, per the same
+    // correction - not just a placeholder either, since the backend's own
+    // default (DEFAULT_TCP_PORT) is a real, submittable value.
+    const hostInput = document.getElementById('meshtasticTcpHostInput');
+    const portInput = document.getElementById('meshtasticTcpPortInput');
+    const saved = appSettings?.meshtastic || {};
+    if (hostInput) hostInput.value = saved.tcp_host || '';
+    if (portInput) portInput.value = saved.tcp_port || 4403;
+}
+
 function _meshtasticUpdateTransportButtons(activeType) {
     const usbBtn = document.getElementById('meshtasticTransportUsbBtn');
     const bleBtn = document.getElementById('meshtasticTransportBleBtn');
+    const tcpBtn = document.getElementById('meshtasticTransportTcpBtn');
     const type = activeType || appSettings?.meshtastic?.transport || 'serial';
 
     usbBtn?.classList.toggle('active', type === 'serial');
     bleBtn?.classList.toggle('active', type === 'bluetooth');
+    tcpBtn?.classList.toggle('active', type === 'tcp');
 
     const scanSection = document.getElementById('meshtasticBleScanSection');
     if (scanSection) scanSection.style.display = type === 'bluetooth' ? '' : 'none';
+
+    const tcpSection = document.getElementById('meshtasticTcpConnectSection');
+    if (tcpSection) tcpSection.style.display = type === 'tcp' ? '' : 'none';
+    // Every reveal/re-reveal of the TCP section re-syncs its fields from
+    // the latest known persisted settings, not whatever was left in the
+    // DOM from a previous open.
+    _meshtasticApplyTcpFieldsFromSettings();
 
     // Permanent, not a one-time confirm dialog (would be annoying on
     // every switch) - visible for as long as Bluetooth is the selected
@@ -2688,6 +2716,14 @@ function _meshtasticUpdateTransportButtons(activeType) {
     // closes this, not a UI fix - see Task 47 live finding.
     const receiveWarning = document.getElementById('meshtasticBleReceiveWarning');
     if (receiveWarning) receiveWarning.style.display = type === 'bluetooth' ? '' : 'none';
+
+    // TCP has the identical receive gap, for the identical reason (no
+    // inbound relay from the adapter subprocess back to Core yet - Radio
+    // TCP Transport part 2's own explicit scope decision) - own banner,
+    // own i18n key, since a future inbound-relay fix may land for TCP
+    // and BLE on different schedules.
+    const tcpReceiveWarning = document.getElementById('meshtasticTcpReceiveWarning');
+    if (tcpReceiveWarning) tcpReceiveWarning.style.display = type === 'tcp' ? '' : 'none';
 }
 
 function _meshtasticRenderConnectionStatus(connection) {
@@ -2696,7 +2732,9 @@ function _meshtasticRenderConnectionStatus(connection) {
 
     const typeLabel = connection.type === 'bluetooth'
         ? window.I18N.t('settings.meshtastic_transport_bluetooth')
-        : window.I18N.t('settings.meshtastic_transport_usb');
+        : (connection.type === 'tcp'
+            ? window.I18N.t('settings.meshtastic_transport_tcp')
+            : window.I18N.t('settings.meshtastic_transport_usb'));
 
     const stateKey = {
         connected: 'settings.meshtastic_state_connected',
@@ -2715,7 +2753,7 @@ function _meshtasticRenderConnectionStatus(connection) {
             : 'reference-location-status');
 }
 
-async function loadMeshtasticConnectionStatus() {
+async function loadMeshtasticConnectionStatus(syncButtons = true) {
     const statusEl = document.getElementById('meshtasticConnectionStatus');
     if (!statusEl) return;
 
@@ -2726,7 +2764,14 @@ async function loadMeshtasticConnectionStatus() {
 
         const connection = data.connection || {};
         _meshtasticRenderConnectionStatus(connection);
-        _meshtasticUpdateTransportButtons(connection.type);
+        // syncButtons=false: refresh the status text only, leave the
+        // segmented buttons/Connect-form sections exactly as they are -
+        // used after a failed BLE/TCP *connect* attempt, where the form
+        // the user is actively filling in must stay open (pixel-111 live
+        // finding: this used to also re-hide the just-opened form,
+        // reverting the whole panel back to whatever the backend's real
+        // active transport still was).
+        if (syncButtons) _meshtasticUpdateTransportButtons(connection.type);
     } catch (error) {
         console.warn('[MESHTASTIC] Failed to load connection status:', error);
         statusEl.textContent = window.I18N.t('settings.meshtastic_status_unavailable');
@@ -2737,10 +2782,12 @@ async function loadMeshtasticConnectionStatus() {
 async function setMeshtasticTransport(type) {
     const usbBtn = document.getElementById('meshtasticTransportUsbBtn');
     const bleBtn = document.getElementById('meshtasticTransportBleBtn');
+    const tcpBtn = document.getElementById('meshtasticTransportTcpBtn');
     const statusEl = document.getElementById('meshtasticConnectionStatus');
 
     if (usbBtn) usbBtn.disabled = true;
     if (bleBtn) bleBtn.disabled = true;
+    if (tcpBtn) tcpBtn.disabled = true;
     if (statusEl) {
         statusEl.textContent = window.I18N.t('settings.meshtastic_switch_in_progress');
         statusEl.className = 'reference-location-status';
@@ -2753,7 +2800,11 @@ async function setMeshtasticTransport(type) {
             body: JSON.stringify({ type }),
         });
         const data = await response.json();
-        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+        if (!response.ok || !data.ok) {
+            const err = new Error(data.error || 'Request failed');
+            err.code = data.error_code || '';
+            throw err;
+        }
 
         _meshtasticRenderConnectionStatus(data.connection || {});
         _meshtasticUpdateTransportButtons(data.connection?.type);
@@ -2765,20 +2816,59 @@ async function setMeshtasticTransport(type) {
         loadSettings();
     } catch (error) {
         console.error('[MESHTASTIC] Transport switch failed:', error);
+
+        // Nothing saved to reconnect to yet (first-ever use of this
+        // transport, or its saved device/endpoint was cleared) - this is
+        // an expected "not configured yet" state, not a real failure.
+        // Reveal the Connect form instead of reverting the whole panel
+        // back to whatever's actually active (pixel-111 live finding:
+        // the generic revert below used to hide the form before the
+        // user had a chance to see or use it).
+        const notYetConfigured =
+            (type === 'tcp' && error.code === 'tcp_host_required') ||
+            (type === 'bluetooth' && error.code === 'ble_address_required');
+        if (notYetConfigured) {
+            _meshtasticUpdateTransportButtons(type);
+            if (statusEl) {
+                statusEl.textContent = window.I18N.t(
+                    type === 'tcp' ? 'settings.meshtastic_tcp_not_configured' : 'settings.meshtastic_ble_not_configured'
+                );
+                statusEl.className = 'reference-location-status';
+            }
+            return;
+        }
+
         if (statusEl) {
             statusEl.textContent = `${window.I18N.t('settings.meshtastic_switch_failed')}: ${error.message || error}`;
             statusEl.className = 'reference-location-status reference-location-status-error';
         }
         showToast(window.I18N.t('settings.meshtastic_switch_failed'), 'error');
 
-        // Switch failed - re-sync with whatever the backend actually
-        // landed on (recovery may have restored serial, or left both
-        // transports down - see api/api_meshtastic.py's fail-closed
-        // recovery path) instead of trusting the button just clicked.
-        loadMeshtasticConnectionStatus();
+        // Re-sync the segmented buttons with whatever the backend
+        // actually landed on (recovery may have restored serial, or left
+        // both transports down - see api/api_meshtastic.py's fail-closed
+        // recovery path), WITHOUT touching statusEl - pixel-111 live
+        // finding: loadMeshtasticConnectionStatus() always re-renders the
+        // status text too (syncButtons=false only skips the button/form
+        // resync, not this), so the detailed error message set above
+        // (e.g. an identity_mismatch explanation naming both radios) was
+        // getting overwritten by the generic "USB - Disconnected" text
+        // within one fetch round-trip - visible as a message that
+        // "flashes and is gone before you can read it".
+        try {
+            const statusResponse = await fetch('/api/meshtastic/connection', { cache: 'no-store' });
+            const statusData = await statusResponse.json();
+            if (statusResponse.ok && statusData.ok) {
+                _meshtasticUpdateTransportButtons(statusData.connection?.type);
+            }
+        } catch (_) {
+            // Best-effort - stale button highlighting is harmless, and
+            // the detailed error message above must survive regardless.
+        }
     } finally {
         if (usbBtn) usbBtn.disabled = false;
         if (bleBtn) bleBtn.disabled = false;
+        if (tcpBtn) tcpBtn.disabled = false;
     }
 }
 
@@ -2876,7 +2966,73 @@ async function meshtasticBleConnect(address, name, button) {
             statusEl.className = 'reference-location-status reference-location-status-error';
         }
         showToast(window.I18N.t('settings.meshtastic_ble_connect_failed'), 'error');
-        loadMeshtasticConnectionStatus();
+        // syncButtons=false - a failed connect attempt must not hide the
+        // scan/connect section the user is actively working in (see
+        // loadMeshtasticConnectionStatus()'s own comment).
+        loadMeshtasticConnectionStatus(false);
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+async function meshtasticTcpConnect(button) {
+    const hostInput = document.getElementById('meshtasticTcpHostInput');
+    const portInput = document.getElementById('meshtasticTcpPortInput');
+    const statusEl = document.getElementById('meshtasticTcpStatus');
+
+    const host = (hostInput?.value || '').trim();
+    const portText = (portInput?.value || '').trim();
+    const port = portText ? parseInt(portText, 10) : undefined;
+
+    if (!host) {
+        if (statusEl) {
+            statusEl.textContent = window.I18N.t('settings.meshtastic_tcp_host_required');
+            statusEl.className = 'reference-location-status reference-location-status-error';
+        }
+        return;
+    }
+
+    if (button) button.disabled = true;
+    if (statusEl) {
+        statusEl.textContent = window.I18N.t('settings.meshtastic_tcp_connecting');
+        statusEl.className = 'reference-location-status';
+    }
+
+    try {
+        const response = await fetch('/api/meshtastic/tcp/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(port ? { host, port } : { host }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
+
+        _meshtasticRenderConnectionStatus(data.connection || {});
+        _meshtasticUpdateTransportButtons(data.connection?.type);
+        if (statusEl) {
+            statusEl.textContent = window.I18N.t('settings.meshtastic_tcp_connect_success');
+            statusEl.className = 'reference-location-status reference-location-status-ok';
+        }
+        showToast(window.I18N.t('settings.meshtastic_tcp_connect_success'), 'success');
+        loadSettings();
+    } catch (error) {
+        console.error('[MESHTASTIC] TCP connect failed:', error);
+        if (statusEl) {
+            // Existing generic error-display pattern (error.message ||
+            // error), same as every other transport error in this file -
+            // deliberately not a separate localized lookup table keyed by
+            // PR #277's specific diagnostic codes (dns_error/
+            // connect_refused/connect_timeout/protocol_sync_timeout/
+            // remote_disconnect/identity_mismatch); the server-supplied
+            // `error` string already names the problem in plain English.
+            statusEl.textContent = `${window.I18N.t('settings.meshtastic_tcp_connect_failed')}: ${error.message || error}`;
+            statusEl.className = 'reference-location-status reference-location-status-error';
+        }
+        showToast(window.I18N.t('settings.meshtastic_tcp_connect_failed'), 'error');
+        // syncButtons=false - a failed connect attempt must not hide the
+        // Host/Port form the user is actively working in (see
+        // loadMeshtasticConnectionStatus()'s own comment).
+        loadMeshtasticConnectionStatus(false);
     } finally {
         if (button) button.disabled = false;
     }
@@ -9964,7 +10120,25 @@ async function loadNodeManagerDashboard(showFeedback = false) {
                             onclick="detectAndAddNodeManagerRadio()">
                             ${escapeHtml(window.I18N.t('node_manager.detect_radio'))}
                         </button>
+                        <button type="button"
+                            class="node-manager-detect-radio-btn"
+                            onclick="toggleNodeManagerTcpDiscovery()">
+                            🌐 ${escapeHtml(window.I18N.t('node_manager.detect_radio_tcp'))}
+                        </button>
                     </div>
+                </div>
+                <div id="nodeManagerTcpDiscoverySection" style="display:none;">
+                    <div class="settings-option">
+                        <label class="settings-option-label" for="nodeManagerTcpHostInput">${escapeHtml(window.I18N.t('node_manager.tcp_host_label'))}</label>
+                        <input type="text" id="nodeManagerTcpHostInput" placeholder="192.168.2.34" autocomplete="off">
+                    </div>
+                    <div class="settings-option">
+                        <label class="settings-option-label" for="nodeManagerTcpPortInput">${escapeHtml(window.I18N.t('node_manager.tcp_port_label'))}</label>
+                        <input type="number" id="nodeManagerTcpPortInput" placeholder="4403" min="1" max="65535" autocomplete="off">
+                    </div>
+                    <button type="button" class="mc-refresh-btn" onclick="detectNodeManagerRadioViaTcp()">
+                        🔌 ${escapeHtml(window.I18N.t('node_manager.tcp_find_button'))}
+                    </button>
                 </div>
                 <div class="node-profile-list">${profileCards}</div>
             </section>
@@ -10086,17 +10260,55 @@ async function waitForNodeManagerProfile(profileId, timeoutMs = 60000) {
 }
 
 
-async function detectAndAddNodeManagerRadio() {
-    const confirmed = window.confirm(window.I18N.t('node_manager.detect_radio_confirm'));
+function toggleNodeManagerTcpDiscovery() {
+    const section = document.getElementById('nodeManagerTcpDiscoverySection');
+    if (section) section.style.display = section.style.display === 'none' ? '' : 'none';
+}
+
+async function detectNodeManagerRadioViaTcp() {
+    const hostInput = document.getElementById('nodeManagerTcpHostInput');
+    const portInput = document.getElementById('nodeManagerTcpPortInput');
+    const host = (hostInput?.value || '').trim();
+
+    if (!host) {
+        showToast(window.I18N.t('node_manager.tcp_host_required'), 'error');
+        return;
+    }
+
+    const portText = (portInput?.value || '').trim();
+    const port = portText ? parseInt(portText, 10) : undefined;
+    await detectAndAddNodeManagerRadio({ host, port });
+}
+
+async function detectAndAddNodeManagerRadio(tcpEndpoint) {
+    // Radio TCP Transport part 2 correction pass #5: `tcpEndpoint`
+    // ({host, port}) means "search for a NEW radio at this TCP
+    // endpoint", independent of whatever the currently accepted
+    // profile's own transport is - the gap correction pass #3 alone
+    // left (an accepted-serial profile had no way to discover a new
+    // radio over TCP at all). No argument = the original, unchanged
+    // "reprobe whatever's currently accepted" behavior.
+    const isTcp = !!(tcpEndpoint && tcpEndpoint.host);
+    const confirmed = window.confirm(
+        isTcp
+            ? window.I18N.t('node_manager.detect_radio_confirm_tcp', { host: tcpEndpoint.host, port: tcpEndpoint.port || 4403 })
+            : window.I18N.t('node_manager.detect_radio_confirm')
+    );
     if (!confirmed) return;
 
-    showToast(window.I18N.t('node_manager.releasing_and_scanning'), 'info');
+    showToast(
+        isTcp
+            ? window.I18N.t('node_manager.searching_radio_tcp')
+            : window.I18N.t('node_manager.releasing_and_scanning'),
+        'info'
+    );
 
     try {
         const response = await fetch('/api/node-manager/radio/detect', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            cache: 'no-store'
+            cache: 'no-store',
+            body: JSON.stringify(isTcp ? { host: tcpEndpoint.host, port: tcpEndpoint.port } : {}),
         });
         const data = await response.json().catch(() => ({}));
 
@@ -10146,14 +10358,20 @@ async function detectAndAddNodeManagerRadio() {
             'info'
         );
 
+        // For the TCP-discovery path, radio.host/radio.tcp_port (from
+        // /detect's own response) name the endpoint that was actually
+        // probed - reused here rather than tcpEndpoint's raw user input,
+        // so accept confirms exactly what detect found (e.g. the real
+        // port after a default substitution), not what was merely typed.
+        const acceptBody = isTcp
+            ? { node_id: radio.node_id, host: radio.host, tcp_port: radio.tcp_port }
+            : { node_id: radio.node_id, port: radio.port };
+
         const acceptResponse = await fetch('/api/node-manager/radio/accept', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             cache: 'no-store',
-            body: JSON.stringify({
-                node_id: radio.node_id,
-                port: radio.port
-            })
+            body: JSON.stringify(acceptBody)
         });
         const accepted = await acceptResponse.json().catch(() => ({}));
         if (!acceptResponse.ok || !accepted.ok) {

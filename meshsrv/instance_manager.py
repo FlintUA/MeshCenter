@@ -82,6 +82,36 @@ class InstanceManager:
                     return text
             return ""
 
+        # transport/endpoint (Radio TCP Transport part 2 correction pass #3
+        # live finding): this schema predates that work and never carried
+        # these two fields - every instance_manager.save() call was
+        # silently stripping them from the "radio" sub-dict, meaning a
+        # persisted "tcp" transport choice never actually survived a
+        # round-trip through this manager at all (data/instance.json on
+        # disk never really had it, regardless of what the in-memory dict
+        # passed to save() contained). Preserved verbatim here (no "default
+        # to serial" business rule duplicated in this module) - that
+        # defaulting is meshsrv/radio_endpoint.py's normalize_radio_record()
+        # single-source-of-truth job, applied by every real reader of
+        # INSTANCE_IDENTITY.radio.
+        #
+        # Deliberately NOT falling back to default_radio (the previously-
+        # saved state) the way node_id/long_name/etc. below do: those
+        # fields are meant to survive a save() call that doesn't touch
+        # "radio" at all (the common case - callers that only update
+        # "runtime" still pass the full existing radio dict through via
+        # `raw["radio"]` unchanged, so nested_radio already has them
+        # directly and this fallback rarely even fires for them). A
+        # caller that DOES pass a "radio" dict but omits transport/
+        # endpoint (api_accept_detected_radio()'s pre-existing serial
+        # branch in server.py, deliberately left byte-for-byte unchanged
+        # by this same correction) means exactly that: this save reflects
+        # a freshly-verified SERIAL radio - falling back to a stale prior
+        # "tcp" endpoint here would silently mislabel it.
+        endpoint_raw = nested_radio.get("endpoint")
+        if not isinstance(endpoint_raw, dict):
+            endpoint_raw = {}
+
         radio = {
             "node_id": first_text(
                 nested_radio.get("node_id"), raw.get("node_id"), configured.get("node_id"), default_radio.get("node_id")
@@ -98,6 +128,8 @@ class InstanceManager:
             "firmware_version": first_text(
                 nested_radio.get("firmware_version"), raw.get("firmware_version"), default_radio.get("firmware_version")
             ),
+            "transport": first_text(nested_radio.get("transport"), raw.get("transport")),
+            "endpoint": dict(endpoint_raw),
         }
 
         detected_radio = nested_runtime.get("last_detected_radio")

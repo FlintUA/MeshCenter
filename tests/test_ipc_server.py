@@ -93,8 +93,12 @@ class _RaisesGenericException:
         raise ValueError("something unrelated to TransportError broke")
 
 
-def _dispatcher(serial=None, ble=None):
-    return _AdapterDispatcher(serial_transport=serial or _FakeTarget(), ble_transport=ble or _FakeTarget())
+def _dispatcher(serial=None, ble=None, tcp=None):
+    return _AdapterDispatcher(
+        serial_transport=serial or _FakeTarget(),
+        ble_transport=ble or _FakeTarget(),
+        tcp_transport=tcp or _FakeTarget(),
+    )
 
 
 def test_connect_routes_to_serial_and_serializes_the_response():
@@ -135,6 +139,27 @@ def test_connect_routes_to_ble_not_serial():
 
     assert len(ble.calls) == 1
     assert len(serial.calls) == 0
+
+
+def test_connect_routes_to_tcp_not_serial_or_ble():
+    serial = _FakeTarget()
+    ble = _FakeTarget()
+    tcp = _FakeTarget()
+    dispatcher = _dispatcher(serial=serial, ble=ble, tcp=tcp)
+
+    response = dispatcher.handle({
+        "operation": "connect",
+        "transport_type": "tcp",
+        "params": {"descriptor": {"type": "tcp", "address": "192.168.2.34:4403", "label": ""}, "force": False},
+        "timeout": 30.0,
+    })
+
+    assert response["ok"] is True
+    assert len(tcp.calls) == 1
+    assert len(serial.calls) == 0
+    assert len(ble.calls) == 0
+    op, descriptor, force, timeout = tcp.calls[0]
+    assert descriptor.address == "192.168.2.34:4403"
 
 
 def test_send_text_round_trips_through_the_real_serializers():

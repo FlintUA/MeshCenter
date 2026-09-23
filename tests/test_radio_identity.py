@@ -9,7 +9,8 @@ import needed - this module only depends on meshsrv.meshtastic_transport
 of which touch hardware at import time.
 """
 
-from meshsrv.radio_identity import compare_radio_identity, parse_radio_identity
+from meshsrv.radio_identity import compare_radio_identity, detect_tcp_radio_identity, parse_radio_identity
+from meshsrv.radio_transport import NodeInfo, NodeUser, TransportError, TransportErrorCode
 
 
 def test_matching_node_id_is_a_match():
@@ -106,3 +107,113 @@ def test_match_then_mismatch_end_to_end_with_parsed_output():
     different_radio_info = 'Owner: Someone Else (SOME)\n{"myNodeNum": 2864434397}\n'
     different_radio = parse_radio_identity(different_radio_info)
     assert compare_radio_identity(configured, different_radio) == "MISMATCH"
+
+
+class _FakeTcpRadioTransport:
+    """Stands in for the tcp_ipc_transport parameter detect_tcp_radio_identity()
+    takes by DI - records connect()/get_local_node()/get_metadata() calls,
+    can be told to raise a specific TransportError instead."""
+
+    def __init__(self, *, node_id="!1fa065f0", raises=None, metadata_json=None):
+        self._node_id = node_id
+        self._raises = raises
+        self._metadata_json = metadata_json
+        self.connect_calls = []
+
+    def connect(self, descriptor, *, timeout):
+        self.connect_calls.append((descriptor, timeout))
+        if self._raises is not None:
+            raise self._raises
+
+    def get_local_node(self, *, timeout):
+        if self._node_id is None:
+            return NodeInfo(node_id="", num=0, user=None)
+        user = NodeUser(id=self._node_id, long_name="T-Beam", short_name="TBM", hw_model="TBEAM")
+        return NodeInfo(node_id=self._node_id, num=1, user=user)
+
+    def get_metadata(self, *, timeout):
+        import json as _json
+
+        return {"metadata_json": _json.dumps(self._metadata_json or {"firmwareVersion": "2.7.15.567b8ea"})}
+
+
+def test_detect_tcp_radio_identity_success():
+    transport = _FakeTcpRadioTransport(node_id="!1fa065f0")
+
+    result, output = detect_tcp_radio_identity(transport, "192.168.2.34", 4403, timeout=10)
+
+    assert result["status"] == "MATCH"
+    assert result["detected"]["node_id"] == "!1fa065f0"
+    assert result["detected"]["long_name"] == "T-Beam"
+    assert result["detected"]["firmware_version"] == "2.7.15.567b8ea"
+    assert result["error"] is None
+    assert result["error_code"] is None
+    descriptor, timeout_arg = transport.connect_calls[0]
+    assert descriptor.address == "192.168.2.34:4403"
+    assert timeout_arg == 10
+
+
+def test_detect_tcp_radio_identity_no_host_configured_short_circuits():
+    transport = _FakeTcpRadioTransport()
+
+    result, _ = detect_tcp_radio_identity(transport, "", 4403, timeout=10)
+
+    assert result["status"] == "DETECTION_ERROR"
+    assert result["error"] == "No TCP host configured"
+    assert transport.connect_calls == []
+
+
+def test_detect_tcp_radio_identity_surfaces_specific_error_code():
+    transport = _FakeTcpRadioTransport(
+        raises=TransportError(TransportErrorCode.CONNECT_REFUSED, "192.168.2.34:4403 refused the connection")
+    )
+
+    result, _ = detect_tcp_radio_identity(transport, "192.168.2.34", 4403, timeout=10)
+
+    assert result["status"] == "DETECTION_ERROR"
+    assert result["error_code"] == "connect_refused"
+    assert "refused" in result["error"]
+
+
+def test_detect_tcp_radio_identity_protocol_sync_timeout_is_surfaced_distinctly():
+    transport = _FakeTcpRadioTransport(
+        raises=TransportError(TransportErrorCode.PROTOCOL_SYNC_TIMEOUT, "handshake never completed")
+    )
+
+    result, _ = detect_tcp_radio_identity(transport, "192.168.2.34", 4403, timeout=10)
+
+    assert result["error_code"] == "protocol_sync_timeout"
+
+
+def test_detect_tcp_radio_identity_no_node_id_is_not_found():
+    transport = _FakeTcpRadioTransport(node_id=None)
+
+    result, _ = detect_tcp_radio_identity(transport, "192.168.2.34", 4403, timeout=10)
+
+    assert result["status"] == "NOT_FOUND"
+    assert result["detected"]["node_id"] == ""
+
+
+def test_detect_tcp_radio_identity_metadata_failure_is_not_fatal():
+    class _NoMetadataTransport(_FakeTcpRadioTransport):
+        def get_metadata(self, *, timeout):
+            raise RuntimeError("metadata unavailable")
+
+    transport = _NoMetadataTransport(node_id="!1fa065f0")
+
+    result, _ = detect_tcp_radio_identity(transport, "192.168.2.34", 4403, timeout=10)
+
+    assert result["status"] == "MATCH"
+    assert result["detected"]["node_id"] == "!1fa065f0"
+    assert result["detected"]["firmware_version"] == ""
+
+
+def test_detect_tcp_radio_identity_then_compare_end_to_end():
+    configured = {"node_id": "!1fa065f0"}
+    transport = _FakeTcpRadioTransport(node_id="!1fa065f0")
+    result, _ = detect_tcp_radio_identity(transport, "192.168.2.34", 4403, timeout=10)
+    assert compare_radio_identity(configured, result["detected"]) == "MATCH"
+
+    other_transport = _FakeTcpRadioTransport(node_id="!deadbeef")
+    other_result, _ = detect_tcp_radio_identity(other_transport, "192.168.2.34", 4403, timeout=10)
+    assert compare_radio_identity(configured, other_result["detected"]) == "MISMATCH"

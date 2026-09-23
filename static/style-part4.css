@@ -1667,6 +1667,66 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     }
 }
 
+/* Radio Profiles & Connections Model, PR 3c: discovery (transport picker)
+   and discovery-result sections - rendered inline within
+   .node-profile-selector-section (like the pre-3c TCP discovery panel
+   they replace), toggled via style.display, not a separate overlay modal -
+   same convention this feature area already used. Theme-aware via the
+   same --mc-* variables as the rest of this file. */
+.node-discovery-section,
+.node-discovery-result-section {
+    margin-top: 14px;
+    padding: 14px;
+    border-radius: 10px;
+    border: 1px solid var(--mc-border-soft, #edf1f6);
+    background: var(--mc-button-secondary-bg, #f4f7fb);
+}
+
+.node-discovery-transport-picker {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--mc-text-primary, #172033);
+}
+
+.node-discovery-transport-picker label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.node-discovery-hint {
+    margin: 0 0 12px;
+    font-size: 12px;
+    color: var(--mc-text-secondary, #64748b);
+    white-space: pre-line;
+}
+
+.node-discovery-identity-note {
+    margin: 10px 0 0;
+    font-size: 12px;
+    color: var(--mc-text-secondary, #64748b);
+    font-style: italic;
+}
+
+@media (max-width: 520px) {
+    .node-connection-row {
+        flex-wrap: wrap;
+    }
+
+    .node-connection-actions {
+        width: 100%;
+    }
+
+    .node-discovery-transport-picker {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+}
+
 @media (max-width: 820px) {
     .device-dashboard-grid {
         grid-template-columns: 1fr;

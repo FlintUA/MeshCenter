@@ -10396,29 +10396,13 @@ async function loadNodeManagerDashboard(showFeedback = false) {
                         <span class="node-manager-profile-count">${profiles.length}</span>
                         <button type="button"
                             class="node-manager-detect-radio-btn"
-                            onclick="detectAndAddNodeManagerRadio()">
-                            ${escapeHtml(window.I18N.t('node_manager.detect_radio'))}
-                        </button>
-                        <button type="button"
-                            class="node-manager-detect-radio-btn"
-                            onclick="toggleNodeManagerTcpDiscovery()">
-                            🌐 ${escapeHtml(window.I18N.t('node_manager.detect_radio_tcp'))}
+                            onclick="toggleNodeManagerDiscovery()">
+                            🔍 ${escapeHtml(window.I18N.t('node_manager.discover_radio'))}
                         </button>
                     </div>
                 </div>
-                <div id="nodeManagerTcpDiscoverySection" style="display:none;">
-                    <div class="settings-option">
-                        <label class="settings-option-label" for="nodeManagerTcpHostInput">${escapeHtml(window.I18N.t('node_manager.tcp_host_label'))}</label>
-                        <input type="text" id="nodeManagerTcpHostInput" placeholder="192.168.2.34" autocomplete="off">
-                    </div>
-                    <div class="settings-option">
-                        <label class="settings-option-label" for="nodeManagerTcpPortInput">${escapeHtml(window.I18N.t('node_manager.tcp_port_label'))}</label>
-                        <input type="number" id="nodeManagerTcpPortInput" placeholder="4403" min="1" max="65535" autocomplete="off">
-                    </div>
-                    <button type="button" class="mc-refresh-btn" onclick="detectNodeManagerRadioViaTcp()">
-                        🔌 ${escapeHtml(window.I18N.t('node_manager.tcp_find_button'))}
-                    </button>
-                </div>
+                ${renderNodeManagerDiscoverySection()}
+                ${renderNodeManagerDiscoveryResultSection()}
                 <div class="node-profile-list">${profileCards}</div>
             </section>
 
@@ -10532,41 +10516,105 @@ async function waitForNodeManagerProfile(profileId, timeoutMs = 60000) {
 }
 
 
-function toggleNodeManagerTcpDiscovery() {
-    const section = document.getElementById('nodeManagerTcpDiscoverySection');
+// Radio Profiles & Connections Model, PR 3c: transport-aware discovery
+// (one dialog with a USB/TCP/Bluetooth picker, replacing the previous two
+// separate buttons) and two distinct result presentations - "radio found"
+// (a genuinely new node_id: offers Create profile) vs "known radio"
+// (a node_id that already has a profile: offers Add connection if it's
+// the profile ALREADY active, or Activate profile if it's a different
+// saved one - never a duplicate profile either way, and never routes a
+// same-profile reconnect through /accept, which always restarts
+// MeshCenter even when nothing about the profile actually changes).
+//
+// Bluetooth has no discovery/identity-verification mechanism at all
+// (api_detect_new_radio() explicitly refuses it, TRANSPORT_NOT_SUPPORTED)
+// - building one is out of this PR's scope (explicitly excluded: "не
+// расширять serial/BLE identity-verification механизм"), so its picker
+// option shows an honest "not supported yet" note instead of a working
+// form, and disables Search rather than pretending to search.
+
+function renderNodeManagerDiscoverySection() {
+    return `
+        <div id="nodeManagerDiscoverySection" style="display:none;" class="node-discovery-section">
+            <div class="node-discovery-transport-picker">
+                <label><input type="radio" name="nodeManagerDiscoveryTransport" value="usb" checked onchange="updateNodeManagerDiscoveryTransport()"> ${escapeHtml(window.I18N.t('node_manager.connection_type_serial'))}</label>
+                <label><input type="radio" name="nodeManagerDiscoveryTransport" value="tcp" onchange="updateNodeManagerDiscoveryTransport()"> ${escapeHtml(window.I18N.t('node_manager.connection_type_tcp'))}</label>
+                <label><input type="radio" name="nodeManagerDiscoveryTransport" value="bluetooth" onchange="updateNodeManagerDiscoveryTransport()"> ${escapeHtml(window.I18N.t('node_manager.connection_type_bluetooth'))}</label>
+            </div>
+            <div id="nodeManagerDiscoveryUsbFields">
+                <p class="node-discovery-hint">${escapeHtml(window.I18N.t('node_manager.discover_usb_hint'))}</p>
+            </div>
+            <div id="nodeManagerDiscoveryTcpFields" style="display:none;">
+                <div class="settings-option">
+                    <label class="settings-option-label" for="nodeManagerTcpHostInput">${escapeHtml(window.I18N.t('node_manager.tcp_host_label'))}</label>
+                    <input type="text" id="nodeManagerTcpHostInput" placeholder="192.168.2.34" autocomplete="off">
+                </div>
+                <div class="settings-option">
+                    <label class="settings-option-label" for="nodeManagerTcpPortInput">${escapeHtml(window.I18N.t('node_manager.tcp_port_label'))}</label>
+                    <input type="number" id="nodeManagerTcpPortInput" placeholder="4403" min="1" max="65535" autocomplete="off">
+                </div>
+            </div>
+            <div id="nodeManagerDiscoveryBluetoothFields" style="display:none;">
+                <p class="node-discovery-hint">${escapeHtml(window.I18N.t('node_manager.discover_bluetooth_unsupported'))}</p>
+            </div>
+            <button type="button" class="mc-refresh-btn" id="nodeManagerDiscoverySearchBtn" onclick="runNodeManagerDiscovery()">
+                🔍 ${escapeHtml(window.I18N.t('node_manager.discover_search_button'))}
+            </button>
+        </div>`;
+}
+
+function renderNodeManagerDiscoveryResultSection() {
+    return `
+        <div id="nodeManagerDiscoveryResultSection" style="display:none;" class="node-discovery-result-section">
+            <div class="device-card-title" id="nodeManagerDiscoveryResultTitle"></div>
+            <dl class="device-detail-list" id="nodeManagerDiscoveryResultDetails"></dl>
+            <p class="node-discovery-identity-note" id="nodeManagerDiscoveryResultIdentityNote" style="display:none;"></p>
+            <div class="device-action-row">
+                <button type="button" class="device-action-btn device-action-secondary" onclick="cancelNodeManagerDiscoveryResult()">${escapeHtml(window.I18N.t('common.cancel'))}</button>
+                <button type="button" class="device-action-btn device-action-primary" id="nodeManagerDiscoveryResultActionBtn"></button>
+            </div>
+        </div>`;
+}
+
+function toggleNodeManagerDiscovery() {
+    const section = document.getElementById('nodeManagerDiscoverySection');
     if (section) section.style.display = section.style.display === 'none' ? '' : 'none';
 }
 
-async function detectNodeManagerRadioViaTcp() {
-    const hostInput = document.getElementById('nodeManagerTcpHostInput');
-    const portInput = document.getElementById('nodeManagerTcpPortInput');
-    const host = (hostInput?.value || '').trim();
+function updateNodeManagerDiscoveryTransport() {
+    const selected = document.querySelector('input[name="nodeManagerDiscoveryTransport"]:checked')?.value || 'usb';
+    const usbFields = document.getElementById('nodeManagerDiscoveryUsbFields');
+    const tcpFields = document.getElementById('nodeManagerDiscoveryTcpFields');
+    const bluetoothFields = document.getElementById('nodeManagerDiscoveryBluetoothFields');
+    const searchBtn = document.getElementById('nodeManagerDiscoverySearchBtn');
+    if (usbFields) usbFields.style.display = selected === 'usb' ? '' : 'none';
+    if (tcpFields) tcpFields.style.display = selected === 'tcp' ? '' : 'none';
+    if (bluetoothFields) bluetoothFields.style.display = selected === 'bluetooth' ? '' : 'none';
+    if (searchBtn) searchBtn.disabled = selected === 'bluetooth';
+}
 
-    if (!host) {
-        showToast(window.I18N.t('node_manager.tcp_host_required'), 'error');
-        return;
+async function runNodeManagerDiscovery() {
+    const selected = document.querySelector('input[name="nodeManagerDiscoveryTransport"]:checked')?.value || 'usb';
+    if (selected === 'bluetooth') return; // guarded by the disabled Search button too - see this section's own docstring
+    if (selected === 'tcp') {
+        const host = (document.getElementById('nodeManagerTcpHostInput')?.value || '').trim();
+        if (!host) {
+            showToast(window.I18N.t('node_manager.tcp_host_required'), 'error');
+            return;
+        }
+        const portText = (document.getElementById('nodeManagerTcpPortInput')?.value || '').trim();
+        const port = portText ? parseInt(portText, 10) : undefined;
+        await detectAndAddNodeManagerRadio({ host, port });
+    } else {
+        await detectAndAddNodeManagerRadio();
     }
-
-    const portText = (portInput?.value || '').trim();
-    const port = portText ? parseInt(portText, 10) : undefined;
-    await detectAndAddNodeManagerRadio({ host, port });
 }
 
 async function detectAndAddNodeManagerRadio(tcpEndpoint) {
-    // Radio TCP Transport part 2 correction pass #5: `tcpEndpoint`
-    // ({host, port}) means "search for a NEW radio at this TCP
-    // endpoint", independent of whatever the currently accepted
-    // profile's own transport is - the gap correction pass #3 alone
-    // left (an accepted-serial profile had no way to discover a new
-    // radio over TCP at all). No argument = the original, unchanged
-    // "reprobe whatever's currently accepted" behavior.
+    // `tcpEndpoint` ({host, port}) means "search for a NEW radio at this
+    // TCP endpoint", independent of whatever the currently accepted
+    // profile's own transport is. No argument = USB scan.
     const isTcp = !!(tcpEndpoint && tcpEndpoint.host);
-    const confirmed = window.confirm(
-        isTcp
-            ? window.I18N.t('node_manager.detect_radio_confirm_tcp', { host: tcpEndpoint.host, port: tcpEndpoint.port || 4403 })
-            : window.I18N.t('node_manager.detect_radio_confirm')
-    );
-    if (!confirmed) return;
 
     showToast(
         isTcp
@@ -10596,45 +10644,113 @@ async function detectAndAddNodeManagerRadio(tcpEndpoint) {
             );
         }
 
-        const radio = data.detected || {};
-        const label = radio.long_name || radio.node_id || window.I18N.t('node_manager.meshtastic_radio_fallback');
-        const details = [
-            radio.short_name,
-            radio.hardware,
-            radio.node_id,
-            radio.port
-        ].filter(Boolean).join(' · ');
+        const discoverySection = document.getElementById('nodeManagerDiscoverySection');
+        if (discoverySection) discoverySection.style.display = 'none';
+        await showNodeManagerDiscoveryResult(data, isTcp);
+    } catch (error) {
+        console.error('[NODE MANAGER] Radio detection failed:', error);
+        window.alert(error.message || String(error));
+        showToast(window.I18N.t('node_manager.radio_not_added'), 'error');
+        await loadNodeManagerDashboard();
+    }
+}
 
-        const action = data.profile_exists
-            ? window.I18N.t('node_manager.use_saved_profile')
-            : window.I18N.t('node_manager.create_clean_profile');
+// Set only while the result dialog is open - read by whichever of the
+// three confirm*() handlers below the user actually clicks. Simpler than
+// serializing the detected radio/endpoint into onclick attribute strings.
+let _pendingNodeManagerDiscoveryResult = null;
 
-        const accept = window.confirm(
-            window.I18N.t('node_manager.radio_detected_confirm', {
-                knownOrNew: data.profile_exists ? window.I18N.t('node_manager.known') : window.I18N.t('node_manager.new'),
-                label,
-                details,
-                action
-            })
-        );
-        if (!accept) {
-            showToast(window.I18N.t('node_manager.radio_detected_released'), 'info');
-            await loadNodeManagerDashboard();
-            return;
-        }
+async function showNodeManagerDiscoveryResult(data, isTcp) {
+    const radio = data.detected || {};
+    const isKnown = Boolean(data.profile_exists);
 
-        showToast(
-            data.profile_exists
-                ? window.I18N.t('node_manager.selecting_profile_for', { label })
-                : window.I18N.t('node_manager.creating_clean_profile_for', { label }),
-            'info'
-        );
+    // Fresh, not cached - this decides Add-connection vs Activate-profile
+    // below, and a stale profile_id here would pick the wrong one.
+    let currentProfileId = '';
+    try {
+        const dashResponse = await fetch('/api/node-manager/dashboard', { cache: 'no-store' });
+        const dash = await dashResponse.json();
+        if (dashResponse.ok && dash.ok) currentProfileId = String(dash.profile?.profile_id || '');
+    } catch (_) {
+        // Best-effort - worst case this falls through to "Activate
+        // profile" for an already-active profile, which activateNodeManagerProfile()
+        // itself already handles as a safe no-op (already_active: true).
+    }
+    const isActiveProfile = isKnown && String(data.profile_id || '') === currentProfileId;
 
-        // For the TCP-discovery path, radio.host/radio.tcp_port (from
-        // /detect's own response) name the endpoint that was actually
-        // probed - reused here rather than tcpEndpoint's raw user input,
-        // so accept confirms exactly what detect found (e.g. the real
-        // port after a default substitution), not what was merely typed.
+    _pendingNodeManagerDiscoveryResult = { data, isTcp, isActiveProfile };
+
+    const titleEl = document.getElementById('nodeManagerDiscoveryResultTitle');
+    const detailsEl = document.getElementById('nodeManagerDiscoveryResultDetails');
+    const identityNoteEl = document.getElementById('nodeManagerDiscoveryResultIdentityNote');
+    const actionBtn = document.getElementById('nodeManagerDiscoveryResultActionBtn');
+    const section = document.getElementById('nodeManagerDiscoveryResultSection');
+    if (!titleEl || !detailsEl || !identityNoteEl || !actionBtn || !section) return;
+
+    titleEl.textContent = isKnown
+        ? `📻 ${window.I18N.t('node_manager.known_radio_title')}`
+        : `✨ ${window.I18N.t('node_manager.radio_found_title')}`;
+
+    detailsEl.innerHTML = `
+        <div><dt>${escapeHtml(window.I18N.t('node_manager.long_name'))}</dt><dd>${deviceDashboardValue(radio.long_name)}</dd></div>
+        <div><dt>${escapeHtml(window.I18N.t('node_manager.short_name'))}</dt><dd>${deviceDashboardValue(radio.short_name)}</dd></div>
+        <div><dt>${escapeHtml(window.I18N.t('chat.node_id_label'))}</dt><dd class="device-monospace">${deviceDashboardValue(radio.node_id)}</dd></div>
+        <div><dt>${escapeHtml(window.I18N.t('node_manager.hardware'))}</dt><dd>${deviceDashboardValue(radio.hardware)}</dd></div>
+        <div><dt>${escapeHtml(isTcp ? window.I18N.t('node_manager.host_port_label') : window.I18N.t('node_manager.usb_port'))}</dt><dd class="device-monospace">${deviceDashboardValue(isTcp ? `${radio.host}:${radio.tcp_port}` : radio.port)}</dd></div>
+    `;
+
+    // Identity safety: MISMATCH here just means "a different radio than
+    // the currently accepted one" - the expected, normal outcome when
+    // discovering a genuinely different radio, not a fault - shown
+    // plainly rather than as an alarming warning, but never silently
+    // dropped (see this PR's own identity-safety requirement).
+    if (data.identity_status === 'MISMATCH') {
+        identityNoteEl.textContent = window.I18N.t('node_manager.discovery_identity_mismatch_note');
+        identityNoteEl.style.display = '';
+    } else {
+        identityNoteEl.style.display = 'none';
+    }
+
+    if (!isKnown) {
+        actionBtn.textContent = window.I18N.t('node_manager.create_profile_action');
+        actionBtn.onclick = confirmNodeManagerDiscoveryCreateProfile;
+    } else if (isActiveProfile) {
+        actionBtn.textContent = window.I18N.t('node_manager.add_connection_action');
+        actionBtn.onclick = confirmNodeManagerDiscoveryAddConnection;
+    } else {
+        actionBtn.textContent = window.I18N.t('node_manager.activate_profile_action');
+        actionBtn.onclick = confirmNodeManagerDiscoveryActivateProfile;
+    }
+
+    section.style.display = '';
+}
+
+function hideNodeManagerDiscoveryResult() {
+    const section = document.getElementById('nodeManagerDiscoveryResultSection');
+    if (section) section.style.display = 'none';
+    _pendingNodeManagerDiscoveryResult = null;
+}
+
+function cancelNodeManagerDiscoveryResult() {
+    hideNodeManagerDiscoveryResult();
+    showToast(window.I18N.t('node_manager.radio_detected_released'), 'info');
+    loadNodeManagerDashboard();
+}
+
+async function confirmNodeManagerDiscoveryCreateProfile() {
+    const pending = _pendingNodeManagerDiscoveryResult;
+    if (!pending) return;
+    const { data, isTcp } = pending;
+    const radio = data.detected || {};
+    const label = radio.long_name || radio.node_id || window.I18N.t('node_manager.meshtastic_radio_fallback');
+    hideNodeManagerDiscoveryResult();
+    showToast(window.I18N.t('node_manager.creating_clean_profile_for', { label }), 'info');
+
+    try {
+        // radio.host/radio.tcp_port (from /detect's own response) name
+        // the endpoint that was actually probed - reused here rather
+        // than the raw form input, so accept confirms exactly what
+        // detect found (e.g. the real port after a default substitution).
         const acceptBody = isTcp
             ? { node_id: radio.node_id, host: radio.host, tcp_port: radio.tcp_port }
             : { node_id: radio.node_id, port: radio.port };
@@ -10659,11 +10775,51 @@ async function detectAndAddNodeManagerRadio(tcpEndpoint) {
         );
         waitForNodeManagerProfile(accepted.profile_id);
     } catch (error) {
-        console.error('[NODE MANAGER] Radio detection failed:', error);
+        console.error('[NODE MANAGER] Create profile failed:', error);
         window.alert(error.message || String(error));
         showToast(window.I18N.t('node_manager.radio_not_added'), 'error');
         await loadNodeManagerDashboard();
     }
+}
+
+async function confirmNodeManagerDiscoveryAddConnection() {
+    // The known radio IS the currently active profile - this is a LIVE
+    // connect that merges into its existing radio.connections
+    // (api/api_meshtastic.py's _persist_choice() -> remember_connection(),
+    // PR 1), reusing the exact same routes PR 3b's useRadioConnection()
+    // does. Deliberately NOT /api/node-manager/radio/accept - that
+    // always restarts MeshCenter even though nothing about the active
+    // profile actually changes here, and NOT .../activate - the profile
+    // is already active, so that route would just no-op without saving
+    // this connection at all.
+    const pending = _pendingNodeManagerDiscoveryResult;
+    if (!pending) return;
+    const { data, isTcp } = pending;
+    const radio = data.detected || {};
+    hideNodeManagerDiscoveryResult();
+
+    try {
+        const transport = isTcp ? 'tcp' : 'serial';
+        const endpoint = isTcp ? { host: radio.host, port: radio.tcp_port } : {};
+        await connectToSavedTransport(transport, endpoint);
+        showToast(window.I18N.t('node_manager.connection_switched'), 'success');
+        await loadNodeManagerDashboard();
+    } catch (error) {
+        console.error('[NODE MANAGER] Add connection failed:', error);
+        showToast(error.message || window.I18N.t('node_manager.connection_switch_failed'), 'error');
+        await loadNodeManagerDashboard();
+    }
+}
+
+async function confirmNodeManagerDiscoveryActivateProfile() {
+    // The known radio is a DIFFERENT, already-saved profile - a genuine
+    // profile switch (restart required), reusing the existing route/flow
+    // exactly as clicking its own profile card already does.
+    const pending = _pendingNodeManagerDiscoveryResult;
+    if (!pending) return;
+    const { data } = pending;
+    hideNodeManagerDiscoveryResult();
+    await activateNodeManagerProfile(data.profile_id);
 }
 
 async function activateNodeManagerProfile(profileId) {

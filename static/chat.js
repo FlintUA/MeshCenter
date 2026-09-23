@@ -2135,6 +2135,8 @@ function updateSettingsUi() {
         batteryCapacityInput.value = appSettings?.power?.battery_capacity_mah || 3000;
     }
 
+    _meshtasticApplyTcpFieldsFromSettings();
+
     const recovery = appSettings?.listener_autorecovery || {};
 
     const enabled = !!recovery.enabled;
@@ -2668,6 +2670,23 @@ async function epaperShowPage(page, button) {
 // stay disabled and the status line reflects "in progress" for the
 // whole wait rather than looking stuck.
 
+function _meshtasticApplyTcpFieldsFromSettings() {
+    // Fills the Host/Port INPUT VALUES from persisted settings - never
+    // relies on the HTML placeholder to stand in for a real value (PR
+    // #278 correction pass #2, live finding: the placeholder showed
+    // 192.168.2.34 as if it were the saved host, but meshtasticTcpConnect()
+    // correctly reads .value, which was empty - Connect silently failed
+    // until the user retyped the exact placeholder text). Port defaults
+    // to a real .value of 4403 when nothing is saved yet, per the same
+    // correction - not just a placeholder either, since the backend's own
+    // default (DEFAULT_TCP_PORT) is a real, submittable value.
+    const hostInput = document.getElementById('meshtasticTcpHostInput');
+    const portInput = document.getElementById('meshtasticTcpPortInput');
+    const saved = appSettings?.meshtastic || {};
+    if (hostInput) hostInput.value = saved.tcp_host || '';
+    if (portInput) portInput.value = saved.tcp_port || 4403;
+}
+
 function _meshtasticUpdateTransportButtons(activeType) {
     const usbBtn = document.getElementById('meshtasticTransportUsbBtn');
     const bleBtn = document.getElementById('meshtasticTransportBleBtn');
@@ -2683,6 +2702,10 @@ function _meshtasticUpdateTransportButtons(activeType) {
 
     const tcpSection = document.getElementById('meshtasticTcpConnectSection');
     if (tcpSection) tcpSection.style.display = type === 'tcp' ? '' : 'none';
+    // Every reveal/re-reveal of the TCP section re-syncs its fields from
+    // the latest known persisted settings, not whatever was left in the
+    // DOM from a previous open.
+    _meshtasticApplyTcpFieldsFromSettings();
 
     // Permanent, not a one-time confirm dialog (would be annoying on
     // every switch) - visible for as long as Bluetooth is the selected

@@ -113,6 +113,47 @@ def test_updates_interval_floored_at_five_minutes():
     assert result["updates"]["interval"] == 300
 
 
+def test_meshtastic_tcp_transport_is_a_valid_value_not_downgraded_to_serial():
+    # Regression: normalize_settings() used to only accept "serial"/
+    # "bluetooth" and silently reset anything else to "serial" - since
+    # every POST /api/settings save round-trips through this function
+    # (settings.clear(); settings.update(normalize_settings(merged))),
+    # that used to silently corrupt a persisted "tcp" choice back to
+    # "serial" on the very next unrelated settings save (PR #278
+    # correction pass #2, pixel-111 live finding).
+    result = normalize_settings({"meshtastic": {"transport": "tcp"}})
+    assert result["meshtastic"]["transport"] == "tcp"
+
+
+def test_meshtastic_unknown_transport_still_falls_back_to_serial():
+    result = normalize_settings({"meshtastic": {"transport": "carrier-pigeon"}})
+    assert result["meshtastic"]["transport"] == "serial"
+
+
+def test_meshtastic_tcp_host_and_port_round_trip():
+    # Regression: tcp_host/tcp_port were entirely missing from both
+    # DEFAULT_SETTINGS and the output shape - since normalize_settings()
+    # rebuilds the "meshtastic" section from scratch, they were silently
+    # dropped from disk on every unrelated settings save even though
+    # _persist_choice() (api/api_meshtastic.py) had just written them
+    # directly to settings.meshtastic moments before.
+    result = normalize_settings({"meshtastic": {"tcp_host": "192.168.2.34", "tcp_port": 4403}})
+    assert result["meshtastic"]["tcp_host"] == "192.168.2.34"
+    assert result["meshtastic"]["tcp_port"] == 4403
+
+
+def test_meshtastic_tcp_host_and_port_defaults_when_absent():
+    result = normalize_settings({})
+    assert result["meshtastic"]["tcp_host"] == ""
+    assert result["meshtastic"]["tcp_port"] == 4403
+
+
+def test_meshtastic_tcp_port_out_of_range_or_invalid_falls_back_to_default():
+    assert normalize_settings({"meshtastic": {"tcp_port": 0}})["meshtastic"]["tcp_port"] == 4403
+    assert normalize_settings({"meshtastic": {"tcp_port": 70000}})["meshtastic"]["tcp_port"] == 4403
+    assert normalize_settings({"meshtastic": {"tcp_port": "not a number"}})["meshtastic"]["tcp_port"] == 4403
+
+
 def test_browser_notifications_categories_fill_in_missing_keys_with_defaults():
     result = normalize_settings({
         "browser_notifications": {"enabled": True, "categories": {"timer": False}},

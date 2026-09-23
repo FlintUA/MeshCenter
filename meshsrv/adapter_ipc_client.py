@@ -542,11 +542,48 @@ class AdapterSupervisor:
             # IDENTITY_MISMATCH, ...) means the adapter's call stack
             # already unwound cleanly, and killing the subprocess for
             # those would be pure churn with no safety benefit.
+            #
+            # EXTENDED (Radio TCP Transport follow-up, live-caught twice on
+            # pixel-111, not theoretical): TCP_CONNECTED and
+            # PROTOCOL_SYNC_TIMEOUT are the TCP-specific counterparts of
+            # the exact same hazard, for a connect() that got as far as
+            # opening a raw socket and starting the underlying
+            # `meshtastic` library's own background reader thread
+            # (TCPTransport's SYNCING state - see
+            # adapters/meshtastic/tcp_transport.py) before failing. That
+            # third-party library DOES attempt its own cleanup on a failed
+            # handshake (TCPInterface.__init__ wraps the connect in a
+            # try/except that calls close()) - but close()'s own reader-
+            # thread-exit wait is capped at GRACEFUL_CLOSE_TIMEOUT (0.25s)
+            # and depends on the remote radio's TCP stack reacting to a
+            # half-close (shutdown(SHUT_WR)) promptly. A radio that
+            # doesn't react fast enough (confirmed live: T-Beam firmware
+            # 2.7.15.567b8ea) leaves that reader thread blocked in a
+            # blocking recv() indefinitely, silently occupying the radio's
+            # single-TCP-client slot from inside this now-degraded, still-
+            # otherwise-healthy-looking adapter process - every SUBSEQUENT
+            # connect attempt then fails the identical way, including a
+            # perfectly healthy one, until something kills the process and
+            # the OS reclaims the leaked socket/thread outright (proven
+            # live: a standalone script and a direct TCPTransport call
+            # both succeeded in isolation every time; only the long-lived
+            # adapter, reused across many attempts, degraded). This is not
+            # something TCPTransport itself can route around - the failed
+            # constructor call never hands back a reference to close()
+            # against (see _classify_sync_failure()'s own docstring in
+            # that module) - and patching the third-party library's own
+            # close() timeout is out of scope. Recycling the adapter here
+            # is the correct fix at this layer, exactly mirroring P0-A's
+            # own reasoning for TIMEOUT.
             if isinstance(payload, dict) and payload.get("ok") is False:
                 error_code = (payload.get("error") or {}).get("code")
-                if error_code == TransportErrorCode.TIMEOUT.value:
+                if error_code in (
+                    TransportErrorCode.TIMEOUT.value,
+                    TransportErrorCode.TCP_CONNECTED.value,
+                    TransportErrorCode.PROTOCOL_SYNC_TIMEOUT.value,
+                ):
                     self._on_log(
-                        "adapter subprocess invalidated after a self-reported TIMEOUT (killed, will respawn)",
+                        f"adapter subprocess invalidated after a self-reported {error_code} (killed, will respawn)",
                         "INFO",
                     )
                     self._kill_locked(ble_address_for_cleanup)

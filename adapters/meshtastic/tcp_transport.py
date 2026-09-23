@@ -279,11 +279,49 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             self._connected_since = None
 
         def _do_close() -> None:
-            if interface_to_close is not None:
-                try:
-                    interface_to_close.close()
-                except Exception:
-                    pass
+            if interface_to_close is None:
+                return
+            try:
+                interface_to_close.close()
+            except Exception:
+                pass
+            # Adapter-watchdog follow-up (live-caught on pixel-111, T-Beam
+            # firmware 2.7.15.567b8ea): the underlying meshtastic library's
+            # own TCPInterface.close() only waits a short, hardcoded
+            # interval (its own GRACEFUL_CLOSE_TIMEOUT, 0.25s at last
+            # check) for its background reader thread to exit, and that
+            # wait depends on the remote radio's own TCP stack reacting to
+            # a half-close (shutdown(SHUT_WR)) promptly. A radio that
+            # doesn't leaves the reader thread blocked in a blocking
+            # recv() indefinitely - close() itself still returns (it
+            # doesn't propagate that as a failure), but the raw socket
+            # (and the radio's single-TCP-client slot) is silently still
+            # held from our side. Live-reproduced as a clean alternating
+            # pattern: every successful connect-then-disconnect cycle
+            # left the NEXT connect attempt failing with TCP_CONNECTED,
+            # every other one succeeding - exactly what a leaked reader
+            # thread from every other disconnect() would produce.
+            #
+            # If the thread is confirmed still alive after the library's
+            # own attempt, force a hard close of the raw socket ourselves
+            # - reaching into the library's own _rxThread/socket
+            # attributes is a deliberate, narrow reach past its public
+            # API for exactly this gap (this module already treats the
+            # library as structured internals elsewhere - see
+            # _local_node_id()/get_local_node() reading myInfo/nodes
+            # directly - not a novel pattern introduced here), not a
+            # workaround of convenience. An abrupt socket.close() raises
+            # inside a blocked recv() as a plain OSError regardless of
+            # what the remote side ever does, unblocking the thread
+            # immediately instead of waiting on it.
+            reader_thread = getattr(interface_to_close, "_rxThread", None)
+            if reader_thread is not None and reader_thread.is_alive():
+                raw_socket = getattr(interface_to_close, "socket", None)
+                if raw_socket is not None:
+                    try:
+                        raw_socket.close()
+                    except Exception:
+                        pass
 
         try:
             self._call_with_timeout(_do_close, timeout=timeout, what="close interface")

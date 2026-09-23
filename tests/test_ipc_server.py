@@ -353,7 +353,7 @@ def test_serve_forever_still_reports_malformed_request_json_normally():
 
 # --- IPC JSON serialization hardening (live-caught: a raw, non-JSON-
 # serializable protobuf object smuggled through inside NodeInfo.position -
-# see utils/helpers.py's json_safe(), the primary fix applied where
+# see adapters/meshtastic/_json_safe.py's json_safe(), the primary fix applied where
 # NodeInfo.position is built. This is the last-resort layer: whatever the
 # cause, dispatcher.handle() returning a *successful* result that still
 # isn't representable must degrade to a clean error response for that one

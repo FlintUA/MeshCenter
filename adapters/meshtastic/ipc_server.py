@@ -282,7 +282,7 @@ def serve_forever(dispatcher: _AdapterDispatcher, *, stdin=None, stdout=None) ->
         try:
             payload = json.dumps(response)
         except (TypeError, ValueError) as error:
-            # Last-resort layer (utils/helpers.py's json_safe() is the
+            # Last-resort layer (adapters/meshtastic/_json_safe.py's json_safe() is the
             # primary fix, applied where NodeInfo.position is built - see
             # that function's own docstring for the live-caught crash
             # this guards against: a raw, non-JSON-serializable protobuf

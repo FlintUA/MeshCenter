@@ -68,6 +68,7 @@ import threading
 import time
 from typing import Callable, Optional, Sequence
 
+from adapters.meshtastic._json_safe import json_safe
 from adapters.meshtastic._timeout_support import TimeoutEnforced
 from meshsrv.node_time_sync import try_sync as try_node_time_sync
 from meshsrv.radio_transport import (
@@ -87,7 +88,6 @@ from meshsrv.radio_transport import (
     TransportErrorCode,
     WaypointResult,
 )
-from utils.helpers import json_safe
 
 # The Meshtastic radio's own default TCP port. Defined exactly once here -
 # nowhere else in this module (or, per this PR's scope, anywhere else in

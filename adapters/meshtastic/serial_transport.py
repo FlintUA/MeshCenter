@@ -68,6 +68,7 @@ from meshsrv.radio_transport import (
     TransportErrorCode,
     WaypointResult,
 )
+from utils.helpers import json_safe
 from meshsrv.serial_port_supervisor import SerialPortSupervisor
 
 
@@ -618,7 +619,7 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
             device_metrics=data.get("deviceMetrics") or {},
             environment_metrics=data.get("environmentMetrics") or {},
             power_metrics=data.get("powerMetrics") or {},
-            position=data.get("position"),
+            position=json_safe(data.get("position")),
         )
 
     # ------------------------------------------------------------------

@@ -59,6 +59,7 @@ from meshsrv.radio_transport import (
     TransportErrorCode,
     WaypointResult,
 )
+from utils.helpers import json_safe
 
 # Fixed reconnect attempts with growing backoff - "naive reconnect" per
 # plan section 5.5, not exponential/jittered/configurable.
@@ -642,7 +643,7 @@ class BLETransport(TimeoutEnforced, RadioTransport):
             device_metrics=data.get("deviceMetrics") or {},
             environment_metrics=data.get("environmentMetrics") or {},
             power_metrics=data.get("powerMetrics") or {},
-            position=data.get("position"),
+            position=json_safe(data.get("position")),
         )
 
     # ------------------------------------------------------------------

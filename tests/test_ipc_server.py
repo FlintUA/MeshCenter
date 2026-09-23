@@ -349,3 +349,70 @@ def test_serve_forever_still_reports_malformed_request_json_normally():
     assert response["ok"] is False
     assert response["error"]["code"] == "unknown"
     assert "malformed request JSON" in response["error"]["message"]
+
+
+# --- IPC JSON serialization hardening (live-caught: a raw, non-JSON-
+# serializable protobuf object smuggled through inside NodeInfo.position -
+# see utils/helpers.py's json_safe(), the primary fix applied where
+# NodeInfo.position is built. This is the last-resort layer: whatever the
+# cause, dispatcher.handle() returning a *successful* result that still
+# isn't representable must degrade to a clean error response for that one
+# request, not crash the whole adapter subprocess.) ---
+
+class _NotJsonSerializable:
+    def __repr__(self):
+        return "<_NotJsonSerializable>"
+
+
+class _UnserializableResultDispatcher:
+    """Stands in for dispatcher.handle() returning successfully (no
+    TransportError/Exception raised - that path is already covered by
+    handle()'s own try/except) with a result that nonetheless contains a
+    value json.dumps() can't serialize, on request numbers in
+    `bad_on`."""
+
+    def __init__(self, bad_on=frozenset({1})):
+        self._bad_on = bad_on
+        self.n = 0
+
+    def handle(self, request):
+        self.n += 1
+        if self.n in self._bad_on:
+            return {"protocol_version": 1, "ok": True, "result": {"n": self.n, "raw": _NotJsonSerializable()}}
+        return {"protocol_version": 1, "ok": True, "result": {"n": self.n}}
+
+
+def test_serve_forever_survives_a_non_json_serializable_response_result():
+    stdin = io.StringIO("{}\n")
+    protocol_out = io.StringIO()
+
+    serve_forever(_UnserializableResultDispatcher(), stdin=stdin, stdout=protocol_out)
+
+    lines = protocol_out.getvalue().splitlines()
+    assert len(lines) == 1
+    response = json.loads(lines[0])  # must be valid, parseable JSON - the process must not have crashed instead
+    assert response["ok"] is False
+    assert response["error"]["code"] == "unknown"
+    assert "not JSON-serializable" in response["error"]["message"]
+
+
+def test_serve_forever_recovers_and_serves_the_next_request_after_a_serialization_failure():
+    """Not just "didn't crash" - the loop must genuinely continue: a
+    second, normal request arriving right after the bad one must still
+    get a real, successful response, proving the adapter subprocess
+    stays alive and usable rather than needing a kill+respawn cycle over
+    a single bad field."""
+    stdin = io.StringIO("{}\n{}\n")
+    protocol_out = io.StringIO()
+
+    serve_forever(_UnserializableResultDispatcher(bad_on={1}), stdin=stdin, stdout=protocol_out)
+
+    lines = protocol_out.getvalue().splitlines()
+    assert len(lines) == 2
+
+    first = json.loads(lines[0])
+    assert first["ok"] is False
+
+    second = json.loads(lines[1])
+    assert second["ok"] is True
+    assert second["result"]["n"] == 2

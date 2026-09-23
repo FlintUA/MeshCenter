@@ -102,3 +102,45 @@ def normalize_node_id_with_aliases(node_id):
     if not node_id:
         return None
     return normalize_node_id(node_id)
+
+
+_JSON_SAFE_SCALARS = (str, int, float, bool)
+
+
+def json_safe(value):
+    """Recursively strips anything json.dumps() can't serialize, keeping
+    dict/list/tuple structure and JSON-primitive leaves untouched.
+
+    Written for adapters/meshtastic/*.py's NodeInfo.position conversion:
+    the meshtastic library's own node dict sometimes carries a raw,
+    non-serializable protobuf message object under a "raw" key (see the
+    installed library's meshtastic/__init__.py, KnownProtocol.protobufFactory
+    handling in _handlePacketFromRadio - "Also provide the protobuf raw",
+    consumed by _onPositionReceive) - that object then flows untouched
+    through NodeInfo.position into meshsrv/ipc_protocol.py's IPC response
+    dict, where json.dumps() previously raised uncaught and crashed the
+    whole adapter subprocess (adapters/meshtastic/ipc_server.py's
+    serve_forever() - see that function's own try/except around the write
+    for the second, last-resort layer of this fix).
+
+    Deliberately generic rather than hardcoded to the one "raw" key, so
+    any other non-JSON-safe value a library upgrade injects degrades the
+    same way (silently dropped) instead of crashing the IPC channel
+    again. Never raises: an unrepresentable top-level value becomes None,
+    an unrepresentable dict/list member is simply omitted rather than
+    replacing the whole structure."""
+    if value is None or isinstance(value, _JSON_SAFE_SCALARS):
+        return value
+    if isinstance(value, dict):
+        return {k: json_safe(v) for k, v in value.items() if _is_json_safe_shape(v)}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v) for v in value if _is_json_safe_shape(v)]
+    return None
+
+
+def _is_json_safe_shape(value):
+    """True if `value` is a type json_safe() knows how to handle (a JSON
+    primitive, None, or a container) - decides whether to keep or drop a
+    dict/list member; nested members are recursively sanitized by
+    json_safe() itself, not fully validated here."""
+    return value is None or isinstance(value, _JSON_SAFE_SCALARS) or isinstance(value, (dict, list, tuple))

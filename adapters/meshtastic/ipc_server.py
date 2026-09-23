@@ -279,7 +279,28 @@ def serve_forever(dispatcher: _AdapterDispatcher, *, stdin=None, stdout=None) ->
             with contextlib.redirect_stdout(sys.stderr):
                 response = dispatcher.handle(request)
 
-        protocol_stdout.write(json.dumps(response) + "\n")
+        try:
+            payload = json.dumps(response)
+        except (TypeError, ValueError) as error:
+            # Last-resort layer (utils/helpers.py's json_safe() is the
+            # primary fix, applied where NodeInfo.position is built - see
+            # that function's own docstring for the live-caught crash
+            # this guards against: a raw, non-JSON-serializable protobuf
+            # object smuggled through a *successful* dispatcher.handle()
+            # result). dispatcher.handle() already converts every raised
+            # TransportError/Exception into a clean error response (see
+            # its own try/except above) - this catches what that one
+            # can't: a result that returned successfully but still isn't
+            # actually representable. Whatever the cause, a serialization
+            # failure here must degrade to a clean IPC error response for
+            # THIS request, not corrupt the protocol stream or kill the
+            # whole adapter subprocess over one bad field.
+            response = ipc_protocol.make_error_response(
+                TransportError(TransportErrorCode.UNKNOWN, f"response not JSON-serializable: {error}")
+            )
+            payload = json.dumps(response)
+
+        protocol_stdout.write(payload + "\n")
         protocol_stdout.flush()
 
 

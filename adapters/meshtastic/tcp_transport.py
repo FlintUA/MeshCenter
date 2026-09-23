@@ -87,6 +87,7 @@ from meshsrv.radio_transport import (
     TransportErrorCode,
     WaypointResult,
 )
+from utils.helpers import json_safe
 
 # The Meshtastic radio's own default TCP port. Defined exactly once here -
 # nowhere else in this module (or, per this PR's scope, anywhere else in
@@ -933,7 +934,7 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             device_metrics=data.get("deviceMetrics") or {},
             environment_metrics=data.get("environmentMetrics") or {},
             power_metrics=data.get("powerMetrics") or {},
-            position=data.get("position"),
+            position=json_safe(data.get("position")),
         )
 
     # ------------------------------------------------------------------

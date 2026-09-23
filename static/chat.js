@@ -10055,6 +10055,105 @@ function deviceConnectionLabel(mode, listenerRunning) {
     return listenerRunning ? window.I18N.t('settings.radio_status_connected') : window.I18N.t('node_manager.listener_stopped');
 }
 
+// Radio Profiles & Connections Model, PR 3a: the Connection card used to
+// always show serial-specific fields (USB port, listener PID, Release
+// button) regardless of which transport was actually active - harmless
+// before PR 2 because `connection` itself was always serial-flavored
+// data anyway, but PR 2 made `connection.type`/`connection.mode` genuinely
+// reflect TCP/Bluetooth too, so a TCP-active profile started rendering a
+// literal "/dev/ttyACM0" as if that were its live connection. Branches on
+// connection.type instead. No "Disconnect" action for TCP/Bluetooth here
+// deliberately - no such backend capability exists yet (only reconnect/
+// switch), inventing one is out of scope for this rendering-only PR.
+// Reconnect for TCP/Bluetooth calls reconnectActiveTransport(), NOT
+// reconnectRadioConnection() (which only ever touches the serial listener/
+// RadioConnectionManager - see meshsrv/radio_manager.py - never
+// TransportRouter, so it would silently do nothing for a non-serial link).
+//
+// Factored out of loadNodeManagerDashboard() as its own pure function
+// (inputs in, an {connectionDetailRows, connectionActionsHtml} object of
+// HTML strings out) so it can be exercised in isolation without driving
+// the whole dashboard fetch/render cycle - this repo has no committed JS
+// test framework (see CLAUDE.md), so that verification is a session-local
+// Node harness (extracts this function's source, runs it in a vm sandbox
+// against a stubbed window.I18N), not a checked-in automated test.
+function renderNodeManagerConnectionCard(connection, radio, connectionLabel, canRelease, canReconnect) {
+    const type = connection.type || 'serial';
+
+    if (type === 'tcp' || type === 'bluetooth') {
+        const typeLabel = type === 'tcp'
+            ? window.I18N.t('node_manager.connection_type_tcp')
+            : window.I18N.t('node_manager.connection_type_bluetooth');
+        const targetRow = type === 'tcp'
+            ? `<div><dt>${escapeHtml(window.I18N.t('node_manager.host_port_label'))}</dt><dd class="device-monospace">${deviceDashboardValue(connection.address)}</dd></div>`
+            : `<div><dt>${escapeHtml(window.I18N.t('node_manager.device_label'))}</dt><dd class="device-monospace">${connection.label ? `${escapeHtml(connection.label)} (${deviceDashboardValue(connection.address)})` : deviceDashboardValue(connection.address)}</dd></div>`;
+
+        return {
+            connectionDetailRows: `
+                <div><dt>${escapeHtml(window.I18N.t('node_manager.connection_type_label'))}</dt><dd>${escapeHtml(typeLabel)}</dd></div>
+                ${targetRow}
+                <div><dt>${escapeHtml(window.I18N.t('waypoints.status'))}</dt><dd>${escapeHtml(connectionLabel)}</dd></div>
+                <div><dt>${escapeHtml(window.I18N.t('node_manager.connected_since'))}</dt><dd>${formatDeviceDashboardDate(connection.connected_since)}</dd></div>
+            `,
+            connectionActionsHtml: `
+                <div class="device-action-row">
+                    <button type="button" class="device-action-btn device-action-primary"
+                        onclick="reconnectActiveTransport('${type}'); setTimeout(() => loadNodeManagerDashboard(), 1800);"
+                        ${canReconnect ? '' : 'disabled'}>${escapeHtml(window.I18N.t('node_manager.reconnect'))}</button>
+                </div>
+            `,
+        };
+    }
+
+    // Serial - byte-for-byte the pre-existing behavior.
+    return {
+        connectionDetailRows: `
+            <div><dt>${escapeHtml(window.I18N.t('node_manager.usb_port'))}</dt><dd class="device-monospace">${deviceDashboardValue(radio.port)}</dd></div>
+            <div><dt>${escapeHtml(window.I18N.t('waypoints.status'))}</dt><dd>${escapeHtml(connectionLabel)}</dd></div>
+            <div><dt>${escapeHtml(window.I18N.t('node_manager.listener_label'))}</dt><dd>${connection.listener_running ? escapeHtml(window.I18N.t('node_manager.running')) : escapeHtml(window.I18N.t('node_manager.stopped'))}</dd></div>
+            <div><dt>${escapeHtml(window.I18N.t('node_manager.listener_pid'))}</dt><dd>${deviceDashboardValue(connection.listener_pid)}</dd></div>
+            <div><dt>${escapeHtml(window.I18N.t('node_manager.connected_since'))}</dt><dd>${formatDeviceDashboardDate(connection.connected_since)}</dd></div>
+            <div><dt>${escapeHtml(window.I18N.t('node_manager.message_label'))}</dt><dd>${deviceDashboardValue(connection.message)}</dd></div>
+        `,
+        connectionActionsHtml: `
+            <div class="device-action-row">
+                <button type="button" class="device-action-btn device-action-secondary"
+                    onclick="releaseRadioConnection(); setTimeout(() => loadNodeManagerDashboard(), 1200);"
+                    ${canRelease ? '' : 'disabled'}>${escapeHtml(window.I18N.t('settings.release_radio'))}</button>
+                <button type="button" class="device-action-btn device-action-primary"
+                    onclick="reconnectRadioConnection(); setTimeout(() => loadNodeManagerDashboard(), 1800);"
+                    ${canReconnect ? '' : 'disabled'}>${escapeHtml(window.I18N.t('node_manager.reconnect'))}</button>
+            </div>
+        `,
+    };
+}
+
+async function reconnectActiveTransport(type) {
+    // The Node Manager Connection card's Reconnect action for a non-
+    // serial active transport - reuses the same /api/meshtastic/transport
+    // route Settings' own segmented Serial/BLE/TCP buttons already use
+    // (reconnects to whichever endpoint was last persisted for `type`,
+    // see api/api_meshtastic.py's api_meshtastic_set_transport()) rather
+    // than inventing a Node-Manager-specific endpoint.
+    try {
+        const response = await fetch('/api/meshtastic/transport', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type }),
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || window.I18N.t('node_manager.reconnect_failed'));
+        }
+
+        showToast(window.I18N.t('node_manager.reconnect_requested'), 'success');
+    } catch (error) {
+        console.error('[NODE MANAGER] Reconnect failed:', error);
+        showToast(error.message || window.I18N.t('node_manager.reconnect_failed'), 'error');
+    }
+}
+
 async function loadNodeManagerDashboard(showFeedback = false) {
     const container = document.getElementById('nodeManagerDashboard');
     if (!container) return;
@@ -10081,6 +10180,7 @@ async function loadNodeManagerDashboard(showFeedback = false) {
         const canRelease = connection.mode === 'connected' && connection.listener_running;
         const canReconnect = connection.mode === 'released' || connection.mode === 'error' || (!connection.listener_running && connection.mode !== 'reconnecting');
         const iconSrc = window.MeshCenterNodeAvatar?.current?.() || '/static/meshcenter_logo.png';
+        const { connectionDetailRows, connectionActionsHtml } = renderNodeManagerConnectionCard(connection, radio, connectionLabel, canRelease, canReconnect);
 
         const profileCards = profiles.map(item => {
             const itemRadio = item.radio || {};
@@ -10181,21 +10281,9 @@ async function loadNodeManagerDashboard(showFeedback = false) {
                 <section class="device-info-card">
                     <div class="device-card-title">🔌 ${escapeHtml(window.I18N.t('node_manager.connection_label'))}</div>
                     <dl class="device-detail-list">
-                        <div><dt>${escapeHtml(window.I18N.t('node_manager.usb_port'))}</dt><dd class="device-monospace">${deviceDashboardValue(radio.port)}</dd></div>
-                        <div><dt>${escapeHtml(window.I18N.t('waypoints.status'))}</dt><dd>${escapeHtml(connectionLabel)}</dd></div>
-                        <div><dt>${escapeHtml(window.I18N.t('node_manager.listener_label'))}</dt><dd>${connection.listener_running ? escapeHtml(window.I18N.t('node_manager.running')) : escapeHtml(window.I18N.t('node_manager.stopped'))}</dd></div>
-                        <div><dt>${escapeHtml(window.I18N.t('node_manager.listener_pid'))}</dt><dd>${deviceDashboardValue(connection.listener_pid)}</dd></div>
-                        <div><dt>${escapeHtml(window.I18N.t('node_manager.connected_since'))}</dt><dd>${formatDeviceDashboardDate(connection.connected_since)}</dd></div>
-                        <div><dt>${escapeHtml(window.I18N.t('node_manager.message_label'))}</dt><dd>${deviceDashboardValue(connection.message)}</dd></div>
+                        ${connectionDetailRows}
                     </dl>
-                    <div class="device-action-row">
-                        <button type="button" class="device-action-btn device-action-secondary"
-                            onclick="releaseRadioConnection(); setTimeout(() => loadNodeManagerDashboard(), 1200);"
-                            ${canRelease ? '' : 'disabled'}>${escapeHtml(window.I18N.t('settings.release_radio'))}</button>
-                        <button type="button" class="device-action-btn device-action-primary"
-                            onclick="reconnectRadioConnection(); setTimeout(() => loadNodeManagerDashboard(), 1800);"
-                            ${canReconnect ? '' : 'disabled'}>${escapeHtml(window.I18N.t('node_manager.reconnect'))}</button>
-                    </div>
+                    ${connectionActionsHtml}
                 </section>
 
                 <section class="device-info-card">

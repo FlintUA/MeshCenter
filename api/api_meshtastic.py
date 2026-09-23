@@ -8,12 +8,13 @@ other Core file since Task 44/45.
 from flask import jsonify, request
 
 from meshsrv.connection_status import connection_payload
-from meshsrv.radio_connections import record_success, remember_connection, set_preferred_transport
+from meshsrv.radio_connections import forget_connection, record_success, remember_connection, set_preferred_transport
 from meshsrv.radio_endpoint import (
     DEFAULT_TCP_PORT,
     SWITCH_CONNECT_TIMEOUT_S as _SWITCH_CONNECT_TIMEOUT_S,
     SWITCH_DISCONNECT_TIMEOUT_S as _SWITCH_DISCONNECT_TIMEOUT_S,
     build_transport_connect_new,
+    normalize_radio_record,
 )
 from meshsrv.radio_identity import compare_radio_identity, fetch_connected_tcp_identity
 from meshsrv.radio_transport import TransportError
@@ -501,3 +502,51 @@ def register_meshtastic_routes(
         except TransportError as error:
             return jsonify({"ok": False, "error": str(error), "error_code": "reconnect_failed"}), 503
         return jsonify({"ok": True, "connection": _connection_payload()})
+
+    @app.route("/api/meshtastic/connections/<transport>/forget", methods=["POST"])
+    @handle_errors
+    def api_meshtastic_forget_connection(transport):
+        """Radio Profiles & Connections Model, PR 3b: removes ONE saved
+        transport/endpoint from the accepted radio's `connections` (Node
+        Manager's "Remove saved connection" action) - never touches the
+        radio profile itself (data/profiles/<id>/ is untouched; only
+        INSTANCE_IDENTITY.radio.connections changes).
+
+        Refuses to remove the currently preferred transport's own
+        connection - forget_connection() itself is purely mechanical (see
+        its own docstring in meshsrv/radio_connections.py) and would
+        happily do it, leaving the radio with no usable saved endpoint
+        for whatever transport it's actually configured to use; this
+        route is where that policy belongs."""
+        transport = str(transport or "").strip().lower()
+        if transport not in ("serial", "bluetooth", "tcp"):
+            return jsonify({
+                "ok": False,
+                "error": "transport must be 'serial', 'bluetooth', or 'tcp'",
+                "error_code": "invalid_transport_type",
+            }), 400
+
+        identity = instance_manager.get()
+        radio = dict(identity.get("radio") or {})
+        normalized = normalize_radio_record(radio)
+
+        if transport not in normalized["connections"]:
+            return jsonify({
+                "ok": False,
+                "error": f"No saved {transport} connection to remove.",
+                "error_code": "connection_not_found",
+            }), 404
+
+        if normalized["preferred_transport"] == transport:
+            return jsonify({
+                "ok": False,
+                "error": "Cannot remove the connection currently in use - switch to another saved connection first.",
+                "error_code": "cannot_remove_preferred",
+            }), 409
+
+        updated_radio = forget_connection(radio, transport)
+        updated = dict(identity)
+        updated["radio"] = updated_radio
+        instance_manager.save(updated)
+
+        return jsonify({"ok": True, "connections": updated_radio["connections"]})

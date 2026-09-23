@@ -163,3 +163,23 @@ def connection_descriptor(radio: Optional[Mapping], transport: str) -> Connectio
     else:
         endpoint = normalize_radio_record({"transport": transport})["endpoint"]
     return endpoint_descriptor(transport, endpoint)
+
+
+def forget_connection(radio: Optional[Mapping], transport: str) -> dict:
+    """Returns a NEW radio dict with `connections[transport]` removed (a
+    no-op if it was never remembered in the first place). Purely
+    mechanical - does NOT refuse to remove the currently preferred/active
+    transport's own connection; that policy belongs to the caller (the
+    HTTP route), same reasoning as remember_connection() not deciding
+    whether a new connection becomes preferred. Leaves every other field
+    (including `preferred_transport`/`last_successful_transport`, even if
+    they still point at the just-removed transport) untouched - a caller
+    that removes the preferred transport's own connection without also
+    calling set_preferred_transport() elsewhere is a caller error, not
+    something this function silently papers over."""
+    transport = str(transport or "").strip().lower()
+    normalized = normalize_radio_record(radio)
+    connections = dict(normalized["connections"])
+    connections.pop(transport, None)
+    normalized["connections"] = connections
+    return normalized

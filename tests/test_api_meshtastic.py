@@ -772,3 +772,97 @@ def test_fresh_install_tcp_connect_establishes_identity_as_onboarding():
     assert saved_radio["node_id"] == "!1fa065f0"
     assert saved_radio["long_name"] == "T-Beam"
     assert saved_radio["transport"] == "tcp"
+
+
+# ---------------------------------------------------------------------------
+# POST /api/meshtastic/connections/<transport>/forget (Radio Profiles &
+# Connections Model, PR 3b)
+# ---------------------------------------------------------------------------
+
+def _forget_env(radio):
+    serial_transport = _FakeSerialTransport()
+    ble_transport = _FakeBleTransport(bad_address="00:00:00:00:00:00")
+    tcp_transport = _FakeTcpTransport()
+    transport_router = TransportRouter(serial_transport)
+    settings = {"meshtastic": {"transport": radio.get("transport", "serial")}}
+    instance_manager = _FakeInstanceManager(initial={"radio": radio})
+
+    return _register(
+        transport_router=transport_router,
+        serial_transport=serial_transport,
+        ble_transport=ble_transport,
+        tcp_transport=tcp_transport,
+        settings=settings,
+        instance_manager=instance_manager,
+    )
+
+
+def test_forget_connection_removes_a_non_preferred_saved_connection():
+    env = _forget_env({
+        "node_id": "!1fa065f0", "long_name": "T-Beam",
+        "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403},
+        "connections": {
+            "tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}},
+            "serial": {"endpoint": {"port": "/dev/ttyACM0"}},
+        },
+        "preferred_transport": "tcp",
+    })
+
+    response = env["client"].post("/api/meshtastic/connections/serial/forget")
+    data = response.get_json()
+
+    assert response.status_code == 200
+    assert data["ok"] is True
+    assert "serial" not in data["connections"]
+    assert "tcp" in data["connections"]
+    saved_radio = env["instance_manager"].get()["radio"]
+    assert "serial" not in saved_radio["connections"]
+
+
+def test_forget_connection_refuses_to_remove_the_preferred_transport():
+    env = _forget_env({
+        "node_id": "!1fa065f0", "long_name": "T-Beam",
+        "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403},
+        "connections": {
+            "tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}},
+            "serial": {"endpoint": {"port": "/dev/ttyACM0"}},
+        },
+        "preferred_transport": "tcp",
+    })
+
+    response = env["client"].post("/api/meshtastic/connections/tcp/forget")
+    data = response.get_json()
+
+    assert response.status_code == 409
+    assert data["ok"] is False
+    assert data["error_code"] == "cannot_remove_preferred"
+    # Nothing persisted - both connections still there.
+    saved_radio = env["instance_manager"].get()["radio"]
+    assert set(saved_radio["connections"].keys()) == {"tcp", "serial"}
+
+
+def test_forget_connection_404s_for_a_transport_with_nothing_saved():
+    env = _forget_env({
+        "node_id": "!1fa065f0", "long_name": "T-Beam",
+        "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403},
+        "connections": {"tcp": {"endpoint": {"host": "192.168.2.34", "port": 4403}}},
+        "preferred_transport": "tcp",
+    })
+
+    response = env["client"].post("/api/meshtastic/connections/bluetooth/forget")
+    data = response.get_json()
+
+    assert response.status_code == 404
+    assert data["ok"] is False
+    assert data["error_code"] == "connection_not_found"
+
+
+def test_forget_connection_rejects_an_unknown_transport_name():
+    env = _forget_env({"node_id": "!1fa065f0", "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403}})
+
+    response = env["client"].post("/api/meshtastic/connections/carrier_pigeon/forget")
+    data = response.get_json()
+
+    assert response.status_code == 400
+    assert data["ok"] is False
+    assert data["error_code"] == "invalid_transport_type"

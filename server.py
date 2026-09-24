@@ -62,7 +62,7 @@ from meshsrv.connection_status import connection_payload
 from meshsrv.time_service import start_background_thread as start_time_service
 from meshsrv.node_time_sync import STARTUP_SYNC_DELAY_S
 from meshsrv.serial_port_supervisor import SerialPortSupervisor
-from meshsrv.radio_transport import ConnectionState, ConnectionType
+from meshsrv.radio_transport import ConnectionState, ConnectionType, TransportError
 from meshsrv.adapter_ipc_client import AdapterIPCTransport, AdapterSupervisor
 from meshsrv.transport_router import TransportRouter
 from meshsrv.schedule_engine import start as start_schedule_engine
@@ -1497,6 +1497,9 @@ def default_settings():
             "enabled": False,
             "delay": 0
         },
+        "tcp_ble_autorecovery": {
+            "enabled": True
+        },
         "power": {
             "battery_capacity_mah": 3000
         }
@@ -1516,6 +1519,10 @@ def load_settings():
     recovery = data.get("listener_autorecovery", {})
     if not isinstance(recovery, dict):
         recovery = {}
+
+    transport_recovery = data.get("tcp_ble_autorecovery", {})
+    if not isinstance(transport_recovery, dict):
+        transport_recovery = {}
 
     if not isinstance(units, dict):
         units = {}
@@ -1539,6 +1546,10 @@ def load_settings():
     normalized_settings["listener_autorecovery"] = {
         "enabled": bool(recovery.get("enabled", False)),
         "delay": int(recovery.get("delay", 60))
+    }
+
+    normalized_settings["tcp_ble_autorecovery"] = {
+        "enabled": bool(transport_recovery.get("enabled", True)),
     }
 
     power = data.get("power", {})
@@ -4178,6 +4189,33 @@ listener_recovery_state = {
     "paused_warning_logged": False,
 }
 
+# TCP/Bluetooth auto-reconnect (reliability follow-up, live-confirmed on
+# pixel-111 across two real reboots): the non-serial counterpart to
+# LISTENER_RECOVERY_MAX_ATTEMPTS/LISTENER_RECOVERY_WINDOW above, reused
+# wholesale (same 3-attempts-per-30-minutes shape) rather than inventing
+# a parallel scheme - see process_transport_autorecovery()'s own
+# docstring for the full design.
+TRANSPORT_RECOVERY_CONSECUTIVE_CYCLES = 2   # ~60s at radio_health_worker()'s own 30s cadence
+TRANSPORT_RECOVERY_MAX_ATTEMPTS = 3
+TRANSPORT_RECOVERY_WINDOW = 30 * 60
+# Background-thread-only budget (never blocks a caller/HTTP request) -
+# comfortably covers TCPTransport.reconnect()'s own internal backoff-
+# sleep cascade (adapters/meshtastic/tcp_transport.py's
+# _RECONNECT_DELAYS_S = 1+2+5+10+30+60 = 108s) plus headroom for each
+# attempt's own connect-time overhead. Deliberately NOT
+# meshsrv.radio_endpoint.SWITCH_CONNECT_TIMEOUT_S (90.0s) - that one
+# bounds api_meshtastic_reconnect()'s own HTTP request, a genuinely
+# different constraint that doesn't apply here.
+TRANSPORT_RECONNECT_TIMEOUT_S = 150.0
+
+transport_recovery_state = {
+    "consecutive_bad_cycles": 0,
+    "attempts": [],
+    "in_progress": False,
+    "last_enabled": None,
+    "limit_logged": False,
+}
+
 
 def resolve_paused_recovery_status(status, now_ts):
     """Droidian-caught follow-up: a repeating retry loop can keep
@@ -4478,6 +4516,172 @@ def process_listener_autorecovery(status, listener_running, now_ts, escalated_fr
         )
 
 
+def process_transport_autorecovery(status, active_transport, now_ts):
+    """Auto-reconnect for TCP/Bluetooth - the non-serial counterpart to
+    process_listener_autorecovery() above, reusing the same shape
+    (bounded attempts per rolling time window, its own settings toggle,
+    its own small state dict) rather than a parallel mechanism.
+    Deliberately a SEPARATE settings section (tcp_ble_autorecovery, not
+    listener_autorecovery) - that one's own name and log copy
+    ("Restart the Meshtastic listener") are explicitly about the serial
+    --listen subprocess; reusing it here would be a real semantic
+    mismatch, not just a naming nitpick.
+
+    Root problem this closes (live-confirmed on pixel-111, two separate
+    real reboots): nothing in this codebase automatically reconnects a
+    TCP/Bluetooth radio once it's DISCONNECTED/ERROR - not "never
+    connected in the first place" (the boot-race scenario
+    TCP_IDENTITY_BOOT_RETRY_DELAYS_S already covers, separately, inside
+    verify_radio_identity()) and not "was connected, then dropped"
+    either - transport_router.reconnect() (with its own already-tested
+    backoff, adapters/meshtastic/tcp_transport.py's _RECONNECT_DELAYS_S)
+    has exactly one caller anywhere in the codebase before this:
+    api_meshtastic_reconnect(), a manual, user-clicked HTTP route.
+    compute_radio_health_status()'s non-serial branch has no memory of
+    which of those two histories led to the current DISCONNECTED/ERROR
+    reading - both are treated identically here, deliberately (see this
+    feature's own investigation write-up for why distinguishing them
+    would need new bookkeeping this doesn't otherwise need).
+
+    THREADING: transport_router.reconnect() can legitimately run for the
+    full TRANSPORT_RECONNECT_TIMEOUT_S (150s) - dispatched onto its own
+    daemon thread so it never blocks radio_health_worker()'s own 30s
+    cadence. `in_progress` guards the narrow window between spawning
+    that thread and it actually acquiring TransportRouter's lock, where
+    get_connection_info() would still report the real DISCONNECTED/
+    ERROR state (only a lock already held makes it report a synthetic
+    CONNECTING+BUSY) - without this flag, a health-check tick landing in
+    that gap could spawn a second, redundant reconnect() attempt before
+    the first one has even started.
+
+    CONFLICT AVOIDANCE WITH A MANUAL ACTION: deliberately NOT via a
+    short reconnect() timeout (that would cripple the very backoff
+    cascade this function exists to reuse - _delegate() splits ONE
+    shared budget between the lock-wait and the operation itself, not
+    two independent numbers, see this feature's own PR discussion) - the
+    real guards are (a) TransportRouter.get_connection_info() only ever
+    reports DISCONNECTED/ERROR when its lock was free a moment ago (a
+    busy lock, whether from a manual action or a previous auto-trigger,
+    synthesizes CONNECTING+BUSY instead - see class docstring), so this
+    function structurally can't fire while anything else is actively
+    working on the connection, and (b) TRANSPORT_RECOVERY_CONSECUTIVE_
+    CYCLES itself (60s of confirmed bad state before the first trigger)
+    makes the remaining TOCTOU race (something grabs the lock in the
+    instant between this function's own read and its reconnect() call)
+    vanishingly unlikely to matter in practice, and harmless even if it
+    does (the queued call just runs slightly late, never destructively).
+    """
+    state = transport_recovery_state
+
+    with state_lock:
+        recovery_settings = settings.get("tcp_ble_autorecovery", {}).copy()
+
+    enabled = bool(recovery_settings.get("enabled", True))
+
+    if state["last_enabled"] is None:
+        state["last_enabled"] = enabled
+
+        if enabled:
+            log_system_event(
+                title="TCP/Bluetooth Auto-Reconnect enabled",
+                level="INFO",
+                details=f"Triggers after {TRANSPORT_RECOVERY_CONSECUTIVE_CYCLES} "
+                    "consecutive unhealthy checks",
+                source="recovery",
+            )
+
+    elif state["last_enabled"] != enabled:
+        state["last_enabled"] = enabled
+
+        log_system_event(
+            title="TCP/Bluetooth Auto-Reconnect enabled"
+                if enabled
+                else "TCP/Bluetooth Auto-Reconnect disabled",
+            level="INFO",
+            details=f"Triggers after {TRANSPORT_RECOVERY_CONSECUTIVE_CYCLES} "
+                "consecutive unhealthy checks"
+                if enabled
+                else "Automatic reconnect is disabled",
+            source="recovery",
+        )
+
+    if not enabled or active_transport == "serial" or status not in ("DISCONNECTED", "ERROR"):
+        state["consecutive_bad_cycles"] = 0
+        return
+
+    state["consecutive_bad_cycles"] += 1
+    if state["consecutive_bad_cycles"] < TRANSPORT_RECOVERY_CONSECUTIVE_CYCLES:
+        return
+
+    if state["in_progress"]:
+        return
+
+    state["attempts"] = [
+        timestamp
+        for timestamp in state["attempts"]
+        if now_ts - timestamp < TRANSPORT_RECOVERY_WINDOW
+    ]
+
+    if len(state["attempts"]) < TRANSPORT_RECOVERY_MAX_ATTEMPTS:
+        state["limit_logged"] = False
+
+    if len(state["attempts"]) >= TRANSPORT_RECOVERY_MAX_ATTEMPTS:
+        if not state["limit_logged"]:
+            log_system_event(
+                title="TCP/Bluetooth auto-reconnect limit reached",
+                level="ERROR",
+                details=f"{TRANSPORT_RECOVERY_MAX_ATTEMPTS} attempts within "
+                    f"{TRANSPORT_RECOVERY_WINDOW // 60} minutes. Manual action required.",
+                source="recovery",
+            )
+            state["limit_logged"] = True
+        return
+
+    attempt_number = len(state["attempts"]) + 1
+
+    state["attempts"].append(now_ts)
+    state["in_progress"] = True
+    state["consecutive_bad_cycles"] = 0
+
+    log_system_event(
+        title="TCP/Bluetooth auto-reconnect triggered",
+        level="ACTION",
+        details=f"{active_transport} has been {status} for "
+            f"{TRANSPORT_RECOVERY_CONSECUTIVE_CYCLES} consecutive checks - "
+            f"attempt {attempt_number} of {TRANSPORT_RECOVERY_MAX_ATTEMPTS}",
+        source="recovery",
+    )
+
+    def _do_reconnect():
+        try:
+            transport_router.reconnect(timeout=TRANSPORT_RECONNECT_TIMEOUT_S)
+            log_system_event(
+                title="TCP/Bluetooth auto-reconnect succeeded",
+                level="OK",
+                details=f"{active_transport} reconnected automatically",
+                source="recovery",
+            )
+        except TransportError as error:
+            log_system_event(
+                title="TCP/Bluetooth auto-reconnect failed",
+                level="WARNING",
+                details=f"{active_transport}: {error}",
+                source="recovery",
+            )
+        except Exception as error:
+            log_system_event(
+                title="TCP/Bluetooth auto-reconnect failed",
+                level="WARNING",
+                details=f"{active_transport}: unexpected error: {error}",
+                source="recovery",
+            )
+        finally:
+            with state_lock:
+                transport_recovery_state["in_progress"] = False
+
+    threading.Thread(target=_do_reconnect, daemon=True).start()
+
+
 def compute_radio_health_status(
     *,
     active_transport,
@@ -4718,6 +4922,12 @@ def radio_health_worker():
                 listener_running=listener_running,
                 now_ts=now_ts,
                 escalated_from_paused=escalated_from_paused,
+            )
+
+            process_transport_autorecovery(
+                status=status,
+                active_transport=active_transport,
+                now_ts=now_ts,
             )
 
         except Exception as e:

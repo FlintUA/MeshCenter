@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import contextlib
 import socket
+import struct
 import threading
 from typing import Optional
 
@@ -107,9 +108,28 @@ class FakeMeshtasticTcpServer:
     this tolerance that probe would consume the one connection this
     server is willing to serve."""
 
-    def __init__(self, *, complete_handshake: bool, node_num: int = 0x756F9960):
+    def __init__(
+        self,
+        *,
+        complete_handshake: bool,
+        node_num: int = 0x756F9960,
+        reset_after_accept: bool = False,
+    ):
+        """`reset_after_accept`: instead of driving any handshake at all,
+        forcibly resets the connection (SO_LINGER with a zero linger
+        time, which makes close() emit a raw RST instead of a clean FIN)
+        the instant the real client's initial ToRadio frame is read -
+        reproducing the exact "Connection reset by peer" / [Errno 104]
+        OSError live-observed on pixel-111 (adapters/meshtastic/
+        tcp_transport.py's fail-fast-override regression test needs
+        this). A distinct failure shape from `complete_handshake=False`
+        (accepts the connection, stays silently open forever - a
+        PROTOCOL_SYNC_TIMEOUT, not a reader-thread death): here the
+        reader thread's own blocking recv() raises immediately, which is
+        exactly what this mode exists to reproduce."""
         self._complete_handshake = complete_handshake
         self._node_num = node_num
+        self._reset_after_accept = reset_after_accept
         self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._listener.bind(("127.0.0.1", 0))
@@ -155,6 +175,17 @@ class FakeMeshtasticTcpServer:
         to_radio = mesh_pb2.ToRadio()
         to_radio.ParseFromString(payload)
         self.accepted_want_config_id = to_radio.want_config_id
+
+        if self._reset_after_accept:
+            # linger=(onoff=1, linger=0): the OS discards any buffered
+            # data and sends RST on close() instead of the normal FIN -
+            # the client's next recv() raises ConnectionResetError
+            # ([Errno 104] on Linux), same as the real, live-observed
+            # failure. The caller's own `finally:` still calls
+            # conn.close() after this returns, which is what actually
+            # triggers the reset now that SO_LINGER is set.
+            conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            return
 
         my_info = mesh_pb2.FromRadio()
         my_info.my_info.my_node_num = self._node_num

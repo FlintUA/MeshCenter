@@ -477,10 +477,111 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         the FULL raw-connect + protocol-handshake sequence, the same way
         SerialInterface's constructor already does for SerialTransport -
         see that module's connect() docstring for the equivalent proof-
-        of-connectivity reasoning this mirrors for TCP."""
+        of-connectivity reasoning this mirrors for TCP.
+
+        Returns a _FailFastTCPInterface (defined locally, not at module
+        scope - the lazy-import discipline above means TCPInterface/
+        MeshInterface can't be named until this function actually runs)
+        instead of the plain TCPInterface class - see that subclass's
+        own docstring for the root cause this fixes and why the fix is
+        safe."""
+        from meshtastic.mesh_interface import MeshInterface
         from meshtastic.tcp_interface import TCPInterface
 
-        return TCPInterface(hostname=self._host, portNumber=self._port, connectNow=True)
+        class _FailFastTCPInterface(TCPInterface):
+            """Overrides MeshInterface._waitConnected()'s single 30s
+            Event.wait() call with a short poll loop that also watches
+            the reader thread's own aliveness.
+
+            ROOT CAUSE (confirmed by reading the pinned meshtastic==2.7.11
+            source directly, live-caught on pixel-111, T-Beam firmware
+            2.7.15.567b8ea): _waitConnected() blocks on
+            self.isConnected.wait(timeout=30.0) - a threading.Event only
+            ever .set() from _connected() (mesh_interface.py), which only
+            runs once the config download has genuinely, fully succeeded.
+            On a reader-thread death (e.g. the real "Connection reset by
+            peer" observed in production), stream_interface.py's own
+            __reader() loop DOES call self._disconnected() from its
+            `finally:` block - but _disconnected() only ever calls
+            self.isConnected.clear(), never .set(). Event.clear() never
+            wakes a thread already blocked in .wait() - it is a pure
+            no-op from the waiter's perspective when the Event was never
+            set in the first place, which is exactly the case for a
+            connect attempt that's failing (it never reached
+            _connected()). Net effect: a dead reader thread leaves
+            _waitConnected() blocked for the FULL hardcoded 30s
+            regardless, observed live as a consistent ~35s hang (30s
+            wait + a few seconds of TCP-probe/raw-connect overhead)
+            ending in AdapterSupervisor's own outer SIGKILL of the whole
+            adapter subprocess, not a clean TransportError.
+
+            FIX: poll self.isConnected (success path, functionally
+            identical to the original - a slow-but-healthy handshake
+            waits out the exact same total budget, just observed in
+            0.25s steps instead of one blocking call) and
+            self._rxThread.is_alive() (failure path - only fires once
+            the reader thread has UNAMBIGUOUSLY exited, never merely
+            "hasn't produced data yet", so this can never rush a
+            legitimate slow connect - see
+            tests/test_tcp_transport_integration.py's stalled-handshake
+            test, which stays green unchanged under this override since
+            that scenario's reader thread stays alive, blocked in
+            recv(), the entire time). `reader_thread.ident is not None`
+            additionally guards against a thread object that exists but
+            hasn't actually been started yet (never observed in practice
+            here - connect() always calls self._rxThread.start() before
+            _waitConnected() - kept as an explicit, cheap safety check
+            rather than an assumption). `not self._wantExit` excludes an
+            intentional concurrent close() (e.g. a racing force=True
+            reconnect) from being misclassified as a fatal failure - the
+            same guard stream_interface.py's own code uses everywhere
+            else for this exact reason.
+
+            FRAGILITY, ACKNOWLEDGED: this overrides a private
+            (underscore-prefixed) method of a pinned third-party library
+            (meshtastic>=2.7.9,<2.8.0 - see adapters/meshtastic/
+            requirements.txt's own pin rationale). A future version bump
+            within that range could change _waitConnected()'s shape and
+            silently turn this override into a no-op (falling back to
+            TCPInterface's own default method, i.e. today's 30s-hang
+            behavior returns, quietly). Guarded by
+            tests/test_tcp_transport_integration.py's dedicated
+            regression test asserting this override actually fires
+            within ~1s against a real reader-thread death (not just that
+            the code imports/runs) - a version bump that broke this
+            would fail that test in CI, not surface live again."""
+
+            _WAIT_POLL_INTERVAL_S = 0.25
+
+            def _waitConnected(self, timeout=30.0):
+                if self.noProto:
+                    return
+                deadline = time.monotonic() + timeout
+                while True:
+                    if self.isConnected.wait(self._WAIT_POLL_INTERVAL_S):
+                        break
+                    reader_thread = self._rxThread
+                    if (
+                        reader_thread is not None
+                        and reader_thread.ident is not None
+                        and not reader_thread.is_alive()
+                        and not self._wantExit
+                    ):
+                        raise MeshInterface.MeshInterfaceError(
+                            "TCP reader thread exited before the connection "
+                            "completed (fail-fast override - see "
+                            "_FailFastTCPInterface's docstring in "
+                            "adapters/meshtastic/tcp_transport.py)"
+                        )
+                    if time.monotonic() >= deadline:
+                        raise MeshInterface.MeshInterfaceError(
+                            "Timed out waiting for connection completion"
+                        )
+
+                if self.failure:
+                    raise self.failure
+
+        return _FailFastTCPInterface(hostname=self._host, portNumber=self._port, connectNow=True)
 
     # ------------------------------------------------------------------
     # RadioTransport - connection lifecycle

@@ -162,3 +162,77 @@ def test_real_tcpinterface_stalled_handshake_reports_protocol_sync_timeout_clean
         # quiet and deterministic.
         time.sleep(3.5)
         server.shutdown()
+
+
+def test_real_tcpinterface_reader_thread_death_fails_fast_instead_of_waiting_30s():
+    """The actual bug investigated and fixed on pixel-111: a reader-thread
+    death (real "Connection reset by peer") used to leave the REAL
+    library's own MeshInterface._waitConnected() blocked for its full
+    hardcoded 30s default (see mesh_interface.py: _disconnected()'s
+    isConnected.clear() never wakes a thread already blocked in
+    isConnected.wait() - only .set() does, and a failing connect never
+    reaches the .set() call in _connected()). This drove the ~35s hangs
+    ending in AdapterSupervisor's own SIGKILL, observed live via
+    switch()'s own "held the router lock for 35.3s"/"35.4s" log lines
+    across three separate reconnect attempts against the same T-Beam.
+
+    tcp_transport.py's _open_interface() now returns a
+    _FailFastTCPInterface that polls instead of blocking on one big
+    wait, and fails fast the moment the reader thread is confirmed dead.
+    This is the required regression guard: without the fix, this test
+    would need ~30s (or the patched-down internal default) to complete;
+    with the fix, it must complete within ~1s of the reset actually
+    landing - proving the override is really in effect against the
+    pinned library version, not just present in the source.
+    """
+    server = FakeMeshtasticTcpServer(complete_handshake=False, reset_after_accept=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+
+    threads_before = set(threading.enumerate())
+
+    try:
+        started = time.monotonic()
+        with pytest.raises(TransportError) as excinfo:
+            # A generous outer budget (10s) specifically so this test
+            # proves the FAIL-FAST override is what ended the attempt,
+            # not TCPTransport's own outer TimeoutEnforced watchdog
+            # (tier 1) racing it - if the fix regressed to a no-op
+            # (e.g. a future meshtastic version silently changed
+            # _waitConnected()'s shape), this budget is wide enough that
+            # the elapsed-time assertion below would fail loudly instead
+            # of the test accidentally passing for the wrong reason.
+            transport.connect(_descriptor("127.0.0.1", server.port), timeout=10.0)
+        elapsed = time.monotonic() - started
+
+        # TCP_CONNECTED: the raw socket connected fine, the Meshtastic
+        # protocol layer then raised immediately - exactly the
+        # classification _classify_sync_failure() assigns a non-socket,
+        # non-OSError exception (MeshInterface.MeshInterfaceError isn't
+        # an OSError subtype) raised during SYNCING, distinct from
+        # PROTOCOL_SYNC_TIMEOUT (the stalled-handshake test above).
+        assert excinfo.value.code == TransportErrorCode.TCP_CONNECTED
+        assert transport.internal_state == "error"
+        assert transport.is_connected() is False
+        assert transport.get_connection_info().state == ConnectionState.ERROR
+
+        # The actual regression guard: real evidence the fail-fast path
+        # fired, not the 30s (or any multi-second) library default. Wide
+        # margin for CI/scheduling jitter while still being nowhere near
+        # the old ~35s hang this fixes.
+        assert elapsed < 3.0, (
+            f"expected the fail-fast override to end this attempt within ~1s of the "
+            f"reset, took {elapsed:.2f}s instead - the override may have silently "
+            f"stopped taking effect (e.g. a meshtastic version bump changed "
+            f"_waitConnected()'s shape - see _FailFastTCPInterface's own docstring)"
+        )
+
+        threads_after = set(threading.enumerate())
+        new_threads = threads_after - threads_before
+        non_daemon = [t for t in new_threads if not t.daemon]
+        assert non_daemon == [], (
+            f"non-daemon thread(s) left behind after a reader-thread-death fail-fast, "
+            f"would block process/test-suite exit: {[t.name for t in non_daemon]}"
+        )
+    finally:
+        transport.close()
+        server.shutdown()

@@ -480,12 +480,24 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         of-connectivity reasoning this mirrors for TCP.
 
         Returns a _FailFastTCPInterface (defined locally, not at module
-        scope - the lazy-import discipline above means TCPInterface/
-        MeshInterface can't be named until this function actually runs)
-        instead of the plain TCPInterface class - see that subclass's
-        own docstring for the root cause this fixes and why the fix is
-        safe."""
-        from meshtastic.mesh_interface import MeshInterface
+        scope - the lazy-import discipline above means TCPInterface
+        can't be named until this function actually runs) instead of
+        the plain TCPInterface class - see that subclass's own
+        docstring for the root cause this fixes and why the fix is
+        safe. Raises plain RuntimeError, not meshtastic.mesh_interface.
+        MeshInterface.MeshInterfaceError (what the real library itself
+        raises on this same timeout) - deliberately avoids a second
+        `meshtastic` import: _classify_sync_failure() (this module)
+        only distinguishes "was it a socket-layer OSError" from
+        "anything else", so any plain Exception subtype classifies
+        identically to TCP_CONNECTED. This also keeps
+        tests/test_tcp_transport.py's fully-mocked suite working - it
+        stubs sys.modules["meshtastic.tcp_interface"] only (fakes
+        TCPInterface itself), not "meshtastic.mesh_interface", and
+        Core's own venv/CI has no real `meshtastic` package installed
+        at all (see CLAUDE.md's GPLv3 process isolation section) - a
+        second top-level `from meshtastic.mesh_interface import ...`
+        here would ModuleNotFoundError in exactly that environment."""
         from meshtastic.tcp_interface import TCPInterface
 
         class _FailFastTCPInterface(TCPInterface):
@@ -567,14 +579,14 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
                         and not reader_thread.is_alive()
                         and not self._wantExit
                     ):
-                        raise MeshInterface.MeshInterfaceError(
+                        raise RuntimeError(
                             "TCP reader thread exited before the connection "
                             "completed (fail-fast override - see "
                             "_FailFastTCPInterface's docstring in "
                             "adapters/meshtastic/tcp_transport.py)"
                         )
                     if time.monotonic() >= deadline:
-                        raise MeshInterface.MeshInterfaceError(
+                        raise RuntimeError(
                             "Timed out waiting for connection completion"
                         )
 

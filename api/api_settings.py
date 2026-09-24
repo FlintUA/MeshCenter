@@ -26,6 +26,10 @@ DEFAULT_SETTINGS = {
         "delay": 60,
     },
 
+    "tcp_ble_autorecovery": {
+        "enabled": True,
+    },
+
     "maps": {
         "provider": "osm",
     },
@@ -227,6 +231,20 @@ def normalize_settings(settings):
 
     if delay not in (30, 60, 90, 120, 180, 300):
         delay = 60
+
+    # -------- TCP/Bluetooth Auto-Reconnect --------
+    # Deliberately a separate section from listener_autorecovery above -
+    # that one's own enabled/delay shape and log copy are specific to
+    # the serial --listen subprocess; this one governs
+    # server.py's process_transport_autorecovery() instead (TCP/
+    # Bluetooth only, no delay dropdown - see that function's own
+    # docstring for why the trigger threshold isn't user-configurable).
+
+    transport_recovery = settings.get("tcp_ble_autorecovery", {})
+    if not isinstance(transport_recovery, dict):
+        transport_recovery = {}
+
+    transport_autorecovery_enabled = bool(transport_recovery.get("enabled", True))
 
     # ---------------- Maps ----------------
 
@@ -523,6 +541,10 @@ def normalize_settings(settings):
         "listener_autorecovery": {
             "enabled": enabled,
             "delay": delay,
+        },
+
+        "tcp_ble_autorecovery": {
+            "enabled": transport_autorecovery_enabled,
         },
 
         "maps": {

@@ -604,3 +604,107 @@ def test_verify_radio_identity_gives_up_after_exhausting_retries(
     assert len(calls) == expected_attempts
     assert slept == list(server_module.TCP_IDENTITY_BOOT_RETRY_DELAYS_S)
     assert server_module.RADIO_IDENTITY_RESULT["status"] == "DETECTION_ERROR"
+
+
+# ---------------------------------------------------------------------------
+# refresh_identity_after_reconnect() - reliability follow-up: a successful
+# transport_router.reconnect()/.switch() used to never touch
+# RADIO_IDENTITY_RESULT/INSTANCE_IDENTITY.runtime.identity_status at all,
+# leaving is_radio_available() gated on a stale pre-reconnect status
+# forever - live-caught on pixel-111 with a fully live TCP connection
+# sitting behind identity_status="DETECTION_ERROR" from an earlier
+# boot-race failure.
+# ---------------------------------------------------------------------------
+
+def _set_accepted_radio(server_module, node_id="!1fa065f0", transport="tcp"):
+    identity = server_module.instance_manager.get()
+    updated = dict(identity)
+    updated["radio"] = {
+        "node_id": node_id,
+        "long_name": "T-Beam",
+        "transport": transport,
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+    }
+    server_module.instance_manager.save(updated)
+    server_module.INSTANCE_IDENTITY = updated
+
+
+def _set_stale_identity_result(server_module, status="DETECTION_ERROR"):
+    server_module.RADIO_IDENTITY_RESULT = {
+        "status": status,
+        "checked_at": "2026-09-24T14:42:16+00:00",
+        "configured": {},
+        "detected": {},
+        "error": "connect_failed: could not open a TCP connection: [Errno 101] Network is unreachable",
+    }
+
+
+def test_refresh_identity_after_reconnect_clears_a_stale_status_on_match(
+    server_module, _preserve_transport_router_state,
+):
+    _set_accepted_radio(server_module, node_id="!1fa065f0")
+    _set_stale_identity_result(server_module, status="DETECTION_ERROR")
+
+    server_module.refresh_identity_after_reconnect("tcp", {"node_id": "!1fa065f0"})
+
+    assert server_module.RADIO_IDENTITY_RESULT["status"] == "MATCH"
+    assert server_module.RADIO_IDENTITY_RESULT["error"] is None
+    assert server_module.INSTANCE_IDENTITY["runtime"]["identity_status"] == "MATCH"
+    # Fresh, not the old stale timestamp.
+    assert server_module.RADIO_IDENTITY_RESULT["checked_at"] != "2026-09-24T14:42:16+00:00"
+
+
+def test_refresh_identity_after_reconnect_reports_a_real_mismatch_not_silently(
+    server_module, _preserve_transport_router_state,
+):
+    """The exact safety guarantee this fix must not weaken: a reconnect
+    to a DIFFERENT radio than accepted must surface as MISMATCH, not get
+    rubber-stamped as MATCH just because the reconnect itself succeeded."""
+    _set_accepted_radio(server_module, node_id="!1fa065f0")
+    _set_stale_identity_result(server_module, status="DETECTION_ERROR")
+
+    server_module.refresh_identity_after_reconnect("tcp", {"node_id": "!deadbeef"})
+
+    assert server_module.RADIO_IDENTITY_RESULT["status"] == "MISMATCH"
+    assert server_module.INSTANCE_IDENTITY["runtime"]["identity_status"] == "MISMATCH"
+
+
+def test_refresh_identity_after_reconnect_is_a_noop_for_bluetooth(
+    server_module, _preserve_transport_router_state,
+):
+    """Bluetooth has no identity-verification mechanism at all
+    (deliberate, pre-existing) - must not touch RADIO_IDENTITY_RESULT."""
+    _set_accepted_radio(server_module, node_id="!756f9960", transport="bluetooth")
+    _set_stale_identity_result(server_module, status="DETECTION_ERROR")
+    before = dict(server_module.RADIO_IDENTITY_RESULT)
+
+    server_module.refresh_identity_after_reconnect("bluetooth", {"node_id": "!756f9960"})
+
+    assert server_module.RADIO_IDENTITY_RESULT == before
+
+
+def test_refresh_identity_after_reconnect_is_a_noop_for_serial(
+    server_module, _preserve_transport_router_state,
+):
+    _set_accepted_radio(server_module, node_id="!067a40fa", transport="serial")
+    _set_stale_identity_result(server_module, status="DETECTION_ERROR")
+    before = dict(server_module.RADIO_IDENTITY_RESULT)
+
+    server_module.refresh_identity_after_reconnect("serial", {"node_id": "!067a40fa"})
+
+    assert server_module.RADIO_IDENTITY_RESULT == before
+
+
+def test_refresh_identity_after_reconnect_missing_node_id_reports_not_found(
+    server_module, _preserve_transport_router_state,
+):
+    """A minimal {"node_id": None} (e.g. TransportRouter.get_connection_info()
+    returned no node_id for some reason) must not be silently treated as
+    a match - compare_radio_identity()'s own NOT_FOUND path, same as any
+    other caller that never got a real node_id."""
+    _set_accepted_radio(server_module, node_id="!1fa065f0")
+    _set_stale_identity_result(server_module, status="DETECTION_ERROR")
+
+    server_module.refresh_identity_after_reconnect("tcp", {"node_id": None})
+
+    assert server_module.RADIO_IDENTITY_RESULT["status"] == "NOT_FOUND"

@@ -4661,6 +4661,24 @@ def process_transport_autorecovery(status, active_transport, now_ts):
                 details=f"{active_transport} reconnected automatically",
                 source="recovery",
             )
+            # Refresh identity_status so is_radio_available() doesn't
+            # keep blocking on a stale pre-reconnect status - see
+            # refresh_identity_after_reconnect()'s own docstring. A
+            # failure here must not retroactively turn a genuinely
+            # successful reconnect into a logged failure - caught and
+            # reported separately, distinct from the TransportError/
+            # Exception handling below (which is specifically about the
+            # reconnect() call itself).
+            try:
+                info = transport_router.get_connection_info()
+                refresh_identity_after_reconnect(active_transport, {"node_id": info.node_id})
+            except Exception as identity_error:
+                log_system_event(
+                    title="TCP/Bluetooth auto-reconnect identity refresh failed",
+                    level="WARNING",
+                    details=f"{active_transport}: {identity_error}",
+                    source="recovery",
+                )
         except TransportError as error:
             log_system_event(
                 title="TCP/Bluetooth auto-reconnect failed",
@@ -4680,6 +4698,68 @@ def process_transport_autorecovery(status, active_transport, now_ts):
                 transport_recovery_state["in_progress"] = False
 
     threading.Thread(target=_do_reconnect, daemon=True).start()
+
+
+def refresh_identity_after_reconnect(active_transport, detected):
+    """The ONE place every successful non-serial reconnect writes
+    through to refresh RADIO_IDENTITY_RESULT/INSTANCE_IDENTITY.runtime.
+    identity_status - called from process_transport_autorecovery()'s own
+    success branch above, api_meshtastic_reconnect(), and
+    api_meshtastic_tcp_connect() (via DI - see register_meshtastic_
+    routes()'s own docstring). A single shared helper specifically so a
+    future fourth caller can't reintroduce the exact "one path updates,
+    another doesn't" bug this fixes: TransportRouter.reconnect()/
+    .switch() never touched these fields at all (confirmed by grepping
+    every RADIO_IDENTITY_RESULT reassignment site - only
+    verify_radio_identity() and the accept-new-radio/activate-profile
+    flows ever did), so a radio that successfully reconnected after a
+    transient failure stayed reported as DETECTION_ERROR/MISMATCH
+    forever, blocking is_radio_available() - live-caught on pixel-111
+    with a fully live TCP connection sitting behind a stale identity
+    status from an earlier boot-race failure.
+
+    Defined here (before register_meshtastic_routes()'s own call site
+    further down this file) rather than next to _save_detected_radio_
+    runtime() (which it delegates to, defined later) - referenced
+    directly as a DI argument at module-load time, so it must already
+    be bound in this module's namespace by the time that call executes,
+    unlike _save_detected_radio_runtime() itself, which is only ever
+    referenced from inside a function body and resolved lazily at call
+    time.
+
+    TCP only. Bluetooth has no identity-verification mechanism at all
+    (deliberate, pre-existing - verify_radio_identity() always sets it
+    to NOT_CHECKED for BLE) and NOT_CHECKED already always satisfies
+    is_radio_available()'s gate - there is no stale-status bug for
+    Bluetooth to fix, and adding real verification for it now would be
+    an unrelated scope expansion.
+
+    `detected` is the caller's own already-obtained identity dict (at
+    minimum node_id) - never re-probed here. api_meshtastic_tcp_connect()
+    already has a full dict (node_id/long_name/hardware/...) from
+    fetch_connected_tcp_identity(); process_transport_autorecovery() and
+    api_meshtastic_reconnect() build a minimal {"node_id": ...} from
+    TransportRouter.get_connection_info(), which TCPTransport already
+    populates from the same round-trip reconnect()/connect() itself
+    just did - no extra network call.
+
+    Never trusts "reconnect succeeded" as proof of identity by itself -
+    TCPTransport's own expected_node_id mismatch guard is dead code in
+    practice (nothing anywhere constructs it with a real value, so it
+    never actually rejects a wrong radio on connect). Delegates to
+    _save_detected_radio_runtime() WITHOUT a status= override, so it
+    always runs a real compare_radio_identity() against the currently-
+    accepted radio, exactly like verify_radio_identity()/accept-radio/
+    activate-profile already do - a MISMATCH/NOT_FOUND result is
+    persisted as such, not silently dropped. This refreshes stale
+    state; it does not loosen the gate."""
+    if active_transport != "tcp":
+        return
+    _save_detected_radio_runtime({
+        "detected": detected,
+        "checked_at": utc_now_iso(),
+        "error": None,
+    })
 
 
 def compute_radio_health_status(
@@ -5267,6 +5347,7 @@ register_meshtastic_routes(
     LOCAL_NODE_ID,
     listener_supervisor,
     instance_manager,
+    refresh_identity_after_reconnect,
 )
 
 @app.route("/")

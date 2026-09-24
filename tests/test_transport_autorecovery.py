@@ -13,7 +13,12 @@ import time
 
 import pytest
 
-from meshsrv.radio_transport import TransportError, TransportErrorCode
+from meshsrv.radio_transport import (
+    ConnectionInfo,
+    ConnectionState,
+    TransportError,
+    TransportErrorCode,
+)
 
 
 @pytest.fixture
@@ -29,9 +34,26 @@ def _clean_recovery_state(server_module):
     })
     with server_module.state_lock:
         server_module.settings["tcp_ble_autorecovery"] = {"enabled": True}
+
+    # Some tests in this file (the identity-refresh ones) also mutate
+    # INSTANCE_IDENTITY/RADIO_IDENTITY_RESULT via refresh_identity_after_
+    # reconnect() - snapshot/restore them too, same discipline as
+    # test_server_startup_tcp_transport.py's own
+    # _preserve_transport_router_state fixture, so this file can't leak
+    # a fake "tcp" accepted radio into other test files sharing the
+    # session-scoped server_module fixture (live-caught: this exact leak
+    # broke test_verify_radio_identity_logging.py's serial-path
+    # assumptions when the full suite ran in collection order).
+    original_identity = server_module.instance_manager.get()
+    original_radio_result = dict(server_module.RADIO_IDENTITY_RESULT)
+
     yield server_module
+
     state.clear()
     state.update(original)
+    server_module.instance_manager.save(original_identity)
+    server_module.INSTANCE_IDENTITY = original_identity
+    server_module.RADIO_IDENTITY_RESULT = original_radio_result
 
 
 @pytest.fixture
@@ -195,6 +217,64 @@ def test_in_progress_cleared_after_a_successful_reconnect(sync_thread, logged, m
     assert server_module.transport_recovery_state["in_progress"] is False
     success_logs = [e for e in logged if e["title"] == "TCP/Bluetooth auto-reconnect succeeded"]
     assert len(success_logs) == 1
+
+
+def test_successful_auto_reconnect_refreshes_stale_identity_status(sync_thread, logged, monkeypatch):
+    """Reliability follow-up: a successful auto-reconnect used to leave
+    RADIO_IDENTITY_RESULT/identity_status stuck at whatever it was before
+    (e.g. DETECTION_ERROR from an earlier boot-race failure), blocking
+    is_radio_available() forever despite a fully live connection - see
+    refresh_identity_after_reconnect()'s own docstring."""
+    server_module = sync_thread
+    monkeypatch.setattr(server_module.transport_router, "reconnect", lambda **k: None)
+    monkeypatch.setattr(
+        server_module.transport_router, "get_connection_info",
+        lambda: ConnectionInfo(state=ConnectionState.CONNECTED, descriptor=None, node_id="!1fa065f0"),
+    )
+
+    identity = server_module.instance_manager.get()
+    updated = dict(identity)
+    updated["radio"] = {"node_id": "!1fa065f0", "long_name": "T-Beam", "transport": "tcp"}
+    server_module.instance_manager.save(updated)
+    server_module.INSTANCE_IDENTITY = updated
+    server_module.RADIO_IDENTITY_RESULT = {
+        "status": "DETECTION_ERROR", "checked_at": "stale", "configured": {}, "detected": {}, "error": "stale error",
+    }
+
+    threshold = server_module.TRANSPORT_RECOVERY_CONSECUTIVE_CYCLES
+    for i in range(threshold):
+        _run(server_module, now_ts=float(i * 30))
+
+    assert server_module.RADIO_IDENTITY_RESULT["status"] == "MATCH"
+    assert server_module.RADIO_IDENTITY_RESULT["checked_at"] != "stale"
+
+
+def test_identity_refresh_failure_does_not_mislabel_a_successful_reconnect(sync_thread, logged, monkeypatch):
+    """A failure inside the identity-refresh step (e.g. instance_manager.
+    save() raising) must not retroactively turn an already-successful
+    reconnect into a logged failure - the connection itself is fine
+    either way, only the identity refresh didn't complete."""
+    server_module = sync_thread
+    monkeypatch.setattr(server_module.transport_router, "reconnect", lambda **k: None)
+
+    def _broken_get_connection_info():
+        raise RuntimeError("simulated get_connection_info failure")
+
+    monkeypatch.setattr(server_module.transport_router, "get_connection_info", _broken_get_connection_info)
+
+    threshold = server_module.TRANSPORT_RECOVERY_CONSECUTIVE_CYCLES
+    for i in range(threshold):
+        _run(server_module, now_ts=float(i * 30))
+
+    success_logs = [e for e in logged if e["title"] == "TCP/Bluetooth auto-reconnect succeeded"]
+    assert len(success_logs) == 1, "the reconnect itself succeeded and must still be logged as such"
+
+    failed_logs = [e for e in logged if e["title"] == "TCP/Bluetooth auto-reconnect failed"]
+    assert failed_logs == [], "must not be mislabeled as a reconnect failure"
+
+    identity_failed_logs = [e for e in logged if e["title"] == "TCP/Bluetooth auto-reconnect identity refresh failed"]
+    assert len(identity_failed_logs) == 1
+    assert server_module.transport_recovery_state["in_progress"] is False
 
 
 def test_in_progress_cleared_after_a_failed_reconnect(sync_thread, logged, monkeypatch):

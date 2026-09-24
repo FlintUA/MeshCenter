@@ -34,6 +34,7 @@ def register_meshtastic_routes(
     local_node_id,
     core_serial_transport,
     instance_manager,
+    refresh_identity_after_reconnect,
 ):
     """Task 48: `serial_transport`/`ble_transport`/`tcp_transport` here are
     Core-side IPC proxies (meshsrv.adapter_ipc_client.AdapterIPCTransport)
@@ -55,7 +56,17 @@ def register_meshtastic_routes(
     that's the boot-time source of truth server.py's start_runtime()
     TRANSPORT RESTORE block reads to reconnect the right transport after
     a restart (see that block's own comment for the pre-existing gap this
-    closes, uniformly for serial/bluetooth/tcp)."""
+    closes, uniformly for serial/bluetooth/tcp).
+
+    `refresh_identity_after_reconnect` (server.py, reliability follow-up):
+    called by api_meshtastic_reconnect() and api_meshtastic_tcp_connect()
+    below after a successful reconnect/connect - RADIO_IDENTITY_RESULT/
+    INSTANCE_IDENTITY.runtime.identity_status live entirely in server.py
+    (this module never had a way to write them), so a plain reconnect to
+    the already-accepted radio used to leave is_radio_available() gated
+    on whatever stale status the last boot-time check happened to leave
+    behind, forever, even after a fully successful reconnect - see that
+    function's own docstring for the live pixel-111 evidence."""
 
     def _connection_payload():
         # Radio Profiles & Connections Model, PR 2: the actual logic moved
@@ -352,6 +363,17 @@ def register_meshtastic_routes(
             # read failure, and a successful read always has a node_id.
 
         _persist_choice(target_transport_name, ble_address, ble_name, tcp_host, tcp_port, tcp_identity=tcp_identity)
+
+        # Refresh identity_status with the identity already read above
+        # (tcp_identity) - see refresh_identity_after_reconnect()'s own
+        # docstring (server.py). No-ops for serial/bluetooth (tcp_identity
+        # is None for those). Best-effort - a failure here must not turn
+        # an already-successful switch into an error response.
+        try:
+            refresh_identity_after_reconnect(target_transport_name, tcp_identity)
+        except Exception as identity_error:
+            print(f"[MESHTASTIC] Identity refresh after switch failed: {identity_error}", flush=True)
+
         return jsonify({"ok": True, "connection": _connection_payload()})
 
     @app.route("/api/meshtastic/connection", methods=["GET"])
@@ -501,6 +523,19 @@ def register_meshtastic_routes(
             transport_router.reconnect(timeout=_SWITCH_CONNECT_TIMEOUT_S)
         except TransportError as error:
             return jsonify({"ok": False, "error": str(error), "error_code": "reconnect_failed"}), 503
+
+        # Refresh identity_status - see refresh_identity_after_reconnect()'s
+        # own docstring (server.py) for why this must happen here, not
+        # just at boot. Best-effort: a failure here must not turn an
+        # already-successful reconnect into an error response to the
+        # caller - the connection itself is fine either way.
+        try:
+            info = transport_router.get_connection_info()
+            reconnected_transport = info.descriptor.type.value if info.descriptor else None
+            refresh_identity_after_reconnect(reconnected_transport, {"node_id": info.node_id})
+        except Exception as identity_error:
+            print(f"[MESHTASTIC] Identity refresh after reconnect failed: {identity_error}", flush=True)
+
         return jsonify({"ok": True, "connection": _connection_payload()})
 
     @app.route("/api/meshtastic/connections/<transport>/forget", methods=["POST"])

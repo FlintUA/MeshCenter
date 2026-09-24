@@ -130,14 +130,19 @@ class _FakeTcpTransport:
     identity-check round-trip itself failing (radio disappeared right
     after connect)."""
 
-    def __init__(self, bad_host=None, identity_node_id="!1fa065f0", identity_long_name="T-Beam", fail_identity_read=False):
+    def __init__(
+        self, bad_host=None, identity_node_id="!1fa065f0", identity_long_name="T-Beam",
+        fail_identity_read=False, fail_reconnect=False,
+    ):
         self.bad_host = bad_host
         self._state = ConnectionState.CONNECTED
         self.connect_calls = []
+        self.reconnect_calls = 0
         self.get_local_node_calls = 0
         self.identity_node_id = identity_node_id
         self.identity_long_name = identity_long_name
         self.fail_identity_read = fail_identity_read
+        self.fail_reconnect = fail_reconnect
 
     def connect(self, descriptor, *, force=False, timeout=30.0):
         self.connect_calls.append(descriptor)
@@ -145,6 +150,14 @@ class _FakeTcpTransport:
         if self.bad_host is not None and host == self.bad_host:
             self._state = ConnectionState.ERROR
             raise TransportError(TransportErrorCode.CONNECT_REFUSED, f"{descriptor.address} refused the connection")
+        self._state = ConnectionState.CONNECTED
+        return self.get_connection_info()
+
+    def reconnect(self, *, timeout=30.0):
+        self.reconnect_calls += 1
+        if self.fail_reconnect:
+            self._state = ConnectionState.ERROR
+            raise TransportError(TransportErrorCode.CONNECT_FAILED, "simulated reconnect failure")
         self._state = ConnectionState.CONNECTED
         return self.get_connection_info()
 
@@ -224,6 +237,11 @@ def _register(
 
     instance_manager = instance_manager or _FakeInstanceManager()
 
+    identity_refresh_calls = []
+
+    def refresh_identity_after_reconnect(active_transport, detected):
+        identity_refresh_calls.append((active_transport, detected))
+
     app = Flask(__name__)
     register_meshtastic_routes(
         app,
@@ -239,12 +257,14 @@ def _register(
         "!756f9960",
         core_serial_transport,
         instance_manager,
+        refresh_identity_after_reconnect,
     )
     return {
         "app": app,
         "client": app.test_client(),
         "core_serial_transport": core_serial_transport,
         "instance_manager": instance_manager,
+        "identity_refresh_calls": identity_refresh_calls,
     }
 
 
@@ -559,6 +579,73 @@ def test_tcp_connect_success_switches_the_router(tcp_env):
     assert transport_router._active is tcp_transport
     assert data["connection"]["type"] == "tcp"
     assert data["connection"]["node_id"] == "!1fa065f0"
+
+
+def test_tcp_connect_success_refreshes_identity_status(tcp_env):
+    """Reliability follow-up: a successful TCP connect already computes
+    a real identity comparison (tcp_identity/compare_radio_identity, see
+    the IDENTITY CHECK block above) - it must also write that through to
+    RADIO_IDENTITY_RESULT via refresh_identity_after_reconnect(), not
+    just INSTANCE_IDENTITY.radio.* (the pre-fix behavior)."""
+    client = tcp_env["client"]
+    identity_refresh_calls = tcp_env["identity_refresh_calls"]
+
+    response = client.post("/api/meshtastic/tcp/connect", json={"host": "192.168.2.34", "port": 4403})
+    assert response.get_json()["ok"] is True
+
+    assert len(identity_refresh_calls) == 1
+    active_transport, detected = identity_refresh_calls[0]
+    assert active_transport == "tcp"
+    assert detected.get("node_id") == "!1fa065f0"
+
+
+def test_tcp_connect_failure_does_not_refresh_identity_status(tcp_env):
+    client = tcp_env["client"]
+    identity_refresh_calls = tcp_env["identity_refresh_calls"]
+
+    response = client.post("/api/meshtastic/tcp/connect", json={"host": "10.0.0.99", "port": 4403})
+    assert response.get_json()["ok"] is False
+
+    assert identity_refresh_calls == []
+
+
+def test_reconnect_success_refreshes_identity_status(tcp_env):
+    """The exact bug this fix closes: a plain reconnect to the already-
+    accepted TCP radio (no endpoint change, unlike /tcp/connect above)
+    used to never touch identity_status at all."""
+    client = tcp_env["client"]
+    identity_refresh_calls = tcp_env["identity_refresh_calls"]
+
+    connect_response = client.post("/api/meshtastic/tcp/connect", json={"host": "192.168.2.34", "port": 4403})
+    assert connect_response.get_json()["ok"] is True
+    identity_refresh_calls.clear()  # only interested in what /reconnect itself triggers
+
+    response = client.post("/api/meshtastic/reconnect")
+    data = response.get_json()
+
+    assert data["ok"] is True
+    assert len(identity_refresh_calls) == 1
+    active_transport, detected = identity_refresh_calls[0]
+    assert active_transport == "tcp"
+    assert detected.get("node_id") == "!1fa065f0"
+
+
+def test_reconnect_failure_does_not_refresh_identity_status(tcp_env):
+    client = tcp_env["client"]
+    tcp_transport = tcp_env["tcp_transport"]
+    identity_refresh_calls = tcp_env["identity_refresh_calls"]
+
+    connect_response = client.post("/api/meshtastic/tcp/connect", json={"host": "192.168.2.34", "port": 4403})
+    assert connect_response.get_json()["ok"] is True
+    identity_refresh_calls.clear()
+
+    tcp_transport.fail_reconnect = True
+    response = client.post("/api/meshtastic/reconnect")
+    data = response.get_json()
+
+    assert data["ok"] is False
+    assert data["error_code"] == "reconnect_failed"
+    assert identity_refresh_calls == []
 
 
 def test_tcp_connect_failure_recovers_to_previous_serial(tcp_env):

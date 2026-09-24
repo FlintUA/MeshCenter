@@ -181,3 +181,32 @@ def test_system_info_model_field_is_none_when_unavailable(client, monkeypatch):
     response = client.get("/api/system/info")
 
     assert response.get_json()["model"] is None
+
+
+def test_top_processes_exception_sanitizes_error_and_logs(client, monkeypatch):
+    logged = []
+    monkeypatch.setattr(
+        api_system_module, "log_system_event",
+        lambda title, level="INFO", details="", source="system": logged.append(
+            {"title": title, "level": level, "details": details, "source": source}
+        ),
+    )
+
+    import psutil
+    def _raise(*args, **kwargs):
+        raise RuntimeError("Internal psutil failure: secret_path=/etc/shadow")
+
+    monkeypatch.setattr(psutil, "process_iter", _raise)
+
+    response = client.get("/api/system/top-processes")
+
+    assert response.status_code == 500
+    data = response.get_json()
+    assert data["ok"] is False
+    assert data["error"] == "Failed to retrieve top processes"
+    assert "secret_path" not in data["error"]
+
+    assert len(logged) == 1
+    assert logged[0]["source"] == "system"
+    assert logged[0]["level"] == "ERROR"
+    assert "Internal psutil failure: secret_path=/etc/shadow" in logged[0]["details"]

@@ -49,6 +49,7 @@ from meshsrv.radio_identity import (
     detect_tcp_radio_identity,
     compare_radio_identity,
     utc_now_iso,
+    IDENTITY_DETECTION_ERROR,
 )
 from meshsrv.radio_endpoint import (
     normalize_radio_record,
@@ -400,6 +401,18 @@ RADIO_IDENTITY_RESULT = {
     "error": None,
 }
 
+# TCP boot-race retry (Radio TCP Transport, reliability follow-up): a
+# fresh reboot's network stack sometimes isn't up yet by the moment
+# verify_radio_identity()'s one-shot TCP probe runs - live-caught on
+# pixel-111 twice, on two separate reboots, "Network is unreachable"
+# fired 4-16s after boot. Deliberately short (sums to 6s, not
+# _RECONNECT_DELAYS_S's 108s in adapters/meshtastic/tcp_transport.py,
+# which is tuned for a user-triggered manual reconnect, not something
+# that blocks start_runtime() itself) - Server Mode principle: Core/Web
+# UI/Storage must stay reachable regardless of radio state, so this
+# can't meaningfully delay boot even in the worst case.
+TCP_IDENTITY_BOOT_RETRY_DELAYS_S = (2.0, 4.0)
+
 def verify_radio_identity():
     """Probe the configured radio once and persist read-only verification
     state. Transport-aware (Radio TCP Transport, part 2): a serial-
@@ -427,6 +440,26 @@ def verify_radio_identity():
         result, output = detect_tcp_radio_identity(
             tcp_ipc_transport, endpoint.get("host", ""), endpoint.get("port", 0), timeout=25
         )
+        # Only retry a transport-level failure (never reached ANY radio -
+        # IDENTITY_DETECTION_ERROR is set before compare_radio_identity()
+        # ever runs, see this function's own comparison below). A
+        # definitive MISMATCH/NOT_FOUND (detected.node_id populated - we
+        # genuinely talked to a radio, just not the expected one) exits
+        # this loop immediately on the first attempt - retrying that would
+        # mask a real identity mismatch behind transient-looking retry
+        # logic, which must never happen (fail-closed stays fail-closed).
+        for delay in TCP_IDENTITY_BOOT_RETRY_DELAYS_S:
+            if result.get("status") != IDENTITY_DETECTION_ERROR:
+                break
+            print(
+                f"[IDENTITY] TCP identity check failed ({result.get('error')}) - "
+                f"retrying in {delay}s in case boot-time networking isn't up yet",
+                flush=True,
+            )
+            time.sleep(delay)
+            result, output = detect_tcp_radio_identity(
+                tcp_ipc_transport, endpoint.get("host", ""), endpoint.get("port", 0), timeout=25
+            )
     elif transport == "serial":
         result, output = detect_radio_identity(MESHTASTIC_CMD, MESHTASTIC_PORT, timeout=25)
     else:

@@ -431,3 +431,176 @@ def test_verify_radio_identity_skips_probe_entirely_for_bluetooth(server_module,
     server_module.verify_radio_identity()
 
     assert server_module.RADIO_IDENTITY_RESULT["status"] == "NOT_CHECKED"
+
+
+# ---------------------------------------------------------------------------
+# TCP boot-race retry (reliability follow-up): verify_radio_identity()'s
+# TCP branch retries a transport-level failure (IDENTITY_DETECTION_ERROR)
+# a bounded number of times with a short backoff, but a definitive
+# MISMATCH/NOT_FOUND must never be retried - see server.py's own
+# TCP_IDENTITY_BOOT_RETRY_DELAYS_S comment for the live-caught boot-race
+# this addresses.
+# ---------------------------------------------------------------------------
+
+def test_verify_radio_identity_retries_a_transient_tcp_failure_and_recovers(
+    server_module, _preserve_transport_router_state, monkeypatch
+):
+    """Simulates the exact live-caught scenario: the network isn't up yet
+    for the first couple of attempts (IDENTITY_DETECTION_ERROR, "Network
+    is unreachable"-shaped), then the same radio answers successfully -
+    must recover within the bounded retry budget instead of leaving
+    identity_status stuck at DETECTION_ERROR for the rest of the process
+    lifetime."""
+    calls = []
+
+    def _fake_detect_tcp(transport, host, port, timeout=25):
+        calls.append((host, port))
+        if len(calls) < 3:
+            return (
+                {
+                    "status": "DETECTION_ERROR",
+                    "checked_at": "2026-09-24T14:42:16+00:00",
+                    "configured": {"host": host, "port": port},
+                    "detected": {},
+                    "error": "connect_failed: could not open a TCP connection "
+                             f"to {host}:{port}: [Errno 101] Network is unreachable",
+                    "error_code": "connect_failed",
+                },
+                "",
+            )
+        return (
+            {
+                "status": "MATCH",
+                "checked_at": "2026-09-24T14:42:20+00:00",
+                "configured": {"host": host, "port": port},
+                "detected": {"node_id": "!1fa065f0", "long_name": "T-Beam"},
+                "error": None,
+                "error_code": None,
+            },
+            "",
+        )
+
+    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
+
+    slept = []
+    monkeypatch.setattr(server_module.time, "sleep", lambda seconds: slept.append(seconds))
+
+    identity = server_module.instance_manager.get()
+    updated = dict(identity)
+    updated["radio"] = {
+        "node_id": "!1fa065f0",
+        "long_name": "T-Beam",
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+    }
+    server_module.instance_manager.save(updated)
+    server_module.INSTANCE_IDENTITY = updated
+
+    server_module.verify_radio_identity()
+
+    assert len(calls) == 3, "must have retried exactly twice (3 attempts total) before recovering"
+    assert slept == list(server_module.TCP_IDENTITY_BOOT_RETRY_DELAYS_S[:2]), (
+        "must sleep only between attempts actually made, using the module's own bounded delay tuple"
+    )
+    assert server_module.RADIO_IDENTITY_RESULT["status"] == "MATCH"
+
+
+def test_verify_radio_identity_never_retries_a_definitive_mismatch(
+    server_module, _preserve_transport_router_state, monkeypatch
+):
+    """A MISMATCH means we genuinely reached a radio and it was the wrong
+    one (detected.node_id populated) - retrying this would mask a real
+    identity mismatch behind transient-looking retry logic, which must
+    never happen. Exactly one call, zero sleeps."""
+    calls = []
+
+    def _fake_detect_tcp(transport, host, port, timeout=25):
+        calls.append((host, port))
+        # Matches detect_tcp_radio_identity()'s own real success-path
+        # return shape (meshsrv/radio_identity.py): status="MATCH" is
+        # just "we successfully reached *a* radio" - verify_radio_identity()'s
+        # own compare_radio_identity() call (after this returns) is what
+        # actually turns this into MISMATCH, based on detected.node_id
+        # not matching configured. Never IDENTITY_DETECTION_ERROR here -
+        # that value is reserved for a transport-level failure that never
+        # reached any radio at all, which this scenario is not.
+        return (
+            {
+                "status": "MATCH",
+                "checked_at": "2026-09-24T14:42:16+00:00",
+                "configured": {"host": host, "port": port},
+                "detected": {"node_id": "!deadbeef", "long_name": "Someone Else's Radio"},
+                "error": None,
+                "error_code": None,
+            },
+            "",
+        )
+
+    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
+
+    slept = []
+    monkeypatch.setattr(server_module.time, "sleep", lambda seconds: slept.append(seconds))
+
+    identity = server_module.instance_manager.get()
+    updated = dict(identity)
+    updated["radio"] = {
+        "node_id": "!1fa065f0",
+        "long_name": "T-Beam",
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+    }
+    server_module.instance_manager.save(updated)
+    server_module.INSTANCE_IDENTITY = updated
+
+    server_module.verify_radio_identity()
+
+    assert len(calls) == 1, "a definitive MISMATCH must never be retried"
+    assert slept == []
+    assert server_module.RADIO_IDENTITY_RESULT["status"] == "MISMATCH"
+
+
+def test_verify_radio_identity_gives_up_after_exhausting_retries(
+    server_module, _preserve_transport_router_state, monkeypatch
+):
+    """Every attempt keeps failing (radio genuinely never reachable) -
+    must exhaust the bounded retry budget and land on DETECTION_ERROR,
+    not retry forever."""
+    calls = []
+
+    def _fake_detect_tcp(transport, host, port, timeout=25):
+        calls.append((host, port))
+        return (
+            {
+                "status": "DETECTION_ERROR",
+                "checked_at": "2026-09-24T14:42:16+00:00",
+                "configured": {"host": host, "port": port},
+                "detected": {},
+                "error": "connect_failed: could not open a TCP connection "
+                         f"to {host}:{port}: [Errno 101] Network is unreachable",
+                "error_code": "connect_failed",
+            },
+            "",
+        )
+
+    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
+
+    slept = []
+    monkeypatch.setattr(server_module.time, "sleep", lambda seconds: slept.append(seconds))
+
+    identity = server_module.instance_manager.get()
+    updated = dict(identity)
+    updated["radio"] = {
+        "node_id": "!1fa065f0",
+        "long_name": "T-Beam",
+        "transport": "tcp",
+        "endpoint": {"host": "192.168.2.34", "port": 4403},
+    }
+    server_module.instance_manager.save(updated)
+    server_module.INSTANCE_IDENTITY = updated
+
+    server_module.verify_radio_identity()
+
+    expected_attempts = len(server_module.TCP_IDENTITY_BOOT_RETRY_DELAYS_S) + 1
+    assert len(calls) == expected_attempts
+    assert slept == list(server_module.TCP_IDENTITY_BOOT_RETRY_DELAYS_S)
+    assert server_module.RADIO_IDENTITY_RESULT["status"] == "DETECTION_ERROR"

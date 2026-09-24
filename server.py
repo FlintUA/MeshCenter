@@ -4444,6 +4444,135 @@ def process_listener_autorecovery(status, listener_running, now_ts, escalated_fr
             flush=True,
         )
 
+
+def compute_radio_health_status(
+    *,
+    active_transport,
+    is_released,
+    is_paused,
+    listener_running,
+    packet_age,
+    transport_state,
+):
+    """Pure status/level/reason/recommendation decision for
+    radio_health_worker() - split out the same way
+    resolve_paused_recovery_status() was (see that function's own
+    docstring): the worker itself is a `while True: time.sleep(30)` loop
+    and isn't exercised directly in tests, this is.
+
+    Serial branch: byte-for-byte the original packet-age/listener-process
+    vocabulary (RELEASED/PAUSED/LISTENER_DOWN/STARTING/OK/IDLE/
+    NO_PACKETS) - unchanged behavior, zero regression risk.
+
+    Non-serial (tcp/bluetooth) branch: TCP/Bluetooth never run the serial
+    `--listen` subprocess (deliberate - no inbound relay yet, same
+    category as the documented BLE receive-blindness trade-off), so
+    listener_running/packet_age never populate for these transports and
+    the serial vocabulary above is meaningless for them - previously left
+    this widget hard-stuck on the "STARTING" default (radio_health's own
+    initializer) forever, even for a genuinely connected radio. Status
+    here instead comes directly from TransportRouter's own live
+    ConnectionState (meshsrv/connection_status.py's connection_payload(),
+    the same canonical source Radio Profiles & Connections Model PR 2
+    already established for api_devices_dashboard()/_connection_payload()
+    - CONNECTED/CONNECTING/DISCONNECTED/ERROR are that enum's own values
+    uppercased, not a third parallel vocabulary. RELEASED/PAUSED are
+    RadioConnectionManager/pause_listen concepts - both serial-port-
+    release-specific and meaningless for TCP/BLE - so this branch doesn't
+    consult is_released/is_paused/listener_running/packet_age at all.
+    """
+    if active_transport == "serial":
+        if is_released:
+            return (
+                "RELEASED",
+                "WARNING",
+                "Radio released for external configuration",
+                "Reconnect the radio from Settings when configuration is complete",
+            )
+
+        if is_paused:
+            return (
+                "PAUSED",
+                "WARNING",
+                "Listener temporarily paused for a radio command",
+                "Wait until the radio command is completed",
+            )
+
+        if not listener_running:
+            return (
+                "LISTENER_DOWN",
+                "ERROR",
+                "Meshtastic listener is not running",
+                "Restart the Meshtastic listener",
+            )
+
+        if packet_age is None:
+            return (
+                "STARTING",
+                "WARNING",
+                "Listener is running, waiting for the first packet",
+                "Wait for the first radio packet",
+            )
+
+        if packet_age <= 180:
+            return (
+                "OK",
+                "OK",
+                "Recent radio activity detected",
+                "No action required",
+            )
+
+        if packet_age <= 600:
+            return (
+                "IDLE",
+                "WARNING",
+                f"No packets received for {packet_age} seconds",
+                "No action required if the mesh is quiet",
+            )
+
+        return (
+            "NO_PACKETS",
+            "ERROR",
+            f"No packets received for {packet_age} seconds",
+            "Check radio reception and try restarting the listener",
+        )
+
+    conn_state = str(transport_state.get("state") or "disconnected").upper()
+    address = transport_state.get("address")
+    via = f"{active_transport} ({address})" if address else active_transport
+
+    if conn_state == "CONNECTED":
+        return (
+            "CONNECTED",
+            "OK",
+            f"Connected via {via}",
+            "No action required",
+        )
+
+    if conn_state == "CONNECTING":
+        return (
+            "CONNECTING",
+            "WARNING",
+            f"Connecting via {via}...",
+            "Wait for the connection to complete",
+        )
+
+    if conn_state == "ERROR":
+        return (
+            "ERROR",
+            "ERROR",
+            transport_state.get("last_error") or "Transport reported an error",
+            "Check the connection and try reconnecting",
+        )
+
+    return (
+        "DISCONNECTED",
+        "ERROR",
+        f"Radio is disconnected ({active_transport})",
+        "Reconnect from Node Manager",
+    )
+
+
 def radio_health_worker():
     print("[RADIO] Passive health worker started", flush=True)
 
@@ -4452,6 +4581,22 @@ def radio_health_worker():
 
         try:
             now_ts = time.time()
+
+            # Not read inside the state_lock block below - connection_payload()
+            # acquires TransportRouter's own lock internally, and nothing
+            # elsewhere in this codebase acquires that lock while already
+            # holding state_lock (same lock-ordering reasoning as
+            # api_devices_dashboard()'s identical call).
+            transport_state = connection_payload(
+                transport_router, LOCAL_NODE_ID, listener_supervisor
+            )
+            configured_normalized = normalize_radio_record(
+                dict(instance_manager.get().get("radio", {}))
+            )
+            active_transport = (
+                transport_state.get("type")
+                or configured_normalized["preferred_transport"]
+            )
 
             with state_lock:
                 listener_running = bool(
@@ -4481,49 +4626,14 @@ def radio_health_worker():
                     if last_send else None
                 )
 
-                if radio_connection_manager.is_released():
-                    status = "RELEASED"
-                    reason = "Radio released for external configuration"
-                    level = "WARNING"
-                    recommendation = "Reconnect the radio from Settings when configuration is complete"
-
-                elif pause_listen.is_set():
-                    status = "PAUSED"
-                    reason = "Listener temporarily paused for a radio command"
-                    level = "WARNING"
-                    recommendation = "Wait until the radio command is completed"
-
-                elif not listener_running:
-                    status = "LISTENER_DOWN"
-                    reason = "Meshtastic listener is not running"
-                    level = "ERROR"
-                    recommendation = "Restart the Meshtastic listener"
-
-                elif packet_age is None:
-                    status = "STARTING"
-                    reason = "Listener is running, waiting for the first packet"
-                    level = "WARNING"
-                    recommendation = "Wait for the first radio packet"
-
-                elif packet_age <= 180:
-                    status = "OK"
-                    reason = "Recent radio activity detected"
-                    level = "OK"
-                    recommendation = "No action required"
-
-                elif packet_age <= 600:
-                    status = "IDLE"
-                    reason = f"No packets received for {packet_age} seconds"
-                    level = "WARNING"
-                    recommendation = "No action required if the mesh is quiet"
-
-                else:
-                    status = "NO_PACKETS"
-                    reason = f"No packets received for {packet_age} seconds"
-                    level = "ERROR"
-                    recommendation = (
-                        "Check radio reception and try restarting the listener"
-                    )
+                status, level, reason, recommendation = compute_radio_health_status(
+                    active_transport=active_transport,
+                    is_released=radio_connection_manager.is_released(),
+                    is_paused=pause_listen.is_set(),
+                    listener_running=listener_running,
+                    packet_age=packet_age,
+                    transport_state=transport_state,
+                )
 
                 previous_status = radio_health.get("status")
 

@@ -7336,16 +7336,32 @@ def start_runtime():
     except Exception as e:
         print(f"[MCA] failed to start AttachmentsService: {e}", flush=True)
 
-    # Start radio workers only for the accepted physical radio, AND only
-    # when that radio is serial - this whole group (the --listen
-    # subprocess itself, plus every worker that only has something to do
-    # because that subprocess is running: dedup cleanup, telemetry
-    # buffering, the ACK-timeout watchdog, and radio_health_worker's own
-    # listener-auto-recovery logic) is serial-specific machinery with no
-    # meaning for Bluetooth or TCP - there is no listener subprocess for
-    # either, so starting radio_health_worker for them would just report
-    # a permanently "down" listener that was never supposed to exist and
-    # attempt pointless auto-recovery restarts against it.
+    # radio_health_worker runs for EVERY transport once identity matches.
+    # It used to live in the serial-only group below on the reasoning that
+    # it "would just report a permanently 'down' listener" for TCP/
+    # Bluetooth - true before #286, false since: compute_radio_health_
+    # status() has a transport-aware branch driven by TransportRouter's own
+    # connection state, and #288's process_transport_autorecovery()
+    # (auto-reconnect) runs from this same loop. Left inside the serial
+    # gate, both were dead code in production for every non-serial radio
+    # (live-caught on pixel-111: 0 "Auto-Reconnect enabled" events, the
+    # System page stuck on the initializer's "STARTING", no recovery after
+    # a connection reset) - their tests called the functions directly and
+    # never exercised this gate; see tests/test_start_runtime_worker_gate.py.
+    # process_listener_autorecovery() (also called from the loop) only ever
+    # acts on the serial-only status "LISTENER_DOWN", so it stays inert for
+    # TCP/Bluetooth.
+    if identity_match:
+        threading.Thread(target=radio_health_worker, daemon=True).start()
+
+    # The rest of this group is serial-specific machinery - each one
+    # consumes the `meshtastic --listen` subprocess's output or exists only
+    # while it runs (verified worker by worker, not assumed): the listener
+    # itself; cleanup_seen_ids (trims the dedup sets only
+    # _handle_listener_line writes); telemetry_worker (only logs the age of
+    # listener-fed telemetry); telemetry_buffer_worker (debounces values
+    # whose only producer is the listener's parser). Only when the accepted
+    # radio is serial and identity matched.
     if identity_match and active_transport == "serial":
         # THE single entry point that starts listener_supervisor's persistent
         # listener (Task 44) - see listen_meshtastic()'s docstring for why
@@ -7356,7 +7372,12 @@ def start_runtime():
         threading.Thread(target=cleanup_seen_ids, daemon=True).start()
         threading.Thread(target=telemetry_worker, daemon=True).start()
         threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
-        threading.Thread(target=radio_health_worker, daemon=True).start()
+        # NOT listener-dependent, unlike the others - a pure timer over
+        # `messages` (see ack_timeout_worker()) - but starting it for TCP/
+        # Bluetooth would start flipping every DM there to "unconfirmed"
+        # after 60s (no inbound relay means an ACK can never be observed),
+        # a user-visible delivery-status decision, not a bug fix. Left
+        # serial-only here on purpose; tracked as a follow-up decision.
         threading.Thread(target=ack_timeout_worker, daemon=True).start()
     else:
         pause_listen.set()

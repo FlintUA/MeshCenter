@@ -236,3 +236,77 @@ def test_real_tcpinterface_reader_thread_death_fails_fast_instead_of_waiting_30s
     finally:
         transport.close()
         server.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# TCP lifecycle P0 - real TCPInterface, real socket, counted at the radio's
+# end: how many clients did the "radio" actually see, and how many at once.
+# The whole point of idempotent connect(): a radio that effectively serves
+# one client must never be shown two from MeshCenter.
+# ---------------------------------------------------------------------------
+
+def _wait_until(predicate, timeout=5.0, interval=0.05):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return predicate()
+
+
+def test_repeated_connect_to_the_same_endpoint_is_one_real_connection_at_the_radio():
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    try:
+        for _ in range(5):
+            info = transport.connect(_descriptor("127.0.0.1", server.port), timeout=10.0)
+            assert info.state == ConnectionState.CONNECTED
+
+        assert server.real_connections == 1
+        assert server.max_concurrent_connections == 1
+        assert server.active_connections == 1
+        time.sleep(0.2)  # let the library's one-time heartbeat write land before close()
+    finally:
+        transport.close()
+        server.shutdown()
+
+
+def test_switching_endpoints_closes_the_first_radios_session_before_opening_the_second():
+    first = FakeMeshtasticTcpServer(complete_handshake=True)
+    second = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=first.port)
+    try:
+        transport.connect(_descriptor("127.0.0.1", first.port), timeout=10.0)
+        assert first.active_connections == 1
+
+        info = transport.connect(_descriptor("127.0.0.1", second.port), timeout=10.0)
+
+        assert info.state == ConnectionState.CONNECTED
+        assert _wait_until(lambda: first.active_connections == 0), "old session was not closed"
+        assert second.real_connections == 1
+        assert first.max_concurrent_connections == 1
+        assert second.max_concurrent_connections == 1
+        time.sleep(0.2)
+    finally:
+        transport.close()
+        first.shutdown()
+        second.shutdown()
+
+
+def test_forced_reconnect_cycles_never_show_the_radio_two_clients_at_once():
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    try:
+        transport.connect(_descriptor("127.0.0.1", server.port), timeout=10.0)
+        for _ in range(3):
+            time.sleep(0.2)
+            transport.connect(_descriptor("127.0.0.1", server.port), force=True, timeout=10.0)
+
+        assert server.real_connections == 4
+        assert server.max_concurrent_connections == 1, (
+            "the radio saw more than one MeshCenter client at the same time"
+        )
+        time.sleep(0.2)
+    finally:
+        transport.close()
+        server.shutdown()

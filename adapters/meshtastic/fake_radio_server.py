@@ -136,40 +136,61 @@ class FakeMeshtasticTcpServer:
         self._listener.listen(2)
         self.port = self._listener.getsockname()[1]
         self.accepted_want_config_id: Optional[int] = None
+        # TCP lifecycle P0: connection accounting, so a test can assert
+        # "MeshCenter never held more than one real client at once" and
+        # "N idempotent connect()s produced exactly one real connection".
+        # A "real" connection is one that sent a framed ToRadio message -
+        # TCPTransport's raw reachability probe (opens and closes without
+        # sending anything) is deliberately not counted.
+        self._count_lock = threading.Lock()
+        self.real_connections = 0
+        self.active_connections = 0
+        self.max_concurrent_connections = 0
         self._stop_requested = threading.Event()
         self._thread = threading.Thread(target=self._serve, daemon=True, name="fake-meshtastic-tcp-server")
         self._thread.start()
 
     def _serve(self) -> None:
-        self._listener.settimeout(10.0)
+        self._listener.settimeout(0.2)
         while not self._stop_requested.is_set():
             try:
                 conn, _addr = self._listener.accept()
+            except socket.timeout:
+                continue
             except OSError:
                 return
+            threading.Thread(
+                target=self._handle_connection, args=(conn,), daemon=True, name="fake-meshtastic-tcp-conn"
+            ).start()
 
-            conn.settimeout(10.0)
-            try:
-                payload = read_to_radio_frame(conn)
-            except Exception:
-                with contextlib.suppress(Exception):
-                    conn.close()
-                continue
+    def _handle_connection(self, conn: socket.socket) -> None:
+        conn.settimeout(10.0)
+        try:
+            payload = read_to_radio_frame(conn)
+        except Exception:
+            with contextlib.suppress(Exception):
+                conn.close()
+            return
 
-            if payload is None:
-                # Connected and closed without ever sending a framed
-                # ToRadio message - not the real client, discard and keep
-                # listening for the next (real) connection.
-                with contextlib.suppress(Exception):
-                    conn.close()
-                continue
+        if payload is None:
+            # Connected and closed without ever sending a framed
+            # ToRadio message - not the real client (e.g. TCPTransport's
+            # raw pre-flight probe), discard.
+            with contextlib.suppress(Exception):
+                conn.close()
+            return
 
-            try:
-                self._drive_handshake(conn, payload)
-            finally:
-                with contextlib.suppress(Exception):
-                    conn.close()
-            return  # served the one real connection - done
+        with self._count_lock:
+            self.real_connections += 1
+            self.active_connections += 1
+            self.max_concurrent_connections = max(self.max_concurrent_connections, self.active_connections)
+        try:
+            self._drive_handshake(conn, payload)
+        finally:
+            with self._count_lock:
+                self.active_connections -= 1
+            with contextlib.suppress(Exception):
+                conn.close()
 
     def _drive_handshake(self, conn: socket.socket, payload: bytes) -> None:
         to_radio = mesh_pb2.ToRadio()
@@ -215,8 +236,18 @@ class FakeMeshtasticTcpServer:
         # Stay connected (don't close our end) until told to stop - a
         # config-never-completes firmware doesn't drop the TCP link
         # either, it just never finishes the protocol handshake.
-        while not self._stop_requested.wait(timeout=0.1):
-            pass
+        # Also notices the client closing its end, so active_connections
+        # drops when a session is torn down (not only at shutdown()).
+        conn.settimeout(0.1)
+        while not self._stop_requested.is_set():
+            try:
+                data = conn.recv(4096)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if data == b"":
+                break
 
     def shutdown(self) -> None:
         self._stop_requested.set()

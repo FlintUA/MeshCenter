@@ -220,6 +220,16 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         # acquire it themselves.
         self._lock = threading.Lock()
 
+        # Serializes whole connect() calls (TCP lifecycle P0): unlike
+        # self._lock (short state reads/writes only, must never be held
+        # across a network call), this one IS held for the entire
+        # connect() - so two callers reaching connect() directly can't
+        # each open their own interface and leak the loser. In
+        # production the adapter's single-threaded request loop already
+        # serializes requests, so this is defense in depth for direct/
+        # in-process users, not the primary guarantee.
+        self._connect_lock = threading.Lock()
+
         self._interface = None
         self._state = _TcpState.DISCONNECTED
         self._connected_since: Optional[float] = None
@@ -263,6 +273,25 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         if num is None:
             return None
         return f"!{int(num):08x}"
+
+    @staticmethod
+    def _interface_is_healthy(interface) -> bool:
+        """Whether an already-attached interface still looks alive - used
+        by connect()'s idempotent shortcut so a stale READY (the radio
+        rebooted, the reader thread died on a reset) is never mistaken for
+        a live session. Reaches into the library's own _rxThread/
+        isConnected the same way _detach_and_close_async() already does
+        (this module already treats them as structured internals).
+        Missing attributes are treated as "no evidence of a problem", so
+        a library version that renames them degrades to "trust READY"
+        rather than to "always reconnect"."""
+        reader = getattr(interface, "_rxThread", None)
+        if reader is not None and not reader.is_alive():
+            return False
+        connected = getattr(interface, "isConnected", None)
+        if connected is not None and hasattr(connected, "is_set") and not connected.is_set():
+            return False
+        return True
 
     def _detach_and_close_async(self, *, timeout: float) -> None:
         """Detaches self._interface and flips self._state to DISCONNECTED
@@ -609,11 +638,59 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         LAN/Wi-Fi TCP connect is expected to be considerably faster than
         a BLE GATT handshake in the first place, so the ABC's default is
         plausibly already generous; revisit with real numbers once the
-        acceptance tests against the T-Beam have actually run."""
+        acceptance tests against the T-Beam have actually run.
+
+        IDEMPOTENT (TCP lifecycle P0): `force=False` used to flip state to
+        CONNECTING (so every send failed not_connected meanwhile), open a
+        raw probe socket AND a second full TCPInterface - two TCP clients
+        from us to a radio that effectively serves one - and then
+        overwrite self._interface without closing the old one, leaking its
+        socket and reader thread. Now:
+          - already READY to the same host:port with a healthy interface
+            -> return the current ConnectionInfo, touch nothing;
+          - anything else with an interface attached (a different
+            endpoint, DEGRADED, or a READY whose reader thread has died)
+            -> that interface is closed first, via the same
+            _detach_and_close_async() path force=True already used;
+          - force=True always reconnects (reconnect() depends on it).
+        Whole calls are serialized by self._connect_lock."""
         if descriptor.type != ConnectionType.TCP:
             raise TransportError(
                 TransportErrorCode.UNSUPPORTED, f"TCPTransport cannot connect to {descriptor.type}"
             )
+
+        if not self._connect_lock.acquire(timeout=max(1.0, timeout)):
+            raise TransportError(
+                TransportErrorCode.BUSY, "another connect() is already in progress on this TCPTransport"
+            )
+        try:
+            target_host, target_port = _parse_host_port(
+                descriptor.address, default_port=self._port or DEFAULT_TCP_PORT
+            )
+            if not force:
+                with self._lock:
+                    same_endpoint = (
+                        (target_host or self._host) == self._host
+                        and (target_port or self._port) == self._port
+                    )
+                    reusable = (
+                        same_endpoint
+                        and self._state == _TcpState.READY
+                        and self._interface is not None
+                        and self._interface_is_healthy(self._interface)
+                    )
+                    if reusable:
+                        self._label = descriptor.label or self._label
+                if reusable:
+                    return self.get_connection_info()
+            return self._connect_locked(descriptor, force=force, timeout=timeout)
+        finally:
+            self._connect_lock.release()
+
+    def _connect_locked(
+        self, descriptor: ConnectionDescriptor, *, force: bool, timeout: float
+    ) -> ConnectionInfo:
+        """The original connect() body - caller holds self._connect_lock."""
 
         # Snapshot before any mutation, restored on every failure path
         # below - same rollback discipline as BLETransport.connect() (see
@@ -632,8 +709,9 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
 
         with self._lock:
             self._state = _TcpState.CONNECTING
+            has_interface = self._interface is not None
 
-        if force:
+        if force or has_interface:
             self._detach_and_close_async(timeout=timeout)
 
         probe_timeout = min(timeout, _TCP_PROBE_TIMEOUT_S)
@@ -691,11 +769,21 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             raise error
 
         with self._lock:
+            displaced = self._interface
             self._interface = interface
             self._node_id = node_id
             self._state = _TcpState.READY
             self._connected_since = time.time()
             self._last_error = None
+        if displaced is not None and displaced is not interface:
+            # Defensive only - _connect_lock plus the detach above mean
+            # nothing should still be attached here, but silently
+            # overwriting (the pre-fix behavior) would leak its socket and
+            # reader thread if that invariant ever breaks.
+            try:
+                displaced.close()
+            except Exception:
+                pass
         return self.get_connection_info()
 
     def disconnect(self, *, timeout: float = 15.0) -> None:

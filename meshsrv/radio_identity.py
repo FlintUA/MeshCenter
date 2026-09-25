@@ -9,7 +9,13 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from meshsrv import meshtastic_transport
-from meshsrv.radio_transport import ConnectionDescriptor, ConnectionType, RadioTransport, TransportError
+from meshsrv.radio_transport import (
+    ConnectionDescriptor,
+    ConnectionState,
+    ConnectionType,
+    RadioTransport,
+    TransportError,
+)
 from meshsrv.runtime_identity import discover_serial_ports
 
 IDENTITY_MATCH = "MATCH"
@@ -414,3 +420,109 @@ def detect_tcp_radio_identity(
         "error_code": None,
     }, "")
 
+
+DETECTION_IN_PROGRESS = "detection_in_progress"
+
+
+def _probe_error_result(checked_at: str, configured: dict, error: str, error_code) -> dict[str, Any]:
+    return {
+        "status": IDENTITY_DETECTION_ERROR,
+        "checked_at": checked_at,
+        "configured": configured,
+        "detected": {},
+        "error": error,
+        "error_code": error_code,
+    }
+
+
+def probe_tcp_radio_identity(
+    host: str,
+    port: int,
+    *,
+    live_transport: RadioTransport,
+    probe_transport: RadioTransport,
+    probe_shutdown,
+    probe_lock,
+    timeout: float = 25,
+    warmup_timeout: float = 30,
+    lock_timeout: float = 5.0,
+) -> tuple[dict[str, Any], str]:
+    """EPHEMERAL identity probe (TCP lifecycle P0, PR-B): same return shape
+    as detect_tcp_radio_identity(), but never touches the production TCP
+    session. Used by Discovery/Accept/profile-activate, NOT by boot-time
+    verify_radio_identity() - that one deliberately keeps using the
+    production transport, because its connection IS the one
+    restore_active_transport() reuses (#278/#287).
+
+    Same endpoint as the live production session: no second connection is
+    ever opened (the radio effectively serves one client). Identity is read
+    from the live session via `live_transport`; if that read fails the
+    error is returned as-is - never a fallback to a second connect, even
+    though the cached state may be stale (the recovery paths are the
+    manual Reconnect and #288 auto-reconnect).
+
+    Anything else: `probe_transport` lives in its OWN adapter process
+    (separate kill domain and lock, so a probe timeout or hang can't kill
+    the production session or block its sends). A cheap warm-up call pays
+    the process spawn + adapter imports first, because the first IPC call's
+    deadline otherwise includes them (~2s on a fast phone, more on a Pi) and
+    would eat the connect budget. `probe_shutdown()` always runs afterwards:
+    process death makes the OS close the probe's socket regardless of what
+    happened inside the adapter (measured on the real T-Beam: a fresh
+    process connects 44/44 even with zero gap after a hard kill).
+
+    `probe_lock` serializes probes; a second concurrent one waits at most
+    `lock_timeout` and then gets error_code == DETECTION_IN_PROGRESS."""
+    checked_at = utc_now_iso()
+    host = str(host or "").strip()
+    port_int = int(port) if port else 0
+    configured = {"host": host, "port": port_int}
+
+    if not host:
+        return _probe_error_result(checked_at, configured, "No TCP host configured", None), ""
+
+    address = f"{host}:{port_int}"
+
+    live = live_transport.get_connection_info()
+    if (
+        live.state == ConnectionState.CONNECTED
+        and live.descriptor is not None
+        and live.descriptor.type == ConnectionType.TCP
+        and str(live.descriptor.address).lower() == address.lower()
+    ):
+        try:
+            detected = _tcp_identity_from_connected_transport(live_transport, host, port, timeout)
+        except TransportError as error:
+            return _probe_error_result(
+                checked_at,
+                configured,
+                f"The active TCP connection to {address} is not responding: {error}",
+                error.code.value,
+            ), ""
+        status = IDENTITY_MATCH if detected.get("node_id") else IDENTITY_NOT_FOUND
+        return ({
+            "status": status,
+            "checked_at": checked_at,
+            "configured": configured,
+            "detected": detected,
+            "error": None if detected.get("node_id") else "TCP radio responded but reported no node ID",
+            "error_code": None,
+        }, "")
+
+    if not probe_lock.acquire(timeout=lock_timeout):
+        return _probe_error_result(
+            checked_at, configured, "Another radio detection is already in progress.", DETECTION_IN_PROGRESS
+        ), ""
+    try:
+        try:
+            probe_transport.disconnect(timeout=warmup_timeout)
+        except TransportError as error:
+            return _probe_error_result(
+                checked_at, configured, f"The probe process could not be started: {error}", error.code.value
+            ), ""
+        return detect_tcp_radio_identity(probe_transport, host, port, timeout=timeout)
+    finally:
+        try:
+            probe_shutdown()
+        finally:
+            probe_lock.release()

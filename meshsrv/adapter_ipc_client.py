@@ -612,6 +612,16 @@ class AdapterSupervisor:
             except Exception as error:
                 self._on_log(f"bluetoothctl disconnect after adapter kill failed: {error}", "WARNING")
 
+    def shutdown(self) -> None:
+        """Kills the adapter subprocess if one is running (idempotent; the
+        next call() respawns it). For a supervisor that owns a deliberately
+        short-lived process - the TCP identity probe's own (TCP lifecycle
+        P0), where process death is what guarantees the OS closes the
+        probe's socket, independent of any close() path inside the adapter.
+        No BLE cleanup: a probe supervisor never talks to Bluetooth."""
+        with self._proc_lock:
+            self._kill_locked(None)
+
 
 class AdapterIPCTransport(RadioTransport):
     """Core-side proxy implementing RadioTransport for one transport_type

@@ -379,10 +379,22 @@ def detect_tcp_radio_identity(
         }, "")
 
     descriptor = ConnectionDescriptor(type=ConnectionType.TCP, address=f"{host}:{int(port) if port else 0}")
+    connected = False
     try:
         transport.connect(descriptor, timeout=timeout)
+        connected = True
         detected = _tcp_identity_from_connected_transport(transport, host, port, timeout)
     except TransportError as error:
+        if connected:
+            # connect() succeeded but the identity read failed - without
+            # this the session stayed open, contradicting this function's
+            # own "does not leave the connection open on failure" contract
+            # (TCP lifecycle P0). Best-effort: a failing disconnect() must
+            # not mask the real error being reported.
+            try:
+                transport.disconnect(timeout=5)
+            except Exception:
+                pass
         return ({
             "status": IDENTITY_DETECTION_ERROR,
             "checked_at": checked_at,

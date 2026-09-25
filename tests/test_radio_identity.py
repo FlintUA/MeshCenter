@@ -217,3 +217,52 @@ def test_detect_tcp_radio_identity_then_compare_end_to_end():
     other_transport = _FakeTcpRadioTransport(node_id="!deadbeef")
     other_result, _ = detect_tcp_radio_identity(other_transport, "192.168.2.34", 4403, timeout=10)
     assert compare_radio_identity(configured, other_result["detected"]) == "MISMATCH"
+
+
+class _RecordingTcpTransport(_FakeTcpRadioTransport):
+    def __init__(self, *, fail_identity_read=False, **kwargs):
+        super().__init__(**kwargs)
+        self.fail_identity_read = fail_identity_read
+        self.disconnect_calls = 0
+
+    def get_local_node(self, *, timeout):
+        if self.fail_identity_read:
+            raise TransportError(TransportErrorCode.TIMEOUT, "identity read timed out")
+        return super().get_local_node(timeout=timeout)
+
+    def disconnect(self, *, timeout=15.0):
+        self.disconnect_calls += 1
+
+
+def test_detect_tcp_radio_identity_disconnects_when_the_read_fails_after_a_successful_connect():
+    """TCP lifecycle P0: connect() succeeded but the identity read failed -
+    the docstring promises the connection isn't left open on failure, and
+    used to be false for exactly this case."""
+    transport = _RecordingTcpTransport(fail_identity_read=True)
+
+    result, _ = detect_tcp_radio_identity(transport, "192.168.2.34", 4403, timeout=10)
+
+    assert result["status"] == "DETECTION_ERROR"
+    assert result["error_code"] == "timeout"
+    assert transport.disconnect_calls == 1
+
+
+def test_detect_tcp_radio_identity_does_not_disconnect_on_success():
+    """Deliberate: boot-time identity detection IS the connection
+    restore_active_transport() reuses (#278/#287) - must stay open."""
+    transport = _RecordingTcpTransport()
+
+    result, _ = detect_tcp_radio_identity(transport, "192.168.2.34", 4403, timeout=10)
+
+    assert result["status"] == "MATCH"
+    assert transport.disconnect_calls == 0
+
+
+def test_detect_tcp_radio_identity_does_not_disconnect_when_connect_itself_failed():
+    transport = _RecordingTcpTransport(
+        raises=TransportError(TransportErrorCode.CONNECT_REFUSED, "refused")
+    )
+
+    detect_tcp_radio_identity(transport, "192.168.2.34", 4403, timeout=10)
+
+    assert transport.disconnect_calls == 0

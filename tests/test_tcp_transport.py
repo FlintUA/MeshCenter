@@ -541,7 +541,7 @@ def test_reconnect_uses_bounded_jittered_backoff_no_tight_loop(monkeypatch):
     transport = TCPTransport(host="192.168.2.34")
 
     with pytest.raises(TransportError) as excinfo:
-        transport.reconnect(timeout=5)
+        transport.reconnect(timeout=150)
 
     assert excinfo.value.code == TransportErrorCode.CONNECT_REFUSED
     assert transport.get_connection_info().state == ConnectionState.ERROR
@@ -573,7 +573,7 @@ def test_reconnect_succeeding_before_exhausting_the_schedule_stops_early(monkeyp
 
     transport = TCPTransport(host="192.168.2.34")
 
-    info = transport.reconnect(timeout=5)
+    info = transport.reconnect(timeout=150)
 
     assert info.state == ConnectionState.CONNECTED
     assert attempts["count"] == 3

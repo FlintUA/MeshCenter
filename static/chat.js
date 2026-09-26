@@ -9847,7 +9847,7 @@ async function restartListener() {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            throw new Error(data.error || `HTTP ${response.status}`);
+            throw new Error(window.I18N.tOrFallback('errors.' + (data.error_code || ''), data.error_params, data.error || `HTTP ${response.status}`));
         }
 
         showToast(`✅ ${window.I18N.t('system.listener_restart_requested')}`, 'success');
@@ -9894,8 +9894,16 @@ async function rescanNodes() {
             }, 2000);
 
             showToast(`✅ ${window.I18N.t('system.network_rescanned')}`, 'success');
+        } else if (!data.error && data.message) {
+            // ok:false with only a message = "completed, nothing changed" (see
+            // api_rescan_nodes), not a failure - it used to surface as
+            // "Error: Unknown error".
+            showToast(`ℹ️ ${window.I18N.t('system.network_rescan_no_changes')}`, 'info');
+            btn.textContent = originalText;
+            btn.disabled = false;
         } else {
-            showToast(`❌ ${window.I18N.t('common.error_prefix', { reason: data.error || window.I18N.t('errors.unknown_error') })}`, 'error');
+            const reason = window.I18N.tOrFallback('errors.' + (data.error_code || ''), data.error_params, data.error || window.I18N.t('errors.unknown_error'));
+            showToast(`❌ ${window.I18N.t('common.error_prefix', { reason })}`, 'error');
             btn.textContent = originalText;
             btn.disabled = false;
         }
@@ -10047,11 +10055,23 @@ function deviceStatusClass(mode, identityStatus) {
     return 'device-status-danger';
 }
 
-function deviceConnectionLabel(mode, listenerRunning) {
+// TCP/Bluetooth have no Core `--listen` subprocess, so "listener running"
+// says nothing about their link - `mode` (the real ConnectionState) is the
+// only truth there and "Listener stopped" must never be shown for them.
+function isNonSerialTransport(type) {
+    return type === 'tcp' || type === 'bluetooth';
+}
+
+function deviceConnectionLabel(mode, listenerRunning, type) {
     if (mode === 'released') return window.I18N.t('settings.radio_status_released');
     if (mode === 'releasing') return window.I18N.t('settings.radio_status_releasing');
     if (mode === 'reconnecting') return window.I18N.t('settings.radio_status_reconnecting');
     if (mode === 'error') return window.I18N.t('node_manager.connection_error');
+    if (isNonSerialTransport(type)) {
+        if (mode === 'connected') return window.I18N.t('settings.radio_status_connected');
+        if (mode === 'connecting') return window.I18N.t('settings.radio_status_reconnecting');
+        return window.I18N.t('node_manager.connection_disconnected');
+    }
     return listenerRunning ? window.I18N.t('settings.radio_status_connected') : window.I18N.t('node_manager.listener_stopped');
 }
 
@@ -10354,7 +10374,7 @@ async function loadNodeManagerDashboard(showFeedback = false) {
         const counts = profile.counts || {};
         const storage = profile.storage || {};
         const statusClass = deviceStatusClass(connection.mode, radio.identity_status);
-        const connectionLabel = deviceConnectionLabel(connection.mode, connection.listener_running);
+        const connectionLabel = deviceConnectionLabel(connection.mode, connection.listener_running, connection.type);
         const canRelease = connection.mode === 'connected' && connection.listener_running;
         const canReconnect = connection.mode === 'released' || connection.mode === 'error' || (!connection.listener_running && connection.mode !== 'reconnecting');
         const iconSrc = window.MeshCenterNodeAvatar?.current?.() || '/static/meshcenter_logo.png';
@@ -12799,6 +12819,9 @@ function updateHeaderNodeStatus(data, reachable = true) {
     const status = String(data?.status || '').toUpperCase();
     const level = String(data?.level || '').toUpperCase();
     const listenerRunning = Boolean(data?.listener_running);
+    // listener_running is always False for TCP/Bluetooth (no Core --listen
+    // subprocess) - for them the transport-aware status/level decide.
+    const nonSerial = isNonSerialTransport(data?.transport);
 
     let label = 'Disconnected';
     let stateClass = 'status-offline';
@@ -12815,7 +12838,7 @@ function updateHeaderNodeStatus(data, reachable = true) {
         label = 'Starting';
         stateClass = 'status-warning';
 
-    } else if (!listenerRunning || status === 'LISTENER_DOWN') {
+    } else if ((!nonSerial && !listenerRunning) || status === 'LISTENER_DOWN') {
         label = 'Offline';
         stateClass = 'status-error';
 
@@ -12869,7 +12892,7 @@ function updateHeaderNodeStatus(data, reachable = true) {
         '';
 
     headerStatus.title = reachable
-        ? `Radio: ${label} | Listener: ${listenerText} | Last packet: ${packetText}${reason ? ` | ${reason}` : ''} | Click to open System`
+        ? `Radio: ${label}${nonSerial ? '' : ` | Listener: ${listenerText}`} | Last packet: ${packetText}${reason ? ` | ${reason}` : ''} | Click to open System`
         : 'MeshCenter status API is unavailable. Click to open System';
 
     headerStatus.setAttribute(
@@ -12948,8 +12971,23 @@ async function loadRadioHealth() {
             levelEl.style.color = levelColor;
         }
 
-        if (listenerEl) {
+        const nonSerialRadio = isNonSerialTransport(data.transport);
+        const listenerRow = listenerEl ? listenerEl.closest('.system-row') : null;
+        if (listenerRow) listenerRow.style.display = nonSerialRadio ? 'none' : '';
+        if (listenerEl && !nonSerialRadio) {
             listenerEl.textContent = data.listener_running ? `🟢 ${window.I18N.t('node_manager.running')}` : `🔴 ${window.I18N.t('node_manager.stopped')}`;
+        }
+
+        // TCP/Bluetooth cannot receive (no push channel adapter -> Core), a
+        // known limitation, not a fault: say so instead of "Listener: Stopped".
+        const receiveRow = document.getElementById('radioHealthReceiveRow');
+        const receiveEl = document.getElementById('radioHealthReceive');
+        if (receiveRow) receiveRow.style.display = nonSerialRadio ? '' : 'none';
+        if (receiveEl && nonSerialRadio) {
+            receiveEl.textContent = window.I18N.t('system.reception_not_supported');
+            receiveEl.title = data.transport === 'tcp'
+                ? window.I18N.t('settings.meshtastic_tcp_receive_note')
+                : window.I18N.t('settings.meshtastic_ble_receive_warning');
         }
 
         if (packetEl) packetEl.textContent = data.packet_age == null ? window.I18N.t('nodes.never_seen') : window.I18N.t('system.seconds_ago', { seconds: data.packet_age });
@@ -12963,7 +13001,8 @@ async function loadRadioHealth() {
         }
 
         if (restartBtn) {
-            restartBtn.disabled = false;
+            restartBtn.disabled = nonSerialRadio;
+            restartBtn.title = nonSerialRadio ? window.I18N.t('system.restart_listener_not_applicable') : '';
             restartBtn.textContent = `🔄 ${window.I18N.t('system.restart_listener_button_label')}`;
         }
 

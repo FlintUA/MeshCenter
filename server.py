@@ -72,6 +72,7 @@ from meshsrv.radio_transport import (
     TransportError,
 )
 from meshsrv import inbound_events
+from meshsrv import inbound_worker as inbound_worker_module
 from meshsrv.adapter_ipc_client import AdapterIPCTransport, AdapterSupervisor
 from meshsrv.transport_router import TransportRouter
 from meshsrv.schedule_engine import start as start_schedule_engine
@@ -3860,6 +3861,44 @@ def _inbound_deps():
     )
 
 
+def inbound_eligibility():
+    """None when inbound TCP events may be ingested right now, else why not.
+    Read from live state every tick, so a Settings switch to or from TCP needs no
+    restart. The router must actually be on TCP: identity MATCH is what makes
+    restore_active_transport() put it there, and a router still on its serial
+    default would answer UNSUPPORTED."""
+    accepted = normalize_radio_record(dict(instance_manager.get().get("radio", {})))
+    if accepted.get("transport") != "tcp":
+        return "not_tcp"
+    status = str(RADIO_IDENTITY_RESULT.get("status") or "NOT_CHECKED")
+    if status != "MATCH":
+        return f"identity_{status.lower()}"
+    try:
+        descriptor = transport_router.get_connection_info().descriptor
+    except Exception:
+        return "router_unavailable"
+    if descriptor is None or descriptor.type != ConnectionType.TCP:
+        return "router_not_tcp"
+    return None
+
+
+inbound_worker = inbound_worker_module.InboundWorker(
+    drain=lambda **kwargs: transport_router.drain_received(**kwargs),
+    eligibility=inbound_eligibility,
+    ingest_text=lambda event: inbound_events.ingest_received_text(event, _inbound_deps()),
+    ingest_waypoint=lambda event: inbound_events.ingest_received_waypoint(event, _inbound_deps(), source="tcp"),
+    log=print,
+    log_system_event=log_system_event,
+)
+
+
+def radio_inbound_worker():
+    """Thread target: TCP inbound text/waypoints -> the shared Core ingest.
+    Started for every transport (an idle tick is a couple of dict reads every
+    few seconds); eligibility decides per tick whether to do anything."""
+    inbound_worker.run_forever()
+
+
 def _optional_int(text):
     return int(text) if text is not None else None
 
@@ -4666,6 +4705,11 @@ def teardown_unverified_tcp_session(status, where):
         detail = "session closed"
     except Exception as error:
         detail = f"disconnect failed: {error}"
+    # Whatever that session captured must not survive to be mixed with a later,
+    # legitimate connection (receive plan, section 46).
+    discarded = inbound_worker.discard_pending(lambda **kwargs: tcp_ipc_transport.drain_received(**kwargs))
+    if discarded:
+        detail += f"; {discarded} buffered inbound event(s) discarded"
     log_system_event(
         "Disconnected from a radio that failed identity verification",
         "WARNING",
@@ -7223,6 +7267,12 @@ def api_radio_health():
     # Bluetooth - they have no Core `--listen` subprocess) as a fault.
     status["transport"] = current_radio_transport()
 
+    # Inbound receive counters (counts and states only - never message content).
+    status["inbound"] = {
+        "worker": inbound_worker.stats(),
+        "ingest": inbound_events.get_inbound_stats(),
+    }
+
     return jsonify(status)
 
 # ============================================================
@@ -7598,6 +7648,12 @@ def start_runtime():
     # TCP/Bluetooth.
     if should_start_health_worker(identity_status, active_transport):
         threading.Thread(target=radio_health_worker, daemon=True).start()
+
+    # TCP inbound (text + waypoints): polls the adapter's receive queue. Started
+    # for every transport and gated per tick (see inbound_eligibility()), so it
+    # also covers a live Settings switch to TCP and a TCP radio whose identity is
+    # still unresolved at boot - it just waits until MATCH.
+    threading.Thread(target=radio_inbound_worker, daemon=True).start()
 
     # The rest of this group is serial-specific machinery - each one
     # consumes the `meshtastic --listen` subprocess's output or exists only

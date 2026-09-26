@@ -232,8 +232,41 @@ the previous drain; `malformed` = events discarded because they could not be
 decoded - one bad event never costs the rest of the batch. Unknown keys in
 input are dropped, an unknown `kind` raises. The method is optional: the default
 raises `UNSUPPORTED` (so "cannot receive" is distinguishable from "nothing
-received" = an empty batch). **`TCPTransport` implements it** (Core does not
-consume it yet); Serial and Bluetooth keep the default.
+received" = an empty batch). **`TCPTransport` implements it**, and Core consumes it
+through `meshsrv/inbound_worker.py` (below); Serial and Bluetooth keep the default.
+
+### TCP inbound worker (Core side)
+
+`radio_inbound_worker` (thread, started for every transport) polls
+`transport_router.drain_received(limit=100)` about once a second and hands each
+event to the shared ingest (`meshsrv/inbound_events.py`). It ingests only while
+`inbound_eligibility()` is true - the accepted radio is TCP, identity is `MATCH`
+and the router is actually on TCP - re-read every tick, so a Settings switch
+needs no restart; otherwise it idles (5 s ticks). `BUSY` / `NOT_CONNECTED` /
+`ADAPTER_UNAVAILABLE` / `TIMEOUT` / `UNSUPPORTED` from the drain are waited out
+silently (one log line per five minutes, never an ERROR per second); one event
+that cannot be ingested is dropped on its own (only its exception *type* is
+logged - a message can be inside the text); a full batch is followed by another
+in the same tick (at most 5). Nothing here logs message text.
+
+Every event must name the radio it came from (`local_radio_node_id`); the ingest
+drops it, with a warning and a counter, unless it is the active accepted radio -
+so events buffered for radio A are never written into radio B's profile. When a
+session is torn down because its identity was refused (MISMATCH / NOT_FOUND),
+whatever the adapter queue captured is drained and discarded.
+
+Counters (counts and states only) are in `GET /api/radio_health` under
+`inbound`: `worker` (drained_events, text_events, waypoint_events, ingest_errors,
+malformed_events, overflow_dropped, discarded_on_identity_refusal, soft_errors,
+status, waiting_reason, last_drain_age_s, connection_generation) and `ingest`
+(text_stored, duplicates, waypoint created/updated/duplicate,
+stale_identity_dropped). The adapter's own `received_*` / `queue_depth` counters
+stay adapter-side (`TCPTransport.get_receive_stats()`).
+
+Delivery is best-effort with Core-side duplicate suppression: an event captured
+while the TCP link is down, or buffered only inside an adapter process that is
+killed before the next drain, can be lost. Out of scope (later stages): NodeInfo /
+position / telemetry, routing ACKs, Bluetooth receive, remote waypoint deletion.
 
 ### TCP capture (adapter side)
 

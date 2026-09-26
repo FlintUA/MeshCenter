@@ -43,6 +43,10 @@ REQUIRED_CALLS = [
      'Every chat/message send/receive route (api/api_chat.py) - /api/send, /api/messages, etc.'),
     ('register_settings_routes(',
      'The Settings page backend (api/api_settings.py).'),
+    ('radio_inbound_worker',
+     'The TCP inbound poller (meshsrv/inbound_worker.py): without this thread text messages '
+     'and waypoints received over a TCP radio are captured by the adapter and then never '
+     'read - the UI keeps working, sending works, and nothing incoming ever appears.'),
     ('listen_meshtastic',
      'The long-lived `meshtastic --listen` subprocess this whole app is built '
      'around (see CLAUDE.md) - without starting this thread, no radio traffic '

@@ -964,7 +964,8 @@
     "restart_listener_not_applicable": "Not applicable for TCP/Bluetooth connections",
     "reception_label": "Incoming messages",
     "reception_not_supported": "Not received (send only)",
-    "network_rescan_no_changes": "Network rescan completed, no changes found"
+    "network_rescan_no_changes": "Network rescan completed, no changes found",
+    "reception_tcp_partial": "Text and waypoints"
   },
   "settings": {
     "title": "Settings",
@@ -1120,7 +1121,7 @@
     "files_description": "File transfers over the Mesh via Relay providers.",
     "files_relay_providers": "Relay providers",
     "files_relay_wizard": "Set up a Relay",
-    "meshtastic_tcp_receive_note": "Incoming messages are not received over TCP - you can send, but not receive. Switch back to USB to receive messages again."
+    "meshtastic_tcp_receive_note": "Over TCP, MeshCenter receives text messages and waypoints. Node info, positions and telemetry are not received yet - use USB for the full feed."
   },
   "modals": {
     "message_info": "Message Info",

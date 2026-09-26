@@ -40,6 +40,7 @@ const STRINGS = {
     'node_manager.running': 'Running',
     'node_manager.stopped': 'Stopped',
     'system.reception_not_supported': 'Not received (send only)',
+    'system.reception_tcp_partial': 'Text and waypoints',
     'system.restart_listener_not_applicable': 'Not applicable for TCP/Bluetooth connections',
     'system.restart_listener_button_label': 'Restart Listener',
     'settings.meshtastic_tcp_receive_note': 'TCP-NOTE',
@@ -191,7 +192,9 @@ async function runCard(data) {
     assert.notEqual(get('radioHealthListener').textContent, 'Stopped');
     assert.ok(!/Stopped/.test(get('radioHealthListener').textContent));
     assert.equal(get('radioHealthReceiveRow').style.display, '');
-    assert.equal(get('radioHealthReceive').textContent, 'Not received (send only)');
+    // TCP receives text and waypoints now: the row must not claim "send only".
+    assert.equal(get('radioHealthReceive').textContent, 'Text and waypoints');
+    assert.notEqual(get('radioHealthReceive').textContent, 'Not received (send only)');
     assert.equal(get('radioHealthReceive').title, 'TCP-NOTE');
     assert.equal(get('restartListenerBtn').disabled, true, 'Restart Listener is disabled, not hidden');
     assert.equal(get('restartListenerBtn').title, 'Not applicable for TCP/Bluetooth connections');
@@ -200,6 +203,7 @@ async function runCard(data) {
 {
     const sb = await runCard({ ...TCP_CONNECTED, transport: 'bluetooth' });
     assert.equal(sb.document.getElementById('radioHealthReceive').title, 'BLE-NOTE');
+    assert.equal(sb.document.getElementById('radioHealthReceive').textContent, 'Not received (send only)', 'Bluetooth still receives nothing');
     assert.equal(sb.document.getElementById('restartListenerBtn').disabled, true);
 }
 

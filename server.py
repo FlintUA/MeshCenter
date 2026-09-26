@@ -5075,6 +5075,34 @@ def resolve_health_active_transport(configured_normalized, transport_state):
     return configured_normalized.get("transport") or "serial"
 
 
+def current_radio_transport():
+    """The active radio's transport ("serial"/"tcp"/"bluetooth") for request
+    handlers - the same resolution radio_health_worker() uses, so a route and
+    the health status can never disagree about which transport is live."""
+    transport_state = connection_payload(transport_router, LOCAL_NODE_ID, listener_supervisor)
+    configured = normalize_radio_record(dict(instance_manager.get().get("radio", {})))
+    return resolve_health_active_transport(configured, transport_state)
+
+
+def serial_only_action_refusal(action_label):
+    """(response, status) for a serial-only route hit while a TCP/Bluetooth
+    radio is active, else None. These routes drive Core's serial `--listen`
+    subprocess / serial `--info` CLI, which do not exist for TCP/Bluetooth -
+    running them anyway either did nothing while reporting success
+    (restart_listener also cleared pause_listen, which start_runtime() sets on
+    purpose for non-serial) or failed with no `error` text (rescan_nodes)."""
+    transport = current_radio_transport()
+    if transport == "serial":
+        return None
+    label = {"tcp": "TCP", "bluetooth": "Bluetooth"}.get(transport, transport)
+    return jsonify({
+        "ok": False,
+        "error": f"{action_label} is not applicable to {label} connections",
+        "error_code": "listener_not_applicable",
+        "transport": transport,
+    }), 409
+
+
 def should_start_health_worker(identity_status, active_transport):
     """Gate for radio_health_worker() in start_runtime().
 
@@ -6778,6 +6806,10 @@ def api_radio_connection_reconnect():
 @app.route("/api/restart_listener", methods=["POST"])
 @handle_errors
 def api_restart_listener():
+    refusal = serial_only_action_refusal("Restarting the listener")
+    if refusal:
+        return refusal
+
     if RADIO_IDENTITY_RESULT.get("status") != "MATCH":
         return jsonify({
             "ok": False,
@@ -6811,6 +6843,10 @@ def api_restart_listener():
 @app.route("/api/rescan_nodes", methods=["POST"])
 @handle_errors
 def api_rescan_nodes():
+    refusal = serial_only_action_refusal("Rescanning the network")
+    if refusal:
+        return refusal
+
     if RADIO_IDENTITY_RESULT.get("status") != "MATCH":
         return jsonify({
             "ok": False,
@@ -7182,6 +7218,10 @@ def api_radio_health():
         max(0, int(now_ts - last_send))
         if last_send else None
     )
+
+    # Lets the UI stop reading listener_running (always False for TCP/
+    # Bluetooth - they have no Core `--listen` subprocess) as a fault.
+    status["transport"] = current_radio_transport()
 
     return jsonify(status)
 

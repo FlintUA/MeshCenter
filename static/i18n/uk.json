@@ -817,7 +817,8 @@
     "unable_to_load": "Не вдалося завантажити інформацію про вузол",
     "unable_to_save_image": "Не вдалося зберегти зображення вузла",
     "upload_failed": "Завантаження не вдалося.",
-    "usb_port": "USB-порт"
+    "usb_port": "USB-порт",
+    "connection_disconnected": "Відключено"
   },
   "system": {
     "title": "Система",
@@ -959,7 +960,11 @@
     "security_enable_requires_password": "Задайте пароль перед увімкненням захисту.",
     "security_save_failed": "Не вдалося зберегти: {reason}",
     "security_logout_btn": "Вийти",
-    "security_logout_note": "Діє лише для цієї сесії браузера."
+    "security_logout_note": "Діє лише для цієї сесії браузера.",
+    "restart_listener_not_applicable": "Не застосовується для підключень TCP/Bluetooth",
+    "reception_label": "Вхідні повідомлення",
+    "reception_not_supported": "Не приймаються (лише надсилання)",
+    "network_rescan_no_changes": "Сканування мережі завершено, змін не знайдено"
   },
   "settings": {
     "title": "Налаштування",
@@ -1114,7 +1119,8 @@
     "files_title": "Файли / MCAttach",
     "files_description": "Передача файлів через Mesh за допомогою Relay-провайдерів.",
     "files_relay_providers": "Relay-провайдери",
-    "files_relay_wizard": "Налаштувати Relay"
+    "files_relay_wizard": "Налаштувати Relay",
+    "meshtastic_tcp_receive_note": "Вхідні повідомлення не приймаються через TCP - ви можете надсилати, але не отримувати. Перемкніться назад на USB, щоб знову отримувати повідомлення."
   },
   "modals": {
     "message_info": "Інформація про повідомлення",
@@ -1473,7 +1479,8 @@
     "request_timeout": "Перевищено час очікування запиту",
     "send_failed": "надсилання не вдалося",
     "unknown_error": "Невідома помилка",
-    "network_error": "Помилка мережі"
+    "network_error": "Помилка мережі",
+    "listener_not_applicable": "Ця дія не застосовується для підключень TCP/Bluetooth"
   },
   "time": {
     "card_title": "Час і таймери",

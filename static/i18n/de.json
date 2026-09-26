@@ -817,7 +817,8 @@
     "unable_to_load": "Knoteninformationen konnten nicht geladen werden",
     "unable_to_save_image": "Knotenbild konnte nicht gespeichert werden",
     "upload_failed": "Hochladen fehlgeschlagen.",
-    "usb_port": "USB-Port"
+    "usb_port": "USB-Port",
+    "connection_disconnected": "Getrennt"
   },
   "system": {
     "title": "System",
@@ -959,7 +960,11 @@
     "security_enable_requires_password": "Lege ein Passwort fest, bevor du den Schutz aktivierst.",
     "security_save_failed": "Konnte nicht gespeichert werden: {reason}",
     "security_logout_btn": "Abmelden",
-    "security_logout_note": "Gilt nur für diese Browser-Sitzung."
+    "security_logout_note": "Gilt nur für diese Browser-Sitzung.",
+    "restart_listener_not_applicable": "Für TCP-/Bluetooth-Verbindungen nicht anwendbar",
+    "reception_label": "Eingehende Nachrichten",
+    "reception_not_supported": "Nicht empfangen (nur senden)",
+    "network_rescan_no_changes": "Netzwerk-Scan abgeschlossen, keine Änderungen gefunden"
   },
   "settings": {
     "title": "Einstellungen",
@@ -1114,7 +1119,8 @@
     "files_title": "Dateien / MCAttach",
     "files_description": "Dateiübertragungen über das Mesh via Relay-Anbieter.",
     "files_relay_providers": "Relay-Anbieter",
-    "files_relay_wizard": "Relay einrichten"
+    "files_relay_wizard": "Relay einrichten",
+    "meshtastic_tcp_receive_note": "Eingehende Nachrichten werden über TCP nicht empfangen - du kannst senden, aber nicht empfangen. Wechsle zurück zu USB, um wieder Nachrichten zu empfangen."
   },
   "modals": {
     "message_info": "Nachrichteninfo",
@@ -1473,7 +1479,8 @@
     "request_timeout": "Zeitüberschreitung der Anfrage",
     "send_failed": "Senden fehlgeschlagen",
     "unknown_error": "Unbekannter Fehler",
-    "network_error": "Netzwerkfehler"
+    "network_error": "Netzwerkfehler",
+    "listener_not_applicable": "Diese Aktion ist für TCP-/Bluetooth-Verbindungen nicht anwendbar"
   },
   "time": {
     "card_title": "Zeit & Timer",

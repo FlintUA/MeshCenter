@@ -35,6 +35,8 @@ license-boundary check" step). The five call sites above now go through
 | `connect(descriptor, force=False, timeout=30)` | Open a connection | `SerialInterface(devPath=...)` construction sites |
 | `disconnect(timeout=15)` | Close, fully released on return | `interface.close()` |
 | `reconnect(timeout=30)` | `disconnect()` + `connect(..., force=True)` | manual retry loops |
+
+IPC-only additions (`meshsrv/adapter_ipc_client.py`, not part of the `RadioTransport` ABC): `reconnect` may carry an optional `descriptor` (the endpoint to reconnect to - an adapter process forgets its last `connect()` whenever it is killed and respawned, so Core always supplies the accepted profile's address), and a `connection_info` operation returns the adapter's own in-memory view of the link (no radio I/O) so Core can refresh its cache-only `get_connection_info()` and notice a session whose reader thread has died.
 | `is_connected()` | Cheap local check | ad hoc `interface is not None` checks |
 | `send_text(message, timeout=15)` | One text message | `interface.sendText(...)` |
 | `send_packet(payload, destination_id, port_num, want_ack=False, timeout=15)` | Raw application payload | (no current equivalent — escape hatch) |

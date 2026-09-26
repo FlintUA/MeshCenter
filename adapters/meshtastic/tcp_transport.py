@@ -795,7 +795,21 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         every attempt, via connect(force=True), never a lighter-weight
         "just reopen the socket" path: a reconnect that skips identity
         re-validation could silently start talking to a different radio
-        than the one this transport was originally bound to."""
+        than the one this transport was originally bound to.
+
+        Needs a known endpoint: a freshly (re)spawned adapter process
+        builds this transport with host="" (ipc_server.py) and only learns
+        the address from connect() or adopt_endpoint(). Without one, every
+        one of the 6 attempts used to fail with `dns_error: could not
+        resolve ''` and the backoff sleeps (~48s) ran while Core's router
+        lock was held (live-caught on pixel-111: the futile auto-reconnect
+        even made a manual switch() BUSY). Fail immediately instead."""
+        if not self._host:
+            raise TransportError(
+                TransportErrorCode.CONNECT_FAILED,
+                "no remembered TCP endpoint (this adapter process was restarted) - "
+                "reconnect needs an explicit address; use connect() or pass one from Core",
+            )
         with self._lock:
             self._state = _TcpState.RECONNECTING
         self.disconnect(timeout=min(timeout, 15.0))
@@ -827,12 +841,51 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         jitter = base_delay * random.uniform(-_RECONNECT_JITTER_RATIO, _RECONNECT_JITTER_RATIO)
         return max(_RECONNECT_MIN_DELAY_S, base_delay + jitter)
 
+    def adopt_endpoint(self, descriptor: ConnectionDescriptor) -> None:
+        """Core re-supplies the endpoint on reconnect (ipc_server.py's
+        `reconnect` operation): an adapter process restarted since the last
+        connect() has no memory of it. Only ever fills/updates the address;
+        never touches a live session's state. A non-TCP or empty descriptor
+        is ignored."""
+        if descriptor is None or descriptor.type != ConnectionType.TCP:
+            return
+        host, port = _parse_host_port(descriptor.address, default_port=self._port or DEFAULT_TCP_PORT)
+        if not host:
+            return
+        with self._lock:
+            self._host = host
+            self._port = port or self._port
+            self._label = descriptor.label or self._label
+
+    def _demote_if_dead_locked(self) -> None:
+        """Caller holds self._lock. A READY session whose reader thread has
+        died (a `Connection reset by peer` ends the library's reader, and the
+        library's heartbeat then just hits BrokenPipe every few minutes) used
+        to stay READY - reported CONNECTED forever - until something happened
+        to send; `_state` only flipped on a failed send. Live evidence
+        (pixel-111, 2026-09-25): reset at 21:54, then heartbeat BrokenPipe
+        every 10 minutes until a manual restart. Flipped to DEGRADED here so
+        the health worker sees ERROR and auto-reconnect can act. Only looks
+        at in-memory thread/event state - no I/O."""
+        if self._state != _TcpState.READY or self._interface is None:
+            return
+        if self._interface_is_healthy(self._interface):
+            return
+        self._state = _TcpState.DEGRADED
+        self._connected_since = None
+        self._last_error = TransportError(
+            TransportErrorCode.REMOTE_DISCONNECT,
+            f"TCP connection to {self._host}:{self._port} was lost (reader thread exited)",
+        )
+
     def is_connected(self) -> bool:
         with self._lock:
+            self._demote_if_dead_locked()
             return self._state == _TcpState.READY and self._interface is not None
 
     def get_connection_info(self) -> ConnectionInfo:
         with self._lock:
+            self._demote_if_dead_locked()
             return ConnectionInfo(
                 state=_EXTERNAL_STATE_MAP[self._state],
                 descriptor=ConnectionDescriptor(

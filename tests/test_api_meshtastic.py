@@ -138,6 +138,7 @@ class _FakeTcpTransport:
         self._state = ConnectionState.CONNECTED
         self.connect_calls = []
         self.reconnect_calls = 0
+        self.reconnect_descriptors = []
         self.get_local_node_calls = 0
         self.identity_node_id = identity_node_id
         self.identity_long_name = identity_long_name
@@ -153,8 +154,9 @@ class _FakeTcpTransport:
         self._state = ConnectionState.CONNECTED
         return self.get_connection_info()
 
-    def reconnect(self, *, timeout=30.0):
+    def reconnect(self, *, timeout=30.0, descriptor=None):
         self.reconnect_calls += 1
+        self.reconnect_descriptors.append(descriptor)
         if self.fail_reconnect:
             self._state = ConnectionState.ERROR
             raise TransportError(TransportErrorCode.CONNECT_FAILED, "simulated reconnect failure")
@@ -229,6 +231,7 @@ def _register(
     settings,
     serial_port="/dev/ttyACM0",
     instance_manager=None,
+    resolve_reconnect_descriptor=None,
 ):
     core_serial_transport = _FakeSerialTransport(listener_pid=99999)
 
@@ -258,6 +261,7 @@ def _register(
         core_serial_transport,
         instance_manager,
         refresh_identity_after_reconnect,
+        resolve_reconnect_descriptor,
     )
     return {
         "app": app,
@@ -528,6 +532,7 @@ def tcp_env():
     env.update({
         "transport_router": transport_router,
         "serial_transport": serial_transport,
+        "ble_transport": ble_transport,
         "tcp_transport": tcp_transport,
         "settings": settings,
     })
@@ -953,3 +958,41 @@ def test_forget_connection_rejects_an_unknown_transport_name():
     assert response.status_code == 400
     assert data["ok"] is False
     assert data["error_code"] == "invalid_transport_type"
+
+
+def test_manual_reconnect_hands_the_adapter_an_explicit_endpoint(tcp_env):
+    """A respawned adapter process has no memory of the last connect(); the
+    route must pass the accepted profile's address (bare reconnect() failed
+    with dns_error '' in that state)."""
+    client = tcp_env["client"]
+    tcp_transport = tcp_env["tcp_transport"]
+    assert client.post("/api/meshtastic/tcp/connect", json={"host": "192.168.2.34", "port": 4403}).get_json()["ok"]
+
+    seen_types = []
+    explicit = ConnectionDescriptor(type=ConnectionType.TCP, address="192.168.2.34:4403")
+
+    def resolve(active_type):
+        seen_types.append(active_type)
+        return explicit
+
+    env = _register(
+        transport_router=tcp_env["transport_router"],
+        serial_transport=tcp_env["serial_transport"],
+        ble_transport=tcp_env["ble_transport"],
+        tcp_transport=tcp_transport,
+        settings=tcp_env["settings"],
+        resolve_reconnect_descriptor=resolve,
+    )
+    response = env["client"].post("/api/meshtastic/reconnect")
+
+    assert response.get_json()["ok"] is True
+    assert seen_types == ["tcp"]
+    assert tcp_transport.reconnect_descriptors[-1] is explicit
+
+
+def test_manual_reconnect_without_a_resolver_is_unchanged(tcp_env):
+    client = tcp_env["client"]
+    assert client.post("/api/meshtastic/tcp/connect", json={"host": "192.168.2.34", "port": 4403}).get_json()["ok"]
+
+    assert client.post("/api/meshtastic/reconnect").get_json()["ok"] is True
+    assert tcp_env["tcp_transport"].reconnect_descriptors[-1] is None

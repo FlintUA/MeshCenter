@@ -720,9 +720,43 @@ class AdapterIPCTransport(RadioTransport):
         result = self._call("disconnect", {}, timeout)
         self._cached_info = ipc_protocol.connection_info_from_dict(result)
 
-    def reconnect(self, *, timeout: float = 30.0) -> ConnectionInfo:
-        result = self._call("reconnect", {}, timeout)
+    def reconnect(
+        self, *, timeout: float = 30.0, descriptor: Optional[ConnectionDescriptor] = None
+    ) -> ConnectionInfo:
+        """`descriptor`, when given, is the endpoint the adapter should
+        reconnect to. The adapter process forgets its last connect() every
+        time it is killed and respawned (which the timeout/tcp_connected
+        recycle rules do routinely), and a bare reconnect() in a fresh
+        process failed with `dns_error: could not resolve ''` - so Core
+        always supplies the address it knows (accepted profile)."""
+        params = {"descriptor": ipc_protocol.descriptor_to_dict(descriptor)} if descriptor is not None else {}
+        result = self._call("reconnect", params, timeout)
         info = ipc_protocol.connection_info_from_dict(result)
+        self._cached_info = info
+        return info
+
+    def refresh_connection_info(self, *, timeout: float = 5.0) -> ConnectionInfo:
+        """Pulls the adapter's own view of the link into the Core-side cache.
+        get_connection_info() is cache-only (never crosses IPC), so without
+        this a session the adapter already knows is dead (reader thread
+        exited) stays cached as CONNECTED until something sends. Cheap: the
+        adapter answers from memory, no radio I/O.
+
+        A respawned adapter reports an empty endpoint; Core's cached
+        descriptor (the last real address) is kept in that case."""
+        result = self._call("connection_info", {}, timeout)
+        info = ipc_protocol.connection_info_from_dict(result)
+        previous = self._cached_info.descriptor
+        reported = info.descriptor
+        host_known = bool(reported is not None and reported.address.rsplit(":", 1)[0].strip("[]"))
+        if previous is not None and not host_known:
+            info = ConnectionInfo(
+                state=info.state,
+                descriptor=previous,
+                node_id=info.node_id or self._cached_info.node_id,
+                connected_since=info.connected_since,
+                last_error=info.last_error,
+            )
         self._cached_info = info
         return info
 

@@ -148,8 +148,18 @@ class _AdapterDispatcher:
             return ipc_protocol.connection_info_to_dict(target.get_connection_info())
 
         if operation == "reconnect":
+            # Core may re-supply the endpoint (from the accepted profile): a
+            # respawned adapter process has no memory of the last connect().
+            explicit = params.get("descriptor")
+            if explicit and hasattr(target, "adopt_endpoint"):
+                target.adopt_endpoint(ipc_protocol.descriptor_from_dict(explicit))
             info = target.reconnect(timeout=timeout)
             return ipc_protocol.connection_info_to_dict(info)
+
+        if operation == "connection_info":
+            # Cheap in-memory status (no radio I/O) so Core can refresh its
+            # cached view - Core's get_connection_info() never crosses IPC.
+            return ipc_protocol.connection_info_to_dict(target.get_connection_info())
 
         if operation == "send_text":
             result = target.send_text(ipc_protocol.outgoing_message_from_dict(params["message"]), timeout=timeout)

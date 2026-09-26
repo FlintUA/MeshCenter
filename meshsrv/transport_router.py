@@ -197,6 +197,28 @@ class TransportRouter(RadioTransport):
     def reconnect(self, *args, timeout: float = 30.0, **kwargs):
         return self._delegate("reconnect", *args, timeout=timeout, **kwargs)
 
+    def refresh_connection_info(self, *, timeout: float = 5.0) -> bool:
+        """Best-effort refresh of the active transport's cached connection
+        state from the adapter (see AdapterIPCTransport.
+        refresh_connection_info()). Never raises and never queues behind a
+        busy router: if a switch/connect/send holds the lock the refresh is
+        skipped - the operation in flight will update the cache itself.
+        Returns whether a refresh actually happened."""
+        if not self._lock.acquire(timeout=0.2):
+            return False
+        try:
+            refresh = getattr(self._active, "refresh_connection_info", None)
+            if refresh is None:
+                return False
+            try:
+                refresh(timeout=timeout)
+                return True
+            except Exception:
+                # The IPC layer already recorded the failure in its cache.
+                return False
+        finally:
+            self._lock.release()
+
     def send_text(self, *args, timeout: float = 15.0, **kwargs):
         return self._delegate("send_text", *args, timeout=timeout, **kwargs)
 

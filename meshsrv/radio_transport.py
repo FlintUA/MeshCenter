@@ -14,7 +14,7 @@ import abc
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Union
 
 PROTOCOL_VERSION = 1
 
@@ -285,6 +285,115 @@ class TelemetryEvent:
 
 
 # ---------------------------------------------------------------------------
+# Received events (inbound traffic from the radio)
+# ---------------------------------------------------------------------------
+#
+# What a transport hands Core for one packet it received - deliberately NOT
+# the library's packet dict or protobuf. The real packet carries a protobuf
+# `raw` MeshPacket, `decoded.payload` bytes and (for waypoints) a second `raw`
+# string; none of that may cross the IPC boundary, be logged, or reach Core's
+# storage. So these are frozen, plain-typed, validated at construction, and the
+# ONLY way onto the wire is the explicit per-field functions in
+# meshsrv/ipc_protocol.py.
+#
+# `sender_id` / `recipient_id` are "!xxxxxxxx" node ids (or "^all" for a
+# broadcast recipient), derived by the transport from the packet's NUMERIC
+# `from` / `to` - never from the library's `fromId`, which is None whenever the
+# sender is not yet in the local NodeDB (observed on meshtastic 2.7.9-2.7.11).
+# `rx_time` is the radio's own clock (epoch seconds, None when the radio
+# reported none / 0); Core stamps its own receive time when it consumes the
+# event.
+
+def _field_str(owner: str, name: str, value) -> str:
+    if type(value) is not str:
+        raise TypeError(f"{owner}.{name} must be str, got {type(value).__name__}")
+    return value
+
+
+def _field_int(owner: str, name: str, value) -> int:
+    if type(value) is not int:  # bool is an int subclass - reject it too
+        raise TypeError(f"{owner}.{name} must be int, got {type(value).__name__}")
+    return value
+
+
+def _field_optional_int(owner: str, name: str, value) -> Optional[int]:
+    return None if value is None else _field_int(owner, name, value)
+
+
+def _field_float(owner: str, name: str, value) -> float:
+    if type(value) not in (int, float):
+        raise TypeError(f"{owner}.{name} must be a number, got {type(value).__name__}")
+    return float(value)
+
+
+def _field_optional_float(owner: str, name: str, value) -> Optional[float]:
+    return None if value is None else _field_float(owner, name, value)
+
+
+@dataclass(frozen=True)
+class ReceivedTextEvent:
+    packet_id: int
+    sender_id: str
+    recipient_id: str  # "!xxxxxxxx" (direct message) or "^all" (broadcast on the channel)
+    channel_index: int
+    text: str
+    rx_time: Optional[int] = None
+    rssi: Optional[int] = None
+    snr: Optional[float] = None
+    hop_limit: Optional[int] = None
+    hop_start: Optional[int] = None
+    relay_node: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        owner = type(self).__name__
+        _field_int(owner, "packet_id", self.packet_id)
+        _field_str(owner, "sender_id", self.sender_id)
+        _field_str(owner, "recipient_id", self.recipient_id)
+        _field_int(owner, "channel_index", self.channel_index)
+        _field_str(owner, "text", self.text)
+        _field_optional_int(owner, "rx_time", self.rx_time)
+        _field_optional_int(owner, "rssi", self.rssi)
+        object.__setattr__(self, "snr", _field_optional_float(owner, "snr", self.snr))
+        _field_optional_int(owner, "hop_limit", self.hop_limit)
+        _field_optional_int(owner, "hop_start", self.hop_start)
+        _field_optional_int(owner, "relay_node", self.relay_node)
+
+
+@dataclass(frozen=True)
+class ReceivedWaypointEvent:
+    packet_id: int
+    sender_id: str
+    recipient_id: str
+    channel_index: int
+    waypoint_id: int
+    name: str
+    description: str
+    latitude: float  # degrees (the packet carries latitudeI / 1e7)
+    longitude: float
+    icon: Optional[int] = None
+    expire_at: Optional[int] = None
+    rx_time: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        owner = type(self).__name__
+        _field_int(owner, "packet_id", self.packet_id)
+        _field_str(owner, "sender_id", self.sender_id)
+        _field_str(owner, "recipient_id", self.recipient_id)
+        _field_int(owner, "channel_index", self.channel_index)
+        _field_int(owner, "waypoint_id", self.waypoint_id)
+        _field_str(owner, "name", self.name)
+        _field_str(owner, "description", self.description)
+        object.__setattr__(self, "latitude", _field_float(owner, "latitude", self.latitude))
+        object.__setattr__(self, "longitude", _field_float(owner, "longitude", self.longitude))
+        _field_optional_int(owner, "icon", self.icon)
+        _field_optional_int(owner, "expire_at", self.expire_at)
+        _field_optional_int(owner, "rx_time", self.rx_time)
+
+
+ReceivedEvent = Union[ReceivedTextEvent, ReceivedWaypointEvent]
+
+
+# ---------------------------------------------------------------------------
 # The interface
 # ---------------------------------------------------------------------------
 
@@ -464,6 +573,23 @@ class RadioTransport(abc.ABC):
         """Non-blocking - returns the last known state, does not itself
         talk to the radio. The polling substitute for a real event stream
         until Stage B (Task 49+) lands."""
+
+    def drain_received(self, *, max_events: int = 100, timeout: float = 5.0) -> list[ReceivedEvent]:
+        """Return (and remove) up to `max_events` inbound events buffered
+        since the last call - ReceivedTextEvent / ReceivedWaypointEvent, oldest
+        first; an empty list when nothing is pending. `timeout` bounds how long
+        the call may wait for the transport to answer.
+
+        OPTIONAL, deliberately not abstract: only a transport that can
+        actually receive implements it (TCP/Bluetooth, once the adapter buffers
+        the library's `meshtastic.receive.*` events). The default raises
+        UNSUPPORTED, so Serial - whose inbound traffic still arrives through
+        Core's own `--listen` subprocess - and every existing test double keep
+        working unchanged, and a caller can tell "cannot receive" from
+        "nothing received" (an empty list)."""
+        raise TransportError(
+            TransportErrorCode.UNSUPPORTED, f"{type(self).__name__} does not support receiving"
+        )
 
     @abc.abstractmethod
     def close(self) -> None:

@@ -30,6 +30,9 @@ from meshsrv.radio_transport import (
     NodeUser,
     OutgoingMessage,
     OutgoingWaypoint,
+    ReceivedEvent,
+    ReceivedTextEvent,
+    ReceivedWaypointEvent,
     SendResult,
     TransportError,
     TransportErrorCode,
@@ -287,6 +290,108 @@ def channel_info_from_dict(data: dict) -> ChannelInfo:
         name=str(data.get("name", "")),
         role=str(data.get("role", "")),
     )
+
+
+# ---------------------------------------------------------------------------
+# Received events (inbound traffic)
+# ---------------------------------------------------------------------------
+# A discriminated envelope: {"kind": "text" | "waypoint", <that kind's fields>}.
+# Field-by-field on BOTH sides, on purpose: the library's packet carries a
+# protobuf `raw`, `decoded.payload` bytes and (waypoints) a second `raw`
+# string, and none of it may be one careless `asdict()` away from the wire.
+# to_dict emits exactly the whitelist below; from_dict reads exactly the
+# whitelist and ignores every other key (a `raw` in the input is dropped, not
+# adopted), and the event constructors reject non-plain types.
+RECEIVED_KIND_TEXT = "text"
+RECEIVED_KIND_WAYPOINT = "waypoint"
+
+
+def received_text_to_dict(event: ReceivedTextEvent) -> dict:
+    return {
+        "kind": RECEIVED_KIND_TEXT,
+        "packet_id": event.packet_id,
+        "sender_id": event.sender_id,
+        "recipient_id": event.recipient_id,
+        "channel_index": event.channel_index,
+        "text": event.text,
+        "rx_time": event.rx_time,
+        "rssi": event.rssi,
+        "snr": event.snr,
+        "hop_limit": event.hop_limit,
+        "hop_start": event.hop_start,
+        "relay_node": event.relay_node,
+    }
+
+
+def received_text_from_dict(data: dict) -> ReceivedTextEvent:
+    return ReceivedTextEvent(
+        packet_id=data["packet_id"],
+        sender_id=data["sender_id"],
+        recipient_id=data["recipient_id"],
+        channel_index=data["channel_index"],
+        text=data["text"],
+        rx_time=data.get("rx_time"),
+        rssi=data.get("rssi"),
+        snr=data.get("snr"),
+        hop_limit=data.get("hop_limit"),
+        hop_start=data.get("hop_start"),
+        relay_node=data.get("relay_node"),
+    )
+
+
+def received_waypoint_to_dict(event: ReceivedWaypointEvent) -> dict:
+    return {
+        "kind": RECEIVED_KIND_WAYPOINT,
+        "packet_id": event.packet_id,
+        "sender_id": event.sender_id,
+        "recipient_id": event.recipient_id,
+        "channel_index": event.channel_index,
+        "waypoint_id": event.waypoint_id,
+        "name": event.name,
+        "description": event.description,
+        "latitude": event.latitude,
+        "longitude": event.longitude,
+        "icon": event.icon,
+        "expire_at": event.expire_at,
+        "rx_time": event.rx_time,
+    }
+
+
+def received_waypoint_from_dict(data: dict) -> ReceivedWaypointEvent:
+    return ReceivedWaypointEvent(
+        packet_id=data["packet_id"],
+        sender_id=data["sender_id"],
+        recipient_id=data["recipient_id"],
+        channel_index=data["channel_index"],
+        waypoint_id=data["waypoint_id"],
+        name=data["name"],
+        description=data["description"],
+        latitude=data["latitude"],
+        longitude=data["longitude"],
+        icon=data.get("icon"),
+        expire_at=data.get("expire_at"),
+        rx_time=data.get("rx_time"),
+    )
+
+
+def received_event_to_dict(event: ReceivedEvent) -> dict:
+    if isinstance(event, ReceivedTextEvent):
+        return received_text_to_dict(event)
+    if isinstance(event, ReceivedWaypointEvent):
+        return received_waypoint_to_dict(event)
+    raise TypeError(f"not a received event: {type(event).__name__}")
+
+
+def received_event_from_dict(data: dict) -> ReceivedEvent:
+    """Raises ValueError for an unknown/missing `kind`, KeyError for a
+    missing required field, TypeError for a wrongly-typed one - an adapter
+    that sends something malformed must be loud, not silently coerced."""
+    kind = data.get("kind") if isinstance(data, dict) else None
+    if kind == RECEIVED_KIND_TEXT:
+        return received_text_from_dict(data)
+    if kind == RECEIVED_KIND_WAYPOINT:
+        return received_waypoint_from_dict(data)
+    raise ValueError(f"unknown received event kind: {kind!r}")
 
 
 # ---------------------------------------------------------------------------

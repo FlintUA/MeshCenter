@@ -362,3 +362,106 @@ def test_the_library_adopts_the_socket_we_opened_and_it_is_blocking():
     finally:
         transport.close()
         server.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Inbound end to end: the REAL library receives a packet from the (fake) radio,
+# publishes it through the REAL pypubsub, and it comes out of drain_received()
+# as a neutral event - through the interface filter, with the real callback
+# signature, and without opening a second TCP connection.
+# ---------------------------------------------------------------------------
+
+
+def _drain_until(transport, count, timeout=10.0):
+    deadline = time.monotonic() + timeout
+    events, dropped, malformed = [], 0, 0
+    while time.monotonic() < deadline and len(events) < count:
+        batch = transport.drain_received()
+        events.extend(batch.events)
+        dropped += batch.dropped
+        malformed += batch.malformed
+        time.sleep(0.05)
+    return events, dropped, malformed
+
+
+def test_real_library_text_and_waypoint_arrive_as_neutral_events():
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    try:
+        transport.connect(_descriptor("127.0.0.1", server.port), timeout=10.0)
+        time.sleep(0.3)  # let the library's one-time heartbeat settle
+
+        server.send_text("Привет TCP 👋", packet_id=101, channel=1)
+        server.send_waypoint(waypoint_id=4242, name="Cafe", description="meet here")
+        events, dropped, malformed = _drain_until(transport, 2)
+
+        assert (dropped, malformed) == (0, 0)
+        assert [type(e).__name__ for e in events] == ["ReceivedTextEvent", "ReceivedWaypointEvent"]
+        text, waypoint = events
+        assert text.text == "Привет TCP 👋"  # exact, unicode intact
+        assert (text.from_node_id, text.to_node_id, text.packet_id, text.channel_index) == ("!1fa065f0", "^all", 101, 1)
+        assert text.local_radio_node_id == "!756f9960"  # the radio the FAKE server says it is
+        assert (waypoint.waypoint_id, waypoint.name, waypoint.description) == (4242, "Cafe", "meet here")
+        assert (waypoint.latitude, waypoint.longitude) == pytest.approx((50.4501, 30.5234))
+        assert waypoint.local_radio_node_id == "!756f9960"
+
+        import json
+        from meshsrv import ipc_protocol
+        wire = json.dumps(ipc_protocol.received_batch_to_dict(type(transport.drain_received())(events=tuple(events))))
+        assert "raw" not in wire and "payload" not in wire
+
+        assert server.accepted_connections == 1, "receiving needs no second TCP connection"
+    finally:
+        transport.close()
+        server.shutdown()
+
+
+def test_real_library_events_survive_a_reconnect_to_the_same_radio():
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    try:
+        transport.connect(_descriptor("127.0.0.1", server.port), timeout=10.0)
+        time.sleep(0.3)
+        server.send_text("before the reconnect", packet_id=1)
+        # captured but not yet drained
+        deadline = time.monotonic() + 10
+        while transport.get_receive_stats()["received_text"] < 1 and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+        transport.reconnect(timeout=30.0)
+        time.sleep(0.3)
+        server.send_text("after the reconnect", packet_id=2)
+        events, dropped, malformed = _drain_until(transport, 2)
+
+        assert [e.text for e in events] == ["before the reconnect", "after the reconnect"]
+        assert (dropped, malformed) == (0, 0)
+        assert transport.drain_received().connection_generation == 2
+    finally:
+        transport.close()
+        server.shutdown()
+
+
+def test_real_library_a_second_transport_in_the_process_does_not_receive_this_ones_packets():
+    """`pub` is process-global; two TCPTransport instances (or a Serial/BLE one)
+    subscribe to the same topics. Each must only queue its OWN interface's events."""
+    server_a = FakeMeshtasticTcpServer(complete_handshake=True, node_num=0x11111111)
+    server_b = FakeMeshtasticTcpServer(complete_handshake=True, node_num=0x22222222)
+    a = TCPTransport(host="127.0.0.1", port=server_a.port)
+    b = TCPTransport(host="127.0.0.1", port=server_b.port)
+    try:
+        a.connect(_descriptor("127.0.0.1", server_a.port), timeout=10.0)
+        b.connect(_descriptor("127.0.0.1", server_b.port), timeout=10.0)
+        time.sleep(0.3)
+
+        server_a.send_text("only for A", packet_id=1)
+        events_a, _, _ = _drain_until(a, 1)
+        time.sleep(0.5)  # give a wrongly-shared subscription time to leak into B
+
+        assert [e.text for e in events_a] == ["only for A"]
+        assert events_a[0].local_radio_node_id == "!11111111"
+        assert b.drain_received().events == ()
+    finally:
+        a.close()
+        b.close()
+        server_a.shutdown()
+        server_b.shutdown()

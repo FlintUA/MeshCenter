@@ -161,6 +161,7 @@ from meshsrv.radio_transport import (
     OutgoingMessage,
     OutgoingWaypoint,
     RadioTransport,
+    ReceivedBatch,
     SendResult,
     TransportError,
     TransportErrorCode,
@@ -734,6 +735,20 @@ class AdapterIPCTransport(RadioTransport):
         info = ipc_protocol.connection_info_from_dict(result)
         self._cached_info = info
         return info
+
+    def drain_received(self, *, limit: int = 100, timeout: float = 5.0) -> ReceivedBatch:
+        """Take the adapter's buffered inbound events (see
+        TCPTransport.drain_received). A transport that cannot receive answers
+        UNSUPPORTED; that says nothing about the LINK, so it must not flip the
+        cached connection state to ERROR the way a real failure does."""
+        cached = self._cached_info
+        try:
+            result = self._call("drain_received", {"limit": limit}, timeout)
+        except TransportError as error:
+            if error.code == TransportErrorCode.UNSUPPORTED:
+                self._cached_info = cached
+            raise
+        return ipc_protocol.received_batch_from_dict(result)
 
     def refresh_connection_info(self, *, timeout: float = 5.0) -> ConnectionInfo:
         """Pulls the adapter's own view of the link into the Core-side cache.

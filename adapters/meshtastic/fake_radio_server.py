@@ -144,6 +144,13 @@ class FakeMeshtasticTcpServer:
         # sending anything) is deliberately not counted.
         self._count_lock = threading.Lock()
         self.real_connections = 0
+        # EVERY accepted TCP connection, including ones that never send
+        # anything (a throwaway reachability probe). A real radio serves one
+        # client and reacts badly to a second connect right behind the first,
+        # so "how many TCP connections did one connect() open" is the number
+        # that matters (measured on a T-Beam: a probe + handshake succeeded
+        # 1 of 32 times, the handshake alone 26 of 32).
+        self.accepted_connections = 0
         self.active_connections = 0
         self.max_concurrent_connections = 0
         self._stop_requested = threading.Event()
@@ -159,6 +166,8 @@ class FakeMeshtasticTcpServer:
                 continue
             except OSError:
                 return
+            with self._count_lock:
+                self.accepted_connections += 1
             threading.Thread(
                 target=self._handle_connection, args=(conn,), daemon=True, name="fake-meshtastic-tcp-conn"
             ).start()

@@ -155,6 +155,10 @@ def _fake_tcp_interface_module(monkeypatch):
 class _FakeSocket:
     def __init__(self):
         self.closed = False
+        self.timeout = 'unset'
+
+    def settimeout(self, value):
+        self.timeout = value
 
     def close(self):
         self.closed = True
@@ -824,3 +828,62 @@ def test_connect_reports_busy_instead_of_hanging_when_another_connect_never_fini
     finally:
         transport._connect_lock.release()
     assert len(_FakeTCPInterface.instances) == 0
+
+
+# ---------------------------------------------------------------------------
+# The socket connect() opens is THE connection (no throwaway probe): it is
+# handed to the library and must never be left dangling as a second client.
+# ---------------------------------------------------------------------------
+
+
+def _recording_create_connection(monkeypatch):
+    sockets = []
+
+    def _create(address, timeout=None):
+        sock = _FakeSocket()
+        sock.opened_with_timeout = timeout
+        sockets.append(sock)
+        return sock
+
+    monkeypatch.setattr("adapters.meshtastic.tcp_transport.socket.create_connection", _create)
+    return sockets
+
+
+def test_connect_opens_a_single_socket_with_a_bounded_connect_timeout(monkeypatch):
+    sockets = _recording_create_connection(monkeypatch)
+    TCPTransport(host="192.168.2.34").connect(_descriptor(), timeout=30)
+
+    assert len(sockets) == 1
+    assert sockets[0].opened_with_timeout == 10.0  # _TCP_PROBE_TIMEOUT_S: dns/refused/timeout stay distinguishable
+    assert sockets[0].timeout is None  # then blocking, for the library's reader thread
+
+
+def test_a_socket_the_library_did_not_adopt_is_closed_not_left_as_a_second_client(monkeypatch):
+    sockets = _recording_create_connection(monkeypatch)
+    TCPTransport(host="192.168.2.34").connect(_descriptor(), timeout=30)
+
+    # The fake TCPInterface dials nothing itself and never adopts ours.
+    assert sockets[0].closed is True
+
+
+def test_the_socket_is_closed_when_the_handshake_fails(monkeypatch):
+    sockets = _recording_create_connection(monkeypatch)
+    _FakeTCPInterface.construct_exception = ConnectionResetError("Connection reset by peer")
+    transport = TCPTransport(host="192.168.2.34")
+
+    with pytest.raises(TransportError):
+        transport.connect(_descriptor(), timeout=30)
+
+    assert len(sockets) == 1 and sockets[0].closed is True
+
+
+def test_the_socket_is_closed_when_the_handshake_times_out(monkeypatch):
+    sockets = _recording_create_connection(monkeypatch)
+    _FakeTCPInterface.construct_delay_s = 1.5
+    transport = TCPTransport(host="192.168.2.34")
+
+    with pytest.raises(TransportError) as excinfo:
+        transport.connect(_descriptor(), timeout=11.2)  # ~1.2s left after the 10s connect ceiling
+
+    assert excinfo.value.code in (TransportErrorCode.PROTOCOL_SYNC_TIMEOUT, TransportErrorCode.TIMEOUT)
+    assert sockets[0].closed is True

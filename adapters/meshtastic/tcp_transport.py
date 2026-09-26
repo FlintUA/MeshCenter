@@ -369,18 +369,29 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             # not a correctness signal, so it's logged, not re-raised.
             self._on_log(f"TCP interface close() did not finish within {timeout}s: {error}", "WARNING")
 
-    def _probe_tcp_reachable(self, timeout: float) -> None:
-        """Prove a raw TCP socket to (self._host, self._port) is
-        reachable, entirely independent of the Meshtastic protocol layer
-        - this is what lets connect() report dns_error/connect_refused/
-        connect_timeout distinctly instead of folding every possible
-        failure into whatever generic exception
-        meshtastic.tcp_interface.TCPInterface's own combined
-        connect+handshake constructor happens to raise. Uses the stdlib
-        `socket` module directly (not `meshtastic`, so this probe - and
-        the diagnostic split it enables - needs no GPLv3 import and is
-        testable with nothing more than a monkeypatched
-        socket.create_connection)."""
+    def _open_socket(self, timeout: float) -> socket.socket:
+        """Open THE TCP connection to (self._host, self._port) and hand it
+        to the Meshtastic library (see _open_interface's `preopened_socket`).
+
+        This used to be a throwaway probe: open a socket, close it, then let
+        TCPInterface open a second one. A radio serves one client, and a
+        connect right behind a connect-and-close makes it reset the real
+        handshake - measured on the T-Beam (pixel-111, 80 cycles): probe +
+        handshake in one process succeeded 1 of 32 times, the handshake
+        alone 26 of 32, a fresh process per connect 14 of 16, at every pause
+        from 0 to 10s before the probe. It also explains why boot connects
+        and every force-reconnect kept failing "immediately" with
+        tcp_connected: they all went through the probe.
+
+        Doing the connect ourselves keeps what the probe was for - distinct
+        dns_error / connect_refused / connect_timeout codes within a bounded
+        10s, entirely independent of the Meshtastic protocol layer (stdlib
+        `socket` only, no GPLv3 import, testable with a monkeypatched
+        socket.create_connection) - with exactly ONE TCP connection per
+        connect().
+
+        The caller owns the returned socket until the interface adopts it
+        (or must close it on failure)."""
         try:
             probe_socket = socket.create_connection((self._host, self._port), timeout=timeout)
         except socket.gaierror as error:
@@ -410,11 +421,17 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
                 TransportErrorCode.CONNECT_FAILED,
                 f"could not open a TCP connection to {self._host}:{self._port}: {error}",
             ) from error
-        else:
-            try:
-                probe_socket.close()
-            except Exception:
-                pass
+        # Connected with a bounded timeout; the library's reader thread does
+        # blocking recv() on it, so it must be back to blocking mode.
+        probe_socket.settimeout(None)
+        return probe_socket
+
+    @staticmethod
+    def _close_quietly(sock) -> None:
+        try:
+            sock.close()
+        except Exception:
+            pass
 
     def _classify_socket_error(self, exc: BaseException) -> Optional[TransportError]:
         """Shared classifier for a raw socket-layer exception, used both
@@ -507,7 +524,7 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         self._last_error = error
         return error
 
-    def _open_interface(self):
+    def _open_interface(self, preopened_socket=None):
         """The one lazy `meshtastic` import in this module - see the
         module docstring's lazy-import-discipline note. `connectNow=True`
         (TCPInterface's own default) is what makes this call block for
@@ -601,6 +618,15 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             would fail that test in CI, not surface live again."""
 
             _WAIT_POLL_INTERVAL_S = 0.25
+
+            def myConnect(self):
+                """Adopt the already-open socket instead of letting the
+                library dial a second connection (see _open_socket()).
+                Without one, the library's own behaviour."""
+                if preopened_socket is not None:
+                    self.socket = preopened_socket
+                else:
+                    super().myConnect()
 
             def _waitConnected(self, timeout=30.0):
                 if self.noProto:
@@ -724,7 +750,7 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
 
         probe_timeout = min(timeout, _TCP_PROBE_TIMEOUT_S)
         try:
-            self._probe_tcp_reachable(probe_timeout)
+            connected_socket = self._open_socket(probe_timeout)
         except TransportError as error:
             with self._lock:
                 self._state = _TcpState.ERROR
@@ -741,13 +767,21 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             with self._lock:
                 self._state = _TcpState.SYNCING
             try:
-                return self._open_interface()
+                interface = self._open_interface(connected_socket)
             except Exception as exc:
+                self._close_quietly(connected_socket)
                 raise self._classify_sync_failure(exc) from exc
+            if getattr(interface, "socket", None) is not connected_socket:
+                # The library did not adopt our socket (a library version that
+                # no longer calls myConnect(), or a fake): it dialled its own.
+                # Don't leave ours dangling as a second client.
+                self._close_quietly(connected_socket)
+            return interface
 
         try:
             interface = self._call_with_timeout(_do_sync, timeout=remaining, what="connect() protocol sync")
         except TransportError as error:
+            self._close_quietly(connected_socket)
             error = self._finalize_sync_error(error)
             with self._lock:
                 self._state = _TcpState.ERROR

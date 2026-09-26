@@ -422,3 +422,16 @@ def test_process_transport_autorecovery_never_blocks_the_caller(_clean_recovery_
 
     release.set()  # let the background thread finish so it doesn't leak into other tests
     time.sleep(0.2)
+
+
+def test_autorecovery_never_reconnects_after_identity_refusal(_clean_recovery_state):
+    """The health worker may now run under DETECTION_ERROR; if identity later
+    resolves to MISMATCH/NOT_FOUND it must stop trying to reconnect."""
+    server = _clean_recovery_state
+    for refused in ("MISMATCH", "NOT_FOUND"):
+        server.RADIO_IDENTITY_RESULT = {"status": refused, "detected": {}, "error": None}
+        for _ in range(5):
+            server.process_transport_autorecovery("DISCONNECTED", "tcp", time.time())
+
+        assert server.transport_recovery_state["attempts"] == []
+        assert server.transport_recovery_state["in_progress"] is False

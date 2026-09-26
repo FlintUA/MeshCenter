@@ -118,15 +118,64 @@ def test_non_serial_does_not_start_the_serial_listener_workers(run_start_runtime
 
 
 @pytest.mark.parametrize("transport", ["serial", "tcp", "bluetooth"])
-def test_no_radio_workers_start_when_identity_does_not_match(run_start_runtime, transport):
-    """Unchanged behavior: a mismatched/unverified radio must not get a
-    health worker (serial autorecovery would try to restart a listener that
-    the identity gate refuses to start) - the gate is `identity_match`,
-    not just the transport."""
+def test_no_radio_workers_start_on_identity_mismatch(run_start_runtime, transport):
+    """A definitive MISMATCH never gets a health worker, on any transport."""
     started, _ = run_start_runtime(transport, identity_status="MISMATCH")
 
     assert "radio_health_worker" not in started
     assert not (SERIAL_ONLY_WORKERS & set(started))
+
+
+@pytest.mark.parametrize("transport", ["serial", "tcp", "bluetooth"])
+def test_not_found_stays_fail_closed(run_start_runtime, transport):
+    started, _ = run_start_runtime(transport, identity_status="NOT_FOUND")
+
+    assert "radio_health_worker" not in started
+
+
+@pytest.mark.parametrize("transport", ["tcp", "bluetooth"])
+def test_non_serial_health_worker_starts_on_transient_detection_error(run_start_runtime, transport):
+    """The circular dependency: auto-reconnect exists to heal a boot-race
+    DETECTION_ERROR, so that state must not keep its own worker from starting.
+    Serial-only workers still must not start."""
+    started, _ = run_start_runtime(transport, identity_status="DETECTION_ERROR")
+
+    assert "radio_health_worker" in started
+    assert not (SERIAL_ONLY_WORKERS & set(started))
+
+
+def test_serial_health_worker_still_requires_match_on_detection_error(run_start_runtime):
+    started, _ = run_start_runtime("serial", identity_status="DETECTION_ERROR")
+
+    assert "radio_health_worker" not in started
+
+
+@pytest.mark.parametrize("status,transport,expected", [
+    ("MATCH", "serial", True), ("MATCH", "tcp", True),
+    ("DETECTION_ERROR", "tcp", True), ("NOT_CHECKED", "bluetooth", True),
+    ("DETECTION_ERROR", "serial", False), ("NOT_CHECKED", "serial", False),
+    ("MISMATCH", "tcp", False), ("NOT_FOUND", "tcp", False), ("MISMATCH", "bluetooth", False),
+])
+def test_should_start_health_worker_table(server_module, status, transport, expected):
+    assert server_module.should_start_health_worker(status, transport) is expected
+
+
+@pytest.mark.parametrize("live_type,configured,expected", [
+    # The pixel-111 case: router never switched off its serial default, but
+    # the accepted profile is TCP.
+    ("serial", "tcp", "tcp"),
+    (None, "tcp", "tcp"),
+    ("serial", "serial", "serial"),
+    # A live non-serial transport is trusted.
+    ("tcp", "tcp", "tcp"),
+    ("bluetooth", "tcp", "bluetooth"),
+])
+def test_health_active_transport_resolution(server_module, live_type, configured, expected):
+    got = server_module.resolve_health_active_transport(
+        {"transport": configured, "preferred_transport": configured}, {"type": live_type}
+    )
+
+    assert got == expected
 
 
 @pytest.mark.parametrize("transport", ["serial", "tcp", "bluetooth"])

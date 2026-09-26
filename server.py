@@ -4609,6 +4609,12 @@ def process_transport_autorecovery(status, active_transport, now_ts):
         state["consecutive_bad_cycles"] = 0
         return
 
+    # Fail-closed: the worker may now run under DETECTION_ERROR, but must
+    # never keep reconnecting to a radio identity has since refused.
+    if RADIO_IDENTITY_RESULT.get("status") in ("MISMATCH", "NOT_FOUND"):
+        state["consecutive_bad_cycles"] = 0
+        return
+
     state["consecutive_bad_cycles"] += 1
     if state["consecutive_bad_cycles"] < TRANSPORT_RECOVERY_CONSECUTIVE_CYCLES:
         return
@@ -4890,6 +4896,43 @@ def compute_radio_health_status(
     )
 
 
+def resolve_health_active_transport(configured_normalized, transport_state):
+    """Which transport radio_health_worker() should judge/recover.
+
+    The router's live descriptor is only trusted when it names a NON-serial
+    transport: transport_router is always constructed on serial_ipc_transport
+    (its hardcoded default) and restore_active_transport() never switches it
+    when the TCP identity gate refused, so a TCP-accepted radio that failed
+    its boot-time identity check reports type == "serial" here. Trusting that
+    made process_transport_autorecovery() return early ("serial") - the
+    worker ran but could never heal anything. The accepted profile's declared
+    transport is the answer whenever the router says "serial" or nothing.
+    """
+    live = transport_state.get("type")
+    if live and live != "serial":
+        return live
+    return configured_normalized.get("transport") or "serial"
+
+
+def should_start_health_worker(identity_status, active_transport):
+    """Gate for radio_health_worker() in start_runtime().
+
+    serial: only on a confirmed MATCH (unchanged - serial autorecovery would
+    try to restart a listener the identity gate refuses to start).
+    tcp/bluetooth: everything except a definitive identity refusal. A
+    transient DETECTION_ERROR (boot-race, network not up yet) is exactly the
+    state auto-reconnect exists to heal, so it must not gate the worker off;
+    MISMATCH and NOT_FOUND (a radio answered but can't be proven to be the
+    accepted one) stay fail-closed. NOT_CHECKED (Bluetooth has no identity
+    check) starts it, as before.
+    """
+    if identity_status == "MATCH":
+        return True
+    if active_transport == "serial":
+        return False
+    return identity_status not in ("MISMATCH", "NOT_FOUND")
+
+
 def radio_health_worker():
     print("[RADIO] Passive health worker started", flush=True)
 
@@ -4910,9 +4953,8 @@ def radio_health_worker():
             configured_normalized = normalize_radio_record(
                 dict(instance_manager.get().get("radio", {}))
             )
-            active_transport = (
-                transport_state.get("type")
-                or configured_normalized["preferred_transport"]
+            active_transport = resolve_health_active_transport(
+                configured_normalized, transport_state
             )
 
             with state_lock:
@@ -7351,7 +7393,7 @@ def start_runtime():
     # process_listener_autorecovery() (also called from the loop) only ever
     # acts on the serial-only status "LISTENER_DOWN", so it stays inert for
     # TCP/Bluetooth.
-    if identity_match:
+    if should_start_health_worker(identity_status, active_transport):
         threading.Thread(target=radio_health_worker, daemon=True).start()
 
     # The rest of this group is serial-specific machinery - each one

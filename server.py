@@ -50,6 +50,7 @@ from meshsrv.radio_identity import (
     compare_radio_identity,
     utc_now_iso,
     IDENTITY_DETECTION_ERROR,
+    is_transient_identity_failure,
 )
 from meshsrv.radio_endpoint import (
     normalize_radio_record,
@@ -449,7 +450,7 @@ def verify_radio_identity():
         # mask a real identity mismatch behind transient-looking retry
         # logic, which must never happen (fail-closed stays fail-closed).
         for delay in TCP_IDENTITY_BOOT_RETRY_DELAYS_S:
-            if result.get("status") != IDENTITY_DETECTION_ERROR:
+            if not is_transient_identity_failure(result):
                 break
             print(
                 f"[IDENTITY] TCP identity check failed ({result.get('error')}) - "
@@ -483,6 +484,7 @@ def verify_radio_identity():
     detected = dict(result.get("detected") or {})
     result["configured"] = configured
     result["status"] = compare_radio_identity(configured, detected) if detected.get("node_id") else result.get("status", "NOT_FOUND")
+    result["transient"] = is_transient_identity_failure(result)
     RADIO_IDENTITY_RESULT = result
 
     updated = dict(INSTANCE_IDENTITY)
@@ -4615,6 +4617,23 @@ def process_transport_autorecovery(status, active_transport, now_ts):
         state["consecutive_bad_cycles"] = 0
         return
 
+    # While identity is unresolved (DETECTION_ERROR) and the router is NOT on
+    # tcp, restore_active_transport() never switched it off its serial
+    # default, so router.reconnect() here would reconnect SERIAL for a
+    # TCP-accepted radio. (A router genuinely on tcp with a stale
+    # DETECTION_ERROR still reconnects - see refresh_identity_after_reconnect.)
+    # Healing the not-on-tcp state
+    # is process_identity_recovery()'s job (verify -> restore), not this one.
+    if active_transport == "tcp" and RADIO_IDENTITY_RESULT.get("status") == "DETECTION_ERROR":
+        try:
+            live_descriptor = transport_router.get_connection_info().descriptor
+            live_type = live_descriptor.type.value if live_descriptor else None
+        except Exception:
+            live_type = None
+        if live_type != "tcp":
+            state["consecutive_bad_cycles"] = 0
+            return
+
     state["consecutive_bad_cycles"] += 1
     if state["consecutive_bad_cycles"] < TRANSPORT_RECOVERY_CONSECUTIVE_CYCLES:
         return
@@ -4766,6 +4785,148 @@ def refresh_identity_after_reconnect(active_transport, detected):
         "checked_at": utc_now_iso(),
         "error": None,
     })
+
+
+# TCP identity recovery (PR-2): a boot-time DETECTION_ERROR of the transient
+# class (see is_transient_identity_failure()) is retried in the background,
+# on a schedule tuned for "network not up yet" rather than for the 30-minute
+# window process_transport_autorecovery() uses for a link that dropped.
+# Offsets are seconds AFTER the previous attempt (the first is measured from
+# when the failure was first seen). Worker cadence is 30s, so granularity is
+# ~30s.
+IDENTITY_RECOVERY_DELAYS_S = (30, 60, 120, 300, 300, 300)
+
+identity_recovery_state = {
+    "first_seen_at": None,
+    "attempts": 0,
+    "next_attempt_at": None,
+    "in_progress": False,
+    "stop_logged": False,
+    "limit_logged": False,
+}
+
+
+def _reset_identity_recovery_state():
+    identity_recovery_state.update({
+        "first_seen_at": None,
+        "attempts": 0,
+        "next_attempt_at": None,
+        "stop_logged": False,
+        "limit_logged": False,
+    })
+
+
+def process_identity_recovery(active_transport, now_ts):
+    """Background retry of a TRANSIENT TCP identity failure.
+
+    Closes the gap left by verify_radio_identity()'s short boot retry
+    (6s total): if the network still isn't up after that, nothing else ever
+    re-checks identity, so restore_active_transport() (which refuses an
+    unverified TCP endpoint) never runs either. Called from
+    radio_health_worker() every tick; acts only for a tcp-accepted radio
+    whose current identity result is a transient DETECTION_ERROR.
+
+    Fail-closed by construction: an attempt re-runs the FULL
+    verify_radio_identity() (real compare_radio_identity against the
+    accepted radio), and only a resulting MATCH triggers
+    restore_active_transport(accepted_radio, True) - the SAME function the
+    boot path calls, so what "identity confirmed" means for bootstrap
+    (connect/reuse the verified session, seed nodes) lives in exactly one
+    place. MISMATCH/NOT_FOUND stops retrying and logs an ERROR; a still-
+    transient failure just waits for the next scheduled attempt, up to
+    len(IDENTITY_RECOVERY_DELAYS_S) attempts, after which manual action is
+    required.
+    """
+    state = identity_recovery_state
+    result = RADIO_IDENTITY_RESULT
+
+    if active_transport != "tcp" or not is_transient_identity_failure(result):
+        _reset_identity_recovery_state()
+        return
+
+    if state["in_progress"]:
+        return
+
+    if state["first_seen_at"] is None:
+        state["first_seen_at"] = now_ts
+        state["next_attempt_at"] = now_ts + IDENTITY_RECOVERY_DELAYS_S[0]
+        log_system_event(
+            title="TCP identity check failed transiently - will retry",
+            level="WARNING",
+            details=f"{result.get('error')} (code={result.get('error_code')}); "
+                f"up to {len(IDENTITY_RECOVERY_DELAYS_S)} background attempts",
+            source="recovery",
+        )
+
+    if state["attempts"] >= len(IDENTITY_RECOVERY_DELAYS_S):
+        if not state["limit_logged"]:
+            log_system_event(
+                title="TCP identity retry limit reached",
+                level="ERROR",
+                details=f"{state['attempts']} attempts failed. Manual action required "
+                    "(Reconnect or re-accept the radio).",
+                source="recovery",
+            )
+            state["limit_logged"] = True
+        return
+
+    if now_ts < state["next_attempt_at"]:
+        return
+
+    state["attempts"] += 1
+    attempt_number = state["attempts"]
+    state["in_progress"] = True
+    started_wall = time.time()
+
+    log_system_event(
+        title="TCP identity retry",
+        level="ACTION",
+        details=f"attempt {attempt_number} of {len(IDENTITY_RECOVERY_DELAYS_S)}",
+        source="recovery",
+    )
+
+    def _do_identity_retry():
+        try:
+            accepted_radio = normalize_radio_record(INSTANCE_IDENTITY.get("radio", {}))
+            verify_radio_identity()
+            status = RADIO_IDENTITY_RESULT.get("status")
+            if status == "MATCH":
+                restore_active_transport(accepted_radio, True)
+                log_system_event(
+                    title="TCP identity confirmed by background retry",
+                    level="OK",
+                    details=f"attempt {attempt_number}: radio verified, transport restored",
+                    source="recovery",
+                )
+                with state_lock:
+                    _reset_identity_recovery_state()
+            elif status in ("MISMATCH", "NOT_FOUND"):
+                log_system_event(
+                    title="TCP identity retry stopped",
+                    level="ERROR",
+                    details=f"attempt {attempt_number}: identity resolved to {status} - "
+                        "not retrying, radio stays blocked",
+                    source="recovery",
+                )
+                state["stop_logged"] = True
+            else:
+                delays = IDENTITY_RECOVERY_DELAYS_S
+                nxt = delays[min(attempt_number, len(delays) - 1)]
+                state["next_attempt_at"] = now_ts + (time.time() - started_wall) + nxt
+        except Exception as error:
+            log_system_event(
+                title="TCP identity retry failed",
+                level="WARNING",
+                details=f"attempt {attempt_number}: unexpected error: {error}",
+                source="recovery",
+            )
+            delays = IDENTITY_RECOVERY_DELAYS_S
+            state["next_attempt_at"] = now_ts + (time.time() - started_wall) + delays[min(attempt_number, len(delays) - 1)]
+        finally:
+            with state_lock:
+                state["in_progress"] = False
+
+    threading.Thread(target=_do_identity_retry, daemon=True).start()
 
 
 def compute_radio_health_status(
@@ -5051,6 +5212,8 @@ def radio_health_worker():
                 active_transport=active_transport,
                 now_ts=now_ts,
             )
+
+            process_identity_recovery(active_transport, now_ts)
 
         except Exception as e:
             error_text = str(e)

@@ -119,7 +119,9 @@ class _FakeTCPInterface:
         self.localNode = types.SimpleNamespace(nodeNum=0x756F9960, channels=[])
         self.metadata = None
         self.closed = False
-        self._rxThread = _FakeReaderThread(alive=_FakeTCPInterface.rx_thread_survives_close)
+        # Alive while the session is open (a live TCPInterface's reader is);
+        # close() below sets what it reports afterwards.
+        self._rxThread = _FakeReaderThread(alive=True)
         self.socket = _FakeSocket()
         _FakeTCPInterface.instances.append(self)
 
@@ -134,6 +136,7 @@ class _FakeTCPInterface:
 
     def close(self):
         self.closed = True
+        self._rxThread._alive = _FakeTCPInterface.rx_thread_survives_close
 
 
 @pytest.fixture(autouse=True)

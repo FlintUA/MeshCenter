@@ -302,6 +302,16 @@ class BLETransport(TimeoutEnforced, RadioTransport):
         on each other. See _detach_and_close_async()."""
         self._detach_and_close_async(timeout=timeout)
 
+    def adopt_endpoint(self, descriptor: ConnectionDescriptor) -> None:
+        """Core re-supplies the device on reconnect (see
+        TCPTransport.adopt_endpoint): an adapter process restarted since the
+        last connect() has no remembered address."""
+        if descriptor is None or descriptor.type != ConnectionType.BLUETOOTH or not descriptor.address:
+            return
+        with self._lock:
+            self._address = descriptor.address
+            self._name = descriptor.label or self._name
+
     def reconnect(self, *, timeout: float = 90.0) -> ConnectionInfo:
         """Naive reconnect (plan section 5.5): fixed attempts with
         growing backoff, not exponential/unbounded.

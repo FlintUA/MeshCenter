@@ -63,7 +63,7 @@ from meshsrv.connection_status import connection_payload
 from meshsrv.time_service import start_background_thread as start_time_service
 from meshsrv.node_time_sync import STARTUP_SYNC_DELAY_S
 from meshsrv.serial_port_supervisor import SerialPortSupervisor
-from meshsrv.radio_transport import ConnectionState, ConnectionType, TransportError
+from meshsrv.radio_transport import ConnectionDescriptor, ConnectionState, ConnectionType, TransportError
 from meshsrv.adapter_ipc_client import AdapterIPCTransport, AdapterSupervisor
 from meshsrv.transport_router import TransportRouter
 from meshsrv.schedule_engine import start as start_schedule_engine
@@ -4679,7 +4679,14 @@ def process_transport_autorecovery(status, active_transport, now_ts):
 
     def _do_reconnect():
         try:
-            transport_router.reconnect(timeout=TRANSPORT_RECONNECT_TIMEOUT_S)
+            # Explicit endpoint from the accepted profile - a respawned
+            # adapter process has no memory of the last connect(), and a bare
+            # reconnect() then failed with dns_error '' after burning ~48s
+            # under the router lock.
+            transport_router.reconnect(
+                timeout=TRANSPORT_RECONNECT_TIMEOUT_S,
+                descriptor=resolve_reconnect_descriptor(active_transport),
+            )
             log_system_event(
                 title="TCP/Bluetooth auto-reconnect succeeded",
                 level="OK",
@@ -4723,6 +4730,48 @@ def process_transport_autorecovery(status, active_transport, now_ts):
                 transport_recovery_state["in_progress"] = False
 
     threading.Thread(target=_do_reconnect, daemon=True).start()
+
+
+def resolve_reconnect_descriptor(active_transport):
+    """The endpoint to hand to a reconnect for a non-serial transport: the
+    accepted profile's own address when it is for this transport (the
+    persisted source of truth), else the address the router last connected
+    to. None when neither is known (serial, or nothing recorded) - the
+    adapter then falls back to its own memory / fails fast."""
+    if active_transport not in ("tcp", "bluetooth"):
+        return None
+    accepted = normalize_radio_record(dict(instance_manager.get().get("radio", {})))
+    endpoint = accepted.get("endpoint") or {}
+    if accepted.get("transport") == active_transport:
+        if active_transport == "tcp" and str(endpoint.get("host") or "").strip():
+            return ConnectionDescriptor(
+                type=ConnectionType.TCP,
+                address=f"{str(endpoint['host']).strip()}:{endpoint.get('port') or 4403}",
+            )
+        if active_transport == "bluetooth" and str(endpoint.get("address") or "").strip():
+            return ConnectionDescriptor(
+                type=ConnectionType.BLUETOOTH,
+                address=str(endpoint["address"]).strip(),
+                label=str(endpoint.get("label") or ""),
+            )
+    try:
+        live = transport_router.get_connection_info().descriptor
+    except Exception:
+        live = None
+    if live is not None and live.type.value == active_transport and live.address.rsplit(":", 1)[0].strip("[]"):
+        return live
+    return None
+
+
+def refresh_non_serial_connection_state(active_transport):
+    """Pull the adapter's own view of a tcp/bluetooth link into Core's
+    cache before the health worker reads it (Core's get_connection_info()
+    is cache-only). Without this a link the adapter already knows is dead
+    stayed CONNECTED until something sent. Best-effort, bounded, never
+    blocks behind a busy router."""
+    if active_transport not in ("tcp", "bluetooth"):
+        return False
+    return transport_router.refresh_connection_info(timeout=5.0)
 
 
 def refresh_identity_after_reconnect(active_transport, detected):
@@ -5145,6 +5194,10 @@ def radio_health_worker():
             active_transport = resolve_health_active_transport(
                 configured_normalized, transport_state
             )
+            if refresh_non_serial_connection_state(active_transport):
+                transport_state = connection_payload(
+                    transport_router, LOCAL_NODE_ID, listener_supervisor
+                )
 
             with state_lock:
                 listener_running = bool(
@@ -5581,6 +5634,7 @@ register_meshtastic_routes(
     listener_supervisor,
     instance_manager,
     refresh_identity_after_reconnect,
+    resolve_reconnect_descriptor,
 )
 
 @app.route("/")

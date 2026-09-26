@@ -35,6 +35,7 @@ def register_meshtastic_routes(
     core_serial_transport,
     instance_manager,
     refresh_identity_after_reconnect,
+    resolve_reconnect_descriptor=None,
 ):
     """Task 48: `serial_transport`/`ble_transport`/`tcp_transport` here are
     Core-side IPC proxies (meshsrv.adapter_ipc_client.AdapterIPCTransport)
@@ -519,8 +520,21 @@ def register_meshtastic_routes(
         active transport's own reconnect() (naive fixed-attempts-with-
         backoff on BLETransport, disconnect+connect(force=True) on
         SerialTransport)."""
+        # Hand the adapter an explicit endpoint (accepted profile): an adapter
+        # process respawned since the last connect() has no memory of it, and
+        # a bare reconnect() then failed with dns_error '' (see
+        # AdapterIPCTransport.reconnect()).
+        reconnect_kwargs = {}
+        if resolve_reconnect_descriptor is not None:
+            try:
+                explicit = resolve_reconnect_descriptor(_connection_payload().get("type"))
+            except Exception:
+                explicit = None
+            if explicit is not None:
+                reconnect_kwargs["descriptor"] = explicit
+
         try:
-            transport_router.reconnect(timeout=_SWITCH_CONNECT_TIMEOUT_S)
+            transport_router.reconnect(timeout=_SWITCH_CONNECT_TIMEOUT_S, **reconnect_kwargs)
         except TransportError as error:
             return jsonify({"ok": False, "error": str(error), "error_code": "reconnect_failed"}), 503
 

@@ -14,7 +14,9 @@ import time
 import pytest
 
 from meshsrv.radio_transport import (
+    ConnectionDescriptor,
     ConnectionInfo,
+    ConnectionType,
     ConnectionState,
     TransportError,
     TransportErrorCode,
@@ -229,7 +231,7 @@ def test_successful_auto_reconnect_refreshes_stale_identity_status(sync_thread, 
     monkeypatch.setattr(server_module.transport_router, "reconnect", lambda **k: None)
     monkeypatch.setattr(
         server_module.transport_router, "get_connection_info",
-        lambda: ConnectionInfo(state=ConnectionState.CONNECTED, descriptor=None, node_id="!1fa065f0"),
+        lambda: ConnectionInfo(state=ConnectionState.CONNECTED, descriptor=ConnectionDescriptor(type=ConnectionType.TCP, address="192.168.2.34:4403"), node_id="!1fa065f0"),
     )
 
     identity = server_module.instance_manager.get()

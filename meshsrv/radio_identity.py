@@ -19,6 +19,41 @@ IDENTITY_DETECTION_ERROR = "DETECTION_ERROR"
 IDENTITY_NOT_CHECKED = "NOT_CHECKED"
 
 
+# TransportErrorCode values (see meshsrv/radio_transport.py) meaning "the
+# network/socket path failed before any radio identified itself" - the
+# boot-race / radio-briefly-away class. A WHITELIST on purpose: a new or
+# unrecognized code defaults to fail-closed rather than to "retry forever".
+# Deliberately absent: identity_mismatch, adapter_unavailable,
+# adapter_protocol_error, unknown, device_not_found, unsupported, busy,
+# port_check_inconclusive, not_connected.
+TRANSIENT_IDENTITY_ERROR_CODES = frozenset({
+    "connect_failed",
+    "connect_timeout",
+    "connect_refused",
+    "dns_error",
+    "protocol_sync_timeout",
+    "remote_disconnect",
+    "tcp_connected",
+    "timeout",
+})
+
+
+def is_transient_identity_failure(result: dict[str, Any]) -> bool:
+    """True only for a transport-level failure that never reached ANY radio:
+    status DETECTION_ERROR, no detected node_id, and an error_code on the
+    whitelist above. Anything that produced a node_id (MATCH/MISMATCH) or a
+    NOT_FOUND ("a radio answered but reported no node ID") is never
+    transient - identity uncertainty must stay fail-closed. Never used to
+    ADMIT a radio, only to decide whether retrying is worthwhile."""
+    if not isinstance(result, dict):
+        return False
+    if result.get("status") != IDENTITY_DETECTION_ERROR:
+        return False
+    if (result.get("detected") or {}).get("node_id"):
+        return False
+    return str(result.get("error_code") or "").strip().lower() in TRANSIENT_IDENTITY_ERROR_CODES
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 

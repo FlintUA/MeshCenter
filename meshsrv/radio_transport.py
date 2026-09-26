@@ -296,17 +296,29 @@ class TelemetryEvent:
 # ONLY way onto the wire is the explicit per-field functions in
 # meshsrv/ipc_protocol.py.
 #
-# `sender_id` / `recipient_id` are "!xxxxxxxx" node ids (or "^all" for a
-# broadcast recipient), derived by the transport from the packet's NUMERIC
-# `from` / `to` - never from the library's `fromId`, which is None whenever the
-# sender is not yet in the local NodeDB (observed on meshtastic 2.7.9-2.7.11).
-# `rx_time` is the radio's own clock (epoch seconds, None when the radio
-# reported none / 0); Core stamps its own receive time when it consumes the
-# event.
+# `from_node_id` / `sender_id` / `to_node_id` are "!xxxxxxxx" node ids (or "^all"
+# for a broadcast recipient), built by the transport from the packet's NUMERIC
+# `from` / `to` (also carried as `from_num` / `to_num`) - never from the
+# library's `fromId`, which is None whenever the sender is not yet in the local
+# NodeDB (observed on meshtastic 2.7.9-2.7.11). `rx_time` is the radio's own
+# clock; `received_at` is when the adapter saw the packet (time.time()).
+#
+# `local_radio_node_id` is the radio THIS event came from ("!xxxxxxxx" of the
+# connected node). It is the safety field: before persisting anything Core
+# compares it with the active accepted profile's node id and drops a mismatch,
+# so events buffered from radio A can never be written into radio B's profile.
+# An event without it cannot be constructed.
 
 def _field_str(owner: str, name: str, value) -> str:
     if type(value) is not str:
         raise TypeError(f"{owner}.{name} must be str, got {type(value).__name__}")
+    return value
+
+
+def _field_nonempty_str(owner: str, name: str, value) -> str:
+    _field_str(owner, name, value)
+    if not value:
+        raise ValueError(f"{owner}.{name} must not be empty")
     return value
 
 
@@ -332,65 +344,94 @@ def _field_optional_float(owner: str, name: str, value) -> Optional[float]:
 
 @dataclass(frozen=True)
 class ReceivedTextEvent:
-    packet_id: int
-    sender_id: str
-    recipient_id: str  # "!xxxxxxxx" (direct message) or "^all" (broadcast on the channel)
-    channel_index: int
+    from_node_id: str
+    to_node_id: str  # "!xxxxxxxx" (direct message) or "^all" (broadcast on the channel)
     text: str
+    received_at: float
+    local_radio_node_id: str
+    packet_id: Optional[int] = None
+    from_num: Optional[int] = None
+    to_num: Optional[int] = None
+    channel_index: Optional[int] = None
+    reply_id: Optional[int] = None
     rx_time: Optional[int] = None
-    rssi: Optional[int] = None
-    snr: Optional[float] = None
+    rx_rssi: Optional[int] = None
+    rx_snr: Optional[float] = None
     hop_limit: Optional[int] = None
     hop_start: Optional[int] = None
     relay_node: Optional[int] = None
 
     def __post_init__(self) -> None:
         owner = type(self).__name__
-        _field_int(owner, "packet_id", self.packet_id)
-        _field_str(owner, "sender_id", self.sender_id)
-        _field_str(owner, "recipient_id", self.recipient_id)
-        _field_int(owner, "channel_index", self.channel_index)
+        _field_str(owner, "from_node_id", self.from_node_id)
+        _field_str(owner, "to_node_id", self.to_node_id)
         _field_str(owner, "text", self.text)
-        _field_optional_int(owner, "rx_time", self.rx_time)
-        _field_optional_int(owner, "rssi", self.rssi)
-        object.__setattr__(self, "snr", _field_optional_float(owner, "snr", self.snr))
-        _field_optional_int(owner, "hop_limit", self.hop_limit)
-        _field_optional_int(owner, "hop_start", self.hop_start)
-        _field_optional_int(owner, "relay_node", self.relay_node)
+        object.__setattr__(self, "received_at", _field_float(owner, "received_at", self.received_at))
+        _field_nonempty_str(owner, "local_radio_node_id", self.local_radio_node_id)
+        for name in ("packet_id", "from_num", "to_num", "channel_index", "reply_id", "rx_time",
+                     "rx_rssi", "hop_limit", "hop_start", "relay_node"):
+            _field_optional_int(owner, name, getattr(self, name))
+        object.__setattr__(self, "rx_snr", _field_optional_float(owner, "rx_snr", self.rx_snr))
 
 
 @dataclass(frozen=True)
 class ReceivedWaypointEvent:
-    packet_id: int
-    sender_id: str
-    recipient_id: str
-    channel_index: int
     waypoint_id: int
+    sender_id: str
     name: str
     description: str
-    latitude: float  # degrees (the packet carries latitudeI / 1e7)
-    longitude: float
+    received_at: float
+    local_radio_node_id: str
+    packet_id: Optional[int] = None
+    latitude: Optional[float] = None  # degrees (the packet carries latitudeI / 1e7)
+    longitude: Optional[float] = None
     icon: Optional[int] = None
     expire_at: Optional[int] = None
-    rx_time: Optional[int] = None
+    channel_index: Optional[int] = None
 
     def __post_init__(self) -> None:
         owner = type(self).__name__
-        _field_int(owner, "packet_id", self.packet_id)
-        _field_str(owner, "sender_id", self.sender_id)
-        _field_str(owner, "recipient_id", self.recipient_id)
-        _field_int(owner, "channel_index", self.channel_index)
         _field_int(owner, "waypoint_id", self.waypoint_id)
+        _field_str(owner, "sender_id", self.sender_id)
         _field_str(owner, "name", self.name)
         _field_str(owner, "description", self.description)
-        object.__setattr__(self, "latitude", _field_float(owner, "latitude", self.latitude))
-        object.__setattr__(self, "longitude", _field_float(owner, "longitude", self.longitude))
-        _field_optional_int(owner, "icon", self.icon)
-        _field_optional_int(owner, "expire_at", self.expire_at)
-        _field_optional_int(owner, "rx_time", self.rx_time)
+        object.__setattr__(self, "received_at", _field_float(owner, "received_at", self.received_at))
+        _field_nonempty_str(owner, "local_radio_node_id", self.local_radio_node_id)
+        for name in ("packet_id", "icon", "expire_at", "channel_index"):
+            _field_optional_int(owner, name, getattr(self, name))
+        object.__setattr__(self, "latitude", _field_optional_float(owner, "latitude", self.latitude))
+        object.__setattr__(self, "longitude", _field_optional_float(owner, "longitude", self.longitude))
 
 
 ReceivedEvent = Union[ReceivedTextEvent, ReceivedWaypointEvent]
+
+
+@dataclass(frozen=True)
+class ReceivedBatch:
+    """Result of one drain_received(): the events taken off the transport's
+    buffer, plus what could not be delivered.
+
+    `dropped`: events the transport's bounded buffer had to discard (oldest
+    first) since the previous drain - overflow must be visible, never silent.
+    `malformed`: events that arrived but could not be decoded on this side; each
+    is discarded on its own, never the whole batch.
+    `connection_generation`: bumps on every new physical connection/endpoint
+    (observability only - node-id identity, not this, is the safety check)."""
+
+    events: tuple = ()
+    dropped: int = 0
+    malformed: int = 0
+    connection_generation: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        owner = type(self).__name__
+        object.__setattr__(self, "events", tuple(self.events))
+        for event in self.events:
+            if not isinstance(event, (ReceivedTextEvent, ReceivedWaypointEvent)):
+                raise TypeError(f"{owner}.events holds a {type(event).__name__}, not a received event")
+        _field_int(owner, "dropped", self.dropped)
+        _field_int(owner, "malformed", self.malformed)
+        _field_optional_int(owner, "connection_generation", self.connection_generation)
 
 
 # ---------------------------------------------------------------------------
@@ -574,19 +615,19 @@ class RadioTransport(abc.ABC):
         talk to the radio. The polling substitute for a real event stream
         until Stage B (Task 49+) lands."""
 
-    def drain_received(self, *, max_events: int = 100, timeout: float = 5.0) -> list[ReceivedEvent]:
-        """Return (and remove) up to `max_events` inbound events buffered
-        since the last call - ReceivedTextEvent / ReceivedWaypointEvent, oldest
-        first; an empty list when nothing is pending. `timeout` bounds how long
-        the call may wait for the transport to answer.
+    def drain_received(self, *, limit: int = 100, timeout: float = 5.0) -> ReceivedBatch:
+        """Take (and remove) up to `limit` inbound events buffered since the
+        last call, oldest first, as a ReceivedBatch (an empty batch when
+        nothing is pending). Reads the transport's in-memory buffer only - it
+        never talks to the radio. `timeout` bounds how long the call may wait
+        for the transport to answer.
 
         OPTIONAL, deliberately not abstract: only a transport that can
-        actually receive implements it (TCP/Bluetooth, once the adapter buffers
-        the library's `meshtastic.receive.*` events). The default raises
-        UNSUPPORTED, so Serial - whose inbound traffic still arrives through
-        Core's own `--listen` subprocess - and every existing test double keep
-        working unchanged, and a caller can tell "cannot receive" from
-        "nothing received" (an empty list)."""
+        actually receive implements it (TCP first, then Bluetooth). The default
+        raises UNSUPPORTED, so Serial - whose inbound traffic still arrives
+        through Core's own `--listen` subprocess - and every existing test
+        double keep working unchanged, and a caller can tell "cannot receive"
+        from "nothing received" (an empty batch)."""
         raise TransportError(
             TransportErrorCode.UNSUPPORTED, f"{type(self).__name__} does not support receiving"
         )

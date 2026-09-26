@@ -30,6 +30,7 @@ from meshsrv.radio_transport import (
     NodeUser,
     OutgoingMessage,
     OutgoingWaypoint,
+    ReceivedBatch,
     ReceivedEvent,
     ReceivedTextEvent,
     ReceivedWaypointEvent,
@@ -295,7 +296,12 @@ def channel_info_from_dict(data: dict) -> ChannelInfo:
 # ---------------------------------------------------------------------------
 # Received events (inbound traffic)
 # ---------------------------------------------------------------------------
-# A discriminated envelope: {"kind": "text" | "waypoint", <that kind's fields>}.
+# One event on the wire is a discriminated envelope
+#     {"kind": "text",     "text":     {<ReceivedTextEvent fields>}}
+#     {"kind": "waypoint", "waypoint": {<ReceivedWaypointEvent fields>}}
+# and drain_received's result is {"events": [<envelope>...], "dropped": n,
+# "malformed": n, "connection_generation": n|null}.
+#
 # Field-by-field on BOTH sides, on purpose: the library's packet carries a
 # protobuf `raw`, `decoded.payload` bytes and (waypoints) a second `raw`
 # string, and none of it may be one careless `asdict()` away from the wire.
@@ -308,15 +314,19 @@ RECEIVED_KIND_WAYPOINT = "waypoint"
 
 def received_text_to_dict(event: ReceivedTextEvent) -> dict:
     return {
-        "kind": RECEIVED_KIND_TEXT,
-        "packet_id": event.packet_id,
-        "sender_id": event.sender_id,
-        "recipient_id": event.recipient_id,
-        "channel_index": event.channel_index,
+        "from_node_id": event.from_node_id,
+        "to_node_id": event.to_node_id,
         "text": event.text,
+        "received_at": event.received_at,
+        "local_radio_node_id": event.local_radio_node_id,
+        "packet_id": event.packet_id,
+        "from_num": event.from_num,
+        "to_num": event.to_num,
+        "channel_index": event.channel_index,
+        "reply_id": event.reply_id,
         "rx_time": event.rx_time,
-        "rssi": event.rssi,
-        "snr": event.snr,
+        "rx_rssi": event.rx_rssi,
+        "rx_snr": event.rx_snr,
         "hop_limit": event.hop_limit,
         "hop_start": event.hop_start,
         "relay_node": event.relay_node,
@@ -325,14 +335,19 @@ def received_text_to_dict(event: ReceivedTextEvent) -> dict:
 
 def received_text_from_dict(data: dict) -> ReceivedTextEvent:
     return ReceivedTextEvent(
-        packet_id=data["packet_id"],
-        sender_id=data["sender_id"],
-        recipient_id=data["recipient_id"],
-        channel_index=data["channel_index"],
+        from_node_id=data["from_node_id"],
+        to_node_id=data["to_node_id"],
         text=data["text"],
+        received_at=data["received_at"],
+        local_radio_node_id=data["local_radio_node_id"],
+        packet_id=data.get("packet_id"),
+        from_num=data.get("from_num"),
+        to_num=data.get("to_num"),
+        channel_index=data.get("channel_index"),
+        reply_id=data.get("reply_id"),
         rx_time=data.get("rx_time"),
-        rssi=data.get("rssi"),
-        snr=data.get("snr"),
+        rx_rssi=data.get("rx_rssi"),
+        rx_snr=data.get("rx_snr"),
         hop_limit=data.get("hop_limit"),
         hop_start=data.get("hop_start"),
         relay_node=data.get("relay_node"),
@@ -341,57 +356,90 @@ def received_text_from_dict(data: dict) -> ReceivedTextEvent:
 
 def received_waypoint_to_dict(event: ReceivedWaypointEvent) -> dict:
     return {
-        "kind": RECEIVED_KIND_WAYPOINT,
-        "packet_id": event.packet_id,
-        "sender_id": event.sender_id,
-        "recipient_id": event.recipient_id,
-        "channel_index": event.channel_index,
         "waypoint_id": event.waypoint_id,
+        "sender_id": event.sender_id,
         "name": event.name,
         "description": event.description,
+        "received_at": event.received_at,
+        "local_radio_node_id": event.local_radio_node_id,
+        "packet_id": event.packet_id,
         "latitude": event.latitude,
         "longitude": event.longitude,
         "icon": event.icon,
         "expire_at": event.expire_at,
-        "rx_time": event.rx_time,
+        "channel_index": event.channel_index,
     }
 
 
 def received_waypoint_from_dict(data: dict) -> ReceivedWaypointEvent:
     return ReceivedWaypointEvent(
-        packet_id=data["packet_id"],
-        sender_id=data["sender_id"],
-        recipient_id=data["recipient_id"],
-        channel_index=data["channel_index"],
         waypoint_id=data["waypoint_id"],
+        sender_id=data["sender_id"],
         name=data["name"],
         description=data["description"],
-        latitude=data["latitude"],
-        longitude=data["longitude"],
+        received_at=data["received_at"],
+        local_radio_node_id=data["local_radio_node_id"],
+        packet_id=data.get("packet_id"),
+        latitude=data.get("latitude"),
+        longitude=data.get("longitude"),
         icon=data.get("icon"),
         expire_at=data.get("expire_at"),
-        rx_time=data.get("rx_time"),
+        channel_index=data.get("channel_index"),
     )
 
 
 def received_event_to_dict(event: ReceivedEvent) -> dict:
     if isinstance(event, ReceivedTextEvent):
-        return received_text_to_dict(event)
+        return {"kind": RECEIVED_KIND_TEXT, RECEIVED_KIND_TEXT: received_text_to_dict(event)}
     if isinstance(event, ReceivedWaypointEvent):
-        return received_waypoint_to_dict(event)
+        return {"kind": RECEIVED_KIND_WAYPOINT, RECEIVED_KIND_WAYPOINT: received_waypoint_to_dict(event)}
     raise TypeError(f"not a received event: {type(event).__name__}")
 
 
 def received_event_from_dict(data: dict) -> ReceivedEvent:
-    """Raises ValueError for an unknown/missing `kind`, KeyError for a
-    missing required field, TypeError for a wrongly-typed one - an adapter
-    that sends something malformed must be loud, not silently coerced."""
+    """Raises ValueError for an unknown/missing `kind` or a body that is not a
+    dict, KeyError for a missing required field, TypeError/ValueError for a
+    wrongly-typed or empty-where-forbidden one - an adapter that sends
+    something malformed must be loud, not silently coerced."""
     kind = data.get("kind") if isinstance(data, dict) else None
+    if kind not in (RECEIVED_KIND_TEXT, RECEIVED_KIND_WAYPOINT):
+        raise ValueError(f"unknown received event kind: {kind!r}")
+    body = data.get(kind)
+    if not isinstance(body, dict):
+        raise ValueError(f"received {kind} event has no {kind!r} object")
     if kind == RECEIVED_KIND_TEXT:
-        return received_text_from_dict(data)
-    if kind == RECEIVED_KIND_WAYPOINT:
-        return received_waypoint_from_dict(data)
-    raise ValueError(f"unknown received event kind: {kind!r}")
+        return received_text_from_dict(body)
+    return received_waypoint_from_dict(body)
+
+
+def received_batch_to_dict(batch: ReceivedBatch) -> dict:
+    return {
+        "events": [received_event_to_dict(event) for event in batch.events],
+        "dropped": batch.dropped,
+        "malformed": batch.malformed,
+        "connection_generation": batch.connection_generation,
+    }
+
+
+def received_batch_from_dict(data: dict) -> ReceivedBatch:
+    """One malformed event is discarded and counted (added to whatever the
+    adapter itself reported as malformed); it never costs the rest of the
+    batch. A batch that is not even a dict/list-of-events shape raises."""
+    if not isinstance(data, dict) or not isinstance(data.get("events"), list):
+        raise ValueError("received batch must be an object with an 'events' list")
+    events = []
+    malformed = 0
+    for item in data["events"]:
+        try:
+            events.append(received_event_from_dict(item))
+        except (KeyError, TypeError, ValueError):
+            malformed += 1
+    return ReceivedBatch(
+        events=tuple(events),
+        dropped=data.get("dropped") or 0,
+        malformed=(data.get("malformed") or 0) + malformed,
+        connection_generation=data.get("connection_generation"),
+    )
 
 
 # ---------------------------------------------------------------------------

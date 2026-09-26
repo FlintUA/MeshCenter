@@ -13,7 +13,8 @@ MeshInterface and the script checks, against what the library really does
 rather than what its source appears to do:
 
   * `meshtastic.receive.text` and `meshtastic.receive.waypoint` fire, exactly
-    once each, for the right packet;
+    once each, for the right packet - and `meshtastic.receive.data.TEXT_MESSAGE_APP` /
+    `.WAYPOINT_APP` do NOT (the library replaces that topic name for known protocols);
   * the delivered packet dict has the keys the adapter will read
     (`from`, `to`, `id`, `channel`, `rxTime`, ..., `decoded.text`,
     `decoded.waypoint.{id,latitudeI,longitudeI,name,description,expire}`);
@@ -41,8 +42,12 @@ from meshtastic.mesh_interface import MeshInterface
 PACKET_KEYS = {"from", "to", "id", "channel", "decoded", "rxTime", "rxSnr", "rxRssi", "hopLimit", "raw"}
 WAYPOINT_KEYS = {"id", "latitudeI", "longitudeI", "name", "description", "expire"}
 TOPICS = ("meshtastic.receive.text", "meshtastic.receive.waypoint")
+# The library first builds "meshtastic.receive.data.<PORTNUM>" and then REPLACES it
+# with "meshtastic.receive.<protocol name>" for a known protocol - so these must
+# stay silent for the same two packets (a subscription to them would receive nothing).
+REPLACED_TOPICS = ("meshtastic.receive.data.TEXT_MESSAGE_APP", "meshtastic.receive.data.WAYPOINT_APP")
 
-received = {topic: [] for topic in TOPICS}
+received = {topic: [] for topic in TOPICS + REPLACED_TOPICS}
 problems = []
 
 
@@ -52,8 +57,8 @@ def _listener_for(topic_name):
     return on_receive
 
 
-_keep_alive = [_listener_for(topic) for topic in TOPICS]  # pubsub holds weak references
-for listener, topic in zip(_keep_alive, TOPICS):
+_keep_alive = [_listener_for(topic) for topic in TOPICS + REPLACED_TOPICS]  # pubsub holds weak references
+for listener, topic in zip(_keep_alive, TOPICS + REPLACED_TOPICS):
     pub.subscribe(listener, topic)
 
 
@@ -94,6 +99,10 @@ def main() -> int:
         if len(received[topic]) != 1:
             problems.append(f"{topic}: fired {len(received[topic])} times, expected 1")
 
+    for topic in REPLACED_TOPICS:
+        if received[topic]:
+            problems.append(f"{topic} fired {len(received[topic])} times - it was expected to be replaced")
+
     text = received[TOPICS[0]][0] if received[TOPICS[0]] else {}
     waypoint_packet = received[TOPICS[1]][0] if received[TOPICS[1]] else {}
 
@@ -115,6 +124,7 @@ def main() -> int:
     report = {
         "meshtastic": version("meshtastic"),
         "topics_fired": {topic: len(received[topic]) for topic in TOPICS},
+        "replaced_topics_fired": {topic: len(received[topic]) for topic in REPLACED_TOPICS},
         "protocol_names": sorted(
             p.name for p in meshtastic.protocols.values() if p.name in ("text", "waypoint")
         ),

@@ -124,6 +124,14 @@ _RECONNECT_JITTER_RATIO = 0.15
 # "no tight loop" enforcement, not just documentation.
 _RECONNECT_MIN_DELAY_S = 0.5
 
+# reconnect()'s `timeout` is ONE budget for the whole call (initial
+# disconnect + every attempt + every backoff sleep), not a per-attempt
+# allowance. An attempt (or the sleep before one) is only started if at
+# least this much budget is left for it to be meaningful: a connect() with
+# a second or two to live can only time out, and a timeout / tcp_connected
+# failure makes Core recycle the whole adapter process.
+_RECONNECT_MIN_ATTEMPT_S = 5.0
+
 
 class _TcpState:
     """Internal, fine-grained connection state - deliberately NOT the
@@ -810,26 +818,48 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
                 "no remembered TCP endpoint (this adapter process was restarted) - "
                 "reconnect needs an explicit address; use connect() or pass one from Core",
             )
+        # ONE shared, shrinking budget. Every attempt used to be handed the
+        # caller's whole `timeout` again, so six slow attempts plus ~108s of
+        # backoff could run for many multiples of it - past the outer
+        # AdapterSupervisor deadline (which then SIGKILLs the adapter mid-
+        # attempt and loses this transport's state) and for the whole time
+        # under Core's router lock.
+        deadline = time.monotonic() + timeout
+
         with self._lock:
             self._state = _TcpState.RECONNECTING
         self.disconnect(timeout=min(timeout, 15.0))
 
         last_error: Optional[TransportError] = None
         attempts = len(_RECONNECT_DELAYS_S)
+        made = 0
         for attempt, base_delay in enumerate(_RECONNECT_DELAYS_S, start=1):
+            remaining = deadline - time.monotonic()
+            if made and remaining < _RECONNECT_MIN_ATTEMPT_S:
+                break
+            made += 1
             try:
                 return self.connect(
                     ConnectionDescriptor(
                         type=ConnectionType.TCP, address=f"{self._host}:{self._port}", label=self._label
                     ),
                     force=True,
-                    timeout=timeout,
+                    timeout=max(1.0, remaining),
                 )
             except TransportError as error:
                 last_error = error
                 self._on_log(f"TCP reconnect attempt {attempt}/{attempts} failed: {error}", "WARNING")
                 if attempt < attempts:
-                    time.sleep(self._jittered_delay(base_delay))
+                    # Sleep only if enough budget is left afterwards for
+                    # another real attempt; never sleep into the deadline.
+                    room = deadline - time.monotonic() - _RECONNECT_MIN_ATTEMPT_S
+                    delay = min(self._jittered_delay(base_delay), room)
+                    if delay <= 0:
+                        self._on_log(
+                            f"TCP reconnect budget ({timeout}s) exhausted after {made} attempt(s)", "WARNING"
+                        )
+                        break
+                    time.sleep(delay)
 
         with self._lock:
             self._state = _TcpState.ERROR

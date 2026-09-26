@@ -232,7 +232,33 @@ the previous drain; `malformed` = events discarded because they could not be
 decoded - one bad event never costs the rest of the batch. Unknown keys in
 input are dropped, an unknown `kind` raises. The method is optional: the default
 raises `UNSUPPORTED` (so "cannot receive" is distinguishable from "nothing
-received" = an empty batch). No transport implements it yet.
+received" = an empty batch). **`TCPTransport` implements it** (Core does not
+consume it yet); Serial and Bluetooth keep the default.
+
+### TCP capture (adapter side)
+
+`TCPTransport` subscribes to `meshtastic.receive.text` and
+`meshtastic.receive.waypoint` **once per instance lifetime** (not per
+connect/reconnect; unsubscribed on the final `close()`). `pub` is global to the
+adapter process, which also hosts the Serial and BLE transports, so the callback
+accepts an event only if it came from this transport's current interface (or the
+one whose handshake is still in flight). Each accepted packet is normalized
+field by field (never reading `raw` or `decoded.payload`) into a neutral event
+and appended to a bounded queue (256): when full, the OLDEST event is dropped,
+counted, and reported in the next batch (`dropped`), with at most one WARNING per
+minute. An undecodable packet is counted in `malformed`, never fatal, and never
+logged (message text is private).
+
+`drain_received` is the ordinary request/response IPC operation
+`{"operation": "drain_received", "params": {"limit": 100}}` ->
+`{"ok": true, "result": {"events": [...], "dropped": n, "malformed": n,
+"connection_generation": n}}`. It reads memory only - no radio I/O - so polling
+it about once a second costs the radio nothing, and it adds no unsolicited
+frame to stdout (Protocol v1 stays strictly one response per request). Through
+`TransportRouter` it takes the same lock and bounded wait as every other
+operation (a switch or long reconnect makes it `BUSY`, never a hang). The queue
+is not cleared by disconnect/reconnect; it dies with the adapter process
+(delivery is best-effort with Core-side duplicate suppression).
 
 Receive contract checked against the real library with
 `adapters/meshtastic/verify_receive_topics.py` (a real `FromRadio` frame through

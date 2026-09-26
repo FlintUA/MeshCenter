@@ -197,6 +197,11 @@ class TransportRouter(RadioTransport):
     def reconnect(self, *args, timeout: float = 30.0, **kwargs):
         return self._delegate("reconnect", *args, timeout=timeout, **kwargs)
 
+    def drain_received(self, *args, timeout: float = 5.0, **kwargs):
+        """Like every other delegated operation: same router lock, same
+        bounded wait (a switch or long reconnect makes it BUSY, never hangs)."""
+        return self._delegate("drain_received", *args, timeout=timeout, **kwargs)
+
     def refresh_connection_info(self, *, timeout: float = 5.0) -> bool:
         """Best-effort refresh of the active transport's cached connection
         state from the adapter (see AdapterIPCTransport.

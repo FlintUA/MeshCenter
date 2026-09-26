@@ -156,6 +156,12 @@ class _AdapterDispatcher:
             info = target.reconnect(timeout=timeout)
             return ipc_protocol.connection_info_to_dict(info)
 
+        if operation == "drain_received":
+            # In-memory queue only (no radio I/O); a plain request/response like
+            # every other operation - never an unsolicited frame on stdout.
+            batch = target.drain_received(limit=int(params.get("limit", 100)), timeout=timeout)
+            return ipc_protocol.received_batch_to_dict(batch)
+
         if operation == "connection_info":
             # Cheap in-memory status (no radio I/O) so Core can refresh its
             # cached view - Core's get_connection_info() never crosses IPC.

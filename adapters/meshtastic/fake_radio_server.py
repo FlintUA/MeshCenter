@@ -39,12 +39,14 @@ not a byte-for-byte capture of any specific firmware's actual output.
 from __future__ import annotations
 
 import contextlib
+import queue
 import socket
 import struct
 import threading
+import time
 from typing import Optional
 
-from meshtastic import channel_pb2, mesh_pb2
+from meshtastic import channel_pb2, mesh_pb2, portnums_pb2
 
 START1 = 0x94
 START2 = 0xC3
@@ -151,6 +153,9 @@ class FakeMeshtasticTcpServer:
         # that matters (measured on a T-Beam: a probe + handshake succeeded
         # 1 of 32 times, the handshake alone 26 of 32).
         self.accepted_connections = 0
+        # Frames to push to the connected client after the handshake (see
+        # send_text() / send_waypoint()): the "radio received a packet" side.
+        self._outbound: "queue.Queue[bytes]" = queue.Queue()
         self.active_connections = 0
         self.max_concurrent_connections = 0
         self._stop_requested = threading.Event()
@@ -249,6 +254,13 @@ class FakeMeshtasticTcpServer:
         # drops when a session is torn down (not only at shutdown()).
         conn.settimeout(0.1)
         while not self._stop_requested.is_set():
+            while True:
+                try:
+                    pending = self._outbound.get_nowait()
+                except queue.Empty:
+                    break
+                with contextlib.suppress(OSError):
+                    conn.sendall(pending)
             try:
                 data = conn.recv(4096)
             except socket.timeout:
@@ -257,6 +269,46 @@ class FakeMeshtasticTcpServer:
                 break
             if data == b"":
                 break
+
+    def _packet_frame(self, portnum, payload: bytes, *, from_num, to_num, packet_id, channel) -> bytes:
+        from_radio = mesh_pb2.FromRadio()
+        packet = from_radio.packet
+        packet.id = packet_id
+        setattr(packet, "from", from_num)
+        packet.to = to_num
+        packet.channel = channel
+        packet.rx_time = int(time.time())
+        packet.rx_snr = 5.5
+        packet.rx_rssi = -80
+        packet.hop_limit = 3
+        packet.decoded.portnum = portnum
+        packet.decoded.payload = payload
+        return frame(from_radio)
+
+    def send_text(self, text: str, *, from_num: int = 0x1FA065F0, to_num: int = 0xFFFFFFFF,
+                  packet_id: int = 101, channel: int = 1) -> None:
+        """Push a received text message to the connected client, as the radio
+        would for a packet it heard on the mesh."""
+        self._outbound.put(self._packet_frame(
+            portnums_pb2.PortNum.TEXT_MESSAGE_APP, text.encode("utf-8"),
+            from_num=from_num, to_num=to_num, packet_id=packet_id, channel=channel,
+        ))
+
+    def send_waypoint(self, *, waypoint_id: int = 4242, name: str = "Cafe", description: str = "meet here",
+                      latitude: float = 50.4501, longitude: float = 30.5234, icon: int = 128205,
+                      expire: int = 0, from_num: int = 0x1FA065F0, packet_id: int = 102, channel: int = 1) -> None:
+        waypoint = mesh_pb2.Waypoint()
+        waypoint.id = waypoint_id
+        waypoint.latitude_i = int(latitude * 1e7)
+        waypoint.longitude_i = int(longitude * 1e7)
+        waypoint.name = name
+        waypoint.description = description
+        waypoint.icon = icon
+        waypoint.expire = expire or int(time.time()) + 3600
+        self._outbound.put(self._packet_frame(
+            portnums_pb2.PortNum.WAYPOINT_APP, waypoint.SerializeToString(),
+            from_num=from_num, to_num=0xFFFFFFFF, packet_id=packet_id, channel=channel,
+        ))
 
     def shutdown(self) -> None:
         self._stop_requested.set()

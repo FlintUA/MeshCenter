@@ -62,6 +62,7 @@ silently auto-reconnect on a caller's behalf.
 """
 from __future__ import annotations
 
+import collections
 import random
 import socket
 import threading
@@ -83,6 +84,9 @@ from meshsrv.radio_transport import (
     OutgoingMessage,
     OutgoingWaypoint,
     RadioTransport,
+    ReceivedBatch,
+    ReceivedTextEvent,
+    ReceivedWaypointEvent,
     SendResult,
     TransportError,
     TransportErrorCode,
@@ -203,6 +207,52 @@ def _parse_host_port(address: str, default_port: int) -> tuple[str, int]:
     return address, default_port
 
 
+# ---------------------------------------------------------------------------
+# Inbound (text + waypoints) - see docs/BACKEND_API.md "Received events"
+# ---------------------------------------------------------------------------
+# The meshtastic library already receives every packet on its reader thread and
+# publishes it through pypubsub. Only these two topics are subscribed - not the
+# catch-all `meshtastic.receive` - so no NodeInfo/position/telemetry is ingested
+# by accident. (For a known protocol the library REPLACES the
+# `meshtastic.receive.data.<PORTNUM>` topic with `meshtastic.receive.<name>`,
+# so subscribing to the former would receive nothing - see
+# verify_receive_topics.py.)
+_RECEIVE_TOPIC_TEXT = "meshtastic.receive.text"
+_RECEIVE_TOPIC_WAYPOINT = "meshtastic.receive.waypoint"
+
+# LoRa traffic is slow; 256 is a large margin for a queue Core drains about once
+# a second. Bounded, and NOT a silent deque(maxlen=N): overflow drops the OLDEST
+# event, is counted, and is reported to the caller in the next batch.
+_RECEIVE_QUEUE_CAPACITY = 256
+
+# One WARNING per this many seconds while overflowing, not one per dropped event.
+_RECEIVE_OVERFLOW_LOG_INTERVAL_S = 60.0
+
+_BROADCAST_NUM = 0xFFFFFFFF
+
+
+def _plain_int(value) -> Optional[int]:
+    """An int from the library's packet dict, or None. bool is not an int here,
+    and anything that is not already a plain int is not coerced."""
+    return value if type(value) is int else None
+
+
+def _plain_int_or_none_if_zero(value) -> Optional[int]:
+    """The library omits protobuf zero-defaults from the dict and 0 means
+    "unknown" for these fields (id, rxTime, rxRssi, relayNode) - normalise 0 to
+    None so a real value and "not reported" cannot be confused."""
+    number = _plain_int(value)
+    return number or None
+
+
+def _plain_float(value) -> Optional[float]:
+    return float(value) if type(value) in (int, float) else None
+
+
+def _node_id_from_num(num: int) -> str:
+    return "^all" if num == _BROADCAST_NUM else f"!{num:08x}"
+
+
 class TCPTransport(TimeoutEnforced, RadioTransport):
     def __init__(
         self,
@@ -243,6 +293,38 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         self._connected_since: Optional[float] = None
         self._last_error: Optional[TransportError] = None
         self._node_id: Optional[str] = None
+
+        # ---- inbound ----------------------------------------------------
+        # Its own lock, never self._lock: the pubsub callback runs on the
+        # library's publishing thread and must not wait behind a connect()/
+        # send that holds the state lock.
+        self._receive_lock = threading.Lock()
+        self._receive_queue: collections.deque = collections.deque()
+        self._receive_capacity = _RECEIVE_QUEUE_CAPACITY
+        self._dropped_since_drain = 0
+        self._malformed_since_drain = 0
+        self._receive_stats = {
+            "received_text": 0,
+            "received_waypoint": 0,
+            "queue_overflow_dropped": 0,
+            "drained_events": 0,
+            "malformed_events": 0,
+        }
+        self._last_overflow_log = float("-inf")
+        # Bumps on every new physical connection. Observability only: the
+        # safety check against writing radio A's events into radio B's profile
+        # is the node id every event carries, not this.
+        self._connection_generation = 0
+        # The interface currently being CONSTRUCTED (its handshake is still in
+        # flight and it is not self._interface yet) - a packet delivered in that
+        # window is still ours.
+        self._pending_interface = None
+        # Subscribed exactly once per TCPTransport lifetime - NOT per connect()
+        # or reconnect(), which would stack duplicate registrations. The
+        # callbacks decide per event whether it came from the current interface.
+        self._receive_subscribed = False
+        self._receive_listeners: list = []
+        self._receive_unavailable_reason: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -554,6 +636,8 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         here would ModuleNotFoundError in exactly that environment."""
         from meshtastic.tcp_interface import TCPInterface
 
+        owner = self
+
         class _FailFastTCPInterface(TCPInterface):
             """Overrides MeshInterface._waitConnected()'s single 30s
             Event.wait() call with a short poll loop that also watches
@@ -618,6 +702,13 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             would fail that test in CI, not surface live again."""
 
             _WAIT_POLL_INTERVAL_S = 0.25
+
+            def __init__(self, *args, **kwargs):
+                # Registered BEFORE the constructor runs its handshake: the
+                # object is not self._interface until the handshake finishes,
+                # and a receive callback in that window must still recognise it.
+                owner._pending_interface = self
+                super().__init__(*args, **kwargs)
 
             def myConnect(self):
                 """Adopt the already-open socket instead of letting the
@@ -736,6 +827,8 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         # bad address forever instead of the last-known-good one.
         previous_host, previous_port, previous_label = self._host, self._port, self._label
 
+        self._ensure_receive_subscription()
+
         host, port = _parse_host_port(descriptor.address, default_port=self._port or DEFAULT_TCP_PORT)
         self._host = host or self._host
         self._port = port or self._port
@@ -781,6 +874,7 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         try:
             interface = self._call_with_timeout(_do_sync, timeout=remaining, what="connect() protocol sync")
         except TransportError as error:
+            self._pending_interface = None
             self._close_quietly(connected_socket)
             error = self._finalize_sync_error(error)
             with self._lock:
@@ -813,10 +907,12 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         with self._lock:
             displaced = self._interface
             self._interface = interface
+            self._pending_interface = None
             self._node_id = node_id
             self._state = _TcpState.READY
             self._connected_since = time.time()
             self._last_error = None
+            self._connection_generation += 1
         if displaced is not None and displaced is not interface:
             # Defensive only - _connect_lock plus the detach above mean
             # nothing should still be attached here, but silently
@@ -962,7 +1058,206 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
 
     def close(self) -> None:
         self.disconnect(timeout=15.0)
+        self._unsubscribe_receive()
         self._shutdown_executor()
+
+    # ------------------------------------------------------------------
+    # Inbound: pubsub capture -> normalize -> bounded queue -> drain_received()
+    # ------------------------------------------------------------------
+    def _ensure_receive_subscription(self) -> None:
+        """Subscribe to the two receive topics, once for this instance's
+        lifetime. `pubsub` is the library's own dependency, imported lazily
+        like `meshtastic` itself (this module is imported in environments that
+        have neither); if it is missing, receiving is reported UNSUPPORTED
+        rather than breaking connect()."""
+        with self._receive_lock:
+            if self._receive_subscribed or self._receive_unavailable_reason:
+                return
+            try:
+                from pubsub import pub
+            except ImportError as error:
+                self._receive_unavailable_reason = f"pubsub is not importable: {error}"
+                self._on_log(f"TCP receive disabled: {self._receive_unavailable_reason}", "WARNING")
+                return
+            listeners = [
+                (_RECEIVE_TOPIC_TEXT, self._on_receive_text),
+                (_RECEIVE_TOPIC_WAYPOINT, self._on_receive_waypoint),
+            ]
+            for topic, listener in listeners:
+                pub.subscribe(listener, topic)
+            # pypubsub keeps only weak references to listeners: hold them.
+            self._receive_listeners = listeners
+            self._receive_subscribed = True
+
+    def _unsubscribe_receive(self) -> None:
+        with self._receive_lock:
+            listeners, self._receive_listeners = self._receive_listeners, []
+            was_subscribed, self._receive_subscribed = self._receive_subscribed, False
+        if not was_subscribed:
+            return
+        try:
+            from pubsub import pub
+        except ImportError:
+            return
+        for topic, listener in listeners:
+            try:
+                pub.unsubscribe(listener, topic)
+            except Exception:
+                pass
+
+    def _is_current_interface(self, interface) -> bool:
+        """`pub` is process-global and this adapter process also hosts the
+        Serial and BLE transports: an event is ours only if it came from OUR
+        current (or currently-being-built) interface - never from another
+        transport's, or from one this transport has already let go of."""
+        return interface is not None and (
+            interface is self._interface or interface is self._pending_interface
+        )
+
+    def _on_receive_text(self, packet, interface) -> None:
+        self._on_receive(packet, interface, "text", self._normalize_text)
+
+    def _on_receive_waypoint(self, packet, interface) -> None:
+        self._on_receive(packet, interface, "waypoint", self._normalize_waypoint)
+
+    def _on_receive(self, packet, interface, kind, normalize) -> None:
+        """Runs on the library's publishing thread: must never raise into it."""
+        try:
+            if not self._is_current_interface(interface):
+                return
+            event = normalize(packet, interface)
+            if event is not None:
+                self._enqueue_received(event, kind)
+        except Exception:
+            # One undecodable packet must not cost anything else - count it.
+            # (No packet content is logged: message text is private.)
+            with self._receive_lock:
+                self._malformed_since_drain += 1
+                self._receive_stats["malformed_events"] += 1
+
+    def _enqueue_received(self, event, kind: str) -> None:
+        log_overflow = False
+        with self._receive_lock:
+            if len(self._receive_queue) >= self._receive_capacity:
+                self._receive_queue.popleft()  # drop the OLDEST, keep the freshest
+                self._dropped_since_drain += 1
+                self._receive_stats["queue_overflow_dropped"] += 1
+                now = time.monotonic()
+                if now - self._last_overflow_log >= _RECEIVE_OVERFLOW_LOG_INTERVAL_S:
+                    self._last_overflow_log = now
+                    log_overflow = True
+            self._receive_queue.append(event)
+            self._receive_stats[f"received_{kind}"] += 1
+            dropped_total = self._receive_stats["queue_overflow_dropped"]
+        if log_overflow:
+            self._on_log(
+                f"TCP receive queue full ({self._receive_capacity}): dropping oldest events "
+                f"({dropped_total} dropped so far) - Core is not draining fast enough",
+                "WARNING",
+            )
+
+    def _normalize_text(self, packet, interface) -> Optional[ReceivedTextEvent]:
+        """Explicit field-by-field construction. `raw` (a protobuf MeshPacket),
+        `decoded.payload` (bytes) and everything else in the library's dict are
+        never read, let alone carried. Returns None for an empty text (parity
+        with the serial parser, which skips it); raises for a malformed packet."""
+        decoded = packet["decoded"]
+        text = decoded["text"]
+        if not isinstance(text, str):
+            raise TypeError("decoded.text is not a str")
+        if not text.strip():
+            return None
+        from_num = packet["from"]
+        to_num = packet["to"]
+        if type(from_num) is not int or type(to_num) is not int:
+            raise TypeError("from/to are not integers")
+        local_node_id = self._local_node_id(interface)
+        if not local_node_id:
+            raise ValueError("local radio node id is not known yet")
+        channel = _plain_int(packet.get("channel"))
+        return ReceivedTextEvent(
+            from_node_id=f"!{from_num:08x}",
+            to_node_id=_node_id_from_num(to_num),
+            text=text,
+            received_at=time.time(),
+            local_radio_node_id=local_node_id,
+            packet_id=_plain_int_or_none_if_zero(packet.get("id")),
+            from_num=from_num,
+            to_num=to_num,
+            channel_index=0 if channel is None else channel,  # protobuf default 0 is omitted
+            reply_id=_plain_int_or_none_if_zero(decoded.get("replyId")),
+            rx_time=_plain_int_or_none_if_zero(packet.get("rxTime")),
+            rx_rssi=_plain_int_or_none_if_zero(packet.get("rxRssi")),
+            rx_snr=_plain_float(packet.get("rxSnr")),
+            hop_limit=_plain_int(packet.get("hopLimit")),
+            hop_start=_plain_int(packet.get("hopStart")),
+            relay_node=_plain_int_or_none_if_zero(packet.get("relayNode")),
+        )
+
+    def _normalize_waypoint(self, packet, interface) -> Optional[ReceivedWaypointEvent]:
+        """Same rules as _normalize_text; coordinates arrive as latitudeI /
+        longitudeI (1e-7 degrees) and become plain floats. The waypoint dict's
+        own `raw` (a protobuf text string) is never read."""
+        waypoint = packet["decoded"]["waypoint"]
+        waypoint_id = _plain_int(waypoint.get("id"))
+        if waypoint_id is None:
+            raise ValueError("waypoint has no integer id")
+        from_num = packet["from"]
+        if type(from_num) is not int:
+            raise TypeError("from is not an integer")
+        name = waypoint.get("name", "")
+        description = waypoint.get("description", "")
+        if not isinstance(name, str) or not isinstance(description, str):
+            raise TypeError("waypoint name/description are not str")
+        local_node_id = self._local_node_id(interface)
+        if not local_node_id:
+            raise ValueError("local radio node id is not known yet")
+        latitude_i = _plain_int(waypoint.get("latitudeI"))
+        longitude_i = _plain_int(waypoint.get("longitudeI"))
+        channel = _plain_int(packet.get("channel"))
+        return ReceivedWaypointEvent(
+            waypoint_id=waypoint_id,
+            sender_id=f"!{from_num:08x}",
+            name=name,
+            description=description,
+            received_at=time.time(),
+            local_radio_node_id=local_node_id,
+            packet_id=_plain_int_or_none_if_zero(packet.get("id")),
+            latitude=None if latitude_i is None else latitude_i / 1e7,
+            longitude=None if longitude_i is None else longitude_i / 1e7,
+            icon=_plain_int(waypoint.get("icon")),
+            expire_at=_plain_int(waypoint.get("expire")),
+            channel_index=0 if channel is None else channel,
+        )
+
+    def drain_received(self, *, limit: int = 100, timeout: float = 5.0) -> ReceivedBatch:
+        """Take up to `limit` buffered events, oldest first, plus how many were
+        dropped (queue overflow) and how many could not be decoded since the
+        previous drain. Reads memory only - no radio I/O, no TCP - so polling it
+        about once a second costs the radio nothing. The queue is NOT cleared by
+        disconnect()/reconnect(): events already captured survive a reconnect to
+        the same radio (they die only with the adapter process)."""
+        if self._receive_unavailable_reason:
+            raise TransportError(TransportErrorCode.UNSUPPORTED, self._receive_unavailable_reason)
+        if type(limit) is not int or limit < 1:
+            raise TransportError(TransportErrorCode.UNKNOWN, f"drain_received limit must be a positive int, got {limit!r}")
+        with self._receive_lock:
+            count = min(limit, len(self._receive_queue))
+            events = tuple(self._receive_queue.popleft() for _ in range(count))
+            dropped, self._dropped_since_drain = self._dropped_since_drain, 0
+            malformed, self._malformed_since_drain = self._malformed_since_drain, 0
+            self._receive_stats["drained_events"] += count
+            generation = self._connection_generation
+        return ReceivedBatch(events=events, dropped=dropped, malformed=malformed, connection_generation=generation)
+
+    def get_receive_stats(self) -> dict:
+        """Counters for observability (no message content): received_text,
+        received_waypoint, queue_depth, queue_overflow_dropped, drained_events,
+        malformed_events."""
+        with self._receive_lock:
+            stats = dict(self._receive_stats)
+            stats["queue_depth"] = len(self._receive_queue)
+        return stats
 
     # ------------------------------------------------------------------
     # RadioTransport - sending. Persistent self._interface (see module

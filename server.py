@@ -63,7 +63,15 @@ from meshsrv.connection_status import connection_payload
 from meshsrv.time_service import start_background_thread as start_time_service
 from meshsrv.node_time_sync import STARTUP_SYNC_DELAY_S
 from meshsrv.serial_port_supervisor import SerialPortSupervisor
-from meshsrv.radio_transport import ConnectionDescriptor, ConnectionState, ConnectionType, TransportError
+from meshsrv.radio_transport import (
+    ConnectionDescriptor,
+    ConnectionState,
+    ConnectionType,
+    ReceivedTextEvent,
+    ReceivedWaypointEvent,
+    TransportError,
+)
+from meshsrv import inbound_events
 from meshsrv.adapter_ipc_client import AdapterIPCTransport, AdapterSupervisor
 from meshsrv.transport_router import TransportRouter
 from meshsrv.schedule_engine import start as start_schedule_engine
@@ -1788,27 +1796,24 @@ def process_waypoint_line(line):
     if not waypoint:
         return False
 
-    saved = waypoint_store.upsert(waypoint)
-    event = saved.pop("_event", "created")
-    if event == "duplicate":
-        return True
-
-    sender_name = get_node_name(saved.get("sender_id")) if saved.get("sender_id") else "Unknown"
-    name = saved.get("name") or f"Waypoint {saved.get('waypoint_id')}"
-    action = "Updated" if event == "updated" else "Received"
-    print(
-        f"[WAYPOINT] {action}: {name}; sender={sender_name} "
-        f"({saved.get('sender_id') or 'unknown'}); "
-        f"lat={saved.get('latitude')}; lon={saved.get('longitude')}; "
-        f"channel={saved.get('channel_index')}",
-        flush=True,
+    event = ReceivedWaypointEvent(
+        waypoint_id=waypoint["waypoint_id"],
+        sender_id=str(waypoint.get("sender_id") or ""),
+        name=str(waypoint.get("name") or ""),
+        description=str(waypoint.get("description") or ""),
+        received_at=waypoint["received_at"],
+        local_radio_node_id=active_radio_node_id(),
+        packet_id=extract_packet_id(line),
+        latitude=waypoint["latitude"],
+        longitude=waypoint["longitude"],
+        icon=waypoint.get("icon"),
+        expire_at=waypoint.get("expire_at"),
+        channel_index=waypoint.get("channel_index"),
     )
-    log_system_event(
-        title=f"Waypoint {event}",
-        level="INFO",
-        details=f"{name}; sender: {sender_name}; "
-        f"coordinates: {saved.get('latitude')}, {saved.get('longitude')}",
-        source="waypoint",
+    # The CLI line stays the row's raw_packet, exactly as before (Core-local,
+    # serial only); a TCP waypoint stores a provenance snapshot instead.
+    inbound_events.ingest_received_waypoint(
+        event, _inbound_deps(), raw_packet=waypoint.get("raw_packet", ""), source="serial"
     )
     return True
 
@@ -3069,108 +3074,9 @@ def extract_relay_node(line):
     m = re.search(r"'relayNode':\s*(\d+)", line)
     return m.group(1) if m else None
 
-def update_node(line, sender, text):
-    node_id = extract_node_id(line) or infer_node_id_from_sender(sender)
-
-    if not node_id:
-        return ""
-
-    if node_id == LOCAL_NODE_ID:
-        log_node_event(
-            "SKIP_LOCAL_NODE",
-            "TEXT_MESSAGE",
-            node_id,
-            extra={
-                "sender": sender,
-                "text": text
-            },
-            raw=line
-        )
-        return node_id
-
-    rssi = extract_rssi(line)
-    snr = extract_snr(line)
-    hop_start = extract_hop_start(line)
-    relay_node = extract_relay_node(line)
-    role = extract_field(line, ["role", "Role"])
-
-    name = get_node_name(node_id)
-    info = get_node_info(node_id)
-
-    with state_lock:
-        old = nodes.get(node_id, {})
-
-        old_snapshot = {
-            "name": old.get("name"),
-            "short_name": old.get("short_name"),
-            "hw_model": old.get("hw_model"),
-            "role": old.get("role"),
-            "rssi": old.get("rssi"),
-            "snr": old.get("snr"),
-            "hop_start": old.get("hop_start"),
-            "relay_node": old.get("relay_node"),
-            "last_text": old.get("last_text")
-        }
-
-        # ВАЖНО:
-        # TEXT_MESSAGE больше НЕ переименовывает ноду.
-        # Имя может менять только NODEINFO / parse_nodes_from_info.
-        stable_name = old.get("name") or name
-
-        node = dict(old)
-        node.update({
-            "name": stable_name,
-            "node_id": node_id,
-            "last_seen": time.time(),
-            "last_time": now(),
-            "rssi": rssi or old.get("rssi"),
-            "snr": snr or old.get("snr"),
-            "hop_start": hop_start or old.get("hop_start", ""),
-            "relay_node": relay_node or old.get("relay_node", ""),
-            "last_text": text or old.get("last_text", ""),
-            "short_name": info.get("short_name") or old.get("short_name", "") or node_id[-4:],
-            "hw_model": info.get("hw_model") or old.get("hw_model", ""),
-            "role": role or old.get("role", "CLIENT"),
-            "ignored": old.get("ignored", False),
-            "favorite": old.get("favorite", False),
-            # Keep the last known position. Text packets do not contain
-            # coordinates and must not erase a position obtained earlier.
-            "position": old.get("position"),
-        })
-        nodes[node_id] = node
-
-        new_snapshot = {
-            "name": nodes[node_id].get("name"),
-            "short_name": nodes[node_id].get("short_name"),
-            "hw_model": nodes[node_id].get("hw_model"),
-            "role": nodes[node_id].get("role"),
-            "rssi": nodes[node_id].get("rssi"),
-            "snr": nodes[node_id].get("snr"),
-            "hop_start": nodes[node_id].get("hop_start"),
-            "relay_node": nodes[node_id].get("relay_node"),
-            "last_text": nodes[node_id].get("last_text")
-        }
-
-        log_node_event(
-            "UPDATE_NODE",
-            "TEXT_MESSAGE",
-            node_id,
-            old=old_snapshot,
-            new=new_snapshot,
-            extra={
-                "sender": sender,
-                "text": text,
-                "line_has_longName": "longName" in line
-            },
-            raw=line
-        )
-
-        if node_id.startswith("!"):
-            ensure_chat(node_id, nodes[node_id].get("name"), force=True)
-
-        save_nodes()
-
-    return node_id
+# update_node(line, sender, text) used to live here: its logic is now
+# meshsrv/inbound_events.py's _update_node_from_received_text(), fed by a
+# neutral event instead of a re-parsed CLI line (shared with the TCP inbound path).
 
 def process_nodeinfo(block):
     if ("NODEINFO_APP" not in block and "longName" not in block and "long_name" not in block and
@@ -3904,6 +3810,117 @@ def listen_meshtastic():
     listener_supervisor.run_listener()
 
 
+def active_radio_node_id():
+    """The accepted radio's node id (lowercase) - what every inbound event must
+    name as its `local_radio_node_id` to be persisted. The accepted instance
+    identity is the source of truth (LOCAL_NODE_ID is its bootstrap mirror);
+    both the serial event builder and the ingest gate call this, so they can
+    never disagree."""
+    accepted = str((INSTANCE_IDENTITY.get("radio") or {}).get("node_id") or "").strip()
+    return (accepted or str(LOCAL_NODE_ID or "").strip()).lower() or "unknown"
+
+
+def _dispatch_mca_text(text, node_id, packet_id, channel_index):
+    mca_runtime.handle_incoming_meshtastic_text(
+        text, node_id, transport_router, data_dir=DATA_DIR, packet_id=packet_id,
+        channel_index=channel_index,
+    )
+
+
+def _inbound_deps():
+    """The state the shared inbound ingest works on. Built per call: seen_ids is
+    rebound by cleanup_seen_ids(), so it must be read at the moment of use."""
+    return inbound_events.InboundDeps(
+        state_lock=state_lock,
+        active_radio_node_id=active_radio_node_id,
+        local_node_id=LOCAL_NODE_ID,
+        channel_chat_id=channel_chat_id,
+        CHANNEL_CHAT_ID=CHANNEL_CHAT_ID,
+        CHANNEL_CHAT_NAME=CHANNEL_CHAT_NAME,
+        radio_event=radio_event,
+        seen_ids=seen_ids,
+        nodes=nodes,
+        chats=chats,
+        get_node_name=get_node_name,
+        get_node_info=get_node_info,
+        infer_node_id_from_sender=infer_node_id_from_sender,
+        is_duplicate_text=is_duplicate_text,
+        log_node_event=log_node_event,
+        ensure_chat=ensure_chat,
+        save_chats=save_chats,
+        save_nodes=save_nodes,
+        find_message_by_packet_id=find_message_by_packet_id,
+        build_reply_reference=build_reply_reference,
+        add_message=add_message,
+        dispatch_mca=_dispatch_mca_text,
+        now=now,
+        time=time.time,
+        waypoint_store=waypoint_store,
+        log_system_event=log_system_event,
+    )
+
+
+def _optional_int(text):
+    return int(text) if text is not None else None
+
+
+def _serial_line_is_channel(line):
+    """The serial parser's own broadcast-vs-direct heuristics over a CLI line,
+    unchanged. The result becomes the event's recipient ("^all" or our node)."""
+    if (
+        "'to': 4294967295" in line
+        or '"to": 4294967295' in line
+        or "'to': '^all'" in line
+        or '"to": "^all"' in line
+        or "'toId': '^all'" in line
+        or '"toId": "^all"' in line
+        or "broadcast" in line.lower()
+    ):
+        return True
+    if "'dest'" in line.lower() or '"dest"' in line.lower():
+        return False
+    if "'to': '!" in line or '"to": "!' in line:
+        return False
+    if re.search(r"'to':\s*[0-9]+,", line) or re.search(r'"to":\s*[0-9]+,', line):
+        if "4294967295" not in line:
+            return False
+    return True
+
+
+def build_serial_text_event(line, text):
+    """CLI line -> (neutral ReceivedTextEvent, serial-only context). Pure
+    parsing with the existing extract_* helpers - no state is read or written,
+    so it can run before the dedup checks exactly as the old inline code did."""
+    node_id = extract_node_id(line) or ""
+    sender_hint = "" if node_id else extract_sender(line)
+    snr_text = extract_snr(line)
+    local_radio = active_radio_node_id()
+    event = ReceivedTextEvent(
+        from_node_id=node_id,
+        to_node_id=BROADCAST_RECIPIENT_ID if _serial_line_is_channel(line) else local_radio,
+        text=text,
+        received_at=time.time(),
+        local_radio_node_id=local_radio,
+        packet_id=extract_packet_id(line),
+        channel_index=extract_optional_channel_index(line),
+        reply_id=extract_reply_id(line),
+        rx_rssi=_optional_int(extract_rssi(line)),
+        rx_snr=float(snr_text) if snr_text is not None else None,
+        hop_start=_optional_int(extract_hop_start(line)),
+        relay_node=_optional_int(extract_relay_node(line)),
+    )
+    context = inbound_events.SerialLineContext(
+        raw_line=line,
+        sender_hint=sender_hint,
+        role=extract_field(line, ["role", "Role"]),
+        rx_snr_text=snr_text,
+    )
+    return event, context
+
+
+BROADCAST_RECIPIENT_ID = inbound_events.BROADCAST_RECIPIENT
+
+
 def _handle_listener_line(line):
     """Meshtastic-protocol parsing for one raw --listen stdout line -
     everything listen_meshtastic() used to do inline, now called from
@@ -4015,124 +4032,8 @@ def _handle_listener_line(line):
         if not text:
             return
 
-        radio_event("text")
-
-        pid = extract_packet_id(line)
-
-        if pid:
-            with state_lock:
-                if pid in seen_ids:
-                    return
-                seen_ids.add(pid)
-
-        sender = extract_sender(line)
-        node_id = update_node(line, sender, text)
-
-        # ===== ИЗМЕНЕНИЕ №4: Обновить sender после update_node =====
-        if node_id:
-            sender = get_node_name(node_id)
-
-        if is_duplicate_text(sender, text, node_id):
-            return
-
-        if node_id and nodes.get(node_id, {}).get("ignored", False):
-            return
-
-        chat_id = CHANNEL_CHAT_ID
-        is_channel = False
-
-        if (
-            "'to': 4294967295" in line
-            or '"to": 4294967295' in line
-            or "'to': '^all'" in line
-            or '"to": "^all"' in line
-            or "'toId': '^all'" in line
-            or '"toId": "^all"' in line
-            or "broadcast" in line.lower()
-        ):
-            is_channel = True
-        elif "'dest'" in line.lower() or '"dest"' in line.lower():
-            is_channel = False
-        elif "'to': '!" in line or '"to": "!' in line:
-            is_channel = False
-        elif re.search(r"'to':\s*[0-9]+,", line) or re.search(r'"to":\s*[0-9]+,', line):
-            if "4294967295" not in line:
-                is_channel = False
-        else:
-            is_channel = True
-
-        if is_channel:
-            incoming_channel_index = extract_channel_index(line)
-            chat_id = channel_chat_id(incoming_channel_index)
-            if chat_id not in chats:
-                with state_lock:
-                    chats[chat_id] = {
-                        "id": chat_id,
-                        "name": CHANNEL_CHAT_NAME if incoming_channel_index == 0 else f"Channel {incoming_channel_index}",
-                        "type": "channel",
-                        "last_message": "",
-                        "last_time": "",
-                        "unread": 0,
-                    }
-                    save_chats()
-        else:
-            if node_id and node_id.startswith("!") and node_id != LOCAL_NODE_ID:
-                chat_id = node_id
-            else:
-                from_match = re.search(r"'from':\s*'(![0-9a-f]+)'", line)
-
-                if not from_match:
-                    from_match = re.search(r'"from":\s*"(![0-9a-f]+)"', line)
-
-                if from_match:
-                    chat_id = from_match.group(1)
-                else:
-                    chat_id = CHANNEL_CHAT_ID
-
-        # ===== ИЗМЕНЕНИЕ №3: ensure_chat без force=True и с именем из базы =====
-        if chat_id.startswith("!") and chat_id != LOCAL_NODE_ID:
-            with state_lock:
-                ensure_chat(
-                    chat_id,
-                    get_node_name(chat_id),
-                    force=False
-                )
-
-        reply_to = None
-        incoming_reply_id = extract_reply_id(line)
-        if incoming_reply_id:
-            with state_lock:
-                original = (
-                    find_message_by_packet_id(incoming_reply_id, chat_id)
-                    or find_message_by_packet_id(incoming_reply_id)
-                )
-                reply_to = build_reply_reference(original)
-
-        with state_lock:
-            add_message(
-                "rx",
-                sender,
-                text,
-                node_id,
-                chat_id,
-                reply_to=reply_to,
-                packet_id=pid,
-            )
-
-        # MCAttach Step 1.3 (spec 19.1): cheap O(1) prefix check only,
-        # after the normal message is already saved above - never block
-        # this listener thread on MCA parsing/crypto/Relay. Direct
-        # messages only (Stage 1 scope: supports_channel=False in
-        # MeshtasticTextAdapter.capabilities()); a channel/broadcast
-        # "MCA1:"-prefixed text is not dispatched here at all.
-        if not is_channel and node_id and text.startswith("MCA1:"):
-            try:
-                mca_runtime.handle_incoming_meshtastic_text(
-                    text, node_id, transport_router, data_dir=DATA_DIR, packet_id=pid,
-                    channel_index=extract_optional_channel_index(line),
-                )
-            except Exception as e:
-                print(f"[MCA] listener dispatch error: {e}", flush=True)
+        event, line_context = build_serial_text_event(line, text)
+        inbound_events.ingest_received_text(event, _inbound_deps(), line_context=line_context)
 
     except Exception as e:
         print(f"[LISTEN] Error processing line: {e}", flush=True)

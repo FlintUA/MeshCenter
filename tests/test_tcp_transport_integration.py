@@ -310,3 +310,55 @@ def test_forced_reconnect_cycles_never_show_the_radio_two_clients_at_once():
     finally:
         transport.close()
         server.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# One TCP connection per connect() - the root cause of the reconnect storms.
+# A throwaway reachability probe (connect + close) right before the real
+# handshake made a real T-Beam reset the handshake: measured on pixel-111,
+# probe + handshake 1 of 32, handshake alone 26 of 32.
+# ---------------------------------------------------------------------------
+
+
+def test_one_connect_opens_exactly_one_tcp_connection_to_the_radio():
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    try:
+        info = transport.connect(_descriptor("127.0.0.1", server.port), timeout=10.0)
+
+        assert info.state == ConnectionState.CONNECTED
+        assert server.accepted_connections == 1, "no throwaway probe connection"
+        assert server.real_connections == 1
+        time.sleep(0.2)
+    finally:
+        transport.close()
+        server.shutdown()
+
+
+def test_every_forced_reconnect_is_also_exactly_one_connection():
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    try:
+        for expected in (1, 2, 3):
+            transport.connect(_descriptor("127.0.0.1", server.port), force=True, timeout=10.0)
+            time.sleep(0.2)
+            assert server.accepted_connections == expected
+            assert server.max_concurrent_connections == 1
+    finally:
+        transport.close()
+        server.shutdown()
+
+
+def test_the_library_adopts_the_socket_we_opened_and_it_is_blocking():
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    try:
+        transport.connect(_descriptor("127.0.0.1", server.port), timeout=10.0)
+
+        interface = transport._interface
+        assert interface.socket is not None
+        assert interface.socket.gettimeout() is None, "blocking mode for the reader thread's recv()"
+        time.sleep(0.2)
+    finally:
+        transport.close()
+        server.shutdown()

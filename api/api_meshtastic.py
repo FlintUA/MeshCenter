@@ -543,12 +543,25 @@ def register_meshtastic_routes(
         # just at boot. Best-effort: a failure here must not turn an
         # already-successful reconnect into an error response to the
         # caller - the connection itself is fine either way.
+        identity_status = None
         try:
             info = transport_router.get_connection_info()
             reconnected_transport = info.descriptor.type.value if info.descriptor else None
-            refresh_identity_after_reconnect(reconnected_transport, {"node_id": info.node_id})
+            identity_status = refresh_identity_after_reconnect(reconnected_transport, {"node_id": info.node_id})
         except Exception as identity_error:
             print(f"[MESHTASTIC] Identity refresh after reconnect failed: {identity_error}", flush=True)
+
+        # The reconnect reached a radio that is not the accepted one: the
+        # session has already been closed (server.py's
+        # teardown_unverified_tcp_session) - report it, don't say "ok".
+        if identity_status in ("MISMATCH", "NOT_FOUND"):
+            return jsonify({
+                "ok": False,
+                "error": "The radio reachable at this endpoint is not the accepted radio - the connection was closed. "
+                         "Use Node Manager -> Discover radio to onboard a different radio.",
+                "error_code": "identity_mismatch",
+                "identity_status": identity_status,
+            }), 409
 
         return jsonify({"ok": True, "connection": _connection_payload()})
 

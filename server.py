@@ -486,6 +486,8 @@ def verify_radio_identity():
     result["status"] = compare_radio_identity(configured, detected) if detected.get("node_id") else result.get("status", "NOT_FOUND")
     result["transient"] = is_transient_identity_failure(result)
     RADIO_IDENTITY_RESULT = result
+    if transport == "tcp" and result.get("status") in IDENTITY_REFUSED_STATUSES:
+        teardown_unverified_tcp_session(result.get("status"), "identity check")
 
     updated = dict(INSTANCE_IDENTITY)
     runtime = dict(updated.get("runtime", {}))
@@ -4703,7 +4705,15 @@ def process_transport_autorecovery(status, active_transport, now_ts):
             # reconnect() call itself).
             try:
                 info = transport_router.get_connection_info()
-                refresh_identity_after_reconnect(active_transport, {"node_id": info.node_id})
+                refreshed_status = refresh_identity_after_reconnect(active_transport, {"node_id": info.node_id})
+                if refreshed_status in IDENTITY_REFUSED_STATUSES:
+                    log_system_event(
+                        title="TCP/Bluetooth auto-reconnect reached a radio that failed identity verification",
+                        level="ERROR",
+                        details=f"{active_transport}: identity {refreshed_status} - session closed, "
+                            "not retrying. Check the endpoint or re-accept the radio.",
+                        source="recovery",
+                    )
             except Exception as identity_error:
                 log_system_event(
                     title="TCP/Bluetooth auto-reconnect identity refresh failed",
@@ -4730,6 +4740,37 @@ def process_transport_autorecovery(status, active_transport, now_ts):
                 transport_recovery_state["in_progress"] = False
 
     threading.Thread(target=_do_reconnect, daemon=True).start()
+
+
+IDENTITY_REFUSED_STATUSES = ("MISMATCH", "NOT_FOUND")
+
+
+def teardown_unverified_tcp_session(status, where):
+    """Disconnect the TCP session to a radio whose identity verification was
+    refused (MISMATCH: a different radio answered; NOT_FOUND: it answered
+    without a node id).
+
+    Until now such a session was simply left open: detect_tcp_radio_identity()
+    deliberately keeps a successful probe connected, verify_radio_identity()
+    never closed it on MISMATCH, and refresh_identity_after_reconnect() only
+    recorded the status - so a wrong radio stayed connected, holding the
+    radio's single client slot and reachable by every sender that does not
+    check is_radio_available() (the MCA AttachmentsService sends through
+    transport_router directly). Closing it makes every later send fail
+    `not_connected` and is the guarantee the identity gate is meant to give.
+    Idempotent (disconnect() on a closed transport is a no-op); best-effort
+    and logged - a failing disconnect must not mask the identity result."""
+    try:
+        tcp_ipc_transport.disconnect(timeout=10)
+        detail = "session closed"
+    except Exception as error:
+        detail = f"disconnect failed: {error}"
+    log_system_event(
+        "Disconnected from a radio that failed identity verification",
+        "WARNING",
+        f"{where}: identity {status} - {detail}",
+        source="identity",
+    )
 
 
 def resolve_reconnect_descriptor(active_transport):
@@ -4828,12 +4869,16 @@ def refresh_identity_after_reconnect(active_transport, detected):
     persisted as such, not silently dropped. This refreshes stale
     state; it does not loosen the gate."""
     if active_transport != "tcp":
-        return
+        return None
     _save_detected_radio_runtime({
         "detected": detected,
         "checked_at": utc_now_iso(),
         "error": None,
     })
+    status = RADIO_IDENTITY_RESULT.get("status")
+    if status in IDENTITY_REFUSED_STATUSES:
+        teardown_unverified_tcp_session(status, "reconnect")
+    return status
 
 
 # TCP identity recovery (PR-2): a boot-time DETECTION_ERROR of the transient

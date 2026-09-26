@@ -47,10 +47,13 @@ from meshsrv.radio_identity import (
     detect_radio_identity,
     detect_connected_radio,
     detect_tcp_radio_identity,
+    probe_tcp_radio_identity,
+    DETECTION_IN_PROGRESS,
     compare_radio_identity,
     utc_now_iso,
     IDENTITY_DETECTION_ERROR,
 )
+from meshsrv.detection_cache import DetectionCache
 from meshsrv.radio_endpoint import (
     normalize_radio_record,
     descriptor_from_radio_record,
@@ -1020,6 +1023,53 @@ ble_ipc_transport = AdapterIPCTransport(
 # by the kernel on process death, nothing extra to clean up - see
 # adapters/meshtastic/tcp_transport.py's own module docstring).
 tcp_ipc_transport = AdapterIPCTransport(ConnectionType.TCP, adapter_supervisor)
+
+# TCP lifecycle P0 (PR-B): a SECOND adapter process, used only by the
+# ephemeral TCP identity probe (Discovery/Accept/profile-activate - see
+# meshsrv/radio_identity.py's probe_tcp_radio_identity()). Separate process
+# = separate kill domain and lock: a probe timeout/hang can never kill the
+# production session (AdapterSupervisor.call() kills the WHOLE adapter on any
+# timeout) or head-of-line-block its sends, and process death closes the
+# probe's socket regardless of what happened inside it. Spawned lazily on the
+# first probe and killed after every one. The router, health worker, boot
+# restore and every other DI consumer never see it.
+probe_adapter_supervisor = AdapterSupervisor(
+    adapter_python=str(resolve_adapter_venv_dir(PROJECT_DIR) / "bin" / "python"),
+    project_dir=PROJECT_DIR,
+    serial_port=MESHTASTIC_PORT,
+    meshtastic_cli=MESHTASTIC_CMD,
+    on_log=lambda msg, level="INFO": log_system_event(
+        title="Meshtastic Probe Adapter", details=msg, level=level, source="adapter_ipc"
+    ),
+)
+tcp_probe_ipc_transport = AdapterIPCTransport(ConnectionType.TCP, probe_adapter_supervisor)
+tcp_probe_lock = threading.Lock()
+# Discovery -> Accept are two HTTP requests; this makes them one probe.
+tcp_detection_cache = DetectionCache()
+
+
+def _probe_tcp_identity(host, port, timeout=25):
+    return probe_tcp_radio_identity(
+        host,
+        port,
+        live_transport=tcp_ipc_transport,
+        probe_transport=tcp_probe_ipc_transport,
+        probe_shutdown=probe_adapter_supervisor.shutdown,
+        probe_lock=tcp_probe_lock,
+        timeout=timeout,
+    )
+
+
+def _detection_in_progress_response(detection):
+    """409 for a probe that lost the probe_lock race, else None."""
+    if detection.get("error_code") != DETECTION_IN_PROGRESS:
+        return None
+    return jsonify({
+        "ok": False,
+        "code": "DETECTION_IN_PROGRESS",
+        "error": detection.get("error"),
+        "error_code": DETECTION_IN_PROGRESS,
+    }), 409
 
 # The ONE stable RadioTransport every DI consumer (api_chat.py,
 # api_waypoints.py, schedule_actions.py) is wired to from here on -
@@ -5733,7 +5783,10 @@ def _detect_tcp_radio_response(host, port):
     when no host/port is given). See api_detect_new_radio()'s own
     docstring for the full picture; detection stays provisional either
     way - nothing here writes to INSTANCE_IDENTITY."""
-    detection, _tcp_output = detect_tcp_radio_identity(tcp_ipc_transport, host, port, timeout=25)
+    detection, _tcp_output = _probe_tcp_identity(host, port)
+    busy = _detection_in_progress_response(detection)
+    if busy is not None:
+        return busy
     detected = dict(detection.get("detected") or {})
 
     if not detected.get("node_id"):
@@ -5766,6 +5819,8 @@ def _detect_tcp_radio_response(host, port):
     except FileNotFoundError:
         profile_exists = False
         profile = None
+
+    tcp_detection_cache.put(host, port, detected, detection.get("checked_at"))
 
     configured = dict(INSTANCE_IDENTITY.get("radio", {}))
     identity_status = compare_radio_identity(configured, detected)
@@ -5939,7 +5994,18 @@ def _accept_tcp_radio(host, port, requested_node_id):
     global INSTANCE_IDENTITY
 
     endpoint = {"host": host, "port": port}
-    detection, _tcp_output = detect_tcp_radio_identity(tcp_ipc_transport, host, port, timeout=25)
+    # Discovery -> Accept: reuse the probe Discovery just ran (server-side
+    # cache, single-use, 60s TTL, node_id must match what the client
+    # asked to confirm) instead of connecting to the radio a second time.
+    # A miss is never an error - it just means one fresh probe.
+    cached = tcp_detection_cache.pop_matching(host, port, requested_node_id)
+    if cached is not None:
+        detection = {"detected": cached["detected"], "checked_at": cached["checked_at"], "error": None}
+    else:
+        detection, _tcp_output = _probe_tcp_identity(host, port)
+        busy = _detection_in_progress_response(detection)
+        if busy is not None:
+            return busy
     detected = dict(detection.get("detected") or {})
     detected_node_id = str(detected.get("node_id") or "").strip().lower()
 
@@ -6254,9 +6320,10 @@ def api_activate_radio_profile(profile_id):
 
     if selected_transport == "tcp":
         endpoint = expected_radio["endpoint"]
-        detection, _tcp_output = detect_tcp_radio_identity(
-            tcp_ipc_transport, endpoint.get("host", ""), endpoint.get("port", 0), timeout=25
-        )
+        detection, _tcp_output = _probe_tcp_identity(endpoint.get("host", ""), endpoint.get("port", 0))
+        busy = _detection_in_progress_response(detection)
+        if busy is not None:
+            return busy
         detected_radio = dict(detection.get("detected") or {})
         detected_node_id = str(detected_radio.get("node_id") or "").strip().lower()
 

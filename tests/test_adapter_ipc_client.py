@@ -776,3 +776,57 @@ def test_stderr_drain_forwards_lines_to_on_log():
 
     assert logged, "stderr content was drained but never reached on_log()"
     assert any("adapter stderr" in msg for msg, _level in logged)
+
+
+# ---------------------------------------------------------------------------
+# AdapterSupervisor.shutdown() - the probe supervisor's kill path (TCP
+# lifecycle P0, PR-B): process death is what guarantees the OS closes a
+# probe's socket, so it must actually kill, be idempotent, and leave the
+# supervisor able to respawn on the next call.
+# ---------------------------------------------------------------------------
+
+def test_shutdown_before_any_spawn_is_a_noop():
+    supervisor = _make_supervisor()
+    supervisor.shutdown()
+    assert supervisor._proc is None
+
+
+def test_shutdown_kills_the_running_process_and_the_next_call_respawns():
+    supervisor = _make_supervisor()
+    proxy = AdapterIPCTransport(ConnectionType.BLUETOOTH, supervisor)
+    first_pid = proxy.scan(timeout=20.0)["_pid"]
+    proc = supervisor._proc
+    assert proc is not None and proc.poll() is None
+
+    supervisor.shutdown()
+
+    assert proc.poll() is not None, "process must actually be dead"
+    assert supervisor._proc is None
+
+    supervisor.shutdown()  # idempotent
+
+    second_pid = proxy.scan(timeout=20.0)["_pid"]
+    assert second_pid != first_pid
+    supervisor.shutdown()
+
+
+def test_shutdown_of_one_supervisor_never_touches_another():
+    """Two supervisors = two kill domains (the reason the probe gets its own
+    process rather than a 4th transport inside the shared adapter)."""
+    production = _make_supervisor()
+    probe = _make_supervisor()
+    production_proxy = AdapterIPCTransport(ConnectionType.BLUETOOTH, production)
+    probe_proxy = AdapterIPCTransport(ConnectionType.BLUETOOTH, probe)
+    production_proxy.scan(timeout=20.0)
+    probe_proxy.scan(timeout=20.0)
+    production_proc = production._proc
+
+    probe.shutdown()
+
+    assert production_proc.poll() is None, "production adapter must survive a probe shutdown"
+    # fake_adapter.py reports its pid only on a process's FIRST response, so
+    # None here means the very same process answered (a respawn would
+    # report a fresh pid).
+    assert production_proxy.scan(timeout=20.0)["_pid"] is None
+    assert production._proc is production_proc
+    production.shutdown()

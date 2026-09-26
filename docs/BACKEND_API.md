@@ -174,6 +174,7 @@ logic that already exists.
 - `OutgoingMessage` / `SendResult`
 - `OutgoingWaypoint` / `WaypointResult`
 - `TelemetryEvent` — node_id, kind, metrics, timestamp
+- `ReceivedTextEvent` / `ReceivedWaypointEvent` — one inbound packet, plain types only (see "Received events" below)
 - `TransportError` — `code` (`TransportErrorCode` enum), `message`
 
 ## Events
@@ -186,6 +187,61 @@ the same pattern `is_radio_available()` / `RADIO_IDENTITY_RESULT` already
 use today. A normalized event stream (`message_received`, `node_updated`,
 `telemetry`, `connection_state`) is explicitly deferred to Stage B (Task
 49+, "Stage B listener").
+
+## Received events (inbound traffic) — models only so far
+
+Field set and envelope follow the TCP-inbound plan (sections 21-27).
+
+`ReceivedTextEvent` (from_node_id, to_node_id, text, received_at,
+**local_radio_node_id**; optional: packet_id, from_num, to_num, channel_index,
+reply_id, rx_time, rx_rssi, rx_snr, hop_limit, hop_start, relay_node) and
+`ReceivedWaypointEvent` (waypoint_id, sender_id, name, description, received_at,
+**local_radio_node_id**; optional: packet_id, latitude, longitude, icon,
+expire_at, channel_index) in `meshsrv/radio_transport.py`. Frozen, validated at
+construction (plain `str`/`int`/`float`/`None` only - bytes, protobuf objects
+and `bool`-as-int are rejected), and on the wire only through the explicit
+per-field functions in `meshsrv/ipc_protocol.py`. Never `asdict()`: the
+library's packet carries `raw` (a protobuf `MeshPacket`), `decoded.payload`
+(bytes) and `decoded.waypoint.raw` (a string), none of which may cross the
+boundary.
+
+`local_radio_node_id` is the radio the event came from. It cannot be omitted or
+empty; Core compares it with the active accepted profile before persisting and
+drops a mismatch, so events buffered from radio A are never written into radio
+B's profile. `latitude`/`longitude` are optional so a remote waypoint *delete*
+(expire 0, no coordinates) is representable; ingesting it is out of the first
+inbound PR's scope.
+
+Node ids are `!xxxxxxxx` (or `^all` for a broadcast `to_node_id`) built from the
+packet's NUMERIC `from` / `to` (also carried as `from_num` / `to_num`), not from
+the library's `fromId`, which is `None` while the sender is not yet in the local
+NodeDB. `rx_time` is the radio's clock, `received_at` the adapter's.
+
+Wire shape of one event - a discriminated envelope:
+
+```json
+{"kind": "text",     "text":     {"from_node_id": "!1fa065f0", "to_node_id": "^all", "text": "...", ...}}
+{"kind": "waypoint", "waypoint": {"waypoint_id": 4242, "sender_id": "!1fa065f0", "name": "...", ...}}
+```
+
+`drain_received(limit=100, timeout=5.0)` returns a `ReceivedBatch(events, dropped,
+malformed, connection_generation)`; on the wire
+`{"events": [<envelope>...], "dropped": n, "malformed": n, "connection_generation": n|null}`.
+`dropped` = events the transport's bounded buffer discarded (oldest first) since
+the previous drain; `malformed` = events discarded because they could not be
+decoded - one bad event never costs the rest of the batch. Unknown keys in
+input are dropped, an unknown `kind` raises. The method is optional: the default
+raises `UNSUPPORTED` (so "cannot receive" is distinguishable from "nothing
+received" = an empty batch). No transport implements it yet.
+
+Receive contract checked against the real library with
+`adapters/meshtastic/verify_receive_topics.py` (a real `FromRadio` frame through
+`MeshInterface`, in a throwaway venv per version): `meshtastic.receive.text` and
+`meshtastic.receive.waypoint` each fire exactly once with the same packet shape,
+and `meshtastic.receive.data.TEXT_MESSAGE_APP` / `.WAYPOINT_APP` do not fire (the
+library replaces that topic name for known protocols), on **2.7.9, 2.7.10 and
+2.7.11** - every release inside the pinned `>=2.7.9,<2.8.0`. Re-run it when that
+pin moves.
 
 ## JSON wire shape (Task 48's subprocess IPC boundary — implemented, in use)
 

@@ -598,3 +598,78 @@ def test_chain_events_from_a_radio_that_is_not_the_accepted_one_are_never_stored
         server.shutdown()
         srv.instance_manager.save(original)
         srv.INSTANCE_IDENTITY = original
+
+
+def test_the_librarys_own_self_healing_reconnect_dials_a_real_second_connection():
+    """LIVE REGRESSION (pixel-111, 2026-09-27): _FailFastTCPInterface.myConnect()
+    used to reuse `preopened_socket` on every call, so whenever the REAL
+    library's own OSError-triggered self-healing (_writeBytes/_readBytes ->
+    _reconnect() -> myConnect() again, on the SAME interface instance) fired, it
+    kept resetting to the same dead socket forever - an infinite once-a-second
+    reconnect-fail loop (driven by _reconnect()'s own time.sleep(1)) that only a
+    full service restart broke out of. Exercises the real library's _reconnect(),
+    not a re-implementation of it.
+
+    Full app-level recovery (a completed handshake, state CONNECTED) is NOT
+    asserted here: the pinned library's own _reconnect() never restarts the
+    reader thread (StreamInterface._rxThread is created exactly once, in
+    __init__ - confirmed by reading stream_interface.py) after the OLD socket's
+    close() kills it with its own OSError, so the config request _startConfig()
+    sends over the fresh socket is written but never read. That is a separate,
+    pre-existing limitation of the library itself, not something this fix
+    claims to close - our OWN get_connection_info() correctly demotes this to
+    ERROR (the dead-reader check from #296/PR-1 of the reconnect investigation),
+    which is exactly what lets the EXISTING auto-reconnect (#288/#298) perform a
+    real, full TransportRouter.reconnect() (a brand-new interface, a live reader
+    thread) within its own ~60-90s cycle - see test_transport_autorecovery.py.
+    What THIS fix guarantees is only that the library's own attempt is a real
+    one, not an infinite once-a-second no-op against a socket that can never
+    work."""
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    try:
+        transport.connect(_descriptor("127.0.0.1", server.port), timeout=10.0)
+        time.sleep(0.3)
+        interface = transport._interface
+        original_socket = interface.socket
+        assert server.accepted_connections == 1
+
+        # Exactly what the library's real _writeBytes()/_readBytes() do on an
+        # OSError from a dead/closed fd (the live "Bad file descriptor").
+        interface._reconnect()
+        time.sleep(0.5)
+
+        assert server.accepted_connections == 2, "a genuine second TCP connection must be dialled"
+        assert interface.socket is not None and interface.socket is not original_socket, (
+            "the OLD (dead) socket must never be reused"
+        )
+        # The library's own reader thread died along with the old socket (see
+        # docstring) and _reconnect() never restarts it - our own code must see
+        # that honestly, as ERROR, not paper over it as a false CONNECTED.
+        assert transport.get_connection_info().state == ConnectionState.ERROR
+        assert not interface._rxThread.is_alive()
+    finally:
+        transport.close()
+        server.shutdown()
+
+
+def test_repeated_internal_reconnects_each_dial_a_real_new_connection_not_the_previous_one():
+    """Not just the second call - every one after the first, matching a radio
+    that keeps dropping the write side repeatedly. Before the fix, every one of
+    these reused the FIRST call's already-dead socket - accepted_connections
+    would have stayed at 1 forever."""
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    try:
+        transport.connect(_descriptor("127.0.0.1", server.port), timeout=10.0)
+        time.sleep(0.3)
+        sockets = [transport._interface.socket]
+        for expected in (2, 3, 4):
+            transport._interface._reconnect()
+            time.sleep(0.4)
+            assert server.accepted_connections == expected
+            sockets.append(transport._interface.socket)
+        assert len(set(id(s) for s in sockets)) == len(sockets), "every reconnect dialled a genuinely distinct socket"
+    finally:
+        transport.close()
+        server.shutdown()

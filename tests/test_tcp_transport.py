@@ -138,6 +138,13 @@ class _FakeTCPInterface:
         self.closed = True
         self._rxThread._alive = _FakeTCPInterface.rx_thread_survives_close
 
+    def myConnect(self):
+        """The real TCPInterface's own default myConnect() (a plain
+        socket.create_connection) - present so the override in
+        _FailFastTCPInterface can fall through to super().myConnect() (its
+        second-and-later-call branch) without an AttributeError."""
+        self.myconnect_calls = getattr(self, "myconnect_calls", 0) + 1
+
 
 @pytest.fixture(autouse=True)
 def _fake_tcp_interface_module(monkeypatch):
@@ -887,3 +894,36 @@ def test_the_socket_is_closed_when_the_handshake_times_out(monkeypatch):
 
     assert excinfo.value.code in (TransportErrorCode.PROTOCOL_SYNC_TIMEOUT, TransportErrorCode.TIMEOUT)
     assert sockets[0].closed is True
+
+
+def test_the_librarys_own_second_myconnect_call_dials_fresh_not_the_preopened_socket(monkeypatch):
+    """LIVE REGRESSION (pixel-111, 2026-09-27): the override used to reuse
+    `preopened_socket` on every call, so the library's own self-healing
+    _reconnect() (which calls myConnect() again on a write/read OSError) kept
+    resetting to the same dead socket forever. Only the FIRST call may reuse it;
+    every later call on the same interface instance must fall through to the
+    library's real myConnect(). The fully-mocked _FakeTCPInterface's own
+    __init__ never calls myConnect() itself (unlike the real library's, which
+    does via StreamInterface.__init__ - see the real-library end-to-end
+    regression in test_tcp_transport_integration.py), so this test drives the
+    two calls directly to pin the override's own consume-once logic in
+    isolation."""
+    _healthy_reader()
+    preopened = _FakeSocket()
+    _patch_create_connection(monkeypatch, result=preopened)
+    transport = TCPTransport(host="192.168.2.34")
+    transport.connect(_descriptor(), timeout=5)
+    interface = transport._interface
+    assert interface.socket is not preopened, "the fake's own __init__ set an unrelated socket"
+
+    interface.myConnect()  # construction's own first call (not made by the fake's __init__)
+
+    assert interface.socket is preopened and getattr(interface, "myconnect_calls", 0) == 0
+
+    interface.myConnect()  # exactly what the library's own _reconnect() does on a later failure
+
+    assert interface.myconnect_calls == 1, "the second call must dial for real, not reuse the dead socket"
+
+    interface.myConnect()
+
+    assert interface.myconnect_calls == 2, "and every call after that too"

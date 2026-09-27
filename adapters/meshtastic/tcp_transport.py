@@ -708,14 +708,35 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
                 # object is not self._interface until the handshake finishes,
                 # and a receive callback in that window must still recognise it.
                 owner._pending_interface = self
+                self._preopened_socket_consumed = False
                 super().__init__(*args, **kwargs)
 
             def myConnect(self):
                 """Adopt the already-open socket instead of letting the
-                library dial a second connection (see _open_socket()).
-                Without one, the library's own behaviour."""
-                if preopened_socket is not None:
+                library dial a second connection (see _open_socket()) - but
+                ONLY on THIS construction's own first connect.
+
+                LIVE REGRESSION (pixel-111, 2026-09-27): myConnect() used to
+                reuse `preopened_socket` unconditionally, on every call - but
+                the library calls it a second time on this SAME instance
+                whenever ITS OWN internal self-healing fires:
+                _writeBytes()/_readBytes() catch a raw OSError (a dead/closed
+                fd - the exact "Bad file descriptor" observed live) and call
+                self._reconnect(), which closes self.socket and calls
+                self.myConnect() again to get a fresh one. Reusing the
+                already-dead preopened_socket there instead of dialling a real
+                new connection turned that self-healing path into an infinite
+                once-a-second reconnect-fail loop (time.sleep(1) inside the
+                library's own _reconnect()) that no traffic could ever break
+                out of - only a full service restart did. The one-connection
+                guarantee this override exists for only concerns OUR OWN
+                initial connect() (_open_interface()'s single call site always
+                supplies a freshly probed socket for that); the library's own
+                later reconnect attempts must keep using its real, unmodified
+                myConnect() so they can actually succeed."""
+                if preopened_socket is not None and not self._preopened_socket_consumed:
                     self.socket = preopened_socket
+                    self._preopened_socket_consumed = True
                 else:
                     super().myConnect()
 

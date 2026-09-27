@@ -20,7 +20,7 @@ import pytest
 
 from adapters.meshtastic.tcp_transport import TCPTransport
 from meshsrv import inbound_events
-from meshsrv.radio_transport import ReceivedTextEvent, ReceivedWaypointEvent
+from meshsrv.radio_transport import ReceivedNodeInfoEvent, ReceivedTelemetryEvent, ReceivedTextEvent, ReceivedWaypointEvent
 from test_serial_inbound_characterization import _text_line, _waypoint_line
 
 REMOTE = "!1fa065f0"
@@ -541,3 +541,261 @@ def test_the_active_radio_id_follows_the_accepted_profile(srv, monkeypatch):
     identity["radio"] = {**identity["radio"], "node_id": ""}
     monkeypatch.setattr(srv, "LOCAL_NODE_ID", "!11223344")
     assert srv.active_radio_node_id() == "!11223344", "falls back to the bootstrap value"
+
+
+# ---------------------------------------------------------------------------
+# NodeInfo parity (PR C) - process_nodeinfo() (serial) vs
+# ingest_received_nodeinfo() (TCP), both built on _merge_nodeinfo_into_node().
+#
+# Position has NO serial counterpart at all (the CLI --listen path only ever
+# saw a position bundled inside a "Received nodeinfo:" line, never standalone)
+# so it has no parity section here - see
+# test_inbound_events_nodeinfo_position_telemetry.py for its direct tests.
+# ---------------------------------------------------------------------------
+
+
+def _nodeinfo_line(*, node_id=REMOTE, long_name="Test Node", short_name="TST", hw_model="RAK4631", role="ROUTER",
+                    rssi=-80, snr=5.5, hop_start=3, relay=240):
+    """A NODEINFO_APP text buffer shaped like the CLI's own dict-ish output -
+    the same shape tests/test_serial_nodeinfo_telemetry_characterization.py's
+    own _block() uses, kept local here to avoid a cross-file import for one
+    small helper."""
+    parts = ["NODEINFO_APP", f"'id': '{node_id}'"]
+    for key, value in (("longName", long_name), ("shortName", short_name), ("hwModel", hw_model), ("role", role)):
+        if value is not None:
+            parts.append(f"'{key}': '{value}'")
+    for key, value in (("rxRssi", rssi), ("rxSnr", snr), ("hopStart", hop_start), ("relayNode", relay)):
+        if value is not None:
+            parts.append(f"'{key}': {value}")
+    return "Received: {" + ", ".join(parts) + "}"
+
+
+def _tcp_nodeinfo_packet(*, node_id=REMOTE, from_num=REMOTE_NUM, long_name="Test Node", short_name="TST",
+                          hw_model="RAK4631", role="ROUTER", rssi=-80, snr=5.5, hop_start=3, relay=240, packet_id=201):
+    user = {"id": node_id}
+    for key, value in (("longName", long_name), ("shortName", short_name), ("hwModel", hw_model), ("role", role)):
+        if value is not None:
+            user[key] = value
+    packet = {
+        "from": from_num, "decoded": {"portnum": "NODEINFO_APP", "user": user}, "raw": object(),
+    }
+    for key, value in (("rxRssi", rssi), ("rxSnr", snr), ("hopStart", hop_start), ("relayNode", relay)):
+        if value is not None:
+            packet[key] = value
+    if packet_id is not None:
+        packet["id"] = packet_id
+    return packet
+
+
+def _tcp_nodeinfo_event(srv, packet):
+    event = TCPTransport(host="192.168.2.34")._normalize_nodeinfo(packet, _interface(srv))
+    assert isinstance(event, ReceivedNodeInfoEvent)
+    return event
+
+
+def _nodeinfo_via_serial(srv, lines):
+    srv.reset_inbound()
+    for line in lines:
+        srv._handle_listener_line(line)
+    return _snapshot(srv)
+
+
+def _nodeinfo_via_tcp(srv, packets):
+    srv.reset_inbound()
+    outcomes = [inbound_events.ingest_received_nodeinfo(_tcp_nodeinfo_event(srv, p), srv._inbound_deps()) for p in packets]
+    return _snapshot(srv), outcomes
+
+
+def _assert_nodeinfo_parity(srv, lines, packets):
+    serial = _nodeinfo_via_serial(srv, lines)
+    tcp, outcomes = _nodeinfo_via_tcp(srv, packets)
+    assert tcp == serial
+    return serial, outcomes
+
+
+def test_a_nodeinfo_produces_the_same_node(srv):
+    snapshot, outcomes = _assert_nodeinfo_parity(srv, [_nodeinfo_line()], [_tcp_nodeinfo_packet()])
+
+    assert outcomes == [inbound_events.STORED]
+    node = snapshot["nodes"][REMOTE]
+    assert node["name"] == "Test Node"
+    assert (node["short_name"], node["hw_model"], node["role"]) == ("TST", "RAK4631", "ROUTER")
+    assert (node["rssi"], node["snr"], node["hop_start"], node["relay_node"]) == ("-80", "5.5", "3", "240")
+    assert REMOTE in snapshot["chats"]
+
+
+def test_a_nodeinfo_with_no_name_fields_resets_the_name_on_both_paths(srv):
+    """Pins the real, pre-existing quirk documented in
+    _merge_nodeinfo_into_node()'s own docstring: unlike the text path, a
+    nameless NODEINFO resets the display name on BOTH transports identically -
+    not fixed by PR C, just no longer duplicated by it."""
+
+    def prepare(s):
+        s.nodes[REMOTE] = {"node_id": REMOTE, "name": "Already Named"}
+
+    srv.reset_inbound()
+    prepare(srv)
+    # Called directly rather than through _handle_listener_line(): its own
+    # has_nodeinfo buffering heuristic (unrelated to PR C - pre-existing
+    # multi-line NODEINFO_APP collection logic) only treats a block as
+    # complete when it mentions longName/shortName/hwModel/'user': at least
+    # once, so a line naming NONE of them would just sit in the buffer
+    # forever instead of reaching process_nodeinfo() at all.
+    srv.process_nodeinfo(_nodeinfo_line(long_name=None, short_name=None, hw_model=None, role=None, rssi=None,
+                                         snr=None, hop_start=None, relay=None))
+    serial = _snapshot(srv)
+
+    srv.reset_inbound()
+    prepare(srv)
+    inbound_events.ingest_received_nodeinfo(
+        _tcp_nodeinfo_event(srv, _tcp_nodeinfo_packet(long_name=None, short_name=None, hw_model=None, role=None,
+                                                       rssi=None, snr=None, hop_start=None, relay=None)),
+        srv._inbound_deps(),
+    )
+    tcp = _snapshot(srv)
+
+    assert tcp == serial
+    assert serial["nodes"][REMOTE]["name"] == "Meshtastic 65f0"
+
+
+def test_a_repeated_nodeinfo_never_erases_a_known_position_on_either_path(srv):
+    def prepare(s):
+        s.nodes[REMOTE] = {"node_id": REMOTE, "name": "Old", "position": {"latitude": 1.0, "longitude": 2.0}}
+
+    srv.reset_inbound()
+    prepare(srv)
+    srv._handle_listener_line(_nodeinfo_line())
+    serial = _snapshot(srv)
+
+    srv.reset_inbound()
+    prepare(srv)
+    inbound_events.ingest_received_nodeinfo(_tcp_nodeinfo_event(srv, _tcp_nodeinfo_packet()), srv._inbound_deps())
+    tcp = _snapshot(srv)
+
+    assert tcp == serial
+    assert tcp["nodes"][REMOTE]["position"] == {"latitude": 1.0, "longitude": 2.0}
+
+
+def test_the_local_node_is_skipped_on_both_paths(srv):
+    local = srv.active_radio_node_id()
+    local_num = _local_num(srv)
+
+    snapshot, outcomes = _assert_nodeinfo_parity(
+        srv,
+        [_nodeinfo_line(node_id=local)],
+        [_tcp_nodeinfo_packet(node_id=local, from_num=local_num)],
+    )
+    assert outcomes == [inbound_events.SKIPPED_LOCAL]
+    assert local not in snapshot["nodes"]
+
+
+def _foreign_nodeinfo(srv, radio="!0badf00d"):
+    event = _tcp_nodeinfo_event(srv, _tcp_nodeinfo_packet())
+    return ReceivedNodeInfoEvent(**{**event.__dict__, "local_radio_node_id": radio})
+
+
+def test_a_nodeinfo_from_another_radio_touches_nothing(srv):
+    outcome = inbound_events.ingest_received_nodeinfo(_foreign_nodeinfo(srv), srv._inbound_deps())
+
+    assert outcome == inbound_events.STALE_RADIO
+    assert srv.nodes == {}
+
+
+# ---------------------------------------------------------------------------
+# Telemetry parity (PR C) - process_telemetry_line() (serial, unchanged) vs
+# ingest_received_telemetry() (TCP), both reducing to the same, unmodified
+# apply_node_telemetry(). `source` legitimately differs ("passive" vs "tcp"),
+# asserted explicitly rather than stripped, the same way waypoint's
+# `raw_packet` difference is handled above.
+# ---------------------------------------------------------------------------
+
+
+def _telemetry_line(*, variant="deviceMetrics", metrics, from_num=REMOTE_NUM, from_id=REMOTE):
+    return (
+        "Received: {'from': %d, 'decoded': {'portnum': 'TELEMETRY_APP', '%s': %r}, 'fromId': '%s'}"
+        % (from_num, variant, metrics, from_id)
+    )
+
+
+def _tcp_telemetry_packet(*, variant="deviceMetrics", metrics, from_num=REMOTE_NUM, packet_id=202):
+    packet = {
+        "from": from_num, "decoded": {"portnum": "TELEMETRY_APP", "telemetry": {variant: metrics}}, "raw": object(),
+    }
+    if packet_id is not None:
+        packet["id"] = packet_id
+    return packet
+
+
+def _tcp_telemetry_event(srv, packet):
+    event = TCPTransport(host="192.168.2.34")._normalize_telemetry(packet, _interface(srv))
+    assert isinstance(event, ReceivedTelemetryEvent)
+    return event
+
+
+@pytest.fixture
+def no_telemetry_history(srv, monkeypatch):
+    """Both paths call apply_node_telemetry(), which writes telemetry history
+    for non-local nodes - stubbed so these tests compare node state only,
+    same convention as test_serial_nodeinfo_telemetry_characterization.py's
+    own telemetry_env fixture."""
+    monkeypatch.setattr(srv.telemetry, "add_node_telemetry_record", lambda *a, **k: None)
+    return srv
+
+
+def _telemetry_via_serial(srv, lines):
+    srv.reset_inbound()
+    for line in lines:
+        srv._handle_listener_line(line)
+    return _snapshot(srv)
+
+
+def _telemetry_via_tcp(srv, packets):
+    srv.reset_inbound()
+    outcomes = [inbound_events.ingest_received_telemetry(_tcp_telemetry_event(srv, p), srv._inbound_deps()) for p in packets]
+    return _snapshot(srv), outcomes
+
+
+@pytest.mark.parametrize("variant,metrics", [
+    ("deviceMetrics", {"batteryLevel": 80, "voltage": 3.9}),
+    ("environmentMetrics", {"temperature": 21.5, "relativeHumidity": 40.0}),
+    ("powerMetrics", {"ch1Voltage": 4.8, "ch1Current": 0.6}),
+])
+def test_each_telemetry_variant_produces_the_same_node_state(no_telemetry_history, variant, metrics):
+    srv = no_telemetry_history
+    serial = _telemetry_via_serial(srv, [_telemetry_line(variant=variant, metrics=metrics)])
+    tcp, outcomes = _telemetry_via_tcp(srv, [_tcp_telemetry_packet(variant=variant, metrics=metrics)])
+
+    # `source` legitimately differs (serial: "passive", TCP: "tcp") - assert it
+    # explicitly, then strip it before comparing the rest of the node state.
+    serial_node, tcp_node = serial["nodes"][REMOTE], tcp["nodes"][REMOTE]
+    assert serial_node["telemetry_source"] == "passive" and tcp_node["telemetry_source"] == "tcp"
+
+    def _without_source(node):
+        node = dict(node)
+        node["telemetry_source"] = None
+        node.pop("last_telemetry_time", None)
+        node.pop("last_telemetry_time_text", None)
+        for key in ("device_metrics", "environment_metrics", "power_metrics"):
+            if isinstance(node.get(key), dict):
+                inner = {k: v for k, v in node[key].items() if k not in ("source", "updated")}
+                if isinstance(inner.get("channels"), dict):
+                    inner["channels"] = {
+                        cid: {k: v for k, v in ch.items() if k not in ("source", "updated")}
+                        for cid, ch in inner["channels"].items()
+                    }
+                node[key] = inner
+        return node
+
+    assert _without_source(tcp_node) == _without_source(serial_node)
+    assert outcomes == [inbound_events.STORED]
+
+
+def test_telemetry_from_another_radio_touches_nothing(no_telemetry_history):
+    srv = no_telemetry_history
+    event = _tcp_telemetry_event(srv, _tcp_telemetry_packet(metrics={"batteryLevel": 80}))
+    foreign = ReceivedTelemetryEvent(**{**event.__dict__, "local_radio_node_id": "!0badf00d"})
+
+    outcome = inbound_events.ingest_received_telemetry(foreign, srv._inbound_deps())
+
+    assert outcome == inbound_events.STALE_RADIO
+    assert srv.nodes == {}

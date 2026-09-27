@@ -34,7 +34,13 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from meshsrv.radio_transport import ReceivedTextEvent, ReceivedWaypointEvent
+from meshsrv.radio_transport import (
+    ReceivedNodeInfoEvent,
+    ReceivedPositionEvent,
+    ReceivedTelemetryEvent,
+    ReceivedTextEvent,
+    ReceivedWaypointEvent,
+)
 
 # Outcomes (strings, so callers and tests can assert without importing enums).
 STORED = "stored"
@@ -46,6 +52,9 @@ DUPLICATE = "duplicate"
 IGNORED_NODE = "ignored_node"
 STALE_RADIO = "stale_radio"
 NO_POSITION = "no_position"
+SKIPPED_LOCAL = "skipped_local"
+NO_NODE_ID = "no_node_id"
+NO_VALUES = "no_values"
 
 BROADCAST_RECIPIENT = "^all"
 MCA_PREFIX = "MCA1:"
@@ -98,6 +107,15 @@ class InboundDeps:
     get_waypoint_sender_name: Optional[Callable[[str], str]] = None
     log_system_event: Optional[Callable[..., Any]] = None
     log: Callable[..., Any] = print
+    # NodeInfo/Position/Telemetry ingest (PR C): the same merge/apply helpers
+    # server.py's own serial parsers (process_nodeinfo(),
+    # process_received_nodeinfo_line()) were extracted into, so TCP and serial
+    # build node state through one shared rule set - see each helper's own
+    # docstring in server.py for the exact behavior preserved.
+    merge_nodeinfo_into_node: Optional[Callable[..., dict]] = None
+    merge_position_into_node: Optional[Callable[..., dict]] = None
+    telemetry_values_from_metrics: Optional[Callable[..., dict]] = None
+    apply_node_telemetry: Optional[Callable[..., bool]] = None
 
 
 # --------------------------------------------------------------------------
@@ -107,6 +125,9 @@ _stats_lock = threading.Lock()
 _stats = {
     "text_stored": 0, "text_duplicate_packet": 0, "text_duplicate_text": 0, "text_ignored_node": 0,
     "waypoint_created": 0, "waypoint_updated": 0, "waypoint_duplicate": 0, "waypoint_no_position": 0,
+    "nodeinfo_stored": 0, "nodeinfo_skipped_local": 0, "nodeinfo_no_node_id": 0,
+    "position_stored": 0, "position_no_position": 0, "position_no_node_id": 0,
+    "telemetry_stored": 0, "telemetry_no_values": 0, "telemetry_no_node_id": 0,
     "stale_identity_dropped": 0,
 }
 
@@ -447,3 +468,141 @@ def ingest_received_waypoint(
     )
     _count("waypoint_updated" if outcome == "updated" else "waypoint_created")
     return UPDATED if outcome == "updated" else CREATED
+
+
+# --------------------------------------------------------------------------
+# NodeInfo / Position / Telemetry (PR C)
+# --------------------------------------------------------------------------
+def ingest_received_nodeinfo(event: ReceivedNodeInfoEvent, deps: InboundDeps) -> str:
+    """Merge one received NodeInfo into node state via
+    deps.merge_nodeinfo_into_node() - server.py's own process_nodeinfo() node-
+    merge core, reused unchanged so TCP and serial build the exact same node
+    dict from the same rules. Returns STORED, SKIPPED_LOCAL, NO_NODE_ID or
+    STALE_RADIO."""
+    if not _accepts(event, deps, "nodeinfo"):
+        return STALE_RADIO
+
+    node_id = event.node_id
+    if not node_id:
+        _count("nodeinfo_no_node_id")
+        return NO_NODE_ID
+
+    if node_id == deps.local_node_id:
+        # process_nodeinfo() skips the local node entirely - preserved as-is.
+        _count("nodeinfo_skipped_local")
+        return SKIPPED_LOCAL
+
+    with deps.state_lock:
+        old = deps.nodes.get(node_id, {})
+        node = deps.merge_nodeinfo_into_node(
+            node_id,
+            old,
+            long_name=event.long_name or "",
+            short_name=event.short_name or "",
+            hw_model=event.hw_model or "",
+            role=event.role or "",
+            rssi=_signal_text(event.rx_rssi),
+            snr=_signal_text(event.rx_snr),
+            hop_start=_signal_text(event.hop_start),
+            relay_node=_signal_text(event.relay_node),
+        )
+        deps.nodes[node_id] = node
+        if node_id.startswith("!"):
+            deps.ensure_chat(node_id, node.get("name"), force=True)
+        deps.save_nodes()
+
+    _count("nodeinfo_stored")
+    return STORED
+
+
+def ingest_received_position(event: ReceivedPositionEvent, deps: InboundDeps) -> str:
+    """Merge one received Position into the reporting node's `position` field
+    via deps.merge_position_into_node() - the same overlay-merge core
+    process_received_nodeinfo_line() uses for its own bundled position. Unlike
+    NodeInfo, a bare Position never had a serial counterpart (the CLI --listen
+    path only ever saw position bundled inside a "Received nodeinfo:" line),
+    so this only ever touches `position` plus last-seen bookkeeping - it does
+    not rename a node, set short_name/hw_model/role, or touch rssi/snr/hop
+    fields, none of which a Position packet carries any precedent for setting.
+    `ground_speed`/`sats_in_view` are new position-dict keys with no serial
+    equivalent; `latitude`/`longitude`/`altitude`/`time` match the existing
+    nodeinfo-position schema exactly (see _normalize_nodeinfo_position()).
+    Returns STORED, NO_POSITION, NO_NODE_ID or STALE_RADIO."""
+    if not _accepts(event, deps, "position"):
+        return STALE_RADIO
+
+    node_id = event.sender_id
+    if not node_id:
+        _count("position_no_node_id")
+        return NO_NODE_ID
+
+    if event.latitude is None or event.longitude is None:
+        _count("position_no_position")
+        return NO_POSITION
+
+    position = {"latitude": event.latitude, "longitude": event.longitude}
+    if event.altitude is not None:
+        position["altitude"] = event.altitude
+    if event.position_time is not None:
+        position["time"] = event.position_time
+    if event.ground_speed is not None:
+        position["ground_speed"] = event.ground_speed
+    if event.sats_in_view is not None:
+        position["sats_in_view"] = event.sats_in_view
+
+    with deps.state_lock:
+        old = deps.nodes.get(node_id, {})
+        node = dict(old)
+        if not old:
+            info = deps.get_node_info(node_id)
+            node.update({
+                "node_id": node_id,
+                "name": deps.get_node_name(node_id),
+                "short_name": info.get("short_name") or node_id[-4:],
+                "hw_model": info.get("hw_model") or "",
+                "role": "CLIENT",
+                "ignored": False,
+                "favorite": False,
+                "last_text": "",
+            })
+        node["last_seen"] = deps.time()
+        node["last_time"] = deps.now()
+        node = deps.merge_position_into_node(node, old, position)
+        deps.nodes[node_id] = node
+        if node_id.startswith("!"):
+            deps.ensure_chat(node_id, node.get("name"), force=False)
+        deps.save_nodes()
+
+    _count("position_stored")
+    return STORED
+
+
+def ingest_received_telemetry(event: ReceivedTelemetryEvent, deps: InboundDeps) -> str:
+    """Thin wrapper over the already transport-agnostic
+    deps.apply_node_telemetry(..., source="tcp") - nothing about telemetry
+    persistence is duplicated here. Only builds the `values` dict (via
+    deps.telemetry_values_from_metrics(), the same mapping
+    process_received_nodeinfo_line() uses) by routing event.metrics into
+    whichever of device/environment/power matches event.kind - a Telemetry
+    packet is a protobuf oneof, so the other two are always empty. Returns
+    STORED, NO_VALUES, NO_NODE_ID or STALE_RADIO."""
+    if not _accepts(event, deps, "telemetry"):
+        return STALE_RADIO
+
+    node_id = event.sender_id
+    if not node_id:
+        _count("telemetry_no_node_id")
+        return NO_NODE_ID
+
+    device_metrics = event.metrics if event.kind == "device" else {}
+    environment_metrics = event.metrics if event.kind == "environment" else {}
+    power_metrics = event.metrics if event.kind == "power" else {}
+
+    values = deps.telemetry_values_from_metrics(device_metrics, environment_metrics, power_metrics)
+    updated = deps.apply_node_telemetry(node_id, values, source="tcp")
+    if not updated:
+        _count("telemetry_no_values")
+        return NO_VALUES
+
+    _count("telemetry_stored")
+    return STORED

@@ -2096,54 +2096,7 @@ def process_received_nodeinfo_line(line):
     if not isinstance(power_metrics, dict):
         power_metrics = {}
 
-    power_channels = {}
-    for channel_number in (1, 2, 3):
-        voltage_key = f"ch{channel_number}Voltage"
-        current_key = f"ch{channel_number}Current"
-        channel_voltage = power_metrics.get(voltage_key)
-        channel_current = power_metrics.get(current_key)
-
-        if channel_number == 1:
-            if channel_voltage is None:
-                channel_voltage = power_metrics.get("voltage")
-            if channel_current is None:
-                channel_current = power_metrics.get("current")
-
-        if channel_voltage is None and channel_current is None:
-            continue
-
-        channel = {
-            "voltage": channel_voltage,
-            "current": channel_current,
-        }
-
-        if channel_voltage is not None and channel_current is not None:
-            try:
-                channel["power"] = (
-                    float(channel_voltage) * float(channel_current)
-                )
-            except (TypeError, ValueError):
-                channel["power"] = None
-
-        power_channels[str(channel_number)] = channel
-
-    channel_1 = power_channels.get("1", {})
-    values = {
-        "battery_level": device_metrics.get("batteryLevel"),
-        "voltage": (
-            device_metrics.get("voltage")
-            if device_metrics.get("voltage") is not None
-            else channel_1.get("voltage")
-        ),
-        "channel_utilization": device_metrics.get("channelUtilization"),
-        "air_util_tx": device_metrics.get("airUtilTx"),
-        "uptime_seconds": device_metrics.get("uptimeSeconds"),
-        "temperature": environment_metrics.get("temperature"),
-        "humidity": environment_metrics.get("relativeHumidity"),
-        "pressure": environment_metrics.get("barometricPressure"),
-        "current": channel_1.get("current"),
-        "power_channels": power_channels or None,
-    }
+    values = _telemetry_values_from_metrics(device_metrics, environment_metrics, power_metrics)
 
     position = _normalize_nodeinfo_position(info.get("position"))
     last_heard = info.get("lastHeard")
@@ -2176,11 +2129,7 @@ def process_received_nodeinfo_line(line):
             "last_text": old.get("last_text", ""),
             "relay_node": old.get("relay_node", ""),
         })
-        if position is not None:
-            old_position = old.get("position") if isinstance(old.get("position"), dict) else {}
-            node["position"] = {**old_position, **position}
-        elif "position" in old:
-            node["position"] = old.get("position")
+        node = _merge_position_into_node(node, old, position)
         nodes[node_id] = node
         if node_id.startswith("!"):
             ensure_chat(node_id, node["name"], force=True)
@@ -3079,6 +3028,125 @@ def extract_relay_node(line):
 # meshsrv/inbound_events.py's _update_node_from_received_text(), fed by a
 # neutral event instead of a re-parsed CLI line (shared with the TCP inbound path).
 
+def _merge_nodeinfo_into_node(node_id, old, *, long_name, short_name, hw_model, role,
+                               rssi=None, snr=None, hop_start=None, relay_node=None):
+    """The node-merge core of process_nodeinfo() (the NODEINFO_APP text-buffer
+    path), extracted so both that function and the TCP-driven
+    ingest_received_nodeinfo() build the SAME node dict from the same rules,
+    instead of two copies that can silently drift apart the way
+    process_nodeinfo() and process_received_nodeinfo_line() already had (see
+    tests/test_serial_nodeinfo_telemetry_characterization.py's own docstring:
+    the latter DOES fall back to old.get("name"), this one never has).
+
+    Preserves process_nodeinfo()'s existing behavior EXACTLY, quirks included
+    - this is a behavior-preserving extraction, not a fix:
+      - `KNOWN_NODES.get(node_id) or long_name or short_name or
+        friendly_unknown_node_name(node_id)` - NO old.get("name") fallback, so
+        a nodeinfo update naming neither resets the display name.
+      - GET_NODE_INFO()'s configured short_name/hw_model beat the packet's own.
+      - rssi/snr/hop_start/relay_node use `or old.get(...)` (falls back only on
+        a real None/empty, since the serial extractors hand back strings).
+      - position is left exactly as it was - this path never sets it.
+
+    Returns the new node dict; does not mutate `old` or touch nodes[]/state_lock
+    - callers own persistence, exactly like _update_node_from_received_text()."""
+    name = KNOWN_NODES.get(node_id) or long_name or short_name or friendly_unknown_node_name(node_id)
+    info = get_node_info(node_id)
+    node = dict(old)
+    node.update({
+        "name": name,
+        "node_id": node_id,
+        "last_seen": time.time(),
+        "last_time": now(),
+        "rssi": rssi or old.get("rssi"),
+        "snr": snr or old.get("snr"),
+        "hop_start": hop_start or old.get("hop_start", ""),
+        "relay_node": relay_node or old.get("relay_node", ""),
+        "last_text": old.get("last_text", ""),
+        "short_name": info.get("short_name") or short_name or old.get("short_name", "") or node_id[-4:],
+        "hw_model": info.get("hw_model") or hw_model or old.get("hw_model", ""),
+        "role": role or old.get("role", "CLIENT"),
+        "ignored": old.get("ignored", False),
+        "favorite": old.get("favorite", False),
+        # NODEINFO refreshes identity/radio metadata only. Preserve the
+        # latest known coordinates across NODEINFO broadcasts/restarts.
+        "position": old.get("position"),
+    })
+    return node
+
+
+def _merge_position_into_node(node, old, position):
+    """The position-merge core of process_received_nodeinfo_line(), extracted
+    so ingest_received_position() (TCP) uses the same overlay rule: a new
+    reading updates only the keys it actually has, on top of whatever was
+    already known - never erasing a prior fix's fields wholesale. `position`
+    may be None (nothing new to merge; the old value, if any, is kept as-is).
+    Mutates and returns `node`."""
+    if position is not None:
+        old_position = old.get("position") if isinstance(old.get("position"), dict) else {}
+        node["position"] = {**old_position, **position}
+    elif "position" in old:
+        node["position"] = old.get("position")
+    return node
+
+
+def _telemetry_values_from_metrics(device_metrics, environment_metrics, power_metrics):
+    """The Telemetry-to-apply_node_telemetry()-values mapping core of
+    process_received_nodeinfo_line(), extracted so ingest_received_telemetry()
+    (TCP, which only ever has ONE of the three metrics dicts populated per
+    packet - Telemetry is a protobuf oneof) builds the exact same `values`
+    shape apply_node_telemetry() expects. `device_metrics`/`environment_metrics`
+    /`power_metrics` are plain dicts (each may be empty); channel 1's own
+    voltage/current fall back to the flat power_metrics.voltage/current keys,
+    matching the existing behavior for a radio that reports only one channel."""
+    power_channels = {}
+    for channel_number in (1, 2, 3):
+        voltage_key = f"ch{channel_number}Voltage"
+        current_key = f"ch{channel_number}Current"
+        channel_voltage = power_metrics.get(voltage_key)
+        channel_current = power_metrics.get(current_key)
+
+        if channel_number == 1:
+            if channel_voltage is None:
+                channel_voltage = power_metrics.get("voltage")
+            if channel_current is None:
+                channel_current = power_metrics.get("current")
+
+        if channel_voltage is None and channel_current is None:
+            continue
+
+        channel = {
+            "voltage": channel_voltage,
+            "current": channel_current,
+        }
+
+        if channel_voltage is not None and channel_current is not None:
+            try:
+                channel["power"] = float(channel_voltage) * float(channel_current)
+            except (TypeError, ValueError):
+                channel["power"] = None
+
+        power_channels[str(channel_number)] = channel
+
+    channel_1 = power_channels.get("1", {})
+    return {
+        "battery_level": device_metrics.get("batteryLevel"),
+        "voltage": (
+            device_metrics.get("voltage")
+            if device_metrics.get("voltage") is not None
+            else channel_1.get("voltage")
+        ),
+        "channel_utilization": device_metrics.get("channelUtilization"),
+        "air_util_tx": device_metrics.get("airUtilTx"),
+        "uptime_seconds": device_metrics.get("uptimeSeconds"),
+        "temperature": environment_metrics.get("temperature"),
+        "humidity": environment_metrics.get("relativeHumidity"),
+        "pressure": environment_metrics.get("barometricPressure"),
+        "current": channel_1.get("current"),
+        "power_channels": power_channels or None,
+    }
+
+
 def process_nodeinfo(block):
     if ("NODEINFO_APP" not in block and "longName" not in block and "long_name" not in block and
         "shortName" not in block and "short_name" not in block and "hwModel" not in block and "hw_model" not in block):
@@ -3121,7 +3189,6 @@ def process_nodeinfo(block):
     snr = extract_snr(block)
     hop_start = extract_hop_start(block)
     relay_node = extract_relay_node(block)
-    name = KNOWN_NODES.get(node_id) or long_name or short_name or friendly_unknown_node_name(node_id)
     with state_lock:
         old = nodes.get(node_id, {})
         old_snapshot = {
@@ -3132,27 +3199,11 @@ def process_nodeinfo(block):
         "rssi": old.get("rssi"),
         "snr": old.get("snr")
         }
-        info = get_node_info(node_id)
-        node = dict(old)
-        node.update({
-            "name": name,
-            "node_id": node_id,
-            "last_seen": time.time(),
-            "last_time": now(),
-            "rssi": rssi or old.get("rssi"),
-            "snr": snr or old.get("snr"),
-            "hop_start": hop_start or old.get("hop_start", ""),
-            "relay_node": relay_node or old.get("relay_node", ""),
-            "last_text": old.get("last_text", ""),
-            "short_name": info.get("short_name") or short_name or old.get("short_name", "") or node_id[-4:],
-            "hw_model": info.get("hw_model") or hw_model or old.get("hw_model", ""),
-            "role": role or old.get("role", "CLIENT"),
-            "ignored": old.get("ignored", False),
-            "favorite": old.get("favorite", False),
-            # NODEINFO refreshes identity/radio metadata only. Preserve the
-            # latest known coordinates across NODEINFO broadcasts/restarts.
-            "position": old.get("position"),
-        })
+        node = _merge_nodeinfo_into_node(
+            node_id, old, long_name=long_name, short_name=short_name, hw_model=hw_model, role=role,
+            rssi=rssi, snr=snr, hop_start=hop_start, relay_node=relay_node,
+        )
+        name = node["name"]
         nodes[node_id] = node
         if node_id.startswith("!"):
             ensure_chat(node_id, name, force=True)
@@ -3858,6 +3909,10 @@ def _inbound_deps():
         time=time.time,
         waypoint_store=waypoint_store,
         log_system_event=log_system_event,
+        merge_nodeinfo_into_node=_merge_nodeinfo_into_node,
+        merge_position_into_node=_merge_position_into_node,
+        telemetry_values_from_metrics=_telemetry_values_from_metrics,
+        apply_node_telemetry=apply_node_telemetry,
     )
 
 

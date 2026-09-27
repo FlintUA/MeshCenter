@@ -174,7 +174,7 @@ logic that already exists.
 - `OutgoingMessage` / `SendResult`
 - `OutgoingWaypoint` / `WaypointResult`
 - `TelemetryEvent` — node_id, kind, metrics, timestamp
-- `ReceivedTextEvent` / `ReceivedWaypointEvent` — one inbound packet, plain types only (see "Received events" below)
+- `ReceivedTextEvent` / `ReceivedWaypointEvent` / `ReceivedNodeInfoEvent` / `ReceivedPositionEvent` / `ReceivedTelemetryEvent` — one inbound packet, plain types only (see "Received events" below)
 - `TransportError` — `code` (`TransportErrorCode` enum), `message`
 
 ## Events
@@ -205,23 +205,61 @@ library's packet carries `raw` (a protobuf `MeshPacket`), `decoded.payload`
 (bytes) and `decoded.waypoint.raw` (a string), none of which may cross the
 boundary.
 
+`ReceivedNodeInfoEvent` (node_id, sender_id, received_at, **local_radio_node_id**;
+optional: packet_id, long_name, short_name, hw_model, role, is_licensed,
+channel_index, rx_*, hop_*, relay_node), `ReceivedPositionEvent` (sender_id,
+received_at, **local_radio_node_id**; optional: packet_id, latitude, longitude,
+altitude, ground_speed, sats_in_view, position_time, channel_index, rx_*, hop_*,
+relay_node) and `ReceivedTelemetryEvent` (sender_id, kind, metrics, received_at,
+**local_radio_node_id**; optional: packet_id, telemetry_time, channel_index,
+rx_*, hop_*, relay_node) follow the same contract. `hw_model`/`role` are the
+library's own enum NAME strings (e.g. `"RAK4631"`, `"ROUTER"`), never the raw
+int; a proto3 default (role CLIENT, isLicensed False, ...) the library omits
+from its own dict must not be assumed always-present, so these are optional and
+`None` means "not reported", not "false"/"CLIENT" - `is_licensed` in particular
+is a real `Optional[bool]`, checked separately from the int fields (`bool` is
+otherwise rejected everywhere else as a disguised int). `ReceivedNodeInfoEvent`
+deliberately does NOT carry the User payload's `macaddr` / `public_key` - a
+narrower default than the library's own dict; neither is needed by anything
+Core does with a NodeInfo today (see that event's own docstring for the
+reasoning, not an oversight).
+
+`ReceivedPositionEvent.latitude`/`longitude` are plain floats the library
+already computed (`_fixupPosition`, latitudeI/1e-7) before publishing - unlike
+`ReceivedWaypointEvent`, no manual conversion happens on our side.
+
+Telemetry is a protobuf `oneof` - exactly one of device/environment/power
+metrics is present per packet - so `ReceivedTelemetryEvent` carries `kind`
+(`"device"|"environment"|"power"`) plus a flat `metrics` dict (`str` keys,
+plain `int`/`float` values, no nesting) rather than one field per possible
+metric across all three variants (43 mostly-empty fields) - the same "kind +
+metrics dict" shape the existing, Core-internal (polled) `TelemetryEvent`
+already uses, just with the received-event envelope fields added.
+
 `local_radio_node_id` is the radio the event came from. It cannot be omitted or
 empty; Core compares it with the active accepted profile before persisting and
 drops a mismatch, so events buffered from radio A are never written into radio
-B's profile. `latitude`/`longitude` are optional so a remote waypoint *delete*
-(expire 0, no coordinates) is representable; ingesting it is out of the first
-inbound PR's scope.
+B's profile. Waypoint `latitude`/`longitude` are optional so a remote waypoint
+*delete* (expire 0, no coordinates) is representable; ingesting it is out of
+the first inbound PR's scope.
 
 Node ids are `!xxxxxxxx` (or `^all` for a broadcast `to_node_id`) built from the
-packet's NUMERIC `from` / `to` (also carried as `from_num` / `to_num`), not from
-the library's `fromId`, which is `None` while the sender is not yet in the local
-NodeDB. `rx_time` is the radio's clock, `received_at` the adapter's.
+packet's NUMERIC `from` / `to` (also carried as `from_num` / `to_num` on
+`ReceivedTextEvent`), not from the library's `fromId`, which is `None` while the
+sender is not yet in the local NodeDB. `rx_time` is the radio's clock,
+`received_at` the adapter's; NodeInfo/Position/Telemetry each also carry their
+own payload-level time field (there is no `from_num`/`to_num` on them - the
+recipient is always the local node, only the numeric sender varies).
 
-Wire shape of one event - a discriminated envelope:
+Wire shape of one event - a discriminated envelope, one kind name per type
+(`text`, `waypoint`, `nodeinfo`, `position`, `telemetry`):
 
 ```json
 {"kind": "text",     "text":     {"from_node_id": "!1fa065f0", "to_node_id": "^all", "text": "...", ...}}
 {"kind": "waypoint", "waypoint": {"waypoint_id": 4242, "sender_id": "!1fa065f0", "name": "...", ...}}
+{"kind": "nodeinfo", "nodeinfo": {"node_id": "!1fa065f0", "sender_id": "!1fa065f0", "long_name": "...", ...}}
+{"kind": "position", "position": {"sender_id": "!1fa065f0", "latitude": 50.4501, "longitude": 30.5234, ...}}
+{"kind": "telemetry", "telemetry": {"sender_id": "!1fa065f0", "kind": "device", "metrics": {"batteryLevel": 80, ...}, ...}}
 ```
 
 `drain_received(limit=100, timeout=5.0)` returns a `ReceivedBatch(events, dropped,

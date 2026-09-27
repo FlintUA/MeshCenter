@@ -308,17 +308,22 @@ position / telemetry, routing ACKs, Bluetooth receive, remote waypoint deletion.
 
 ### TCP capture (adapter side)
 
-`TCPTransport` subscribes to `meshtastic.receive.text` and
-`meshtastic.receive.waypoint` **once per instance lifetime** (not per
-connect/reconnect; unsubscribed on the final `close()`). `pub` is global to the
-adapter process, which also hosts the Serial and BLE transports, so the callback
-accepts an event only if it came from this transport's current interface (or the
-one whose handshake is still in flight). Each accepted packet is normalized
-field by field (never reading `raw` or `decoded.payload`) into a neutral event
-and appended to a bounded queue (256): when full, the OLDEST event is dropped,
-counted, and reported in the next batch (`dropped`), with at most one WARNING per
-minute. An undecodable packet is counted in `malformed`, never fatal, and never
-logged (message text is private).
+`TCPTransport` subscribes to `meshtastic.receive.{text,waypoint,user,position,
+telemetry}` **once per instance lifetime** (not per connect/reconnect;
+unsubscribed on the final `close()`) - `user` is the library's own protocol name
+for NodeInfo. `pub` is global to the adapter process, which also hosts the
+Serial and BLE transports, so the callback accepts an event only if it came from
+this transport's current interface (or the one whose handshake is still in
+flight). Each accepted packet is normalized field by field (never reading `raw`
+or `decoded.payload`) into a neutral event and appended to a bounded queue
+(256): when full, the OLDEST event is dropped, counted, and reported in the next
+batch (`dropped`), with at most one WARNING per minute. An undecodable packet,
+or a Telemetry packet naming none of the three supported variants, is counted in
+`malformed`, never fatal, and never logged (message text is private). NodeInfo's
+`hw_model`/`role` are read leniently (a wrongly-typed value becomes `None`, not
+a dropped packet) - only the identity fields (`node_id`, the numeric sender) are
+strictly validated, the same rule already used for every other optional/
+secondary field (rssi, snr, hop_*) across every event kind.
 
 `drain_received` is the ordinary request/response IPC operation
 `{"operation": "drain_received", "params": {"limit": 100}}` ->

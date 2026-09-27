@@ -384,6 +384,51 @@ def _drain_until(transport, count, timeout=10.0):
     return events, dropped, malformed
 
 
+def test_real_library_nodeinfo_position_telemetry_arrive_as_neutral_events():
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    try:
+        transport.connect(_descriptor("127.0.0.1", server.port), timeout=10.0)
+        time.sleep(0.3)
+
+        server.send_nodeinfo(node_id="!2b3c4d5e", long_name="Другой узел 👋", packet_id=201)
+        server.send_position(latitude=48.8566, longitude=2.3522, packet_id=202)
+        server.send_telemetry("device", packet_id=203)
+        server.send_telemetry("environment", packet_id=204)
+        server.send_telemetry("power", packet_id=205)
+        events, dropped, malformed = _drain_until(transport, 5)
+
+        assert (dropped, malformed) == (0, 0)
+        kinds = [type(e).__name__ for e in events]
+        assert kinds == [
+            "ReceivedNodeInfoEvent", "ReceivedPositionEvent",
+            "ReceivedTelemetryEvent", "ReceivedTelemetryEvent", "ReceivedTelemetryEvent",
+        ]
+        nodeinfo, position, device, environment, power = events
+
+        assert nodeinfo.node_id == "!2b3c4d5e" and nodeinfo.long_name == "Другой узел 👋"
+        assert nodeinfo.hw_model == "RAK4631" and nodeinfo.role == "ROUTER" and nodeinfo.is_licensed is True
+        assert nodeinfo.local_radio_node_id == "!756f9960"
+        assert not hasattr(nodeinfo, "macaddr") and not hasattr(nodeinfo, "public_key")
+
+        assert (position.latitude, position.longitude) == pytest.approx((48.8566, 2.3522))
+        assert position.local_radio_node_id == "!756f9960"
+
+        assert device.kind == "device" and "batteryLevel" in device.metrics
+        assert environment.kind == "environment" and "temperature" in environment.metrics
+        assert power.kind == "power" and "ch1Voltage" in power.metrics
+
+        import json
+        from meshsrv import ipc_protocol
+        wire = json.dumps([ipc_protocol.received_event_to_dict(e) for e in events])
+        assert "raw" not in wire and "DESCRIPTOR" not in wire
+
+        assert server.accepted_connections == 1, "receiving needs no second TCP connection"
+    finally:
+        transport.close()
+        server.shutdown()
+
+
 def test_real_library_text_and_waypoint_arrive_as_neutral_events():
     server = FakeMeshtasticTcpServer(complete_handshake=True)
     transport = TCPTransport(host="127.0.0.1", port=server.port)

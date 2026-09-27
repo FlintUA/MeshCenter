@@ -28,6 +28,9 @@ from meshsrv.radio_transport import (
     ConnectionState,
     ConnectionType,
     ReceivedBatch,
+    ReceivedNodeInfoEvent,
+    ReceivedPositionEvent,
+    ReceivedTelemetryEvent,
     ReceivedTextEvent,
     ReceivedWaypointEvent,
     TransportError,
@@ -39,6 +42,10 @@ LOCAL_NUM = 0x756F9960
 LOCAL_ID = "!756f9960"
 TEXT_TOPIC = "meshtastic.receive.text"
 WAYPOINT_TOPIC = "meshtastic.receive.waypoint"
+NODEINFO_TOPIC = "meshtastic.receive.user"
+POSITION_TOPIC = "meshtastic.receive.position"
+TELEMETRY_TOPIC = "meshtastic.receive.telemetry"
+ALL_TOPICS = [TEXT_TOPIC, WAYPOINT_TOPIC, NODEINFO_TOPIC, POSITION_TOPIC, TELEMETRY_TOPIC]
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +179,63 @@ def deliver_waypoint(pub, transport, packet=None, interface=None):
              interface if interface is not None else transport._interface)
 
 
+def nodeinfo_packet(*, id=103, **user_overrides):
+    user = {"id": "!1fa065f0", "longName": "Test Node", "shortName": "TST", "hwModel": "RAK4631",
+            "role": "ROUTER", "isLicensed": True, "macaddr": "AQIDBAUG", "publicKey": "aa==",
+            "raw": FakeProtobuf()}
+    user.update(user_overrides)
+    return {
+        "from": 0x1FA065F0, "to": 0xFFFFFFFF, "id": id, "channel": 1, "rxTime": 1790455378,
+        "rxSnr": 5.5, "rxRssi": -80, "hopLimit": 3, "hopStart": 3, "relayNode": 240,
+        "decoded": {"portnum": "NODEINFO_APP", "payload": b"x", "user": user},
+        "raw": FakeProtobuf(),
+    }
+
+
+def position_packet(*, id=104, **position_overrides):
+    position = {"latitudeI": 504501000, "longitudeI": 305234000, "latitude": 50.4501, "longitude": 30.5234,
+                "altitude": 123, "time": 1790000000, "groundSpeed": 5, "satsInView": 8, "raw": FakeProtobuf()}
+    position.update(position_overrides)
+    return {
+        "from": 0x1FA065F0, "to": 0xFFFFFFFF, "id": id, "channel": 1, "rxTime": 1790455378,
+        "rxSnr": 5.5, "rxRssi": -80, "hopLimit": 3, "hopStart": 3, "relayNode": 240,
+        "decoded": {"portnum": "POSITION_APP", "payload": b"x", "position": position},
+        "raw": FakeProtobuf(),
+    }
+
+
+def telemetry_packet(variant="device", metrics=None, *, id=105, **telemetry_overrides):
+    variant_key = {"device": "deviceMetrics", "environment": "environmentMetrics", "power": "powerMetrics"}[variant]
+    default_metrics = {
+        "device": {"batteryLevel": 80, "voltage": 3.9, "channelUtilization": 1.2, "airUtilTx": 0.5, "uptimeSeconds": 1000},
+        "environment": {"temperature": 21.5, "relativeHumidity": 40.0},
+        "power": {"ch1Voltage": 5.0, "ch1Current": 0.5},
+    }[variant]
+    telemetry = {"time": 1790000000, variant_key: metrics if metrics is not None else default_metrics}
+    telemetry.update(telemetry_overrides)
+    return {
+        "from": 0x1FA065F0, "to": 0xFFFFFFFF, "id": id, "channel": 1, "rxTime": 1790455378,
+        "rxSnr": 5.5, "rxRssi": -80, "hopLimit": 3, "hopStart": 3, "relayNode": 240,
+        "decoded": {"portnum": "TELEMETRY_APP", "payload": b"x", "telemetry": telemetry},
+        "raw": FakeProtobuf(),
+    }
+
+
+def deliver_nodeinfo(pub, transport, packet=None, interface=None):
+    pub.send(NODEINFO_TOPIC, packet if packet is not None else nodeinfo_packet(),
+             interface if interface is not None else transport._interface)
+
+
+def deliver_position(pub, transport, packet=None, interface=None):
+    pub.send(POSITION_TOPIC, packet if packet is not None else position_packet(),
+             interface if interface is not None else transport._interface)
+
+
+def deliver_telemetry(pub, transport, packet=None, interface=None):
+    pub.send(TELEMETRY_TOPIC, packet if packet is not None else telemetry_packet(),
+             interface if interface is not None else transport._interface)
+
+
 # ---------------------------------------------------------------------------
 # Subscription lifetime
 # ---------------------------------------------------------------------------
@@ -182,8 +246,8 @@ def test_subscribes_to_exactly_the_two_receive_topics_once(pub):
     for _ in range(3):
         transport._ensure_receive_subscription()
 
-    assert sorted(topic for topic, _ in pub.listeners) == [TEXT_TOPIC, WAYPOINT_TOPIC]
-    assert pub.subscribe_calls == 2, "not per call, and no catch-all 'meshtastic.receive'"
+    assert sorted(topic for topic, _ in pub.listeners) == sorted(ALL_TOPICS)
+    assert pub.subscribe_calls == len(ALL_TOPICS), "not per call, and no catch-all 'meshtastic.receive'"
 
 
 @pytest.fixture
@@ -216,8 +280,8 @@ def test_connect_and_reconnect_never_stack_subscriptions(pub, fake_connectable):
     transport.connect(_descriptor(), force=True, timeout=5)
     transport.reconnect(timeout=30)
 
-    assert pub.subscribe_calls == 2
-    assert len(pub.listeners) == 2
+    assert pub.subscribe_calls == len(ALL_TOPICS)
+    assert len(pub.listeners) == len(ALL_TOPICS)
 
 
 def test_close_unsubscribes_and_is_idempotent(pub, fake_connectable):
@@ -228,7 +292,7 @@ def test_close_unsubscribes_and_is_idempotent(pub, fake_connectable):
     transport.close()
 
     assert pub.listeners == []
-    assert pub.unsubscribe_calls == 2
+    assert pub.unsubscribe_calls == len(ALL_TOPICS)
 
 
 def test_a_plain_disconnect_keeps_the_subscription(pub, fake_connectable):
@@ -237,7 +301,7 @@ def test_a_plain_disconnect_keeps_the_subscription(pub, fake_connectable):
 
     transport.disconnect(timeout=5)
 
-    assert len(pub.listeners) == 2, "only close() ends the lifetime"
+    assert len(pub.listeners) == len(ALL_TOPICS), "only close() ends the lifetime"
 
 
 def test_missing_pubsub_disables_receiving_without_breaking_connect(monkeypatch, fake_connectable, logs):
@@ -573,8 +637,9 @@ def test_stats_count_everything_without_content(pub, transport):
     transport.drain_received()
 
     assert transport.get_receive_stats() == {
-        "received_text": 1, "received_waypoint": 1, "queue_overflow_dropped": 0,
-        "drained_events": 2, "malformed_events": 1, "queue_depth": 0,
+        "received_text": 1, "received_waypoint": 1, "received_nodeinfo": 0, "received_position": 0,
+        "received_telemetry": 0, "queue_overflow_dropped": 0, "drained_events": 2, "malformed_events": 1,
+        "queue_depth": 0,
     }
 
 
@@ -611,7 +676,7 @@ def test_events_queued_before_a_reconnect_are_delivered_with_those_after(pub, fa
     assert second_interface is not first_interface
     assert [e.packet_id for e in batch.events] == [1, 2], "A + B; the late packet from the old session is dropped"
     assert batch.connection_generation == first_generation + 1, "a new physical connection bumps the generation"
-    assert len(pub.listeners) == 2, "and the subscription was not re-made"
+    assert len(pub.listeners) == len(ALL_TOPICS), "and the subscription was not re-made"
 
 
 def test_a_failed_reconnect_does_not_lose_queued_events(pub, fake_connectable, monkeypatch):
@@ -808,3 +873,240 @@ def test_an_asynchronous_pubsub_event_never_disturbs_the_request_response_ipc(pu
     dropped_total = transport.get_receive_stats()["queue_overflow_dropped"]
     assert drained + leftover == sorted(drained + leftover), "order preserved"
     assert len(drained) + len(leftover) + dropped_total == len(injected), "every captured event is accounted for"
+
+
+# ---------------------------------------------------------------------------
+# NodeInfo / Position / Telemetry normalization and capture (PR B)
+# ---------------------------------------------------------------------------
+
+
+def test_nodeinfo_is_normalized_to_a_neutral_event(pub, transport):
+    deliver_nodeinfo(pub, transport)
+
+    batch = transport.drain_received()
+
+    assert len(batch.events) == 1
+    event = batch.events[0]
+    assert type(event) is ReceivedNodeInfoEvent
+    assert (event.node_id, event.sender_id) == ("!1fa065f0", "!1fa065f0")
+    assert (event.long_name, event.short_name, event.hw_model, event.role) == ("Test Node", "TST", "RAK4631", "ROUTER")
+    assert event.is_licensed is True
+    assert (event.packet_id, event.channel_index) == (103, 1)
+    assert (event.rx_rssi, event.rx_snr, event.hop_limit, event.hop_start, event.relay_node) == (-80, 5.5, 3, 3, 240)
+    assert event.local_radio_node_id == LOCAL_ID
+
+
+def test_nodeinfo_never_carries_macaddr_or_public_key(pub, transport):
+    packet = RecordingDict(nodeinfo_packet())
+    packet["decoded"] = RecordingDict(packet["decoded"])
+    deliver_nodeinfo(pub, transport, packet)
+
+    event = transport.drain_received().events[0]
+
+    assert not hasattr(event, "macaddr") and not hasattr(event, "public_key")
+    assert "raw" not in packet.touched
+
+
+def test_nodeinfo_omitted_fields_are_none_not_a_default_value(pub, transport):
+    """The library OMITS role/hwModel/isLicensed from its own dict at their
+    proto3 default (verify_receive_topics.py) - a missing key must become
+    None, never a false "CLIENT"/False."""
+    packet = nodeinfo_packet()
+    for omitted in ("hwModel", "role", "isLicensed", "longName", "shortName"):
+        packet["decoded"]["user"].pop(omitted, None)
+    for omitted in ("rxSnr", "rxRssi", "hopLimit", "hopStart", "relayNode"):
+        packet.pop(omitted, None)
+
+    deliver_nodeinfo(pub, transport, packet)
+
+    event = transport.drain_received().events[0]
+    assert (event.hw_model, event.role, event.is_licensed) == (None, None, None)
+    assert (event.long_name, event.short_name) == (None, None)
+
+
+def test_a_wrongly_typed_optional_nodeinfo_field_is_silently_dropped_not_fatal(pub, transport):
+    """hw_model/role are read leniently, same as every other OPTIONAL secondary
+    field in this module (rssi/snr/hop_*) - only the identity fields (node_id,
+    from) are strictly validated, matching the existing text/waypoint
+    precedent (e.g. a wrongly-typed hopLimit is silently None too, never
+    fatal)."""
+    deliver_nodeinfo(pub, transport, nodeinfo_packet(hwModel=9))  # the raw enum int, not the name string
+
+    event = transport.drain_received().events[0]
+    assert event.hw_model is None
+
+
+def test_nodeinfo_is_licensed_false_is_not_confused_with_absent(pub, transport):
+    deliver_nodeinfo(pub, transport, nodeinfo_packet(isLicensed=False))
+
+    assert transport.drain_received().events[0].is_licensed is False
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda p: p["decoded"]["user"].pop("id"),
+    lambda p: p["decoded"]["user"].update(id=""),
+    lambda p: p["decoded"]["user"].update(id=b"!1fa065f0"),
+    lambda p: p.pop("from"),
+])
+def test_a_malformed_nodeinfo_is_counted_and_costs_nothing_else(pub, transport, mutate):
+    bad = nodeinfo_packet()
+    bad["decoded"] = dict(bad["decoded"])
+    bad["decoded"]["user"] = dict(bad["decoded"]["user"])
+    mutate(bad)
+    deliver_nodeinfo(pub, transport, bad)
+    deliver_nodeinfo(pub, transport, nodeinfo_packet(id=999))
+
+    batch = transport.drain_received()
+
+    assert [e.packet_id for e in batch.events] == [999]
+    assert batch.malformed == 1
+
+
+def test_position_is_normalized_with_already_converted_coordinates(pub, transport):
+    packet = RecordingDict(position_packet())
+    deliver_position(pub, transport, packet)
+
+    event = transport.drain_received().events[0]
+
+    assert type(event) is ReceivedPositionEvent
+    assert event.sender_id == "!1fa065f0"
+    assert (event.latitude, event.longitude) == (pytest.approx(50.4501), pytest.approx(30.5234))
+    assert (event.altitude, event.ground_speed, event.sats_in_view) == (123, 5, 8)
+    assert event.position_time == 1790000000
+    assert event.local_radio_node_id == LOCAL_ID
+    assert "raw" not in packet.touched
+
+
+def test_a_wrongly_typed_optional_position_field_is_silently_dropped_not_fatal(pub, transport):
+    deliver_position(pub, transport, position_packet(latitude="50.4"))
+
+    event = transport.drain_received().events[0]
+    assert event.latitude is None
+
+
+def test_position_optional_fields_are_none_when_omitted(pub, transport):
+    packet = position_packet()
+    for omitted in ("altitude", "groundSpeed", "satsInView", "time", "latitude", "longitude"):
+        packet["decoded"]["position"].pop(omitted, None)
+
+    deliver_position(pub, transport, packet)
+
+    event = transport.drain_received().events[0]
+    assert (event.altitude, event.ground_speed, event.sats_in_view, event.position_time) == (None, None, None, None)
+    assert (event.latitude, event.longitude) == (None, None)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda p: p.pop("from"),
+    lambda p: p.update({"from": "!1fa065f0"}),
+])
+def test_a_malformed_position_is_counted_and_costs_nothing_else(pub, transport, mutate):
+    bad = position_packet()
+    bad["decoded"] = dict(bad["decoded"])
+    bad["decoded"]["position"] = dict(bad["decoded"]["position"])
+    mutate(bad)
+    deliver_position(pub, transport, bad)
+    deliver_position(pub, transport, position_packet(id=999))
+
+    batch = transport.drain_received()
+
+    assert [e.packet_id for e in batch.events] == [999]
+    assert batch.malformed == 1
+
+
+@pytest.mark.parametrize("variant,metric_key", [("device", "batteryLevel"), ("environment", "temperature"), ("power", "ch1Voltage")])
+def test_telemetry_is_normalized_per_variant(pub, transport, variant, metric_key):
+    packet = RecordingDict(telemetry_packet(variant=variant))
+    deliver_telemetry(pub, transport, packet)
+
+    event = transport.drain_received().events[0]
+
+    assert type(event) is ReceivedTelemetryEvent
+    assert event.sender_id == "!1fa065f0" and event.kind == variant
+    assert metric_key in event.metrics
+    assert event.telemetry_time == 1790000000
+    assert event.local_radio_node_id == LOCAL_ID
+    assert "raw" not in packet.touched
+
+
+def test_telemetry_metrics_is_a_plain_copy_not_the_packets_own_dict():
+    transport = TCPTransport(host="192.168.2.34")
+    transport._interface = FakeInterface()
+    source_metrics = {"batteryLevel": 80}
+    packet = telemetry_packet(metrics=source_metrics)
+
+    event = transport._normalize_telemetry(packet, transport._interface)
+
+    assert event.metrics == {"batteryLevel": 80}
+    source_metrics["batteryLevel"] = 0
+    assert event.metrics == {"batteryLevel": 80}, "mutating the packet's dict afterwards must not affect the event"
+
+
+def test_an_unknown_telemetry_variant_is_malformed_not_guessed(pub, transport):
+    """A future protobuf field (airQualityMetrics, localStats, ...) this stage
+    does not support - out of scope, must not be silently coerced into one of
+    the three known kinds."""
+    bad = telemetry_packet()
+    bad["decoded"] = dict(bad["decoded"])
+    bad["decoded"]["telemetry"] = {"time": 1, "airQualityMetrics": {"co2": 400}}
+    deliver_telemetry(pub, transport, bad)
+    deliver_telemetry(pub, transport, telemetry_packet(id=999))
+
+    batch = transport.drain_received()
+
+    assert [e.packet_id for e in batch.events] == [999]
+    assert batch.malformed == 1
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda p: p.pop("from"),
+    lambda p: p["decoded"].update(telemetry={"time": 1, "deviceMetrics": {"batteryLevel": "80"}}),
+    lambda p: p["decoded"].update(telemetry={"time": 1, "deviceMetrics": {"batteryLevel": True}}),
+])
+def test_a_malformed_telemetry_packet_is_counted_and_costs_nothing_else(pub, transport, mutate):
+    bad = telemetry_packet()
+    bad["decoded"] = dict(bad["decoded"])
+    mutate(bad)
+    deliver_telemetry(pub, transport, bad)
+    deliver_telemetry(pub, transport, telemetry_packet(id=999))
+
+    batch = transport.drain_received()
+
+    assert [e.packet_id for e in batch.events] == [999]
+    assert batch.malformed == 1
+
+
+def test_all_five_kinds_share_one_ordered_queue(pub, transport):
+    deliver_text(pub, transport, text_packet(id=1))
+    deliver_waypoint(pub, transport)
+    deliver_nodeinfo(pub, transport)
+    deliver_position(pub, transport)
+    deliver_telemetry(pub, transport)
+
+    kinds = [type(e).__name__ for e in transport.drain_received().events]
+
+    assert kinds == [
+        "ReceivedTextEvent", "ReceivedWaypointEvent", "ReceivedNodeInfoEvent",
+        "ReceivedPositionEvent", "ReceivedTelemetryEvent",
+    ]
+
+
+def test_nodeinfo_position_telemetry_also_respect_the_interface_filter(pub, transport):
+    other = FakeInterface()
+    deliver_nodeinfo(pub, transport, interface=other)
+    deliver_position(pub, transport, interface=other)
+    deliver_telemetry(pub, transport, interface=other)
+
+    batch = transport.drain_received()
+
+    assert batch.events == () and batch.malformed == 0
+
+
+def test_stats_include_the_three_new_kinds(pub, transport):
+    deliver_nodeinfo(pub, transport)
+    deliver_position(pub, transport)
+    deliver_telemetry(pub, transport)
+    transport.drain_received()
+
+    stats = transport.get_receive_stats()
+    assert (stats["received_nodeinfo"], stats["received_position"], stats["received_telemetry"]) == (1, 1, 1)

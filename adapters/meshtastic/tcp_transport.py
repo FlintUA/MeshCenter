@@ -85,6 +85,9 @@ from meshsrv.radio_transport import (
     OutgoingWaypoint,
     RadioTransport,
     ReceivedBatch,
+    ReceivedNodeInfoEvent,
+    ReceivedPositionEvent,
+    ReceivedTelemetryEvent,
     ReceivedTextEvent,
     ReceivedWaypointEvent,
     SendResult,
@@ -219,6 +222,9 @@ def _parse_host_port(address: str, default_port: int) -> tuple[str, int]:
 # verify_receive_topics.py.)
 _RECEIVE_TOPIC_TEXT = "meshtastic.receive.text"
 _RECEIVE_TOPIC_WAYPOINT = "meshtastic.receive.waypoint"
+_RECEIVE_TOPIC_NODEINFO = "meshtastic.receive.user"  # the library's own protocol name is "user", not "nodeinfo"
+_RECEIVE_TOPIC_POSITION = "meshtastic.receive.position"
+_RECEIVE_TOPIC_TELEMETRY = "meshtastic.receive.telemetry"
 
 # LoRa traffic is slow; 256 is a large margin for a queue Core drains about once
 # a second. Bounded, and NOT a silent deque(maxlen=N): overflow drops the OLDEST
@@ -249,8 +255,27 @@ def _plain_float(value) -> Optional[float]:
     return float(value) if type(value) in (int, float) else None
 
 
+def _plain_str(value) -> Optional[str]:
+    """A str from the library's packet dict, or None - used for the enum-NAME
+    fields (User.hwModel/role) MessageToDict already gives us as strings, and
+    which it OMITS entirely at their proto3 default (confirmed directly
+    against a bare User in verify_receive_topics.py) - so a missing key here
+    is "not reported", not a false default value."""
+    return value if type(value) is str else None
+
+
+def _plain_bool(value) -> Optional[bool]:
+    return value if type(value) is bool else None
+
+
 def _node_id_from_num(num: int) -> str:
     return "^all" if num == _BROADCAST_NUM else f"!{num:08x}"
+
+
+# Telemetry is a protobuf oneof: exactly one of these dict keys is present per
+# packet (confirmed in verify_receive_topics.py). Maps the library's own key to
+# ReceivedTelemetryEvent.kind.
+_TELEMETRY_VARIANT_KEYS = (("deviceMetrics", "device"), ("environmentMetrics", "environment"), ("powerMetrics", "power"))
 
 
 class TCPTransport(TimeoutEnforced, RadioTransport):
@@ -306,6 +331,9 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         self._receive_stats = {
             "received_text": 0,
             "received_waypoint": 0,
+            "received_nodeinfo": 0,
+            "received_position": 0,
+            "received_telemetry": 0,
             "queue_overflow_dropped": 0,
             "drained_events": 0,
             "malformed_events": 0,
@@ -1103,6 +1131,9 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             listeners = [
                 (_RECEIVE_TOPIC_TEXT, self._on_receive_text),
                 (_RECEIVE_TOPIC_WAYPOINT, self._on_receive_waypoint),
+                (_RECEIVE_TOPIC_NODEINFO, self._on_receive_nodeinfo),
+                (_RECEIVE_TOPIC_POSITION, self._on_receive_position),
+                (_RECEIVE_TOPIC_TELEMETRY, self._on_receive_telemetry),
             ]
             for topic, listener in listeners:
                 pub.subscribe(listener, topic)
@@ -1140,6 +1171,15 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
 
     def _on_receive_waypoint(self, packet, interface) -> None:
         self._on_receive(packet, interface, "waypoint", self._normalize_waypoint)
+
+    def _on_receive_nodeinfo(self, packet, interface) -> None:
+        self._on_receive(packet, interface, "nodeinfo", self._normalize_nodeinfo)
+
+    def _on_receive_position(self, packet, interface) -> None:
+        self._on_receive(packet, interface, "position", self._normalize_position)
+
+    def _on_receive_telemetry(self, packet, interface) -> None:
+        self._on_receive(packet, interface, "telemetry", self._normalize_telemetry)
 
     def _on_receive(self, packet, interface, kind, normalize) -> None:
         """Runs on the library's publishing thread: must never raise into it."""
@@ -1251,6 +1291,123 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             channel_index=0 if channel is None else channel,
         )
 
+    def _normalize_nodeinfo(self, packet, interface) -> Optional[ReceivedNodeInfoEvent]:
+        """Same rules as _normalize_text. `hwModel`/`role` are already enum
+        NAME strings from the library (never the raw int); a proto3 default
+        (role CLIENT, isLicensed False, ...) is OMITTED from the dict entirely
+        (verify_receive_topics.py confirmed this against a bare User), so a
+        missing key here means "not reported", not a default value - read with
+        `_plain_str`/`_plain_bool`, never a falsy-default `.get(..., "")`.
+        `macaddr`/`publicKey` are read by nothing here - see
+        ReceivedNodeInfoEvent's own docstring for why they are not carried."""
+        user = packet["decoded"]["user"]
+        node_id = user.get("id")
+        if not isinstance(node_id, str) or not node_id:
+            raise ValueError("user has no id")
+        from_num = packet["from"]
+        if type(from_num) is not int:
+            raise TypeError("from is not an integer")
+        local_node_id = self._local_node_id(interface)
+        if not local_node_id:
+            raise ValueError("local radio node id is not known yet")
+        channel = _plain_int(packet.get("channel"))
+        return ReceivedNodeInfoEvent(
+            node_id=node_id,
+            sender_id=f"!{from_num:08x}",
+            received_at=time.time(),
+            local_radio_node_id=local_node_id,
+            packet_id=_plain_int_or_none_if_zero(packet.get("id")),
+            long_name=_plain_str(user.get("longName")),
+            short_name=_plain_str(user.get("shortName")),
+            hw_model=_plain_str(user.get("hwModel")),
+            role=_plain_str(user.get("role")),
+            is_licensed=_plain_bool(user.get("isLicensed")),
+            channel_index=0 if channel is None else channel,
+            rx_time=_plain_int_or_none_if_zero(packet.get("rxTime")),
+            rx_rssi=_plain_int_or_none_if_zero(packet.get("rxRssi")),
+            rx_snr=_plain_float(packet.get("rxSnr")),
+            hop_limit=_plain_int(packet.get("hopLimit")),
+            hop_start=_plain_int(packet.get("hopStart")),
+            relay_node=_plain_int_or_none_if_zero(packet.get("relayNode")),
+        )
+
+    def _normalize_position(self, packet, interface) -> Optional[ReceivedPositionEvent]:
+        """Same rules as _normalize_text. Unlike Waypoint, `latitude`/
+        `longitude` are already plain floats here - the library's own
+        _fixupPosition converts latitudeI/longitudeI (1e-7 deg) before
+        publishing, confirmed in verify_receive_topics.py - so no manual /1e7
+        division happens on this side."""
+        position = packet["decoded"]["position"]
+        from_num = packet["from"]
+        if type(from_num) is not int:
+            raise TypeError("from is not an integer")
+        local_node_id = self._local_node_id(interface)
+        if not local_node_id:
+            raise ValueError("local radio node id is not known yet")
+        channel = _plain_int(packet.get("channel"))
+        return ReceivedPositionEvent(
+            sender_id=f"!{from_num:08x}",
+            received_at=time.time(),
+            local_radio_node_id=local_node_id,
+            packet_id=_plain_int_or_none_if_zero(packet.get("id")),
+            latitude=_plain_float(position.get("latitude")),
+            longitude=_plain_float(position.get("longitude")),
+            altitude=_plain_int(position.get("altitude")),
+            ground_speed=_plain_int(position.get("groundSpeed")),
+            sats_in_view=_plain_int(position.get("satsInView")),
+            position_time=_plain_int(position.get("time")),
+            channel_index=0 if channel is None else channel,
+            rx_time=_plain_int_or_none_if_zero(packet.get("rxTime")),
+            rx_rssi=_plain_int_or_none_if_zero(packet.get("rxRssi")),
+            rx_snr=_plain_float(packet.get("rxSnr")),
+            hop_limit=_plain_int(packet.get("hopLimit")),
+            hop_start=_plain_int(packet.get("hopStart")),
+            relay_node=_plain_int_or_none_if_zero(packet.get("relayNode")),
+        )
+
+    def _normalize_telemetry(self, packet, interface) -> Optional[ReceivedTelemetryEvent]:
+        """Same rules as _normalize_text. Telemetry is a protobuf oneof -
+        exactly one of deviceMetrics/environmentMetrics/powerMetrics is
+        present per packet (verify_receive_topics.py); a packet naming none of
+        our three known variants (e.g. a newer airQualityMetrics/localStats/
+        healthMetrics/hostMetrics field this stage does not support) is
+        treated as malformed rather than guessed at - out of scope, not
+        silently coerced. `metrics` is handed to ReceivedTelemetryEvent as-is;
+        its own constructor validates every value is a plain int/float."""
+        telemetry = packet["decoded"]["telemetry"]
+        metrics = None
+        kind = None
+        for variant_key, variant_kind in _TELEMETRY_VARIANT_KEYS:
+            if variant_key in telemetry:
+                metrics = telemetry[variant_key]
+                kind = variant_kind
+                break
+        if kind is None:
+            raise ValueError(f"telemetry packet has no known variant: {sorted(telemetry)}")
+        from_num = packet["from"]
+        if type(from_num) is not int:
+            raise TypeError("from is not an integer")
+        local_node_id = self._local_node_id(interface)
+        if not local_node_id:
+            raise ValueError("local radio node id is not known yet")
+        channel = _plain_int(packet.get("channel"))
+        return ReceivedTelemetryEvent(
+            sender_id=f"!{from_num:08x}",
+            kind=kind,
+            metrics=metrics,
+            received_at=time.time(),
+            local_radio_node_id=local_node_id,
+            packet_id=_plain_int_or_none_if_zero(packet.get("id")),
+            telemetry_time=_plain_int(telemetry.get("time")),
+            channel_index=0 if channel is None else channel,
+            rx_time=_plain_int_or_none_if_zero(packet.get("rxTime")),
+            rx_rssi=_plain_int_or_none_if_zero(packet.get("rxRssi")),
+            rx_snr=_plain_float(packet.get("rxSnr")),
+            hop_limit=_plain_int(packet.get("hopLimit")),
+            hop_start=_plain_int(packet.get("hopStart")),
+            relay_node=_plain_int_or_none_if_zero(packet.get("relayNode")),
+        )
+
     def drain_received(self, *, limit: int = 100, timeout: float = 5.0) -> ReceivedBatch:
         """Take up to `limit` buffered events, oldest first, plus how many were
         dropped (queue overflow) and how many could not be decoded since the
@@ -1273,8 +1430,9 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
 
     def get_receive_stats(self) -> dict:
         """Counters for observability (no message content): received_text,
-        received_waypoint, queue_depth, queue_overflow_dropped, drained_events,
-        malformed_events."""
+        received_waypoint, received_nodeinfo, received_position,
+        received_telemetry, queue_depth, queue_overflow_dropped,
+        drained_events, malformed_events."""
         with self._receive_lock:
             stats = dict(self._receive_stats)
             stats["queue_depth"] = len(self._receive_queue)

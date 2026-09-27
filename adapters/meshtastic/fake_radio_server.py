@@ -47,6 +47,7 @@ import time
 from typing import Optional
 
 from meshtastic import channel_pb2, mesh_pb2, portnums_pb2
+from meshtastic.protobuf import telemetry_pb2
 
 START1 = 0x94
 START2 = 0xC3
@@ -307,6 +308,54 @@ class FakeMeshtasticTcpServer:
         waypoint.expire = expire or int(time.time()) + 3600
         self._outbound.put(self._packet_frame(
             portnums_pb2.PortNum.WAYPOINT_APP, waypoint.SerializeToString(),
+            from_num=from_num, to_num=0xFFFFFFFF, packet_id=packet_id, channel=channel,
+        ))
+
+    def send_nodeinfo(self, *, node_id: str = "!1fa065f0", long_name: str = "Other Node", short_name: str = "OTH",
+                      hw_model: int = 9, role: int = 2, is_licensed: bool = True,
+                      from_num: int = 0x1FA065F0, packet_id: int = 103, channel: int = 1) -> None:
+        user = mesh_pb2.User()
+        user.id = node_id
+        user.long_name = long_name
+        user.short_name = short_name
+        user.hw_model = hw_model
+        user.role = role
+        user.is_licensed = is_licensed
+        self._outbound.put(self._packet_frame(
+            portnums_pb2.PortNum.NODEINFO_APP, user.SerializeToString(),
+            from_num=from_num, to_num=0xFFFFFFFF, packet_id=packet_id, channel=channel,
+        ))
+
+    def send_position(self, *, latitude: float = 50.4501, longitude: float = 30.5234, altitude: int = 123,
+                      ground_speed: int = 5, sats_in_view: int = 8, from_num: int = 0x1FA065F0,
+                      packet_id: int = 104, channel: int = 1) -> None:
+        position = mesh_pb2.Position()
+        position.latitude_i = int(latitude * 1e7)
+        position.longitude_i = int(longitude * 1e7)
+        position.altitude = altitude
+        position.time = int(time.time())
+        position.ground_speed = ground_speed
+        position.sats_in_view = sats_in_view
+        self._outbound.put(self._packet_frame(
+            portnums_pb2.PortNum.POSITION_APP, position.SerializeToString(),
+            from_num=from_num, to_num=0xFFFFFFFF, packet_id=packet_id, channel=channel,
+        ))
+
+    def send_telemetry(self, variant: str = "device", *, from_num: int = 0x1FA065F0, packet_id: int = 105,
+                       channel: int = 1) -> None:
+        telemetry = telemetry_pb2.Telemetry()
+        telemetry.time = int(time.time())
+        if variant == "device":
+            telemetry.device_metrics.battery_level = 80
+            telemetry.device_metrics.voltage = 3.9
+        elif variant == "environment":
+            telemetry.environment_metrics.temperature = 21.5
+            telemetry.environment_metrics.relative_humidity = 40.0
+        else:
+            telemetry.power_metrics.ch1_voltage = 5.0
+            telemetry.power_metrics.ch1_current = 0.5
+        self._outbound.put(self._packet_frame(
+            portnums_pb2.PortNum.TELEMETRY_APP, telemetry.SerializeToString(),
             from_num=from_num, to_num=0xFFFFFFFF, packet_id=packet_id, channel=channel,
         ))
 

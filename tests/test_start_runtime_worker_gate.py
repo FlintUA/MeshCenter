@@ -186,3 +186,15 @@ def test_always_on_workers_and_transport_restore_are_unaffected(run_start_runtim
     assert "check_worker" in started  # update_service.check_worker
     assert len(restore_calls) == 1
     assert restore_calls[0][1] is True
+
+
+@pytest.mark.parametrize("transport", ["serial", "tcp", "bluetooth"])
+@pytest.mark.parametrize("identity_status", ["MATCH", "MISMATCH", "DETECTION_ERROR", "NOT_FOUND", "NOT_CHECKED"])
+def test_the_inbound_worker_is_always_started_and_decides_per_tick(run_start_runtime, transport, identity_status):
+    """TCP inbound is gated PER TICK by inbound_eligibility() (accepted transport
+    is tcp AND identity MATCH AND the router is on tcp), not once at boot: that
+    is what makes a live Settings switch to TCP, and a TCP radio whose identity is
+    still unresolved at boot, work without a restart."""
+    started, _ = run_start_runtime(transport, identity_status=identity_status)
+
+    assert "radio_inbound_worker" in started

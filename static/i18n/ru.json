@@ -964,7 +964,8 @@
     "restart_listener_not_applicable": "Не применимо для подключений TCP/Bluetooth",
     "reception_label": "Входящие сообщения",
     "reception_not_supported": "Не принимаются (только отправка)",
-    "network_rescan_no_changes": "Сканирование сети завершено, изменений не найдено"
+    "network_rescan_no_changes": "Сканирование сети завершено, изменений не найдено",
+    "reception_tcp_partial": "Текст и waypoint"
   },
   "settings": {
     "title": "Настройки",
@@ -1120,7 +1121,7 @@
     "files_description": "Передача файлов по Mesh через Relay-провайдеров.",
     "files_relay_providers": "Relay-провайдеры",
     "files_relay_wizard": "Настроить Relay",
-    "meshtastic_tcp_receive_note": "Входящие сообщения не принимаются по TCP - вы можете отправлять, но не получать. Переключитесь обратно на USB, чтобы снова получать сообщения."
+    "meshtastic_tcp_receive_note": "По TCP MeshCenter принимает текстовые сообщения и waypoint. Информация об узлах, позиции и телеметрия пока не принимаются - для полного приёма используйте USB."
   },
   "modals": {
     "message_info": "Информация о сообщении",

@@ -12984,7 +12984,10 @@ async function loadRadioHealth() {
         const receiveEl = document.getElementById('radioHealthReceive');
         if (receiveRow) receiveRow.style.display = nonSerialRadio ? '' : 'none';
         if (receiveEl && nonSerialRadio) {
-            receiveEl.textContent = window.I18N.t('system.reception_not_supported');
+            // TCP receives text and waypoints (adapter queue -> radio_inbound_worker); Bluetooth still receives nothing.
+            receiveEl.textContent = data.transport === 'tcp'
+                ? window.I18N.t('system.reception_tcp_partial')
+                : window.I18N.t('system.reception_not_supported');
             receiveEl.title = data.transport === 'tcp'
                 ? window.I18N.t('settings.meshtastic_tcp_receive_note')
                 : window.I18N.t('settings.meshtastic_ble_receive_warning');

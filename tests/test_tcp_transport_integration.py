@@ -465,3 +465,136 @@ def test_real_library_a_second_transport_in_the_process_does_not_receive_this_on
         b.close()
         server_a.shutdown()
         server_b.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# The whole chain: the (fake) radio hears a packet -> REAL TCPInterface -> REAL
+# pypubsub -> adapter queue -> TransportRouter -> InboundWorker -> the shared
+# Core ingest -> messages / chats / waypoints.db. No mocks between the socket and
+# the stores.
+# ---------------------------------------------------------------------------
+
+
+def _chain(server_module, monkeypatch, server):
+    from meshsrv.radio_transport import ConnectionDescriptor as CD, ConnectionType as CT
+    from meshsrv.transport_router import TransportRouter
+
+    srv = server_module
+    original = srv.instance_manager.get()
+    updated = dict(original)
+    updated["radio"] = {
+        **dict(original.get("radio") or {}), "node_id": "!756f9960", "transport": "tcp",
+        "endpoint": {"host": "127.0.0.1", "port": server.port},
+    }
+    srv.INSTANCE_IDENTITY = srv.instance_manager.save(updated)
+    monkeypatch.setattr(srv, "LOCAL_NODE_ID", "!756f9960")
+    monkeypatch.setattr(srv, "RADIO_IDENTITY_RESULT", {"status": "MATCH", "detected": {}, "error": None})
+
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    router = TransportRouter(transport)
+    monkeypatch.setattr(srv, "transport_router", router)
+    srv.nodes.clear(); srv.chats.clear(); srv.messages.clear(); srv.seen_ids.clear(); srv.seen_recent_texts.clear()
+    srv.waypoint_store.delete_all()
+    from meshsrv import inbound_events
+    inbound_events.reset_inbound_stats()
+    srv.inbound_worker.__init__(
+        drain=srv.inbound_worker._drain, eligibility=srv.inbound_worker._eligibility,
+        ingest_text=srv.inbound_worker._ingest_text, ingest_waypoint=srv.inbound_worker._ingest_waypoint,
+        log=lambda *a, **k: None, log_system_event=lambda **k: None,
+    )
+    transport.connect(CD(type=CT.TCP, address=f"127.0.0.1:{server.port}"), timeout=10.0)
+    time.sleep(0.3)
+    return srv, transport, router, original
+
+
+def _tick_until(srv, predicate, timeout=10.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        srv.inbound_worker.tick()
+        if predicate():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def test_chain_real_radio_traffic_ends_up_in_messages_chats_and_waypoints(server_module, monkeypatch):
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    srv, transport, router, original = _chain(server_module, monkeypatch, server)
+    mca = []
+    monkeypatch.setattr(srv.mca_runtime, "handle_incoming_meshtastic_text",
+                        lambda text, node_id, r, **kw: mca.append((text, node_id, kw)))
+    try:
+        local = 0x756F9960
+        server.send_text("Привет TCP 👋", packet_id=101, channel=1)                       # channel text, unicode
+        server.send_text("psst, only you", packet_id=102, to_num=local, channel=0)        # direct message
+        server.send_text("MCA1:control", packet_id=103, to_num=local, channel=0)          # MCAttach control text
+        server.send_text("Привет TCP 👋", packet_id=101, channel=1)                       # the same packet again
+        server.send_waypoint(waypoint_id=940001, name="Cafe")
+        server.send_waypoint(waypoint_id=940001, name="Bar", latitude=50.5)               # an update, same id
+
+        assert _tick_until(srv, lambda: len(srv.messages) >= 3 and srv.waypoint_store.count() == 1
+                           and (srv.waypoint_store.get(940001) or {}).get("name") == "Bar")
+
+        texts = [(m["chat_id"], m["text"]) for m in srv.messages]
+        assert ("channel:1", "Привет TCP 👋") in texts, "exact unicode, on the right channel"
+        assert ("!1fa065f0", "psst, only you") in texts, "a DM lands in the sender's chat"
+        assert texts.count(("channel:1", "Привет TCP 👋")) == 1, "the replayed packet was not stored twice"
+        assert srv.chats["channel:1"]["unread"] == 1 and srv.chats["!1fa065f0"]["unread"] >= 2
+        assert [c[0] for c in mca] == ["MCA1:control"] and mca[0][1] == "!1fa065f0"
+        assert srv.waypoint_store.get(940001)["latitude"] == pytest.approx(50.5), "the update won, still one row"
+
+        assert server.accepted_connections == 1, "no second TCP connection was opened to receive"
+        stats = srv.inbound_worker.stats()
+        assert stats["malformed_events"] == 0 and stats["overflow_dropped"] == 0 and stats["ingest_errors"] == 0
+    finally:
+        transport.close()
+        server.shutdown()
+        srv.waypoint_store.delete_all()
+        srv.instance_manager.save(original)
+        srv.INSTANCE_IDENTITY = original
+
+
+def test_chain_keeps_receiving_after_a_reconnect_without_restarting_anything(server_module, monkeypatch):
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    srv, transport, router, original = _chain(server_module, monkeypatch, server)
+    try:
+        server.send_text("before the reconnect", packet_id=201, channel=1)
+        assert _tick_until(srv, lambda: len(srv.messages) == 1)
+
+        router.reconnect(timeout=30.0)
+        time.sleep(0.3)
+        server.send_text("after the reconnect", packet_id=202, channel=1)
+
+        assert _tick_until(srv, lambda: len(srv.messages) == 2)
+        assert [m["text"] for m in srv.messages] == ["before the reconnect", "after the reconnect"]
+        assert srv.inbound_worker.stats()["connection_generation"] == 2
+        assert server.max_concurrent_connections == 1
+    finally:
+        transport.close()
+        server.shutdown()
+        srv.instance_manager.save(original)
+        srv.INSTANCE_IDENTITY = original
+
+
+def test_chain_events_from_a_radio_that_is_not_the_accepted_one_are_never_stored(server_module, monkeypatch):
+    """The fake radio identifies as !756f9960; the accepted profile is another node."""
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    srv, transport, router, original = _chain(server_module, monkeypatch, server)
+    identity = dict(srv.INSTANCE_IDENTITY)
+    identity["radio"] = {**identity["radio"], "node_id": "!0badf00d"}
+    monkeypatch.setattr(srv, "INSTANCE_IDENTITY", identity)
+    monkeypatch.setattr(srv, "LOCAL_NODE_ID", "!0badf00d")
+    try:
+        server.send_text("from the wrong radio", packet_id=301, channel=1)
+        server.send_waypoint(waypoint_id=940002)
+
+        from meshsrv import inbound_events
+        assert _tick_until(srv, lambda: inbound_events.get_inbound_stats()["stale_identity_dropped"] >= 2)
+
+        assert srv.messages == [] and srv.waypoint_store.count() == 0
+        assert inbound_events.get_inbound_stats()["stale_identity_dropped"] == 2
+    finally:
+        transport.close()
+        server.shutdown()
+        srv.instance_manager.save(original)
+        srv.INSTANCE_IDENTITY = original

@@ -545,6 +545,8 @@ def _chain(server_module, monkeypatch, server):
     srv.inbound_worker.__init__(
         drain=srv.inbound_worker._drain, eligibility=srv.inbound_worker._eligibility,
         ingest_text=srv.inbound_worker._ingest_text, ingest_waypoint=srv.inbound_worker._ingest_waypoint,
+        ingest_nodeinfo=srv.inbound_worker._ingest_nodeinfo, ingest_position=srv.inbound_worker._ingest_position,
+        ingest_telemetry=srv.inbound_worker._ingest_telemetry,
         log=lambda *a, **k: None, log_system_event=lambda **k: None,
     )
     transport.connect(CD(type=CT.TCP, address=f"127.0.0.1:{server.port}"), timeout=10.0)

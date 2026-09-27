@@ -965,7 +965,7 @@
     "reception_label": "Вхідні повідомлення",
     "reception_not_supported": "Не приймаються (лише надсилання)",
     "network_rescan_no_changes": "Сканування мережі завершено, змін не знайдено",
-    "reception_tcp_partial": "Текст і waypoint"
+    "reception_tcp_partial": "Текст, waypoint, інфо про вузли й телеметрія"
   },
   "settings": {
     "title": "Налаштування",
@@ -1083,7 +1083,7 @@
     "meshtastic_tcp_connect_success": "Радіо через TCP підключено",
     "meshtastic_tcp_connect_failed": "Не вдалося підключитися",
     "meshtastic_tcp_host_required": "Потрібно вказати хост TCP",
-    "meshtastic_tcp_receive_warning": "Активний режим TCP. Вхідні повідомлення та телеметрія в реальному часі поки не підтримуються в цьому режимі.",
+    "meshtastic_tcp_receive_warning": "Активний режим TCP. Підтвердження доставки поки не приймаються в цьому режимі - для повного зворотного зв'язку щодо статусу використовуйте USB.",
     "epaper_title": "Дисплей E-Paper",
     "epaper_description": "Налаштування дисплея та відображення інформації.",
     "epaper_enabled": "Увімкнено",
@@ -1121,7 +1121,7 @@
     "files_description": "Передача файлів через Mesh за допомогою Relay-провайдерів.",
     "files_relay_providers": "Relay-провайдери",
     "files_relay_wizard": "Налаштувати Relay",
-    "meshtastic_tcp_receive_note": "Через TCP MeshCenter приймає текстові повідомлення та waypoint. Інформація про вузли, позиції та телеметрія поки не приймаються - для повного приймання використовуйте USB."
+    "meshtastic_tcp_receive_note": "Через TCP MeshCenter приймає текстові повідомлення, waypoint, інформацію про вузли, позиції та телеметрію. Підтвердження доставки поки не приймаються - для повного приймання використовуйте USB."
   },
   "modals": {
     "message_info": "Інформація про повідомлення",

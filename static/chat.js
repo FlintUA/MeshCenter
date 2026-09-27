@@ -2717,11 +2717,11 @@ function _meshtasticUpdateTransportButtons(activeType) {
     const receiveWarning = document.getElementById('meshtasticBleReceiveWarning');
     if (receiveWarning) receiveWarning.style.display = type === 'bluetooth' ? '' : 'none';
 
-    // TCP has the identical receive gap, for the identical reason (no
-    // inbound relay from the adapter subprocess back to Core yet - Radio
-    // TCP Transport part 2's own explicit scope decision) - own banner,
-    // own i18n key, since a future inbound-relay fix may land for TCP
-    // and BLE on different schedules.
+    // TCP receives text/waypoints/nodeinfo/position/telemetry (best-effort,
+    // meshsrv/inbound_worker.py) - unlike Bluetooth, it is not fully
+    // receive-blind. Its own banner/i18n key stays (own remaining gap:
+    // delivery acknowledgements), since Bluetooth's own receive-path fix,
+    // if it ever lands, is a separate, later stage.
     const tcpReceiveWarning = document.getElementById('meshtasticTcpReceiveWarning');
     if (tcpReceiveWarning) tcpReceiveWarning.style.display = type === 'tcp' ? '' : 'none';
 }

@@ -965,7 +965,7 @@
     "reception_label": "Incoming messages",
     "reception_not_supported": "Not received (send only)",
     "network_rescan_no_changes": "Network rescan completed, no changes found",
-    "reception_tcp_partial": "Text and waypoints"
+    "reception_tcp_partial": "Text, waypoints, node info & telemetry"
   },
   "settings": {
     "title": "Settings",
@@ -1083,7 +1083,7 @@
     "meshtastic_tcp_connect_success": "TCP radio connected",
     "meshtastic_tcp_connect_failed": "Unable to connect",
     "meshtastic_tcp_host_required": "A TCP host is required",
-    "meshtastic_tcp_receive_warning": "TCP mode is active. Incoming live messages and telemetry are not yet supported in this mode.",
+    "meshtastic_tcp_receive_warning": "TCP mode is active. Delivery acknowledgements are not received yet in this mode - use USB for full status feedback.",
     "epaper_title": "E-Paper Display",
     "epaper_description": "Display and information-display settings.",
     "epaper_enabled": "Enabled",
@@ -1121,7 +1121,7 @@
     "files_description": "File transfers over the Mesh via Relay providers.",
     "files_relay_providers": "Relay providers",
     "files_relay_wizard": "Set up a Relay",
-    "meshtastic_tcp_receive_note": "Over TCP, MeshCenter receives text messages and waypoints. Node info, positions and telemetry are not received yet - use USB for the full feed."
+    "meshtastic_tcp_receive_note": "Over TCP, MeshCenter receives text messages, waypoints, node info, positions and telemetry. Delivery acknowledgements are not received yet - use USB for the full feed."
   },
   "modals": {
     "message_info": "Message Info",

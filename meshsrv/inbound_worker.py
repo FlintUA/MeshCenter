@@ -23,6 +23,9 @@ import time
 from typing import Any, Callable, Optional
 
 from meshsrv.radio_transport import (
+    ReceivedNodeInfoEvent,
+    ReceivedPositionEvent,
+    ReceivedTelemetryEvent,
     ReceivedTextEvent,
     ReceivedWaypointEvent,
     TransportError,
@@ -57,6 +60,9 @@ class InboundWorker:
         eligibility: Callable[[], Optional[str]],
         ingest_text: Callable[[ReceivedTextEvent], Any],
         ingest_waypoint: Callable[[ReceivedWaypointEvent], Any],
+        ingest_nodeinfo: Callable[[ReceivedNodeInfoEvent], Any],
+        ingest_position: Callable[[ReceivedPositionEvent], Any],
+        ingest_telemetry: Callable[[ReceivedTelemetryEvent], Any],
         log: Callable[..., Any] = print,
         log_system_event: Optional[Callable[..., Any]] = None,
         clock: Callable[[], float] = time.monotonic,
@@ -66,6 +72,9 @@ class InboundWorker:
         self._eligibility = eligibility
         self._ingest_text = ingest_text
         self._ingest_waypoint = ingest_waypoint
+        self._ingest_nodeinfo = ingest_nodeinfo
+        self._ingest_position = ingest_position
+        self._ingest_telemetry = ingest_telemetry
         self._log = log
         self._log_system_event = log_system_event
         self._clock = clock
@@ -78,6 +87,9 @@ class InboundWorker:
             "drained_events": 0,
             "text_events": 0,
             "waypoint_events": 0,
+            "nodeinfo_events": 0,
+            "position_events": 0,
+            "telemetry_events": 0,
             "ingest_errors": 0,
             "malformed_events": 0,          # undecodable on the adapter or on this side
             "overflow_dropped": 0,          # discarded by the adapter's bounded queue
@@ -194,6 +206,15 @@ class InboundWorker:
                 elif isinstance(event, ReceivedWaypointEvent):
                     self._bump("waypoint_events")
                     self._ingest_waypoint(event)
+                elif isinstance(event, ReceivedNodeInfoEvent):
+                    self._bump("nodeinfo_events")
+                    self._ingest_nodeinfo(event)
+                elif isinstance(event, ReceivedPositionEvent):
+                    self._bump("position_events")
+                    self._ingest_position(event)
+                elif isinstance(event, ReceivedTelemetryEvent):
+                    self._bump("telemetry_events")
+                    self._ingest_telemetry(event)
                 else:
                     self._bump("malformed_events")
             except Exception as error:

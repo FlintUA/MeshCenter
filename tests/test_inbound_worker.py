@@ -11,6 +11,9 @@ from meshsrv import inbound_worker as iw
 from meshsrv.inbound_worker import InboundWorker
 from meshsrv.radio_transport import (
     ReceivedBatch,
+    ReceivedNodeInfoEvent,
+    ReceivedPositionEvent,
+    ReceivedTelemetryEvent,
     ReceivedTextEvent,
     ReceivedWaypointEvent,
     TransportError,
@@ -34,6 +37,27 @@ def waypoint_event(n=1):
     )
 
 
+def nodeinfo_event(n=1):
+    return ReceivedNodeInfoEvent(
+        node_id="!1fa065f0", sender_id="!1fa065f0", received_at=1.0,
+        local_radio_node_id=LOCAL, packet_id=n, long_name="Test Node",
+    )
+
+
+def position_event(n=1):
+    return ReceivedPositionEvent(
+        sender_id="!1fa065f0", received_at=1.0, local_radio_node_id=LOCAL,
+        packet_id=n, latitude=50.0, longitude=30.0,
+    )
+
+
+def telemetry_event(n=1):
+    return ReceivedTelemetryEvent(
+        sender_id="!1fa065f0", kind="device", metrics={"batteryLevel": 80}, received_at=1.0,
+        local_radio_node_id=LOCAL, packet_id=n,
+    )
+
+
 class Clock:
     def __init__(self):
         self.now = 1000.0
@@ -49,6 +73,7 @@ class Harness:
         self.system_events = []
         self.drain_calls = []
         self.texts, self.waypoints = [], []
+        self.nodeinfos, self.positions, self.telemetries = [], [], []
         self.drains = list(drains or [])
         self.eligibility_value = eligibility
         self.worker = InboundWorker(
@@ -56,6 +81,9 @@ class Harness:
             eligibility=lambda: self.eligibility_value,
             ingest_text=self.texts.append,
             ingest_waypoint=self.waypoints.append,
+            ingest_nodeinfo=self.nodeinfos.append,
+            ingest_position=self.positions.append,
+            ingest_telemetry=self.telemetries.append,
             log=lambda message, **kw: self.logs.append(message),
             log_system_event=lambda **kw: self.system_events.append(kw),
             clock=self.clock,
@@ -100,6 +128,19 @@ def test_eligible_drains_and_routes_each_event_to_its_ingest():
     stats = h.worker.stats()
     assert (stats["drained_events"], stats["text_events"], stats["waypoint_events"]) == (3, 2, 1)
     assert stats["connection_generation"] == 4 and stats["status"] == "ingesting"
+
+
+def test_nodeinfo_position_and_telemetry_route_to_their_own_ingest():
+    h = Harness(drains=[ReceivedBatch(events=(nodeinfo_event(1), position_event(2), telemetry_event(3)))])
+
+    assert h.worker.tick() == "ingesting"
+
+    assert [e.packet_id for e in h.nodeinfos] == [1]
+    assert [e.packet_id for e in h.positions] == [2]
+    assert [e.packet_id for e in h.telemetries] == [3]
+    stats = h.worker.stats()
+    assert (stats["nodeinfo_events"], stats["position_events"], stats["telemetry_events"]) == (1, 1, 1)
+    assert stats["malformed_events"] == 0
 
 
 def test_a_broken_eligibility_check_never_takes_the_worker_down():
@@ -252,7 +293,8 @@ def test_statistics_never_contain_message_text():
     wire = json.dumps(h.worker.stats())
     assert "private" not in wire
     assert set(h.worker.stats()) >= {
-        "ticks", "drains", "drained_events", "text_events", "waypoint_events", "ingest_errors",
+        "ticks", "drains", "drained_events", "text_events", "waypoint_events",
+        "nodeinfo_events", "position_events", "telemetry_events", "ingest_errors",
         "malformed_events", "overflow_dropped", "discarded_on_identity_refusal", "soft_errors",
         "status", "waiting_reason", "last_drain_age_s", "connection_generation",
     }

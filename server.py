@@ -3942,15 +3942,19 @@ inbound_worker = inbound_worker_module.InboundWorker(
     eligibility=inbound_eligibility,
     ingest_text=lambda event: inbound_events.ingest_received_text(event, _inbound_deps()),
     ingest_waypoint=lambda event: inbound_events.ingest_received_waypoint(event, _inbound_deps(), source="tcp"),
+    ingest_nodeinfo=lambda event: inbound_events.ingest_received_nodeinfo(event, _inbound_deps()),
+    ingest_position=lambda event: inbound_events.ingest_received_position(event, _inbound_deps()),
+    ingest_telemetry=lambda event: inbound_events.ingest_received_telemetry(event, _inbound_deps()),
     log=print,
     log_system_event=log_system_event,
 )
 
 
 def radio_inbound_worker():
-    """Thread target: TCP inbound text/waypoints -> the shared Core ingest.
-    Started for every transport (an idle tick is a couple of dict reads every
-    few seconds); eligibility decides per tick whether to do anything."""
+    """Thread target: TCP inbound text/waypoints/nodeinfo/position/telemetry ->
+    the shared Core ingest. Started for every transport (an idle tick is a
+    couple of dict reads every few seconds); eligibility decides per tick
+    whether to do anything."""
     inbound_worker.run_forever()
 
 

@@ -294,17 +294,20 @@ session is torn down because its identity was refused (MISMATCH / NOT_FOUND),
 whatever the adapter queue captured is drained and discarded.
 
 Counters (counts and states only) are in `GET /api/radio_health` under
-`inbound`: `worker` (drained_events, text_events, waypoint_events, ingest_errors,
+`inbound`: `worker` (drained_events, text_events, waypoint_events,
+nodeinfo_events, position_events, telemetry_events, ingest_errors,
 malformed_events, overflow_dropped, discarded_on_identity_refusal, soft_errors,
 status, waiting_reason, last_drain_age_s, connection_generation) and `ingest`
-(text_stored, duplicates, waypoint created/updated/duplicate,
-stale_identity_dropped). The adapter's own `received_*` / `queue_depth` counters
-stay adapter-side (`TCPTransport.get_receive_stats()`).
+(text_stored, duplicates, waypoint created/updated/duplicate, nodeinfo_stored,
+nodeinfo_skipped_local, position_stored, position_no_position, telemetry_stored,
+stale_identity_dropped, and a `*_no_node_id` counter per new kind). The
+adapter's own `received_*` / `queue_depth` counters stay adapter-side
+(`TCPTransport.get_receive_stats()`).
 
 Delivery is best-effort with Core-side duplicate suppression: an event captured
 while the TCP link is down, or buffered only inside an adapter process that is
-killed before the next drain, can be lost. Out of scope (later stages): NodeInfo /
-position / telemetry, routing ACKs, Bluetooth receive, remote waypoint deletion.
+killed before the next drain, can be lost. Out of scope (later stages): routing
+ACKs, Bluetooth receive, remote waypoint deletion.
 
 ### TCP capture (adapter side)
 

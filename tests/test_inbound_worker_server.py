@@ -14,6 +14,9 @@ from meshsrv.radio_transport import (
     ConnectionState,
     ConnectionType,
     ReceivedBatch,
+    ReceivedNodeInfoEvent,
+    ReceivedPositionEvent,
+    ReceivedTelemetryEvent,
     ReceivedTextEvent,
     ReceivedWaypointEvent,
     TransportError,
@@ -73,6 +76,8 @@ def tcp(server_module, monkeypatch):
     srv.inbound_worker.__init__(
         drain=srv.inbound_worker._drain, eligibility=srv.inbound_worker._eligibility,
         ingest_text=srv.inbound_worker._ingest_text, ingest_waypoint=srv.inbound_worker._ingest_waypoint,
+        ingest_nodeinfo=srv.inbound_worker._ingest_nodeinfo, ingest_position=srv.inbound_worker._ingest_position,
+        ingest_telemetry=srv.inbound_worker._ingest_telemetry,
         log=lambda *a, **k: None, log_system_event=lambda **k: None,
     )
     yield srv, queue
@@ -96,6 +101,28 @@ def _waypoint(srv, waypoint_id=930001, name="Cafe", lat=50.4501, radio=None):
         waypoint_id=waypoint_id, sender_id=REMOTE, name=name, description="meet here", received_at=1790455379.0,
         local_radio_node_id=radio or srv.active_radio_node_id(), packet_id=102,
         latitude=lat, longitude=30.5234, icon=128205, expire_at=4102444800, channel_index=1,
+    )
+
+
+def _nodeinfo(srv, node_id=REMOTE, *, long_name="Test Node", radio=None, packet_id=201):
+    return ReceivedNodeInfoEvent(
+        node_id=node_id, sender_id=node_id, received_at=1790455379.0,
+        local_radio_node_id=radio or srv.active_radio_node_id(), packet_id=packet_id,
+        long_name=long_name, short_name="TST", hw_model="RAK4631", role="ROUTER",
+    )
+
+
+def _position(srv, *, sender=REMOTE, lat=50.4501, lon=30.5234, radio=None, packet_id=202):
+    return ReceivedPositionEvent(
+        sender_id=sender, received_at=1790455379.0, local_radio_node_id=radio or srv.active_radio_node_id(),
+        packet_id=packet_id, latitude=lat, longitude=lon,
+    )
+
+
+def _telemetry(srv, *, sender=REMOTE, kind="device", metrics=None, radio=None, packet_id=203):
+    return ReceivedTelemetryEvent(
+        sender_id=sender, kind=kind, metrics=metrics or {"batteryLevel": 80, "voltage": 3.9},
+        received_at=1790455379.0, local_radio_node_id=radio or srv.active_radio_node_id(), packet_id=packet_id,
     )
 
 
@@ -301,20 +328,79 @@ def test_a_waypoint_without_a_position_is_skipped(tcp):
     assert srv.waypoint_store.count() == 0
 
 
+# --- nodeinfo / position / telemetry (PR D) ------------------------------------------------
+
+
+def test_a_nodeinfo_creates_a_node(tcp):
+    srv, queue = tcp
+    queue.push(_nodeinfo(srv))
+
+    assert srv.inbound_worker.tick() == "ingesting"
+
+    node = srv.nodes[REMOTE]
+    assert (node["name"], node["short_name"], node["hw_model"], node["role"]) == ("Test Node", "TST", "RAK4631", "ROUTER")
+    assert srv.inbound_worker.stats()["nodeinfo_events"] == 1
+    assert inbound_events.get_inbound_stats()["nodeinfo_stored"] == 1
+
+
+def test_a_position_sets_the_nodes_position(tcp):
+    srv, queue = tcp
+    queue.push(_position(srv))
+
+    srv.inbound_worker.tick()
+
+    assert srv.nodes[REMOTE]["position"] == {"latitude": pytest.approx(50.4501), "longitude": pytest.approx(30.5234)}
+    assert srv.inbound_worker.stats()["position_events"] == 1
+
+
+def test_telemetry_updates_the_nodes_metrics(tcp, monkeypatch):
+    srv, queue = tcp
+    monkeypatch.setattr(srv.telemetry, "add_node_telemetry_record", lambda *a, **k: None)
+    queue.push(_telemetry(srv))
+
+    srv.inbound_worker.tick()
+
+    node = srv.nodes[REMOTE]
+    assert node["battery_level"] == 80 and node["voltage"] == 3.9 and node["telemetry_source"] == "tcp"
+    assert srv.inbound_worker.stats()["telemetry_events"] == 1
+
+
+def test_the_local_node_is_skipped_for_nodeinfo_but_not_for_telemetry(tcp, monkeypatch):
+    srv, queue = tcp
+    monkeypatch.setattr(srv.telemetry, "add_node_telemetry_record", lambda *a, **k: None)
+    local = srv.active_radio_node_id()
+    queue.push(_nodeinfo(srv, node_id=local, packet_id=1), _telemetry(srv, sender=local, packet_id=2))
+
+    srv.inbound_worker.tick()
+
+    assert inbound_events.get_inbound_stats()["nodeinfo_skipped_local"] == 1
+    assert local not in srv.nodes or srv.nodes[local].get("short_name") != "TST", "nodeinfo never wrote the local node"
+    assert srv.nodes[local]["battery_level"] == 80, "apply_node_telemetry() still updates the local node's own metrics"
+
+
 # --- safety: stale radio (plan 43 / 68) ---------------------------------------------------
 
 
 def test_events_from_another_radio_are_dropped_before_anything_is_stored(tcp):
     srv, queue = tcp
     queue.push(_text(srv, "for another radio", radio="!0badf00d"), _waypoint(srv, radio="!0badf00d"),
+               _nodeinfo(srv, radio="!0badf00d", packet_id=99), _position(srv, radio="!0badf00d", packet_id=98),
+               _telemetry(srv, radio="!0badf00d", packet_id=97),
                _text(srv, "for this radio", packet_id=2))
 
     srv.inbound_worker.tick()
 
     assert [m["text"] for m in _stored(srv)] == ["for this radio"]
     assert srv.waypoint_store.count() == 0
-    assert inbound_events.get_inbound_stats()["stale_identity_dropped"] == 2
-    assert srv.inbound_worker.stats()["drained_events"] == 3
+    # The legit text still updates REMOTE's node; the 3 new stale kinds never
+    # touched it - none of their own fields made it in (short_name/position
+    # are also set by the text path itself, to their own text-path defaults).
+    node = srv.nodes[REMOTE]
+    assert node["short_name"] != "TST" and node.get("hw_model") != "RAK4631" and node.get("role") != "ROUTER"
+    assert node.get("position") is None
+    assert "battery_level" not in node
+    assert inbound_events.get_inbound_stats()["stale_identity_dropped"] == 5
+    assert srv.inbound_worker.stats()["drained_events"] == 6
 
 
 def test_events_queued_for_radio_a_are_dropped_after_switching_to_radio_b(tcp, monkeypatch):
@@ -479,3 +565,17 @@ def test_radio_health_reports_inbound_counters_without_any_message_text(tcp):
     assert inbound["worker"]["text_events"] == 1 and inbound["worker"]["drained_events"] == 1
     assert inbound["ingest"]["text_stored"] == 1
     assert "private" not in json.dumps(inbound)
+
+
+def test_radio_health_also_reports_nodeinfo_position_and_telemetry_counters(tcp, monkeypatch):
+    srv, queue = tcp
+    monkeypatch.setattr(srv.telemetry, "add_node_telemetry_record", lambda *a, **k: None)
+    queue.push(_nodeinfo(srv), _position(srv), _telemetry(srv))
+    srv.inbound_worker.tick()
+
+    with srv.app.test_request_context("/api/radio_health"):
+        data = srv.api_radio_health().get_json()
+
+    worker, ingest = data["inbound"]["worker"], data["inbound"]["ingest"]
+    assert (worker["nodeinfo_events"], worker["position_events"], worker["telemetry_events"]) == (1, 1, 1)
+    assert (ingest["nodeinfo_stored"], ingest["position_stored"], ingest["telemetry_stored"]) == (1, 1, 1)

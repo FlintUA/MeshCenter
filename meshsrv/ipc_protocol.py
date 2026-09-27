@@ -32,6 +32,9 @@ from meshsrv.radio_transport import (
     OutgoingWaypoint,
     ReceivedBatch,
     ReceivedEvent,
+    ReceivedNodeInfoEvent,
+    ReceivedPositionEvent,
+    ReceivedTelemetryEvent,
     ReceivedTextEvent,
     ReceivedWaypointEvent,
     SendResult,
@@ -310,6 +313,9 @@ def channel_info_from_dict(data: dict) -> ChannelInfo:
 # adopted), and the event constructors reject non-plain types.
 RECEIVED_KIND_TEXT = "text"
 RECEIVED_KIND_WAYPOINT = "waypoint"
+RECEIVED_KIND_NODEINFO = "nodeinfo"
+RECEIVED_KIND_POSITION = "position"
+RECEIVED_KIND_TELEMETRY = "telemetry"
 
 
 def received_text_to_dict(event: ReceivedTextEvent) -> dict:
@@ -388,11 +394,152 @@ def received_waypoint_from_dict(data: dict) -> ReceivedWaypointEvent:
     )
 
 
+def received_nodeinfo_to_dict(event: ReceivedNodeInfoEvent) -> dict:
+    return {
+        "node_id": event.node_id,
+        "sender_id": event.sender_id,
+        "received_at": event.received_at,
+        "local_radio_node_id": event.local_radio_node_id,
+        "packet_id": event.packet_id,
+        "long_name": event.long_name,
+        "short_name": event.short_name,
+        "hw_model": event.hw_model,
+        "role": event.role,
+        "is_licensed": event.is_licensed,
+        "channel_index": event.channel_index,
+        "rx_time": event.rx_time,
+        "rx_rssi": event.rx_rssi,
+        "rx_snr": event.rx_snr,
+        "hop_limit": event.hop_limit,
+        "hop_start": event.hop_start,
+        "relay_node": event.relay_node,
+    }
+
+
+def received_nodeinfo_from_dict(data: dict) -> ReceivedNodeInfoEvent:
+    return ReceivedNodeInfoEvent(
+        node_id=data["node_id"],
+        sender_id=data["sender_id"],
+        received_at=data["received_at"],
+        local_radio_node_id=data["local_radio_node_id"],
+        packet_id=data.get("packet_id"),
+        long_name=data.get("long_name"),
+        short_name=data.get("short_name"),
+        hw_model=data.get("hw_model"),
+        role=data.get("role"),
+        is_licensed=data.get("is_licensed"),
+        channel_index=data.get("channel_index"),
+        rx_time=data.get("rx_time"),
+        rx_rssi=data.get("rx_rssi"),
+        rx_snr=data.get("rx_snr"),
+        hop_limit=data.get("hop_limit"),
+        hop_start=data.get("hop_start"),
+        relay_node=data.get("relay_node"),
+    )
+
+
+def received_position_to_dict(event: ReceivedPositionEvent) -> dict:
+    return {
+        "sender_id": event.sender_id,
+        "received_at": event.received_at,
+        "local_radio_node_id": event.local_radio_node_id,
+        "packet_id": event.packet_id,
+        "latitude": event.latitude,
+        "longitude": event.longitude,
+        "altitude": event.altitude,
+        "ground_speed": event.ground_speed,
+        "sats_in_view": event.sats_in_view,
+        "position_time": event.position_time,
+        "channel_index": event.channel_index,
+        "rx_time": event.rx_time,
+        "rx_rssi": event.rx_rssi,
+        "rx_snr": event.rx_snr,
+        "hop_limit": event.hop_limit,
+        "hop_start": event.hop_start,
+        "relay_node": event.relay_node,
+    }
+
+
+def received_position_from_dict(data: dict) -> ReceivedPositionEvent:
+    return ReceivedPositionEvent(
+        sender_id=data["sender_id"],
+        received_at=data["received_at"],
+        local_radio_node_id=data["local_radio_node_id"],
+        packet_id=data.get("packet_id"),
+        latitude=data.get("latitude"),
+        longitude=data.get("longitude"),
+        altitude=data.get("altitude"),
+        ground_speed=data.get("ground_speed"),
+        sats_in_view=data.get("sats_in_view"),
+        position_time=data.get("position_time"),
+        channel_index=data.get("channel_index"),
+        rx_time=data.get("rx_time"),
+        rx_rssi=data.get("rx_rssi"),
+        rx_snr=data.get("rx_snr"),
+        hop_limit=data.get("hop_limit"),
+        hop_start=data.get("hop_start"),
+        relay_node=data.get("relay_node"),
+    )
+
+
+def received_telemetry_to_dict(event: ReceivedTelemetryEvent) -> dict:
+    return {
+        "sender_id": event.sender_id,
+        "kind": event.kind,
+        "metrics": dict(event.metrics),
+        "received_at": event.received_at,
+        "local_radio_node_id": event.local_radio_node_id,
+        "packet_id": event.packet_id,
+        "telemetry_time": event.telemetry_time,
+        "channel_index": event.channel_index,
+        "rx_time": event.rx_time,
+        "rx_rssi": event.rx_rssi,
+        "rx_snr": event.rx_snr,
+        "hop_limit": event.hop_limit,
+        "hop_start": event.hop_start,
+        "relay_node": event.relay_node,
+    }
+
+
+def received_telemetry_from_dict(data: dict) -> ReceivedTelemetryEvent:
+    return ReceivedTelemetryEvent(
+        sender_id=data["sender_id"],
+        kind=data["kind"],
+        metrics=data["metrics"],
+        received_at=data["received_at"],
+        local_radio_node_id=data["local_radio_node_id"],
+        packet_id=data.get("packet_id"),
+        telemetry_time=data.get("telemetry_time"),
+        channel_index=data.get("channel_index"),
+        rx_time=data.get("rx_time"),
+        rx_rssi=data.get("rx_rssi"),
+        rx_snr=data.get("rx_snr"),
+        hop_limit=data.get("hop_limit"),
+        hop_start=data.get("hop_start"),
+        relay_node=data.get("relay_node"),
+    )
+
+
+_RECEIVED_TO_DICT = {
+    ReceivedTextEvent: (RECEIVED_KIND_TEXT, received_text_to_dict),
+    ReceivedWaypointEvent: (RECEIVED_KIND_WAYPOINT, received_waypoint_to_dict),
+    ReceivedNodeInfoEvent: (RECEIVED_KIND_NODEINFO, received_nodeinfo_to_dict),
+    ReceivedPositionEvent: (RECEIVED_KIND_POSITION, received_position_to_dict),
+    ReceivedTelemetryEvent: (RECEIVED_KIND_TELEMETRY, received_telemetry_to_dict),
+}
+_RECEIVED_FROM_DICT = {
+    RECEIVED_KIND_TEXT: received_text_from_dict,
+    RECEIVED_KIND_WAYPOINT: received_waypoint_from_dict,
+    RECEIVED_KIND_NODEINFO: received_nodeinfo_from_dict,
+    RECEIVED_KIND_POSITION: received_position_from_dict,
+    RECEIVED_KIND_TELEMETRY: received_telemetry_from_dict,
+}
+
+
 def received_event_to_dict(event: ReceivedEvent) -> dict:
-    if isinstance(event, ReceivedTextEvent):
-        return {"kind": RECEIVED_KIND_TEXT, RECEIVED_KIND_TEXT: received_text_to_dict(event)}
-    if isinstance(event, ReceivedWaypointEvent):
-        return {"kind": RECEIVED_KIND_WAYPOINT, RECEIVED_KIND_WAYPOINT: received_waypoint_to_dict(event)}
+    for event_type, (kind, to_dict) in _RECEIVED_TO_DICT.items():
+        if isinstance(event, event_type):
+            return {"kind": kind, kind: to_dict(event)}
     raise TypeError(f"not a received event: {type(event).__name__}")
 
 
@@ -402,14 +549,13 @@ def received_event_from_dict(data: dict) -> ReceivedEvent:
     wrongly-typed or empty-where-forbidden one - an adapter that sends
     something malformed must be loud, not silently coerced."""
     kind = data.get("kind") if isinstance(data, dict) else None
-    if kind not in (RECEIVED_KIND_TEXT, RECEIVED_KIND_WAYPOINT):
+    from_dict = _RECEIVED_FROM_DICT.get(kind)
+    if from_dict is None:
         raise ValueError(f"unknown received event kind: {kind!r}")
     body = data.get(kind)
     if not isinstance(body, dict):
         raise ValueError(f"received {kind} event has no {kind!r} object")
-    if kind == RECEIVED_KIND_TEXT:
-        return received_text_from_dict(body)
-    return received_waypoint_from_dict(body)
+    return from_dict(body)
 
 
 def received_batch_to_dict(batch: ReceivedBatch) -> dict:

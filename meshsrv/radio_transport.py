@@ -342,6 +342,27 @@ def _field_optional_float(owner: str, name: str, value) -> Optional[float]:
     return None if value is None else _field_float(owner, name, value)
 
 
+def _field_optional_bool(owner: str, name: str, value) -> Optional[bool]:
+    if value is not None and type(value) is not bool:
+        raise TypeError(f"{owner}.{name} must be bool, got {type(value).__name__}")
+    return value
+
+
+def _field_metrics(owner: str, name: str, value) -> dict:
+    """A flat {str: int|float} dict (one Telemetry variant's fields) - the one
+    place a received event carries more than a handful of fixed columns.
+    Still no nesting, no bytes, no protobuf: every key is a plain str, every
+    value a plain int/float (bool rejected, same as everywhere else)."""
+    if type(value) is not dict:
+        raise TypeError(f"{owner}.{name} must be dict, got {type(value).__name__}")
+    for key, metric in value.items():
+        if type(key) is not str:
+            raise TypeError(f"{owner}.{name} has a non-str key: {key!r}")
+        if type(metric) not in (int, float):
+            raise TypeError(f"{owner}.{name}[{key!r}] must be a number, got {type(metric).__name__}")
+    return dict(value)
+
+
 @dataclass(frozen=True)
 class ReceivedTextEvent:
     from_node_id: str
@@ -403,7 +424,149 @@ class ReceivedWaypointEvent:
         object.__setattr__(self, "longitude", _field_optional_float(owner, "longitude", self.longitude))
 
 
-ReceivedEvent = Union[ReceivedTextEvent, ReceivedWaypointEvent]
+@dataclass(frozen=True)
+class ReceivedNodeInfoEvent:
+    """One User/NODEINFO_APP packet - a node announcing its own identity.
+    `node_id` is the User payload's own id (the node this info is ABOUT);
+    `sender_id` is who the packet arrived from (built from the numeric `from`,
+    same convention as ReceivedWaypointEvent.sender_id) - normally the same
+    node, kept separate because they come from different parts of the packet
+    and a mesh can in principle relay one for another.
+
+    `hw_model` / `role` arrive from the library as enum NAME strings (e.g.
+    "RAK4631", "ROUTER"), never the raw int - already true of the library's
+    own MessageToDict output, not a conversion this event performs.
+    `macaddr` / `public_key` are deliberately NOT carried: neither is needed
+    by anything Core does with a NodeInfo today, and there is no reason to
+    move a device's MAC or its crypto public key through IPC/storage/logs
+    that doesn't already need them - a narrower default than the library's
+    own dict, not an oversight (see the field-by-field serializer contract
+    this whole module follows)."""
+
+    node_id: str
+    sender_id: str
+    received_at: float
+    local_radio_node_id: str
+    packet_id: Optional[int] = None
+    long_name: Optional[str] = None
+    short_name: Optional[str] = None
+    hw_model: Optional[str] = None
+    role: Optional[str] = None
+    is_licensed: Optional[bool] = None
+    channel_index: Optional[int] = None
+    rx_time: Optional[int] = None
+    rx_rssi: Optional[int] = None
+    rx_snr: Optional[float] = None
+    hop_limit: Optional[int] = None
+    hop_start: Optional[int] = None
+    relay_node: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        owner = type(self).__name__
+        _field_str(owner, "node_id", self.node_id)
+        _field_str(owner, "sender_id", self.sender_id)
+        object.__setattr__(self, "received_at", _field_float(owner, "received_at", self.received_at))
+        _field_nonempty_str(owner, "local_radio_node_id", self.local_radio_node_id)
+        for name in ("long_name", "short_name", "hw_model", "role"):
+            value = getattr(self, name)
+            if value is not None:
+                _field_str(owner, name, value)
+        object.__setattr__(self, "is_licensed", _field_optional_bool(owner, "is_licensed", self.is_licensed))
+        for name in ("packet_id", "channel_index", "rx_time", "rx_rssi", "hop_limit", "hop_start", "relay_node"):
+            _field_optional_int(owner, name, getattr(self, name))
+        object.__setattr__(self, "rx_snr", _field_optional_float(owner, "rx_snr", self.rx_snr))
+
+
+@dataclass(frozen=True)
+class ReceivedPositionEvent:
+    """One Position/POSITION_APP packet. `latitude`/`longitude` are plain
+    degrees - the library's own _fixupPosition already converts latitudeI/
+    longitudeI (1e-7 deg) to these before publishing, so (unlike Waypoint,
+    whose serial/CLI path never gets that conversion for free) no manual /1e7
+    division happens here; the adapter only reads the already-converted
+    fields. `position_time` is the Position payload's own GPS/reported time,
+    kept distinct from the packet's own `rx_time`."""
+
+    sender_id: str
+    received_at: float
+    local_radio_node_id: str
+    packet_id: Optional[int] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    altitude: Optional[int] = None
+    ground_speed: Optional[int] = None
+    sats_in_view: Optional[int] = None
+    position_time: Optional[int] = None
+    channel_index: Optional[int] = None
+    rx_time: Optional[int] = None
+    rx_rssi: Optional[int] = None
+    rx_snr: Optional[float] = None
+    hop_limit: Optional[int] = None
+    hop_start: Optional[int] = None
+    relay_node: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        owner = type(self).__name__
+        _field_str(owner, "sender_id", self.sender_id)
+        object.__setattr__(self, "received_at", _field_float(owner, "received_at", self.received_at))
+        _field_nonempty_str(owner, "local_radio_node_id", self.local_radio_node_id)
+        object.__setattr__(self, "latitude", _field_optional_float(owner, "latitude", self.latitude))
+        object.__setattr__(self, "longitude", _field_optional_float(owner, "longitude", self.longitude))
+        for name in ("packet_id", "altitude", "ground_speed", "sats_in_view", "position_time",
+                     "channel_index", "rx_time", "rx_rssi", "hop_limit", "hop_start", "relay_node"):
+            _field_optional_int(owner, name, getattr(self, name))
+        object.__setattr__(self, "rx_snr", _field_optional_float(owner, "rx_snr", self.rx_snr))
+
+
+TELEMETRY_KINDS = ("device", "environment", "power")
+
+
+@dataclass(frozen=True)
+class ReceivedTelemetryEvent:
+    """One Telemetry/TELEMETRY_APP packet. Telemetry is a protobuf `oneof` -
+    exactly one of device/environment/power metrics is present per packet -
+    so, like the existing (Core-internal, polled) TelemetryEvent above, this
+    carries `kind` + a flat `metrics` dict rather than one dataclass field per
+    possible metric across all three variants (5 + 22 + 16 fields, almost
+    always empty) - the exploded-field shape that fits Text/Waypoint/NodeInfo/
+    Position does not fit telemetry's own shape. `metrics` is still validated
+    (str keys, plain int/float values, no nesting) by the same discipline as
+    every other field this module carries - see _field_metrics().
+    `telemetry_time` is the Telemetry payload's own `time` field, distinct
+    from the packet's `rx_time`."""
+
+    sender_id: str
+    kind: str  # "device" | "environment" | "power"
+    metrics: dict
+    received_at: float
+    local_radio_node_id: str
+    packet_id: Optional[int] = None
+    telemetry_time: Optional[int] = None
+    channel_index: Optional[int] = None
+    rx_time: Optional[int] = None
+    rx_rssi: Optional[int] = None
+    rx_snr: Optional[float] = None
+    hop_limit: Optional[int] = None
+    hop_start: Optional[int] = None
+    relay_node: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        owner = type(self).__name__
+        _field_str(owner, "sender_id", self.sender_id)
+        if self.kind not in TELEMETRY_KINDS:
+            raise ValueError(f"{owner}.kind must be one of {TELEMETRY_KINDS}, got {self.kind!r}")
+        object.__setattr__(self, "metrics", _field_metrics(owner, "metrics", self.metrics))
+        object.__setattr__(self, "received_at", _field_float(owner, "received_at", self.received_at))
+        _field_nonempty_str(owner, "local_radio_node_id", self.local_radio_node_id)
+        for name in ("packet_id", "telemetry_time", "channel_index", "rx_time", "rx_rssi",
+                     "hop_limit", "hop_start", "relay_node"):
+            _field_optional_int(owner, name, getattr(self, name))
+        object.__setattr__(self, "rx_snr", _field_optional_float(owner, "rx_snr", self.rx_snr))
+
+
+ReceivedEvent = Union[
+    ReceivedTextEvent, ReceivedWaypointEvent, ReceivedNodeInfoEvent, ReceivedPositionEvent, ReceivedTelemetryEvent,
+]
 
 
 @dataclass(frozen=True)
@@ -427,7 +590,10 @@ class ReceivedBatch:
         owner = type(self).__name__
         object.__setattr__(self, "events", tuple(self.events))
         for event in self.events:
-            if not isinstance(event, (ReceivedTextEvent, ReceivedWaypointEvent)):
+            if not isinstance(event, (
+                ReceivedTextEvent, ReceivedWaypointEvent, ReceivedNodeInfoEvent,
+                ReceivedPositionEvent, ReceivedTelemetryEvent,
+            )):
                 raise TypeError(f"{owner}.events holds a {type(event).__name__}, not a received event")
         _field_int(owner, "dropped", self.dropped)
         _field_int(owner, "malformed", self.malformed)

@@ -368,6 +368,18 @@ def ingest_received_text(
                 or deps.find_message_by_packet_id(event.reply_id)
             )
             reply_to = deps.build_reply_reference(original)
+        # TEMPORARY (Reply Metadata Consistency investigation, PR 1 - remove
+        # once the live root cause is confirmed): counts and identifiers only,
+        # never message text/quoted text - see this project's own diagnostic
+        # logging convention elsewhere in this module.
+        deps.log(
+            f"[INBOUND REPLY] packet_id={pid} reply_id={event.reply_id} chat_id={chat_id} "
+            f"original_found={'true' if original else 'false'} "
+            f"matched_original_packet_id={(original or {}).get('packet_id')} "
+            f"transport={'serial' if line_context is not None else 'tcp'} "
+            f"local_radio_node_id={event.local_radio_node_id}",
+            flush=True,
+        )
 
     with deps.state_lock:
         deps.add_message(

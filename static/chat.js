@@ -6123,6 +6123,37 @@ function initializeMessageActions() {
     container.addEventListener('scroll', closeMessageActionsMenu, { passive: true });
 }
 
+// Reply Metadata Consistency (PR 2): three states, never a silent fourth
+// (plain bubble) for something that actually was a reply.
+//   A. msg.reply_to resolved -> quote with sender + text preview, clickable
+//      (scrolls to the original if it is currently rendered).
+//   B. msg.reply_id present but msg.reply_to is not -> a neutral, static
+//      (non-clickable - there is no message id to scroll to) indicator.
+//      Never shown as an ordinary bubble: that would misrepresent the
+//      message as something it isn't. The packet id itself is a protocol
+//      detail and is never shown here (see the execution plan's own
+//      "don't show packet id to the user by default").
+//   C. neither -> no reply decoration at all (unchanged).
+function buildReplyBlockHtml(msg) {
+    const reply = msg.reply_to && typeof msg.reply_to === 'object' ? msg.reply_to : null;
+    if (reply) {
+        return `
+            <button type="button" class="message-reply-quote" data-reply-message-id="${escapeHtml(String(reply.id || ''))}" title="${escapeHtml(window.I18N.t('chat.referenced_message'))}">
+                <span class="message-reply-label">↪ ${escapeHtml(String(reply.sender || window.I18N.t('nodes.unknown_node')))}</span>
+                <span class="message-reply-text">${escapeHtml(String(reply.text || ''))}</span>
+            </button>
+        `;
+    }
+    if (msg.reply_id !== undefined && msg.reply_id !== null) {
+        return `
+            <div class="message-reply-quote message-reply-quote--unresolved" title="${escapeHtml(window.I18N.t('chat.original_message_unavailable'))}">
+                <span class="message-reply-label">↪ ${escapeHtml(window.I18N.t('chat.reply_unresolved'))}</span>
+            </div>
+        `;
+    }
+    return '';
+}
+
 // ============================================================
 // RENDER MESSAGES (with force update when container shows loading)
 // ============================================================
@@ -6185,13 +6216,7 @@ function renderMessages(container, messages, chatId) {
             const time = escapeHtml(msg.time || '');
 
             const messageId = escapeHtml(String(msg.id || ''));
-            const reply = msg.reply_to && typeof msg.reply_to === 'object' ? msg.reply_to : null;
-            const replyBlock = reply ? `
-                <button type="button" class="message-reply-quote" data-reply-message-id="${escapeHtml(String(reply.id || ''))}" title="${escapeHtml(window.I18N.t('chat.referenced_message'))}">
-                    <span class="message-reply-label">↪ ${escapeHtml(String(reply.sender || window.I18N.t('nodes.unknown_node')))}</span>
-                    <span class="message-reply-text">${escapeHtml(String(reply.text || ''))}</span>
-                </button>
-            ` : '';
+            const replyBlock = buildReplyBlockHtml(msg);
             const actionsButton = msg.id ? `
                 <button type="button"
                         class="message-actions-trigger"

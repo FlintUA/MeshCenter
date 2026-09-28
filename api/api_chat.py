@@ -46,6 +46,7 @@ def register_chat_routes(
     radio_event,
     is_radio_available,
     update_message_status,
+    resolve_reply_reference,
 ):
     # ------------------------------------------------------------------
     # Background send worker.
@@ -421,8 +422,11 @@ def register_chat_routes(
                 "chat_info": chat_info
             })
 
+        with state_lock:
+            projected = [resolve_reply_reference(m) for m in messages]
+
         return jsonify({
-            "messages": messages,
+            "messages": projected,
             "nodes": get_nodes_list()
         })
 

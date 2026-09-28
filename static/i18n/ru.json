@@ -505,6 +505,7 @@
     "message_copied": "Сообщение скопировано",
     "message_copy_failed": "Не удалось скопировать сообщение",
     "reply_to": "Ответ для {sender}",
+    "reply_unresolved": "Ответ на более раннее сообщение",
     "direction_system": "Система",
     "direction_sent": "Отправлено",
     "direction_received": "Получено",

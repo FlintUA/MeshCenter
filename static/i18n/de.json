@@ -505,6 +505,7 @@
     "message_copied": "Nachricht kopiert",
     "message_copy_failed": "Nachricht konnte nicht kopiert werden",
     "reply_to": "Antwort an {sender}",
+    "reply_unresolved": "Antwort auf eine frühere Nachricht",
     "direction_system": "System",
     "direction_sent": "Gesendet",
     "direction_received": "Empfangen",

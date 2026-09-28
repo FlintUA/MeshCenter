@@ -371,6 +371,19 @@
     background: rgba(255, 255, 255, 0.13);
 }
 
+/* Reply Metadata Consistency (PR 2): state B, a reply_id whose original
+   isn't known locally - a static indicator, not a clickable quote (there is
+   no message id to scroll to), so it must not look actionable. */
+.message-reply-quote--unresolved {
+    cursor: default;
+    opacity: 0.75;
+    border-left-style: dashed;
+}
+
+.message-reply-quote--unresolved .message-reply-label {
+    font-style: italic;
+}
+
 .message-reply-label,
 .message-reply-text {
     display: block;

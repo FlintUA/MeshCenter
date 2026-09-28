@@ -2993,6 +2993,84 @@ def build_reply_reference(message):
         "chat_name": str(message.get("chat_name", ""))[:160],
     }
 
+
+def find_reply_original(reply_id, chat_id):
+    """Resolve an inbound/lazy reply's original message - the one place that
+    decides whether a reply_id may be turned into a reply_to, so ingest-time
+    and projection-time resolution (resolve_reply_reference(), below) can
+    never disagree (Reply Metadata Consistency, PR 2, section 13).
+
+    Same-chat match is trusted immediately (find_message_by_packet_id()'s own
+    chat-local lookup): the reply arrived in this chat, so a match in this
+    chat is authoritative. A match found only OUTSIDE the reply's own chat is
+    used only when unambiguous. Meshtastic packet_ids are NOT guaranteed
+    globally unique - the wire ID is a 10-bit per-boot counter plus 22
+    random bits, and firmware-side dedup only covers a bounded
+    (sender, packet_id) window, not "forever" - so after a node reboot or
+    once that window ages out, the same packet_id can legitimately recur
+    for a different sender/message. If it currently exists in more than one
+    distinct chat, guessing which one the reply meant would risk quoting the
+    wrong message: return None (reply_id stays present on the message;
+    reply_to stays unresolved) rather than guess."""
+    same_chat = find_message_by_packet_id(reply_id, chat_id)
+    if same_chat is not None:
+        return same_chat
+
+    try:
+        wanted = int(reply_id)
+    except (TypeError, ValueError):
+        return None
+
+    matched_chats = set()
+    first_match = None
+    for message in reversed(messages):
+        try:
+            current = int(message.get("packet_id"))
+        except (TypeError, ValueError):
+            continue
+        if current != wanted:
+            continue
+        if first_match is None:
+            first_match = message
+        matched_chats.add(message.get("chat_id"))
+        if len(matched_chats) > 1:
+            return None
+
+    return first_match
+
+
+def resolve_reply_reference(message):
+    """Projection-time reply enrichment (Reply Metadata Consistency, PR 2,
+    section 9): called wherever a message reaches the frontend, so a reply
+    whose original wasn't known yet at ingest time (received out of order,
+    or simply not seen by this instance yet) resolves automatically on a
+    later read once the original does arrive - no re-ingest, no persisted
+    rewrite needed. Never mutates `message`: returns a new dict when
+    enrichment adds anything, otherwise `message` itself unchanged.
+
+    - Already has a resolved reply_to -> returned as-is (no re-lookup).
+    - Has a reply_id but no reply_to -> attempt find_reply_original(); still
+      unresolved (not found, or ambiguous) -> returned as-is, reply_id kept.
+    - Neither -> an ordinary message, returned as-is.
+
+    Caller must hold state_lock (this reads `messages`, like
+    find_reply_original() itself)."""
+    if isinstance(message.get("reply_to"), dict):
+        return message
+
+    reply_id = message.get("reply_id")
+    if reply_id is None:
+        return message
+
+    original = find_reply_original(reply_id, message.get("chat_id"))
+    if original is None:
+        return message
+
+    enriched = dict(message)
+    enriched["reply_to"] = build_reply_reference(original)
+    return enriched
+
+
 def extract_text_message(line):
     if "TEXT_MESSAGE_APP" not in line and "'text':" not in line and '"text":' not in line:
         return None
@@ -3234,7 +3312,7 @@ def process_nodeinfo(block):
     return True
 
 def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, reply_to=None, packet_id=None,
-                 status=None, client_id=None):
+                 status=None, client_id=None, reply_id=None):
     # Store all locally transmitted messages under one canonical direction.
     # Older waypoint notifications used "tx", while the rest of the chat
     # subsystem and UI use "me" for outgoing messages.
@@ -3313,6 +3391,22 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
         if packet_id is not None:
             try:
                 msg["packet_id"] = int(packet_id)
+            except (TypeError, ValueError):
+                pass
+        # reply_id is the protocol fact "this message replies to packet X" -
+        # stored independently of whether the original could be resolved
+        # locally, so a reply is never silently indistinguishable from a
+        # plain message just because its original isn't known yet/anymore
+        # (Reply Metadata Consistency, PR 2). Falls back to reply_to's own
+        # packet_id when the caller only passed a fully-resolved reply_to
+        # (the outbound /api/send path, which always already knows the
+        # original it is replying to) - not a behavior change there, just
+        # keeping the schema consistent without touching that call site.
+        if reply_id is None and isinstance(reply_to, dict):
+            reply_id = reply_to.get("packet_id")
+        if reply_id is not None:
+            try:
+                msg["reply_id"] = int(reply_id)
             except (TypeError, ValueError):
                 pass
         if isinstance(reply_to, dict):
@@ -3578,7 +3672,7 @@ def get_chats_list():
 
 def get_chat_messages(chat_id):
     with state_lock:
-        return [m for m in messages if m.get("chat_id") == chat_id]
+        return [resolve_reply_reference(m) for m in messages if m.get("chat_id") == chat_id]
 
 def stop_listener():
     """Delegates to listener_supervisor's listener-stop logic.
@@ -3913,6 +4007,7 @@ def _inbound_deps():
         merge_position_into_node=_merge_position_into_node,
         telemetry_values_from_metrics=_telemetry_values_from_metrics,
         apply_node_telemetry=apply_node_telemetry,
+        find_reply_original=find_reply_original,
     )
 
 
@@ -5405,6 +5500,7 @@ register_chat_routes(
     radio_event,
     is_radio_available,
     update_message_status,
+    resolve_reply_reference,
 )
 
 def _coordinate(value, minimum, maximum):

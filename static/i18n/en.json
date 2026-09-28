@@ -505,6 +505,7 @@
     "message_copied": "Message copied",
     "message_copy_failed": "Could not copy message",
     "reply_to": "Reply to {sender}",
+    "reply_unresolved": "Reply to an earlier message",
     "direction_system": "System",
     "direction_sent": "Sent",
     "direction_received": "Received",

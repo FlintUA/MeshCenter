@@ -115,6 +115,12 @@ class InboundDeps:
     merge_nodeinfo_into_node: Optional[Callable[..., dict]] = None
     merge_position_into_node: Optional[Callable[..., dict]] = None
     telemetry_values_from_metrics: Optional[Callable[..., dict]] = None
+    # Reply Metadata Consistency (PR 2): the single ambiguity-guarded lookup
+    # ingest-time and projection-time reply resolution both go through, so
+    # they can never disagree - see server.py's find_reply_original() for
+    # the actual rule (chat-local trusted; a cross-chat match only used when
+    # unambiguous).
+    find_reply_original: Optional[Callable[[Any, str], Any]] = None
     apply_node_telemetry: Optional[Callable[..., bool]] = None
 
 
@@ -363,15 +369,11 @@ def ingest_received_text(
     reply_to = None
     if event.reply_id:
         with deps.state_lock:
-            original = (
-                deps.find_message_by_packet_id(event.reply_id, chat_id)
-                or deps.find_message_by_packet_id(event.reply_id)
-            )
+            original = deps.find_reply_original(event.reply_id, chat_id)
             reply_to = deps.build_reply_reference(original)
-        # TEMPORARY (Reply Metadata Consistency investigation, PR 1 - remove
-        # once the live root cause is confirmed): counts and identifiers only,
-        # never message text/quoted text - see this project's own diagnostic
-        # logging convention elsewhere in this module.
+        # Rate-safe developer diagnostics (kept from the Reply Metadata
+        # Consistency investigation, PR 1/#309): counts and identifiers
+        # only, never message text/quoted text.
         deps.log(
             f"[INBOUND REPLY] packet_id={pid} reply_id={event.reply_id} chat_id={chat_id} "
             f"original_found={'true' if original else 'false'} "
@@ -390,6 +392,12 @@ def ingest_received_text(
             chat_id,
             reply_to=reply_to,
             packet_id=pid,
+            # The protocol fact "this is a reply to packet X" is stored
+            # independently of whether `reply_to` resolved above (Reply
+            # Metadata Consistency, PR 2) - add_message() persists it even
+            # when reply_to is None, so a reply is never silently
+            # indistinguishable from a plain message.
+            reply_id=event.reply_id,
         )
     _count("text_stored")
 

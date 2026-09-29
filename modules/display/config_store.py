@@ -18,6 +18,8 @@ time, so those fields deliberately don't autosave or apply on their own.
 
 from __future__ import annotations
 
+import math
+
 from storage.json_store import safe_read_json, safe_write_json
 
 # One entry per supported panel. Each model's own pin defaults - not a
@@ -61,6 +63,29 @@ DEFAULT_EPAPER_CONFIG: dict = {
 }
 
 
+def _sanitize_seconds(merged: dict, key: str) -> None:
+    """Defense-in-depth against a hand-edited config file, or a value saved
+    before api/api_hardware_display.py's own NaN/Infinity range validation
+    existed (audit review 2026-09-29, F2b): DisplayManager reads these
+    straight off this dict (modules/display/service.py's build_driver()),
+    so a bad number here breaks debounce/rotation/refresh timing silently
+    (e.g. `time.monotonic() + NaN` makes every later "is it time yet"
+    comparison False forever - the panel would simply stop refreshing).
+    Falls back to the default rather than a hard failure, same spirit as
+    rotation_pages filtering below. Logs a WARNING naming the key, the bad
+    value and the replacement - a silent reset here would hide exactly the
+    kind of corruption this function exists to catch."""
+    value = merged.get(key)
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+        default = DEFAULT_EPAPER_CONFIG[key]
+        print(
+            f"[EPAPER] WARNING: {key}={value!r} in epaper_config.json is not a finite number - "
+            f"resetting to default {default!r} on load",
+            flush=True,
+        )
+        merged[key] = default
+
+
 def load_epaper_config(path: str) -> dict:
     data = safe_read_json(path, dict(DEFAULT_EPAPER_CONFIG))
     merged = dict(DEFAULT_EPAPER_CONFIG)
@@ -90,6 +115,8 @@ def load_epaper_config(path: str) -> dict:
             ]
         else:
             merged["rotation_pages"] = []
+        for key in ("debounce_seconds", "refresh_timeout", "rotation_interval_seconds"):
+            _sanitize_seconds(merged, key)
     return merged
 
 

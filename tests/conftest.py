@@ -147,17 +147,37 @@ def server_module(tmp_path_factory):
     return server_module_
 
 
+# server.py hands these out by reference to api/*.py's register_*_routes()
+# DI functions at import time (e.g. register_chat_routes(..., messages, ...)).
+# A handler that does `messages = [...]` (rebinding the module-level name)
+# instead of `messages[:] = [...]`/`.clear()`+`.update()` (mutating the SAME
+# object) silently breaks every one of those captured references: server.py's
+# own global moves on to a new list/dict while every DI consumer is left
+# holding a stale, disconnected one - no exception, just a slow desync for
+# the rest of the process's life (audit review 2026-09-29, F2 -
+# clear_chat()/delete_chat()/delete_all_dm() all did this for `messages`
+# before the fix). `seen_ids` is EXCLUDED deliberately: cleanup_seen_ids()
+# rebinds it on purpose (server.py's own _inbound_deps() re-reads it fresh
+# per call for exactly this reason - see meshsrv/inbound_events.py's own
+# InboundDeps docstring), so identity is not an invariant for it.
+_IDENTITY_INVARIANT_NAMES = ("nodes", "chats", "messages", "settings", "seen_recent_texts")
+
+
 @pytest.fixture(autouse=True)
 def _reset_server_state(request):
     """Snapshot/restore server.py's mutable module-level dicts around every
     test that uses server_module, so tests can't leak node/chat/message state
-    into each other."""
+    into each other. Also asserts the container objects themselves were never
+    replaced mid-test (see _IDENTITY_INVARIANT_NAMES above) - a regression
+    here fails the test immediately instead of silently corrupting whatever
+    ran after it."""
     if "server_module" not in request.fixturenames:
         yield
         return
 
     server = request.getfixturevalue("server_module")
     snapshots = {}
+    identities = {}
     for name in ("nodes", "chats", "messages", "settings", "seen_ids", "seen_recent_texts"):
         value = getattr(server, name, None)
         if isinstance(value, dict):
@@ -166,9 +186,18 @@ def _reset_server_state(request):
             snapshots[name] = list(value)
         elif isinstance(value, set):
             snapshots[name] = set(value)
+        if name in _IDENTITY_INVARIANT_NAMES:
+            identities[name] = id(value)
 
     yield
 
+    # Restore CONTENT first, unconditionally, regardless of what the
+    # identity check below finds: getattr() always reads whatever object is
+    # CURRENTLY bound to the name, so this cleans it up in place even if that
+    # object was swapped out mid-test - later tests must start from clean
+    # state either way. Only once that is done do we check whether the
+    # object itself was swapped, so a violation fails loudly without ever
+    # leaving stale content behind for the next test to inherit.
     for name, snapshot in snapshots.items():
         current = getattr(server, name)
         current.clear()
@@ -178,3 +207,14 @@ def _reset_server_state(request):
             current.extend(snapshot)
         elif isinstance(current, set):
             current.update(snapshot)
+
+    for name, original_id in identities.items():
+        current = getattr(server, name)
+        assert id(current) == original_id, (
+            f"server.{name} was replaced with a new object during the test "
+            f"instead of being mutated in place - every module that received "
+            f"it by reference via a register_*_routes() DI call now holds a "
+            f"stale, disconnected copy (see F2). Use `{name}[:] = [...]` "
+            f"(list) or `{name}.clear(); {name}.update(...)` (dict), never "
+            f"`{name} = ...`."
+        )

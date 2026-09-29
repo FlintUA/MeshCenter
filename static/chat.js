@@ -4234,11 +4234,21 @@ document.addEventListener('DOMContentLoaded', async function() {
 
 });
 
+// Escapes for BOTH HTML text and double-/single-quoted HTML attribute
+// values. The previous DOM-based version (textContent -> innerHTML) only
+// escaped & < > - not quotes - yet is used inside attributes throughout
+// (data-*="${escapeHtml(x)}"), so a quote in a mesh node name or Wi-Fi
+// SSID could break out of the attribute (audit review 2026-09-29, F1).
+// Pure string function, so it is also testable in node:vm without a DOM.
+// Self-contained (no module-level lookup table) so tests can extract it.
 function escapeHtml(value) {
     if (value === null || value === undefined) return '';
-    const div = document.createElement('div');
-    div.textContent = String(value);
-    return div.innerHTML;
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function formatTime(timeStr) {
@@ -4398,8 +4408,8 @@ function renderChatItem(chat) {
     }
 
     const clickHandler = isDemo
-        ? `showToast(${JSON.stringify(window.I18N.t('chat.channel_not_configured_toast'))}, 'info')`
-        : `openChat('${escapeHtml(chat.id)}', '${escapeJsString(chat.name)}', '${escapeHtml(chat.type)}', 'chat')`;
+        ? `showToast('${escapeJsString(window.I18N.t('chat.channel_not_configured_toast'))}', 'info')`
+        : `openChat('${escapeJsString(chat.id)}', '${escapeJsString(chat.name)}', '${escapeJsString(chat.type)}', 'chat')`;
     const demoClass = isDemo ? 'demo-channel' : '';
     const displayName = chat.is_channel && Number.isInteger(chat.index)
         ? formatChannelIndexLabel(chat.name, chat.index)
@@ -7023,12 +7033,23 @@ function getMapProvider() {
 }
 
 
+// For a value that becomes a single-quoted JS string literal INSIDE a
+// double-quoted inline-handler attribute: onclick="fn('${escapeJsString(x)}')".
+// Two layers, in this order: JS-string escaping first, then HTML-attribute
+// escaping, because the HTML parser decodes the attribute (&#39; -> ')
+// before the JS engine ever sees it. JS escaping alone let a node name like
+// `x" onmouseover="...` or `a&#39;);...//` escape (audit review 2026-09-29,
+// F1). Only valid in that inline-handler context - F1.2 removes these
+// handlers in favour of data-* + addEventListener.
 function escapeJsString(value) {
-    return String(value ?? '')
+    const js = String(value ?? '')
         .replace(/\\/g, '\\\\')
         .replace(/'/g, "\\'")
         .replace(/\r/g, '\\r')
-        .replace(/\n/g, '\\n');
+        .replace(/\n/g, '\\n')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
+    return escapeHtml(js);
 }
 
 // ============================================================
@@ -7422,7 +7443,7 @@ function renderNodeDetails(node) {
             </div>
 
             <div class="node-detail-bottom-actions">
-                <button type="button" class="node-detail-toolbar-btn" onclick="openChat('${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', 'dm')">
+                <button type="button" class="node-detail-toolbar-btn" onclick="openChat('${escapeJsString(nodeId)}', '${escapeJsString(displayName)}', 'dm')">
                     <span aria-hidden="true">💬</span> ${escapeHtml(window.I18N.t('nodes.message_button'))}
                 </button>
                 <button type="button" class="node-detail-toolbar-btn" onclick="openExternalNodeMap(${hasPosition ? position.latitude : 0}, ${hasPosition ? position.longitude : 0})" ${hasPosition ? '' : 'disabled'} title="${escapeHtml(window.I18N.t('nodes.external_map'))}">
@@ -7472,10 +7493,10 @@ function nodeActionsMenuHtml(nodeId, displayName) {
     return `
         <div class="node-actions-menu" id="nodeActionsMenu" style="display:none;">
             <div class="node-actions-menu-inner">
-                <button onclick="openChat('${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', 'dm')">📨 ${escapeHtml(window.I18N.t('nodes.send_message'))}</button>
-                <button onclick="runNodeTool('request_position', '${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', this)">📍 ${escapeHtml(window.I18N.t('nodes.request_position'))}</button>
-                <button onclick="runNodeTool('request_telemetry', '${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', this)">📊 ${escapeHtml(window.I18N.t('nodes.request_telemetry'))}</button>
-                <button onclick="runNodeTool('traceroute', '${escapeHtml(nodeId)}', '${escapeJsString(displayName)}', this)">🔍 ${escapeHtml(window.I18N.t('nodes.traceroute'))}</button>
+                <button onclick="openChat('${escapeJsString(nodeId)}', '${escapeJsString(displayName)}', 'dm')">📨 ${escapeHtml(window.I18N.t('nodes.send_message'))}</button>
+                <button onclick="runNodeTool('request_position', '${escapeJsString(nodeId)}', '${escapeJsString(displayName)}', this)">📍 ${escapeHtml(window.I18N.t('nodes.request_position'))}</button>
+                <button onclick="runNodeTool('request_telemetry', '${escapeJsString(nodeId)}', '${escapeJsString(displayName)}', this)">📊 ${escapeHtml(window.I18N.t('nodes.request_telemetry'))}</button>
+                <button onclick="runNodeTool('traceroute', '${escapeJsString(nodeId)}', '${escapeJsString(displayName)}', this)">🔍 ${escapeHtml(window.I18N.t('nodes.traceroute'))}</button>
                 <button onclick="setNodeAsReference('${escapeHtml(nodeId)}')">📍 ${escapeHtml(window.I18N.t('nodes.set_as_reference'))}</button>
             </div>
         </div>
@@ -7572,7 +7593,7 @@ function renderRadioPane(node) {
                 ${historyHtml}
             </div>
             <div class="radio-actions">
-                <button class="radio-action" onclick="runNodeTool('traceroute', '${escapeHtml(node.node_id)}', '${escapeJsString(node.clean_name || node.name || node.node_id)}', this)">🔍 ${escapeHtml(window.I18N.t('nodes.run_traceroute'))}</button>
+                <button class="radio-action" onclick="runNodeTool('traceroute', '${escapeJsString(node.node_id)}', '${escapeJsString(node.clean_name || node.name || node.node_id)}', this)">🔍 ${escapeHtml(window.I18N.t('nodes.run_traceroute'))}</button>
                 <button class="radio-action" onclick="refreshNodeMetrics('${escapeHtml(node.node_id)}')">↻ ${escapeHtml(window.I18N.t('common.refresh'))}</button>
             </div>
         </div>
@@ -7622,13 +7643,13 @@ function renderPositionPane(node) {
                 <button onclick='openNodeMap(${pos.latitude}, ${pos.longitude}, ${JSON.stringify(String(node.node_id || ""))})'>🗺 ${escapeHtml(window.I18N.t('nodes.locate_on_map'))}</button>
                 <button onclick="copyCoordinates('${pos.latitude}', '${pos.longitude}')">📋 ${escapeHtml(window.I18N.t('nodes.copy_coordinates'))}</button>
                 <button onclick="setNodeAsReference('${escapeHtml(node.node_id)}')">📍 ${escapeHtml(window.I18N.t('nodes.set_as_reference'))}</button>
-                <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeJsString(node.clean_name || node.name || node.node_id)}', this)">📡 ${escapeHtml(window.I18N.t('nodes.request_new_position'))}</button>
+                <button onclick="runNodeTool('request_position', '${escapeJsString(node.node_id)}', '${escapeJsString(node.clean_name || node.name || node.node_id)}', this)">📡 ${escapeHtml(window.I18N.t('nodes.request_new_position'))}</button>
             </div>
             <div class="position-reference">${escapeHtml(window.I18N.t('nodes.reference_prefix', { name: referenceName }))}</div>
             ` : `
             <div class="position-no-data">
                 <span>📍 ${escapeHtml(window.I18N.t('nodes.no_known_position'))}</span>
-                <button onclick="runNodeTool('request_position', '${escapeHtml(node.node_id)}', '${escapeJsString(node.clean_name || node.name || node.node_id)}', this)">${escapeHtml(window.I18N.t('nodes.request_position'))}</button>
+                <button onclick="runNodeTool('request_position', '${escapeJsString(node.node_id)}', '${escapeJsString(node.clean_name || node.name || node.node_id)}', this)">${escapeHtml(window.I18N.t('nodes.request_position'))}</button>
             </div>
             `}
         </div>
@@ -12003,7 +12024,7 @@ async function loadWifiNetworks() {
 
         div.innerHTML = `
             <div class="wifi-name">
-                ${net.connected ? "🟢" : "⚪"} ${net.ssid}
+                ${net.connected ? "🟢" : "⚪"} ${escapeHtml(net.ssid)}
                 ${net.saved && !net.connected ? `<span class="wifi-saved-badge">${escapeHtml(window.I18N.t('node_manager.badge_saved'))}</span>` : ''}
             </div>
 

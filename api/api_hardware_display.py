@@ -23,6 +23,8 @@ finds out immediately rather than only on the next debounced refresh.
 
 from __future__ import annotations
 
+import math
+
 from flask import jsonify, request
 
 from modules.display.config_store import (
@@ -48,6 +50,34 @@ KNOWN_SHOW_PAGES = ("status", "radio", "power", "system", "message")
 # different concept - see modules/display/service.py's rotation docstring).
 ROTATION_INTERVAL_MIN_SECONDS = 5.0
 ROTATION_INTERVAL_MAX_SECONDS = 3600.0
+
+# debounce_seconds/refresh_timeout had NO range check at all before this
+# (audit review 2026-09-29, F2b) - a NaN/Infinity debounce_seconds turns
+# DisplayManager's own `deadline = time.monotonic() + self._debounce_seconds`
+# into NaN, and every subsequent `now >= deadline` comparison is then False
+# forever (NaN comparisons are always False), so the panel never refreshes
+# again until restart. Bounds are generous, not a precise hardware spec -
+# they only need to reject NaN/Infinity/negative/pathological values, not
+# police a "correct" debounce/timeout: 0 still means "no debounce", and the
+# upper bound is well past what any real panel or use case needs.
+DEBOUNCE_SECONDS_MIN = 0.0
+DEBOUNCE_SECONDS_MAX = 300.0
+REFRESH_TIMEOUT_MIN_SECONDS = 1.0
+REFRESH_TIMEOUT_MAX_SECONDS = 300.0
+
+
+def _validated_seconds(raw_value, *, minimum, maximum):
+    """float(raw_value), rejecting anything that isn't a finite number in
+    [minimum, maximum]. Returns (value, None) or (None, error_message)."""
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        return None, "must be a number"
+    if not math.isfinite(value):
+        return None, "must be a finite number"
+    if not (minimum <= value <= maximum):
+        return None, f"must be between {minimum:.0f} and {maximum:.0f}"
+    return value, None
 
 
 def register_hardware_display_routes(
@@ -126,7 +156,12 @@ def register_hardware_display_routes(
             config["refresh_mode"] = mode.value
 
         if "debounce_seconds" in body:
-            config["debounce_seconds"] = float(body["debounce_seconds"])
+            value, error = _validated_seconds(
+                body["debounce_seconds"], minimum=DEBOUNCE_SECONDS_MIN, maximum=DEBOUNCE_SECONDS_MAX,
+            )
+            if error is not None:
+                return jsonify({"ok": False, "error": f"debounce_seconds {error}"}), 400
+            config["debounce_seconds"] = value
 
         if mode_changed or "debounce_seconds" in body:
             display_manager.set_refresh_mode(RefreshMode(config["refresh_mode"]), config["debounce_seconds"])
@@ -193,7 +228,12 @@ def register_hardware_display_routes(
         if "spi" in body:
             new_config["spi"] = {**config["spi"], **body["spi"]}
         if "refresh_timeout" in body:
-            new_config["refresh_timeout"] = float(body["refresh_timeout"])
+            value, error = _validated_seconds(
+                body["refresh_timeout"], minimum=REFRESH_TIMEOUT_MIN_SECONDS, maximum=REFRESH_TIMEOUT_MAX_SECONDS,
+            )
+            if error is not None:
+                return jsonify({"ok": False, "error": f"refresh_timeout {error}"}), 400
+            new_config["refresh_timeout"] = value
 
         # Release whatever the *current* model claimed before checking the
         # new pins - GpioRegistry.check() only exempts a pin already

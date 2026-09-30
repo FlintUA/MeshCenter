@@ -4,12 +4,14 @@ MeshCenter - Web Control Center for Meshtastic nodes on Raspberry Pi Zero 2W
 """
 
 from flask import Flask, request, jsonify, render_template, Response, send_from_directory, make_response
+from flask.json.provider import DefaultJSONProvider
 from functools import wraps
 import subprocess
 import threading
 import time
 import re
 import json
+import math
 import os
 import sys
 import io
@@ -562,7 +564,27 @@ SCREENSHOTS_DIR = os.path.join(DATA_DIR, "screenshots")
 if not os.path.exists(SCREENSHOTS_DIR):
     os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
 
+class _StrictJSONProvider(DefaultJSONProvider):
+    """Refuses to serialize NaN/Infinity (audit review 2026-09-29, F2b
+    insurance measure). Python's `json` module happily emits the bare,
+    non-standard tokens `NaN`/`Infinity`/`-Infinity` by default
+    (`allow_nan=True`) - valid to itself, but not valid JSON, so a strict
+    client-side parser would choke on it. Enabled only after confirming no
+    endpoint today actually serves one of these (checked settings.json/
+    epaper_config.json on every deployed instance - see the F2b PR - and
+    every float()/int() conversion from an incoming request is now
+    range/isfinite-validated instead of only relying on this to catch it
+    after the fact): this exists as a loud last-resort backstop, not the
+    primary defense. A future NaN leak now raises ValueError from jsonify()
+    (a visible 500) instead of silently shipping malformed JSON."""
+
+    def dumps(self, obj, **kwargs):
+        kwargs.setdefault("allow_nan", False)
+        return super().dumps(obj, **kwargs)
+
+
 app = Flask(__name__)
+app.json = _StrictJSONProvider(app)
 waypoint_store = WaypointStore(WAYPOINTS_DB_FILE)
 
 # Flask session cookies (used by the optional password protection below)
@@ -1522,6 +1544,34 @@ def save_settings():
     with state_lock:
         safe_write_json(SETTINGS_FILE, settings)
 
+def _sanitize_settings_coordinate(container, key, minimum, maximum, context):
+    """Reset one settings.json coordinate field to None if it isn't a
+    finite number in range - loudly, with a WARNING naming the key, the bad
+    value and the replacement (audit review 2026-09-29, F2b item 4: a
+    silent reset here would be just as bad as the NaN it's cleaning up,
+    since the same reference-location value already lost its stored fix
+    with no visible trace). Mutates `container` in place; does nothing if
+    the key is absent, or already None/empty (that's the legitimate resting
+    value for an unset coordinate - warning on every startup for the
+    default reference_location would be pure noise, reported 2026-09-30)."""
+    if key not in container:
+        return
+    raw = container[key]
+    if raw is None or raw == "":
+        return
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = None
+    if value is None or not math.isfinite(value) or value < minimum or value > maximum:
+        print(
+            f"[SETTINGS] WARNING: {context}.{key}={raw!r} is not a finite number in "
+            f"[{minimum}, {maximum}] - resetting to null on load",
+            flush=True,
+        )
+        container[key] = None
+
+
 def load_settings():
     data = safe_read_json(SETTINGS_FILE, default_settings())
 
@@ -1569,12 +1619,41 @@ def load_settings():
     if not isinstance(power, dict):
         power = {}
     try:
+        # int(float('inf')) raises OverflowError, not ValueError/TypeError -
+        # the original except clause here didn't catch it, so an Infinity
+        # battery_capacity_mah would have crashed load_settings() itself,
+        # at server startup (audit review 2026-09-29, F2b - found while
+        # auditing float()/int() conversions from settings.json, not one of
+        # the task's own two named holes).
         battery_capacity_mah = int(power.get("battery_capacity_mah", 3000))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         battery_capacity_mah = 3000
     normalized_settings["power"] = {
         "battery_capacity_mah": max(100, min(50000, battery_capacity_mah))
     }
+
+    # NaN/Infinity in a manually-entered reference location (audit review
+    # 2026-09-29, F2b item 4): api/api_settings.py's normalize_settings()
+    # already rejects these when BUILDING the response for GET /api/settings
+    # (via _normalize_coordinate()'s own math.isfinite() fix), but that never
+    # touches the persisted copy here - a bad value would keep coming back on
+    # every read forever. Sanitize it in the one place that actually owns
+    # settings.json and already unconditionally re-saves it below.
+    reference_location = normalized_settings.get("reference_location")
+    if not isinstance(reference_location, dict):
+        reference_location = {}
+    manual = reference_location.get("manual")
+    if not isinstance(manual, dict):
+        manual = {}
+    _sanitize_settings_coordinate(manual, "latitude", -90.0, 90.0, "reference_location.manual")
+    _sanitize_settings_coordinate(manual, "longitude", -180.0, 180.0, "reference_location.manual")
+    reference_location["manual"] = manual
+    # Backward-compat flat fields (pre-"manual" schema - see
+    # api/api_settings.py's normalize_settings() docstring for the same
+    # fallback) get the same treatment.
+    _sanitize_settings_coordinate(reference_location, "latitude", -90.0, 90.0, "reference_location")
+    _sanitize_settings_coordinate(reference_location, "longitude", -180.0, 180.0, "reference_location")
+    normalized_settings["reference_location"] = reference_location
 
     settings.clear()
     settings.update(normalized_settings)

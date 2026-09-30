@@ -4,6 +4,7 @@ from flask import jsonify, request
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 import json
+import math
 import re
 
 from meshsrv.radio_endpoint import DEFAULT_TCP_PORT
@@ -142,6 +143,15 @@ def _normalize_coordinate(value, minimum, maximum):
     try:
         number = float(value)
     except (TypeError, ValueError):
+        return None
+
+    # NaN/Infinity survive float() and then silently defeat the range
+    # check below: EVERY comparison against NaN is False, so
+    # `number < minimum or number > maximum` never becomes True and NaN
+    # falls straight through as though it were a valid coordinate
+    # (audit review 2026-09-29, F2b). math.isfinite() rejects both NaN and
+    # +-Infinity explicitly rather than relying on comparison semantics.
+    if not math.isfinite(number):
         return None
 
     if number < minimum or number > maximum:

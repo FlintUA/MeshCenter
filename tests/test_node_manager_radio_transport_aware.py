@@ -28,13 +28,34 @@ this suite doesn't otherwise need to touch.
 """
 import pytest
 
+from meshsrv.detection_cache import DetectionCache
+
 
 @pytest.fixture
 def _preserve_node_manager_state(server_module):
     original_identity = server_module.instance_manager.get()
+    original_cache = server_module.tcp_detection_cache
+    # TCP lifecycle P0 (PR-B): Discovery now caches its probe result for
+    # Accept - a fresh cache per test so one test's detect can't turn the
+    # next test's accept into a cache hit.
+    server_module.tcp_detection_cache = DetectionCache()
     yield
+    server_module.tcp_detection_cache = original_cache
     server_module.instance_manager.save(original_identity)
     server_module.INSTANCE_IDENTITY = original_identity
+
+
+def _patch_tcp_detection(monkeypatch, server_module, detect):
+    """These tests were written against detect_tcp_radio_identity(transport,
+    host, port, timeout) as the seam. Discovery/Accept/activate now go
+    through server._probe_tcp_identity(host, port, timeout) (ephemeral probe,
+    TCP lifecycle P0 PR-B) - same fakes, adapted at the seam so each test
+    body keeps saying what it always said."""
+    monkeypatch.setattr(
+        server_module,
+        "_probe_tcp_identity",
+        lambda host, port, timeout=25: detect(None, host, port, timeout),
+    )
 
 
 def _set_accepted_radio(server_module, radio, active_profile_id=""):
@@ -113,7 +134,7 @@ def test_tcp_active_detect_never_runs_the_usb_scan(server_module, _preserve_node
         raise AssertionError("USB scan must not run while TCP is the active transport")
 
     monkeypatch.setattr(server_module, "detect_connected_radio", _fail_if_called)
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_tcp_detection())
+    _patch_tcp_detection(monkeypatch, server_module, _fake_tcp_detection())
 
     _call(server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect")
     # No AssertionError raised above = regression #2 holds.
@@ -131,7 +152,7 @@ def test_tcp_detect_uses_the_accepted_radios_saved_host_and_port(server_module, 
         calls.append((host, port))
         return _fake_tcp_detection()(transport, host, port, timeout)
 
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
+    _patch_tcp_detection(monkeypatch, server_module, _fake_detect_tcp)
 
     _call(server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect")
 
@@ -145,7 +166,7 @@ def test_tcp_detect_returns_detected_node_and_profile_status(server_module, _pre
     _set_accepted_radio(server_module, {
         "node_id": "!deadc0de", "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403},
     })
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_tcp_detection(node_id="!f00dcafe"))
+    _patch_tcp_detection(monkeypatch, server_module, _fake_tcp_detection(node_id="!f00dcafe"))
 
     data, status = _call(server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect")
 
@@ -166,7 +187,7 @@ def test_tcp_detect_failure_leaves_the_active_profile_untouched(server_module, _
     before = _set_accepted_radio(server_module, {
         "node_id": "!deadc0de", "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403},
     }, active_profile_id="deadc0de")
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_tcp_detection(found=False, error="connect_timeout", error_code="connect_timeout"))
+    _patch_tcp_detection(monkeypatch, server_module, _fake_tcp_detection(found=False, error="connect_timeout", error_code="connect_timeout"))
 
     data, status = _call(server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect")
 
@@ -188,7 +209,7 @@ def test_bluetooth_detect_is_explicitly_unsupported(server_module, _preserve_nod
         raise AssertionError("no detection call should be made for an unsupported transport")
 
     monkeypatch.setattr(server_module, "detect_connected_radio", _fail_if_called)
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fail_if_called)
+    _patch_tcp_detection(monkeypatch, server_module, _fail_if_called)
 
     data, status = _call(server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect")
 
@@ -200,11 +221,14 @@ def test_bluetooth_detect_is_explicitly_unsupported(server_module, _preserve_nod
 # /api/node-manager/radio/accept
 # ---------------------------------------------------------------------------
 
-def test_tcp_accept_reprobes_the_same_endpoint_detect_used(server_module, _preserve_node_manager_state, monkeypatch):
-    """Regression #5: accept re-verifies the identical TCP endpoint -
-    since both routes derive it the same way (from the accepted radio's
-    own normalized record), a single fake capturing both calls proves
-    they match without threading anything through the request body."""
+def test_tcp_accept_reuses_the_probe_detect_ran_on_the_same_endpoint(server_module, _preserve_node_manager_state, monkeypatch):
+    """Regression #5, updated for TCP lifecycle P0 (PR-B): this used to
+    assert Accept probed the identical endpoint a SECOND time (two
+    connects to the same radio - the double-connect being removed). Now
+    Accept consumes Discovery's cached probe, so exactly one probe runs -
+    and the cache is keyed by endpoint, so a hit itself proves both routes
+    derived the same one (from the accepted radio's own normalized record)
+    without threading anything through the request body."""
     _set_accepted_radio(server_module, {
         "node_id": "!deadc0de", "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403},
     })
@@ -214,14 +238,14 @@ def test_tcp_accept_reprobes_the_same_endpoint_detect_used(server_module, _prese
         calls.append((host, port))
         return _fake_tcp_detection(node_id="!f00dcafe")(transport, host, port, timeout)
 
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
+    _patch_tcp_detection(monkeypatch, server_module, _fake_detect_tcp)
 
     _call(server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect")
     data, status = _call(server_module, server_module.api_accept_detected_radio, "/api/node-manager/radio/accept", {"node_id": "!f00dcafe"})
 
     assert status == 202
     assert data["ok"] is True
-    assert calls == [("192.168.2.34", 4403), ("192.168.2.34", 4403)]
+    assert calls == [("192.168.2.34", 4403)]
 
     profile = server_module.profile_manager.get_profile(data["profile_id"])
     assert profile["metadata"]["radio"]["transport"] == "tcp"
@@ -235,7 +259,7 @@ def test_tcp_accept_rejects_a_radio_that_changed_since_detection(server_module, 
     before = _set_accepted_radio(server_module, {
         "node_id": "!deadc0de", "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403},
     }, active_profile_id="deadc0de")
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_tcp_detection(node_id="!f00dcafe"))
+    _patch_tcp_detection(monkeypatch, server_module, _fake_tcp_detection(node_id="!f00dcafe"))
 
     data, status = _call(
         server_module, server_module.api_accept_detected_radio, "/api/node-manager/radio/accept",
@@ -253,7 +277,7 @@ def test_tcp_accept_failure_leaves_the_active_profile_untouched(server_module, _
     before = _set_accepted_radio(server_module, {
         "node_id": "!deadc0de", "transport": "tcp", "endpoint": {"host": "192.168.2.34", "port": 4403},
     }, active_profile_id="deadc0de")
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_tcp_detection(found=False, error="connect_refused", error_code="connect_refused"))
+    _patch_tcp_detection(monkeypatch, server_module, _fake_tcp_detection(found=False, error="connect_refused", error_code="connect_refused"))
 
     data, status = _call(server_module, server_module.api_accept_detected_radio, "/api/node-manager/radio/accept")
 
@@ -273,7 +297,7 @@ def test_bluetooth_accept_is_explicitly_unsupported(server_module, _preserve_nod
         raise AssertionError("no detection call should be made for an unsupported transport")
 
     monkeypatch.setattr(server_module, "detect_connected_radio", _fail_if_called)
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fail_if_called)
+    _patch_tcp_detection(monkeypatch, server_module, _fail_if_called)
 
     data, status = _call(server_module, server_module.api_accept_detected_radio, "/api/node-manager/radio/accept")
 
@@ -305,7 +329,7 @@ def test_explicit_tcp_detect_probes_that_endpoint_when_accepted_is_serial(server
         calls.append((host, port))
         return _fake_tcp_detection(node_id="!f00dcafe")(transport, host, port, timeout)
 
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
+    _patch_tcp_detection(monkeypatch, server_module, _fake_detect_tcp)
 
     data, status = _call(
         server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect",
@@ -330,7 +354,7 @@ def test_detect_without_host_still_reprobes_the_accepted_transport(server_module
         calls.append((host, port))
         return _fake_tcp_detection(node_id="!deadc0de")(transport, host, port, timeout)
 
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
+    _patch_tcp_detection(monkeypatch, server_module, _fake_detect_tcp)
 
     data, status = _call(server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect")
 
@@ -339,7 +363,7 @@ def test_detect_without_host_still_reprobes_the_accepted_transport(server_module
 
 
 def test_explicit_tcp_port_defaults_and_validates(server_module, _preserve_node_manager_state, monkeypatch):
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_tcp_detection(node_id="!f00dcafe"))
+    _patch_tcp_detection(monkeypatch, server_module, _fake_tcp_detection(node_id="!f00dcafe"))
 
     data, status = _call(
         server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect",
@@ -375,7 +399,7 @@ def test_explicit_tcp_accept_creates_profile_for_that_endpoint_while_serial_is_a
         calls.append((host, port))
         return _fake_tcp_detection(node_id="!f00dcafe", long_name="T-Beam")(transport, host, port, timeout)
 
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
+    _patch_tcp_detection(monkeypatch, server_module, _fake_detect_tcp)
 
     data, status = _call(
         server_module, server_module.api_accept_detected_radio, "/api/node-manager/radio/accept",
@@ -407,7 +431,7 @@ def test_explicit_tcp_detect_does_not_touch_the_currently_accepted_profile(serve
     before = _set_accepted_radio(server_module, {
         "node_id": "!067a40fa", "long_name": "Flint Base", "transport": "serial", "endpoint": {"port": "/dev/ttyACM0"},
     }, active_profile_id="067a40fa")
-    monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_tcp_detection(node_id="!f00dcafe"))
+    _patch_tcp_detection(monkeypatch, server_module, _fake_tcp_detection(node_id="!f00dcafe"))
 
     _call(
         server_module, server_module.api_detect_new_radio, "/api/node-manager/radio/detect",

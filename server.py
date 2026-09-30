@@ -35,6 +35,7 @@ from camera import camera
 from camera.camera_manager import build_camera_manager
 from telemetry import telemetry
 from meshsrv import meshtastic_transport
+from meshsrv.info_parser import local_node_entry, parse_info_nodes
 from meshsrv.radio_manager import RadioConnectionManager
 from meshsrv.runtime_identity import (
     resolve_meshtastic_cli,
@@ -902,25 +903,6 @@ def safe_write_json(filepath, data):
 
 def atomic_write_json(filepath, data):
     return safe_write_json(filepath, data)
-
-def extract_json_block(text, start_pos):
-    """Извлекает JSON блок из текста начиная с указанной позиции"""
-    brace_start = text.find("{", start_pos)
-    if brace_start < 0:
-        return None
-    brace_count = 0
-    brace_end = -1
-    for i in range(brace_start, len(text)):
-        if text[i] == '{':
-            brace_count += 1
-        elif text[i] == '}':
-            brace_count -= 1
-            if brace_count == 0:
-                brace_end = i
-                break
-    if brace_end < 0:
-        return None
-    return text[brace_start:brace_end + 1]
 
 # ============================================================
 # ВСЕ ОСТАЛЬНЫЕ ФУНКЦИИ (Meshtastic, чаты, телеметрия и т.д.)
@@ -2423,48 +2405,37 @@ def get_telemetry_from_info(info_output=None):
         else:
             output = str(info_output)
 
-        node_pos = output.find(f'"{LOCAL_NODE_ID}"')
-        if node_pos < 0:
+        # F3: read the three metric blocks ONLY from the local node's own
+        # entry in "Nodes in mesh" (meshsrv.info_parser.local_node_entry) -
+        # the old output.find('"<metric>"', node_pos) search had no upper
+        # bound, so it happily matched the FIRST occurrence anywhere after
+        # the local node's key, including inside the next node's own
+        # object, and applied a neighbour's reading as if it were the
+        # local radio's.
+        local_entry = local_node_entry(output, LOCAL_NODE_ID)
+        if local_entry is None:
             return
 
         temp = humidity = pressure = voltage = current = None
         battery = None
 
-        env_pos = output.find('"environmentMetrics"', node_pos)
-        if env_pos >= 0:
-            block = extract_json_block(output, env_pos)
-            if block:
-                try:
-                    env = json.loads(block)
-                    temp = env.get("temperature")
-                    humidity = env.get("relativeHumidity")
-                    pressure = env.get("barometricPressure")
-                    print(f"[INFO_TELEMETRY] Environment: temp={temp}, humidity={humidity}, pressure={pressure}", flush=True)
-                except Exception as e:
-                    print(f"[INFO_TELEMETRY] Error parsing environment: {e}", flush=True)
+        env = local_entry.get("environmentMetrics")
+        if isinstance(env, dict):
+            temp = env.get("temperature")
+            humidity = env.get("relativeHumidity")
+            pressure = env.get("barometricPressure")
+            print(f"[INFO_TELEMETRY] Environment: temp={temp}, humidity={humidity}, pressure={pressure}", flush=True)
 
-        power_pos = output.find('"powerMetrics"', node_pos)
-        if power_pos >= 0:
-            block = extract_json_block(output, power_pos)
-            if block:
-                try:
-                    power_data = json.loads(block)
-                    current = power_data.get("current")
-                    print(f"[INFO_TELEMETRY] Power: current={current}mA", flush=True)
-                except Exception as e:
-                    print(f"[INFO_TELEMETRY] Error parsing power: {e}", flush=True)
+        power_data = local_entry.get("powerMetrics")
+        if isinstance(power_data, dict):
+            current = power_data.get("current")
+            print(f"[INFO_TELEMETRY] Power: current={current}mA", flush=True)
 
-        metrics_pos = output.find('"deviceMetrics"', node_pos)
-        if metrics_pos >= 0:
-            block = extract_json_block(output, metrics_pos)
-            if block:
-                try:
-                    metrics = json.loads(block)
-                    voltage = metrics.get("voltage")
-                    battery = metrics.get("batteryLevel")
-                    print(f"[INFO_TELEMETRY] Device: voltage={voltage}V, battery={battery}%", flush=True)
-                except Exception as e:
-                    print(f"[INFO_TELEMETRY] Error parsing device: {e}", flush=True)
+        metrics = local_entry.get("deviceMetrics")
+        if isinstance(metrics, dict):
+            voltage = metrics.get("voltage")
+            battery = metrics.get("batteryLevel")
+            print(f"[INFO_TELEMETRY] Device: voltage={voltage}V, battery={battery}%", flush=True)
 
         if voltage is not None or temp is not None or humidity is not None or pressure is not None or current is not None:
             values = {
@@ -2638,15 +2609,15 @@ def parse_nodes_from_info(info_output=None):
             output = result.stdout + result.stderr
         else:
             output = str(info_output)
-        mesh_pos = output.find("Nodes in mesh: {")
-        if mesh_pos < 0:
-            mesh_pos = output.find("Nodes in mesh:")
-            if mesh_pos < 0:
-                return False
-        block = extract_json_block(output, mesh_pos)
-        if not block:
+        # F3: meshsrv.info_parser.parse_info_nodes() is string-aware (via
+        # json.JSONDecoder.raw_decode) instead of counting braces - a node
+        # name containing '{'/'}' (names come from the mesh, not from us)
+        # used to desync the old brace counter and either corrupt the
+        # block or make json.loads() fail entirely, importing NOTHING,
+        # not even other, perfectly valid nodes in the same dump.
+        data = parse_info_nodes(output)
+        if not data:
             return False
-        data = json.loads(block)
         imported = 0
         updated = 0
         for node_id, node_data in data.items():
@@ -4006,15 +3977,17 @@ def update_base_status_from_info(info_output=None):
             output = result.stdout + result.stderr
         else:
             output = str(info_output)
-        node_pos = output.find(f'"{LOCAL_NODE_ID}"')
-        if node_pos < 0:
+        # F3: same fix as get_telemetry_from_info() above - deviceMetrics
+        # must come from the local node's own entry only, never the first
+        # "deviceMetrics" occurrence anywhere after it in the output.
+        local_entry = local_node_entry(output, LOCAL_NODE_ID)
+        if local_entry is None:
             print("Base status: local node id not found")
             return
-        block = extract_json_block(output, output.find('"deviceMetrics"', node_pos))
-        if not block:
+        metrics = local_entry.get("deviceMetrics")
+        if not isinstance(metrics, dict):
             print("Base status: deviceMetrics not found")
             return
-        metrics = json.loads(block)
         voltage = metrics.get("voltage")
         battery_level = metrics.get("batteryLevel")
         if battery_level == 101:

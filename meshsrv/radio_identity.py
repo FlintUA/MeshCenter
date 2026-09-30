@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from meshsrv import meshtastic_transport
+from meshsrv.info_parser import find_json_object, parse_info_nodes
 from meshsrv.radio_transport import (
     ConnectionDescriptor,
     ConnectionState,
@@ -64,34 +65,6 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
-def _extract_json_block(text: str, start_pos: int) -> str | None:
-    start = text.find("{", max(0, start_pos))
-    if start < 0:
-        return None
-    depth = 0
-    in_string = False
-    escaped = False
-    for index in range(start, len(text)):
-        char = text[index]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start:index + 1]
-    return None
-
-
 def _normalize_node_id(value: Any) -> str:
     text = str(value or "").strip().lower()
     if re.fullmatch(r"![0-9a-f]{8}", text):
@@ -131,17 +104,12 @@ def _find_local_node_id(output: str) -> str:
 
 
 def _parse_nodes(output: str) -> dict[str, Any]:
-    marker = output.find("Nodes in mesh:")
-    if marker < 0:
-        return {}
-    block = _extract_json_block(output, marker)
-    if not block:
-        return {}
-    try:
-        value = json.loads(block)
-    except json.JSONDecodeError:
-        return {}
-    return value if isinstance(value, dict) else {}
+    # F3: delegates to meshsrv/info_parser.py's shared, string-aware
+    # extraction (json.JSONDecoder.raw_decode-based) instead of this
+    # module's own former brace-counting _extract_json_block() - same
+    # behavior for well-formed output, but a node name containing '{'/'}'
+    # can no longer desync it.
+    return parse_info_nodes(output)
 
 
 def _parse_metadata(output: str) -> dict[str, Any]:
@@ -149,17 +117,7 @@ def _parse_metadata(output: str) -> dict[str, Any]:
     # MeshInterface.showInfo(), see mesh_interface.py) holding the local
     # node's DeviceMetadata - firmwareVersion lives here, not in the
     # per-node "Nodes in mesh" block used for name/hardware/role above.
-    marker = output.find("Metadata:")
-    if marker < 0:
-        return {}
-    block = _extract_json_block(output, marker)
-    if not block:
-        return {}
-    try:
-        value = json.loads(block)
-    except json.JSONDecodeError:
-        return {}
-    return value if isinstance(value, dict) else {}
+    return find_json_object(output, "Metadata:") or {}
 
 
 def parse_radio_identity(output: str, serial_port: str = "") -> dict[str, str]:

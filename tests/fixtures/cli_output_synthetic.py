@@ -133,3 +133,124 @@ Nodes in mesh: {
 }
 Preferences: {...}
 """
+
+# F3 repro (defects A/B): the LOCAL node ("!aabbccdd", matching conftest.py's
+# synthetic LOCAL_NODE_ID) has ONLY deviceMetrics; a NEIGHBOUR node that
+# appears AFTER it in the text has environmentMetrics. The pre-fix
+# output.find('"environmentMetrics"', node_pos) search (unbounded - it
+# scans to the end of the whole output, not just the local node's own
+# object) finds the neighbour's block and wrongly applies temperature=99
+# as if it were the local node's own reading.
+INFO_OUTPUT_LOCAL_METRICS_LEAK = """
+Connected to radio
+Owner: Test Local Node (TEST)
+Nodes in mesh: {
+  "!aabbccdd": {
+    "num": 2864434397,
+    "user": {
+      "id": "!aabbccdd",
+      "longName": "Test Local Node",
+      "shortName": "TEST",
+      "hwModel": "RAK4631",
+      "role": "ROUTER"
+    },
+    "deviceMetrics": {
+      "batteryLevel": 80,
+      "voltage": 4.1,
+      "channelUtilization": 2.5,
+      "airUtilTx": 1.1,
+      "uptimeSeconds": 9999
+    }
+  },
+  "!820af75a": {
+    "num": 2181570266,
+    "user": {
+      "id": "!820af75a",
+      "longName": "Neighbour Node",
+      "shortName": "NBR1",
+      "hwModel": "RAK4631",
+      "role": "CLIENT"
+    },
+    "environmentMetrics": {
+      "temperature": 99,
+      "relativeHumidity": 5,
+      "barometricPressure": 500
+    }
+  }
+}
+Preferences: {...}
+"""
+
+# F3 repro (defect B): the LOCAL node has NO deviceMetrics at all; a
+# NEIGHBOUR that appears after it does. The pre-fix
+# extract_json_block(output, output.find('"deviceMetrics"', node_pos))
+# search is unbounded past the local node's own object, so it finds and
+# applies the neighbour's voltage/battery as if they belonged to the
+# local radio.
+INFO_OUTPUT_LOCAL_MISSING_DEVICE_METRICS = """
+Connected to radio
+Owner: Test Local Node (TEST)
+Nodes in mesh: {
+  "!aabbccdd": {
+    "num": 2864434397,
+    "user": {
+      "id": "!aabbccdd",
+      "longName": "Test Local Node",
+      "shortName": "TEST",
+      "hwModel": "RAK4631",
+      "role": "ROUTER"
+    }
+  },
+  "!820af75a": {
+    "num": 2181570266,
+    "user": {
+      "id": "!820af75a",
+      "longName": "Neighbour Node",
+      "shortName": "NBR1",
+      "hwModel": "RAK4631",
+      "role": "CLIENT"
+    },
+    "deviceMetrics": {
+      "batteryLevel": 7,
+      "voltage": 3.3,
+      "channelUtilization": 1.0,
+      "airUtilTx": 0.5,
+      "uptimeSeconds": 1000
+    }
+  }
+}
+Preferences: {...}
+"""
+
+# F3 repro (defect C): a node whose longName contains a literal '}' -
+# names come from the mesh, not from us. The pre-fix brace-counting
+# extract_json_block() desyncs on this and either fails json.loads()
+# entirely (returning False, importing NOTHING - not even the perfectly
+# valid neighbour that follows) or truncates the block early.
+INFO_OUTPUT_NODE_NAME_WITH_BRACE = """
+Connected to radio
+Owner: Test Local Node (TEST)
+Nodes in mesh: {
+  "!eeeeeeee": {
+    "num": 4008636142,
+    "user": {
+      "id": "!eeeeeeee",
+      "longName": "Evil }",
+      "shortName": "EVL1",
+      "hwModel": "RAK4631",
+      "role": "CLIENT"
+    }
+  },
+  "!ffffffff": {
+    "num": 4294967295,
+    "user": {
+      "id": "!ffffffff",
+      "longName": "Normal Neighbour",
+      "shortName": "NRM1",
+      "hwModel": "RAK4631",
+      "role": "CLIENT"
+    }
+  }
+}
+Preferences: {...}
+"""

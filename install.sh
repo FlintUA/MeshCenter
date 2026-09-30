@@ -278,8 +278,16 @@ step_system_packages() {
     # support (camera/usb_driver.py) drives both as external programs,
     # not a pip dependency - installed unconditionally here, unlike
     # python3-picamera2/rpicam-apps below (gated behind INSTALL_CAMERA,
-    # "200+ dependencies") since this pair is a ~3MB combined footprint
-    # (CAM-0 report, 2026-09-30) with no such cost to gate.
+    # "200+ dependencies"). CAM-0's original ~2.9MB estimate was measured
+    # on a node that already had rpicam-apps installed, which pulls in
+    # the same libav* stack ffmpeg needs - PR #314 review caught this;
+    # re-measured on a node with neither package (pixel-111/Droidian,
+    # arm64, no rpicam-apps): ffmpeg + v4l-utils + libavdevice61 +
+    # libv4l2rds0t64 + libxv1 = ~6.3MB installed, ~2.9MB download. Exact
+    # bytes are platform/version-specific (this was Droidian, not
+    # Raspberry Pi OS), but the shape holds either way and stays well
+    # under a size that would justify gating this behind a flag the way
+    # python3-picamera2/rpicam-apps are.
     sudo apt-get install -y \
         git \
         python3-venv \

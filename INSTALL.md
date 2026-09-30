@@ -200,6 +200,16 @@ Without this, the Devices tab shows "USB camera support requires ffmpeg and
 v4l-utils" instead of the camera — CSI cameras and nodes with no USB camera
 are unaffected either way.
 
+`pip install -r requirements.txt` (already run by every deploy) does **not**
+remove a package that's no longer listed — the now-unused `v4l2py`/`linuxpy`
+(GPL-3.0-or-later) stay installed in Core's venv until explicitly removed:
+```bash
+source venv/bin/activate && pip uninstall -y v4l2py linuxpy && deactivate
+```
+Not required for correctness (nothing imports them any more), but worth doing
+so Core's venv actually matches the "no GPL code in Core's process" claim on
+disk, not just in the code that runs.
+
 ---
 
 ## Manual Installation

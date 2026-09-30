@@ -15,6 +15,7 @@ too).
 
 import os
 import sys
+import threading
 import time
 
 import pytest
@@ -141,6 +142,44 @@ def test_stream_mjpeg_yields_frames(driver):
     gen.close()
 
 
+def test_start_from_a_short_lived_thread_does_not_kill_the_process(driver):
+    """PR #314 review finding, live-reproduced on camtest: PR_SET_PDEATHSIG
+    is per-THREAD (man 2 prctl) - the kernel delivers the death signal when
+    the specific thread that called fork() exits, not when the whole
+    parent PROCESS does. Calling start() (and therefore spawning ffmpeg)
+    from a short-lived thread used to arm PDEATHSIG against that thread's
+    own lifetime: the moment the thread returned, the kernel killed
+    ffmpeg - independent of whether Core itself was still running. This
+    "worked" under gunicorn's gthread pool purely because its worker
+    threads happen to be long-lived; it broke under Werkzeug's dev server
+    (`python server.py`), where a request can land on a fresh, short-lived
+    thread. Fixed by routing every spawn through one persistent spawner
+    thread (see _spawn_ffmpeg()) - this test proves the fix by doing
+    exactly what broke it: starting the stream from a thread that then
+    immediately exits, and confirming the process and its frames survive
+    well past that."""
+    started_ok = {}
+
+    def start_and_exit():
+        started_ok["result"] = driver.start(resolution="1280x720")
+
+    thread = threading.Thread(target=start_and_exit)
+    thread.start()
+    thread.join()  # the spawning thread is now gone
+
+    assert started_ok["result"] is True
+    process = driver._process
+    assert process is not None
+
+    # On Linux this is the actual PR_SET_PDEATHSIG regression check; on
+    # other platforms (no PDEATHSIG at all - see _popen_ffmpeg()'s
+    # platform guard) this still verifies the queue/future spawn
+    # mechanism itself introduces no regression.
+    time.sleep(1.0)
+    assert process.poll() is None, "ffmpeg was killed after its spawning thread exited"
+    assert _wait_until(lambda: driver._last_frame is not None), "no frames after the spawning thread exited"
+
+
 # ---------------------------------------------------------------------------
 # Failure detection - the CAM-0 exit-code finding
 # ---------------------------------------------------------------------------
@@ -223,23 +262,20 @@ def test_stop_reaps_the_process_no_zombie(driver):
 # ---------------------------------------------------------------------------
 
 def _install_spawn_counters(monkeypatch):
+    """_popen_ffmpeg() is the one real subprocess.Popen() choke point for
+    BOTH the streaming and one-shot-photo paths (PR #314 review fix: both
+    now go through the persistent spawner thread) - classify each call by
+    argv content (`-frames:v` only appears in a one-shot capture) rather
+    than patching two different call sites."""
     stream_spawns = []
-    real_spawn = usb_driver._spawn_ffmpeg
-
-    def counting_spawn(argv):
-        stream_spawns.append(argv)
-        return real_spawn(argv)
-
-    monkeypatch.setattr(usb_driver, "_spawn_ffmpeg", counting_spawn)
-
     oneshot_calls = []
-    real_run = usb_driver.subprocess.run
+    real_popen = usb_driver._popen_ffmpeg
 
-    def counting_run(argv, **kwargs):
-        oneshot_calls.append(argv)
-        return real_run(argv, **kwargs)
+    def counting_popen(argv):
+        (oneshot_calls if "-frames:v" in argv else stream_spawns).append(argv)
+        return real_popen(argv)
 
-    monkeypatch.setattr(usb_driver.subprocess, "run", counting_run)
+    monkeypatch.setattr(usb_driver, "_popen_ffmpeg", counting_popen)
     return stream_spawns, oneshot_calls
 
 

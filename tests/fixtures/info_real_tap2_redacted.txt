@@ -1,0 +1,679 @@
+Connected to radio
+
+Owner: Flint TAP2 (FLT2)
+My info: { "myNodeNum": 1970248032, "rebootCount": 75, "minAppVersion": 30200, "deviceId": "XXXXXXXXXXXXXXXXXXXXXXXX", "pioEnv": "rak_wismesh_tap_v2-tft", "nodedbCount": 250, "firmwareEdition": "VANILLA" }
+Metadata: { "firmwareVersion": "2.7.26.54e0d8d", "deviceStateVersion": 24, "canShutdown": true, "hasWifi": true, "hasBluetooth": true, "positionFlags": 811, "hwModel": "RAK3312", "hasPKC": true, "excludedModules": 1344, "hasEthernet": false, "role": "CLIENT", "hasRemoteHardware": false }
+
+Nodes in mesh: {
+  "!756f9960": {
+    "num": 1970248032,
+    "user": {
+      "id": "!756f9960",
+      "longName": "Flint TAP2",
+      "shortName": "FLT2",
+      "macaddr": "aa:00:00:00:00:0e",
+      "hwModel": "RAK3312",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "isUnmessagable": false
+    },
+    "position": {
+      "time": 1790796443
+    },
+    "lastHeard": 1790796443,
+    "deviceMetrics": {
+      "batteryLevel": 92,
+      "voltage": 4.059,
+      "channelUtilization": 2.5433333,
+      "airUtilTx": 0.69294447,
+      "uptimeSeconds": 4001440
+    },
+    "isFavorite": true
+  },
+  "!f0000001": {
+    "num": 4026531841,
+    "user": {
+      "id": "!f0000001",
+      "longName": "XY Sample ",
+      "shortName": "XYS",
+      "macaddr": "aa:00:00:00:00:01",
+      "hwModel": "HELTEC_V4",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "isUnmessagable": false
+    },
+    "position": {
+      "latitudeI": 0,
+      "longitudeI": 0,
+      "altitude": 308,
+      "time": 1790792034,
+      "locationSource": "LOC_INTERNAL",
+      "latitude": 0,
+      "longitude": 0
+    },
+    "snr": 7.75,
+    "lastHeard": 1790796414,
+    "hopsAway": 5
+  },
+  "!f0000002": {
+    "num": 4026531842,
+    "user": {
+      "id": "!f0000002",
+      "longName": "TEST-cafe",
+      "shortName": "TEST",
+      "macaddr": "aa:00:00:00:00:02",
+      "hwModel": "TRACKER_T1000_E",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+    },
+    "position": {
+      "latitudeI": 0,
+      "longitudeI": 0,
+      "altitude": 287,
+      "time": 1790796254,
+      "locationSource": "LOC_INTERNAL",
+      "latitude": 0,
+      "longitude": 0
+    },
+    "snr": -7.0,
+    "lastHeard": 1790796252,
+    "deviceMetrics": {
+      "batteryLevel": 101,
+      "voltage": 4.172,
+      "channelUtilization": 3.0533335,
+      "airUtilTx": 0.58205557,
+      "uptimeSeconds": 77772
+    },
+    "hopsAway": 2
+  },
+  "!f0000003": {
+    "num": 4026531843,
+    "user": {
+      "id": "!f0000003",
+      "longName": "testerqz9",
+      "shortName": "TZQ9",
+      "macaddr": "aa:00:00:00:00:03",
+      "hwModel": "HELTEC_V3",
+      "role": "CLIENT_MUTE",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "isUnmessagable": false
+    },
+    "snr": -7.0,
+    "lastHeard": 1790796212,
+    "hopsAway": 4
+  },
+  "!f0000004": {
+    "num": 4026531844,
+    "user": {
+      "id": "!f0000004",
+      "longName": "Testtastic 4242",
+      "shortName": "4242",
+      "macaddr": "aa:00:00:00:00:04",
+      "hwModel": "HELTEC_V3",
+      "role": "CLIENT_MUTE",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "isUnmessagable": false
+    },
+    "position": {
+      "latitudeI": 0,
+      "longitudeI": 0,
+      "time": 1790772885,
+      "locationSource": "LOC_MANUAL",
+      "latitude": 0,
+      "longitude": 0
+    },
+    "snr": 6.5,
+    "lastHeard": 1790796127,
+    "deviceMetrics": {
+      "batteryLevel": 92,
+      "voltage": 4.09,
+      "channelUtilization": 1.0,
+      "airUtilTx": 0.02461111,
+      "uptimeSeconds": 96439
+    },
+    "hopsAway": 3
+  },
+  "!f0000005": {
+    "num": 4026531845,
+    "user": {
+      "id": "!f0000005",
+      "longName": "22TS451 Basisstation Mürnitz🍀",
+      "shortName": "13HN",
+      "macaddr": "aa:00:00:00:00:05",
+      "hwModel": "HELTEC_V4",
+      "role": "CLIENT_BASE",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "isUnmessagable": false
+    },
+    "position": {
+      "latitudeI": 0,
+      "longitudeI": 0,
+      "altitude": 320,
+      "time": 1790755411,
+      "locationSource": "LOC_MANUAL",
+      "latitude": 0,
+      "longitude": 0
+    },
+    "snr": -6.75,
+    "lastHeard": 1790796096,
+    "deviceMetrics": {
+      "batteryLevel": 101,
+      "voltage": 4.342,
+      "channelUtilization": 0.0,
+      "airUtilTx": 0.80777776,
+      "uptimeSeconds": 57218
+    },
+    "hopsAway": 7
+  },
+  "!f0000006": {
+    "num": 4026531846,
+    "user": {
+      "id": "!f0000006",
+      "longName": "knoten.test | Base Nord",
+      "shortName": "knrd",
+      "macaddr": "aa:00:00:00:00:06",
+      "hwModel": "PRIVATE_HW",
+      "role": "CLIENT_MUTE",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "isUnmessagable": false
+    },
+    "position": {
+      "latitudeI": 0,
+      "longitudeI": 0,
+      "altitude": 311,
+      "time": 1790796044,
+      "locationSource": "LOC_MANUAL",
+      "latitude": 0,
+      "longitude": 0
+    },
+    "snr": 6.25,
+    "lastHeard": 1790796058,
+    "deviceMetrics": {
+      "batteryLevel": 101,
+      "voltage": 0.0,
+      "channelUtilization": 2.1366668,
+      "airUtilTx": 0.079166666,
+      "uptimeSeconds": 3059340
+    },
+    "hopsAway": 5
+  },
+  "!f0000007": {
+    "num": 4026531847,
+    "user": {
+      "id": "!f0000007",
+      "longName": "https://www.exmstr.test/panel",
+      "shortName": "exms",
+      "macaddr": "aa:00:00:00:00:07",
+      "hwModel": "HELTEC_V4",
+      "role": "CLIENT_BASE",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "isUnmessagable": false
+    },
+    "position": {
+      "latitudeI": 0,
+      "longitudeI": 0,
+      "altitude": 309,
+      "time": 1790757098,
+      "locationSource": "LOC_MANUAL",
+      "latitude": 0,
+      "longitude": 0
+    },
+    "snr": 6.5,
+    "lastHeard": 1790796006,
+    "deviceMetrics": {
+      "batteryLevel": 101,
+      "voltage": 4.383,
+      "channelUtilization": 16.366667,
+      "airUtilTx": 0.12766667,
+      "uptimeSeconds": 128
+    },
+    "hopsAway": 6
+  },
+  "!f0000008": {
+    "num": 4026531848,
+    "user": {
+      "id": "!f0000008",
+      "longName": "TesQR",
+      "shortName": "Tes",
+      "macaddr": "aa:00:00:00:00:0d",
+      "hwModel": "T_DECK",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "isUnmessagable": false
+    },
+    "position": {
+      "latitudeI": 0,
+      "longitudeI": 0,
+      "altitude": 311,
+      "time": 1790795989,
+      "locationSource": "LOC_INTERNAL",
+      "latitude": 0,
+      "longitude": 0
+    },
+    "snr": 7.75,
+    "lastHeard": 1790795996,
+    "hopsAway": 3
+  },
+  "!f0000009": {
+    "num": 4026531849,
+    "user": {
+      "id": "!f0000009",
+      "longName": "Testgoth Sampleorbit",
+      "shortName": "Tgo",
+      "macaddr": "aa:00:00:00:00:08",
+      "hwModel": "RAK4631",
+      "role": "ROUTER_LATE",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "isUnmessagable": true
+    },
+    "position": {
+      "latitudeI": 0,
+      "longitudeI": 0,
+      "altitude": 342,
+      "time": 1790756509,
+      "locationSource": "LOC_MANUAL",
+      "latitude": 0,
+      "longitude": 0
+    },
+    "snr": 7.0,
+    "lastHeard": 1790795987,
+    "deviceMetrics": {
+      "batteryLevel": 101,
+      "voltage": 4.258,
+      "channelUtilization": 0.0,
+      "airUtilTx": 0.6911389,
+      "uptimeSeconds": 1028228
+    },
+    "hopsAway": 4
+  },
+  "!f000000a": {
+    "num": 4026531850,
+    "user": {
+      "id": "!f000000a",
+      "longName": "XY_QR",
+      "shortName": "XYQR",
+      "macaddr": "aa:00:00:00:00:09",
+      "hwModel": "XIAO_NRF52_KIT",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+    },
+    "position": {
+      "latitudeI": 0,
+      "longitudeI": 0,
+      "altitude": 365,
+      "time": 1790783818,
+      "locationSource": "LOC_MANUAL",
+      "latitude": 0,
+      "longitude": 0
+    },
+    "snr": 6.25,
+    "lastHeard": 1790795843,
+    "deviceMetrics": {
+      "batteryLevel": 91,
+      "voltage": 4.07,
+      "channelUtilization": 9.615001,
+      "airUtilTx": 1.8060001,
+      "uptimeSeconds": 19943279
+    },
+    "hopsAway": 6
+  },
+  "!f000000b": {
+    "num": 4026531851,
+    "user": {
+      "id": "!f000000b",
+      "longName": "TST1_a001",
+      "shortName": "TST1",
+      "macaddr": "aa:00:00:00:00:0a",
+      "hwModel": "RAK4631",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+    },
+    "snr": -5.5,
+    "lastHeard": 1790795841,
+    "deviceMetrics": {
+      "batteryLevel": 87,
+      "voltage": 4.036,
+      "channelUtilization": 6.448333,
+      "airUtilTx": 1.1991111,
+      "uptimeSeconds": 34452261
+    },
+    "hopsAway": 3
+  },
+  "!1fa065f0": {
+    "num": 530605552,
+    "user": {
+      "id": "!1fa065f0",
+      "longName": "Site: Elektroniker.help",
+      "shortName": "Elek",
+      "macaddr": "aa:00:00:00:00:0f",
+      "hwModel": "TBEAM",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "isUnmessagable": false
+    },
+    "position": {
+      "latitudeI": 0,
+      "longitudeI": 0,
+      "altitude": 283,
+      "time": 1790793883,
+      "locationSource": "LOC_INTERNAL",
+      "latitude": 0,
+      "longitude": 0
+    },
+    "snr": 6.5,
+    "lastHeard": 1790795800,
+    "deviceMetrics": {
+      "batteryLevel": 100,
+      "voltage": 4.124,
+      "channelUtilization": 1.07,
+      "airUtilTx": 0.5381389,
+      "uptimeSeconds": 301204
+    },
+    "hopsAway": 0
+  },
+  "!f000000c": {
+    "num": 4026531852,
+    "user": {
+      "id": "!f000000c",
+      "longName": "Der Musten Funker",
+      "shortName": "DMF0",
+      "macaddr": "aa:00:00:00:00:0c",
+      "hwModel": "SEEED_WIO_TRACKER_L1",
+      "role": "CLIENT_BASE",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "isUnmessagable": false
+    },
+    "position": {
+      "latitudeI": 0,
+      "longitudeI": 0,
+      "altitude": 323,
+      "time": 1790794802,
+      "locationSource": "LOC_MANUAL",
+      "latitude": 0,
+      "longitude": 0
+    },
+    "snr": 5.75,
+    "lastHeard": 1790795692,
+    "deviceMetrics": {
+      "batteryLevel": 94,
+      "voltage": 4.009,
+      "channelUtilization": 3.6583333,
+      "airUtilTx": 1.8281112,
+      "uptimeSeconds": 9641710
+    },
+    "hopsAway": 4
+  },
+  "!f000000d": {
+    "num": 4026531853,
+    "user": {
+      "id": "!f000000d",
+      "longName": "Test12 Jörg",
+      "shortName": "Tes1",
+      "macaddr": "aa:00:00:00:00:0b",
+      "hwModel": "HELTEC_V3",
+      "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "isUnmessagable": false
+    },
+    "position": {
+      "latitudeI": 0,
+      "longitudeI": 0,
+      "altitude": 300,
+      "time": 1773615742,
+      "locationSource": "LOC_EXTERNAL",
+      "latitude": 0,
+      "longitude": 0
+    },
+    "snr": 6.5,
+    "lastHeard": 1790795675,
+    "deviceMetrics": {
+      "batteryLevel": 101,
+      "voltage": 4.25,
+      "channelUtilization": 10.278333,
+      "airUtilTx": 0.70394444,
+      "uptimeSeconds": 21126774
+    },
+    "hopsAway": 3
+  }
+}
+
+Preferences: {
+  "device": {
+    "buzzerGpio": 38,
+    "nodeInfoBroadcastSecs": 10800,
+    "tzdef": "GMT-1GMT,M3.5.0,M10.5.0/3",
+    "role": "CLIENT",
+    "serialEnabled": false,
+    "buttonGpio": 0,
+    "rebroadcastMode": "ALL",
+    "doubleTapAsButtonPress": false,
+    "isManaged": false,
+    "disableTripleClick": false,
+    "ledHeartbeatDisabled": false,
+    "buzzerMode": "ALL_ENABLED"
+  },
+  "position": {
+    "positionBroadcastSecs": 3600,
+    "positionBroadcastSmartEnabled": true,
+    "gpsUpdateInterval": 120,
+    "positionFlags": 811,
+    "broadcastSmartMinimumDistance": 100,
+    "broadcastSmartMinimumIntervalSecs": 300,
+    "gpsMode": "ENABLED",
+    "fixedPosition": false,
+    "gpsEnabled": false,
+    "gpsAttemptTime": 0,
+    "rxGpio": 0,
+    "txGpio": 0,
+    "gpsEnGpio": 0
+  },
+  "power": {
+    "waitBluetoothSecs": 60,
+    "sdsSecs": 4294967295,
+    "lsSecs": 300,
+    "minWakeSecs": 10,
+    "isPowerSaving": false,
+    "onBatteryShutdownAfterSecs": 0,
+    "adcMultiplierOverride": 0.0,
+    "deviceBatteryInaAddress": 0,
+    "powermonEnables": "0"
+  },
+  "network": {
+    "ntpServer": "meshtastic.pool.ntp.org",
+    "wifiEnabled": false,
+    "wifiSsid": "",
+    "wifiPsk": "",
+    "ethEnabled": false,
+    "addressMode": "DHCP",
+    "rsyslogServer": "",
+    "enabledProtocols": 0,
+    "ipv6Enabled": false
+  },
+  "display": {
+    "screenOnSecs": 600,
+    "displaymode": "COLOR",
+    "gpsFormat": "UNUSED",
+    "autoScreenCarouselSecs": 0,
+    "compassNorthTop": false,
+    "flipScreen": false,
+    "units": "METRIC",
+    "oled": "OLED_AUTO",
+    "headingBold": false,
+    "wakeOnTapOrMotion": false,
+    "compassOrientation": "DEGREES_0",
+    "use12hClock": false,
+    "useLongNodeName": false,
+    "enableMessageBubbles": false
+  },
+  "lora": {
+    "usePreset": true,
+    "bandwidth": 250,
+    "spreadFactor": 11,
+    "codingRate": 5,
+    "region": "EU_868",
+    "hopLimit": 3,
+    "txEnabled": true,
+    "txPower": 27,
+    "channelNum": 1,
+    "sx126xRxBoostedGain": true,
+    "ignoreMqtt": true,
+    "femLnaMode": "NOT_PRESENT",
+    "modemPreset": "LONG_FAST",
+    "frequencyOffset": 0.0,
+    "overrideDutyCycle": false,
+    "overrideFrequency": 0.0,
+    "paFanDisabled": false,
+    "ignoreIncoming": [],
+    "configOkToMqtt": false,
+    "serialHalOnly": false
+  },
+  "bluetooth": {
+    "enabled": true,
+    "mode": "FIXED_PIN",
+    "fixedPin": 750749
+  },
+  "security": {
+    "publicKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "privateKey": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "serialEnabled": true,
+    "adminKey": [],
+    "isManaged": false,
+    "debugLogApiEnabled": false,
+    "adminChannelEnabled": false
+  },
+  "version": 0
+}
+
+Module preferences: {
+  "mqtt": {
+    "enabled": true,
+    "address": "mqtt.meshtastic.org",
+    "username": "meshdev",
+    "password": "XXXXXXXXXX",
+    "encryptionEnabled": true,
+    "root": "msh/EU_868",
+    "proxyToClientEnabled": true,
+    "mapReportingEnabled": true,
+    "mapReportSettings": {
+      "publishIntervalSecs": 3600,
+      "positionPrecision": 15,
+      "shouldReportLocation": true
+    },
+    "jsonEnabled": false,
+    "tlsEnabled": false
+  },
+  "serial": {
+    "enabled": false,
+    "echo": false,
+    "rxd": 0,
+    "txd": 0,
+    "baud": "BAUD_DEFAULT",
+    "timeout": 0,
+    "mode": "DEFAULT",
+    "overrideConsoleSerialPort": false
+  },
+  "externalNotification": {
+    "enabled": true,
+    "outputMs": 1000,
+    "output": 45,
+    "active": true,
+    "alertMessage": true,
+    "usePwm": true,
+    "outputBuzzer": 38,
+    "alertMessageBuzzer": true,
+    "nagTimeout": 15,
+    "outputVibra": 0,
+    "alertMessageVibra": false,
+    "alertBell": false,
+    "alertBellVibra": false,
+    "alertBellBuzzer": false,
+    "useI2sAsBuzzer": false
+  },
+  "storeForward": {
+    "enabled": false,
+    "heartbeat": false,
+    "records": 0,
+    "historyReturnMax": 0,
+    "historyReturnWindow": 0,
+    "isServer": false
+  },
+  "rangeTest": {
+    "enabled": false,
+    "sender": 0,
+    "save": false,
+    "clearOnReboot": false
+  },
+  "telemetry": {
+    "deviceUpdateInterval": 2147483647,
+    "environmentUpdateInterval": 0,
+    "environmentMeasurementEnabled": false,
+    "environmentScreenEnabled": false,
+    "environmentDisplayFahrenheit": false,
+    "airQualityEnabled": false,
+    "airQualityInterval": 0,
+    "powerMeasurementEnabled": false,
+    "powerUpdateInterval": 0,
+    "powerScreenEnabled": false,
+    "healthMeasurementEnabled": false,
+    "healthUpdateInterval": 0,
+    "healthScreenEnabled": false,
+    "deviceTelemetryEnabled": false,
+    "airQualityScreenEnabled": false
+  },
+  "cannedMessage": {
+    "rotary1Enabled": false,
+    "inputbrokerPinA": 0,
+    "inputbrokerPinB": 0,
+    "inputbrokerPinPress": 0,
+    "inputbrokerEventCw": "NONE",
+    "inputbrokerEventCcw": "NONE",
+    "inputbrokerEventPress": "NONE",
+    "updown1Enabled": false,
+    "enabled": false,
+    "allowInputSource": "",
+    "sendBell": false
+  },
+  "audio": {
+    "codec2Enabled": false,
+    "pttPin": 0,
+    "bitrate": "CODEC2_DEFAULT",
+    "i2sWs": 0,
+    "i2sSd": 0,
+    "i2sDin": 0,
+    "i2sSck": 0
+  },
+  "remoteHardware": {
+    "enabled": false,
+    "allowUndefinedPinAccess": false,
+    "availablePins": []
+  },
+  "neighborInfo": {
+    "enabled": false,
+    "updateInterval": 0,
+    "transmitOverLora": false
+  },
+  "ambientLighting": {
+    "current": 10,
+    "red": 111,
+    "green": 153,
+    "blue": 96,
+    "ledState": false
+  },
+  "detectionSensor": {
+    "minimumBroadcastSecs": 45,
+    "detectionTriggerType": "LOGIC_HIGH",
+    "enabled": false,
+    "stateBroadcastSecs": 0,
+    "sendBell": false,
+    "name": "",
+    "monitorPin": 0,
+    "usePullup": false
+  },
+  "paxcounter": {
+    "enabled": false,
+    "paxcounterUpdateInterval": 0,
+    "wifiThreshold": 0,
+    "bleThreshold": 0
+  },
+  "version": 0
+}
+
+Channels:
+  Index 0: PRIMARY psk=default { "psk": "XXXX", "moduleSettings": { "positionPrecision": 13, "isMuted": false }, "channelNum": 0, "name": "", "id": 0, "uplinkEnabled": false, "downlinkEnabled": false }
+  Index 1: SECONDARY psk=secret { "psk": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "name": "Flint-pvt", "moduleSettings": { "positionPrecision": 32, "isMuted": false }, "channelNum": 0, "id": 0, "uplinkEnabled": false, "downlinkEnabled": false }
+
+Primary channel URL: https://meshtastic.org/e/#REDACTED
+Complete URL (includes all channels): https://meshtastic.org/e/#REDACTED
+

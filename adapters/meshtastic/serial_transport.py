@@ -548,8 +548,8 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         implementation does NOT parse them out; it returns the raw
         `meshtastic --info` stdout/stderr text as-is (same output
         server.py's update_base_status_from_info() already knows how to
-        pick apart with extract_json_block()/json.loads(), but that
-        parsing logic is not duplicated here). Not a problem for Task 44
+        pick apart with meshsrv.info_parser.local_node_entry()/json, but
+        that parsing logic is not duplicated here). Not a problem for Task 44
         (nothing calls this yet), but whoever wires get_metadata() into
         Core in Task 46 must not assume a structured dict with those
         fields - it will need to add the parsing step itself."""

@@ -1551,10 +1551,14 @@ def _sanitize_settings_coordinate(container, key, minimum, maximum, context):
     silent reset here would be just as bad as the NaN it's cleaning up,
     since the same reference-location value already lost its stored fix
     with no visible trace). Mutates `container` in place; does nothing if
-    the key is absent."""
+    the key is absent, or already None/empty (that's the legitimate resting
+    value for an unset coordinate - warning on every startup for the
+    default reference_location would be pure noise, reported 2026-09-30)."""
     if key not in container:
         return
     raw = container[key]
+    if raw is None or raw == "":
+        return
     try:
         value = float(raw)
     except (TypeError, ValueError):

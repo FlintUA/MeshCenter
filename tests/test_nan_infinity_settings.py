@@ -290,6 +290,24 @@ def test_load_settings_keeps_a_valid_manual_coordinate(server_module):
     assert srv.settings["reference_location"]["manual"]["longitude"] == -73.5
 
 
+def test_load_settings_does_not_warn_on_the_default_unset_reference_location(server_module, capsys):
+    """DEFAULT_SETTINGS' reference_location.manual is {"latitude": None,
+    "longitude": None} (api/api_settings.py) - that's the normal resting
+    state for a node that never set one, not a corrupted value. Reported
+    2026-09-30: the original fix treated None the same as any other
+    non-numeric value, so every node without a manual reference location
+    logged a spurious WARNING on every single startup."""
+    srv = server_module
+    _write_settings_file(srv, {"reference_location": {"manual": {"latitude": None, "longitude": None}}})
+
+    srv.load_settings()
+
+    assert srv.settings["reference_location"]["manual"]["latitude"] is None
+    assert srv.settings["reference_location"]["manual"]["longitude"] is None
+    out = capsys.readouterr().out
+    assert "WARNING" not in out
+
+
 def test_load_settings_persists_the_sanitized_value_to_disk(server_module):
     """load_settings() already unconditionally re-saves via save_settings()
     at the end - the sanitized value must survive that, not just live in

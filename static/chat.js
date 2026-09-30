@@ -11236,12 +11236,18 @@ function renderCameraManagerCards(cameraManagerData, profileId) {
 
     const cameras = Array.isArray(cameraManagerData.cameras) ? cameraManagerData.cameras : [];
     if (cameras.length === 0) {
+        // CAM-1: ffmpeg/v4l-utils missing is a different, more actionable
+        // situation than "nothing plugged in" - see
+        // api/api_camera_manager.py's _summary().
+        const title = cameraManagerData.usb_tooling_missing
+            ? window.I18N.t('devices.usb_camera_requires_ffmpeg')
+            : window.I18N.t('devices.no_cameras_found');
         return `
             <section class="peripheral-card">
                 <div class="peripheral-card-header">
                     <div>
                         <div class="device-card-eyebrow">${eyebrow}</div>
-                        <h3>${escapeHtml(window.I18N.t('devices.no_cameras_found'))}</h3>
+                        <h3>${escapeHtml(title)}</h3>
                     </div>
                 </div>
                 <div class="device-action-row device-action-row-single">

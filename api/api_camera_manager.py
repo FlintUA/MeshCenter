@@ -25,18 +25,29 @@ from __future__ import annotations
 from flask import request, jsonify
 
 from camera.camera_manager import build_camera_manager
+from camera.usb_driver import ffmpeg_and_v4l2ctl_available
 
 
 def register_camera_manager_routes(app, device_manager, handle_errors, camera_manager_state):
     def _summary():
         manager = camera_manager_state.get("manager")
+        # Cheap (no subprocess, no device I/O) - CAM-1: distinguishes "no
+        # USB camera plugged in" from "ffmpeg/v4l-utils aren't installed",
+        # so the Devices tab can tell the user what to actually do instead
+        # of a generic "no cameras found" (see static/chat.js's
+        # renderCameraManagerCards()).
+        usb_tooling_missing = not ffmpeg_and_v4l2ctl_available()
         if manager is None:
-            return {"ok": True, "scanned": False, "active_id": None, "cameras": []}
+            return {
+                "ok": True, "scanned": False, "active_id": None, "cameras": [],
+                "usb_tooling_missing": usb_tooling_missing,
+            }
         return {
             "ok": True,
             "scanned": True,
             "active_id": manager.active_id,
             "cameras": manager.list_drivers(),
+            "usb_tooling_missing": usb_tooling_missing,
         }
 
     @app.route("/api/devices/cameras")

@@ -1,0 +1,16 @@
+
+User Controls
+
+                     brightness 0x00980900 (int)    : min=1 max=15 step=1 default=7 value=7 flags=has-min-max
+                       contrast 0x00980901 (int)    : min=0 max=15 step=1 default=8 value=8 flags=has-min-max
+                     saturation 0x00980902 (int)    : min=0 max=14 step=1 default=9 value=9 flags=has-min-max
+                          gamma 0x00980910 (int)    : min=0 max=4 step=1 default=0 value=0 flags=has-min-max
+                           gain 0x00980913 (int)    : min=4 max=15 step=1 default=15 value=15 flags=has-min-max
+           power_line_frequency 0x00980918 (menu)   : min=0 max=2 default=1 value=1 (50 Hz)
+      white_balance_temperature 0x0098091a (int)    : min=0 max=8 step=1 default=0 value=0 flags=has-min-max
+                      sharpness 0x0098091b (int)    : min=0 max=15 step=1 default=2 value=2 flags=has-min-max
+         backlight_compensation 0x0098091c (int)    : min=0 max=1 step=1 default=0 value=0 flags=has-min-max
+
+Camera Controls
+
+                  zoom_absolute 0x009a090d (int)    : min=1 max=192 step=1 default=1 value=1 flags=has-min-max

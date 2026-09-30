@@ -666,6 +666,7 @@
     "scan_cameras": "Scan for cameras",
     "scanning_cameras": "Scanning for cameras…",
     "no_cameras_found": "No cameras found",
+    "usb_camera_requires_ffmpeg": "USB camera support requires ffmpeg and v4l-utils (sudo apt-get install -y ffmpeg v4l-utils, then restart the service)",
     "rescan_cameras": "Rescan cameras",
     "make_active": "Make active",
     "camera_id": "ID",

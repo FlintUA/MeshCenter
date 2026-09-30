@@ -274,6 +274,20 @@ step_system_packages() {
     progress "2/9 Installing system packages..."
 
     sudo apt-get update -qq
+    # ffmpeg/v4l-utils (CAM-1, audit review finding F10): USB camera
+    # support (camera/usb_driver.py) drives both as external programs,
+    # not a pip dependency - installed unconditionally here, unlike
+    # python3-picamera2/rpicam-apps below (gated behind INSTALL_CAMERA,
+    # "200+ dependencies"). CAM-0's original ~2.9MB estimate was measured
+    # on a node that already had rpicam-apps installed, which pulls in
+    # the same libav* stack ffmpeg needs - PR #314 review caught this;
+    # re-measured on a node with neither package (pixel-111/Droidian,
+    # arm64, no rpicam-apps): ffmpeg + v4l-utils + libavdevice61 +
+    # libv4l2rds0t64 + libxv1 = ~6.3MB installed, ~2.9MB download. Exact
+    # bytes are platform/version-specific (this was Droidian, not
+    # Raspberry Pi OS), but the shape holds either way and stays well
+    # under a size that would justify gating this behind a flag the way
+    # python3-picamera2/rpicam-apps are.
     sudo apt-get install -y \
         git \
         python3-venv \
@@ -284,6 +298,8 @@ step_system_packages() {
         lsof \
         i2c-tools \
         util-linux-extra \
+        ffmpeg \
+        v4l-utils \
         --no-install-recommends \
         -qq
 

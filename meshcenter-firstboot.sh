@@ -418,6 +418,15 @@ log "Installing MeshCenter system dependencies..."
 wait_for_apt_lock
 apt-get update -qq
 wait_for_apt_lock
+# ffmpeg/v4l-utils (CAM-1, audit review finding F10): USB camera support
+# (camera/usb_driver.py) drives both as external programs, unconditionally -
+# unlike python3-picamera2/rpicam-apps below (gated behind INSTALL_CAMERA).
+# CAM-0's original ~2.9MB estimate was measured on a node that already had
+# rpicam-apps installed (which pulls in the same libav* stack ffmpeg
+# needs) - PR #314 review caught this; re-measured on a node with neither
+# package (pixel-111/Droidian, arm64): ffmpeg + v4l-utils + libavdevice61
+# + libv4l2rds0t64 + libxv1 = ~6.3MB installed, ~2.9MB download. Still
+# well under a size that would justify gating this behind a flag.
 apt-get install -y --no-install-recommends \
     git \
     python3 \
@@ -429,7 +438,9 @@ apt-get install -y --no-install-recommends \
     usbutils \
     lsof \
     i2c-tools \
-    util-linux-extra
+    util-linux-extra \
+    ffmpeg \
+    v4l-utils
 
 systemctl enable avahi-daemon >/dev/null 2>&1 || true
 systemctl start avahi-daemon || true

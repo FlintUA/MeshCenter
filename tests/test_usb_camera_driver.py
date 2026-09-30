@@ -429,6 +429,44 @@ def test_discover_usb_cameras_skips_devices_without_usb_ids(monkeypatch):
 # ffmpeg_and_v4l2ctl_available()
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# _run_v4l2_ctl() - retry on timeout (live-caught on camtest, 2026-09-30)
+# ---------------------------------------------------------------------------
+
+def test_run_v4l2_ctl_retries_once_on_timeout(monkeypatch):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if len(calls) == 1:
+            raise usb_driver.subprocess.TimeoutExpired(cmd=argv, timeout=kwargs.get("timeout"))
+        return usb_driver.subprocess.CompletedProcess(argv, 0, stdout="ok output", stderr="")
+
+    monkeypatch.setattr(usb_driver, "V4L2_CTL_PATH", "/usr/bin/v4l2-ctl")
+    monkeypatch.setattr(usb_driver.subprocess, "run", fake_run)
+
+    result = usb_driver._run_v4l2_ctl("/dev/video0", "--info")
+
+    assert result == "ok output"
+    assert len(calls) == 2
+
+
+def test_run_v4l2_ctl_gives_up_after_second_timeout(monkeypatch):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        raise usb_driver.subprocess.TimeoutExpired(cmd=argv, timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr(usb_driver, "V4L2_CTL_PATH", "/usr/bin/v4l2-ctl")
+    monkeypatch.setattr(usb_driver.subprocess, "run", fake_run)
+
+    result = usb_driver._run_v4l2_ctl("/dev/video0", "--info")
+
+    assert result == ""
+    assert len(calls) == 2
+
+
 def test_ffmpeg_and_v4l2ctl_available_reflects_module_state(driver, monkeypatch):
     assert usb_driver.ffmpeg_and_v4l2ctl_available() is True
     monkeypatch.setattr(usb_driver, "FFMPEG_CMD_PREFIX", [])

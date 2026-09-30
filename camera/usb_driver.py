@@ -214,20 +214,38 @@ def _run_v4l2_ctl(dev_path: str, *args: str, timeout: float = 5.0) -> str:
     (missing binary, nonzero exit, timeout, exception) - never raises.
     A directly-monkeypatchable seam for driver-level tests (separate from
     camera/v4l2_ctl_parse.py's own pure-text-parsing tests, which don't
-    need a real subprocess at all)."""
+    need a real subprocess at all).
+
+    One retry on timeout only (live-caught on camtest, CAM-1 verification,
+    2026-09-30: a `--list-formats-ext` call occasionally took the full 5s
+    timeout - roughly 1 in 10 calls in a rapid stop/restart test loop -
+    while the same call in isolation consistently completed in <20ms; the
+    timing lines up with a brief kernel-level handoff window right after a
+    previous ffmpeg process released the device, not a generally slow or
+    broken v4l2-ctl. A single retry absorbs that narrow window without
+    hiding a genuinely broken/missing binary - that still fails fast on
+    the first attempt via FileNotFoundError, not a timeout, so it isn't
+    retried needlessly)."""
     if not V4L2_CTL_PATH:
         return ""
-    try:
-        result = subprocess.run(
-            [V4L2_CTL_PATH, "-d", dev_path, *args],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        return result.stdout
-    except Exception as error:
-        print(f"[USB CAMERA] v4l2-ctl {' '.join(args)} failed for {dev_path}: {error}", flush=True)
-        return ""
+    for attempt in range(2):
+        try:
+            result = subprocess.run(
+                [V4L2_CTL_PATH, "-d", dev_path, *args],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            return result.stdout
+        except subprocess.TimeoutExpired as error:
+            if attempt == 0:
+                continue
+            print(f"[USB CAMERA] v4l2-ctl {' '.join(args)} failed for {dev_path}: {error}", flush=True)
+            return ""
+        except Exception as error:
+            print(f"[USB CAMERA] v4l2-ctl {' '.join(args)} failed for {dev_path}: {error}", flush=True)
+            return ""
+    return ""
 
 
 def _pid_holding_device(dev_path: str) -> int | None:

@@ -150,6 +150,7 @@ from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 from meshsrv import ipc_protocol
+from meshsrv import subprocess_spawner
 from meshsrv.radio_transport import (
     ChannelInfo,
     CheckedSendResult,
@@ -347,17 +348,34 @@ class AdapterSupervisor:
             "--meshtastic-cli",
             str(self._meshtastic_cli),
         ]
-        self._proc = subprocess.Popen(
-            command,
-            cwd=str(self._project_dir),
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            preexec_fn=_set_pdeathsig_to_sigkill if sys.platform == "linux" else None,
-        )
+
+        def _popen_adapter() -> subprocess.Popen:
+            return subprocess.Popen(
+                command,
+                cwd=str(self._project_dir),
+                env=env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                preexec_fn=_set_pdeathsig_to_sigkill if sys.platform == "linux" else None,
+            )
+
+        # F15 (PR #314 review, generalized): PR_SET_PDEATHSIG is per-
+        # THREAD, not per-process (man 2 prctl) - the preexec_fn above
+        # only protects this subprocess from Core dying if the THREAD
+        # that called Popen() itself outlives it. _spawn_locked() used to
+        # be called directly from whichever thread needed a respawn -
+        # including server.py's _do_reconnect/_do_identity_retry, both
+        # short-lived daemon threads - which would arm the death signal
+        # against that thread's own lifetime and silently SIGKILL the
+        # adapter the moment it returned, independent of Core's own
+        # state. meshsrv.subprocess_spawner.spawn() runs the actual
+        # Popen() call on one shared, persistent spawner thread instead
+        # (the same one camera/usb_driver.py's ffmpeg spawns use) - see
+        # that module's own docstring for the full reasoning.
+        self._proc = subprocess_spawner.spawn(_popen_adapter)
         # P0 stabilization follow-up: stderr=PIPE above gives the adapter
         # subprocess a real OS pipe with a finite kernel buffer (typically
         # 64KB on Linux) - before this drain thread, nothing ever read it.

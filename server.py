@@ -7176,9 +7176,14 @@ def api_clear_chat():
     chat_id = data.get("chat_id", "").strip()
     if not chat_id or not is_valid_chat_id(chat_id):
         return jsonify({"ok": False, "error": "Invalid chat_id", "error_code": "invalid_chat_id"}), 400
-    global messages
     with state_lock:
-        messages = [m for m in messages if m.get("chat_id") != chat_id]
+        # In place (F2): server.py hands `messages` to api/api_chat.py's
+        # register_chat_routes() by reference at import time. Rebinding the
+        # name here (`messages = [...]`) would leave that reference - and
+        # everything built on it (/api/messages, /api/messages/delete,
+        # /api/send/retry) - pointing at a stale, disconnected list for the
+        # rest of the process's life.
+        messages[:] = [m for m in messages if m.get("chat_id") != chat_id]
         save_messages()
         if chat_id in chats:
             chats[chat_id]["last_message"] = ""
@@ -7198,8 +7203,8 @@ def api_delete_chat():
         if chat_id in chats:
             del chats[chat_id]
             save_chats()
-        global messages
-        messages = [m for m in messages if m.get("chat_id") != chat_id]
+        # In place (F2) - see api_clear_chat()'s own comment above.
+        messages[:] = [m for m in messages if m.get("chat_id") != chat_id]
         save_messages()
     return jsonify({"ok": True})
 
@@ -7440,7 +7445,8 @@ def api_delete_all_dm():
                     json.dump({"deleted": dm_chat_ids}, f)
             except Exception as e:
                 print(f"[WARN] Could not write deleted_dm.json: {e}")
-            messages = [
+            # In place (F2) - see api_clear_chat()'s own comment above.
+            messages[:] = [
                 m for m in messages
                 if m.get("chat_id") == CHANNEL_CHAT_ID or str(m.get("chat_id", "")).startswith("channel:")
             ]

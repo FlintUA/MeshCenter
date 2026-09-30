@@ -5,6 +5,7 @@ dependency, runs on any platform including this project's Windows dev
 machine), not a mocked-out simulation of subprocess behavior.
 """
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -172,6 +173,56 @@ def test_killed_adapter_respawns_as_a_genuinely_different_process():
     second_pid = second["result"]["_pid"]
     assert second_pid is not None
     assert second_pid != first_pid, "respawn must be a genuinely new OS process, not the killed one still running"
+
+
+def test_spawn_from_a_short_lived_thread_does_not_kill_the_adapter():
+    """F15 (PR #314 review finding, generalized): _spawn_locked() used to
+    call subprocess.Popen(preexec_fn=_set_pdeathsig_to_sigkill) directly
+    on whichever thread triggered a (re)spawn - including server.py's
+    _do_reconnect/_do_identity_retry, both short-lived daemon threads.
+    PR_SET_PDEATHSIG is per-THREAD (man 2 prctl): the kernel delivers the
+    death signal when the thread that called fork() exits, not when the
+    whole parent process does - so a respawn triggered from one of those
+    threads would get the adapter SIGKILLed the instant that thread
+    returned, independent of Core's own state. Now routed through
+    meshsrv.subprocess_spawner's shared, persistent spawner thread
+    instead - this proves the fix by doing exactly what used to break
+    it: triggering the adapter's first spawn from a thread that then
+    immediately exits, and confirming the adapter survives well past
+    that and a second call still reaches the SAME process."""
+    supervisor = _make_supervisor()
+    result = {}
+
+    def call_from_thread():
+        result["response"] = supervisor.call(
+            {"operation": "get_metadata", "transport_type": "serial", "params": {}, "timeout": 5.0},
+            timeout=5.0,
+            ble_address_for_cleanup=None,
+        )
+
+    thread = threading.Thread(target=call_from_thread)
+    thread.start()
+    thread.join()  # the spawning thread is now gone
+
+    assert result["response"]["ok"] is True
+    first_pid = result["response"]["result"]["_pid"]
+    assert first_pid is not None
+
+    proc = supervisor._proc
+    assert proc is not None
+    assert proc.poll() is None, "adapter was killed after its spawning thread exited"
+
+    second = supervisor.call(
+        {"operation": "get_metadata", "transport_type": "serial", "params": {}, "timeout": 5.0},
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+    assert second["ok"] is True
+    # fake_adapter.py only echoes _pid on the FIRST request it ever
+    # answers - a second, genuinely-the-same process reports None here
+    # (see that fixture's own docstring), which is itself the proof this
+    # is still the original process, not a silent respawn.
+    assert second["result"]["_pid"] is None
 
 
 def test_adapter_self_reported_timeout_kills_and_respawns_the_subprocess():

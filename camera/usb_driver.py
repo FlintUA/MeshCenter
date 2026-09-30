@@ -54,11 +54,9 @@ tail and `_stall_watchdog_loop()`.
 from __future__ import annotations
 
 import atexit
-import concurrent.futures
 import glob
 import io
 import os
-import queue
 import re
 import shutil
 import signal
@@ -79,6 +77,7 @@ from camera.v4l2_ctl_parse import (
     parse_list_ctrls,
     parse_list_formats_ext,
 )
+from meshsrv import subprocess_spawner
 
 # ---------------------------------------------------------------------
 # External-program resolution, once at module load. FFMPEG_CMD_PREFIX is
@@ -680,12 +679,12 @@ class UsbCameraDriver(CameraDriver):
             return b""
 
         argv = self._build_ffmpeg_photo_argv(pixel_format, resolution)
-        # Spawned via _spawn_ffmpeg() (the persistent spawner thread), not
-        # subprocess.run() directly, so a one-shot capture gets the same
-        # process-group/PDEATHSIG protection as the streaming path - see
-        # the module-level comment above _SPAWN_QUEUE. communicate() then
-        # does the actual wait-for-completion on THIS (caller's) thread,
-        # which is fine - only the fork() itself needs to happen on the
+        # Spawned via _spawn_ffmpeg() (meshsrv.subprocess_spawner's shared
+        # persistent thread), not subprocess.run() directly, so a
+        # one-shot capture gets the same process-group/PDEATHSIG
+        # protection as the streaming path. communicate() then does the
+        # actual wait-for-completion on THIS (caller's) thread, which is
+        # fine - only the fork() itself needs to happen on the
         # persistent thread.
         try:
             process = _spawn_ffmpeg(argv)
@@ -1014,65 +1013,36 @@ def ffmpeg_and_v4l2ctl_available() -> bool:
     return bool(FFMPEG_CMD_PREFIX) and bool(V4L2_CTL_PATH)
 
 
-# PR #314 review finding (live-reproduced, 2026-09-30): PR_SET_PDEATHSIG is
-# per-THREAD, not per-process - "the 'parent' in this case is the thread
-# that created this process... the signal will be sent when that thread
-# terminates... rather than after all the threads in the parent process
-# have terminated" (man 2 prctl). Calling subprocess.Popen(preexec_fn=...)
+# PR #314 review finding (live-reproduced, 2026-09-30), generalized into
+# meshsrv/subprocess_spawner.py as F15: PR_SET_PDEATHSIG is per-THREAD,
+# not per-process (man 2 prctl) - calling subprocess.Popen(preexec_fn=...)
 # directly from a request-handling thread arms the death signal against
 # THAT THREAD's lifetime, not Core's. Confirmed live: spawning from a
 # short-lived threading.Thread got the child SIGKILLed the instant that
-# thread returned, independent of whether the process it belonged to was
-# still running. This "worked" under gunicorn's gthread worker only
-# because gthread's own worker threads happen to be long-lived, reused
-# across many requests - it would NOT work under Werkzeug's dev server
-# (`python server.py`), where a request can land on a fresh, short-lived
-# thread, silently killing the camera for every other viewer the moment
-# the first one's request thread ends.
-#
-# Fix: every ffmpeg process (streaming or one-shot) is spawned from this
-# one dedicated, never-exiting daemon thread instead of the caller's own
-# thread - "the thread that called fork()" is then a fixed, permanent
-# fact (this thread lives for the whole process), not an accident of
-# which thread pool happened to serve a given request. Rejected
-# alternative: dropping PDEATHSIG entirely and relying only on
-# start_new_session+killpg+atexit+systemd KillMode=control-group - covers
-# every orderly-shutdown and systemd-managed case, but leaves a real gap
-# for `python server.py` run directly outside systemd if it's crashed or
-# kill -9'd (no atexit, no systemd cgroup to clean up after it) - exactly
-# the scenario PDEATHSIG exists for in the first place (see CLAUDE.md's
-# GPLv3 process isolation section, same reasoning for the meshtastic
-# adapter). The spawner-thread approach keeps that protection intact
-# without the per-thread footgun.
-_SPAWN_QUEUE: "queue.Queue[tuple[list[str], concurrent.futures.Future]]" = queue.Queue()
-
-
-def _spawner_loop() -> None:
-    """Runs forever on _SPAWNER_THREAD. The only place subprocess.Popen()
-    is ever called for ffmpeg - see the module-level comment above for
-    why that matters for PR_SET_PDEATHSIG specifically."""
-    while True:
-        argv, future = _SPAWN_QUEUE.get()
-        try:
-            process = _popen_ffmpeg(argv)
-        except Exception as error:
-            future.set_exception(error)
-        else:
-            future.set_result(process)
-
-
+# thread returned. This "worked" under gunicorn's gthread worker only
+# because gthread's own worker threads happen to be long-lived - it did
+# NOT work under Werkzeug's dev server (`python server.py`), where a
+# request can land on a fresh, short-lived thread. Every ffmpeg process
+# (streaming or one-shot) is spawned via meshsrv.subprocess_spawner.spawn()
+# instead - one shared, persistent spawner thread used by this module AND
+# meshsrv/adapter_ipc_client.py (F15, same underlying bug there), so
+# "the thread that called fork()" is a fixed fact everywhere this pattern
+# is needed, not an implementation each caller re-derives on its own. See
+# that module's own docstring for the full reasoning (including the
+# rejected alternative of dropping PDEATHSIG entirely) and its abandoned-
+# future/fork-safety handling.
 def _popen_ffmpeg(argv: list[str]) -> subprocess.Popen:
     """The actual subprocess.Popen() call - only ever invoked from
-    _spawner_loop() on _SPAWNER_THREAD, never directly. Spawns ffmpeg with
-    its own process group (so a stray child, if ffmpeg ever forked one,
-    can be killed as a unit - see _terminate_process()) and
-    PR_SET_PDEATHSIG on Linux (reusing meshsrv/adapter_ipc_client.py's
-    already fork-safety-audited implementation rather than duplicating
-    the subtle preexec_fn/dlopen lock-ordering hazard that module's own
-    docstring explains in detail - the same hazard applies here for the
-    same reason, Core is multi-threaded) so an ffmpeg subprocess can't
-    outlive a killed/crashed Core process even outside systemd's own
-    KillMode=control-group net."""
+    meshsrv.subprocess_spawner's shared spawner thread, never directly
+    (see _spawn_ffmpeg() below). Spawns ffmpeg with its own process group
+    (so a stray child, if ffmpeg ever forked one, can be killed as a unit
+    - see _terminate_process()) and PR_SET_PDEATHSIG on Linux (reusing
+    meshsrv/adapter_ipc_client.py's already fork-safety-audited
+    implementation rather than duplicating the subtle preexec_fn/dlopen
+    lock-ordering hazard that module's own docstring explains in detail -
+    the same hazard applies here for the same reason, Core is multi-
+    threaded) so an ffmpeg subprocess can't outlive a killed/crashed Core
+    process even outside systemd's own KillMode=control-group net."""
     popen_kwargs: dict[str, Any] = {
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
@@ -1089,19 +1059,13 @@ def _popen_ffmpeg(argv: list[str]) -> subprocess.Popen:
     return subprocess.Popen(argv, **popen_kwargs)
 
 
-_SPAWNER_THREAD = threading.Thread(target=_spawner_loop, name="usb-camera-ffmpeg-spawner", daemon=True)
-_SPAWNER_THREAD.start()
-
-
 def _spawn_ffmpeg(argv: list[str], timeout: float = 10.0) -> subprocess.Popen:
     """Public spawn entry point - every caller (stream start, one-shot
-    photo) hands argv to the persistent spawner thread and blocks the
+    photo) hands a zero-arg closure to meshsrv.subprocess_spawner.spawn(),
+    which runs it on the shared persistent spawner thread and blocks the
     CALLING thread (safe to be short-lived) until the Popen object comes
-    back. See the module-level comment above _SPAWN_QUEUE for why the
-    actual fork()+exec() must never happen on the caller's own thread."""
-    future: "concurrent.futures.Future[subprocess.Popen]" = concurrent.futures.Future()
-    _SPAWN_QUEUE.put((argv, future))
-    return future.result(timeout=timeout)
+    back."""
+    return subprocess_spawner.spawn(lambda: _popen_ffmpeg(argv), timeout=timeout)
 
 
 def _terminate_process(process: subprocess.Popen) -> None:

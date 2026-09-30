@@ -29,7 +29,13 @@ psutil>=5.9.0,<8.0.0
 # --info calls (arm's-length subprocess invocation, not an import) -
 # meshsrv/runtime_identity.py's resolve_meshtastic_cli() finds that
 # binary in the adapter venv created by install.sh's step_adapter_venv().
-v4l2py>=3.0.0,<4.0.0
+# CAM-1 (audit review finding F10, 2026-09-30): USB camera support no
+# longer imports linuxpy/v4l2py (GPL-3.0-or-later) into Core's own
+# process - camera/usb_driver.py now drives ffmpeg/v4l2-ctl as external
+# programs, the same arm's-length reasoning as the `meshtastic` CLI
+# above. See THIRD_PARTY_NOTICES.md and install.sh/meshcenter-firstboot.sh
+# for the resulting system-package requirement (ffmpeg + v4l-utils, not
+# a pip package).
 # Production WSGI server (see gunicorn.conf.py / deploy/meshcenter.service).
 # Pinned to the 23.x line - gunicorn's own worker/arbiter internals (the
 # gthread worker class specifically, which /video_feed's long-lived MJPEG

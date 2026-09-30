@@ -666,6 +666,7 @@
     "scan_cameras": "Знайти камери",
     "scanning_cameras": "Пошук камер…",
     "no_cameras_found": "Камери не знайдено",
+    "usb_camera_requires_ffmpeg": "Для підтримки USB-камери потрібні ffmpeg і v4l-utils (sudo apt-get install -y ffmpeg v4l-utils, потім перезапустіть службу)",
     "rescan_cameras": "Пересканувати камери",
     "make_active": "Зробити активною",
     "camera_id": "ID",

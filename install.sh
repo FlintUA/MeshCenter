@@ -274,6 +274,12 @@ step_system_packages() {
     progress "2/9 Installing system packages..."
 
     sudo apt-get update -qq
+    # ffmpeg/v4l-utils (CAM-1, audit review finding F10): USB camera
+    # support (camera/usb_driver.py) drives both as external programs,
+    # not a pip dependency - installed unconditionally here, unlike
+    # python3-picamera2/rpicam-apps below (gated behind INSTALL_CAMERA,
+    # "200+ dependencies") since this pair is a ~3MB combined footprint
+    # (CAM-0 report, 2026-09-30) with no such cost to gate.
     sudo apt-get install -y \
         git \
         python3-venv \
@@ -284,6 +290,8 @@ step_system_packages() {
         lsof \
         i2c-tools \
         util-linux-extra \
+        ffmpeg \
+        v4l-utils \
         --no-install-recommends \
         -qq
 

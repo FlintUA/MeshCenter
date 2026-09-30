@@ -1,15 +1,18 @@
 """Camera-specific extension of DeviceDriver.
 
-Both csi_driver.py (Picamera2) and usb_driver.py (raw V4L2 via v4l2py)
-implement this. The unifying contract is that every driver hands back
-already-JPEG-encoded bytes, however it gets there internally:
+Both csi_driver.py (Picamera2) and usb_driver.py (ffmpeg subprocess +
+v4l2-ctl, CAM-1) implement this. The unifying contract is that every
+driver hands back already-JPEG-encoded bytes, however it gets there
+internally:
 
 - CSI decodes a raw sensor frame and re-encodes it via PIL (see
   camera/camera.py's existing capture_array()/fix_camera_colors() path,
   wrapped as-is by csi_driver.py).
 - USB passes the camera's own native MJPEG straight through with zero
-  decode/re-encode, since the confirmed hardware (Logitech QuickCam E
-  3500) already produces MJPEG in hardware.
+  decode/re-encode when the camera offers it (`ffmpeg -c:v copy`),
+  otherwise transcodes YUYV to JPEG in ffmpeg itself - see
+  usb_driver.py's own module docstring for the reference hardware this
+  was verified against.
 
 camera_manager.py therefore only ever deals in JPEG bytes, never a
 driver-specific frame format - it owns the multipart/x-mixed-replace

@@ -75,6 +75,8 @@ The official [`meshtastic`](https://github.com/meshtastic/python) Python package
 
 `adapters/meshtastic/` ships its own [LICENSE](adapters/meshtastic/LICENSE) (the GPLv3 text). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full dependency breakdown and reasoning.
 
+USB camera support (`camera/usb_driver.py`) uses the same arm's-length-external-program reasoning for `ffmpeg` and `v4l-utils` (both GPL-2.0-or-later) — invoked as system programs via `subprocess`, never imported as a Python library, and not bundled or vendored. This replaced an earlier design that imported the `linuxpy`/`v4l2py` package (GPL-3.0-or-later) directly into Core's own process.
+
 Process isolation — not which repository the files live in — is the architecture chosen to keep GPLv3 code out of Core's own process; per-directory licensing inside one monorepo is a standard, widely-used pattern, and a separate repository is not necessary for that architecture to work. A separate repository may be split off later purely for distribution convenience, not as a requirement of this design.
 
 For the full technical detail (timeout contracts, subprocess supervision, IPC protocol), see `CLAUDE.md`'s "GPLv3 process isolation" section.

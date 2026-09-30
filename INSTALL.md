@@ -189,6 +189,17 @@ Reload the browser with Ctrl+F5 after updating.
 Note: `git fetch --tags` is required for the version shown in the status bar
 to update correctly.
 
+**Upgrading past CAM-1** (USB camera driver rewrite): `git pull` doesn't run
+`apt`, so an existing install needs one manual, one-time step if it has a USB
+camera attached:
+```bash
+sudo apt-get install -y ffmpeg v4l-utils
+sudo -n /usr/bin/systemctl restart meshcenter.service
+```
+Without this, the Devices tab shows "USB camera support requires ffmpeg and
+v4l-utils" instead of the camera — CSI cameras and nodes with no USB camera
+are unaffected either way.
+
 ---
 
 ## Manual Installation
@@ -228,7 +239,10 @@ of this automatically.
    ```bash
    sudo apt update
    sudo apt install -y git python3 python3-venv python3-pip network-manager iw
-   # optional camera support — install BEFORE creating the venv:
+   # USB camera support (ffmpeg/v4l-utils) — not gated behind the optional
+   # CSI camera install below; needed for any USB/UVC webcam:
+   sudo apt install -y ffmpeg v4l-utils
+   # optional CSI camera support — install BEFORE creating the venv:
    sudo apt install -y python3-picamera2 rpicam-apps
    sudo usermod -aG dialout "$USER"
    sudo reboot

@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-MeshCenter's own code is MIT-licensed (see [LICENSE](LICENSE)). This file covers the one third-party dependency that isn't permissively licensed, and why it doesn't affect the license of MeshCenter's own code.
+MeshCenter's own code is MIT-licensed (see [LICENSE](LICENSE)). This file covers the third-party dependencies that aren't permissively licensed, and why they don't affect the license of MeshCenter's own code.
 
 ## `meshtastic` (GPLv3)
 
@@ -9,6 +9,12 @@ MeshCenter's own code is MIT-licensed (see [LICENSE](LICENSE)). This file covers
 To keep GPLv3 code from linking into MeshCenter's own MIT-licensed process, `meshtastic` is used exclusively from `adapters/meshtastic/` — its own Python package, installed into its own virtual environment (`adapters/meshtastic/venv`, separate from Core's `venv/`), and imported only by code running in a **separate OS process** (the "adapter" subprocess, supervised by `meshsrv/adapter_ipc_client.py`). MeshCenter's Core (`server.py`, `api/`, `meshsrv/`, everything outside `adapters/`) talks to that process over a local IPC boundary — newline-delimited JSON on stdin/stdout — and never imports `meshtastic` directly. See `CLAUDE.md`'s "GPLv3 process isolation" section for the technical detail, and `adapters/meshtastic/LICENSE` for the full GPLv3 text.
 
 `meshtastic`'s own dependencies (installed alongside it in `adapters/meshtastic/venv`, pinned in `adapters/meshtastic/requirements.txt`) are all permissively licensed: `bleak` (Bluetooth LE support, MIT — along with its own dependency `dbus-fast`, also MIT), `protobuf` (BSD-3-Clause), `pyserial` (BSD), `pyyaml` (MIT), `requests` (Apache-2.0), `tabulate` (MIT), `pypubsub` (BSD-2-Clause), `packaging` (Apache-2.0 or BSD-2-Clause).
+
+## `ffmpeg` and `v4l-utils` (GPL-2.0-or-later)
+
+USB camera support (`camera/usb_driver.py`, CAM-1, audit review finding F10) drives `ffmpeg` and `v4l2-ctl` (part of `v4l-utils`) as external system programs — invoked via `subprocess`, never imported as a library — the same arm's-length reasoning as the `meshtastic` CLI above. Neither is installed as a Python dependency (see `requirements.txt`); both are system packages `install.sh`/`meshcenter-firstboot.sh` install unconditionally, and are not bundled or vendored anywhere in this repository.
+
+The Debian/Raspberry Pi OS `ffmpeg` build is **GPL-2.0-or-later** (confirmed from its own `/usr/share/doc/ffmpeg/copyright`: "some of the GPL licensed files are used, so the resulting binaries are licensed under GPL v2+" — not LGPL, despite many of ffmpeg's individual source files being LGPL). `v4l-utils`/`v4l2-ctl` is GPL-2.0-or-later (the library, `libv4l`, is LGPL-2.1; the command-line utilities are GPL). Both replace the old `linuxpy`/`v4l2py` Python package (GPL-3.0-or-later), which used to be imported directly into Core's own process — exactly the pattern the `meshtastic`-adapter process boundary above was built to avoid. This is the project's own established practice for a GPL-licensed external program, not a legal opinion.
 
 ## Chart.js (bundled, MIT)
 
@@ -28,4 +34,4 @@ The Map workspace (`static/chat-map.js`) renders tiles from `tile.openstreetmap.
 
 ## Everything else
 
-Core's own dependencies (`requirements.txt`) — Flask, Pillow, requests, psutil, v4l2py, gunicorn, cbor2 (MCAttach codec, MIT), pynacl (MCAttach crypto, Apache-2.0) — are all permissively licensed (MIT/BSD/Apache-family). See each package's own PyPI page for its specific license.
+Core's own dependencies (`requirements.txt`) — Flask, Pillow, requests, psutil, gunicorn, cbor2 (MCAttach codec, MIT), pynacl (MCAttach crypto, Apache-2.0) — are all permissively licensed (MIT/BSD/Apache-family). See each package's own PyPI page for its specific license. `v4l2py` was removed from this list in CAM-1 (it used to be listed here as permissive, which was wrong — v4l2py, and the `linuxpy` package it re-exported, are GPL-3.0-or-later; see the `ffmpeg`/`v4l-utils` entry above for what replaced it).

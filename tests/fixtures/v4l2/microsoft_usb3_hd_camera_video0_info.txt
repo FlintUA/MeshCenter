@@ -1,0 +1,33 @@
+Driver Info:
+	Driver name      : uvcvideo
+	Card type        : USB3.0 HD CAMERA
+	Bus info         : usb-0000:01:00.0-2
+	Driver version   : 6.18.39
+	Capabilities     : 0x84a00001
+		Video Capture
+		Metadata Capture
+		Streaming
+		Extended Pix Format
+		Device Capabilities
+	Device Caps      : 0x04200001
+		Video Capture
+		Streaming
+		Extended Pix Format
+Media Driver Info:
+	Driver name      : uvcvideo
+	Model            : USB3.0 HD CAMERA
+	Serial           : 
+	Bus info         : usb-0000:01:00.0-2
+	Media version    : 6.18.39
+	Hardware revision: 0x00000000 (0)
+	Driver version   : 6.18.39
+Interface Info:
+	ID               : 0x03000002
+	Type             : V4L Video
+Entity Info:
+	ID               : 0x00000001 (1)
+	Name             : USB3.0 HD CAMERA
+	Function         : V4L2 I/O
+	Flags            : default
+	Pad 0x01000007   : 0: Sink
+	  Link 0x02000010: from remote pad 0x100000a of entity 'Extension 3' (Video Pixel Formatter): Data, Enabled, Immutable

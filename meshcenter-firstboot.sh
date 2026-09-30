@@ -418,6 +418,11 @@ log "Installing MeshCenter system dependencies..."
 wait_for_apt_lock
 apt-get update -qq
 wait_for_apt_lock
+# ffmpeg/v4l-utils (CAM-1, audit review finding F10): USB camera support
+# (camera/usb_driver.py) drives both as external programs, unconditionally -
+# unlike python3-picamera2/rpicam-apps below (gated behind INSTALL_CAMERA)
+# this pair is a small (~3MB combined, CAM-0 report 2026-09-30) system
+# package with no dependency-count reason to gate it.
 apt-get install -y --no-install-recommends \
     git \
     python3 \
@@ -429,7 +434,9 @@ apt-get install -y --no-install-recommends \
     usbutils \
     lsof \
     i2c-tools \
-    util-linux-extra
+    util-linux-extra \
+    ffmpeg \
+    v4l-utils
 
 systemctl enable avahi-daemon >/dev/null 2>&1 || true
 systemctl start avahi-daemon || true

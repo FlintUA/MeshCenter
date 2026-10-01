@@ -2,11 +2,11 @@ from flask import request, jsonify, Response, send_file
 from pathlib import Path
 from datetime import datetime
 import base64
-import json
 import os
 import threading
 
 from camera.camera_manager import build_camera_manager
+from storage.json_store import safe_read_json, safe_write_json
 
 
 def register_camera_routes(app, camera, camera_manager_state, device_manager, handle_errors):
@@ -43,37 +43,16 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
     }
 
     def save_power_state():
-        data_dir.mkdir(parents=True, exist_ok=True)
-        temp_file = power_state_file.with_suffix(".json.tmp")
-
-        with temp_file.open("w", encoding="utf-8") as file:
-            json.dump(
-                {"enabled": bool(power_state["enabled"])},
-                file,
-                ensure_ascii=False,
-                indent=2
-            )
-            file.flush()
-
-        temp_file.replace(power_state_file)
+        # F4.1: folded onto the shared storage.json_store helper (unique
+        # temp name + fsync + directory fsync) instead of this route's own
+        # fixed-.tmp-name, no-fsync ad-hoc write.
+        return safe_write_json(str(power_state_file), {"enabled": bool(power_state["enabled"])})
 
     def load_power_state():
-        try:
-            if not power_state_file.exists():
-                return
-
-            with power_state_file.open("r", encoding="utf-8") as file:
-                saved = json.load(file)
-
-            power_state["enabled"] = bool(
-                saved.get("enabled", True)
-            )
-
-        except Exception as error:
-            print(
-                f"[CAMERA POWER] Could not load state: {error}",
-                flush=True
-            )
+        saved = safe_read_json(str(power_state_file), default={})
+        if not saved:
+            return
+        power_state["enabled"] = bool(saved.get("enabled", True))
 
     def close_camera_device():
         driver = _active_driver()

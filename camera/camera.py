@@ -14,6 +14,7 @@ import threading
 import time
 from datetime import datetime
 from PIL import Image
+from storage.json_store import safe_read_json, safe_write_json
 
 # libcamera is only present on real CSI-camera hardware (Picamera2's own
 # dependency) - devices running the USB driver instead (camera/usb_driver.py,
@@ -146,52 +147,6 @@ last_frame_time = 0
 # Incremented whenever the camera is stopped or reconfigured.
 # Old MJPEG generators exit when their generation becomes obsolete.
 stream_generation = 0
-
-# ============================================================
-# JSON HELPERS
-# ============================================================
-
-def safe_read_json(filepath, default=None):
-    if default is None:
-        default = {}
-
-    tmp_file = filepath + ".tmp"
-    if os.path.exists(tmp_file):
-        try:
-            os.remove(tmp_file)
-            print(f"[JSON] Removed stale tmp file: {tmp_file}", flush=True)
-        except Exception as e:
-            print(f"[JSON] Could not remove tmp file: {e}", flush=True)
-
-    if not os.path.exists(filepath):
-        return default
-
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
-        print(f"[JSON] Read error: {e}, using default", flush=True)
-        return default
-
-
-def safe_write_json(filepath, data):
-    tmp_file = filepath + ".tmp"
-    try:
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_file, filepath)
-        return True
-    except Exception as e:
-        print(f"[JSON] Write error: {e}", flush=True)
-        try:
-            if os.path.exists(tmp_file):
-                os.remove(tmp_file)
-        except Exception:
-            pass
-        return False
 
 # ============================================================
 # SETTINGS

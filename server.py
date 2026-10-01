@@ -106,6 +106,7 @@ from system_log import log_system_event
 from storage.waypoint_store import WaypointStore
 from storage.profile_manager import ProfileManager
 from storage.device_manager import DeviceManager
+from storage.json_store import safe_read_json, safe_write_json, cleanup_stale_temp_files
 from api.api_node_tools import register_node_tools_routes
 from api.api_waypoints import register_waypoint_routes
 from api.api_node_icons import register_node_icon_routes
@@ -606,13 +607,29 @@ def _load_or_create_secret_key(path):
     except OSError:
         pass
     key = secrets.token_hex(32)
+    # F4.1: atomic + 0600-from-creation, not open("w") (briefly world-
+    # readable until the chmod() right after it runs) followed by a plain
+    # non-atomic write (a truncated file from a power cut right after the
+    # open() would leave an empty/partial secret_key.txt, invalidating
+    # every session on the next read). O_CREAT|O_EXCL|O_WRONLY on a temp
+    # name means the file is born at mode 0o600, never readable by anyone
+    # else even for an instant; os.replace() is what finally makes the
+    # real key readable, and only once it's complete on disk.
+    tmp_path = path + ".tmp"
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(key)
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)  # leftover from a previous crashed attempt
+        fd = os.open(tmp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
-            os.chmod(path, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(key)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
         except OSError:
-            pass
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
     except OSError as error:
         print(f"[AUTH] Could not persist secret key: {error}", flush=True)
     return key
@@ -859,50 +876,6 @@ register_hardware_bme280_routes(app, handle_errors)
 def static_files(filename):
     return send_from_directory('static', filename)
 
-def safe_read_json(filepath, default=None):
-    """Безопасное чтение JSON с проверкой временных файлов"""
-    if default is None:
-        default = {}
-    
-    tmp_file = filepath + ".tmp"
-    if os.path.exists(tmp_file):
-        try:
-            os.remove(tmp_file)
-            print(f"[JSON] Removed stale tmp file: {tmp_file}", flush=True)
-        except Exception as e:
-            print(f"[JSON] Could not remove tmp file: {e}", flush=True)
-    
-    if not os.path.exists(filepath):
-        return default
-    
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
-        print(f"[JSON] Read error: {e}, using default", flush=True)
-        return default
-
-def safe_write_json(filepath, data):
-    """Безопасная атомарная запись JSON"""
-    tmp_file = filepath + ".tmp"
-    try:
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_file, filepath)
-        return True
-    except Exception as e:
-        print(f"[JSON] Write error: {e}", flush=True)
-        try:
-            if os.path.exists(tmp_file):
-                os.remove(tmp_file)
-        except:
-            pass
-        return False
-
-def atomic_write_json(filepath, data):
-    return safe_write_json(filepath, data)
 
 # ============================================================
 # ВСЕ ОСТАЛЬНЫЕ ФУНКЦИИ (Meshtastic, чаты, телеметрия и т.д.)
@@ -1698,14 +1671,13 @@ def ensure_chat(node_id, node_name=None, force=False):
 
     deleted_file = DELETED_DM_FILE
 
-    if not force and os.path.exists(deleted_file):
-        try:
-            with open(deleted_file, "r") as f:
-                deleted_data = json.load(f)
-                if node_id in deleted_data.get("deleted", []):
-                    return
-        except (json.JSONDecodeError, IOError) as e:
-            print(f"[WARN] Could not read deleted_dm.json: {e}")
+    if not force:
+        # F4.1: folded onto the shared storage.json_store helper (handles
+        # missing/corrupt itself - a corrupt deleted_dm.json is now
+        # quarantined instead of just logged and ignored in place).
+        deleted_data = safe_read_json(deleted_file, default={})
+        if node_id in deleted_data.get("deleted", []):
+            return
 
     name = node_name or get_node_name(node_id)
 
@@ -7480,11 +7452,10 @@ def api_delete_all_dm():
                 if chat_id in chats:
                     del chats[chat_id]
             deleted_file = DELETED_DM_FILE
-            try:
-                with open(deleted_file, "w") as f:
-                    json.dump({"deleted": dm_chat_ids}, f)
-            except Exception as e:
-                print(f"[WARN] Could not write deleted_dm.json: {e}")
+            # F4.1: folded onto the shared storage.json_store helper
+            # (unique temp name + fsync, instead of this route's own
+            # non-atomic open(...,"w")).
+            safe_write_json(deleted_file, {"deleted": dm_chat_ids})
             # In place (F2) - see api_clear_chat()'s own comment above.
             messages[:] = [
                 m for m in messages
@@ -7760,6 +7731,14 @@ def start_runtime():
         return
     _acquire_runtime_lock()
     _runtime_started = True
+
+    # F4.1: one-time startup sweep for leftover .tmp files from a process
+    # that crashed mid-write (old fixed <file>.tmp names and the current
+    # unique mkstemp() names both match) - safe_read_json() itself no
+    # longer touches .tmp files at all, so nothing else will ever clean
+    # these up. 300s margin is generous slack past any write this process
+    # could plausibly still have in flight at its own startup.
+    cleanup_stale_temp_files(DATA_DIR, older_than_s=300)
 
     # Verify the physical radio before loading or mutating radio-profile data.
     startup_info_output = verify_radio_identity()

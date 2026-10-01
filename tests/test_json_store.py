@@ -288,6 +288,57 @@ def test_cleanup_never_raises_on_a_missing_directory():
 
 
 # ---------------------------------------------------------------------------
+# cleanup_stale_temp_files() must never touch meshsrv/attachments' own
+# mca/ workspace tree - PR #319 review (BLOCKING): it owns its own temp-file
+# convention (dot-prefixed, .tmp-suffixed spool staging files, with its own
+# much longer ORPHAN_SPOOL_MIN_AGE_SECONDS=3600 orphan policy) and its own
+# "files/" directory holds RECEIVED attachments under a filename the
+# REMOTE SENDER chose, which could coincidentally end in ".tmp".
+# ---------------------------------------------------------------------------
+
+def test_cleanup_never_touches_mca_spool_staging_files(tmp_path):
+    spool_dir = tmp_path / "mca" / "deadbeefdeadbeefdeadbeefdeadbeef" / "spool" / "outgoing"
+    spool_dir.mkdir(parents=True)
+    staging_file = spool_dir / ".a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4.tmp"
+    staging_file.write_text("in-progress upload", encoding="utf-8")
+    old_time = time.time() - 3600  # older than this sweep's own threshold,
+    os.utime(staging_file, (old_time, old_time))  # but well under MCAttach's own 3600s orphan policy
+
+    json_store.cleanup_stale_temp_files(str(tmp_path), older_than_s=300)
+
+    assert staging_file.exists(), "cleanup_stale_temp_files() must never touch the mca/ workspace tree"
+
+
+def test_cleanup_never_touches_a_received_attachment_named_dot_tmp(tmp_path):
+    files_dir = tmp_path / "mca" / "deadbeefdeadbeefdeadbeefdeadbeef" / "files"
+    files_dir.mkdir(parents=True)
+    received_file = files_dir / "report.tmp"  # the remote sender's own filename
+    received_file.write_text("a user's actual file content", encoding="utf-8")
+    old_time = time.time() - 3600
+    os.utime(received_file, (old_time, old_time))
+
+    json_store.cleanup_stale_temp_files(str(tmp_path), older_than_s=300)
+
+    assert received_file.exists(), "a received attachment must never be swept just for ending in .tmp"
+
+
+def test_cleanup_ignores_a_dot_tmp_file_outside_data_dir_that_isnt_a_json_store_name(tmp_path):
+    """Defense in depth beyond the mca/ exclusion: even a stray dot-prefixed
+    .tmp file elsewhere under data_dir that doesn't match json_store's own
+    naming (no ".json." segment) must survive - this sweep only ever
+    removes names IT recognizes as its own, never anything merely
+    tmp-shaped."""
+    stray = tmp_path / ".some_other_subsystems_file.abc123.tmp"
+    stray.write_text("not ours", encoding="utf-8")
+    old_time = time.time() - 3600
+    os.utime(stray, (old_time, old_time))
+
+    json_store.cleanup_stale_temp_files(str(tmp_path), older_than_s=300)
+
+    assert stray.exists()
+
+
+# ---------------------------------------------------------------------------
 # Failure path
 # ---------------------------------------------------------------------------
 

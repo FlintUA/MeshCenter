@@ -22,8 +22,42 @@ confirmed defects (F4.0 investigation):
 
 import json
 import os
+import re
 import tempfile
 import time
+
+# cleanup_stale_temp_files() must only ever remove a name it can positively
+# identify as ITS OWN temp-file convention - every safe_write_json() target
+# in this codebase ends in ".json" (confirmed by inventory, F4.0/PR #319
+# review), so both naming generations always contain a literal ".json."
+# segment: the legacy fixed `<name>.json.tmp` (no leading dot - the pre-F4.1
+# server.py/camera.py duplicates did `filepath + ".tmp"`), and the current
+# `tempfile.mkstemp(prefix=f".{basename}.", suffix=".tmp")` shape, which
+# looks like `.<name>.json.<random>.tmp`. A name that merely LOOKS tmp-
+# shaped (dot-prefixed, .tmp-suffixed) but lacks the ".json." segment is
+# never touched - see _EXCLUDED_TOP_LEVEL_DIRS below for why that matters.
+_LEGACY_JSON_TMP_RE = re.compile(r"\.json\.tmp\Z")
+_UNIQUE_JSON_TMP_RE = re.compile(r"\A\..*\.json\.[^./\\]+\.tmp\Z")
+
+# Top-level data_dir subdirectories that own their own temp-file convention
+# and must never be swept by this module, even if a name in them happened
+# to also match the patterns above:
+#   - "mca": meshsrv/attachments/ (MCAttach). Its spool/outgoing staging
+#     files are dot-prefixed/.tmp-suffixed too (api/api_attachments.py's
+#     own _TEMP_SUFFIX), with its own, much longer orphan policy
+#     (meshsrv/attachments/service.py's ORPHAN_SPOOL_MIN_AGE_SECONDS=3600,
+#     vs this sweep's 300s default) - built from a pure-hex attachment_id,
+#     which can never contain "json" (hex digits are 0-9a-f only, "json"
+#     needs j/s/o/n), so the regexes above already can't match it, but its
+#     files/ directory holds RECEIVED attachments under a filename the
+#     REMOTE SENDER chose, which very much *could* coincidentally end in
+#     ".tmp" (or even, in principle, collide with the pattern) - directory-
+#     level exclusion is the only thing that is actually safe for that one.
+_EXCLUDED_TOP_LEVEL_DIRS = frozenset({"mca"})
+
+
+def _is_json_store_temp_name(name):
+    return bool(_LEGACY_JSON_TMP_RE.search(name) or _UNIQUE_JSON_TMP_RE.match(name))
 
 
 def safe_read_json(filepath, default=None):
@@ -163,21 +197,27 @@ def atomic_write_json(filepath, data):
 
 
 def cleanup_stale_temp_files(data_dir, older_than_s=300):
-    """Removes leftover `.tmp` files under `data_dir` (recursively) older
-    than `older_than_s` seconds - matches both the legacy fixed `<file>.tmp`
-    naming and the unique `.{basename}.<random>.tmp` naming safe_write_json()
-    uses now. Meant to run once at startup, well after any write from a
-    previous process could plausibly still be in flight - reads themselves
-    never delete anything any more (see safe_read_json() above).
+    """Removes leftover json_store temp files under `data_dir` (recursively)
+    older than `older_than_s` seconds - matches ONLY this module's own two
+    naming generations (see _is_json_store_temp_name() above), and never
+    descends into a directory listed in _EXCLUDED_TOP_LEVEL_DIRS (other
+    subsystems with their own temp-file conventions and orphan policies -
+    see that constant's own comment). Meant to run once at startup, well
+    after any write from a previous process could plausibly still be in
+    flight - reads themselves never delete anything any more (see
+    safe_read_json() above).
 
     Best-effort and silent on a missing/unreadable data_dir or individual
     file errors - this is housekeeping, not something that should ever be
     allowed to block or fail startup."""
     cutoff = time.time() - older_than_s
+    data_dir_abs = os.path.abspath(data_dir)
     try:
-        for root, _dirs, files in os.walk(data_dir):
+        for root, dirs, files in os.walk(data_dir):
+            if os.path.abspath(root) == data_dir_abs:
+                dirs[:] = [d for d in dirs if d not in _EXCLUDED_TOP_LEVEL_DIRS]
             for name in files:
-                if not name.endswith(".tmp"):
+                if not _is_json_store_temp_name(name):
                     continue
                 path = os.path.join(root, name)
                 try:

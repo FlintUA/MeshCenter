@@ -8,6 +8,17 @@
 # lock file), but not left fully unbounded either. Live-verified versions
 # on dev (!756f9960) at the time of this pin: Flask 3.1.3, Pillow 11.1.0,
 # requests 2.32.3, psutil 7.2.2.
+# H1-A1 (security review, F11): requests' HTTPAdapter.send() only calls
+# get_connection_with_tls_context() - the method meshsrv/attachments/
+# relay_http.py's _PinnedHTTPSAdapter overrides to enforce IP pinning -
+# starting in 2.32.2; 2.31.0 (allowed by the old >=2.31.0 floor) calls
+# get_connection() instead, silently falling back to an unpinned
+# connection with no error (2.32.0/2.32.1 were yanked from PyPI entirely).
+# requests >=2.32.4 also picks up the CVE-2024-35195 (session verify=False
+# caching across requests) and CVE-2024-47081 (.netrc credential leak via
+# a crafted URL) fixes. _PinnedHTTPSAdapter.get_connection() is overridden
+# too now as a second, independent layer, but the floor below is the
+# primary fix - don't lower it without re-checking this reasoning.
 # Flask's floor is 3.1 (not 3.0) because the MCAttach create endpoint
 # (`POST /api/attachments`, api/api_attachments.py) sets a *per-request*
 # `request.max_content_length` to bound the multipart body before Werkzeug
@@ -18,7 +29,7 @@
 # §7.2. The live-verified 3.1.3 above already satisfies this floor.
 Flask>=3.1.0,<4.0.0
 Pillow>=10.0.0,<12.0.0
-requests>=2.31.0,<3.0.0
+requests>=2.32.4,<3.0.0
 psutil>=5.9.0,<8.0.0
 # Task 48: the meshtastic package (GPLv3) no longer lives in Core's own
 # venv - Core never imports it directly (adapters/meshtastic/*.py are the

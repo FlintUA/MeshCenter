@@ -30,7 +30,10 @@ against requests 2.34.2 / urllib3 2.7.0):
   built with `host=<ip>`, `assert_hostname=<hostname>`, and
   `server_hostname=<hostname>` (SNI). The hostname is *not* re-resolved:
   `HTTPAdapter.request_url()` returns only the URL's path, and urllib3
-  connects to the pool's host (the IP).
+  connects to the pool's host (the IP). `get_connection()` (the method
+  requests < 2.32.2 calls instead - see requirements.txt's `requests`
+  floor comment) delegates to the exact same pinned pool, as a second,
+  independent layer in case that floor is ever violated.
 - `HTTPAdapter.cert_verify()` (which requests calls right after, and which
   *only* sets `cert_reqs`/`ca_certs`/`ca_cert_dir`) never touches
   `assert_hostname`, so the pinned pool's hostname verification survives.
@@ -109,7 +112,18 @@ def is_globally_routable(addr: str) -> bool:
     classified by their embedded IPv4 address, so a host that resolves to a
     mapped loopback/RFC1918 address is rejected rather than sneaking past
     `is_global` on the v6 side. Unparseable input (including scoped v6
-    like `fe80::1%eth0`) is conservatively non-routable."""
+    like `fe80::1%eth0`) is conservatively non-routable.
+
+    H1-A3 (security review, F13): `ipaddress`'s own `.is_global` is true
+    for multicast addresses (`224.0.0.1`, `239.255.255.250`, `ff02::1`,
+    `ff0e::1`) - "global scope" in RFC 4291/6890 terms is about routing
+    scope, not about being a legitimate unicast destination a Relay could
+    actually be reached at. `is_global` alone therefore let a Relay origin
+    resolve to a multicast address right past this whole SSRF check. The
+    explicit rejections below are checked BEFORE `is_global` so none of
+    them can slip through on a technicality; `is_private` already covers
+    RFC1918/ULA, `is_reserved` covers the other IANA special ranges (e.g.
+    `240.0.0.0/4`) not caught by the more specific checks."""
     try:
         ip = ipaddress.ip_address(addr)
     except ValueError:
@@ -118,6 +132,15 @@ def is_globally_routable(addr: str) -> bool:
         mapped = ip.ipv4_mapped
         if mapped is not None:
             ip = mapped
+    if (
+        ip.is_multicast
+        or ip.is_unspecified
+        or ip.is_reserved
+        or ip.is_link_local
+        or ip.is_loopback
+        or ip.is_private
+    ):
+        return False
     return bool(ip.is_global)
 
 
@@ -198,7 +221,7 @@ class _PinnedHTTPSAdapter(requests.adapters.HTTPAdapter):
         self._port = port
         self._pinned_ip = pinned_ip
 
-    def get_connection_with_tls_context(self, request, verify, proxies=None, cert=None):
+    def _pinned_pool(self):
         return self.poolmanager.connection_from_host(
             host=self._pinned_ip,
             port=self._port,
@@ -208,6 +231,21 @@ class _PinnedHTTPSAdapter(requests.adapters.HTTPAdapter):
                 "server_hostname": self._hostname,
             },
         )
+
+    def get_connection_with_tls_context(self, request, verify, proxies=None, cert=None):
+        return self._pinned_pool()
+
+    def get_connection(self, url, proxies=None):
+        # F11 (security review): requests < 2.32.2's HTTPAdapter.send()
+        # calls THIS method, not get_connection_with_tls_context() (added
+        # in 2.32.2) - requirements.txt's floor below is meant to make that
+        # version impossible to install, but this override exists as a
+        # second, independent layer so a floor violation (editable install,
+        # a constraints file overriding this project's own pin, etc.)
+        # degrades to "still pinned" instead of "silently connects to the
+        # original hostname again, undoing IP pinning entirely" with no
+        # error of any kind.
+        return self._pinned_pool()
 
 
 class SecureSession:

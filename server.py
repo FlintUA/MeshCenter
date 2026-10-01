@@ -1349,6 +1349,59 @@ def sanitize_text(text):
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
     return text
 
+# H1-A4 (security review, F7): /api/nodes_import's size/shape limits.
+# Meshtastic firmware's User.long_name/short_name protobuf fields have a
+# nanopb max_size of 40/5 bytes (which includes the implicit null
+# terminator, so 39/4 usable characters) - cited from mesh.proto, NOT
+# independently re-verified against the actual .proto source in this
+# environment (no adapter venv/network access here available to check it
+# against); flag for review if exact precision matters beyond "generous
+# enough for any real node name, tight enough to block abuse."
+MAX_NODES_IMPORT_COUNT = 2000
+MAX_IMPORT_LONG_NAME_LEN = 39
+MAX_IMPORT_SHORT_NAME_LEN = 4
+
+
+def _finite_float_or_none(value):
+    """A usable float, or None for anything that isn't one - NaN/Infinity
+    (both valid JSON-adjacent float() inputs via the strings "nan"/"inf",
+    which Python's json module itself can decode), bools (isinstance of
+    int in Python, but not a real numeric reading), None, or a
+    non-numeric string all come back None rather than poisoning a node's
+    rssi/snr/position with a non-finite value that would break any later
+    arithmetic or JSON round-trip expecting a real number."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _sanitize_import_name(value, max_len=None):
+    text = sanitize_text(str(value)) if value else ""
+    if max_len is not None:
+        text = text[:max_len]
+    return text
+
+
+def _sanitize_import_position(position):
+    """A clean {"latitude", "longitude"} dict, or None if `position` isn't
+    a dict or either coordinate is missing/non-finite/out of range -
+    matches the stored shape /api/nodes_export round-trips (plain decimal
+    degrees), not the wire-format *_i integer encoding."""
+    if not isinstance(position, dict):
+        return None
+    lat = _finite_float_or_none(position.get("latitude"))
+    lon = _finite_float_or_none(position.get("longitude"))
+    if lat is None or lon is None:
+        return None
+    if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+        return None
+    return {"latitude": lat, "longitude": lon}
+
+
 def friendly_unknown_node_name(node_id):
     if node_id and node_id.startswith("!") and len(node_id) >= 5:
         return "Meshtastic " + node_id[-4:]
@@ -7500,35 +7553,106 @@ def api_nodes_export():
 @app.route("/api/nodes_import", methods=["POST"])
 @handle_errors
 def api_nodes_import():
-    data = request.get_json()
-    imported_nodes = data.get("nodes", [])
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "Request body must be a JSON object", "error_code": "invalid_body"}), 400
+
+    imported_nodes = data.get("nodes")
+    if not isinstance(imported_nodes, list):
+        return jsonify({"ok": False, "error": "'nodes' must be a list", "error_code": "invalid_body"}), 400
+    if len(imported_nodes) > MAX_NODES_IMPORT_COUNT:
+        return jsonify({
+            "ok": False,
+            "error": f"Too many nodes in one import (max {MAX_NODES_IMPORT_COUNT})",
+            "error_code": "too_many_nodes",
+        }), 413
+
     imported_count = 0
+    rejected_count = 0
     with state_lock:
         nodes_snapshot = dict(nodes)
         chats_snapshot = dict(chats)
         for node_data in imported_nodes:
-            node_id = node_data.get("node_id")
-            if not node_id:
+            # H1-A4 (security review, F7): the old handler trusted
+            # node_id/name/short_name/hw_model/role/rssi/snr/position
+            # completely - no type check, no is_valid_node_id(), no
+            # Meshtastic name-length cap, no finite-number check on
+            # rssi/snr/position. A hostile or merely malformed import
+            # (wrong types, a huge list, NaN/Infinity coordinates, an
+            # oversized name) used to be written straight to nodes.json
+            # and echoed back out of every other node-reading endpoint.
+            if not isinstance(node_data, dict) or not is_valid_node_id(node_data.get("node_id")):
+                rejected_count += 1
                 continue
+            node_id = str(node_data.get("node_id")).strip()
+
             old = nodes.get(node_id, {})
-            name = node_data.get("name") or old.get("name") or friendly_unknown_node_name(node_id)
-            nodes[node_id] = {
+            # MERGE onto a copy of whatever this node already has - F7:
+            # the old code built a brand-new dict from scratch here, which
+            # silently wiped any field NOT in this route's own whitelist
+            # (e.g. battery/voltage/channel_utilization, set directly on
+            # the node dict by TELEMETRY_APP ingestion elsewhere) the
+            # moment that node was ever imported, even just to touch its
+            # name. dict(old) + update() preserves everything this route
+            # doesn't itself know about, same pattern as
+            # _merge_nodeinfo_into_node().
+            node = dict(old)
+
+            raw_name = node_data.get("name")
+            name = (
+                _sanitize_import_name(raw_name, MAX_IMPORT_LONG_NAME_LEN)
+                if raw_name else (old.get("name") or friendly_unknown_node_name(node_id))
+            )
+
+            raw_short_name = node_data.get("short_name")
+            short_name = (
+                _sanitize_import_name(raw_short_name, MAX_IMPORT_SHORT_NAME_LEN)
+                if raw_short_name else (old.get("short_name") or node_id[-4:])
+            )
+
+            raw_hw_model = node_data.get("hw_model")
+            hw_model = _sanitize_import_name(raw_hw_model) if raw_hw_model else old.get("hw_model", "")
+
+            raw_role = node_data.get("role")
+            role = _sanitize_import_name(raw_role) if raw_role else old.get("role", "CLIENT")
+
+            rssi = _finite_float_or_none(node_data.get("rssi"))
+            if rssi is None:
+                rssi = old.get("rssi")
+            snr = _finite_float_or_none(node_data.get("snr"))
+            if snr is None:
+                snr = old.get("snr")
+
+            raw_last_time = node_data.get("last_time")
+            last_time = _sanitize_import_name(raw_last_time) if raw_last_time else old.get("last_time", now())
+
+            if "position" in node_data:
+                position = _sanitize_import_position(node_data.get("position"))
+                # A malformed incoming position is dropped (not applied),
+                # falling back to whatever was already known - never
+                # erase a good stored fix with garbage input.
+                if position is None:
+                    position = old.get("position")
+            else:
+                position = old.get("position")
+
+            node.update({
                 "name": name, "node_id": node_id,
                 "last_seen": old.get("last_seen", time.time()),
-                "last_time": node_data.get("last_time", old.get("last_time", now())),
-                "rssi": node_data.get("rssi", old.get("rssi")),
-                "snr": node_data.get("snr", old.get("snr")),
+                "last_time": last_time,
+                "rssi": rssi,
+                "snr": snr,
                 "hop_start": old.get("hop_start", ""),
                 "relay_node": old.get("relay_node", ""),
                 "last_text": old.get("last_text", ""),
-                "short_name": node_data.get("short_name", old.get("short_name", "") or node_id[-4:]),
-                "hw_model": node_data.get("hw_model", old.get("hw_model", "")),
-                "role": node_data.get("role", old.get("role", "CLIENT")),
+                "short_name": short_name,
+                "hw_model": hw_model,
+                "role": role,
                 "ignored": old.get("ignored", False),
                 "favorite": old.get("favorite", False),
-                # Importing metadata must not discard a stored position.
-                "position": node_data.get("position", old.get("position"))
-            }
+                "position": position,
+            })
+            nodes[node_id] = node
             ensure_chat(node_id, name, force=True)
             imported_count += 1
         if not save_nodes() or not save_chats():
@@ -7538,7 +7662,7 @@ def api_nodes_import():
             save_nodes()
             save_chats()
             return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
-    return jsonify({"ok": True, "imported_count": imported_count})
+    return jsonify({"ok": True, "imported_count": imported_count, "rejected_count": rejected_count})
 
 
 @app.route("/api/delete_all_dm", methods=["POST"])

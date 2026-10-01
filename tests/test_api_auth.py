@@ -70,7 +70,7 @@ def _make_setup_app(tmp_path, auth_state=None):
 def test_load_auth_state_first_run_defaults_to_disabled(tmp_path):
     auth_file = tmp_path / "auth.json"  # does not exist yet
     state = load_auth_state(str(auth_file))
-    assert state == {"enabled": False, "password_hash": ""}
+    assert state == {"enabled": False, "password_hash": "", "auth_version": 1}
 
 
 def test_load_auth_state_no_bootstrap_args_writes_nothing(tmp_path, monkeypatch):
@@ -84,7 +84,7 @@ def test_load_auth_state_no_bootstrap_args_writes_nothing(tmp_path, monkeypatch)
     auth_file = tmp_path / "auth.json"
     state = load_auth_state(str(auth_file))
 
-    assert state == {"enabled": False, "password_hash": ""}
+    assert state == {"enabled": False, "password_hash": "", "auth_version": 1}
     assert needs_setup(state) is False
     writer.assert_not_called()
     assert not auth_file.exists()
@@ -101,7 +101,7 @@ def test_load_auth_state_bootstrap_enabled_without_hash_needs_setup(tmp_path):
     state = load_auth_state(str(auth_file), bootstrap_enabled=True, bootstrap_password_hash="")
 
     assert needs_setup(state) is True
-    assert state == {"enabled": True, "password_hash": ""}
+    assert state == {"enabled": True, "password_hash": "", "auth_version": 1}
 
     # Persisted to disk immediately - unlike the plain in-memory bootstrap
     # path, nothing else would ever write auth.json for this case.
@@ -121,15 +121,15 @@ def test_load_auth_state_second_call_returns_persisted_state_without_rewriting(t
     # rewrite, nothing re-done.
     auth_file = tmp_path / "auth.json"
     first = load_auth_state(str(auth_file), bootstrap_enabled=True, bootstrap_password_hash="")
-    assert first == {"enabled": True, "password_hash": ""}
+    assert first == {"enabled": True, "password_hash": "", "auth_version": 1}
 
     writer = MagicMock()
     monkeypatch.setattr(api_auth, "safe_write_json", writer)
     state_again = load_auth_state(str(auth_file), bootstrap_enabled=True, bootstrap_password_hash="")
 
-    assert state_again == {"enabled": True, "password_hash": ""}
+    assert state_again == {"enabled": True, "password_hash": "", "auth_version": 1}
     writer.assert_not_called()
-    assert json.loads(auth_file.read_text(encoding="utf-8")) == {"enabled": True, "password_hash": ""}
+    assert json.loads(auth_file.read_text(encoding="utf-8")) == {"enabled": True, "password_hash": "", "auth_version": 1}
     assert not (tmp_path / "initial_password.txt").exists()
 
 
@@ -137,7 +137,7 @@ def test_load_auth_state_bootstrap_enabled_with_hash_is_enabled(tmp_path):
     auth_file = tmp_path / "auth.json"
     password_hash = generate_password_hash("correct horse battery staple")
     state = load_auth_state(str(auth_file), bootstrap_enabled=True, bootstrap_password_hash=password_hash)
-    assert state == {"enabled": True, "password_hash": password_hash}
+    assert state == {"enabled": True, "password_hash": password_hash, "auth_version": 1}
 
 
 def test_load_auth_state_existing_file_ignores_bootstrap_args(tmp_path):
@@ -148,7 +148,7 @@ def test_load_auth_state_existing_file_ignores_bootstrap_args(tmp_path):
     auth_file.write_text(json.dumps({"enabled": True, "password_hash": "stored-hash"}), encoding="utf-8")
 
     state = load_auth_state(str(auth_file), bootstrap_enabled=False, bootstrap_password_hash="")
-    assert state == {"enabled": True, "password_hash": "stored-hash"}
+    assert state == {"enabled": True, "password_hash": "stored-hash", "auth_version": 1}
 
 
 def test_load_auth_state_existing_file_is_never_rewritten(tmp_path, monkeypatch):
@@ -167,7 +167,7 @@ def test_load_auth_state_existing_file_is_never_rewritten(tmp_path, monkeypatch)
 
     state = load_auth_state(str(auth_file), bootstrap_enabled=True, bootstrap_password_hash="")
 
-    assert state == {"enabled": True, "password_hash": "stored-hash"}
+    assert state == {"enabled": True, "password_hash": "stored-hash", "auth_version": 1}
     writer.assert_not_called()
     assert not (tmp_path / "initial_password.txt").exists()
 
@@ -179,7 +179,7 @@ def test_load_auth_state_tolerates_corrupt_file(tmp_path):
     # safe_read_json() falls back to {} on a JSON decode error - load_auth_state()
     # must then treat that the same as "no file yet" (bootstrap path), not crash.
     state = load_auth_state(str(auth_file))
-    assert state == {"enabled": False, "password_hash": ""}
+    assert state == {"enabled": False, "password_hash": "", "auth_version": 1}
 
 
 def test_is_protected_requires_both_enabled_and_a_real_hash():
@@ -772,7 +772,7 @@ def test_api_security_password_change_failed_write_returns_storage_error_and_kee
 
     resp = client.post(
         "/api/security",
-        json={"password": "brand-new-password-456"},
+        json={"password": "brand-new-password-456", "current_password": "original-password-123"},
         headers={"X-CSRF-Token": "test-csrf-token"},
     )
 
@@ -812,10 +812,231 @@ def test_api_security_successful_write_still_works_end_to_end(tmp_path):
 
     resp = client.post(
         "/api/security",
-        json={"password": "brand-new-password-456"},
+        json={"password": "brand-new-password-456", "current_password": "original-password-123"},
         headers={"X-CSRF-Token": "test-csrf-token"},
     )
 
     assert resp.status_code == 200
     assert resp.get_json()["ok"] is True
     assert check_password_hash(auth_state["password_hash"], "brand-new-password-456")
+
+
+# ---------------------------------------------------------------------------
+# H1-A2 (security review, F12): auth_version session invalidation + a
+# current-password check before a password change or disabling protection.
+# ---------------------------------------------------------------------------
+
+
+def _authed_session(client, auth_version=1):
+    with client.session_transaction() as sess:
+        sess["authenticated"] = True
+        sess["auth_version"] = auth_version
+        sess["csrf_token"] = "test-csrf-token"
+
+
+def test_password_change_invalidates_other_sessions_but_not_the_changing_one(tmp_path):
+    app, auth_state = _make_app(tmp_path, password="original-password-123")
+    client1 = app.test_client()
+    client2 = app.test_client()
+    _authed_session(client1)
+    _authed_session(client2)
+
+    resp = client1.post(
+        "/api/security",
+        json={"password": "brand-new-password-456", "current_password": "original-password-123"},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+    assert resp.status_code == 200
+
+    # The session that performed the change keeps working...
+    still_ok = client1.get("/api/security")
+    assert still_ok.status_code == 200
+
+    # ...every other already-authenticated session is logged out.
+    kicked_out = client2.get("/api/security")
+    assert kicked_out.status_code == 401
+    assert kicked_out.get_json()["error_code"] == "auth_required"
+
+
+def test_api_security_wrong_current_password_returns_403_and_keeps_old_hash(tmp_path):
+    app, auth_state = _make_app(tmp_path, password="original-password-123")
+    original_hash = auth_state["password_hash"]
+    client = app.test_client()
+    _authed_session(client)
+
+    resp = client.post(
+        "/api/security",
+        json={"password": "brand-new-password-456", "current_password": "totally-wrong"},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+
+    assert resp.status_code == 403
+    assert resp.get_json()["error_code"] == "current_password_invalid"
+    assert auth_state["password_hash"] == original_hash
+    # auth_version must not have bumped either - nothing actually changed.
+    assert auth_state.get("auth_version", 1) == 1
+
+
+def test_api_security_missing_current_password_returns_403(tmp_path):
+    app, auth_state = _make_app(tmp_path, password="original-password-123")
+    client = app.test_client()
+    _authed_session(client)
+
+    resp = client.post(
+        "/api/security",
+        json={"password": "brand-new-password-456"},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+
+    assert resp.status_code == 403
+    assert resp.get_json()["error_code"] == "current_password_invalid"
+
+
+def test_api_security_disabling_protection_requires_current_password(tmp_path):
+    app, auth_state = _make_app(tmp_path, password="original-password-123", enabled=True)
+    client = app.test_client()
+    _authed_session(client)
+
+    resp = client.post(
+        "/api/security",
+        json={"enabled": False},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+
+    assert resp.status_code == 403
+    assert resp.get_json()["error_code"] == "current_password_invalid"
+    assert auth_state["enabled"] is True
+
+    resp_ok = client.post(
+        "/api/security",
+        json={"enabled": False, "current_password": "original-password-123"},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+    assert resp_ok.status_code == 200
+    assert auth_state["enabled"] is False
+
+
+def test_api_security_enabling_protection_does_not_require_current_password(tmp_path):
+    # Enabling protection for the first time (or re-enabling with the same
+    # password already set) is how a brand-new browser session bootstraps
+    # itself - there's nothing to "prove you already knew" the first time
+    # protection is switched on, unlike disabling it or changing it.
+    app, auth_state = _make_app(tmp_path, password="realpassword123", enabled=False)
+    client = app.test_client()
+    _authed_session(client)
+
+    resp = client.post(
+        "/api/security",
+        json={"enabled": True},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+    assert resp.status_code == 200
+    assert auth_state["enabled"] is True
+
+
+def test_api_security_disable_then_enable_bumps_auth_version_and_logs_out_other_sessions(tmp_path):
+    app, auth_state = _make_app(tmp_path, password="realpassword123", enabled=True)
+    client1 = app.test_client()
+    client2 = app.test_client()
+    _authed_session(client1)
+    _authed_session(client2)
+
+    off = client1.post(
+        "/api/security",
+        json={"enabled": False, "current_password": "realpassword123"},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+    assert off.status_code == 200
+
+    on = client1.post(
+        "/api/security",
+        json={"enabled": True},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+    assert on.status_code == 200
+
+    # client1 (performed both changes) still works.
+    assert client1.get("/api/security").status_code == 200
+    # client2's stale auth_version=1 session is logged out now that
+    # protection has been re-enabled under a new version.
+    stale = client2.get("/api/security")
+    assert stale.status_code == 401
+    assert stale.get_json()["error_code"] == "auth_required"
+
+
+def test_api_security_wrong_current_password_is_throttled_like_login(tmp_path, monkeypatch):
+    app, auth_state = _make_app(tmp_path, password="original-password-123")
+    client = app.test_client()
+    _authed_session(client)
+
+    # Burn through the free attempts.
+    for _ in range(5):
+        resp = client.post(
+            "/api/security",
+            json={"password": "brand-new-password-456", "current_password": "wrong"},
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+        assert resp.status_code == 403
+
+    locked = client.post(
+        "/api/security",
+        json={"password": "brand-new-password-456", "current_password": "wrong"},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+    assert locked.status_code == 429
+    assert locked.get_json()["error_code"] == "login_throttled"
+
+    # Even the CORRECT password is refused while locked out - matches
+    # login()'s own behavior of checking the lock before the credential.
+    still_locked = client.post(
+        "/api/security",
+        json={"password": "brand-new-password-456", "current_password": "original-password-123"},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+    assert still_locked.status_code == 429
+    assert auth_state["password_hash"] != None  # noqa: E711 - sanity: still has a hash
+    assert not check_password_hash(auth_state["password_hash"], "brand-new-password-456")
+
+
+def test_auth_version_missing_from_disk_defaults_to_1_and_existing_sessions_stay_valid(tmp_path):
+    """auth.json written before auth_version existed (no migration write)
+    must load as version 1, and a session that predates this feature
+    entirely (no "auth_version" key at all) must keep working - only a
+    SUBSEQUENT actual change invalidates it."""
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(
+        json.dumps({"enabled": True, "password_hash": generate_password_hash("realpassword123")}),
+        encoding="utf-8",
+    )
+
+    state = load_auth_state(str(auth_file))
+    assert state["auth_version"] == 1
+
+    app, auth_state, _ = _make_setup_app(tmp_path, auth_state=state)
+    client = app.test_client()
+    with client.session_transaction() as sess:
+        sess["authenticated"] = True
+        # Deliberately no "auth_version" key - a pre-existing session from
+        # before this feature shipped.
+        sess["csrf_token"] = "test-csrf-token"
+
+    # Still works - the missing session key defaults to 1, matching the
+    # file's own default.
+    assert client.get("/api/ping").status_code == 200
+
+    # A real change (password rotation) bumps the file's version...
+    changed = client.post(
+        "/api/security",
+        json={"password": "newpassword123456", "current_password": "realpassword123"},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+    assert changed.status_code == 200
+    assert auth_state["auth_version"] == 2
+
+    # ...so another pre-existing (no-version-key) session is now stale.
+    stale_client = app.test_client()
+    with stale_client.session_transaction() as sess:
+        sess["authenticated"] = True
+        sess["csrf_token"] = "test-csrf-token"
+    resp = stale_client.get("/api/ping")
+    assert resp.status_code == 401

@@ -167,6 +167,13 @@ def load_auth_state(auth_file, bootstrap_enabled=False, bootstrap_password_hash=
         return {
             "enabled": bool(data.get("enabled", False)),
             "password_hash": str(data.get("password_hash") or ""),
+            # H1-A2 (security review, F12): defaults to 1 for an existing
+            # auth.json written before this field existed - no migration
+            # write needed, every session created before this feature
+            # shipped also implicitly carries "version 1" (see
+            # _enforce_auth()'s own default), so nothing gets logged out
+            # just because the field was missing on disk.
+            "auth_version": int(data.get("auth_version") or 1),
         }
 
     # First run: seed from config.py's bootstrap values, same pattern as
@@ -184,7 +191,7 @@ def load_auth_state(auth_file, bootstrap_enabled=False, bootstrap_password_hash=
         # path uniformly (install.sh, meshcenter-firstboot.sh, and
         # CLAUDE.md's own documented manual `cp config.example.py
         # config.py` path).
-        state = {"enabled": True, "password_hash": ""}
+        state = {"enabled": True, "password_hash": "", "auth_version": 1}
         safe_write_json(auth_file, state)
         print(
             "[AUTH] No password configured yet - open http://<this-device>:5000/setup "
@@ -196,6 +203,7 @@ def load_auth_state(auth_file, bootstrap_enabled=False, bootstrap_password_hash=
     return {
         "enabled": bool(bootstrap_enabled) and bool(bootstrap_password_hash.strip()),
         "password_hash": bootstrap_password_hash,
+        "auth_version": 1,
     }
 
 
@@ -301,6 +309,7 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
         with state_lock:
             setup_needed = needs_setup(auth_state)
             protected = is_protected(auth_state)
+            current_auth_version = int(auth_state.get("auth_version") or 1)
 
         # Checked before `protected`: a fresh install (enabled, no password
         # yet) has nothing to log in against, so every non-exempt path is
@@ -315,8 +324,20 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
                 }), 401
             return redirect("/setup")
 
-        if not protected or session.get("authenticated"):
+        if not protected:
             return None
+
+        if session.get("authenticated"):
+            # H1-A2 (security review, F12): a session minted before the
+            # password was last changed (or before protection was last
+            # re-enabled) must not keep working after that - defaulting a
+            # session with no recorded version to 1 (not 0, not "always
+            # stale") matches auth.json's own default above, so a session
+            # that predates this feature stays valid until the next actual
+            # change, exactly like the file it's checked against.
+            if session.get("auth_version", 1) == current_auth_version:
+                return None
+            session.clear()
 
         if path.startswith("/api/"):
             return jsonify({
@@ -369,6 +390,7 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
         with state_lock:
             protected = is_protected(auth_state)
             password_hash = str(auth_state.get("password_hash") or "")
+            login_auth_version = int(auth_state.get("auth_version") or 1)
 
         if not protected:
             return redirect("/")
@@ -405,6 +427,7 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
                 session.clear()
                 session.permanent = True
                 session["authenticated"] = True
+                session["auth_version"] = login_auth_version
                 # Rotate the CSRF token on every successful login (§2.3 point
                 # 3): a token minted before authentication (e.g. by the login
                 # page render, or carried over from an older session) is
@@ -465,6 +488,7 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
                     session.clear()
                     session.permanent = True
                     session["authenticated"] = True
+                    session["auth_version"] = int(new_state.get("auth_version") or 1)
                     session[_CSRF_SESSION_KEY] = _generate_csrf_token()
                     return redirect("/")
                 # Persist failed: auth_state is untouched (still needs
@@ -503,8 +527,54 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
         with state_lock:
             new_state = dict(auth_state)
             grant_session = False
+            bump_auth_version = False
 
             new_password = data.get("password")
+            wants_disable = "enabled" in data and not bool(data["enabled"])
+            # H1-A2 (security review, F12): a password change or disabling
+            # protection are both actions that should require proving you
+            # still know the CURRENT password - not just riding an
+            # already-authenticated session's cookie (a 7-day cookie plus
+            # no re-auth meant anyone with a left-open browser tab could do
+            # either). Only enforced when a password is actually set yet -
+            # the very first /setup has nothing to re-check against, and
+            # that route is separate from this one anyway.
+            current_password_required = bool(
+                str(new_state.get("password_hash") or "").strip()
+            ) and (bool(new_password) or wants_disable)
+
+            if current_password_required:
+                client_key = _client_key()
+                now = time.monotonic()
+                _prune_login_throttle(now)
+                existing_entry = login_throttle.get(client_key)
+                locked_until = existing_entry["locked_until"] if existing_entry else 0
+                if now < locked_until:
+                    retry_after = int(locked_until - now) + 1
+                    return jsonify({
+                        "ok": False,
+                        "error": "Too many attempts - try again later",
+                        "error_code": "login_throttled",
+                        "retry_after": retry_after,
+                    }), 429
+
+                current_password = str(data.get("current_password") or "")
+                if not current_password or not check_password_hash(
+                    str(new_state.get("password_hash") or ""), current_password
+                ):
+                    entry = login_throttle.setdefault(client_key, {"fail_count": 0, "locked_until": 0})
+                    entry["fail_count"] += 1
+                    entry["last_seen"] = now
+                    entry["locked_until"] = now + _login_throttle_delay(entry["fail_count"])
+                    return jsonify({
+                        "ok": False,
+                        "error": "Current password is incorrect",
+                        "error_code": "current_password_invalid",
+                    }), 403
+                # Correct current password - same throttle reset login() does
+                # on a successful attempt.
+                login_throttle.pop(client_key, None)
+
             if new_password:
                 new_password = str(new_password)
                 if len(new_password) < MIN_PASSWORD_LENGTH:
@@ -514,6 +584,11 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
                         "error_code": "password_too_short",
                     }), 400
                 new_state["password_hash"] = generate_password_hash(new_password)
+                # Invalidates every OTHER session logged in under the old
+                # password - see _enforce_auth()'s auth_version check. The
+                # session making this very change gets the new version
+                # below instead of being logged out by its own request.
+                bump_auth_version = True
 
             if "enabled" in data:
                 enabled = bool(data["enabled"])
@@ -523,6 +598,11 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
                         "error": "Set a password before enabling protection",
                         "error_code": "no_password_set",
                     }), 400
+                if enabled and not bool(auth_state.get("enabled")):
+                    # Disabled -> enabled: a fresh round of protection, not a
+                    # continuation of whatever sessions existed from before
+                    # it was last turned off.
+                    bump_auth_version = True
                 new_state["enabled"] = enabled
                 if enabled:
                     # Whoever just flipped this on did so from an already-open
@@ -535,6 +615,9 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
                     # failed write still leave the browser "logged in" to a
                     # protection flag that was never actually persisted.
                     grant_session = True
+
+            if bump_auth_version:
+                new_state["auth_version"] = int(auth_state.get("auth_version") or 1) + 1
 
             # F4.1 PR 2: persist-then-commit - build the new state as a copy
             # (done above), write THAT, and only commit it into the live
@@ -553,6 +636,12 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
             if grant_session:
                 session.permanent = True
                 session["authenticated"] = True
+            if session.get("authenticated"):
+                # Keep the session that just made this change in step with
+                # whatever auth_version was actually persisted - otherwise a
+                # bump above would make _enforce_auth() log this very
+                # request's own session out on its next request.
+                session["auth_version"] = int(auth_state.get("auth_version") or 1)
 
             response = {
                 "ok": True,

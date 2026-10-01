@@ -444,7 +444,7 @@ def register_chat_routes(
         if not message_id or len(message_id) > 128:
             return jsonify({"ok": False, "error": "Invalid message_id", "error_code": "invalid_message_id"}), 400
 
-        deleted_message = None
+        deleted_index = None
 
         with state_lock:
             for index, message in enumerate(messages):
@@ -452,20 +452,40 @@ def register_chat_routes(
                     message.get("chat_id") == chat_id
                     and str(message.get("id", "")) == message_id
                 ):
-                    deleted_message = messages.pop(index)
+                    deleted_index = index
                     break
 
-            if deleted_message is None:
+            if deleted_index is None:
                 return jsonify({"ok": False, "error": "Message not found", "error_code": "message_not_found"}), 404
 
-            save_messages()
+            deleted_message = messages.pop(deleted_index)
+            chat_entry_snapshot = dict(chats[chat_id]) if chat_id in chats else None
+
+            def _restore():
+                # F4.1 PR 2: undo both the popped message and the chat
+                # summary fields if either save fails below, so a failed
+                # write never leaves memory diverged from what's on disk -
+                # this route used to call save_messages()/save_chats()
+                # without even checking their result.
+                messages.insert(deleted_index, deleted_message)
+                if chat_entry_snapshot is not None:
+                    chats[chat_id].clear()
+                    chats[chat_id].update(chat_entry_snapshot)
+                # Best-effort: resync disk too, in case one save already
+                # succeeded before the other failed.
+                save_messages()
+                save_chats()
+
+            if not save_messages():
+                _restore()
+                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
 
             remaining = [
                 message for message in messages
                 if message.get("chat_id") == chat_id
             ]
 
-            if chat_id in chats:
+            if chat_entry_snapshot is not None:
                 if remaining:
                     last_message = remaining[-1]
                     chats[chat_id]["last_message"] = last_message.get("text", "")
@@ -475,7 +495,9 @@ def register_chat_routes(
                     chats[chat_id]["last_time"] = ""
 
                 chats[chat_id]["unread"] = 0
-                save_chats()
+                if not save_chats():
+                    _restore()
+                    return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
 
         return jsonify({
             "ok": True,

@@ -1514,6 +1514,33 @@ def log_node_event(event, source, node_id, old=None, new=None, raw=None, extra=N
     except Exception as e:
         print(f"[NODE_LOG] Error: {e}", flush=True)            
 
+def _restore_dict_in_place(target, snapshot):
+    """Rolls a shared dict back to a pre-mutation snapshot without
+    rebinding it (the F2 identity invariant - DI consumers elsewhere hold
+    a reference to the same object). Used by F4.1 PR 2's mutating routes
+    to undo an in-memory change when the matching save_*() call fails, so
+    a failed write never leaves memory diverged from what's on disk."""
+    target.clear()
+    target.update(snapshot)
+
+def _restore_list_in_place(target, snapshot):
+    target[:] = snapshot
+
+def _restore_marker_file(path, existed, snapshot):
+    """Undoes a just-written marker file (e.g. DELETED_DM_FILE) back to
+    whatever it held before this request - or removes it if it didn't
+    exist yet. Pairs with _restore_dict_in_place()/_restore_list_in_place()
+    in routes that write a marker file alongside in-memory state, so a
+    failure partway through doesn't leave an orphaned marker that a later
+    request would wrongly treat as authoritative."""
+    if existed:
+        safe_write_json(path, snapshot)
+    else:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
 def save_sensors():
     with state_lock:
         return safe_write_json(SENSORS_FILE, sensor_data)
@@ -7055,8 +7082,10 @@ def api_toggle_ignore():
     if not node_id or node_id not in nodes or not is_valid_node_id(node_id):
         return jsonify({"ok": False, "error": "Invalid node"}), 400
     with state_lock:
-        nodes[node_id]["ignored"] = not nodes[node_id].get("ignored", False)
+        previous = nodes[node_id].get("ignored", False)
+        nodes[node_id]["ignored"] = not previous
         if not save_nodes():
+            nodes[node_id]["ignored"] = previous
             return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         return jsonify({"ok": True, "ignored": nodes[node_id]["ignored"]})
 
@@ -7068,8 +7097,10 @@ def api_toggle_favorite():
     if not node_id or node_id not in nodes or not is_valid_node_id(node_id):
         return jsonify({"ok": False, "error": "Invalid node"}), 400
     with state_lock:
-        nodes[node_id]["favorite"] = not nodes[node_id].get("favorite", False)
+        previous = nodes[node_id].get("favorite", False)
+        nodes[node_id]["favorite"] = not previous
         if not save_nodes():
+            nodes[node_id]["favorite"] = previous
             return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         return jsonify({"ok": True, "favorite": nodes[node_id]["favorite"]})
 
@@ -7077,10 +7108,12 @@ def api_toggle_favorite():
 @handle_errors
 def api_cleanup_nodes():
     with state_lock:
+        chats_snapshot = dict(chats)
         for node_id, node in nodes.items():
             if node_id.startswith("!") and node_id not in chats:
                 ensure_chat(node_id, node.get("name"), force=True)
         if not save_chats():
+            _restore_dict_in_place(chats, chats_snapshot)
             return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         return jsonify({"ok": True, "message": "Nodes cleaned up", "node_count": len(nodes)})
 
@@ -7226,14 +7259,30 @@ def api_clear_chat():
         # everything built on it (/api/messages, /api/messages/delete,
         # /api/send/retry) - pointing at a stale, disconnected list for the
         # rest of the process's life.
+        messages_snapshot = list(messages)
+        chat_entry_snapshot = dict(chats[chat_id]) if chat_id in chats else None
+
+        def _restore():
+            _restore_list_in_place(messages, messages_snapshot)
+            if chat_entry_snapshot is not None:
+                _restore_dict_in_place(chats[chat_id], chat_entry_snapshot)
+            # Best-effort: push the reverted state back to disk too, in
+            # case the other save already succeeded before this one
+            # failed - memory (the in-process source of truth) is correct
+            # either way even if this resync also fails.
+            save_messages()
+            save_chats()
+
         messages[:] = [m for m in messages if m.get("chat_id") != chat_id]
         if not save_messages():
+            _restore()
             return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
-        if chat_id in chats:
+        if chat_entry_snapshot is not None:
             chats[chat_id]["last_message"] = ""
             chats[chat_id]["last_time"] = ""
             chats[chat_id]["unread"] = 0
             if not save_chats():
+                _restore()
                 return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
     return jsonify({"ok": True})
 
@@ -7245,13 +7294,27 @@ def api_delete_chat():
     if not chat_id or chat_id == CHANNEL_CHAT_ID or not is_valid_node_id(chat_id):
         return jsonify({"ok": False, "error": "Invalid chat", "error_code": "invalid_chat"}), 400
     with state_lock:
-        if chat_id in chats:
+        chat_snapshot = chats.get(chat_id)
+        existed_in_chats = chat_id in chats
+        messages_snapshot = list(messages)
+
+        def _restore():
+            if existed_in_chats:
+                chats[chat_id] = chat_snapshot
+            _restore_list_in_place(messages, messages_snapshot)
+            # Best-effort: see api_clear_chat()'s identical comment above.
+            save_chats()
+            save_messages()
+
+        if existed_in_chats:
             del chats[chat_id]
             if not save_chats():
+                _restore()
                 return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         # In place (F2) - see api_clear_chat()'s own comment above.
         messages[:] = [m for m in messages if m.get("chat_id") != chat_id]
         if not save_messages():
+            _restore()
             return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
     return jsonify({"ok": True})
 
@@ -7441,6 +7504,8 @@ def api_nodes_import():
     imported_nodes = data.get("nodes", [])
     imported_count = 0
     with state_lock:
+        nodes_snapshot = dict(nodes)
+        chats_snapshot = dict(chats)
         for node_data in imported_nodes:
             node_id = node_data.get("node_id")
             if not node_id:
@@ -7467,6 +7532,11 @@ def api_nodes_import():
             ensure_chat(node_id, name, force=True)
             imported_count += 1
         if not save_nodes() or not save_chats():
+            _restore_dict_in_place(nodes, nodes_snapshot)
+            _restore_dict_in_place(chats, chats_snapshot)
+            # Best-effort: see api_clear_chat()'s identical comment above.
+            save_nodes()
+            save_chats()
             return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
     return jsonify({"ok": True, "imported_count": imported_count})
 
@@ -7474,34 +7544,55 @@ def api_nodes_import():
 @app.route("/api/delete_all_dm", methods=["POST"])
 @handle_errors
 def api_delete_all_dm():
-    global messages, chats
+    deleted_file = DELETED_DM_FILE
     try:
         with state_lock:
-            deleted_count = 0
-            dm_chat_ids = []
-            for chat_id in list(chats.keys()):
-                if chat_id != CHANNEL_CHAT_ID and chat_id.startswith("!"):
-                    dm_chat_ids.append(chat_id)
-                    deleted_count += 1
+            chats_snapshot = dict(chats)
+            messages_snapshot = list(messages)
+
+            dm_chat_ids = [
+                chat_id for chat_id in chats
+                if chat_id != CHANNEL_CHAT_ID and chat_id.startswith("!")
+            ]
+            deleted_count = len(dm_chat_ids)
+
+            def _restore():
+                _restore_dict_in_place(chats, chats_snapshot)
+                _restore_list_in_place(messages, messages_snapshot)
+                # Best-effort: see api_clear_chat()'s identical comment
+                # above - resync disk in case one of the two saves below
+                # already succeeded before the other failed.
+                save_chats()
+                save_messages()
+
             for chat_id in dm_chat_ids:
-                if chat_id in chats:
-                    del chats[chat_id]
-            deleted_file = DELETED_DM_FILE
-            # F4.1: folded onto the shared storage.json_store helper
-            # (unique temp name + fsync, instead of this route's own
-            # non-atomic open(...,"w")). F4.1 PR 2: result checked - this
-            # used to answer ok:true even when this specific write failed,
-            # silently risking a deleted DM chat reappearing on the next
-            # incoming message (ensure_chat() reads this file to decide
-            # whether a chat was deliberately deleted).
-            if not safe_write_json(deleted_file, {"deleted": dm_chat_ids}):
-                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+                del chats[chat_id]
             # In place (F2) - see api_clear_chat()'s own comment above.
             messages[:] = [
                 m for m in messages
                 if m.get("chat_id") == CHANNEL_CHAT_ID or str(m.get("chat_id", "")).startswith("channel:")
             ]
             if not save_chats() or not save_messages():
+                _restore()
+                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+
+            # F4.1 PR 2 (review fix): the marker is now written LAST, only
+            # once chats.json/messages.json have actually been persisted
+            # with the deletion applied - this route used to write it
+            # FIRST. Writing it first meant a later save_chats()/
+            # save_messages() failure left a marker on disk claiming these
+            # chats were deliberately deleted even after the in-memory
+            # rollback (and disk resync) above put them back - an orphaned
+            # marker that ensure_chat() would then trust forever. The one
+            # accepted gap with "marker last": if this specific write
+            # fails, chats/messages are already genuinely deleted (not
+            # rolled back - doing so here would re-diverge memory from the
+            # chats.json/messages.json already committed above), just
+            # without the marker, so an incoming message before the next
+            # successful write of this file could recreate one of them.
+            # Narrower and self-healing (retried on the next delete-all or
+            # restore-deleted-dm call) versus the alternative.
+            if not safe_write_json(deleted_file, {"deleted": dm_chat_ids}):
                 return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         return jsonify({"ok": True, "deleted_count": deleted_count, "message": f"Deleted {deleted_count} DM chats"})
     except Exception as e:
@@ -7512,16 +7603,29 @@ def api_delete_all_dm():
 @handle_errors
 def api_restore_deleted_dm():
     deleted_file = DELETED_DM_FILE
-    if os.path.exists(deleted_file):
-        os.remove(deleted_file)
-        with state_lock:
-            for node_id in nodes:
-                if node_id.startswith("!"):
-                    ensure_chat(node_id, nodes[node_id].get("name"), force=False)
-            if not save_chats():
-                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
-        return jsonify({"ok": True, "message": "Restored deleted DM chats"})
-    return jsonify({"ok": True, "message": "No deleted chats to restore"})
+    if not os.path.exists(deleted_file):
+        return jsonify({"ok": True, "message": "No deleted chats to restore"})
+
+    with state_lock:
+        chats_snapshot = dict(chats)
+        for node_id in nodes:
+            if node_id.startswith("!"):
+                ensure_chat(node_id, nodes[node_id].get("name"), force=False)
+        if not save_chats():
+            _restore_dict_in_place(chats, chats_snapshot)
+            # Best-effort: see api_clear_chat()'s identical comment above.
+            save_chats()
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+        # F4.1 PR 2 (review fix): the marker is only removed AFTER
+        # chats.json has actually been persisted with the restored chats -
+        # this route used to remove it FIRST, so a failed save_chats()
+        # left the marker permanently gone (the deletion was never really
+        # undone) while reporting a 500.
+        try:
+            os.remove(deleted_file)
+        except OSError:
+            pass
+    return jsonify({"ok": True, "message": "Restored deleted DM chats"})
 
 @app.route("/api/radio_health")
 def api_radio_health():

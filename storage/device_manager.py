@@ -3,13 +3,13 @@
 
 from __future__ import annotations
 
-import json
 import os
-import tempfile
 import threading
 from copy import deepcopy
 from datetime import datetime
 from typing import Any, Dict
+
+from storage.json_store import safe_read_json, safe_write_json
 
 
 class DeviceManager:
@@ -63,34 +63,31 @@ class DeviceManager:
     def load_or_create(self) -> Dict[str, Any]:
         with self._lock:
             data = self._default()
-            try:
-                with open(self.path, "r", encoding="utf-8") as handle:
-                    loaded = json.load(handle)
-                if isinstance(loaded, dict):
-                    data.update({k: v for k, v in loaded.items() if k != "devices"})
-                    loaded_devices = loaded.get("devices")
-                    if isinstance(loaded_devices, dict):
-                        # Schema v1 -> v2 migration: the old single "camera"
-                        # object becomes one entry in "cameras", keyed
-                        # "csi" - that was the only camera type that could
-                        # exist under v1, so this is an unambiguous rename,
-                        # not a guess.
-                        legacy_camera = loaded_devices.get("camera")
-                        if isinstance(legacy_camera, dict) and "cameras" not in loaded_devices:
-                            data["devices"]["cameras"]["csi"] = {
-                                k: v for k, v in legacy_camera.items() if k != "type"
-                            }
+            # F4.1: folded onto the shared storage.json_store helper - a
+            # malformed devices.json is now quarantined (moved aside, not
+            # silently discarded) instead of just being overwritten by the
+            # save() call below with no trace of the original left behind.
+            loaded = safe_read_json(self.path, default={})
+            if isinstance(loaded, dict):
+                data.update({k: v for k, v in loaded.items() if k != "devices"})
+                loaded_devices = loaded.get("devices")
+                if isinstance(loaded_devices, dict):
+                    # Schema v1 -> v2 migration: the old single "camera"
+                    # object becomes one entry in "cameras", keyed
+                    # "csi" - that was the only camera type that could
+                    # exist under v1, so this is an unambiguous rename,
+                    # not a guess.
+                    legacy_camera = loaded_devices.get("camera")
+                    if isinstance(legacy_camera, dict) and "cameras" not in loaded_devices:
+                        data["devices"]["cameras"]["csi"] = {
+                            k: v for k, v in legacy_camera.items() if k != "type"
+                        }
 
-                        for key, value in loaded_devices.items():
-                            if key == "camera":
-                                continue  # migrated above; don't also recreate the old flat key
-                            if isinstance(value, dict):
-                                data["devices"].setdefault(key, {}).update(value)
-            except FileNotFoundError:
-                pass
-            except (OSError, ValueError, TypeError):
-                # Keep a usable default; a malformed file is replaced atomically.
-                pass
+                    for key, value in loaded_devices.items():
+                        if key == "camera":
+                            continue  # migrated above; don't also recreate the old flat key
+                        if isinstance(value, dict):
+                            data["devices"].setdefault(key, {}).update(value)
 
             data["schema_version"] = self.SCHEMA_VERSION
             self.save(data)
@@ -101,16 +98,8 @@ class DeviceManager:
             payload = deepcopy(data if isinstance(data, dict) else self._default())
             payload["schema_version"] = self.SCHEMA_VERSION
             payload["updated_at"] = self._now()
-            os.makedirs(self.profile_dir, exist_ok=True)
-            fd, tmp_path = tempfile.mkstemp(prefix=".devices.", suffix=".tmp", dir=self.profile_dir)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    json.dump(payload, handle, ensure_ascii=False, indent=2)
-                    handle.write("\n")
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(tmp_path, self.path)
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+            # F4.1: folded onto the shared storage.json_store helper -
+            # same unique-temp-name+fsync mechanism this already had
+            # inline, now de-duplicated into one place.
+            safe_write_json(self.path, payload)
             return deepcopy(payload)

@@ -93,7 +93,14 @@ class DeviceManager:
             self.save(data)
             return deepcopy(data)
 
-    def save(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def save(self, data: Dict[str, Any]) -> bool:
+        """F4.1 PR 2: returns whether the write actually succeeded
+        (previously always returned a deepcopy of the payload - truthy no
+        matter what safe_write_json() did - so every caller that never
+        checked it had no way to tell a failure from a success). No
+        existing caller used the old return value for anything beyond
+        discarding it or (load_or_create()) building its own, independent
+        return value, so this is a safe, non-breaking contract change."""
         with self._lock:
             payload = deepcopy(data if isinstance(data, dict) else self._default())
             payload["schema_version"] = self.SCHEMA_VERSION
@@ -101,5 +108,4 @@ class DeviceManager:
             # F4.1: folded onto the shared storage.json_store helper -
             # same unique-temp-name+fsync mechanism this already had
             # inline, now de-duplicated into one place.
-            safe_write_json(self.path, payload)
-            return deepcopy(payload)
+            return safe_write_json(self.path, payload)

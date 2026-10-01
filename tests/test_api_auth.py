@@ -702,3 +702,120 @@ def test_auth_disabled_from_config_never_triggers_setup_end_to_end(tmp_path):
     assert client.get("/api/ping").status_code == 200
     assert client.get("/setup").headers["Location"] == "/"
     assert not auth_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# F4.1 PR 2: persist-then-commit + result propagation. A failed write must
+# never leave auth_state looking like it succeeded (mutate-then-save used to
+# write the hash into auth_state regardless of whether safe_write_json()
+# itself succeeded) - the admin would see success, use the app for the rest
+# of that process's life, then lose the change on the next restart (stale
+# file re-read, needs_setup() true again). Reproduced and fixed by building
+# the new state as a COPY, writing THAT, and only swapping it into the live
+# auth_state dict (in place - clear()+update(), never rebinding, per the F2
+# identity invariant) once the write has actually succeeded.
+# ---------------------------------------------------------------------------
+
+def test_setup_post_failed_write_does_not_grant_a_session_or_touch_auth_state(tmp_path, monkeypatch):
+    app, auth_state, auth_file = _make_setup_app(tmp_path)
+    client = app.test_client()
+    password = "x" * api_auth.MIN_PASSWORD_LENGTH
+    original_state = dict(auth_state)
+
+    monkeypatch.setattr(api_auth, "safe_write_json", lambda *a, **k: False)
+
+    resp = client.post("/setup", data={"password": password, "confirm_password": password})
+
+    assert resp.status_code == 200  # re-renders setup.html with an error, no redirect
+    assert b"setup" in resp.data.lower()
+    assert auth_state == original_state, "a failed write must leave auth_state completely untouched"
+    assert not auth_file.exists()
+    with client.session_transaction() as sess:
+        assert not sess.get("authenticated")
+
+    # The wizard must still be open - needs_setup() reads the untouched state.
+    assert needs_setup(auth_state) is True
+
+
+def test_setup_post_failed_write_then_a_working_write_still_succeeds(tmp_path, monkeypatch):
+    """Not a permanent lockout - once storage recovers, setup works
+    normally (proves the failure path doesn't leave any stale partial
+    state behind that would trip up a later, successful attempt)."""
+    app, auth_state, auth_file = _make_setup_app(tmp_path)
+    client = app.test_client()
+    password = "x" * api_auth.MIN_PASSWORD_LENGTH
+
+    real_write = api_auth.safe_write_json
+    monkeypatch.setattr(api_auth, "safe_write_json", lambda *a, **k: False)
+    client.post("/setup", data={"password": password, "confirm_password": password})
+
+    monkeypatch.setattr(api_auth, "safe_write_json", real_write)
+    resp = client.post("/setup", data={"password": password, "confirm_password": password})
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"] == "/"
+    assert check_password_hash(auth_state["password_hash"], password)
+    assert auth_file.exists()
+
+
+def test_api_security_password_change_failed_write_returns_storage_error_and_keeps_old_hash(tmp_path, monkeypatch):
+    original_hash = generate_password_hash("original-password-123")
+    app, auth_state = _make_app(tmp_path, password="original-password-123")
+    auth_state["password_hash"] = original_hash
+    client = app.test_client()
+
+    with client.session_transaction() as sess:
+        sess["authenticated"] = True
+        sess["csrf_token"] = "test-csrf-token"
+
+    monkeypatch.setattr(api_auth, "safe_write_json", lambda *a, **k: False)
+
+    resp = client.post(
+        "/api/security",
+        json={"password": "brand-new-password-456"},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+
+    assert resp.status_code == 500
+    assert resp.get_json()["error_code"] == "storage_write_failed"
+    assert auth_state["password_hash"] == original_hash, "a failed write must never change the live password hash"
+
+
+def test_api_security_enable_failed_write_returns_storage_error_and_does_not_grant_a_session(tmp_path, monkeypatch):
+    app, auth_state = _make_app(tmp_path, password="realpassword123", enabled=False)
+    client = app.test_client()
+
+    with client.session_transaction() as sess:
+        sess["authenticated"] = True
+        sess["csrf_token"] = "test-csrf-token"
+
+    monkeypatch.setattr(api_auth, "safe_write_json", lambda *a, **k: False)
+
+    resp = client.post(
+        "/api/security",
+        json={"enabled": True},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+
+    assert resp.status_code == 500
+    assert resp.get_json()["error_code"] == "storage_write_failed"
+    assert auth_state["enabled"] is False, "a failed write must never flip the live enabled flag"
+
+
+def test_api_security_successful_write_still_works_end_to_end(tmp_path):
+    app, auth_state = _make_app(tmp_path, password="original-password-123")
+    client = app.test_client()
+
+    with client.session_transaction() as sess:
+        sess["authenticated"] = True
+        sess["csrf_token"] = "test-csrf-token"
+
+    resp = client.post(
+        "/api/security",
+        json={"password": "brand-new-password-456"},
+        headers={"X-CSRF-Token": "test-csrf-token"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.get_json()["ok"] is True
+    assert check_password_hash(auth_state["password_hash"], "brand-new-password-456")

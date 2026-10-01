@@ -1450,6 +1450,7 @@
   },
   "errors": {
     "generic": "Etwas ist schiefgelaufen. Versuch es bitte erneut.",
+    "storage_write_failed": "Speichern fehlgeschlagen - Schreibfehler. Bitte versuch es erneut.",
     "invalid_chat_id": "Ungültiger Chat.",
     "invalid_chat": "Ungültiger Chat.",
     "invalid_node_id": "Ungültiger Knoten.",
@@ -1575,7 +1576,8 @@
     "setup_hint": "Verwende mindestens {min} Zeichen.",
     "setup_submit": "Passwort festlegen",
     "setup_error_mismatch": "Die Passwörter stimmen nicht überein.",
-    "setup_error_too_short": "Das Passwort muss mindestens {min} Zeichen lang sein."
+    "setup_error_too_short": "Das Passwort muss mindestens {min} Zeichen lang sein.",
+    "setup_error_storage_failed": "Speichern fehlgeschlagen - Schreibfehler. Bitte versuch es erneut."
   },
   "csrf": {
     "expired_reload": "Sicherheitsprüfung abgelaufen. Bitte lade die Seite neu, um fortzufahren.",

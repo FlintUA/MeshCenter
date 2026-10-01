@@ -1370,7 +1370,7 @@ def get_node_info(node_id):
 
 def save_messages():
     with state_lock:
-        safe_write_json(HISTORY_FILE, messages[-MAX_HISTORY_MESSAGES:])
+        return safe_write_json(HISTORY_FILE, messages[-MAX_HISTORY_MESSAGES:])
 
 def load_messages():
     data = safe_read_json(HISTORY_FILE, [])
@@ -1420,7 +1420,7 @@ def load_messages():
 
 def save_chats():
     with state_lock:
-        safe_write_json(CHATS_FILE, chats)
+        return safe_write_json(CHATS_FILE, chats)
 
 def load_chats():
     data = safe_read_json(CHATS_FILE, {})
@@ -1450,7 +1450,7 @@ def load_chats():
 
 def save_nodes():
     with state_lock:
-        safe_write_json(NODES_FILE, nodes)
+        return safe_write_json(NODES_FILE, nodes)
 
 def load_nodes():
     data = safe_read_json(NODES_FILE, {})
@@ -1516,8 +1516,8 @@ def log_node_event(event, source, node_id, old=None, new=None, raw=None, extra=N
 
 def save_sensors():
     with state_lock:
-        safe_write_json(SENSORS_FILE, sensor_data)
-        
+        return safe_write_json(SENSORS_FILE, sensor_data)
+
 def load_sensors_data():
     global sensor_data
     data = safe_read_json(SENSORS_FILE, {})
@@ -1545,9 +1545,23 @@ def default_settings():
         }
     }
 
-def save_settings():
+def save_settings(new_state=None):
+    """With no argument: writes the live `settings` dict as-is (unchanged
+    behavior for every existing caller). F4.1 PR 2: when `new_state` is
+    given, persist-then-commit - writes `new_state` first, and only on
+    success replaces `settings`'s own contents in place (clear()+update(),
+    never rebinding - preserves the F2 identity invariant). Returns
+    whether the write succeeded either way, so a caller like
+    api_update_settings() can refuse to report success on a failed write,
+    leaving the live settings exactly as they were."""
     with state_lock:
-        safe_write_json(SETTINGS_FILE, settings)
+        if new_state is not None:
+            ok = safe_write_json(SETTINGS_FILE, new_state)
+            if ok:
+                settings.clear()
+                settings.update(new_state)
+            return ok
+        return safe_write_json(SETTINGS_FILE, settings)
 
 def _sanitize_settings_coordinate(container, key, minimum, maximum, context):
     """Reset one settings.json coordinate field to None if it isn't a
@@ -1578,6 +1592,7 @@ def _sanitize_settings_coordinate(container, key, minimum, maximum, context):
 
 
 def load_settings():
+    file_existed = os.path.exists(SETTINGS_FILE)
     data = safe_read_json(SETTINGS_FILE, default_settings())
 
     if not isinstance(data, dict):
@@ -1663,7 +1678,18 @@ def load_settings():
     settings.clear()
     settings.update(normalized_settings)
 
-    save_settings()
+    # F4.1 PR 2 (amendment 6): don't blindly re-save on every load - only
+    # when there's an actual observable change (a fresh install with no
+    # file yet, or normalization/sanitization above actually changed
+    # something from what was on disk). A corrupt file is now quarantined
+    # by safe_read_json() itself (never silently handed back to be
+    # overwritten here) - re-saving unconditionally used to immediately
+    # replace a just-quarantined file's recoverable sibling data with bare
+    # defaults, destroying the one thing the quarantine was meant to
+    # preserve for inspection. The next real settings change (via
+    # POST /api/settings) persists normally either way.
+    if not file_existed or normalized_settings != data:
+        save_settings()
 
 def ensure_chat(node_id, node_name=None, force=False):
     if node_id == CHANNEL_CHAT_ID or not node_id or not node_id.startswith("!"):
@@ -2435,11 +2461,13 @@ def get_telemetry_export_records(
     series="",
     node_id=""
     ):
-    data = safe_read_json(telemetry.TELEMETRY_FILE, {})
-    records = data.get("history", [])
-
-    if not isinstance(records, list):
-        records = []
+    # F4.1 PR 2: reads the in-memory history under telemetry.py's own lock
+    # instead of re-reading TELEMETRY_FILE off disk - the old direct
+    # safe_read_json() here raced the ingest threads (serial listener, TCP
+    # inbound worker), which save telemetry unlocked from their own side
+    # too; this can never observe a half-written file or the list
+    # mid-mutation.
+    records = telemetry.get_history_snapshot()
 
     node_id = str(node_id or "").strip()
     if node_id:
@@ -7028,8 +7056,9 @@ def api_toggle_ignore():
         return jsonify({"ok": False, "error": "Invalid node"}), 400
     with state_lock:
         nodes[node_id]["ignored"] = not nodes[node_id].get("ignored", False)
-        save_nodes()
-    return jsonify({"ok": True, "ignored": nodes[node_id]["ignored"]})
+        if not save_nodes():
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+        return jsonify({"ok": True, "ignored": nodes[node_id]["ignored"]})
 
 @app.route("/api/toggle_favorite", methods=["POST"])
 @handle_errors
@@ -7040,8 +7069,9 @@ def api_toggle_favorite():
         return jsonify({"ok": False, "error": "Invalid node"}), 400
     with state_lock:
         nodes[node_id]["favorite"] = not nodes[node_id].get("favorite", False)
-        save_nodes()
-    return jsonify({"ok": True, "favorite": nodes[node_id]["favorite"]})
+        if not save_nodes():
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+        return jsonify({"ok": True, "favorite": nodes[node_id]["favorite"]})
 
 @app.route("/api/cleanup_nodes", methods=["POST"])
 @handle_errors
@@ -7050,8 +7080,9 @@ def api_cleanup_nodes():
         for node_id, node in nodes.items():
             if node_id.startswith("!") and node_id not in chats:
                 ensure_chat(node_id, node.get("name"), force=True)
-        save_chats()
-    return jsonify({"ok": True, "message": "Nodes cleaned up", "node_count": len(nodes)})
+        if not save_chats():
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+        return jsonify({"ok": True, "message": "Nodes cleaned up", "node_count": len(nodes)})
 
 @app.route("/api/radio_connection/status")
 @handle_errors
@@ -7196,12 +7227,14 @@ def api_clear_chat():
         # /api/send/retry) - pointing at a stale, disconnected list for the
         # rest of the process's life.
         messages[:] = [m for m in messages if m.get("chat_id") != chat_id]
-        save_messages()
+        if not save_messages():
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         if chat_id in chats:
             chats[chat_id]["last_message"] = ""
             chats[chat_id]["last_time"] = ""
             chats[chat_id]["unread"] = 0
-            save_chats()
+            if not save_chats():
+                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
     return jsonify({"ok": True})
 
 @app.route("/api/delete_chat", methods=["POST"])
@@ -7214,10 +7247,12 @@ def api_delete_chat():
     with state_lock:
         if chat_id in chats:
             del chats[chat_id]
-            save_chats()
+            if not save_chats():
+                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         # In place (F2) - see api_clear_chat()'s own comment above.
         messages[:] = [m for m in messages if m.get("chat_id") != chat_id]
-        save_messages()
+        if not save_messages():
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
     return jsonify({"ok": True})
 
 # ===== TELEMETRY API =====
@@ -7431,8 +7466,8 @@ def api_nodes_import():
             }
             ensure_chat(node_id, name, force=True)
             imported_count += 1
-        save_nodes()
-        save_chats()
+        if not save_nodes() or not save_chats():
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
     return jsonify({"ok": True, "imported_count": imported_count})
 
 
@@ -7454,15 +7489,20 @@ def api_delete_all_dm():
             deleted_file = DELETED_DM_FILE
             # F4.1: folded onto the shared storage.json_store helper
             # (unique temp name + fsync, instead of this route's own
-            # non-atomic open(...,"w")).
-            safe_write_json(deleted_file, {"deleted": dm_chat_ids})
+            # non-atomic open(...,"w")). F4.1 PR 2: result checked - this
+            # used to answer ok:true even when this specific write failed,
+            # silently risking a deleted DM chat reappearing on the next
+            # incoming message (ensure_chat() reads this file to decide
+            # whether a chat was deliberately deleted).
+            if not safe_write_json(deleted_file, {"deleted": dm_chat_ids}):
+                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
             # In place (F2) - see api_clear_chat()'s own comment above.
             messages[:] = [
                 m for m in messages
                 if m.get("chat_id") == CHANNEL_CHAT_ID or str(m.get("chat_id", "")).startswith("channel:")
             ]
-            save_chats()
-            save_messages()
+            if not save_chats() or not save_messages():
+                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         return jsonify({"ok": True, "deleted_count": deleted_count, "message": f"Deleted {deleted_count} DM chats"})
     except Exception as e:
         print(f"[ERROR] Delete all DM: {e}")
@@ -7478,7 +7518,8 @@ def api_restore_deleted_dm():
             for node_id in nodes:
                 if node_id.startswith("!"):
                     ensure_chat(node_id, nodes[node_id].get("name"), force=False)
-            save_chats()
+            if not save_chats():
+                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         return jsonify({"ok": True, "message": "Restored deleted DM chats"})
     return jsonify({"ok": True, "message": "No deleted chats to restore"})
 
@@ -7847,11 +7888,16 @@ def start_runtime():
                 stored_camera = cameras.setdefault(active_camera_id, {})
                 if stored_camera.get("model") != detected_camera_model:
                     stored_camera["model"] = detected_camera_model
-                    device_manager.save(devices_data)
-                    print(
-                        f"[CAMERA] Recorded detected model in devices.json: {detected_camera_model}",
-                        flush=True,
-                    )
+                    if device_manager.save(devices_data):
+                        print(
+                            f"[CAMERA] Recorded detected model in devices.json: {detected_camera_model}",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            f"[CAMERA] Could not persist detected model {detected_camera_model} - storage write failed",
+                            flush=True,
+                        )
             except Exception as error:
                 print(f"[CAMERA] Failed to persist detected model: {error}", flush=True)
     else:

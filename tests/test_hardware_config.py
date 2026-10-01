@@ -29,7 +29,7 @@ def test_enable_i2c_success_writes_pending_record(tmp_path):
     with patch("subprocess.run", mock_run):
         result = hardware_config.enable_i2c(str(tmp_path))
 
-    assert result == {"ok": True, "stdout": "added: dtparam=i2c_arm=on"}
+    assert result == {"ok": True, "stdout": "added: dtparam=i2c_arm=on", "pending_saved": True}
     args, kwargs = mock_run.call_args
     assert args[0] == ["sudo", "-n", hardware_config.HELPER_PATH, "enable-i2c"]
     assert kwargs.get("shell") is not True
@@ -38,6 +38,21 @@ def test_enable_i2c_success_writes_pending_record(tmp_path):
     record = json.loads(pending_file.read_text(encoding="utf-8"))
     assert record["action"] == "enable_i2c"
     assert isinstance(record["set_at"], (int, float))
+
+
+def test_enable_i2c_reports_pending_saved_false_on_a_failed_write(tmp_path, monkeypatch):
+    """F4.1 PR 2: the privileged hardware change already happened (the
+    helper succeeded) by the time _save_pending() runs - a failed write
+    here must not be reported as the whole operation failing (the real
+    system change is real either way), just surfaced via pending_saved so
+    a caller that cares can tell the reboot-required bookkeeping didn't
+    persist."""
+    monkeypatch.setattr(hardware_config, "safe_write_json", lambda *a, **k: False)
+    with patch("subprocess.run", return_value=_completed(stdout="added: dtparam=i2c_arm=on")):
+        result = hardware_config.enable_i2c(str(tmp_path))
+
+    assert result["ok"] is True
+    assert result["pending_saved"] is False
 
 
 def test_configure_rtc_success_writes_pending_record_with_model(tmp_path):

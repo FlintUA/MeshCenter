@@ -257,9 +257,21 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
     # slate, same lifetime as auth_state itself.
     login_throttle = {}
 
-    def _save():
-        with state_lock:
-            safe_write_json(auth_file, auth_state)
+    def _save(new_state):
+        """F4.1 PR 2: persist-then-commit. Writes `new_state` (a COPY the
+        caller built, never the live auth_state dict itself) to disk; only
+        on success does it replace auth_state's own contents, in place
+        (clear()+update(), never rebinding - preserves the F2 identity
+        invariant every DI consumer that received auth_state by reference
+        depends on). Returns whether the write succeeded, so the caller
+        can refuse to grant a session or report success on failure,
+        leaving auth_state exactly as it was. Must be called with
+        state_lock already held."""
+        ok = safe_write_json(auth_file, new_state)
+        if ok:
+            auth_state.clear()
+            auth_state.update(new_state)
+        return ok
 
     def _ui_language():
         if resolve_ui_language is None:
@@ -444,15 +456,21 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
                     # is a one-time action.
                     if not needs_setup(auth_state):
                         return redirect("/")
-                    auth_state["password_hash"] = generate_password_hash(password)
-                    auth_state["enabled"] = True
-                    _save()
-                # Same session grant as a successful login().
-                session.clear()
-                session.permanent = True
-                session["authenticated"] = True
-                session[_CSRF_SESSION_KEY] = _generate_csrf_token()
-                return redirect("/")
+                    new_state = dict(auth_state)
+                    new_state["password_hash"] = generate_password_hash(password)
+                    new_state["enabled"] = True
+                    saved = _save(new_state)
+                if saved:
+                    # Same session grant as a successful login().
+                    session.clear()
+                    session.permanent = True
+                    session["authenticated"] = True
+                    session[_CSRF_SESSION_KEY] = _generate_csrf_token()
+                    return redirect("/")
+                # Persist failed: auth_state is untouched (still needs
+                # setup), no session granted - report it on the same page
+                # instead of redirecting as if it had worked.
+                error = "setup_error_storage_failed"
 
         return render_template(
             "setup.html",
@@ -483,6 +501,9 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
         data = request.get_json(force=True) or {}
 
         with state_lock:
+            new_state = dict(auth_state)
+            grant_session = False
+
             new_password = data.get("password")
             if new_password:
                 new_password = str(new_password)
@@ -492,28 +513,47 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
                         "error": f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
                         "error_code": "password_too_short",
                     }), 400
-                auth_state["password_hash"] = generate_password_hash(new_password)
+                new_state["password_hash"] = generate_password_hash(new_password)
 
             if "enabled" in data:
                 enabled = bool(data["enabled"])
-                if enabled and not str(auth_state.get("password_hash") or "").strip():
+                if enabled and not str(new_state.get("password_hash") or "").strip():
                     return jsonify({
                         "ok": False,
                         "error": "Set a password before enabling protection",
                         "error_code": "no_password_set",
                     }), 400
-                auth_state["enabled"] = enabled
+                new_state["enabled"] = enabled
                 if enabled:
                     # Whoever just flipped this on did so from an already-open
                     # (until now unauthenticated-because-there-was-nothing-to-
                     # authenticate-against) session - grant it now, otherwise
                     # the very next request from the same browser would
                     # immediately get bounced to /login with no prior chance
-                    # to sign in.
-                    session.permanent = True
-                    session["authenticated"] = True
+                    # to sign in. Deferred until the write actually succeeds
+                    # (see below) - granting it unconditionally used to let a
+                    # failed write still leave the browser "logged in" to a
+                    # protection flag that was never actually persisted.
+                    grant_session = True
 
-            _save()
+            # F4.1 PR 2: persist-then-commit - build the new state as a copy
+            # (done above), write THAT, and only commit it into the live
+            # auth_state (and grant any session change) once the write has
+            # actually succeeded. A failed write must never look like
+            # success: the caller would otherwise believe a password change
+            # or an enable/disable took effect, only to find it silently
+            # reverted after the next restart (the exact F4.0 finding).
+            if not _save(new_state):
+                return jsonify({
+                    "ok": False,
+                    "error": "Could not save - storage write failed",
+                    "error_code": "storage_write_failed",
+                }), 500
+
+            if grant_session:
+                session.permanent = True
+                session["authenticated"] = True
+
             response = {
                 "ok": True,
                 "enabled": bool(auth_state.get("enabled", False)),

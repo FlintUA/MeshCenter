@@ -1450,6 +1450,7 @@
   },
   "errors": {
     "generic": "Something went wrong. Please try again.",
+    "storage_write_failed": "Could not save - storage write failed. Please try again.",
     "invalid_chat_id": "Invalid chat.",
     "invalid_chat": "Invalid chat.",
     "invalid_node_id": "Invalid node.",
@@ -1575,7 +1576,8 @@
     "setup_hint": "Use at least {min} characters.",
     "setup_submit": "Create password",
     "setup_error_mismatch": "The passwords do not match.",
-    "setup_error_too_short": "Password must be at least {min} characters."
+    "setup_error_too_short": "Password must be at least {min} characters.",
+    "setup_error_storage_failed": "Could not save - storage write failed. Please try again."
   },
   "csrf": {
     "expired_reload": "Security check expired. Please reload the page to continue.",

@@ -195,7 +195,8 @@ def register_hardware_display_routes(
                 }), 400
             config["rotation_interval_seconds"] = interval
 
-        save_epaper_config(config_path, config)
+        if not save_epaper_config(config_path, config):
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         return jsonify({"ok": True, "config": config})
 
     @app.route("/api/hardware/display/reinit", methods=["POST"])
@@ -274,7 +275,13 @@ def register_hardware_display_routes(
             return jsonify({"ok": False, "error": error}), 400
 
         config.update(new_config)
-        save_epaper_config(config_path, config)
+        if not save_epaper_config(config_path, config):
+            # The live swap above already succeeded - the display really is
+            # running the new driver/config right now - but it won't
+            # survive a restart. Reported as a failure anyway for
+            # consistency with every other storage_write_failed response;
+            # the panel itself is not in a broken state.
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         return jsonify({"ok": True, "config": config})
 
     @app.route("/api/hardware/display/test", methods=["POST"])

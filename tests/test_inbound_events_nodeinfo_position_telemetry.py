@@ -21,10 +21,14 @@ OTHER_RADIO = "!0badf00d"
 
 
 @pytest.fixture
-def srv(server_module):
+def srv(server_module, monkeypatch):
     server_module.nodes.clear()
     server_module.chats.clear()
-    server_module.telemetry.add_node_telemetry_record = lambda *a, **k: None
+    # monkeypatch (not a direct assignment) - server_module.telemetry is the
+    # same session-wide singleton every other test file sees too; a direct
+    # assignment here would leave this no-op lambda in place for the rest
+    # of the whole test session once this file's tests are done.
+    monkeypatch.setattr(server_module.telemetry, "add_node_telemetry_record", lambda *a, **k: None)
     inbound_events.reset_inbound_stats()
     yield server_module
     server_module.nodes.clear()

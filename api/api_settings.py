@@ -720,9 +720,19 @@ def register_settings_routes(
                 != current.get("weather", {}).get("provider")
             )
 
-            settings.clear()
-            settings.update(new_settings)
-            save_settings()
+            # F4.1 PR 2: persist-then-commit - save_settings(new_settings)
+            # writes new_settings first and only commits it into the live
+            # settings dict on success. A failed write must never look
+            # like it took effect: the old mutate-then-save behavior
+            # changed `settings` in memory regardless of whether the write
+            # actually succeeded, so the caller saw ok:true while the file
+            # on disk stayed unchanged - exactly the F4.0 finding.
+            if not save_settings(new_settings):
+                return jsonify({
+                    "ok": False,
+                    "error": "Could not save - storage write failed",
+                    "error_code": "storage_write_failed",
+                }), 500
 
             response_settings = normalize_settings(settings)
 

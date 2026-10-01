@@ -29,6 +29,25 @@ GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 _lock = threading.Lock()
 _cache_path: str | None = None
 
+# F4.1 PR 2: background poller, not an HTTP handler - check_worker()'s own
+# try/except already keeps the loop alive on any exception, but
+# safe_write_json() never raises (it returns False), so a persistent cache
+# write failure here would otherwise fail completely silently. Logs once
+# per failure streak instead, same shape as system_log.py's own
+# _log_write_failing.
+_cache_write_failing = False
+
+
+def _save_cache(cache: dict[str, Any]) -> bool:
+    global _cache_write_failing
+    ok = safe_write_json(_cache_path, cache)
+    if ok:
+        _cache_write_failing = False
+    elif not _cache_write_failing:
+        _cache_write_failing = True
+        print("[UPDATES] Could not save update-check cache (further failures suppressed until it recovers)", flush=True)
+    return ok
+
 _DEFAULT_CACHE: dict[str, Any] = {
     "last_checked_at": None,
     "latest_version": None,
@@ -124,7 +143,7 @@ def check_now(current_version: str) -> dict[str, Any]:
         })
 
     with _lock:
-        safe_write_json(_cache_path, cache)
+        _save_cache(cache)
 
     return get_status(current_version)
 
@@ -265,7 +284,7 @@ def apply_update(project_dir: str, upstream: str) -> dict[str, Any]:
             cache["previous_version_sha"] = previous_sha
             cache["last_update_attempt_at"] = int(time.time())
             cache["last_update_ok"] = False
-            safe_write_json(_cache_path, cache)
+            _save_cache(cache)
         return {
             "ok": False,
             "blocked": True,
@@ -292,7 +311,7 @@ def apply_update(project_dir: str, upstream: str) -> dict[str, Any]:
         cache["previous_version_sha"] = previous_sha
         cache["last_update_attempt_at"] = int(time.time())
         cache["last_update_ok"] = pull.returncode == 0
-        safe_write_json(_cache_path, cache)
+        _save_cache(cache)
 
     return {
         "ok": pull.returncode == 0,

@@ -29,6 +29,13 @@ _cpu_prev_total = None
 _cpu_prev_idle = None
 _cpu_current_usage = 0.0
 
+# F4.1 PR 2: background worker, not an HTTP handler - a failed save must
+# never crash the sampler loop (it never did - safe_write_json() already
+# returns False rather than raising) or spam a print every
+# CPU_SAMPLE_INTERVAL while storage stays broken. Logs once per failure
+# streak instead, same shape as system_log.py's own _log_write_failing.
+_cpu_history_write_failing = False
+
 
 def get_current_usage():
     """Accessor for _cpu_current_usage - lets external code (e.g. server.py's
@@ -113,9 +120,16 @@ def load_cpu_history(cpu_history_file):
 
 
 def save_cpu_history(cpu_history_file):
+    global _cpu_history_write_failing
     with cpu_history_lock:
         payload = {"cpu": list(cpu_history)}
-    safe_write_json(cpu_history_file, payload)
+    ok = safe_write_json(cpu_history_file, payload)
+    if ok:
+        _cpu_history_write_failing = False
+    elif not _cpu_history_write_failing:
+        _cpu_history_write_failing = True
+        print("[CPU_HISTORY] Could not save history (further failures suppressed until it recovers)", flush=True)
+    return ok
 
 
 def cpu_history_worker(cpu_history_file):

@@ -71,13 +71,13 @@ def _load_pending(data_dir: str) -> dict | None:
     return data if isinstance(data, dict) and data else None
 
 
-def _save_pending(data_dir: str, action: str, **extra) -> None:
+def _save_pending(data_dir: str, action: str, **extra) -> bool:
     record = {"action": action, "set_at": time.time(), **extra}
-    safe_write_json(_pending_path(data_dir), record)
+    return safe_write_json(_pending_path(data_dir), record)
 
 
-def _clear_pending(data_dir: str) -> None:
-    safe_write_json(_pending_path(data_dir), {})
+def _clear_pending(data_dir: str) -> bool:
+    return safe_write_json(_pending_path(data_dir), {})
 
 
 def _boot_time_unix() -> float | None:
@@ -96,14 +96,19 @@ def _boot_time_unix() -> float | None:
 def enable_i2c(data_dir: str) -> dict:
     result = _run_helper("enable-i2c")
     if result.get("ok"):
-        _save_pending(data_dir, action="enable_i2c")
+        # The privileged change already happened (the helper succeeded) -
+        # only the "reboot required" bookkeeping might not persist. Noted
+        # in the result rather than turned into a failure: the hardware
+        # change is real either way, and the UI already tells the user to
+        # reboot from this same response regardless of pending_saved.
+        result["pending_saved"] = _save_pending(data_dir, action="enable_i2c")
     return result
 
 
 def configure_rtc(data_dir: str, model: str) -> dict:
     result = _run_helper("configure-rtc", model)
     if result.get("ok"):
-        _save_pending(data_dir, action="configure_rtc", model=model)
+        result["pending_saved"] = _save_pending(data_dir, action="configure_rtc", model=model)
     return result
 
 

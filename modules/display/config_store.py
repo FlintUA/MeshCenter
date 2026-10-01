@@ -120,5 +120,5 @@ def load_epaper_config(path: str) -> dict:
     return merged
 
 
-def save_epaper_config(path: str, config: dict) -> None:
-    safe_write_json(path, config)
+def save_epaper_config(path: str, config: dict) -> bool:
+    return safe_write_json(path, config)

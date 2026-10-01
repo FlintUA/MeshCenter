@@ -1370,7 +1370,7 @@ def get_node_info(node_id):
 
 def save_messages():
     with state_lock:
-        safe_write_json(HISTORY_FILE, messages[-MAX_HISTORY_MESSAGES:])
+        return safe_write_json(HISTORY_FILE, messages[-MAX_HISTORY_MESSAGES:])
 
 def load_messages():
     data = safe_read_json(HISTORY_FILE, [])
@@ -1420,7 +1420,7 @@ def load_messages():
 
 def save_chats():
     with state_lock:
-        safe_write_json(CHATS_FILE, chats)
+        return safe_write_json(CHATS_FILE, chats)
 
 def load_chats():
     data = safe_read_json(CHATS_FILE, {})
@@ -1450,7 +1450,7 @@ def load_chats():
 
 def save_nodes():
     with state_lock:
-        safe_write_json(NODES_FILE, nodes)
+        return safe_write_json(NODES_FILE, nodes)
 
 def load_nodes():
     data = safe_read_json(NODES_FILE, {})
@@ -1514,10 +1514,37 @@ def log_node_event(event, source, node_id, old=None, new=None, raw=None, extra=N
     except Exception as e:
         print(f"[NODE_LOG] Error: {e}", flush=True)            
 
+def _restore_dict_in_place(target, snapshot):
+    """Rolls a shared dict back to a pre-mutation snapshot without
+    rebinding it (the F2 identity invariant - DI consumers elsewhere hold
+    a reference to the same object). Used by F4.1 PR 2's mutating routes
+    to undo an in-memory change when the matching save_*() call fails, so
+    a failed write never leaves memory diverged from what's on disk."""
+    target.clear()
+    target.update(snapshot)
+
+def _restore_list_in_place(target, snapshot):
+    target[:] = snapshot
+
+def _restore_marker_file(path, existed, snapshot):
+    """Undoes a just-written marker file (e.g. DELETED_DM_FILE) back to
+    whatever it held before this request - or removes it if it didn't
+    exist yet. Pairs with _restore_dict_in_place()/_restore_list_in_place()
+    in routes that write a marker file alongside in-memory state, so a
+    failure partway through doesn't leave an orphaned marker that a later
+    request would wrongly treat as authoritative."""
+    if existed:
+        safe_write_json(path, snapshot)
+    else:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
 def save_sensors():
     with state_lock:
-        safe_write_json(SENSORS_FILE, sensor_data)
-        
+        return safe_write_json(SENSORS_FILE, sensor_data)
+
 def load_sensors_data():
     global sensor_data
     data = safe_read_json(SENSORS_FILE, {})
@@ -1545,9 +1572,23 @@ def default_settings():
         }
     }
 
-def save_settings():
+def save_settings(new_state=None):
+    """With no argument: writes the live `settings` dict as-is (unchanged
+    behavior for every existing caller). F4.1 PR 2: when `new_state` is
+    given, persist-then-commit - writes `new_state` first, and only on
+    success replaces `settings`'s own contents in place (clear()+update(),
+    never rebinding - preserves the F2 identity invariant). Returns
+    whether the write succeeded either way, so a caller like
+    api_update_settings() can refuse to report success on a failed write,
+    leaving the live settings exactly as they were."""
     with state_lock:
-        safe_write_json(SETTINGS_FILE, settings)
+        if new_state is not None:
+            ok = safe_write_json(SETTINGS_FILE, new_state)
+            if ok:
+                settings.clear()
+                settings.update(new_state)
+            return ok
+        return safe_write_json(SETTINGS_FILE, settings)
 
 def _sanitize_settings_coordinate(container, key, minimum, maximum, context):
     """Reset one settings.json coordinate field to None if it isn't a
@@ -1578,6 +1619,7 @@ def _sanitize_settings_coordinate(container, key, minimum, maximum, context):
 
 
 def load_settings():
+    file_existed = os.path.exists(SETTINGS_FILE)
     data = safe_read_json(SETTINGS_FILE, default_settings())
 
     if not isinstance(data, dict):
@@ -1663,7 +1705,18 @@ def load_settings():
     settings.clear()
     settings.update(normalized_settings)
 
-    save_settings()
+    # F4.1 PR 2 (amendment 6): don't blindly re-save on every load - only
+    # when there's an actual observable change (a fresh install with no
+    # file yet, or normalization/sanitization above actually changed
+    # something from what was on disk). A corrupt file is now quarantined
+    # by safe_read_json() itself (never silently handed back to be
+    # overwritten here) - re-saving unconditionally used to immediately
+    # replace a just-quarantined file's recoverable sibling data with bare
+    # defaults, destroying the one thing the quarantine was meant to
+    # preserve for inspection. The next real settings change (via
+    # POST /api/settings) persists normally either way.
+    if not file_existed or normalized_settings != data:
+        save_settings()
 
 def ensure_chat(node_id, node_name=None, force=False):
     if node_id == CHANNEL_CHAT_ID or not node_id or not node_id.startswith("!"):
@@ -2435,11 +2488,13 @@ def get_telemetry_export_records(
     series="",
     node_id=""
     ):
-    data = safe_read_json(telemetry.TELEMETRY_FILE, {})
-    records = data.get("history", [])
-
-    if not isinstance(records, list):
-        records = []
+    # F4.1 PR 2: reads the in-memory history under telemetry.py's own lock
+    # instead of re-reading TELEMETRY_FILE off disk - the old direct
+    # safe_read_json() here raced the ingest threads (serial listener, TCP
+    # inbound worker), which save telemetry unlocked from their own side
+    # too; this can never observe a half-written file or the list
+    # mid-mutation.
+    records = telemetry.get_history_snapshot()
 
     node_id = str(node_id or "").strip()
     if node_id:
@@ -7027,9 +7082,12 @@ def api_toggle_ignore():
     if not node_id or node_id not in nodes or not is_valid_node_id(node_id):
         return jsonify({"ok": False, "error": "Invalid node"}), 400
     with state_lock:
-        nodes[node_id]["ignored"] = not nodes[node_id].get("ignored", False)
-        save_nodes()
-    return jsonify({"ok": True, "ignored": nodes[node_id]["ignored"]})
+        previous = nodes[node_id].get("ignored", False)
+        nodes[node_id]["ignored"] = not previous
+        if not save_nodes():
+            nodes[node_id]["ignored"] = previous
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+        return jsonify({"ok": True, "ignored": nodes[node_id]["ignored"]})
 
 @app.route("/api/toggle_favorite", methods=["POST"])
 @handle_errors
@@ -7039,19 +7097,25 @@ def api_toggle_favorite():
     if not node_id or node_id not in nodes or not is_valid_node_id(node_id):
         return jsonify({"ok": False, "error": "Invalid node"}), 400
     with state_lock:
-        nodes[node_id]["favorite"] = not nodes[node_id].get("favorite", False)
-        save_nodes()
-    return jsonify({"ok": True, "favorite": nodes[node_id]["favorite"]})
+        previous = nodes[node_id].get("favorite", False)
+        nodes[node_id]["favorite"] = not previous
+        if not save_nodes():
+            nodes[node_id]["favorite"] = previous
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+        return jsonify({"ok": True, "favorite": nodes[node_id]["favorite"]})
 
 @app.route("/api/cleanup_nodes", methods=["POST"])
 @handle_errors
 def api_cleanup_nodes():
     with state_lock:
+        chats_snapshot = dict(chats)
         for node_id, node in nodes.items():
             if node_id.startswith("!") and node_id not in chats:
                 ensure_chat(node_id, node.get("name"), force=True)
-        save_chats()
-    return jsonify({"ok": True, "message": "Nodes cleaned up", "node_count": len(nodes)})
+        if not save_chats():
+            _restore_dict_in_place(chats, chats_snapshot)
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+        return jsonify({"ok": True, "message": "Nodes cleaned up", "node_count": len(nodes)})
 
 @app.route("/api/radio_connection/status")
 @handle_errors
@@ -7195,13 +7259,31 @@ def api_clear_chat():
         # everything built on it (/api/messages, /api/messages/delete,
         # /api/send/retry) - pointing at a stale, disconnected list for the
         # rest of the process's life.
+        messages_snapshot = list(messages)
+        chat_entry_snapshot = dict(chats[chat_id]) if chat_id in chats else None
+
+        def _restore():
+            _restore_list_in_place(messages, messages_snapshot)
+            if chat_entry_snapshot is not None:
+                _restore_dict_in_place(chats[chat_id], chat_entry_snapshot)
+            # Best-effort: push the reverted state back to disk too, in
+            # case the other save already succeeded before this one
+            # failed - memory (the in-process source of truth) is correct
+            # either way even if this resync also fails.
+            save_messages()
+            save_chats()
+
         messages[:] = [m for m in messages if m.get("chat_id") != chat_id]
-        save_messages()
-        if chat_id in chats:
+        if not save_messages():
+            _restore()
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+        if chat_entry_snapshot is not None:
             chats[chat_id]["last_message"] = ""
             chats[chat_id]["last_time"] = ""
             chats[chat_id]["unread"] = 0
-            save_chats()
+            if not save_chats():
+                _restore()
+                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
     return jsonify({"ok": True})
 
 @app.route("/api/delete_chat", methods=["POST"])
@@ -7212,12 +7294,28 @@ def api_delete_chat():
     if not chat_id or chat_id == CHANNEL_CHAT_ID or not is_valid_node_id(chat_id):
         return jsonify({"ok": False, "error": "Invalid chat", "error_code": "invalid_chat"}), 400
     with state_lock:
-        if chat_id in chats:
-            del chats[chat_id]
+        chat_snapshot = chats.get(chat_id)
+        existed_in_chats = chat_id in chats
+        messages_snapshot = list(messages)
+
+        def _restore():
+            if existed_in_chats:
+                chats[chat_id] = chat_snapshot
+            _restore_list_in_place(messages, messages_snapshot)
+            # Best-effort: see api_clear_chat()'s identical comment above.
             save_chats()
+            save_messages()
+
+        if existed_in_chats:
+            del chats[chat_id]
+            if not save_chats():
+                _restore()
+                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         # In place (F2) - see api_clear_chat()'s own comment above.
         messages[:] = [m for m in messages if m.get("chat_id") != chat_id]
-        save_messages()
+        if not save_messages():
+            _restore()
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
     return jsonify({"ok": True})
 
 # ===== TELEMETRY API =====
@@ -7406,6 +7504,8 @@ def api_nodes_import():
     imported_nodes = data.get("nodes", [])
     imported_count = 0
     with state_lock:
+        nodes_snapshot = dict(nodes)
+        chats_snapshot = dict(chats)
         for node_data in imported_nodes:
             node_id = node_data.get("node_id")
             if not node_id:
@@ -7431,38 +7531,69 @@ def api_nodes_import():
             }
             ensure_chat(node_id, name, force=True)
             imported_count += 1
-        save_nodes()
-        save_chats()
+        if not save_nodes() or not save_chats():
+            _restore_dict_in_place(nodes, nodes_snapshot)
+            _restore_dict_in_place(chats, chats_snapshot)
+            # Best-effort: see api_clear_chat()'s identical comment above.
+            save_nodes()
+            save_chats()
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
     return jsonify({"ok": True, "imported_count": imported_count})
 
 
 @app.route("/api/delete_all_dm", methods=["POST"])
 @handle_errors
 def api_delete_all_dm():
-    global messages, chats
+    deleted_file = DELETED_DM_FILE
     try:
         with state_lock:
-            deleted_count = 0
-            dm_chat_ids = []
-            for chat_id in list(chats.keys()):
-                if chat_id != CHANNEL_CHAT_ID and chat_id.startswith("!"):
-                    dm_chat_ids.append(chat_id)
-                    deleted_count += 1
+            chats_snapshot = dict(chats)
+            messages_snapshot = list(messages)
+
+            dm_chat_ids = [
+                chat_id for chat_id in chats
+                if chat_id != CHANNEL_CHAT_ID and chat_id.startswith("!")
+            ]
+            deleted_count = len(dm_chat_ids)
+
+            def _restore():
+                _restore_dict_in_place(chats, chats_snapshot)
+                _restore_list_in_place(messages, messages_snapshot)
+                # Best-effort: see api_clear_chat()'s identical comment
+                # above - resync disk in case one of the two saves below
+                # already succeeded before the other failed.
+                save_chats()
+                save_messages()
+
             for chat_id in dm_chat_ids:
-                if chat_id in chats:
-                    del chats[chat_id]
-            deleted_file = DELETED_DM_FILE
-            # F4.1: folded onto the shared storage.json_store helper
-            # (unique temp name + fsync, instead of this route's own
-            # non-atomic open(...,"w")).
-            safe_write_json(deleted_file, {"deleted": dm_chat_ids})
+                del chats[chat_id]
             # In place (F2) - see api_clear_chat()'s own comment above.
             messages[:] = [
                 m for m in messages
                 if m.get("chat_id") == CHANNEL_CHAT_ID or str(m.get("chat_id", "")).startswith("channel:")
             ]
-            save_chats()
-            save_messages()
+            if not save_chats() or not save_messages():
+                _restore()
+                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+
+            # F4.1 PR 2 (review fix): the marker is now written LAST, only
+            # once chats.json/messages.json have actually been persisted
+            # with the deletion applied - this route used to write it
+            # FIRST. Writing it first meant a later save_chats()/
+            # save_messages() failure left a marker on disk claiming these
+            # chats were deliberately deleted even after the in-memory
+            # rollback (and disk resync) above put them back - an orphaned
+            # marker that ensure_chat() would then trust forever. The one
+            # accepted gap with "marker last": if this specific write
+            # fails, chats/messages are already genuinely deleted (not
+            # rolled back - doing so here would re-diverge memory from the
+            # chats.json/messages.json already committed above), just
+            # without the marker, so an incoming message before the next
+            # successful write of this file could recreate one of them.
+            # Narrower and self-healing (retried on the next delete-all or
+            # restore-deleted-dm call) versus the alternative.
+            if not safe_write_json(deleted_file, {"deleted": dm_chat_ids}):
+                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         return jsonify({"ok": True, "deleted_count": deleted_count, "message": f"Deleted {deleted_count} DM chats"})
     except Exception as e:
         print(f"[ERROR] Delete all DM: {e}")
@@ -7472,15 +7603,29 @@ def api_delete_all_dm():
 @handle_errors
 def api_restore_deleted_dm():
     deleted_file = DELETED_DM_FILE
-    if os.path.exists(deleted_file):
-        os.remove(deleted_file)
-        with state_lock:
-            for node_id in nodes:
-                if node_id.startswith("!"):
-                    ensure_chat(node_id, nodes[node_id].get("name"), force=False)
+    if not os.path.exists(deleted_file):
+        return jsonify({"ok": True, "message": "No deleted chats to restore"})
+
+    with state_lock:
+        chats_snapshot = dict(chats)
+        for node_id in nodes:
+            if node_id.startswith("!"):
+                ensure_chat(node_id, nodes[node_id].get("name"), force=False)
+        if not save_chats():
+            _restore_dict_in_place(chats, chats_snapshot)
+            # Best-effort: see api_clear_chat()'s identical comment above.
             save_chats()
-        return jsonify({"ok": True, "message": "Restored deleted DM chats"})
-    return jsonify({"ok": True, "message": "No deleted chats to restore"})
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+        # F4.1 PR 2 (review fix): the marker is only removed AFTER
+        # chats.json has actually been persisted with the restored chats -
+        # this route used to remove it FIRST, so a failed save_chats()
+        # left the marker permanently gone (the deletion was never really
+        # undone) while reporting a 500.
+        try:
+            os.remove(deleted_file)
+        except OSError:
+            pass
+    return jsonify({"ok": True, "message": "Restored deleted DM chats"})
 
 @app.route("/api/radio_health")
 def api_radio_health():
@@ -7847,11 +7992,16 @@ def start_runtime():
                 stored_camera = cameras.setdefault(active_camera_id, {})
                 if stored_camera.get("model") != detected_camera_model:
                     stored_camera["model"] = detected_camera_model
-                    device_manager.save(devices_data)
-                    print(
-                        f"[CAMERA] Recorded detected model in devices.json: {detected_camera_model}",
-                        flush=True,
-                    )
+                    if device_manager.save(devices_data):
+                        print(
+                            f"[CAMERA] Recorded detected model in devices.json: {detected_camera_model}",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            f"[CAMERA] Could not persist detected model {detected_camera_model} - storage write failed",
+                            flush=True,
+                        )
             except Exception as error:
                 print(f"[CAMERA] Failed to persist detected model: {error}", flush=True)
     else:

@@ -106,6 +106,11 @@ def register_camera_manager_routes(app, device_manager, handle_errors, camera_ma
 
         devices_data = device_manager.load_or_create()
         devices_data["active_camera_id"] = driver_id
-        device_manager.save(devices_data)
+        if not device_manager.save(devices_data):
+            # The camera switch above already succeeded live - only the
+            # "which camera was active" bookkeeping might not survive a
+            # restart. Reported as a failure anyway for consistency with
+            # every other storage_write_failed response.
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
 
         return jsonify(_summary())

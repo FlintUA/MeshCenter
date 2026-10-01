@@ -165,6 +165,8 @@ async function toggleSecurityEnabled(checked) {
             if (enabledToggle) enabledToggle.checked = !checked;
             const message = data.error_code === 'no_password_set'
                 ? window.I18N.t('system.security_enable_requires_password')
+                : data.error_code === 'storage_write_failed'
+                ? window.I18N.t('errors.storage_write_failed')
                 : window.I18N.t('system.security_save_failed', { reason: data.error || window.I18N.t('errors.unknown_error') });
             renderSecurityResult(message, true);
         }
@@ -203,7 +205,10 @@ async function saveSecurityPassword() {
             if (newPasswordInput) newPasswordInput.value = '';
             if (confirmInput) confirmInput.value = '';
         } else {
-            renderSecurityResult(data.error || window.I18N.t('errors.unknown_error'), true);
+            const message = data.error_code === 'storage_write_failed'
+                ? window.I18N.t('errors.storage_write_failed')
+                : data.error || window.I18N.t('errors.unknown_error');
+            renderSecurityResult(message, true);
         }
     } catch (error) {
         renderSecurityResult(window.I18N.t('system.security_save_failed', { reason: error.message }), true);

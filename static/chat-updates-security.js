@@ -140,6 +140,22 @@ function renderSecurityStatus(data) {
             ? window.I18N.t('system.security_change_password_btn')
             : window.I18N.t('system.security_set_password_btn');
     }
+
+    // H1-A2 (security review, F12): a current password is only ever
+    // required once one actually exists - the very first password set
+    // (data.password_set === false) has nothing to re-check against.
+    const currentPasswordWrap = document.getElementById('securityCurrentPasswordWrap');
+    if (currentPasswordWrap) currentPasswordWrap.style.display = data.password_set ? 'block' : 'none';
+}
+
+function _securityCurrentPasswordErrorMessage(data) {
+    if (data.error_code === 'current_password_invalid') {
+        return window.I18N.t('system.security_current_password_invalid');
+    }
+    if (data.error_code === 'login_throttled') {
+        return window.I18N.t('system.security_current_password_throttled');
+    }
+    return null;
 }
 
 function renderSecurityResult(message, isError) {
@@ -150,24 +166,36 @@ function renderSecurityResult(message, isError) {
 }
 
 async function toggleSecurityEnabled(checked) {
+    // H1-A2 (security review, F12): disabling protection requires proving
+    // you still know the current password - the same field the password-
+    // change form uses, since both actions share one "prove it's really
+    // you" gate. Enabling (checked === true) never requires it.
+    const currentPasswordInput = document.getElementById('securityCurrentPassword');
+    const body = { enabled: checked };
+    if (!checked && currentPasswordInput) {
+        body.current_password = currentPasswordInput.value || '';
+    }
+
     try {
         const response = await fetch('/api/security', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: checked })
+            body: JSON.stringify(body)
         });
         const data = await response.json();
         if (data.ok) {
             renderSecurityStatus(data);
             renderSecurityResult(window.I18N.t('system.security_saved'), false);
+            if (currentPasswordInput) currentPasswordInput.value = '';
         } else {
             const enabledToggle = document.getElementById('securityEnabled');
             if (enabledToggle) enabledToggle.checked = !checked;
-            const message = data.error_code === 'no_password_set'
-                ? window.I18N.t('system.security_enable_requires_password')
-                : data.error_code === 'storage_write_failed'
-                ? window.I18N.t('errors.storage_write_failed')
-                : window.I18N.t('system.security_save_failed', { reason: data.error || window.I18N.t('errors.unknown_error') });
+            const message = _securityCurrentPasswordErrorMessage(data)
+                || (data.error_code === 'no_password_set'
+                    ? window.I18N.t('system.security_enable_requires_password')
+                    : data.error_code === 'storage_write_failed'
+                    ? window.I18N.t('errors.storage_write_failed')
+                    : window.I18N.t('system.security_save_failed', { reason: data.error || window.I18N.t('errors.unknown_error') }));
             renderSecurityResult(message, true);
         }
     } catch (error) {
@@ -178,6 +206,7 @@ async function toggleSecurityEnabled(checked) {
 }
 
 async function saveSecurityPassword() {
+    const currentPasswordInput = document.getElementById('securityCurrentPassword');
     const newPasswordInput = document.getElementById('securityNewPassword');
     const confirmInput = document.getElementById('securityConfirmPassword');
     const newPassword = newPasswordInput?.value || '';
@@ -192,22 +221,33 @@ async function saveSecurityPassword() {
         return;
     }
 
+    const body = { password: newPassword };
+    // H1-A2 (security review, F12): only sent once a password already
+    // exists (the field itself is hidden otherwise, see
+    // renderSecurityStatus()) - the server only requires it in that case
+    // too, so sending an empty string for a brand-new setup is harmless.
+    if (currentPasswordInput) {
+        body.current_password = currentPasswordInput.value || '';
+    }
+
     try {
         const response = await fetch('/api/security', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: newPassword })
+            body: JSON.stringify(body)
         });
         const data = await response.json();
         if (data.ok) {
             renderSecurityStatus(data);
             renderSecurityResult(window.I18N.t('system.security_saved'), false);
+            if (currentPasswordInput) currentPasswordInput.value = '';
             if (newPasswordInput) newPasswordInput.value = '';
             if (confirmInput) confirmInput.value = '';
         } else {
-            const message = data.error_code === 'storage_write_failed'
-                ? window.I18N.t('errors.storage_write_failed')
-                : data.error || window.I18N.t('errors.unknown_error');
+            const message = _securityCurrentPasswordErrorMessage(data)
+                || (data.error_code === 'storage_write_failed'
+                    ? window.I18N.t('errors.storage_write_failed')
+                    : data.error || window.I18N.t('errors.unknown_error'));
             renderSecurityResult(message, true);
         }
     } catch (error) {

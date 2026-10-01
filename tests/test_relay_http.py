@@ -69,6 +69,16 @@ def _addr(family, ip, port=443):
         ("192.0.2.1", False),  # documentation-only TEST-NET-1
         ("not-an-ip", False),
         ("", False),
+        # H1-A3 (security review, F13): ipaddress's own .is_global is True
+        # for these - multicast/unspecified/reserved must be rejected
+        # explicitly, not just left to is_global's "global scope" meaning.
+        ("224.0.0.1", False),  # IPv4 multicast
+        ("239.255.255.250", False),  # IPv4 multicast (SSDP)
+        ("ff02::1", False),  # IPv6 multicast (link-local all-nodes)
+        ("ff0e::1", False),  # IPv6 multicast (global scope)
+        ("::", False),  # IPv6 unspecified
+        ("240.0.0.1", False),  # IPv4 reserved (240.0.0.0/4)
+        ("::ffff:224.0.0.1", False),  # IPv4-mapped multicast
     ],
 )
 def test_is_globally_routable(addr, expected):
@@ -200,6 +210,35 @@ def test_pinned_adapter_pools_keyed_by_ip_verify_against_hostname():
     assert pool.host == _PUBLIC_V4
     assert pool.assert_hostname == "ok.example"
     assert pool.conn_kw.get("server_hostname") == "ok.example"
+
+
+def test_pinned_adapter_get_connection_also_uses_the_pinned_pool():
+    """F11 (security review): requests.adapters.HTTPAdapter.send() calls
+    get_connection_with_tls_context() only starting in requests 2.32.2 -
+    2.31.0 (allowed by the pre-fix requirements.txt floor) calls
+    get_connection() instead. Without this override, that older version
+    would silently fall back to an unpinned connection resolved against
+    the original hostname again - exactly the DNS-rebinding/SSRF window
+    this whole module exists to close - with no error of any kind.
+
+    Calls get_connection() directly rather than through a real
+    Session.send(): this environment's installed requests (>= 2.32.2)
+    never calls get_connection() via send() at all, so routing through
+    send() would only prove the override works on requests versions new
+    enough not to need it. Asserting on get_connection()'s own return
+    value instead exercises the exact regression this override guards
+    against, independent of whatever requests version CI happens to have
+    installed - and fails immediately (pool.host would be the hostname via
+    requests' normal unpinned PoolManager, not the pinned IP) if the
+    override is ever removed.
+    """
+    adapter = _PinnedHTTPSAdapter("example.invalid", 443, "192.0.2.1")
+    pool = adapter.get_connection("https://example.invalid/", proxies=None)
+    assert pool.scheme == "https"
+    assert pool.host == "192.0.2.1"
+    assert pool.port == 443
+    assert pool.assert_hostname == "example.invalid"
+    assert pool.conn_kw.get("server_hostname") == "example.invalid"
 
 
 # ---------------------------------------------------------------------------

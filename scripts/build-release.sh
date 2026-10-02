@@ -25,14 +25,21 @@
 #     smoke_test_core.sh below.
 #
 #   meshcenter-meshtastic-adapter-<version>.tar.gz
-#     GPLv3 (meshtastic itself; the adapter's own code is still MIT, see
+#     GPLv3 (F14, decided 2026-09-30): adapters/meshtastic/ is GPLv3-
+#     licensed AS A WHOLE, not just its meshtastic dependency - see
 #     adapters/meshtastic/LICENSE + THIRD_PARTY_NOTICES.md for the
-#     detail). NOT just adapters/meshtastic/ in isolation - it has a real
-#     transitive import dependency on a specific slice of meshsrv/ and
-#     hardware/ (see ADAPTER_WHITELIST below for the exact list and why).
-#     An archive containing only adapters/meshtastic/ would fail to
+#     detail. NOT just adapters/meshtastic/ in isolation, though - it has
+#     a real transitive import dependency on a specific slice of meshsrv/
+#     and hardware/ (see ADAPTER_WHITELIST below for the exact list and
+#     why). An archive containing only adapters/meshtastic/ would fail to
 #     import at all - that's the bug this whitelist and its smoke test
 #     exist to catch, not a hypothetical.
+#
+#     Those meshsrv/+hardware/ files are MIT-licensed Core code riding
+#     along in a GPLv3 archive - fine (MIT permits this), but only if
+#     their own MIT notice is kept: the root MIT LICENSE is shipped
+#     alongside as LICENSE-MIT (see ADAPTER_EXTRA_COPIES below), and
+#     adapters/meshtastic/README explains the split.
 #
 # Both archives are built from the SAME working tree on every run - this
 # is deliberate duplication of a handful of small MIT files' *bytes* into
@@ -86,7 +93,7 @@ DIST_DIR="$REPO_ROOT/dist"
 # deployment.
 CORE_WHITELIST=(
     api camera deploy devices docs hardware meshsrv modules static
-    storage system telemetry templates utils weather
+    storage system telemetry templates utils weather licenses
     server.py wsgi.py system_log.py gunicorn.conf.py
     config.example.py weather_secrets.example.py requirements.txt
     README.md LICENSE THIRD_PARTY_NOTICES.md
@@ -131,6 +138,19 @@ ADAPTER_WHITELIST=(
     THIRD_PARTY_NOTICES.md
 )
 
+# F14: the meshsrv/+hardware/ files above are MIT-licensed Core code
+# riding along inside this otherwise-GPLv3 archive - MIT permits this,
+# but only if MIT's own permission notice is kept. "src:dest" pairs,
+# copied into the staged archive AFTER its whitelist (so a dest path can
+# differ from its source, unlike the whitelist loop above, which always
+# preserves the source's own path/name) - adapters/meshtastic/README.md's
+# own text points readers at this exact file.
+ADAPTER_EXTRA_COPIES=(
+    "LICENSE:LICENSE-MIT"
+)
+# Core's own archive needs no renamed/extra files beyond its whitelist.
+CORE_EXTRA_COPIES=()
+
 # Never allowed into either release archive, even if accidentally added
 # to a whitelist above or present inside a whitelisted directory (e.g. a
 # stray __pycache__ under api/). Belt-and-suspenders on top of the
@@ -147,15 +167,19 @@ DENYLIST_PATTERNS=(
     "venv"
 )
 
-# build_archive <archive-basename-without-extension> <whitelist-array-name>
+# build_archive <archive-basename-without-extension> <whitelist-array-name> <extra-copies-array-name>
 #
-# Stages the given whitelist into dist/<name>/, applies the denylist,
-# fails loud on any missing whitelisted path or any denylisted survivor,
-# then tars it up to dist/<name>.tar.gz. Shared by both archives so the
-# staging/denylist/archiving logic exists exactly once.
+# Stages the given whitelist into dist/<name>/, then the given "src:dest"
+# extra-copy pairs (for a file that needs a DIFFERENT name/path in the
+# archive than it has in the repo - the plain whitelist loop above always
+# preserves the source's own path), applies the denylist, fails loud on
+# any missing whitelisted path or any denylisted survivor, then tars it
+# up to dist/<name>.tar.gz. Shared by both archives so the staging/
+# denylist/archiving logic exists exactly once.
 build_archive() {
     local stage_name="$1"
     local -n whitelist_ref="$2"
+    local -n extra_copies_ref="$3"
 
     local stage_dir="$DIST_DIR/$stage_name"
     local archive_path="$DIST_DIR/${stage_name}.tar.gz"
@@ -186,6 +210,20 @@ build_archive() {
         else
             cp "$src" "$dest"
         fi
+    done
+
+    local extra extra_src extra_dest
+    for extra in "${extra_copies_ref[@]:-}"; do
+        [ -z "$extra" ] && continue
+        extra_src="$REPO_ROOT/${extra%%:*}"
+        extra_dest="$stage_dir/${extra#*:}"
+        if [ ! -e "$extra_src" ]; then
+            echo "!! Missing extra-copy source: ${extra%%:*}" >&2
+            missing=1
+            continue
+        fi
+        mkdir -p "$(dirname "$extra_dest")"
+        cp "$extra_src" "$extra_dest"
     done
 
     if [ "$missing" -ne 0 ]; then
@@ -234,11 +272,11 @@ mkdir -p "$DIST_DIR"
 CORE_ARCHIVE_NAME="meshcenter-core-${VERSION}"
 ADAPTER_ARCHIVE_NAME="meshcenter-meshtastic-adapter-${VERSION}"
 
-build_archive "$CORE_ARCHIVE_NAME" CORE_WHITELIST
+build_archive "$CORE_ARCHIVE_NAME" CORE_WHITELIST CORE_EXTRA_COPIES
 echo "==> Smoke-testing $CORE_ARCHIVE_NAME.tar.gz"
 "$SCRIPT_DIR/smoke_test_core.sh" "$DIST_DIR/${CORE_ARCHIVE_NAME}.tar.gz"
 
-build_archive "$ADAPTER_ARCHIVE_NAME" ADAPTER_WHITELIST
+build_archive "$ADAPTER_ARCHIVE_NAME" ADAPTER_WHITELIST ADAPTER_EXTRA_COPIES
 echo "==> Smoke-testing $ADAPTER_ARCHIVE_NAME.tar.gz"
 "$SCRIPT_DIR/smoke_test_adapter.sh" "$DIST_DIR/${ADAPTER_ARCHIVE_NAME}.tar.gz"
 

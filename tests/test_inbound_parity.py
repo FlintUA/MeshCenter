@@ -352,10 +352,13 @@ def test_the_text_signal_fires_for_both_paths(srv, monkeypatch):
     monkeypatch.setattr(srv, "radio_event", lambda name, *a, **k: (seen.append(name), real(name, *a, **k))[1])
 
     _via_serial(srv, [_text_line("ping", packet_id=77)])
-    assert seen == ["packet", "text"]
+    # H1-C2: cli_activity now fires for every CLI line (the old
+    # unconditional "packet" signal, renamed); "packet" itself now only
+    # fires for a recognized received-packet line like this one.
+    assert seen == ["cli_activity", "packet", "text"]
     seen.clear()
     _via_tcp(srv, [_tcp_text_packet("ping", packet_id=77)])
-    assert seen == ["text"], "TCP has no CLI line, hence no 'packet' signal of its own"
+    assert seen == ["text"], "TCP has no CLI line, hence no 'packet'/'cli_activity' signal of its own"
 
 
 # ---------------------------------------------------------------------------

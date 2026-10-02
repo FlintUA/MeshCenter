@@ -885,8 +885,80 @@ def static_files(filename):
 state_lock = threading.RLock()
 radio_lock = threading.RLock()
 
+class _SeenPacketIds:
+    """H1-C1 review fix: recently-seen-packet-id dedup tracker, replacing a
+    plain set(). cleanup_seen_ids() used to do
+    `seen_ids = set(list(seen_ids)[-500:])`, which assumed list() on a set
+    returns elements in INSERTION order - sets have no such guarantee
+    (CPython's set iteration order follows hash bucket layout, not
+    insertion order), so that "keep the most recent 500" trim was actually
+    keeping an ARBITRARY, unpredictable 500 ids: a packet seen moments ago
+    could be evicted while one from hours earlier survived, silently
+    reopening the dedup window for a recently-retransmitted packet.
+
+    A plain dict is insertion-ordered (Python 3.7+), mapping pid -> the
+    time it was first seen - trim() can then drop the OLDEST entries
+    first, correctly, in O(k) for k entries actually removed. add()/
+    __contains__()/clear()/__iter__()/__len__() match the plain-set
+    interface every existing caller (meshsrv/inbound_events.py's
+    `deps.seen_ids.add(pid)` / `pid in deps.seen_ids`, several tests'
+    `.clear()`) already uses, so none of them need to change. Mutated in
+    place by trim() - never rebound - so, unlike the old set, this is
+    safe to add to conftest.py's _IDENTITY_INVARIANT_NAMES.
+    """
+
+    def __init__(self):
+        self._timestamps = {}
+
+    def add(self, pid):
+        # Review fix: a plain `self._timestamps[pid] = time.time()` on an
+        # ALREADY-present pid updates its timestamp but keeps its original
+        # dict position (dict re-assignment never moves a key) - breaking
+        # trim()'s "insertion order == timestamp order, oldest first"
+        # assumption for any re-seen pid. Popping first forces re-insertion
+        # to the end, so a re-seen pid's position always matches its fresh
+        # timestamp, same as a brand-new one.
+        self._timestamps.pop(pid, None)
+        self._timestamps[pid] = time.time()
+
+    def __contains__(self, pid):
+        return pid in self._timestamps
+
+    def __iter__(self):
+        return iter(self._timestamps)
+
+    def __len__(self):
+        return len(self._timestamps)
+
+    def clear(self):
+        self._timestamps.clear()
+
+    def trim(self, max_count=500, max_age_seconds=1800):
+        """Removes the OLDEST entries first, mutating in place, until both
+        constraints hold: at most `max_count` entries, and nothing older
+        than `max_age_seconds`. Caller holds state_lock."""
+        now = time.time()
+        # Dict iteration is insertion order, and timestamps are assigned
+        # in non-decreasing order as pids are added, so the oldest
+        # entries are always encountered first - stop at the first one
+        # still within the age window rather than scanning everything.
+        stale = []
+        for pid, ts in self._timestamps.items():
+            if now - ts > max_age_seconds:
+                stale.append(pid)
+            else:
+                break
+        for pid in stale:
+            del self._timestamps[pid]
+
+        excess = len(self._timestamps) - max_count
+        if excess > 0:
+            for pid in list(self._timestamps)[:excess]:
+                del self._timestamps[pid]
+
+
 messages = []
-seen_ids = set()
+seen_ids = _SeenPacketIds()
 seen_recent_texts = {}
 nodes = {}
 chats = {}
@@ -1108,6 +1180,15 @@ radio_health = {
     "listener_running": False,
 
     "last_packet": 0,
+    # H1-C2 review fix: separate from last_packet - this fires for EVERY
+    # line the `meshtastic --listen` subprocess prints (see
+    # _handle_listener_line()), a pure "is the CLI subprocess still alive
+    # and producing output" liveness signal, independent of whether any
+    # given line was an actual received mesh packet. Not consulted by
+    # compute_radio_health_status()'s OK/IDLE/NO_PACKETS classification
+    # (that's last_packet/packet_age's job) - available for a future
+    # "the listener process itself looks wedged" check if one is needed.
+    "last_cli_activity": 0,
     "last_text": 0,
     "last_telemetry": 0,
     "last_send": 0,
@@ -1235,6 +1316,9 @@ def radio_event(event, error="", intentional=None):
 
         elif event == "packet":
             radio_health["last_packet"] = now_ts
+
+        elif event == "cli_activity":
+            radio_health["last_cli_activity"] = now_ts
 
         elif event == "telemetry":
             radio_health["last_packet"] = now_ts
@@ -4115,15 +4199,17 @@ def read_sensors_from_meshtastic():
     return sensor_data
 
 def cleanup_seen_ids():
-    global seen_ids
-
     while True:
         time.sleep(300)
         current_time = time.time()
 
         with state_lock:
-            if len(seen_ids) > 1000:
-                seen_ids = set(list(seen_ids)[-500:])
+            # H1-C1 review fix: trims the OLDEST entries first (by
+            # insertion order, which _SeenPacketIds maintains correctly -
+            # see its own docstring for why a plain set() couldn't) by
+            # both count (keep at most 500) and age (drop anything older
+            # than 30 minutes) - mutates in place, never rebinds.
+            seen_ids.trim(max_count=500, max_age_seconds=1800)
 
             expired_keys = [
                 key
@@ -4180,8 +4266,13 @@ def _dispatch_mca_text(text, node_id, packet_id, channel_index):
 
 
 def _inbound_deps():
-    """The state the shared inbound ingest works on. Built per call: seen_ids is
-    rebound by cleanup_seen_ids(), so it must be read at the moment of use."""
+    """The state the shared inbound ingest works on. Built per call - this
+    predates H1-C1's fix (cleanup_seen_ids() used to REBIND seen_ids to a
+    new set(), so the dict passed here had to be read fresh each call;
+    _SeenPacketIds now mutates in place instead, so seen_ids itself could
+    be captured once, but every OTHER value here is still read fresh for
+    the same original reason (nodes/chats/settings can all change between
+    calls too)."""
     return inbound_events.InboundDeps(
         state_lock=state_lock,
         active_radio_node_id=active_radio_node_id,
@@ -4325,12 +4416,39 @@ def _handle_listener_line(line):
     everything listen_meshtastic() used to do inline, now called from
     listener_supervisor.run_listener() via the on_raw_line callback (see
     meshsrv/serial_port_supervisor.py's run_listener() docstring).
-    Behavior preserved 1:1, including radio_event("packet")
-    firing even for a line that strips to empty - the old loop called it
-    unconditionally before the emptiness check, so this does too."""
+
+    H1-C2 review fix: radio_event("packet") used to fire unconditionally
+    for EVERY line (even one that strips to empty) - last_packet/
+    packet_age (compute_radio_health_status()'s OK/<=180s/IDLE/<=600s/
+    NO_PACKETS classification) was therefore really measuring "did the
+    CLI subprocess print ANY line recently" (log noise, WARNING/ERROR
+    diagnostics, blank lines included), not "did the mesh actually
+    deliver a packet recently" - a quiet-but-healthy mesh and a listener
+    that stopped receiving real traffic but kept printing SOMETHING could
+    look identical. radio_event("packet") now fires only for a line this
+    function itself recognizes as one of the actual received-packet kinds
+    it parses below (nodeinfo/waypoint/routing ack/telemetry/text) -
+    exactly mirroring the marker checks those branches already use, so
+    this stays in sync with them by construction rather than duplicating
+    a second, driftable classification. The old unconditional liveness
+    signal still exists, renamed to its own field (last_cli_activity) via
+    a separate "cli_activity" event, in case a future "the listener
+    process itself looks wedged" check wants it - compute_radio_health_status()
+    does not consult it today."""
     global _nodeinfo_buffer, _collecting_nodeinfo
 
-    radio_event("packet")
+    is_recognized_packet_line = bool(line) and (
+        "Received nodeinfo:" in line
+        or "WAYPOINT_APP" in line or "'waypoint':" in line or '"waypoint":' in line
+        or "Publishing meshtastic.receive.routing:" in line
+        or "TELEMETRY_APP" in line or "environmentMetrics" in line or "powerMetrics" in line or "deviceMetrics" in line
+        or "TEXT_MESSAGE_APP" in line or "'text':" in line or '"text":' in line
+        or "NODEINFO_APP" in line or _collecting_nodeinfo
+    )
+
+    radio_event("cli_activity")
+    if is_recognized_packet_line:
+        radio_event("packet")
 
     if not line:
         return
@@ -7852,7 +7970,31 @@ def api_delete_all_dm():
             # Narrower and self-healing (retried on the next delete-all or
             # restore-deleted-dm call) versus the alternative.
             if not safe_write_json(deleted_file, {"deleted": dm_chat_ids}):
-                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+                # H1-C4(a): chats.json/messages.json above already reflect
+                # the deletion - rolling back here would re-diverge memory
+                # from what's already committed to disk (see the "marker
+                # last" comment above). The deletion itself succeeded, so
+                # report ok:true with a warning rather than a 500 that
+                # would make the caller think nothing happened; the only
+                # real exposure is the self-healing gap already documented
+                # above (an incoming message before the next successful
+                # write of this file could recreate one of the chats).
+                log_system_event(
+                    title="Delete all DM: marker write failed",
+                    level="WARNING",
+                    details=(
+                        f"Deleted {deleted_count} DM chats but could not write "
+                        f"{deleted_file} - see the marker-last comment in "
+                        "api_delete_all_dm() for the accepted gap this leaves."
+                    ),
+                    source="storage",
+                )
+                return jsonify({
+                    "ok": True,
+                    "deleted_count": deleted_count,
+                    "message": f"Deleted {deleted_count} DM chats",
+                    "warning": "deleted_dm_marker_write_failed",
+                })
         return jsonify({"ok": True, "deleted_count": deleted_count, "message": f"Deleted {deleted_count} DM chats"})
     except Exception as e:
         print(f"[ERROR] Delete all DM: {e}")

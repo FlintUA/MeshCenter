@@ -124,6 +124,19 @@ class TransportErrorCode(str, Enum):
     # usable, which is what actually drives TCPTransport's own reconnect
     # backoff rather than requiring a caller-initiated reconnect() call.
     REMOTE_DISCONNECT = "remote_disconnect"
+    # H1-C4(b): a BrokenPipeError/ConnectionResetError raised DURING the
+    # Meshtastic protocol handshake (i.e. after TCPTransport's own raw TCP
+    # probe already proved host:port is reachable) - the characteristic
+    # signature of a radio that serves exactly one TCP client (see
+    # adapters/meshtastic/tcp_transport.py's module docstring, "OWNERSHIP
+    # MODEL") accepting our socket and then immediately tearing it down
+    # because another client (the official Meshtastic app/CLI, or a stale
+    # session of ours) already holds its one slot. Distinct from the
+    # generic CONNECT_FAILED a TCP_CONNECTED-adjacent OSError would
+    # otherwise collapse into, so a caller/UI can show an actionable
+    # "radio busy: another client is connected" message instead of a raw
+    # OS error string ("Broken pipe") with no explanation.
+    TCP_RADIO_BUSY = "tcp_radio_busy"
 
 
 # ---------------------------------------------------------------------------

@@ -574,6 +574,22 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         only ever wraps a non-TransportError as TransportErrorCode.UNKNOWN
         (see adapters/meshtastic/_timeout_support.py), so any finer
         classification has to happen here, on the raising side."""
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
+            # H1-C4(b): checked BEFORE the generic OSError branch below (a
+            # BrokenPipeError/ConnectionResetError IS an OSError, so it
+            # would otherwise be swallowed into the generic CONNECT_FAILED
+            # path with a raw, unexplained "Broken pipe" string). This
+            # early in the handshake - right after _open_socket() already
+            # proved the raw TCP connect itself succeeded - it is the
+            # characteristic signature of a radio that serves exactly one
+            # TCP client (see TransportErrorCode.TCP_RADIO_BUSY's own
+            # docstring) accepting our socket and then immediately killing
+            # it because another client already holds its one slot.
+            return TransportError(
+                TransportErrorCode.TCP_RADIO_BUSY,
+                f"{self._host}:{self._port} closed the connection immediately after accepting it "
+                f"(radio busy: another client is connected): {exc}",
+            )
         socket_error = self._classify_socket_error(exc)
         if socket_error is not None:
             return socket_error

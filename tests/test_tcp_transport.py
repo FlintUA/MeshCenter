@@ -314,6 +314,39 @@ def test_connect_immediate_protocol_rejection_reports_tcp_connected(monkeypatch)
     assert transport.internal_state == "error"
 
 
+def test_connect_broken_pipe_during_handshake_reports_tcp_radio_busy(monkeypatch):
+    """H1-C4(b): a radio that serves exactly one TCP client accepts our raw
+    socket (the probe succeeds) and then immediately tears it down because
+    another client already holds its one slot - observed as a
+    BrokenPipeError/ConnectionResetError raised synchronously from inside
+    the Meshtastic protocol layer. Must be distinguishable from the
+    generic tcp_connected code (which would otherwise surface this as a
+    raw, unexplained "Broken pipe" string) so a caller/UI can show an
+    actionable "radio busy: another client is connected" message."""
+    _patch_create_connection(monkeypatch)
+    _FakeTCPInterface.construct_exception = BrokenPipeError("[Errno 32] Broken pipe")
+    transport = TCPTransport(host="192.168.2.34")
+
+    with pytest.raises(TransportError) as excinfo:
+        transport.connect(_descriptor(), timeout=5)
+
+    assert excinfo.value.code == TransportErrorCode.TCP_RADIO_BUSY
+    assert transport.internal_state == "error"
+
+
+def test_connect_connection_reset_during_handshake_reports_tcp_radio_busy(monkeypatch):
+    """Same signature as the BrokenPipeError case above, just the other
+    OSError subtype observed for this failure mode in practice."""
+    _patch_create_connection(monkeypatch)
+    _FakeTCPInterface.construct_exception = ConnectionResetError("[Errno 104] Connection reset by peer")
+    transport = TCPTransport(host="192.168.2.34")
+
+    with pytest.raises(TransportError) as excinfo:
+        transport.connect(_descriptor(), timeout=5)
+
+    assert excinfo.value.code == TransportErrorCode.TCP_RADIO_BUSY
+
+
 def test_connect_regression_firmware_hang_reports_protocol_sync_timeout_cleanly(monkeypatch):
     """The acceptance-test regression scenario (firmware 2.7.26.54e0d8d:
     TCP connects, FromRadio packets partially received, config never

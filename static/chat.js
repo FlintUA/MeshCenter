@@ -9715,22 +9715,145 @@ async function loadNodesManagement() {
 // ============================================================
 // EXPORT/IMPORT
 // ============================================================
+
+// H1-C3: single source of truth for the node-backup CSV column set, used
+// by BOTH export and import - matches /api/nodes_export's own fields
+// exactly (name/node_id/last_time/rssi/snr/role/short_name/hw_model).
+// Deliberately does NOT include favourites/ignore/positions - see the
+// README backup section.
+const CSV_NODE_COLUMNS = [
+    { header: 'Node Name', get: n => n.name, set: (node, v) => { node.name = v; } },
+    { header: 'Node ID', get: n => n.node_id, set: (node, v) => { node.node_id = v; } },
+    { header: 'Last Seen', get: n => n.last_time || '', set: (node, v) => { node.last_time = v; } },
+    { header: 'RSSI', get: n => n.rssi || '', set: (node, v) => { node.rssi = v; } },
+    { header: 'SNR', get: n => n.snr || '', set: (node, v) => { node.snr = v; } },
+    { header: 'Role', get: n => n.role || 'CLIENT', set: (node, v) => { node.role = v; } },
+    { header: 'Short Name', get: n => n.short_name || '', set: (node, v) => { node.short_name = v; } },
+    { header: 'HW Model', get: n => n.hw_model || '', set: (node, v) => { node.hw_model = v; } },
+];
+
+// H1-C3 (F-finding): one csvField() applied to EVERY field, replacing the
+// old export template that only escaped n.name (the other 7 columns were
+// interpolated raw - an embedded `"` in any of them would corrupt the row
+// boundary) and had no formula-injection guard at all. Mirrors the
+// defense GitHub/Google Sheets/Excel use: a value a spreadsheet would
+// interpret as a formula (starts with = + - @) or that starts with a
+// raw tab/CR gets a leading apostrophe, which those apps treat as "force
+// plain text" and strip from the DISPLAYED value. parseCsvCell()'s own
+// stripCsvFormulaGuard() reverses it on import - but only in front of
+// = + - @, never tab/CR (a value that genuinely started with one of
+// those is vanishingly unlikely for a node name/role/model string, and
+// leaving the apostrophe in place on re-import is the safer default
+// versus risking a false-positive strip of a real leading apostrophe).
+function csvField(value) {
+    let str = (value === null || value === undefined) ? '' : String(value);
+    if (/^[=+\-@\t\r]/.test(str)) {
+        str = "'" + str;
+    }
+    return '"' + str.replace(/"/g, '""') + '"';
+}
+
+function stripCsvFormulaGuard(value) {
+    if (typeof value === 'string' && value.length >= 2 && value[0] === "'" && /^[=+\-@]/.test(value[1])) {
+        return value.slice(1);
+    }
+    return value;
+}
+
+// H1-C3 (F-finding): a real RFC-4180 parser, replacing the old
+// `line.replace(/^"|"$/g, '').split('","')` approach - that assumed every
+// row was exactly `"a","b","c"` with no embedded comma, no embedded
+// newline inside a quoted field (the file was already split into "lines"
+// by '\n' BEFORE this ran, so a legitimately multi-line quoted field was
+// silently torn in half), and no escaped `""` handling (it just stripped
+// EVERY `"` unconditionally afterward, corrupting a field that contained
+// a real quote character as part of its data). Returns an array of rows,
+// each an array of field strings.
+function parseCsv(text) {
+    const rows = [];
+    let row = [];
+    let field = '';
+    let inQuotes = false;
+    let i = 0;
+    const len = text.length;
+
+    while (i < len) {
+        const char = text[i];
+
+        if (inQuotes) {
+            if (char === '"') {
+                if (text[i + 1] === '"') {
+                    field += '"';
+                    i += 2;
+                    continue;
+                }
+                inQuotes = false;
+                i += 1;
+                continue;
+            }
+            field += char;
+            i += 1;
+            continue;
+        }
+
+        if (char === '"') {
+            inQuotes = true;
+            i += 1;
+            continue;
+        }
+        if (char === ',') {
+            row.push(field);
+            field = '';
+            i += 1;
+            continue;
+        }
+        if (char === '\r') {
+            i += 1; // swallow bare CR and CRLF alike - \n below ends the row
+            continue;
+        }
+        if (char === '\n') {
+            row.push(field);
+            rows.push(row);
+            row = [];
+            field = '';
+            i += 1;
+            continue;
+        }
+        field += char;
+        i += 1;
+    }
+
+    if (field.length > 0 || row.length > 0) {
+        row.push(field);
+        rows.push(row);
+    }
+
+    return rows;
+}
+
 async function exportNodesCSV() {
     try {
         const response = await fetch('/api/nodes_export');
         const data = await response.json();
-        
+
         if (!data.nodes || data.nodes.length === 0) {
             showToast(`❌ ${window.I18N.t('node_manager.no_nodes_to_export')}`, 'error');
             return;
         }
 
-        const headers = ['"Node Name","Node ID","Last Seen","RSSI","SNR","Role","Short Name","HW Model"'];
-        const rows = data.nodes.map(n => 
-            `"${escapeCsv(n.name)}","${n.node_id}","${n.last_time || ''}","${n.rssi || ''}","${n.snr || ''}","${n.role || 'CLIENT'}","${n.short_name || ''}","${n.hw_model || ''}"`
-        );
-        
-        const csv = headers.concat(rows).join('\n');
+        // H1-C3 (F-finding): every field now goes through the SAME
+        // csvField() - the old template only escaped n.name, leaving
+        // node_id/last_time/rssi/snr/role/short_name/hw_model to be
+        // interpolated raw: an embedded double-quote in any of those
+        // (hw_model/role are device-reported strings, not validated
+        // input) would silently corrupt the row boundary on export, and
+        // there was no formula-injection guard for a field starting with
+        // = + - @ (a name field is free-text, not restricted to safe
+        // characters) for a spreadsheet app that opens the file.
+        const headerRow = CSV_NODE_COLUMNS.map(col => csvField(col.header)).join(',');
+        const rows = data.nodes.map(n => CSV_NODE_COLUMNS.map(col => csvField(col.get(n))).join(','));
+
+        const csv = [headerRow].concat(rows).join('\r\n');
         const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -9779,33 +9902,32 @@ async function importNodesCSV(event) {
     reader.onload = async function(e) {
         try {
             const text = e.target.result;
-            const lines = text.split('\n').filter(line => line.trim());
-            if (lines.length < 2) {
+            // H1-C3 (F-finding): real RFC-4180 parsing (see parseCsv()'s own
+            // docstring) - handles embedded commas/newlines inside a quoted
+            // field and escaped "" correctly, instead of the old naive
+            // split('\n') + split('","') that broke on any of those.
+            const rows = parseCsv(text).filter(row => row.some(cell => cell.trim() !== ''));
+            if (rows.length < 2) {
                 showToast(`❌ ${window.I18N.t('node_manager.invalid_csv_file')}`, 'error');
                 return;
             }
-            
-            const headerLine = lines[0].replace(/^"|"$/g, '').split('","');
-            const headers = headerLine.map(h => h.replace(/"/g, '').trim());
-            
+
+            const headers = rows[0].map(h => h.trim());
+            const columnsByHeader = new Map(CSV_NODE_COLUMNS.map(col => [col.header, col]));
+
             const nodes = [];
-            for (let i = 1; i < lines.length; i++) {
-                const line = lines[i].replace(/^"|"$/g, '').split('","');
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
                 const node = {};
                 headers.forEach((h, idx) => {
-                    const val = (line[idx] || '').replace(/"/g, '').trim();
-                    if (h === 'Node Name') node.name = val;
-                    else if (h === 'Node ID') node.node_id = val;
-                    else if (h === 'Short Name') node.short_name = val;
-                    else if (h === 'HW Model') node.hw_model = val;
-                    else if (h === 'Role') node.role = val;
-                    else if (h === 'Last Seen') node.last_time = val;
-                    else if (h === 'RSSI') node.rssi = val;
-                    else if (h === 'SNR') node.snr = val;
+                    const column = columnsByHeader.get(h);
+                    if (!column) return;
+                    const raw = (row[idx] || '').trim();
+                    column.set(node, stripCsvFormulaGuard(raw));
                 });
                 if (node.node_id) nodes.push(node);
             }
-            
+
             if (nodes.length === 0) {
                 showToast(`❌ ${window.I18N.t('node_manager.no_valid_nodes_csv')}`, 'error');
                 return;
@@ -9868,11 +9990,6 @@ async function importNodesJSON(event) {
     };
     reader.readAsText(file);
     event.target.value = '';
-}
-
-function escapeCsv(value) {
-    if (value === null || value === undefined) return '';
-    return String(value).replace(/"/g, '""');
 }
 
 async function restartListener() {
@@ -10704,9 +10821,19 @@ async function detectAndAddNodeManagerRadio(tcpEndpoint) {
                     `${item.port}: ${item.error || item.status || window.I18N.t('node_manager.no_response')}`
                 ).join('\n')
                 : '';
+            // H1-C4(b): most detection failures still show the server's
+            // own plain-English `error` string as-is (same pattern as
+            // meshtasticTcpConnect()'s own comment on this), but a few
+            // specific error_codes get a localized, more actionable
+            // message instead of a raw socket-layer string like "Broken
+            // pipe" the server can't phrase helpfully on its own.
+            const message = window.I18N.tOrFallback(
+                'errors.' + (data.error_code || ''),
+                null,
+                data.error || window.I18N.t('node_manager.radio_detection_failed_http', { status: response.status })
+            );
             throw new Error(
-                (data.error || window.I18N.t('node_manager.radio_detection_failed_http', { status: response.status })) +
-                (attempts ? `\n\n${window.I18N.t('node_manager.probe_results')}:\n${attempts}` : '')
+                message + (attempts ? `\n\n${window.I18N.t('node_manager.probe_results')}:\n${attempts}` : '')
             );
         }
 
@@ -10829,9 +10956,17 @@ async function confirmNodeManagerDiscoveryCreateProfile() {
         });
         const accepted = await acceptResponse.json().catch(() => ({}));
         if (!acceptResponse.ok || !accepted.ok) {
+            // H1-C4(b): same localized-error_code lookup as the Discovery
+            // step above (detectAndAddNodeManagerRadio) - Accept re-probes
+            // the same endpoint and can hit the exact same tcp_radio_busy
+            // case if another client grabbed the radio's one TCP slot
+            // between Discover and Accept.
             throw new Error(
-                accepted.error ||
-                window.I18N.t('node_manager.profile_creation_failed_http', { status: acceptResponse.status })
+                window.I18N.tOrFallback(
+                    'errors.' + (accepted.error_code || ''),
+                    null,
+                    accepted.error || window.I18N.t('node_manager.profile_creation_failed_http', { status: acceptResponse.status })
+                )
             );
         }
 

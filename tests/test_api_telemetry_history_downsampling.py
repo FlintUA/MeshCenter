@@ -154,3 +154,29 @@ def test_remote_records_do_not_evict_local_history_in_the_history_route(srv):
     data = resp.get_json()
     assert data["total"] == 1
     assert data["history"][0]["temperature"] == 20.0
+
+
+@pytest.mark.parametrize("since_value", ["nan", "inf", "-inf"])
+def test_since_nan_or_infinity_is_rejected_with_400_not_a_crash(srv, since_value):
+    """H1-B2 review fix: request.args.get(type=float) happily parses the
+    literal strings "nan"/"inf"/"-inf" (Python's float() accepts them) -
+    math.ceil(NaN) used to raise inside _downsample_telemetry_history(),
+    a 500 from a single malformed query string."""
+    client = srv.app.test_client()
+    resp = client.get(f"/api/telemetry/history?since={since_value}&max_points=10")
+
+    assert resp.status_code == 400
+    assert resp.get_json()["error_code"] == "invalid_since"
+
+
+def test_since_in_the_future_returns_an_empty_result_not_an_error(srv):
+    now_ts = time.time()
+    srv.telemetry.telemetry_history.append({"timestamp": now_ts - 1, "temperature": 20.0, "source": "local"})
+
+    client = srv.app.test_client()
+    resp = client.get(f"/api/telemetry/history?since={now_ts + 10000}&max_points=10")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["history"] == []
+    assert data["total_in_range"] == 0

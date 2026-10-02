@@ -7480,6 +7480,27 @@ def api_telemetry_history():
     if node_id and not is_valid_node_id(node_id):
         return jsonify({"ok": False, "error": "Invalid node_id"}), 400
 
+    # H1-B2 review fix: request.args.get(..., type=float) happily parses
+    # the literal strings "nan"/"inf"/"-inf" (Python's float() accepts
+    # them) - math.ceil(NaN) then raises inside
+    # _downsample_telemetry_history(), a 500 from a single malformed query
+    # string. Reject non-finite outright; a `since` in the future can only
+    # ever match zero records, so answer that directly instead of running
+    # the downsample machinery on a degenerate range.
+    if since is not None:
+        if not math.isfinite(since):
+            return jsonify({"ok": False, "error": "'since' must be a finite number", "error_code": "invalid_since"}), 400
+        now_ts = time.time()
+        if since > now_ts:
+            return jsonify({
+                "history": [],
+                "total_in_range": 0,
+                "downsampled": False,
+                "bucket_seconds": 1,
+                "node_id": node_id or LOCAL_NODE_ID,
+                "config": telemetry.telemetry_config,
+            })
+
     with state_lock:
         all_history = [
             record for record in telemetry.telemetry_history

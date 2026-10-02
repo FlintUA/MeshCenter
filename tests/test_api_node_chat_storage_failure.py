@@ -18,7 +18,9 @@ deleted_dm.json marker is the one deliberate exception, documented at its
 own call site: the marker is written LAST, after chats/messages are
 already persisted, so a marker-only failure leaves the deletion applied
 (not rolled back) - the narrower, self-healing gap is a missing marker,
-never a chats/messages memory-vs-disk mismatch.
+never a chats/messages memory-vs-disk mismatch. Since the deletion itself
+already succeeded in that case, the route answers ok:true with a warning
+field (H1-C4(a)) rather than a 500.
 """
 
 import json
@@ -96,7 +98,11 @@ def test_delete_all_dm_failed_marker_write_still_deletes_the_chats(server_module
     persisted with the deletion applied. If only the marker write fails,
     the deletion is NOT rolled back (chats/messages are already genuinely
     saved) - the accepted, narrower gap is a missing marker, not a
-    memory/disk mismatch for chats/messages themselves."""
+    memory/disk mismatch for chats/messages themselves.
+
+    H1-C4(a): since the deletion genuinely succeeded in this case, the
+    route now answers ok:true with a warning field instead of a 500 that
+    would make the caller believe nothing happened."""
     client = _csrf_client(server_module)
 
     with server_module.state_lock:
@@ -116,8 +122,10 @@ def test_delete_all_dm_failed_marker_write_still_deletes_the_chats(server_module
 
     resp = client.post("/api/delete_all_dm", headers={"X-CSRF-Token": "test-csrf-token"})
 
-    assert resp.status_code == 500
-    assert resp.get_json()["error_code"] == "storage_write_failed"
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["warning"] == "deleted_dm_marker_write_failed"
     assert "!aabbccdd" not in server_module.chats
 
 

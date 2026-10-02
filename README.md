@@ -893,6 +893,8 @@ This is useful for:
 - Keeping a known node list
 - Sharing node information between installations
 
+The CSV format covers only Node Name, Node ID, Last Seen, RSSI, SNR, Role, Short Name and Hardware Model - it does not include favorites, ignore-list membership, positions, or telemetry history. Use the JSON export, or a full `data/` backup, if you need those too.
+
 ### 🛠️ Node Tools (Remote Commands)
 
 MeshCenter can send commands to any visible node directly from the web interface:

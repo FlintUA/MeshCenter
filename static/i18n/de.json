@@ -1463,6 +1463,7 @@
     "invalid_chat": "Ungültiger Chat.",
     "invalid_node_id": "Ungültiger Knoten.",
     "radio_busy": "Das Funkgerät ist gerade beschäftigt. Versuch es in Kürze noch mal.",
+    "tcp_radio_busy": "Funkgerät besetzt: Ein anderer Client ist bereits per TCP mit diesem Funkgerät verbunden.",
     "radio_timeout": "Das Funkgerät hat nicht rechtzeitig geantwortet.",
     "radio_released": "Das Funkgerät ist für die externe Konfiguration freigegeben.",
     "action_busy": "Eine andere Aktion läuft bereits.",

@@ -156,11 +156,12 @@ def server_module(tmp_path_factory):
 # holding a stale, disconnected one - no exception, just a slow desync for
 # the rest of the process's life (audit review 2026-09-29, F2 -
 # clear_chat()/delete_chat()/delete_all_dm() all did this for `messages`
-# before the fix). `seen_ids` is EXCLUDED deliberately: cleanup_seen_ids()
-# rebinds it on purpose (server.py's own _inbound_deps() re-reads it fresh
-# per call for exactly this reason - see meshsrv/inbound_events.py's own
-# InboundDeps docstring), so identity is not an invariant for it.
-_IDENTITY_INVARIANT_NAMES = ("nodes", "chats", "messages", "settings", "seen_recent_texts")
+# before the fix). `seen_ids` was EXCLUDED here until H1-C1: before that
+# fix, cleanup_seen_ids() rebound it on purpose
+# (`seen_ids = set(list(seen_ids)[-500:])`), so identity wasn't an
+# invariant for it. H1-C1 replaced the plain set() with _SeenPacketIds,
+# whose own trim() mutates in place instead - it belongs in this list now.
+_IDENTITY_INVARIANT_NAMES = ("nodes", "chats", "messages", "settings", "seen_ids", "seen_recent_texts")
 
 
 @pytest.fixture(autouse=True)
@@ -186,6 +187,13 @@ def _reset_server_state(request):
             snapshots[name] = list(value)
         elif isinstance(value, set):
             snapshots[name] = set(value)
+        elif isinstance(value, server._SeenPacketIds):
+            # H1-C1: seen_ids is no longer a plain set() - snapshotting
+            # just the pids (not their timestamps) is enough for test
+            # isolation; restore below re-adds each one with a fresh
+            # timestamp via .add(), which is all any test actually checks
+            # (membership), not exact first-seen times.
+            snapshots[name] = list(value)
         if name in _IDENTITY_INVARIANT_NAMES:
             identities[name] = id(value)
 
@@ -207,6 +215,9 @@ def _reset_server_state(request):
             current.extend(snapshot)
         elif isinstance(current, set):
             current.update(snapshot)
+        elif isinstance(current, server._SeenPacketIds):
+            for pid in snapshot:
+                current.add(pid)
 
     for name, original_id in identities.items():
         current = getattr(server, name)

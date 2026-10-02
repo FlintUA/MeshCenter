@@ -19,8 +19,11 @@ slowly diverging copy. The order of side effects is deliberate and preserved:
          node -> chat routing -> reply reference -> add_message -> MCAttach.
 
 State (nodes, chats, messages, seen ids, the waypoint store, the lock) belongs
-to server.py; it is handed in through `InboundDeps`, built per call because some
-of it (seen_ids) is rebound by background cleanup.
+to server.py; it is handed in through `InboundDeps`, built per call since
+several of these (nodes, chats, settings) can change between calls - not
+because seen_ids itself is rebound: H1-C1 replaced its old plain set() (which
+cleanup_seen_ids() did rebind) with server.py's _SeenPacketIds, mutated in
+place instead.
 
 SAFETY GATE: every event names the radio it came from (`local_radio_node_id`).
 Before anything is persisted it must equal the active accepted profile's node
@@ -86,7 +89,9 @@ class InboundDeps:
     CHANNEL_CHAT_ID: str
     CHANNEL_CHAT_NAME: str
     radio_event: Callable[..., Any]
-    seen_ids: set
+    # server.py's _SeenPacketIds (H1-C1) - not a plain set, but supports
+    # the same add()/__contains__() interface used below.
+    seen_ids: Any
     nodes: dict
     chats: dict
     get_node_name: Callable[[str], str]

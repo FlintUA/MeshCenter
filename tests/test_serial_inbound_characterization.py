@@ -143,7 +143,7 @@ def test_a_line_that_is_not_a_text_message_creates_nothing(srv):
     _feed(srv, "some unrelated log line")
     _feed(srv, "")
 
-    assert srv.messages == [] and srv.seen_ids == set()
+    assert srv.messages == [] and len(srv.seen_ids) == 0
 
 
 def test_empty_text_is_ignored(srv):
@@ -170,7 +170,7 @@ def test_the_same_text_within_15s_is_stored_once_but_the_node_is_still_updated(s
 
     assert len(_messages(srv)) == 1
     assert srv.nodes[REMOTE]["rssi"] == "-42", "the text-duplicate check runs AFTER update_node"
-    assert {1, 2} <= srv.seen_ids
+    assert {1, 2} <= set(srv.seen_ids)
 
 
 def test_without_a_packet_id_the_text_fallback_still_dedups(srv):
@@ -178,7 +178,7 @@ def test_without_a_packet_id_the_text_fallback_still_dedups(srv):
     _feed(srv, _text_line("no id", packet_id=None))
 
     assert len(_messages(srv)) == 1
-    assert srv.seen_ids == set()
+    assert len(srv.seen_ids) == 0
     assert "packet_id" not in _messages(srv)[0]
 
 
@@ -286,9 +286,12 @@ def test_radio_event_text_and_packet_are_signalled(srv, monkeypatch):
 
     _feed(srv, _text_line("ping", packet_id=77))
 
-    assert seen == ["packet", "text"]
+    # H1-C2: cli_activity now fires for every line (the old unconditional
+    # "packet" signal, renamed); "packet" itself now only fires for a
+    # recognized received-packet line like this one.
+    assert seen == ["cli_activity", "packet", "text"]
     _feed(srv, _text_line("ping", packet_id=77))  # duplicate: text is signalled BEFORE the dedup
-    assert seen == ["packet", "text", "packet", "text"]
+    assert seen == ["cli_activity", "packet", "text", "cli_activity", "packet", "text"]
 
 
 # --- waypoints ----------------------------------------------------------------

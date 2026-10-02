@@ -241,7 +241,7 @@ def test_without_a_packet_id_the_same_text_within_15s_is_stored_once(tcp):
 
     srv.inbound_worker.tick()
 
-    assert len(srv.messages) == 1 and srv.seen_ids == set()
+    assert len(srv.messages) == 1 and len(srv.seen_ids) == 0
 
 
 def test_an_ignored_node_stores_nothing(tcp):

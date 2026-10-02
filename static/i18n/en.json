@@ -1463,6 +1463,7 @@
     "invalid_chat": "Invalid chat.",
     "invalid_node_id": "Invalid node.",
     "radio_busy": "The radio is busy right now. Please try again shortly.",
+    "tcp_radio_busy": "Radio busy: another client is already connected to this radio over TCP.",
     "radio_timeout": "The radio did not respond in time.",
     "radio_released": "The radio is released for external configuration.",
     "action_busy": "Another action is already in progress.",

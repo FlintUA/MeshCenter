@@ -8465,6 +8465,14 @@ def start_runtime():
     # still unresolved at boot - it just waits until MATCH.
     threading.Thread(target=radio_inbound_worker, daemon=True).start()
 
+    # H1-C5: debounced telemetry-history flush - started for every transport
+    # (unlike the serial-only group below) since add_node_telemetry_record()
+    # is fed by both the serial parser and the TCP inbound worker above. See
+    # telemetry/telemetry.py's own module-level comment for the full
+    # rationale; without this thread, telemetry history is only ever marked
+    # dirty and never actually written to disk.
+    threading.Thread(target=telemetry.telemetry_flush_worker, daemon=True).start()
+
     # The rest of this group is serial-specific machinery - each one
     # consumes the `meshtastic --listen` subprocess's output or exists only
     # while it runs (verified worker by worker, not assumed): the listener

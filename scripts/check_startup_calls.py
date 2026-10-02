@@ -51,6 +51,12 @@ REQUIRED_CALLS = [
      'The long-lived `meshtastic --listen` subprocess this whole app is built '
      'around (see CLAUDE.md) - without starting this thread, no radio traffic '
      'is ever parsed at all.'),
+    ('telemetry_flush_worker',
+     'telemetry/telemetry.py\'s background debounced-flush thread (H1-C5) - without '
+     'this, add_telemetry_record()/add_node_telemetry_record() only ever mark '
+     'telemetry history dirty and it is never actually written to disk, so '
+     'telemetry_history.json silently stops updating after whatever was on disk '
+     'at the last old-style synchronous save.'),
 ]
 
 

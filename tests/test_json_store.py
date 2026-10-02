@@ -51,6 +51,46 @@ def test_no_tmp_file_left_behind_after_a_successful_write(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# H1-C5: optional `indent` parameter (compact encoding for telemetry_history.json)
+# ---------------------------------------------------------------------------
+
+def test_default_indent_is_still_pretty_printed(tmp_path):
+    """Every existing caller that doesn't pass `indent` must see byte-
+    identical output to before this parameter existed."""
+    path = str(tmp_path / "data.json")
+    json_store.safe_write_json(path, {"a": 1, "b": [1, 2]})
+    with open(path, encoding="utf-8") as f:
+        raw = f.read()
+    assert raw == json.dumps({"a": 1, "b": [1, 2]}, ensure_ascii=False, indent=2)
+
+
+def test_indent_none_produces_compact_output_with_no_extra_spaces(tmp_path):
+    path = str(tmp_path / "data.json")
+    json_store.safe_write_json(path, {"a": 1, "b": [1, 2]}, indent=None)
+    with open(path, encoding="utf-8") as f:
+        raw = f.read()
+    assert raw == '{"a":1,"b":[1,2]}'
+    assert "\n" not in raw
+    assert ", " not in raw and ": " not in raw
+
+
+def test_indent_none_round_trips_the_same_data_as_pretty_printed(tmp_path):
+    path = str(tmp_path / "data.json")
+    data = {"history": [{"a": 1}, {"a": 2}], "config": {"interval": 300}}
+    json_store.safe_write_json(path, data, indent=None)
+    assert json_store.safe_read_json(path) == data
+
+
+def test_indent_none_output_is_smaller_than_default(tmp_path):
+    data = {"history": [{"temperature": 21.5, "humidity": 40, "node_id": "!aabbccdd"} for _ in range(50)]}
+    pretty_path = str(tmp_path / "pretty.json")
+    compact_path = str(tmp_path / "compact.json")
+    json_store.safe_write_json(pretty_path, data)
+    json_store.safe_write_json(compact_path, data, indent=None)
+    assert os.path.getsize(compact_path) < os.path.getsize(pretty_path)
+
+
+# ---------------------------------------------------------------------------
 # Unique temp names - the shared-.tmp race this rewrite closes
 # ---------------------------------------------------------------------------
 

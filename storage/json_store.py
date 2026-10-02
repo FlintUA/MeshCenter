@@ -134,7 +134,7 @@ def _quarantine_corrupt_file(filepath, max_copies=3):
         pass
 
 
-def safe_write_json(filepath, data):
+def safe_write_json(filepath, data, indent=2):
     """Writes `data` as JSON to `filepath` atomically: a uniquely-named
     temp file (tempfile.mkstemp(), never the fixed `<file>.tmp` name two
     concurrent writers - or a writer and a reader - could collide on),
@@ -142,6 +142,17 @@ def safe_write_json(filepath, data):
     by a best-effort fsync of the containing directory (POSIX only -
     Windows has no directory file descriptor to fsync, so this step is a
     silent no-op there rather than a platform-specific failure).
+
+    `indent` defaults to 2 (pretty-printed, human-inspectable - the
+    existing behavior every other caller still gets unchanged). H1-C5:
+    pass `indent=None` for a compact encoding instead (no indentation,
+    `separators=(",", ":")` to also drop the default's space after `,`/
+    `:`) - telemetry_history.json is the one caller that opts into this,
+    since it is rewritten whole on every flush and can grow into the tens
+    of thousands of records (see telemetry/telemetry.py's own sizing
+    comments), where indent=2's per-line/per-key overhead is a real,
+    measured fraction of the file's total size for no readability benefit
+    anyone actually reads this particular file by eye in production.
 
     Returns True on success, False on any failure - the temp file is
     removed on a failed attempt, so a failure never leaves a stray partial
@@ -159,7 +170,10 @@ def safe_write_json(filepath, data):
         tmp_fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=f".{basename}.", suffix=".tmp")
         with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
             tmp_fd = None  # fdopen now owns the fd; avoid a double-close below
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            if indent is None:
+                json.dump(data, f, ensure_ascii=False, indent=None, separators=(",", ":"))
+            else:
+                json.dump(data, f, ensure_ascii=False, indent=indent)
             f.flush()
             os.fsync(f.fileno())
 
@@ -191,9 +205,9 @@ def safe_write_json(filepath, data):
         return False
 
 
-def atomic_write_json(filepath, data):
+def atomic_write_json(filepath, data, indent=2):
     """Backward-compatible alias."""
-    return safe_write_json(filepath, data)
+    return safe_write_json(filepath, data, indent=indent)
 
 
 def cleanup_stale_temp_files(data_dir, older_than_s=300):

@@ -127,6 +127,39 @@ def test_successful_round_trip_returns_the_adapters_result():
     assert response["result"]["echo"] == {"hello": "world"}
 
 
+def test_nan_and_infinity_in_an_adapter_response_decode_to_none():
+    """H1-B3 (telemetry correctness): json.loads() accepts the bare
+    NaN/Infinity/-Infinity tokens as a non-standard extension - a
+    malformed telemetry reading from the radio (or a stray value
+    surviving a buggy merge somewhere in the adapter) could reach this
+    layer as one of these inside an otherwise well-formed response.
+    fake_adapter.py's own json.dumps() call (stdlib default: allow_nan is
+    True) happily emits the literal NaN/Infinity tokens when echoing these
+    request params back - a real end-to-end round trip through actual
+    subprocess stdin/stdout, not a mocked decode. The supervisor's read
+    loop must decode them as None, not as Python float('nan')/float('inf')."""
+    import math
+
+    supervisor = _make_supervisor()
+
+    response = supervisor.call(
+        {
+            "operation": "get_metadata", "transport_type": "serial",
+            "params": {"a": math.nan, "b": math.inf, "c": -math.inf, "d": 1.5},
+            "timeout": 5.0,
+        },
+        timeout=5.0,
+        ble_address_for_cleanup=None,
+    )
+
+    assert response["ok"] is True
+    echoed = response["result"]["echo"]
+    assert echoed["a"] is None
+    assert echoed["b"] is None
+    assert echoed["c"] is None
+    assert echoed["d"] == 1.5
+
+
 def test_hung_adapter_is_killed_and_caller_gets_timeout_within_its_own_budget():
     import time
 

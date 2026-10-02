@@ -27,6 +27,38 @@ def configure_storage(filepath):
     TELEMETRY_FILE = str(filepath)
 
 
+# H1-B2 (F6): replaces the old single 26000-record cap SHARED across every
+# node plus local - a mesh with several chatty remote nodes could evict
+# local's own history (or another node's) well before it, with no
+# per-node fairness at all. Each node (local counts as its own bucket,
+# keyed by node_id=None - see _trim_node_history()) now gets its own
+# independent cap instead.
+#
+# Sized to hold 30 days of history at the DEFAULT 300s interval
+# (86400*30/300 = 8640 records) with headroom for a shorter configured
+# interval or a burst of merged device/environment/power samples - not
+# sized for the shortest allowed interval (120s would need 21600 for 30
+# days), since the task's own instruction is "30 days at default
+# interval". A local record is ~110-140 bytes of JSON (time, timestamp,
+# temperature, humidity, pressure, voltage, current, power, source); a
+# remote node's record adds node_id/battery_level/channel_utilization/
+# air_util_tx/uptime_seconds, up to ~220 bytes.
+#
+# Worst-case file size, reported as asked rather than assumed: dev
+# (!756f9960) has 507 entries in /api/nodes_export as of 2026-10-01 -
+# most of those are only ever seen via NODEINFO/routing on the mesh and
+# never send this node actual TELEMETRY_APP packets, so realistic usage
+# is a small fraction of the theoretical cap. The true worst case if
+# EVERY one of those 507 nodes filled its own 10000-record bucket is
+# 507 * 10000 * ~220 bytes =~ 1.06 GB for telemetry_history.json - a real
+# number worth flagging to the reviewer, not a size that happens in
+# practice (it would require 507 distinct radios each sending telemetry
+# at the default interval continuously for 30+ days), but large enough
+# that a node seeing many hundreds of mesh-visible devices should budget
+# SD card space accordingly, or the cap should be lowered/made
+# configurable in a follow-up if that theoretical ceiling is a concern.
+MAX_RECORDS_PER_NODE = 10000
+
 telemetry_history = []
 telemetry_config = {"interval": 300, "enabled": True}
 telemetry_current = {
@@ -42,6 +74,49 @@ telemetry_current = {
 telemetry_last_save_time = 0
 
 
+def _trim_node_history(node_key):
+    """Drop the OLDEST records for one node/local bucket if it exceeds
+    MAX_RECORDS_PER_NODE - every other bucket (every other node_id, or
+    local when trimming a remote node's bucket) is left completely
+    untouched. `node_key` is the record's own `record.get("node_id")`
+    value - None for a local record (see add_telemetry_record()'s record
+    shape, which never sets "node_id" at all). Must be called with
+    _telemetry_lock already held. Returns True if anything was removed."""
+    global telemetry_history
+
+    matching_indices = [
+        i for i, record in enumerate(telemetry_history)
+        if isinstance(record, dict) and record.get("node_id") == node_key
+    ]
+    excess = len(matching_indices) - MAX_RECORDS_PER_NODE
+    if excess <= 0:
+        return False
+
+    remove_indices = set(matching_indices[:excess])
+    telemetry_history = [
+        record for i, record in enumerate(telemetry_history)
+        if i not in remove_indices
+    ]
+    return True
+
+
+def _trim_all_history_per_node():
+    """Like _trim_node_history(), but for every distinct node_key present -
+    used once at load time, since a file saved before MAX_RECORDS_PER_NODE
+    existed (or saved by an older build) could have any node over the cap,
+    not just whichever one happens to be written to next. Must be called
+    with _telemetry_lock already held."""
+    keys = {
+        record.get("node_id") for record in telemetry_history
+        if isinstance(record, dict)
+    }
+    trimmed = False
+    for key in keys:
+        if _trim_node_history(key):
+            trimmed = True
+    return trimmed
+
+
 def load_telemetry():
     global telemetry_history, telemetry_config
 
@@ -51,9 +126,7 @@ def load_telemetry():
             telemetry_history = data.get("history", [])
             telemetry_config = data.get("config", {"interval": 300, "enabled": True})
 
-            max_records = 26000
-            if len(telemetry_history) > max_records:
-                telemetry_history = telemetry_history[-max_records:]
+            if _trim_all_history_per_node():
                 save_telemetry()
         else:
             save_telemetry()
@@ -84,6 +157,17 @@ def add_telemetry_record(temp, humidity, pressure, voltage, current):
     global telemetry_history, telemetry_last_save_time
 
     with _telemetry_lock:
+        # H1-B1 (F5): telemetry_config["enabled"] used to be written by
+        # /api/telemetry/config but never read anywhere - toggling it had
+        # no effect at all. Per the agreed semantics, disabling only stops
+        # WRITING HISTORY: live values (telemetry_current, sensor_data,
+        # base_status, node device/environment/power_metrics) are updated
+        # directly by server.py's apply_telemetry_values()/
+        # apply_node_telemetry() regardless of this flag, independently of
+        # the add_*_record() calls these two functions gate.
+        if not telemetry_config.get("enabled", True):
+            return False
+
         current_time = time.time()
         interval = telemetry_config.get("interval", 300)
 
@@ -116,10 +200,7 @@ def add_telemetry_record(temp, humidity, pressure, voltage, current):
         }
 
         telemetry_history.append(record)
-
-        max_records = 26000
-        if len(telemetry_history) > max_records:
-            telemetry_history = telemetry_history[-max_records:]
+        _trim_node_history(None)
 
         telemetry_last_save_time = current_time
         save_telemetry()
@@ -154,6 +235,12 @@ def add_node_telemetry_record(node_id, values, source="passive"):
         return False
 
     with _telemetry_lock:
+        # H1-B1 (F5): see add_telemetry_record()'s identical comment above -
+        # same gate, same semantics (live per-node fields are updated by
+        # apply_node_telemetry() regardless, independently of this call).
+        if not telemetry_config.get("enabled", True):
+            return False
+
         timestamp = time.time()
         interval = max(30, int(telemetry_config.get("interval", 300) or 300))
 
@@ -200,10 +287,7 @@ def add_node_telemetry_record(node_id, values, source="passive"):
             **fields,
         }
         telemetry_history.append(record)
-
-        max_records = 26000
-        if len(telemetry_history) > max_records:
-            telemetry_history = telemetry_history[-max_records:]
+        _trim_node_history(node_id)
 
         save_telemetry()
         return True

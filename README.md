@@ -73,7 +73,7 @@ MeshCenter's own code (`server.py`, `api/`, `meshsrv/`, `static/`, `templates/`,
 
 The official [`meshtastic`](https://github.com/meshtastic/python) Python package, used to talk to the radio over serial or Bluetooth, is GPLv3-licensed. To keep GPLv3 code from linking into MeshCenter's own MIT-licensed process, it's isolated in `adapters/meshtastic/` — its own package, its own Python virtual environment (`adapters/meshtastic/venv`), running as a **separate OS process** that Core talks to over a local IPC boundary (newline-delimited JSON over stdin/stdout), never a direct Python import. Core itself never imports `meshtastic`.
 
-`adapters/meshtastic/` ships its own [LICENSE](adapters/meshtastic/LICENSE) (the GPLv3 text). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full dependency breakdown and reasoning.
+`adapters/meshtastic/` is **GPLv3-licensed as a whole** — not just the `meshtastic` dependency it wraps, but the adapter's own code too — and ships its own [LICENSE](adapters/meshtastic/LICENSE) (the GPLv3 text). The adapter also carries a handful of MIT-licensed Core files it has a real import dependency on; see [`adapters/meshtastic/README.md`](adapters/meshtastic/README.md) for that split. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full dependency breakdown and reasoning.
 
 USB camera support (`camera/usb_driver.py`) uses the same arm's-length-external-program reasoning for `ffmpeg` and `v4l-utils` (both GPL-2.0-or-later) — invoked as system programs via `subprocess`, never imported as a Python library, and not bundled or vendored. This replaced an earlier design that imported the `linuxpy`/`v4l2py` package (GPL-3.0-or-later) directly into Core's own process.
 

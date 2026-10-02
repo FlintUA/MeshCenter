@@ -157,7 +157,13 @@ def test_shutdown_telemetry_stops_the_flush_worker_loop(telemetry_module):
 
 
 def test_shutdown_telemetry_is_a_noop_on_nothing_pending(telemetry_module, monkeypatch):
-    """Nothing dirty -> shutdown must not force a spurious write."""
+    """Nothing dirty -> shutdown must not force a spurious write - "behaves
+    as documented" per shutdown_telemetry()'s own docstring ("performs one
+    final flush if anything is still dirty"), the clean-state side of the
+    PR #324 review's request. This is why shutdown_telemetry() calls
+    flush_telemetry() directly rather than request_flush(wait=True): the
+    latter unconditionally marks dirty before flushing, which would make
+    this test's own premise (a true no-op on a clean shutdown) false."""
     calls = _spy_on_writes(telemetry_module, monkeypatch)
     telemetry_module.shutdown_telemetry()
     assert calls == []
@@ -260,9 +266,39 @@ def test_request_flush_wakes_the_event_without_writing_itself(telemetry_module, 
 
     assert calls == [], "request_flush() without wait=True must not write on the calling thread"
     assert telemetry_module._flush_now_event.is_set()
+    # Regression (PR #324 review): request_flush() used to assign
+    # `_telemetry_dirty = True` without `global`, creating a local
+    # variable that shadowed the module flag - it looked like it worked
+    # (the event WAS set) while the actual dirty flag was never touched.
+    assert telemetry_module._telemetry_dirty is True, (
+        "request_flush() must set the MODULE-level dirty flag, not a local shadow"
+    )
+
+
+def test_request_flush_wait_true_writes_even_from_a_clean_state(telemetry_module, monkeypatch):
+    """Direct regression test for the review finding: with no prior append
+    (nothing dirty to begin with), request_flush(wait=True) must still
+    perform exactly one write - that is its entire purpose as a "persist
+    right now" primitive, independent of whether something happened to
+    already be dirty. The bug (missing `global _telemetry_dirty` in
+    request_flush()) made this silently perform ZERO writes instead,
+    reproduced here with `_telemetry_dirty` starting False and no add_*
+    call before request_flush()."""
+    calls = _spy_on_writes(telemetry_module, monkeypatch)
+    assert telemetry_module._telemetry_dirty is False
+
+    telemetry_module.request_flush(wait=True)
+
+    assert len(calls) == 1, "request_flush(wait=True) from a clean state must still write exactly once"
 
 
 def test_request_flush_wait_true_flushes_synchronously(telemetry_module, monkeypatch):
+    """A less isolated variant of the clean-state test above - kept since
+    it also exercises the normal "something was already dirty" path, but
+    note it alone would NOT have caught the review-fixed bug: add_*
+    already sets the real module flag via _mark_dirty() before
+    request_flush() ever runs, so this test's `len(calls) == 1` passed
+    even while request_flush()'s own assignment was a silent no-op."""
     calls = _spy_on_writes(telemetry_module, monkeypatch)
 
     telemetry_module.add_node_telemetry_record("!aaaaaaaa", {"voltage": 4.0})

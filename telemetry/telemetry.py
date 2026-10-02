@@ -275,6 +275,7 @@ def request_flush(wait=False):
     flush on the CALLING thread right away (used by shutdown_telemetry(),
     where the process is exiting and there is no later tick to rely on
     the woken worker actually running before exit)."""
+    global _telemetry_dirty
     with _telemetry_lock:
         _telemetry_dirty = True
     _flush_now_event.set()
@@ -304,9 +305,18 @@ def shutdown_telemetry():
     would. Registered with atexit at module import time - there is no
     other single "runtime stop path" in this codebase to hook into (see
     CLAUDE.md: server.py has no stop_runtime() counterpart to
-    start_runtime()) - and also safe to call directly or more than once."""
+    start_runtime()) - and also safe to call directly or more than once.
+
+    Deliberately calls flush_telemetry() directly rather than
+    request_flush(wait=True): the latter unconditionally marks dirty
+    before flushing (correct for ITS OWN contract - an explicit "I just
+    changed something, persist it now" caller), which would make every
+    shutdown force a write even when nothing was pending, contradicting
+    this function's own "if anything is still dirty" contract above and
+    wasting a write (and, on a Pi, SD-card wear) for no reason."""
     _flush_worker_stop.set()
-    request_flush(wait=True)
+    _flush_now_event.set()
+    flush_telemetry()
 
 
 atexit.register(shutdown_telemetry)

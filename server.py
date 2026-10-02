@@ -2123,10 +2123,33 @@ def parse_telemetry_from_listen_line(line):
     return {"node_id": node_id, "values": values}
 
 
+def _sanitize_non_finite(value):
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: _sanitize_non_finite(item) for key, item in value.items()}
+    return value
+
+
+def _sanitize_telemetry_values(values):
+    """H1-B3 (telemetry correctness): a non-finite (NaN/Infinity/
+    -Infinity) reading becomes None. meshsrv/adapter_ipc_client.py's
+    parse_constant is the primary defense at the IPC JSON-decode boundary;
+    this is a second, independent layer covering any other path that
+    could hand a non-finite float to apply_node_telemetry()/
+    apply_telemetry_values() (e.g. the serial --listen text parser's own
+    float() calls), so a bad reading behaves identically regardless of
+    source: a missing value, never one that poisons node state, telemetry
+    history, or a later JSON round-trip (json.dumps() raises on a bare
+    NaN/Infinity by default - see /api/nodes_export)."""
+    return {key: _sanitize_non_finite(value) for key, value in values.items()}
+
+
 def apply_node_telemetry(node_id, values, source="passive"):
     """Merge normalized telemetry into the persistent node model."""
     if not node_id or not values:
         return False
+    values = _sanitize_telemetry_values(values)
 
     timestamp = time.time()
     with state_lock:
@@ -2343,6 +2366,7 @@ def apply_telemetry_values(values, save_history=True):
 
     if not values:
         return False
+    values = _sanitize_telemetry_values(values)
 
     current = telemetry.telemetry_current
 
@@ -7377,13 +7401,105 @@ def api_telemetry():
     return jsonify(telemetry.telemetry_current)
 
 
+# H1-B2 (F6): the fields averaged per bucket by _downsample_telemetry_history()
+# - the same set add_telemetry_record()/add_node_telemetry_record() store.
+_TELEMETRY_NUMERIC_FIELDS = (
+    "temperature", "humidity", "pressure", "voltage", "current", "power",
+    "battery_level", "channel_utilization", "air_util_tx", "uptime_seconds",
+)
+
+
+def _downsample_telemetry_history(records, since, max_points, now_ts=None):
+    """Groups `records` (already filtered to one node, each with
+    timestamp >= since) into up to `max_points` fixed-width time buckets
+    spanning [since, now] - a 30-day chart stops being limited by a flat
+    5000-record cap shared across every node (chat-telemetry.js's old
+    `limit=5000` + client-side filter) and instead scales its bucket
+    width to whatever range was actually requested. Each numeric field
+    (_TELEMETRY_NUMERIC_FIELDS) is averaged across the records landing in
+    a bucket, ignoring None - a bucket where every record left a field
+    unset reports None for it too, never a false 0.
+
+    Buckets span to `now`, not just to the last record's own timestamp,
+    so a 30-day request always returns buckets covering the full 30 days
+    even if the node's last actual report was somewhat older - the caller
+    can tell "no data recently" from the trailing empty buckets rather
+    than a chart that silently stops early.
+
+    Returns (history, bucket_seconds)."""
+    if now_ts is None:
+        now_ts = time.time()
+    span = max(1.0, now_ts - since)
+    bucket_seconds = max(1, math.ceil(span / max_points))
+
+    buckets = {}
+    for record in records:
+        try:
+            timestamp = float(record.get("timestamp", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        index = int((timestamp - since) // bucket_seconds)
+        index = max(0, min(index, max_points - 1))
+        bucket = buckets.setdefault(index, {"timestamps": [], "fields": {field: [] for field in _TELEMETRY_NUMERIC_FIELDS}})
+        bucket["timestamps"].append(timestamp)
+        for field in _TELEMETRY_NUMERIC_FIELDS:
+            value = record.get(field)
+            if value is None:
+                continue
+            try:
+                bucket["fields"][field].append(float(value))
+            except (TypeError, ValueError):
+                pass
+
+    history = []
+    for index in sorted(buckets):
+        bucket = buckets[index]
+        bucket_timestamp = sum(bucket["timestamps"]) / len(bucket["timestamps"])
+        entry = {
+            "timestamp": bucket_timestamp,
+            "time": datetime.fromtimestamp(bucket_timestamp).strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        for field, values in bucket["fields"].items():
+            entry[field] = (sum(values) / len(values)) if values else None
+        history.append(entry)
+
+    return history, bucket_seconds
+
+
 @app.route("/api/telemetry/history")
 def api_telemetry_history():
     limit = request.args.get("limit", 100, type=int)
     node_id = request.args.get("node_id", "").strip()
+    since = request.args.get("since", type=float)
+    # H1-B2: default 1000, capped at 5000 - a caller can ask for fewer
+    # buckets than that but never more, regardless of how wide a range
+    # `since` covers.
+    max_points = request.args.get("max_points", 1000, type=int)
+    max_points = max(1, min(max_points, 5000))
 
     if node_id and not is_valid_node_id(node_id):
         return jsonify({"ok": False, "error": "Invalid node_id"}), 400
+
+    # H1-B2 review fix: request.args.get(..., type=float) happily parses
+    # the literal strings "nan"/"inf"/"-inf" (Python's float() accepts
+    # them) - math.ceil(NaN) then raises inside
+    # _downsample_telemetry_history(), a 500 from a single malformed query
+    # string. Reject non-finite outright; a `since` in the future can only
+    # ever match zero records, so answer that directly instead of running
+    # the downsample machinery on a degenerate range.
+    if since is not None:
+        if not math.isfinite(since):
+            return jsonify({"ok": False, "error": "'since' must be a finite number", "error_code": "invalid_since"}), 400
+        now_ts = time.time()
+        if since > now_ts:
+            return jsonify({
+                "history": [],
+                "total_in_range": 0,
+                "downsampled": False,
+                "bucket_seconds": 1,
+                "node_id": node_id or LOCAL_NODE_ID,
+                "config": telemetry.telemetry_config,
+            })
 
     with state_lock:
         all_history = [
@@ -7408,6 +7524,25 @@ def api_telemetry_history():
                 record for record in all_history
                 if record.get("node_id") in (None, "", LOCAL_NODE_ID)
             ]
+
+        if since is not None:
+            # H1-B2: a `since` query bypasses the plain `limit` cap
+            # entirely - the whole point is a 30-day (or any other) range
+            # request is no longer limited by a flat record count, local
+            # or shared. `limit` without `since` is unchanged below.
+            in_range = [
+                record for record in filtered
+                if float(record.get("timestamp", 0) or 0) >= since
+            ]
+            history, bucket_seconds = _downsample_telemetry_history(in_range, since, max_points)
+            return jsonify({
+                "history": history,
+                "total_in_range": len(in_range),
+                "downsampled": len(history) < len(in_range),
+                "bucket_seconds": bucket_seconds,
+                "node_id": node_id or LOCAL_NODE_ID,
+                "config": telemetry.telemetry_config,
+            })
 
         history = filtered[-limit:] if limit > 0 else filtered
 

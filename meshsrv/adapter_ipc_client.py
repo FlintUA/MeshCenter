@@ -494,7 +494,20 @@ class AdapterSupervisor:
                         if not stripped:
                             continue
                         try:
-                            parsed = json.loads(stripped)
+                            # H1-B3 (F telemetry correctness): json.loads()
+                            # accepts the bare NaN/Infinity/-Infinity tokens
+                            # as a non-standard extension - the adapter
+                            # process (or a radio sending a malformed
+                            # telemetry reading) could hand back one of
+                            # these inside an otherwise well-formed IPC
+                            # response. parse_constant maps all three to
+                            # None at the JSON-decode boundary, so nothing
+                            # downstream (apply_node_telemetry(),
+                            # apply_telemetry_values(), telemetry history,
+                            # /api/nodes_export) ever has to special-case a
+                            # non-finite float - it just sees a normal
+                            # missing reading.
+                            parsed = json.loads(stripped, parse_constant=lambda _: None)
                         except json.JSONDecodeError:
                             bad_lines += 1
                             bad_bytes += len(raw)

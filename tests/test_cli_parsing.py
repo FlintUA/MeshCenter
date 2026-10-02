@@ -98,14 +98,23 @@ def test_parse_nodes_from_info_returns_false_without_marker(server_module):
 # ONLY from the local node's own entry, never a neighbour's.
 # ---------------------------------------------------------------------------
 
-def test_get_telemetry_from_info_never_applies_a_neighbours_environment_metrics(server_module):
+def test_get_telemetry_from_info_never_applies_a_neighbours_environment_metrics(server_module, monkeypatch):
     captured = {}
 
     def _capture(values, save_history=True):
         captured["values"] = values
         return True
 
-    server_module.apply_telemetry_values = _capture
+    # H1-B review finding: a direct attribute assignment here (instead of
+    # monkeypatch.setattr) permanently replaced server.py's real
+    # apply_telemetry_values() with this no-op stub for the rest of the
+    # whole pytest session - any later test (anywhere in the suite) that
+    # called the real function via server_module would silently get this
+    # stub instead, with no exception and no obvious symptom beyond
+    # telemetry_current/sensor_data never actually being updated. Same bug
+    # class as tests/test_inbound_events_nodeinfo_position_telemetry.py's
+    # fixed add_node_telemetry_record case earlier this session.
+    monkeypatch.setattr(server_module, "apply_telemetry_values", _capture)
     server_module.get_telemetry_from_info(INFO_OUTPUT_LOCAL_METRICS_LEAK)
 
     assert "values" in captured, "apply_telemetry_values() was never called"

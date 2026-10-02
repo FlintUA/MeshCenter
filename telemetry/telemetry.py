@@ -27,6 +27,142 @@ def configure_storage(filepath):
     TELEMETRY_FILE = str(filepath)
 
 
+# H1-B2 review fix (F6): per-node caps ALONE still allowed an unbounded
+# total file size - MAX_RECORDS_PER_NODE=10000 applied to every node
+# meant dev's 505 known nodes could theoretically reach ~1.9 GB (505 *
+# 10000 * ~374 bytes/record, measured via save_telemetry()'s own
+# json.dumps(indent=2) shape), rewritten+fsynced on an SD card on every
+# single telemetry save. Three independent limits now apply together:
+#
+# - MAX_LOCAL_RECORDS: local's own budget, unchanged from the original
+#   H1-B2 sizing - 30 days of history at the DEFAULT 300s interval
+#   (86400*30/300 = 8640 records) with headroom for a shorter configured
+#   interval or a burst of merged device/environment/power samples.
+# - MAX_RECORDS_PER_REMOTE_NODE: a much smaller per-remote-node budget -
+#   1000 records at the default interval is ~3.5 days of per-node
+#   history, plenty for "what has this specific remote node been doing
+#   recently" (this feature's actual use case - long-term 30-day trend
+#   analysis is a local-node feature, see MAX_LOCAL_RECORDS). Combined
+#   with MAX_TOTAL_RECORDS below, one chatty remote node can never
+#   consume more than 2.5% of the whole history file's budget by itself.
+# - MAX_TOTAL_RECORDS: a hard ceiling on telemetry_history's TOTAL length
+#   regardless of how many distinct nodes exist - the actual bound on
+#   worst-case file size, since per-node caps alone can't bound a
+#   mesh with hundreds of nodes. ~374 bytes/record * 40000 =~ 15 MB, a
+#   number that holds no matter how many remote nodes a mesh has. When
+#   exceeded, the OLDEST REMOTE records are evicted first (see
+#   _enforce_global_ceiling()) - local history is never evicted by
+#   remote traffic, matching MAX_LOCAL_RECORDS' own independent budget.
+#
+# A record is ~110-140 bytes of JSON for local (time, timestamp,
+# temperature, humidity, pressure, voltage, current, power, source); a
+# remote node's record adds node_id/battery_level/channel_utilization/
+# air_util_tx/uptime_seconds, up to ~220 bytes - 374 bytes/record above
+# is the actually-measured json.dumps(indent=2) figure including
+# object/key overhead, not the raw field-byte estimate.
+MAX_LOCAL_RECORDS = 10000
+MAX_RECORDS_PER_REMOTE_NODE = 1000
+MAX_TOTAL_RECORDS = 40000
+
+# A per-key record count, maintained incrementally (incremented on
+# append, decremented on eviction) instead of recomputed by scanning
+# telemetry_history on every single call - the previous _trim_node_history()
+# scanned+rebuilt the WHOLE list on every append regardless of whether
+# anything was actually over its cap, exactly the "O(N) full-history scan
+# on every append" the review flagged. Keyed the same way as every
+# record's own "node_id" field: None for local. Rebuilt from scratch
+# (_rebuild_record_counts()) at load time; any test that mutates
+# telemetry_history directly (bypassing add_telemetry_record()/
+# add_node_telemetry_record()) must call it too before relying on
+# cap-enforcement behavior.
+_record_counts = {}
+
+
+def _rebuild_record_counts():
+    """O(N) - meant to run once (at load time), not per-append."""
+    global _record_counts
+    counts = {}
+    for record in telemetry_history:
+        if not isinstance(record, dict):
+            continue
+        key = record.get("node_id")
+        counts[key] = counts.get(key, 0) + 1
+    _record_counts = counts
+
+
+def _record_key_cap(key):
+    return MAX_LOCAL_RECORDS if key is None else MAX_RECORDS_PER_REMOTE_NODE
+
+
+def _evict_oldest_for_key(key, cap):
+    """Removes the OLDEST records for one key until its count is back at
+    `cap` - O(N) (a flat shared list has no cheaper way to drop a
+    specific key's oldest entries), but only runs when that key is
+    actually over its own cap, not on every append; every other key's
+    records are left untouched. Must be called with _telemetry_lock held."""
+    global telemetry_history
+    excess = _record_counts.get(key, 0) - cap
+    if excess <= 0:
+        return
+    removed = 0
+    kept = []
+    for record in telemetry_history:
+        if removed < excess and isinstance(record, dict) and record.get("node_id") == key:
+            removed += 1
+            continue
+        kept.append(record)
+    telemetry_history = kept
+    _record_counts[key] = _record_counts.get(key, 0) - removed
+
+
+def _enforce_global_ceiling():
+    """Hard-bounds telemetry_history's total length at MAX_TOTAL_RECORDS by
+    evicting the OLDEST REMOTE records first - local history (key=None)
+    is never touched here, matching MAX_LOCAL_RECORDS' own independent
+    budget. The length check is O(1), so this is a no-op on every append
+    that doesn't cross the ceiling; the eviction itself is O(N) same as
+    _evict_oldest_for_key() above, for the same reason. Must be called
+    with _telemetry_lock held."""
+    global telemetry_history
+    excess = len(telemetry_history) - MAX_TOTAL_RECORDS
+    if excess <= 0:
+        return
+    removed = 0
+    kept = []
+    for record in telemetry_history:
+        if removed < excess and isinstance(record, dict) and record.get("node_id") is not None:
+            key = record.get("node_id")
+            _record_counts[key] = _record_counts.get(key, 1) - 1
+            removed += 1
+            continue
+        kept.append(record)
+    telemetry_history = kept
+
+
+def _note_appended(key):
+    """Call immediately after appending one record for `key` - O(1)
+    bookkeeping, then enforces that key's own cap and the global ceiling
+    (both no-ops, O(1) to check, unless actually exceeded). Must be
+    called with _telemetry_lock held."""
+    _record_counts[key] = _record_counts.get(key, 0) + 1
+    _evict_oldest_for_key(key, _record_key_cap(key))
+    _enforce_global_ceiling()
+
+
+def _enforce_all_caps_after_load():
+    """Every distinct key's own cap, then the global ceiling - used once
+    at load time, since a file saved before these limits existed (or by
+    an older build, or hand-edited) could have any key over its cap, or
+    the file as a whole over the global ceiling, not just whichever key
+    happens to receive the next append. Must be called with
+    _telemetry_lock held. Returns True if anything was removed."""
+    before = len(telemetry_history)
+    for key in list(_record_counts.keys()):
+        _evict_oldest_for_key(key, _record_key_cap(key))
+    _enforce_global_ceiling()
+    return len(telemetry_history) != before
+
+
 telemetry_history = []
 telemetry_config = {"interval": 300, "enabled": True}
 telemetry_current = {
@@ -50,12 +186,11 @@ def load_telemetry():
         if data:
             telemetry_history = data.get("history", [])
             telemetry_config = data.get("config", {"interval": 300, "enabled": True})
-
-            max_records = 26000
-            if len(telemetry_history) > max_records:
-                telemetry_history = telemetry_history[-max_records:]
+            _rebuild_record_counts()
+            if _enforce_all_caps_after_load():
                 save_telemetry()
         else:
+            _rebuild_record_counts()
             save_telemetry()
 
 
@@ -84,6 +219,17 @@ def add_telemetry_record(temp, humidity, pressure, voltage, current):
     global telemetry_history, telemetry_last_save_time
 
     with _telemetry_lock:
+        # H1-B1 (F5): telemetry_config["enabled"] used to be written by
+        # /api/telemetry/config but never read anywhere - toggling it had
+        # no effect at all. Per the agreed semantics, disabling only stops
+        # WRITING HISTORY: live values (telemetry_current, sensor_data,
+        # base_status, node device/environment/power_metrics) are updated
+        # directly by server.py's apply_telemetry_values()/
+        # apply_node_telemetry() regardless of this flag, independently of
+        # the add_*_record() calls these two functions gate.
+        if not telemetry_config.get("enabled", True):
+            return False
+
         current_time = time.time()
         interval = telemetry_config.get("interval", 300)
 
@@ -116,10 +262,7 @@ def add_telemetry_record(temp, humidity, pressure, voltage, current):
         }
 
         telemetry_history.append(record)
-
-        max_records = 26000
-        if len(telemetry_history) > max_records:
-            telemetry_history = telemetry_history[-max_records:]
+        _note_appended(None)
 
         telemetry_last_save_time = current_time
         save_telemetry()
@@ -154,6 +297,12 @@ def add_node_telemetry_record(node_id, values, source="passive"):
         return False
 
     with _telemetry_lock:
+        # H1-B1 (F5): see add_telemetry_record()'s identical comment above -
+        # same gate, same semantics (live per-node fields are updated by
+        # apply_node_telemetry() regardless, independently of this call).
+        if not telemetry_config.get("enabled", True):
+            return False
+
         timestamp = time.time()
         interval = max(30, int(telemetry_config.get("interval", 300) or 300))
 
@@ -200,10 +349,7 @@ def add_node_telemetry_record(node_id, values, source="passive"):
             **fields,
         }
         telemetry_history.append(record)
-
-        max_records = 26000
-        if len(telemetry_history) > max_records:
-            telemetry_history = telemetry_history[-max_records:]
+        _note_appended(node_id)
 
         save_telemetry()
         return True

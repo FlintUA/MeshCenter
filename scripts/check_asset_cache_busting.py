@@ -25,7 +25,7 @@ INDEX_HTML = Path(__file__).parent.parent / 'templates' / 'index.html'
 I18N_JS = Path(__file__).parent.parent / 'static' / 'i18n.js'
 
 # The single canonical cache-busting token for the current frontend release.
-CURRENT_VERSION = '20261001-h1a2-auth-version'
+CURRENT_VERSION = '20261002-h1b-telemetry-correctness'
 
 # Browser assets changed in the current release. Every entry must be referenced
 # in index.html with CURRENT_VERSION (and, for i18n.js, its CATALOG_VERSION must
@@ -33,7 +33,7 @@ CURRENT_VERSION = '20261001-h1a2-auth-version'
 # stale from cache. Keys are the `static/`-relative path.
 CURRENT_ASSETS = {
     'static/i18n.js',
-    'static/chat-updates-security.js',
+    'static/chat-telemetry.js',
 }
 
 # `<link rel="stylesheet" href="{{ url_for('static', filename='X') }}?v=TOKEN">`

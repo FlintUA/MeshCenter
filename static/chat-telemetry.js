@@ -91,8 +91,12 @@ async function loadTelemetry() {
     }
 }
 
-async function fetchTelemetryHistoryData(nodeId = '', force = false) {
-    const cacheKey = nodeId || '__local__';
+async function fetchTelemetryHistoryData(nodeId = '', rangeMinutes = 60, force = false) {
+    // H1-B2 (F6): cache key now includes the range - a 30-day fetch and a
+    // 1h fetch for the same node are genuinely different server queries
+    // (different `since`, different bucket width), not the same 5000-row
+    // blob sliced differently on the client the way this used to work.
+    const cacheKey = `${nodeId || '__local__'}:${rangeMinutes}`;
     const cached = telemetryHistoryCache.get(cacheKey);
     const now = Date.now();
 
@@ -105,7 +109,12 @@ async function fetchTelemetryHistoryData(nodeId = '', force = false) {
     }
 
     const requestPromise = (async () => {
-        const params = new URLSearchParams({ limit: '5000' });
+        // H1-B2: no more flat limit=5000 - `since` asks the server for
+        // exactly the requested range, downsampled server-side into at
+        // most max_points buckets instead of being capped by a record
+        // count shared across every node.
+        const since = (now / 1000) - (rangeMinutes * 60);
+        const params = new URLSearchParams({ since: String(since), max_points: '1000' });
         if (nodeId) params.set('node_id', nodeId);
 
         const response = await fetch(`/api/telemetry/history?${params.toString()}`);
@@ -134,10 +143,14 @@ async function fetchTelemetryHistoryData(nodeId = '', force = false) {
     }
 }
 
-async function loadTelemetryHistory(nodeId = '', force = false) {
+async function loadTelemetryHistory(nodeId = '', rangeMinutes = 60, force = false) {
     try {
-        const historyData = await fetchTelemetryHistoryData(nodeId, force);
+        const historyData = await fetchTelemetryHistoryData(nodeId, rangeMinutes, force);
 
+        // Already time-bounded (since=now-range) and downsampled by the
+        // server - renderTelemetryWithRange() no longer needs to (and,
+        // since the 5000-row client-side blob is gone, no longer can)
+        // re-filter this by time itself.
         telemetryFullHistory = historyData.history || [];
         telemetryHistory = telemetryFullHistory;
 
@@ -145,6 +158,7 @@ async function loadTelemetryHistory(nodeId = '', force = false) {
             telemetryInterval = historyData.config.interval || 300;
             const select = document.getElementById('telemetryInterval');
             if (select) select.value = telemetryInterval;
+            renderTelemetryHistoryEnabled(historyData.config.enabled !== false);
         }
 
         console.log('[TELEMETRY] History records:', telemetryHistory.length);
@@ -208,6 +222,41 @@ function updateTelemetryUI() {
         } else {
             statusEl.textContent = `⚪ ${window.I18N.t('nodes.no_data')}`;
         }
+    }
+}
+
+function renderTelemetryHistoryEnabled(enabled) {
+    const toggle = document.getElementById('telemetryHistoryEnabled');
+    if (toggle) toggle.checked = enabled;
+    const note = document.getElementById('telemetryHistoryPausedNote');
+    if (note) note.style.display = enabled ? 'none' : 'block';
+}
+
+async function toggleTelemetryHistoryEnabled(checked) {
+    try {
+        const response = await fetch('/api/telemetry/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ enabled: checked })
+        });
+
+        const data = await response.json();
+        if (data.ok) {
+            renderTelemetryHistoryEnabled(data.config.enabled !== false);
+            showToast(
+                checked
+                    ? `✅ ${window.I18N.t('settings.telemetry_history_resumed')}`
+                    : `✅ ${window.I18N.t('settings.telemetry_history_paused_toast')}`,
+                'success'
+            );
+        } else {
+            renderTelemetryHistoryEnabled(!checked);
+            showToast(`❌ ${window.I18N.t('nodes.interval_update_failed')}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error updating telemetry config:', error);
+        renderTelemetryHistoryEnabled(!checked);
+        showToast(`❌ ${window.I18N.t('errors.network_error')}`, 'error');
     }
 }
 
@@ -288,7 +337,6 @@ async function openTelemetryModal(type, nodeId = '', nodeName = '') {
         if (!nodeId) {
             await loadTelemetry();
         }
-        await loadTelemetryHistory(nodeId);
 
         if (requestId !== telemetryModalRequestId
             || modal.dataset.type !== type
@@ -296,23 +344,23 @@ async function openTelemetryModal(type, nodeId = '', nodeName = '') {
             return;
         }
 
-        renderTelemetryWithRange(type, telemetryTimeRange);
+        await renderTelemetryWithRange(type, telemetryTimeRange);
         } catch (error) {
         console.error('Error loading telemetry modal:', error);
         container.innerHTML = `<div class="loading">⚠️ ${escapeHtml(window.I18N.t('nodes.error_loading_telemetry'))}</div>`;
     }
 }
 
-function setTelemetryRange(minutes) {
+async function setTelemetryRange(minutes) {
     telemetryTimeRange = minutes;
-    
+
     document.querySelectorAll('.time-btn').forEach(btn => {
         btn.classList.toggle('active', parseInt(btn.dataset.range) === minutes);
     });
-    
+
     const modal = document.getElementById('telemetryModal');
     const type = modal ? modal.dataset.type : 'environment';
-    renderTelemetryWithRange(type, minutes);
+    await renderTelemetryWithRange(type, minutes);
 }
 
 function toggleTelemetrySeries(seriesName) {
@@ -628,35 +676,53 @@ function _refreshTelemetryChartOnThemeChange() {
     if (type) renderTelemetryWithRange(type, telemetryTimeRange);
 }
 
-function renderTelemetryWithRange(type, minutes) {
+async function renderTelemetryWithRange(type, minutes) {
     const container = document.getElementById('telemetryChartContainer');
     const recordsCount = document.getElementById('telemetryRecordsCount');
-    
-    if (!container) return;
-    
-    const now = Date.now() / 1000;
-    const cutoff = now - (minutes * 60);
-    
-    const filteredRecords = telemetryFullHistory.filter(record => {
-        const timestamp = Number(record?.timestamp);
-        return Number.isFinite(timestamp)
-            && timestamp >= cutoff
-            && telemetryRecordHasType(record, type);
-    });
-    
-const rangeLabel = minutes < 1440
-    ? `${minutes / 60}h`
-    : `${minutes / 1440}d`;
+    const modal = document.getElementById('telemetryModal');
 
-if (filteredRecords.length === 0) {
-    container.innerHTML = `<div class="loading">📊 ${escapeHtml(window.I18N.t('nodes.no_data_for_period', { range: rangeLabel }))}</div>`;
-    if (recordsCount) recordsCount.textContent = `📊 ${window.I18N.plural('nodes.records_count', 0, { count: 0 })}`;
-    return;
-}
+    if (!container || !modal) return;
 
-if (recordsCount) {
-    recordsCount.textContent = `📊 ${window.I18N.plural('nodes.records_count', filteredRecords.length, { count: filteredRecords.length })} (${rangeLabel})`;
-}
+    // H1-B2 (F6): switching range now means a real server fetch
+    // (since=now-range), not just re-filtering an already-loaded 5000-row
+    // blob in memory - a fast double range-switch (or closing the modal
+    // mid-fetch) must not let the SLOWER of two requests paint its
+    // (now-stale) result over the faster/later one.
+    const requestId = ++telemetryModalRequestId;
+    const nodeId = modal.dataset.nodeId || '';
+
+    try {
+        await loadTelemetryHistory(nodeId, minutes);
+    } catch (error) {
+        if (requestId === telemetryModalRequestId) {
+            container.innerHTML = `<div class="loading">⚠️ ${escapeHtml(window.I18N.t('nodes.error_loading_telemetry'))}</div>`;
+        }
+        return;
+    }
+
+    if (requestId !== telemetryModalRequestId
+        || modal.dataset.type !== type
+        || modal.dataset.nodeId !== nodeId) {
+        return;
+    }
+
+    // Already time-bounded by the server (since=now-range) - only the
+    // chart TYPE (environment vs power) still needs filtering here.
+    const filteredRecords = telemetryFullHistory.filter(record => telemetryRecordHasType(record, type));
+
+    const rangeLabel = minutes < 1440
+        ? `${minutes / 60}h`
+        : `${minutes / 1440}d`;
+
+    if (filteredRecords.length === 0) {
+        container.innerHTML = `<div class="loading">📊 ${escapeHtml(window.I18N.t('nodes.no_data_for_period', { range: rangeLabel }))}</div>`;
+        if (recordsCount) recordsCount.textContent = `📊 ${window.I18N.plural('nodes.records_count', 0, { count: 0 })}`;
+        return;
+    }
+
+    if (recordsCount) {
+        recordsCount.textContent = `📊 ${window.I18N.plural('nodes.records_count', filteredRecords.length, { count: filteredRecords.length })} (${rangeLabel})`;
+    }
 
     renderTelemetryChart(container, filteredRecords, type);
     updateTelemetryCards(filteredRecords, type);

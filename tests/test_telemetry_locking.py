@@ -12,11 +12,20 @@ that, a read landing mid-write could delete the writer's own temp file under
 the old json_store design (fixed in PR 1).
 
 Fix: one module-level RLock (reentrant - load_telemetry() calls
-save_telemetry() internally) held for every history mutation + save, and a
-new get_history_snapshot() that returns an isolated, point-in-time copy of
+save_telemetry() internally) held for every history mutation, and a new
+get_history_snapshot() that returns an isolated, point-in-time copy of
 telemetry_history under that same lock - server.py's export route now calls
 this instead of re-reading the file, so it can never observe a half-written
 file OR a list being mutated out from under it mid-copy.
+
+H1-C5 update: the lock is still held for every in-memory mutation (append,
+dirty-flag set, snapshot-for-writing), but the actual disk WRITE for the
+debounced flush path now happens OUTSIDE it (see flush_telemetry() in
+telemetry/telemetry.py) - a slow SD-card write must never block a
+concurrent ingest thread that only needs the lock briefly. The two tests
+below that used to assert the opposite (a concurrent append/snapshot
+BLOCKS behind an in-progress write) were rewritten to assert the new,
+intentional non-blocking behavior instead - see their own docstrings.
 """
 
 import os
@@ -55,67 +64,57 @@ def test_load_telemetry_does_not_deadlock_on_its_own_lock(telemetry_module):
     assert telemetry_module.telemetry_history == []
 
 
-def test_concurrent_save_blocks_a_concurrent_append_until_it_finishes(telemetry_module, monkeypatch):
-    order = []
-    save_started = threading.Event()
-    release_save = threading.Event()
-    first_call = threading.Event()
-    first_call.set()  # only the FIRST call pauses - later ones (including
-    # the second thread's own eventual save, once it gets the lock) must
-    # run for real, or this test would just be measuring the mock's own
-    # blocking instead of the module's lock.
-
+def test_a_slow_flush_write_does_not_block_a_concurrent_append(telemetry_module, monkeypatch):
+    """H1-C5 superseded this test's original assertion: save_telemetry()
+    used to hold _telemetry_lock for the ENTIRE write, so a concurrent
+    append genuinely had to wait for it. The debounced flush_telemetry()
+    deliberately moved the slow disk write OUTSIDE the lock (snapshot
+    under the lock, write after releasing it) specifically so an ingest
+    thread calling add_node_telemetry_record() while a flush's write is
+    still in flight only ever waits for that brief snapshot, never for
+    the write itself - this is the actual point of H1-C5's debounce."""
+    write_started = threading.Event()
+    release_write = threading.Event()
     real_write = telemetry_module.safe_write_json
 
-    def _pausing_write(path, data):
-        if first_call.is_set():
-            first_call.clear()
-            order.append("save_started")
-            save_started.set()
-            release_save.wait(timeout=5)
-            order.append("save_finished")
-        return real_write(path, data)
+    def _pausing_write(path, data, indent=2):
+        write_started.set()
+        release_write.wait(timeout=5)
+        return real_write(path, data, indent=indent)
 
     monkeypatch.setattr(telemetry_module, "safe_write_json", _pausing_write)
 
-    def _trigger_save():
-        telemetry_module.add_node_telemetry_record("!aaaaaaaa", {"voltage": 4.0})
+    telemetry_module.add_node_telemetry_record("!aaaaaaaa", {"voltage": 4.0})
 
-    saver_thread = threading.Thread(target=_trigger_save)
-    saver_thread.start()
+    flush_thread = threading.Thread(target=telemetry_module.flush_telemetry, kwargs={"force": True})
+    flush_thread.start()
     try:
-        assert save_started.wait(timeout=5), "save never started"
+        assert write_started.wait(timeout=5), "flush never started its write"
+
+        append_done = threading.Event()
 
         def _second_append():
             telemetry_module.add_node_telemetry_record("!bbbbbbbb", {"voltage": 3.9})
-            order.append("append_done")
+            append_done.set()
 
         appender_thread = threading.Thread(target=_second_append)
         appender_thread.start()
         try:
-            # Poll rather than a single fixed sleep - robust under a loaded
-            # CI/full-suite run where scheduling can be delayed well past
-            # any one short sleep. If the lock is doing its job this NEVER
-            # becomes true no matter how long we wait, so a generous
-            # bounded poll is exactly as safe as a shorter one, just less
-            # prone to a false failure under load.
-            deadline = time.monotonic() + 2.0
-            while time.monotonic() < deadline and "append_done" not in order:
-                time.sleep(0.02)
-            assert "append_done" not in order, "a concurrent append must block while a save holds the lock"
+            assert append_done.wait(timeout=2), (
+                "a concurrent append must NOT block behind a slow flush write"
+            )
         finally:
-            # Always unblock the saver and join both threads, even if the
-            # assertion above failed - otherwise a failed run here leaves
-            # both threads alive, still holding/contending for the module-
-            # level lock, which then poisons every later test in this file.
-            release_save.set()
             appender_thread.join(timeout=5)
     finally:
-        release_save.set()
-        saver_thread.join(timeout=5)
+        # Always unblock the writer and join, even if the assertion above
+        # failed - otherwise a failed run here leaves a thread alive,
+        # still holding/contending for the module-level lock, which then
+        # poisons every later test in this file.
+        release_write.set()
+        flush_thread.join(timeout=5)
 
-    assert order.index("save_finished") < order.index("append_done")
-    # Both records landed - the lock serialized them, it didn't drop one.
+    # Both records landed - the lock still serializes the in-memory
+    # mutations themselves, only the disk write moved outside it.
     node_ids = {r.get("node_id") for r in telemetry_module.telemetry_history}
     assert node_ids == {"!aaaaaaaa", "!bbbbbbbb"}
 
@@ -135,27 +134,32 @@ def test_get_history_snapshot_returns_an_isolated_copy(telemetry_module):
     assert len(snapshot) == 1
 
 
-def test_get_history_snapshot_waits_for_an_in_progress_save(telemetry_module, monkeypatch):
-    save_started = threading.Event()
-    release_save = threading.Event()
+def test_get_history_snapshot_does_not_wait_for_an_in_progress_flush(telemetry_module, monkeypatch):
+    """H1-C5 superseded this test's original assertion the same way as
+    test_a_slow_flush_write_does_not_block_a_concurrent_append above:
+    get_history_snapshot() only ever needs _telemetry_lock for a fast
+    list copy, and flush_telemetry() releases that lock before starting
+    its own slow write - a snapshot requested while a flush's write is in
+    flight must return promptly, not wait for the write to finish."""
+    write_started = threading.Event()
+    release_write = threading.Event()
     real_write = telemetry_module.safe_write_json
 
-    def _pausing_write(path, data):
-        save_started.set()
-        release_save.wait(timeout=5)
-        return real_write(path, data)
+    def _pausing_write(path, data, indent=2):
+        write_started.set()
+        release_write.wait(timeout=5)
+        return real_write(path, data, indent=indent)
 
     monkeypatch.setattr(telemetry_module, "safe_write_json", _pausing_write)
 
-    result = {}
+    telemetry_module.add_node_telemetry_record("!aaaaaaaa", {"voltage": 4.0})
 
-    def _trigger_save():
-        telemetry_module.add_node_telemetry_record("!aaaaaaaa", {"voltage": 4.0})
-
-    saver_thread = threading.Thread(target=_trigger_save)
-    saver_thread.start()
+    flush_thread = threading.Thread(target=telemetry_module.flush_telemetry, kwargs={"force": True})
+    flush_thread.start()
     try:
-        assert save_started.wait(timeout=5)
+        assert write_started.wait(timeout=5)
+
+        result = {}
 
         def _snapshot():
             result["snapshot"] = telemetry_module.get_history_snapshot()
@@ -163,16 +167,13 @@ def test_get_history_snapshot_waits_for_an_in_progress_save(telemetry_module, mo
         snapshot_thread = threading.Thread(target=_snapshot)
         snapshot_thread.start()
         try:
-            deadline = time.monotonic() + 2.0
-            while time.monotonic() < deadline and "snapshot" not in result:
-                time.sleep(0.02)
-            assert "snapshot" not in result, "snapshot must wait for the in-progress save's lock hold"
+            snapshot_thread.join(timeout=2)
+            assert "snapshot" in result, "snapshot must not wait for the in-progress flush's write"
         finally:
-            release_save.set()
             snapshot_thread.join(timeout=5)
     finally:
-        release_save.set()
-        saver_thread.join(timeout=5)
+        release_write.set()
+        flush_thread.join(timeout=5)
 
     assert len(result["snapshot"]) == 1
 

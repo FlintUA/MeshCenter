@@ -1,3 +1,4 @@
+import atexit
 import os
 import threading
 import time
@@ -194,13 +195,143 @@ def load_telemetry():
             save_telemetry()
 
 
-def save_telemetry():
+# H1-C5: save_telemetry() used to run synchronously on whichever thread
+# accepted a record (the serial `--listen` parser or the TCP inbound
+# worker) - rewriting the ENTIRE history (indent=2, fsync'd) under
+# _telemetry_lock on every single accepted record. Measured on dev (Pi
+# Zero 2W) at a 40k-record history: ~5s per save, during which that
+# ingest thread (and anything else waiting on _telemetry_lock) was
+# blocked. Fixed by debouncing: add_telemetry_record()/
+# add_node_telemetry_record() now only flip a dirty flag (_mark_dirty()),
+# and telemetry_flush_worker() - a background thread started once from
+# server.py's start_runtime(), for every transport - writes at most once
+# every TELEMETRY_FLUSH_INTERVAL_S while dirty. The write itself always
+# happens OUTSIDE _telemetry_lock (see flush_telemetry()), so a slow SD-
+# card write can never block an ingest thread that only needs the lock
+# briefly to append one record.
+#
+# Trade-off, accepted and documented (see README's telemetry section): a
+# crash (not a clean shutdown - see shutdown_telemetry() below) can lose
+# up to TELEMETRY_FLUSH_INTERVAL_S seconds of telemetry HISTORY. Nothing
+# else is affected - live values (telemetry_current, node device/
+# environment/power metrics) are updated directly by server.py's
+# apply_telemetry_values()/apply_node_telemetry() independently of this
+# buffer, and every other JSON-backed store in this project still saves
+# synchronously, unchanged.
+TELEMETRY_FLUSH_INTERVAL_S = 60
+
+_telemetry_dirty = False
+# Set to wake telemetry_flush_worker() before its normal tick - used by
+# request_flush() (explicit config/enabled changes) and shutdown_telemetry()
+# (clean shutdown), never by the two ingest functions themselves (they are
+# exactly the hot path this debounce exists to keep off the write path).
+_flush_now_event = threading.Event()
+_flush_worker_stop = threading.Event()
+
+
+def _mark_dirty():
+    """Caller MUST already hold _telemetry_lock - same contract as
+    _note_appended() and friends above."""
+    global _telemetry_dirty
+    _telemetry_dirty = True
+
+
+def flush_telemetry(force=False):
+    """Writes telemetry_history/telemetry_config to disk if dirty (or
+    unconditionally when `force=True`). The snapshot (a plain dict - no
+    deep copy needed, see get_history_snapshot()'s own comment on why a
+    shallow list copy is enough once nothing mutates records in place
+    after this point) is taken, and the dirty flag cleared, under
+    _telemetry_lock; the actual json.dumps()+fsync - the slow part on an
+    SD card - happens OUTSIDE it. If that write fails, the dirty flag is
+    set again (regardless of what a concurrent append may have already
+    set it to) so the NEXT tick retries rather than silently losing the
+    pending write forever. Returns True if a write was attempted and
+    succeeded, False if nothing was dirty (and not forced) or the write
+    itself failed."""
+    global _telemetry_dirty
     with _telemetry_lock:
+        if not (_telemetry_dirty or force):
+            return False
         data = {
             "config": telemetry_config,
             "history": telemetry_history,
         }
-        safe_write_json(TELEMETRY_FILE, data)
+        _telemetry_dirty = False
+
+    ok = safe_write_json(TELEMETRY_FILE, data, indent=None)
+    if not ok:
+        with _telemetry_lock:
+            _telemetry_dirty = True
+    return ok
+
+
+def request_flush(wait=False):
+    """For explicit, infrequent admin actions (interval/enabled config
+    changes via /api/telemetry/config) that should not wait out the full
+    debounce window - the user just changed a setting and expects it
+    persisted now, not up to 60s later. Marks dirty and wakes the
+    background worker immediately; `wait=True` additionally performs the
+    flush on the CALLING thread right away (used by shutdown_telemetry(),
+    where the process is exiting and there is no later tick to rely on
+    the woken worker actually running before exit)."""
+    global _telemetry_dirty
+    with _telemetry_lock:
+        _telemetry_dirty = True
+    _flush_now_event.set()
+    if wait:
+        flush_telemetry()
+
+
+def telemetry_flush_worker():
+    """Background debounce loop - see the module-level comment above
+    flush_telemetry() for the full rationale. Runs for the lifetime of
+    the process, like every other background worker in server.py's
+    "Background threads" group (CLAUDE.md), for every transport (unlike
+    the serial-only group) since telemetry can arrive via TCP too."""
+    while not _flush_worker_stop.is_set():
+        _flush_now_event.wait(timeout=TELEMETRY_FLUSH_INTERVAL_S)
+        _flush_now_event.clear()
+        if _flush_worker_stop.is_set():
+            break
+        flush_telemetry()
+
+
+def shutdown_telemetry():
+    """Flush on clean shutdown: stops telemetry_flush_worker()'s loop and
+    performs one final flush if anything is still dirty, so a graceful
+    process exit (gunicorn worker restart/stop, a manual service restart)
+    never loses the last few seconds of telemetry history the way a crash
+    would. Registered with atexit at module import time - there is no
+    other single "runtime stop path" in this codebase to hook into (see
+    CLAUDE.md: server.py has no stop_runtime() counterpart to
+    start_runtime()) - and also safe to call directly or more than once.
+
+    Deliberately calls flush_telemetry() directly rather than
+    request_flush(wait=True): the latter unconditionally marks dirty
+    before flushing (correct for ITS OWN contract - an explicit "I just
+    changed something, persist it now" caller), which would make every
+    shutdown force a write even when nothing was pending, contradicting
+    this function's own "if anything is still dirty" contract above and
+    wasting a write (and, on a Pi, SD-card wear) for no reason."""
+    _flush_worker_stop.set()
+    _flush_now_event.set()
+    flush_telemetry()
+
+
+atexit.register(shutdown_telemetry)
+
+
+def save_telemetry():
+    """Immediate, synchronous, forced flush - unchanged name/contract for
+    existing callers (load_telemetry()'s own startup saves below, and
+    /api/telemetry/config's explicit interval/enabled changes in
+    server.py, which want their change persisted right away, not
+    debounced). Implemented via flush_telemetry(force=True) so it shares
+    the same snapshot-outside-lock behavior and compact-JSON encoding as
+    the debounced path, rather than a second, divergent write
+    implementation."""
+    flush_telemetry(force=True)
 
 
 def get_history_snapshot():
@@ -265,7 +396,7 @@ def add_telemetry_record(temp, humidity, pressure, voltage, current):
         _note_appended(None)
 
         telemetry_last_save_time = current_time
-        save_telemetry()
+        _mark_dirty()
         return True
 
 
@@ -338,7 +469,7 @@ def add_node_telemetry_record(node_id, values, source="passive"):
             if changed:
                 last_record["source"] = source
                 last_record["updated_at"] = timestamp
-                save_telemetry()
+                _mark_dirty()
             return changed
 
         record = {
@@ -351,5 +482,5 @@ def add_node_telemetry_record(node_id, values, source="passive"):
         telemetry_history.append(record)
         _note_appended(node_id)
 
-        save_telemetry()
+        _mark_dirty()
         return True

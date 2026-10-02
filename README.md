@@ -962,6 +962,8 @@ Typical sensor: **INA226**
 
 Telemetry history is stored locally and can be displayed as charts with selectable time ranges (1 hour to 30 days). Data can be exported as CSV or JSON.
 
+Telemetry history is written to disk on a debounced schedule (at most once every 60 seconds while new data has arrived) rather than on every single received reading, to keep frequent telemetry updates from repeatedly rewriting a large history file. The history is also flushed immediately on a normal service stop/restart. The only practical effect of this is that an abrupt crash or power loss (not a normal restart) can lose up to the last 60 seconds of telemetry *history* — current/live readings shown elsewhere in the UI are unaffected, and nothing else (messages, nodes, waypoints, settings) uses this debounced schedule.
+
 ### 📷 Camera
 
 MeshCenter includes camera support based on Raspberry Pi Camera (CSI, via Picamera2) and USB/UVC webcams — both are handled through a shared driver framework (`camera_manager`), so `/video_feed`, live preview and photo capture work the same way regardless of which camera is active.

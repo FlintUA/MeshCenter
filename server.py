@@ -911,6 +911,14 @@ class _SeenPacketIds:
         self._timestamps = {}
 
     def add(self, pid):
+        # Review fix: a plain `self._timestamps[pid] = time.time()` on an
+        # ALREADY-present pid updates its timestamp but keeps its original
+        # dict position (dict re-assignment never moves a key) - breaking
+        # trim()'s "insertion order == timestamp order, oldest first"
+        # assumption for any re-seen pid. Popping first forces re-insertion
+        # to the end, so a re-seen pid's position always matches its fresh
+        # timestamp, same as a brand-new one.
+        self._timestamps.pop(pid, None)
         self._timestamps[pid] = time.time()
 
     def __contains__(self, pid):

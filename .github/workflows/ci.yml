@@ -12,6 +12,16 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Full history (not the default shallow depth-1 clone) is needed
+          # so `origin/main` actually resolves locally - H1-C review
+          # follow-up: scripts/check_asset_cache_busting.py now diffs this
+          # branch against origin/main's merge-base to catch a changed
+          # static/ asset nobody added to CURRENT_ASSETS. That diff fails
+          # quiet (skips, never errors) if origin/main can't be resolved,
+          # so this isn't load-bearing for the other checks in this job,
+          # but without it the new check would silently never run in CI.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5

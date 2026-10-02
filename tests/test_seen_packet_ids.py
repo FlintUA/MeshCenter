@@ -84,6 +84,41 @@ def test_trim_is_a_noop_when_under_both_limits(tracker):
     assert 1 in tracker and 2 in tracker
 
 
+def test_re_adding_an_existing_pid_moves_it_to_the_end(tracker):
+    """Review fix: a plain dict re-assignment on an already-present key
+    updates its value but keeps its ORIGINAL position - add() must pop
+    before re-inserting so a re-seen pid's position tracks its refreshed
+    timestamp, matching trim()'s "insertion order == timestamp order"
+    assumption."""
+    tracker.add(1)
+    tracker.add(2)
+    tracker.add(3)
+    tracker.add(1)  # re-seen - must jump to the end, not stay at index 0
+    assert list(tracker) == [2, 3, 1]
+
+
+def test_re_adding_a_pid_protects_it_from_count_based_eviction(tracker):
+    """The actual failure mode the review flagged: without the pop-before-
+    insert fix, a re-seen pid keeps its OLD dict position even though its
+    timestamp is fresh - trim()'s count-based eviction (oldest-by-position
+    first) would then evict a just-refreshed pid as if it were still the
+    oldest entry, reopening the dedup window for an id that was supposed
+    to still be suppressed."""
+    tracker.add(1)
+    for pid in range(2, 501):
+        tracker.add(pid)
+    assert len(tracker) == 500
+
+    tracker.add(1)  # re-seen just now
+    tracker.add(501)  # pushes total to 501, forcing trim() to evict exactly one
+
+    tracker.trim(max_count=500, max_age_seconds=1_000_000)
+
+    assert len(tracker) == 500
+    assert 1 in tracker, "a just-refreshed pid must never be evicted as if it were the oldest entry"
+    assert 2 not in tracker, "the genuinely oldest never-re-seen pid should be the one evicted instead"
+
+
 def test_seen_ids_identity_is_preserved_across_cleanup(server_module, monkeypatch):
     """H1-C1: seen_ids must now be MUTATED, never rebound - this is the
     actual bug class the old `seen_ids = set(list(seen_ids)[-500:])`

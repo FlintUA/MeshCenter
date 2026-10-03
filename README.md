@@ -260,7 +260,7 @@ No. MeshCenter complements the official applications with a permanent browser-ba
 
 ### Does MeshCenter send photos over Meshtastic?
 
-No. Photos are stored locally on the Raspberry Pi and viewed through the web interface.
+Camera snapshots are stored locally on the Raspberry Pi and viewed through the web interface — they aren't sent automatically. You can, however, deliberately send a JPEG/PNG/WebP photo to another node as a direct file transfer via the **Files (MCAttach)** tab.
 
 ### Can multiple browsers connect simultaneously?
 

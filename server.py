@@ -7512,11 +7512,18 @@ def api_radio_connection_release():
 @app.route("/api/radio_connection/reconnect", methods=["POST"])
 @handle_errors
 def api_radio_connection_reconnect():
-    if RADIO_IDENTITY_RESULT.get("status") != "MATCH":
-        return jsonify({
-            "ok": False,
-            "error": "Radio identity mismatch - reconnect is blocked for the active profile"
-        }), 409
+    # H2-C Phase 2: this used to check RADIO_IDENTITY_RESULT - the status
+    # from BEFORE the release happened, since nothing re-checks identity
+    # while released. That's stale, not a safety check: a radio swapped
+    # or reconfigured during the release window (exactly what Release/
+    # Reconnect exists to allow) would still read whatever status was
+    # true beforehand, often MATCH, and this gate would wave it through.
+    # radio_connection_manager's own on_reconnect hook (wired to
+    # listener_supervisor.clear_mismatch() at construction) now forces a
+    # genuinely fresh identity re-check before the listener ever resumes -
+    # see that module's own docstring and
+    # test_restart_listener_never_popens_without_a_fresh_match_even_on_a_
+    # persisting_mismatch's sibling test below for the proof.
     ok, status = radio_connection_manager.reconnect()
     if ok:
         radio_event("restart")

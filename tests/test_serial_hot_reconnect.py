@@ -215,6 +215,34 @@ def test_disconnect_then_mismatch_halts_and_surfaces_without_starting_the_listen
     assert supervisor._disconnect_detected.is_set() is False, "mismatch owns the wait now, not the disconnect-retry path"
 
 
+def test_on_identity_mismatch_fires_exactly_once_not_per_tick(monkeypatch):
+    """Visibility requirement: a mismatch must produce exactly one System
+    Log/Notification event, not one every ~30s health-worker tick for as
+    long as the wrong radio stays plugged in. Once _mismatch_active is
+    set, _listener_cycle()'s own top-level check short-circuits before
+    ever reaching _await_identity_before_restart() again - proven here by
+    driving several cycles and counting the callback's actual calls."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    mismatch_calls = []
+    popen_calls = []
+    supervisor = _make_supervisor(
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=lambda port: "MISMATCH",
+        on_identity_mismatch=mismatch_calls.append,
+    )
+    supervisor._disconnect_detected.set()
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a))
+
+    for _ in range(5):
+        supervisor._listener_cycle()
+
+    assert mismatch_calls == ["/dev/ttyACM0"], "must fire exactly once, not once per tick"
+    assert popen_calls == [], "must never Popen while mismatch-halted"
+
+
 def test_mismatch_active_never_popens_on_subsequent_cycles(monkeypatch):
     popen_calls = []
     supervisor = _make_supervisor()

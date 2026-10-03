@@ -129,6 +129,123 @@ def test_restart_listener_on_serial_no_longer_blocked_by_bad_identity(server_mod
     assert calls == ["stop", "restart"]
 
 
+def test_restart_listener_never_popens_without_a_fresh_match_even_on_a_persisting_mismatch(server_module, _preserve, monkeypatch):
+    """The actual safety property reviewers need proof of, not just the
+    route's own synchronous behavior: clicking Restart Listener after a
+    radio swap must NEVER start the listener against the wrong radio,
+    even though the route itself no longer returns 409. The route only
+    sets the disconnect-recovery flag and clears pause_listen - it is
+    listener_supervisor's own background cycle (run_listener(), a real
+    persistent thread in production, driven by hand here since no such
+    thread runs in this test environment) that actually performs the
+    re-verification before ever touching subprocess.Popen. This test
+    drives that cycle for real after the route call, with the swapped
+    radio still answering MISMATCH, and proves Popen is never reached -
+    not just that the route returned 200."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    _accept(server_module, "serial")
+    server_module.RADIO_IDENTITY_RESULT = {"status": "MISMATCH", "detected": {}, "error": None}
+    monkeypatch.setattr(server_module.time, "sleep", lambda s: None)
+    monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(server_module.radio_connection_manager, "is_released", lambda: False)
+
+    data, status_code = _post(server_module, server_module.api_restart_listener, "/api/restart_listener")
+    assert status_code == 200 and data["ok"] is True
+
+    # The real persistent listener thread would pick this up on its own
+    # next cycle in production - driven by hand here. The swapped radio
+    # is still there and still wrong: verify_identity must be consulted
+    # again (not skipped), and it says MISMATCH again.
+    popen_calls = []
+    monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a))
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+    server_module.listener_supervisor._resolve_port = lambda: "/dev/ttyACM0"
+    server_module.listener_supervisor._verify_identity = lambda port: "MISMATCH"
+
+    server_module.listener_supervisor._listener_cycle()
+
+    assert popen_calls == [], "must never start the listener against a radio that hasn't been re-proven to be the accepted one"
+    assert server_module.listener_supervisor.is_mismatch_active() is True
+
+
+def test_restart_listener_resumes_once_the_re_check_actually_confirms_match(server_module, _preserve, monkeypatch):
+    """The other half of the same property: once the re-check genuinely
+    confirms MATCH (the same radio, or the user physically restored it),
+    the listener resumes normally - clear_mismatch() forces a real
+    re-check, not a permanent lockout."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    _accept(server_module, "serial")
+    server_module.RADIO_IDENTITY_RESULT = {"status": "MISMATCH", "detected": {}, "error": None}
+    monkeypatch.setattr(server_module.time, "sleep", lambda s: None)
+    monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(server_module.radio_connection_manager, "is_released", lambda: False)
+
+    _post(server_module, server_module.api_restart_listener, "/api/restart_listener")
+
+    popen_calls = []
+    monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a) or _FakeProc())
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+    server_module.listener_supervisor._resolve_port = lambda: "/dev/ttyACM0"
+    server_module.listener_supervisor._verify_identity = lambda port: "MATCH"
+
+    server_module.listener_supervisor._listener_cycle()
+
+    assert len(popen_calls) == 1, "a genuine MATCH must actually resume the listener, not stay halted forever"
+    assert server_module.listener_supervisor.is_mismatch_active() is False
+
+
+class _FakeProc:
+    def __init__(self):
+        self.stdout = iter(["line\n"])
+
+    def poll(self):
+        return 0
+
+    def terminate(self):
+        pass
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self):
+        pass
+
+
+def test_reconnect_route_never_popens_without_a_fresh_match_even_on_a_persisting_mismatch(server_module, _preserve, monkeypatch):
+    """Same safety property as restart_listener's sibling test above,
+    through the Release/Reconnect entry point instead: a radio swapped or
+    reconfigured while released must never be silently resumed just
+    because Reconnect was clicked. /api/radio_connection/reconnect used
+    to check RADIO_IDENTITY_RESULT - the STALE pre-release status, since
+    nothing re-checks identity while released - which would have waved
+    through exactly this case if it happened to read MATCH from before
+    the release. radio_connection_manager's on_reconnect hook (wired to
+    listener_supervisor.clear_mismatch() at construction) is what
+    actually protects this now."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    _accept(server_module, "serial")
+    server_module.RADIO_IDENTITY_RESULT = {"status": "MATCH", "detected": {}, "error": None}  # stale: true before release
+    server_module.radio_connection_manager._mode = "released"
+    monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
+
+    data, status_code = _post(server_module, server_module.api_radio_connection_reconnect, "/api/radio_connection/reconnect")
+    assert status_code == 200 and data["ok"] is True
+
+    popen_calls = []
+    monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a))
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+    server_module.listener_supervisor._resolve_port = lambda: "/dev/ttyACM0"
+    server_module.listener_supervisor._verify_identity = lambda port: "MISMATCH"  # the radio was swapped during release
+
+    server_module.listener_supervisor._listener_cycle()
+
+    assert popen_calls == [], "Reconnect must never resume against a radio that hasn't been re-proven to be the accepted one"
+    assert server_module.listener_supervisor.is_mismatch_active() is True
+
+
 def test_restart_listener_on_serial_clears_a_mismatch(server_module, _preserve, monkeypatch):
     _accept(server_module, "serial")
     server_module.listener_supervisor._mismatch_active.set()

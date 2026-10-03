@@ -1,4 +1,4 @@
-# MeshCenter — Known Issues (feature/time-system)
+# MeshCenter — Known Issues
 
 ## KI-001: e-Paper driver hang on start (Waveshare 2.13" color HAT) - RESOLVED
 Status: resolved 2026-08-13, on dev node (.104)
@@ -101,3 +101,12 @@ used in production, confirming the call reaches the injected function with
 the right arguments) - not verified with a live radio send in this stage
 (no additional live-send authorization was granted beyond the one already
 used and cleaned up in Stage 7).
+
+## KI-007: Chat-list timestamps don't follow the 12h/24h toggle
+Status: planned
+Symptom: message timestamps shown in the chat list are formatted
+server-side and don't react to the `Settings > Units` 12h/24h display
+toggle the rest of the interface respects (`TimeFormatter`).
+Next step: route chat-list timestamp formatting through the same
+client-side `TimeFormatter` the Time card and other timestamps already use,
+instead of a server-formatted string.

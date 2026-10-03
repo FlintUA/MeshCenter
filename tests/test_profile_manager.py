@@ -98,6 +98,32 @@ def test_create_clean_profile_initializes_empty_state_files(tmp_path):
     assert profile["profile_id"] == "75fea2aa"
 
 
+def test_create_clean_profile_telemetry_config_matches_telemetry_default(tmp_path, server_module):
+    """storage/profile_manager.py can't import telemetry/telemetry.py's
+    DEFAULT_TELEMETRY_CONFIG directly - that would pull in config.DATA_DIR at
+    module load, a dependency this module (and this file, which tests
+    ProfileManager without the server_module fixture everywhere else) has
+    never had. create_clean_profile()'s own comment says the two literals are
+    kept in sync "by hand" - this test turns that into an enforced check
+    instead of just a comment.
+
+    The `server_module` fixture is requested only so telemetry.telemetry is
+    already imported (server.py imports it at module level) before this test
+    imports it directly - by then config.py has already been resolved once,
+    so re-importing telemetry.telemetry here hits the cached module rather
+    than re-triggering the `from config import DATA_DIR` that broke the
+    earlier attempt to import it from profile_manager.py itself.
+    """
+    from telemetry.telemetry import DEFAULT_TELEMETRY_CONFIG
+
+    manager = ProfileManager(tmp_path)
+    manager.create_clean_profile(_radio())
+
+    profile_dir = tmp_path / "profiles" / "75fea2aa"
+    written = json.loads((profile_dir / "telemetry_history.json").read_text(encoding="utf-8"))
+    assert written["config"] == DEFAULT_TELEMETRY_CONFIG
+
+
 def test_legacy_radio_dict_with_no_transport_key_normalizes_to_serial(tmp_path):
     """Every existing call site (detect_connected_radio()'s output,
     INSTANCE_IDENTITY.radio before this feature) hands ensure_profile() a

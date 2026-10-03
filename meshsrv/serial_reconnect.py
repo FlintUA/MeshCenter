@@ -92,6 +92,42 @@ def device_identity_changed(old: Optional[DeviceIdentity], port: str) -> bool:
     return current != old
 
 
+DEFAULT_BY_ID_DIR = "/dev/serial/by-id"
+
+
+def find_by_id_for_port(port: str, by_id_dir: str = DEFAULT_BY_ID_DIR) -> str:
+    """The reverse of resolve_by_id_target(): given a real device path
+    (e.g. /dev/ttyACM0), find the /dev/serial/by-id/* symlink that
+    currently points at it, if any - used once at boot/accept time to
+    persist a stable by-id reference into the connections model (see
+    meshsrv/radio_connections.py), so a later replug can resolve forward
+    through resolve_by_id_target() even if the ttyACMx number changes.
+    Returns '' if the platform has no by-id directory (non-Linux, or a
+    device with no udev by-id rule) or no link matches. `by_id_dir` is a
+    parameter (not hardcoded inline) purely so tests can point it at a
+    tmp_path fixture instead of the real /dev."""
+    port = str(port or "").strip()
+    if not port:
+        return ""
+    try:
+        target = os.path.realpath(port)
+    except OSError:
+        return ""
+    try:
+        if not os.path.isdir(by_id_dir):
+            return ""
+        for name in sorted(os.listdir(by_id_dir)):
+            candidate = os.path.join(by_id_dir, name)
+            try:
+                if os.path.realpath(candidate) == target:
+                    return candidate
+            except OSError:
+                continue
+    except OSError:
+        return ""
+    return ""
+
+
 def resolve_by_id_target(by_id_path: str) -> str:
     """Resolve a /dev/serial/by-id/* symlink to its current real device
     path. Returns '' if `by_id_path` is blank or doesn't currently exist -

@@ -332,3 +332,57 @@ def test_terminate_if_device_changed_true_and_kills_when_the_device_node_is_gone
 def test_terminate_if_device_changed_false_when_nothing_is_running():
     supervisor = _make_supervisor()
     assert supervisor.terminate_if_device_changed() is False
+
+
+# --- Case 4: boot without a radio -> health worker running -> radio
+# appears -> MATCH -> listener started. -----------------------------------
+
+
+def test_start_in_recovery_state_detection_error_enters_wait_for_device():
+    """Boot-time DETECTION_ERROR/NOT_FOUND/NOT_CHECKED: enters the same
+    wait-for-device-then-verify loop a live disconnect would, instead of
+    refusing to ever start the listener thread."""
+    supervisor = _make_supervisor()
+
+    supervisor.start_in_recovery_state(mismatch=False)
+
+    assert supervisor._disconnect_detected.is_set() is True
+    assert supervisor.is_mismatch_active() is False
+
+
+def test_start_in_recovery_state_mismatch_halts_immediately():
+    """Boot-time MISMATCH: halts with no Popen, same as a live mismatch -
+    a known-wrong radio needs no "wait for it" phase."""
+    supervisor = _make_supervisor()
+
+    supervisor.start_in_recovery_state(mismatch=True, port="/dev/ttyACM0")
+
+    assert supervisor.is_mismatch_active() is True
+    assert supervisor.mismatch_port == "/dev/ttyACM0"
+    assert supervisor._disconnect_detected.is_set() is False
+
+
+def test_boot_in_recovery_state_then_device_appears_and_matches_starts_the_listener(monkeypatch):
+    """End-to-end for case 4: seed the DETECTION_ERROR boot state, then
+    simulate the radio appearing and matching - the listener actually
+    starts (a real Popen call happens)."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    popen_calls = []
+    supervisor = _make_supervisor(
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=lambda port: "MATCH",
+    )
+    supervisor.start_in_recovery_state(mismatch=False)
+
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        spv_module.subprocess, "Popen",
+        lambda *a, **k: popen_calls.append(a) or _FakeListenProcess(["line\n"], exit_code=0),
+    )
+
+    supervisor._listener_cycle()
+
+    assert len(popen_calls) == 1
+    assert supervisor._disconnect_detected.is_set() is False

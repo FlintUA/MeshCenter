@@ -9,6 +9,7 @@ from meshsrv.serial_reconnect import (
     DeviceIdentity,
     capture_device_identity,
     device_identity_changed,
+    find_by_id_for_port,
     identity_retry_delay,
     line_signals_disconnect,
     resolve_by_id_target,
@@ -123,6 +124,48 @@ def test_resolve_by_id_target_resolves_a_real_symlink(tmp_path):
         pytest.skip("symlink creation needs privileges on this platform")
 
     assert resolve_by_id_target(str(link)) == os.path.realpath(str(real_port))
+
+
+def test_find_by_id_for_port_returns_empty_when_no_by_id_directory():
+    assert find_by_id_for_port("/dev/ttyACM0") == ""
+
+
+def test_find_by_id_for_port_returns_empty_for_blank_port():
+    assert find_by_id_for_port("") == ""
+
+
+def test_find_by_id_for_port_finds_the_matching_link(tmp_path):
+    real_port = tmp_path / "ttyACM0"
+    real_port.write_text("")
+    by_id_dir = tmp_path / "by-id"
+    by_id_dir.mkdir()
+    link = by_id_dir / "usb-Some_Radio-if00"
+    try:
+        link.symlink_to(real_port)
+    except OSError:
+        import pytest
+        pytest.skip("symlink creation needs privileges on this platform")
+
+    result = find_by_id_for_port(str(real_port), by_id_dir=str(by_id_dir))
+
+    assert result == str(link)
+
+
+def test_find_by_id_for_port_no_match_among_unrelated_links(tmp_path):
+    real_port = tmp_path / "ttyACM0"
+    real_port.write_text("")
+    other_device = tmp_path / "ttyACM1"
+    other_device.write_text("")
+    by_id_dir = tmp_path / "by-id"
+    by_id_dir.mkdir()
+    link = by_id_dir / "usb-Other_Radio-if00"
+    try:
+        link.symlink_to(other_device)
+    except OSError:
+        import pytest
+        pytest.skip("symlink creation needs privileges on this platform")
+
+    assert find_by_id_for_port(str(real_port), by_id_dir=str(by_id_dir)) == ""
 
 
 def test_identity_retry_delay_follows_the_schedule_then_settles():

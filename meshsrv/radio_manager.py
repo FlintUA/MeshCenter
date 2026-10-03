@@ -16,12 +16,20 @@ class RadioConnectionManager:
         wait_serial_release,
         serial_port,
         log_event=None,
+        on_reconnect=None,
     ):
         self._pause_event = pause_event
         self._stop_listener = stop_listener
         self._wait_serial_release = wait_serial_release
         self._serial_port = serial_port
         self._log_event = log_event
+        # H2-C Phase 2: called at the start of reconnect() - the radio may
+        # have been swapped or reconfigured while released to an external
+        # tool (the whole point of the release), so resuming should
+        # re-verify identity rather than silently trust whatever was true
+        # before the release. Optional/no-op default so this class stays
+        # usable standalone (e.g. in tests) without a listener supervisor.
+        self._on_reconnect = on_reconnect or (lambda: None)
         self._lock = threading.RLock()
         self._mode = "connected"
         self._message = "The radio is controlled by MeshCenter."
@@ -123,6 +131,10 @@ class RadioConnectionManager:
             self._updated_at = time.time()
 
         print("[RADIO MANAGER] Reconnect requested", flush=True)
+        try:
+            self._on_reconnect()
+        except Exception as error:
+            print(f"[RADIO MANAGER] on_reconnect hook error: {error}", flush=True)
         self._pause_event.clear()
         self._log(
             "ACTION",

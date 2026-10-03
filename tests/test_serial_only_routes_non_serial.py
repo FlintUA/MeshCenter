@@ -104,6 +104,45 @@ def test_restart_listener_on_serial_is_unchanged(server_module, _preserve, monke
     assert not server_module.pause_listen.is_set()
 
 
+# --- H2-C Phase 2: restart_listener() used to refuse outright (409)
+# unless identity was already a confirmed MATCH - exactly the states a
+# user would actually reach for this button (DETECTION_ERROR after a
+# replug, MISMATCH after a radio swap). Now proceeds regardless, and
+# forces a fresh identity re-check via clear_mismatch() rather than
+# assuming the click fixed anything. ---------------------------------
+
+
+@pytest.mark.parametrize("status", ["DETECTION_ERROR", "MISMATCH", "NOT_FOUND"])
+def test_restart_listener_on_serial_no_longer_blocked_by_bad_identity(server_module, _preserve, monkeypatch, status):
+    _accept(server_module, "serial")
+    server_module.RADIO_IDENTITY_RESULT = {"status": status, "detected": {}, "error": "x"}
+    calls = []
+    monkeypatch.setattr(server_module, "stop_listener", lambda: calls.append("stop") or True)
+    monkeypatch.setattr(server_module, "radio_event", lambda name: calls.append(name))
+    monkeypatch.setattr(server_module.time, "sleep", lambda s: None)
+    monkeypatch.setattr(server_module.radio_connection_manager, "is_released", lambda: False)
+
+    data, status_code = _post(server_module, server_module.api_restart_listener, "/api/restart_listener")
+
+    assert status_code == 200
+    assert data["ok"] is True
+    assert calls == ["stop", "restart"]
+
+
+def test_restart_listener_on_serial_clears_a_mismatch(server_module, _preserve, monkeypatch):
+    _accept(server_module, "serial")
+    server_module.listener_supervisor._mismatch_active.set()
+    server_module.listener_supervisor._mismatch_port = "/dev/ttyACM0"
+    monkeypatch.setattr(server_module, "stop_listener", lambda: True)
+    monkeypatch.setattr(server_module, "radio_event", lambda name: None)
+    monkeypatch.setattr(server_module.time, "sleep", lambda s: None)
+    monkeypatch.setattr(server_module.radio_connection_manager, "is_released", lambda: False)
+
+    _post(server_module, server_module.api_restart_listener, "/api/restart_listener")
+
+    assert server_module.listener_supervisor.is_mismatch_active() is False
+
+
 @pytest.mark.parametrize("transport", ["serial", "tcp", "bluetooth"])
 def test_radio_health_reports_the_active_transport(server_module, _preserve, transport):
     _accept(server_module, transport)

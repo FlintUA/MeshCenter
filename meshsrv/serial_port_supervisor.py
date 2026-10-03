@@ -447,6 +447,26 @@ class SerialPortSupervisor:
         self._disconnect_detected.set()
         self._identity_retry_attempt = 0
 
+    def start_in_recovery_state(self, *, mismatch: bool = False, port: str = "") -> None:
+        """Called once, before run_listener(), when boot-time identity
+        verification wasn't already a confirmed MATCH (server.py's
+        listen_meshtastic()) - seeds the SAME disconnect-recovery/mismatch
+        state machine a live disconnect would use, instead of the old
+        behavior of refusing to ever start the listener thread at all.
+
+        `mismatch=True` (boot-time MISMATCH - a different, known radio
+        answered) halts immediately with no Popen, same as a live
+        mismatch - there's nothing to "wait for" since the wrong radio is
+        already confirmed. `mismatch=False` (DETECTION_ERROR/NOT_FOUND/
+        NOT_CHECKED - the radio simply hasn't answered yet, or nothing
+        was checked) enters the normal wait-for-device-then-verify loop,
+        same as after a live disconnect."""
+        if mismatch:
+            self._mismatch_active.set()
+            self._mismatch_port = port
+        else:
+            self._disconnect_detected.set()
+
     def is_mismatch_active(self) -> bool:
         return self._mismatch_active.is_set()
 

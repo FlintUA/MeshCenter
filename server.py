@@ -58,6 +58,8 @@ from meshsrv.radio_identity import (
     is_transient_identity_failure,
 )
 from meshsrv.detection_cache import DetectionCache
+from meshsrv.radio_connections import get_connection, remember_connection
+from meshsrv.serial_reconnect import find_by_id_for_port, resolve_by_id_target
 from meshsrv.radio_endpoint import (
     normalize_radio_record,
     descriptor_from_radio_record,
@@ -564,6 +566,120 @@ def verify_radio_identity():
 
     return output
 
+
+# ---------------------------------------------------------------------
+# H2-C Phase 2 (serial hot-reconnect): the three callables
+# listener_supervisor (meshsrv/serial_port_supervisor.py) is constructed
+# with below. Kept here, next to verify_radio_identity(), rather than in
+# that module itself - SerialPortSupervisor is deliberately radio-
+# protocol-agnostic ("this is about who currently owns the OS-level
+# serial device... not about the radio protocol itself", see its own
+# docstring); CLI-based identity verification and the connections-model
+# read/write both belong to Core's own policy layer, injected in exactly
+# the same way on_raw_line/on_lifecycle_event/on_log already are.
+# ---------------------------------------------------------------------
+
+def _resolve_listener_port():
+    """resolve_port callable for listener_supervisor - called before
+    every (re)start, not just once at boot. Prefers the accepted radio's
+    recorded /dev/serial/by-id/* link (stable across a replug even if
+    /dev/ttyACMx changes) over resolve_serial_port()'s own configured-
+    port-first behavior; falls back to that function's single-candidate
+    discovery when no by-id link is on record yet, and opportunistically
+    persists one once a port resolves, so a LATER replug can resolve
+    forward through by-id instead of discovery every time."""
+    global INSTANCE_IDENTITY
+    accepted_radio = normalize_radio_record(INSTANCE_IDENTITY.get("radio", {}))
+    serial_connection = get_connection(accepted_radio, "serial") or {}
+    serial_endpoint = serial_connection.get("endpoint") if isinstance(serial_connection, dict) else None
+    by_id = str((serial_endpoint or {}).get("by_id") or "") if isinstance(serial_endpoint, dict) else ""
+
+    resolved = resolve_by_id_target(by_id)
+    if resolved:
+        return resolved
+
+    try:
+        fallback_port = resolve_serial_port(MESHTASTIC_PORT)
+    except RuntimeError:
+        return ""
+
+    if not by_id and fallback_port:
+        found_by_id = find_by_id_for_port(fallback_port)
+        if found_by_id:
+            updated_radio = remember_connection(accepted_radio, "serial", {"port": fallback_port, "by_id": found_by_id})
+            updated_identity = dict(INSTANCE_IDENTITY)
+            updated_identity["radio"] = updated_radio
+            INSTANCE_IDENTITY = instance_manager.save(updated_identity)
+            print(f"[IDENTITY] Recorded by-id reference for future replugs: {found_by_id}", flush=True)
+
+    return fallback_port
+
+
+def _verify_listener_identity(port):
+    """verify_identity callable for listener_supervisor - called ONLY
+    after a real detected disconnect (see meshsrv/serial_reconnect.py's
+    module docstring), never on an ordinary crash-loop retry. Mirrors
+    verify_radio_identity()'s own serial branch (same detect_radio_
+    identity()/compare_radio_identity() calls, same RADIO_IDENTITY_RESULT/
+    INSTANCE_IDENTITY.runtime update) so /api/instance and the System
+    card's existing identity display reflect this fresh check too - a
+    replug is a genuine re-verification, not just "the listener quietly
+    started again"."""
+    global INSTANCE_IDENTITY, RADIO_IDENTITY_RESULT
+    result, _output = detect_radio_identity(MESHTASTIC_CMD, port, timeout=25)
+    configured = dict(INSTANCE_IDENTITY.get("radio", {}))
+    detected = dict(result.get("detected") or {})
+    result["configured"] = configured
+    result["status"] = compare_radio_identity(configured, detected) if detected.get("node_id") else result.get("status", "NOT_FOUND")
+    RADIO_IDENTITY_RESULT = result
+
+    updated = dict(INSTANCE_IDENTITY)
+    runtime = dict(updated.get("runtime", {}))
+    runtime.update({
+        "cli_path": MESHTASTIC_CMD,
+        "last_detected_at": result.get("checked_at"),
+        "identity_status": result.get("status"),
+        "last_error": result.get("error"),
+        "last_detected_radio": detected,
+    })
+    updated["runtime"] = runtime
+    INSTANCE_IDENTITY = instance_manager.save(updated)
+
+    status = result.get("status")
+    print(f"[IDENTITY] Re-check after replug on {port}: {status}", flush=True)
+    return status
+
+
+def _on_listener_identity_mismatch(port):
+    """on_identity_mismatch callable for listener_supervisor - the
+    listener itself stays halted (no Popen) once this fires; this is
+    purely the visible-surface half (System Log + Notification, same
+    shape verify_radio_identity()'s own MISMATCH branch already uses for
+    the boot-time case - /api/instance already reflects the mismatch via
+    _verify_listener_identity()'s own RADIO_IDENTITY_RESULT update
+    above, no separate banner plumbing needed)."""
+    configured = dict(INSTANCE_IDENTITY.get("radio", {}))
+    detected = dict(RADIO_IDENTITY_RESULT.get("detected") or {})
+    configured_label = configured.get("long_name") or configured.get("node_id") or "the accepted radio"
+    detected_label = detected.get("long_name") or detected.get("node_id") or "a different radio"
+    log_system_event(
+        "Different radio detected after replug",
+        "ERROR",
+        f"Expected {configured_label}, found {detected_label} on {port}. "
+        "The listener will not start automatically - use Reconnect (or "
+        "switch profiles) once you've confirmed which radio should be "
+        "connected.",
+        source="identity",
+    )
+    from meshsrv.notification_service import push_notification
+    push_notification(
+        level="warning",
+        source="radio",
+        title="A different radio was connected",
+        body=f"Expected {configured_label}, found {detected_label} on {port}.",
+    )
+
+
 # Папка для скриншотов
 SCREENSHOTS_DIR = os.path.join(DATA_DIR, "screenshots")
 if not os.path.exists(SCREENSHOTS_DIR):
@@ -1029,6 +1145,15 @@ listener_supervisor = SerialPortSupervisor(
     on_log=lambda msg, level="INFO", title="Node Time Sync", source="time_sync": log_system_event(
         title=title, details=msg, level=level, source=source
     ),
+    # H2-C Phase 2 (serial hot-reconnect) - see the three functions' own
+    # docstrings, defined just above verify_radio_identity()'s sibling
+    # functions. Lambdas (not direct references) purely so this
+    # construction site doesn't care about definition order relative to
+    # them - all three are plain module-level functions by the time any
+    # of these are actually called.
+    resolve_port=lambda: _resolve_listener_port(),
+    verify_identity=lambda port: _verify_listener_identity(port),
+    on_identity_mismatch=lambda port: _on_listener_identity_mismatch(port),
 )
 
 # Task 48: one persistent adapter subprocess, spawned/supervised here,
@@ -4019,6 +4144,13 @@ radio_connection_manager = RadioConnectionManager(
     wait_serial_release=wait_serial_release,
     serial_port=MESHTASTIC_PORT,
     log_event=log_system_event,
+    # H2-C Phase 2: the radio may have been swapped or reconfigured while
+    # released to an external tool (the whole point of Release/Reconnect) -
+    # reconnect() should force a fresh identity re-check rather than
+    # silently resuming whatever was true before the release.
+    # clear_mismatch() does exactly this regardless of whether a mismatch
+    # was actually active (a harmless no-op on those two fields if not).
+    on_reconnect=listener_supervisor.clear_mismatch,
 )
 
 
@@ -4245,13 +4377,24 @@ def listen_meshtastic():
     need a pre-existing background thread to become useful - only
     SerialTransport's --listen model needs this split between "thread
     that owns the persistent process" and "connect() = pause/unpause it".
+
+    H2-C Phase 2: a boot-time identity status other than MATCH used to
+    mean this thread never started at all - permanently stuck until a
+    full service restart, even once the radio genuinely came back,
+    confirmed live (2026-10-03). Now seeds the SAME disconnect-recovery/
+    mismatch state machine a live disconnect uses (see
+    SerialPortSupervisor.start_in_recovery_state()) instead of refusing
+    to start - DETECTION_ERROR/NOT_FOUND/NOT_CHECKED wait for the radio
+    and re-verify; a known MISMATCH halts immediately (no Popen) but
+    stays visible via /api/instance, same as a live mismatch.
     """
-    if RADIO_IDENTITY_RESULT.get("status") != "MATCH":
-        print(
-            f"[IDENTITY] Listener start blocked: status={RADIO_IDENTITY_RESULT.get('status')}",
-            flush=True,
+    status = RADIO_IDENTITY_RESULT.get("status")
+    if status != "MATCH":
+        print(f"[IDENTITY] Listener starting in recovery state: status={status}", flush=True)
+        listener_supervisor.start_in_recovery_state(
+            mismatch=(status == "MISMATCH"),
+            port=MESHTASTIC_PORT,
         )
-        return
     listener_supervisor.run_listener()
 
 
@@ -5630,19 +5773,29 @@ def serial_only_action_refusal(action_label):
 def should_start_health_worker(identity_status, active_transport):
     """Gate for radio_health_worker() in start_runtime().
 
-    serial: only on a confirmed MATCH (unchanged - serial autorecovery would
-    try to restart a listener the identity gate refuses to start).
-    tcp/bluetooth: everything except a definitive identity refusal. A
-    transient DETECTION_ERROR (boot-race, network not up yet) is exactly the
-    state auto-reconnect exists to heal, so it must not gate the worker off;
-    MISMATCH and NOT_FOUND (a radio answered but can't be proven to be the
-    accepted one) stay fail-closed. NOT_CHECKED (Bluetooth has no identity
-    check) starts it, as before.
+    serial: H2-C Phase 2 - always starts now, regardless of boot-time
+    identity status. The old "only on a confirmed MATCH" rule meant that
+    once a radio failed identity verification at boot, radio_health_worker()
+    never ran at all - which also meant terminate_if_device_changed() (this
+    worker's own tick, see its call site below) never got a chance to
+    notice the radio had come back, confirmed live (2026-10-03): the
+    service stayed stuck in DETECTION_ERROR forever even with the radio
+    physically present, with zero further log lines. listen_meshtastic()'s
+    own disconnect-recovery/mismatch state machine (see
+    SerialPortSupervisor.start_in_recovery_state()) is what actually
+    handles a bad boot-time identity now - freezing this worker too no
+    longer serves any purpose.
+    tcp/bluetooth: unchanged - everything except a definitive identity
+    refusal. A transient DETECTION_ERROR (boot-race, network not up yet) is
+    exactly the state auto-reconnect exists to heal, so it must not gate
+    the worker off; MISMATCH and NOT_FOUND (a radio answered but can't be
+    proven to be the accepted one) stay fail-closed. NOT_CHECKED
+    (Bluetooth has no identity check) starts it, as before.
     """
+    if active_transport == "serial":
+        return True
     if identity_status == "MATCH":
         return True
-    if active_transport == "serial":
-        return False
     return identity_status not in ("MISMATCH", "NOT_FOUND")
 
 
@@ -5770,6 +5923,21 @@ def radio_health_worker():
             )
 
             process_identity_recovery(active_transport, now_ts)
+
+            # H2-C Phase 2: detects a hung-but-alive listener subprocess
+            # (the Meshtastic library noticed its own disconnect and
+            # logged it, but the Python process itself never exited - the
+            # failure mode found live on dev, 2026-10-03, where status sat
+            # at IDLE/listener_running=True forever with the device
+            # genuinely gone) by comparing the device node currently at
+            # the listener's port against the snapshot captured when it
+            # was last started. Harmless no-op for every other transport
+            # and for a healthy serial listener - see
+            # SerialPortSupervisor.terminate_if_device_changed()'s own
+            # docstring for why this is conservative (does nothing during
+            # an intentional claim).
+            if active_transport == "serial":
+                listener_supervisor.terminate_if_device_changed()
 
         except Exception as e:
             error_text = str(e)
@@ -7366,12 +7534,6 @@ def api_restart_listener():
     if refusal:
         return refusal
 
-    if RADIO_IDENTITY_RESULT.get("status") != "MATCH":
-        return jsonify({
-            "ok": False,
-            "error": "Radio identity mismatch - listener restart is blocked"
-        }), 409
-
     if radio_connection_manager.is_released():
         return jsonify({
             "ok": False,
@@ -7379,6 +7541,19 @@ def api_restart_listener():
         }), 409
 
     try:
+        # H2-C Phase 2: this used to refuse outright unless identity was
+        # already a confirmed MATCH - which meant the one user-facing
+        # recovery action blocked itself in exactly the states a user
+        # would actually reach for it (DETECTION_ERROR after a replug,
+        # MISMATCH after a radio swap). clear_mismatch() is a harmless
+        # no-op when nothing is halted; when something is, it forces a
+        # fresh by-id resolve + identity re-check instead of assuming the
+        # click fixed anything - stop_listener() below still correctly
+        # kills a hung-but-alive listener process too (proc.terminate()
+        # fires whenever poll() reports still-running, independent of
+        # why it never started a Popen for a wait-for-radio/mismatch
+        # state in the first place).
+        listener_supervisor.clear_mismatch()
         stop_listener()
         time.sleep(1)
         pause_listen.clear()
@@ -8488,23 +8663,39 @@ def start_runtime():
     # listener-fed telemetry); telemetry_buffer_worker (debounces values
     # whose only producer is the listener's parser). Only when the accepted
     # radio is serial and identity matched.
-    if identity_match and active_transport == "serial":
-        # THE single entry point that starts listener_supervisor's persistent
-        # listener (Task 44) - see listen_meshtastic()'s docstring for why
-        # SerialTransport.connect() depends on this thread already running,
-        # and why that precondition is Serial-specific rather than part of
-        # the RadioTransport contract BLETransport (Task 45) has to share.
+    if active_transport == "serial":
+        # H2-C Phase 2: this thread now ALWAYS starts for serial,
+        # regardless of boot-time identity status - listen_meshtastic()'s
+        # own disconnect-recovery/mismatch state machine (see
+        # SerialPortSupervisor.start_in_recovery_state()) is what decides
+        # whether to actually Popen (MATCH), wait for the radio
+        # (DETECTION_ERROR/NOT_FOUND/NOT_CHECKED), or halt visibly with no
+        # Popen (MISMATCH) - the thread existing is not the same as "a
+        # listener is running" in the user-facing sense, so "MISMATCH
+        # stays fail-closed" is still true where it actually matters.
+        # Before this change, a bad boot-time identity meant this thread
+        # never started at all - permanently stuck even once the radio
+        # came back, confirmed live (2026-10-03, zero further log lines
+        # for 6+ minutes with the device physically present).
+        #
+        # pause_listen must stay CLEAR here (unlike the non-serial branch
+        # below) - the recovery state machine lives inside this thread's
+        # own loop (meshsrv/serial_port_supervisor.py's _listener_cycle())
+        # and would never run if paused; a MISMATCH/DETECTION_ERROR halt
+        # is represented by that module's own _mismatch_active/
+        # _disconnect_detected state, not by this shared Event.
         threading.Thread(target=listen_meshtastic, daemon=True).start()
-        threading.Thread(target=cleanup_seen_ids, daemon=True).start()
-        threading.Thread(target=telemetry_worker, daemon=True).start()
-        threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
-        # NOT listener-dependent, unlike the others - a pure timer over
-        # `messages` (see ack_timeout_worker()) - but starting it for TCP/
-        # Bluetooth would start flipping every DM there to "unconfirmed"
-        # after 60s (no inbound relay means an ACK can never be observed),
-        # a user-visible delivery-status decision, not a bug fix. Left
-        # serial-only here on purpose; tracked as a follow-up decision.
-        threading.Thread(target=ack_timeout_worker, daemon=True).start()
+        if identity_match:
+            threading.Thread(target=cleanup_seen_ids, daemon=True).start()
+            threading.Thread(target=telemetry_worker, daemon=True).start()
+            threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
+            # NOT listener-dependent, unlike the others - a pure timer over
+            # `messages` (see ack_timeout_worker()) - but starting it for TCP/
+            # Bluetooth would start flipping every DM there to "unconfirmed"
+            # after 60s (no inbound relay means an ACK can never be observed),
+            # a user-visible delivery-status decision, not a bug fix. Left
+            # serial-only here on purpose; tracked as a follow-up decision.
+            threading.Thread(target=ack_timeout_worker, daemon=True).start()
     else:
         pause_listen.set()
         print(

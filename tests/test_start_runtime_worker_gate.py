@@ -22,6 +22,20 @@ SERIAL_ONLY_WORKERS = {
     "ack_timeout_worker",
 }
 
+# H2-C Phase 2: listen_meshtastic() now always starts for serial regardless
+# of boot-time identity status - its own disconnect-recovery/mismatch
+# state machine (SerialPortSupervisor.start_in_recovery_state()) is what
+# decides whether to actually Popen, not this gate (see that function's
+# own docstring and server.py's start_runtime() comment at its call site).
+# These four siblings still only start once identity_match is True - they
+# have nothing to do until the listener is actually producing real data.
+SERIAL_MATCH_ONLY_WORKERS = {
+    "cleanup_seen_ids",
+    "telemetry_worker",
+    "telemetry_buffer_worker",
+    "ack_timeout_worker",
+}
+
 
 class _RecordingThread:
     started = []
@@ -117,20 +131,46 @@ def test_non_serial_does_not_start_the_serial_listener_workers(run_start_runtime
     assert not (SERIAL_ONLY_WORKERS & set(started)), sorted(SERIAL_ONLY_WORKERS & set(started))
 
 
-@pytest.mark.parametrize("transport", ["serial", "tcp", "bluetooth"])
+@pytest.mark.parametrize("transport", ["tcp", "bluetooth"])
 def test_no_radio_workers_start_on_identity_mismatch(run_start_runtime, transport):
-    """A definitive MISMATCH never gets a health worker, on any transport."""
+    """A definitive MISMATCH never gets a health worker, on tcp/bluetooth."""
     started, _ = run_start_runtime(transport, identity_status="MISMATCH")
 
     assert "radio_health_worker" not in started
     assert not (SERIAL_ONLY_WORKERS & set(started))
 
 
-@pytest.mark.parametrize("transport", ["serial", "tcp", "bluetooth"])
+def test_serial_on_mismatch_still_starts_the_listener_thread_and_health_worker(run_start_runtime):
+    """H2-C Phase 2: serial now always starts listen_meshtastic() and
+    radio_health_worker() too, even on a known boot-time MISMATCH - the
+    listener thread's own state machine
+    (SerialPortSupervisor.start_in_recovery_state()) is what actually
+    keeps it from ever Popen'ing on a mismatch, not this gate. The four
+    siblings that only matter once real listener data is flowing still
+    correctly stay off."""
+    started, _ = run_start_runtime("serial", identity_status="MISMATCH")
+
+    assert "listen_meshtastic" in started
+    assert "radio_health_worker" in started
+    assert not (SERIAL_MATCH_ONLY_WORKERS & set(started))
+
+
+@pytest.mark.parametrize("transport", ["tcp", "bluetooth"])
 def test_not_found_stays_fail_closed(run_start_runtime, transport):
     started, _ = run_start_runtime(transport, identity_status="NOT_FOUND")
 
     assert "radio_health_worker" not in started
+
+
+def test_serial_on_not_found_still_starts_the_listener_thread_and_health_worker(run_start_runtime):
+    """Same H2-C Phase 2 reasoning as the MISMATCH case above - NOT_FOUND
+    (a radio answered but reported no ID) still gets the listener thread
+    and health worker, just not the data-dependent siblings."""
+    started, _ = run_start_runtime("serial", identity_status="NOT_FOUND")
+
+    assert "listen_meshtastic" in started
+    assert "radio_health_worker" in started
+    assert not (SERIAL_MATCH_ONLY_WORKERS & set(started))
 
 
 @pytest.mark.parametrize("transport", ["tcp", "bluetooth"])
@@ -144,16 +184,28 @@ def test_non_serial_health_worker_starts_on_transient_detection_error(run_start_
     assert not (SERIAL_ONLY_WORKERS & set(started))
 
 
-def test_serial_health_worker_still_requires_match_on_detection_error(run_start_runtime):
+def test_serial_health_worker_now_starts_on_detection_error_too(run_start_runtime):
+    """H2-C Phase 2 (was: 'still requires MATCH on DETECTION_ERROR' - the
+    old behavior that left the service permanently stuck with zero further
+    log lines even once the radio physically came back, confirmed live on
+    dev 2026-10-03). listen_meshtastic()'s own recovery state machine
+    (not this gate) now does the actual waiting."""
     started, _ = run_start_runtime("serial", identity_status="DETECTION_ERROR")
 
-    assert "radio_health_worker" not in started
+    assert "radio_health_worker" in started
+    assert "listen_meshtastic" in started
+    assert not (SERIAL_MATCH_ONLY_WORKERS & set(started))
 
 
 @pytest.mark.parametrize("status,transport,expected", [
     ("MATCH", "serial", True), ("MATCH", "tcp", True),
     ("DETECTION_ERROR", "tcp", True), ("NOT_CHECKED", "bluetooth", True),
-    ("DETECTION_ERROR", "serial", False), ("NOT_CHECKED", "serial", False),
+    # H2-C Phase 2: serial is unconditional now - see should_start_health_
+    # worker()'s own docstring for why freezing this worker no longer
+    # serves any purpose once the listener thread has its own recovery
+    # state machine.
+    ("DETECTION_ERROR", "serial", True), ("NOT_CHECKED", "serial", True),
+    ("MISMATCH", "serial", True), ("NOT_FOUND", "serial", True),
     ("MISMATCH", "tcp", False), ("NOT_FOUND", "tcp", False), ("MISMATCH", "bluetooth", False),
 ])
 def test_should_start_health_worker_table(server_module, status, transport, expected):

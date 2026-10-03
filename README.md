@@ -61,6 +61,8 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full dependency bre
 
 ## 📸 Screenshots
 
+*These screenshots are from v1.5.0 — the overall layout is still representative, but the current interface also has a **Files** tab (MCAttach) alongside Chats/Camera/Media/Devices that isn't shown here. Refreshing these from a current install is tracked as a follow-up.*
+
 <details>
 <summary>🗺️ Map — Light theme</summary>
 
@@ -197,13 +199,13 @@ See [docs/User_Guide.md](docs/User_Guide.md#12-radio-connection-type) for the fu
 
 ## Tested Hardware
 
-MeshCenter is primarily developed and tested on a Raspberry Pi Zero 2 W. Radios actually used for development and testing:
+MeshCenter is primarily developed and tested on a Raspberry Pi Zero 2 W, with a Raspberry Pi 4B also in regular use. Radios actually used for development and testing:
 
 - **RAK4631** (USB serial)
 - **RAK WisMesh TAP v2 / RAK3312** (USB serial) — also the install-validation reference device above
 - **A T-Beam, connected over TCP** rather than USB serial
 
-Cameras: a Raspberry Pi Camera (IMX219/OV5647, CSI) and a USB/UVC webcam (a YUYV-only reference device — MJPEG passthrough is implemented and unit-tested but has not been separately live-verified against an MJPEG-capable USB camera). Also used: an INA226 power monitor, a BME280 environmental sensor, a DS3231 real-time clock, and a WeAct 1.54" e-Paper display.
+Cameras: a Raspberry Pi Camera (IMX219/OV5647, CSI) and a **Microsoft USB3.0 HD camera** (USB/UVC, YUYV-only — MJPEG passthrough is implemented and unit-tested but has not been separately live-verified against an MJPEG-capable USB camera). Also used: an INA226 power monitor, a BME280 environmental sensor, a DS3231 real-time clock, and a WeAct 1.54" e-Paper display.
 
 Other Raspberry Pi models and standard Meshtastic-compatible radios with a supported USB serial, TCP, or Bluetooth connection are expected to work, though not all have been specifically verified. The radio must already be configured with an official Meshtastic application — MeshCenter uses whatever region, channels and keys are already on it, and does not modify the radio's own configuration.
 
@@ -223,7 +225,7 @@ A setup wizard requires a password (at least 12 characters) before the interface
 
 MeshCenter is served over plain HTTP by default and is intended for a trusted local network — password protection stops unauthorized use of the interface, but doesn't encrypt the connection itself. Use a VPN or a TLS-terminating reverse proxy for genuine remote access rather than exposing the service directly to the Internet.
 
-See [docs/User_Guide.md](docs/User_Guide.md#16-security-notes) for the full detail.
+See [docs/User_Guide.md](docs/User_Guide.md#18-security-notes) for the full detail.
 
 ---
 
@@ -283,6 +285,7 @@ See **[docs/development/Roadmap.md](docs/development/Roadmap.md)** for current a
 | Version | Highlights |
 |----------|------------|
 | v1.8.4 | MCAttach control-channel index fix; production logging (`wsgi.py`); Relay server source published under `relay-server/` for optional self-hosting; a guided "Connect a Relay" setup wizard; transfer detail card with Normal/Advanced/Technical levels |
+| v1.8.2 | Documentation maintenance: `STYLE_GUIDE.md` brought up to date with the theme-registry work |
 | v1.8.1 | Installation ID (`PRIVACY.md`) with a management CLI; unified `.btn` sizing system; identity-check failures routed to the System Log instead of raw exception text |
 | v1.8.0 | I2C device support (RTC + BME280), e-Paper display redesign with auto-rotation, stored-XSS fix, gunicorn in production |
 | v1.7.0 | Auto-Installer (cloud-init), redesigned Time card, channel name/discovery fixes |
@@ -291,6 +294,8 @@ See **[docs/development/Roadmap.md](docs/development/Roadmap.md)** for current a
 | v1.4.0 | Multi-Radio Profiles & Node Manager |
 | v1.3.0 | Waypoints, Notifications, Action Engine |
 | v1.2.0 | Interactive Map |
+| v1.1.0 | Redesigned node inspector with a tabbed interface |
+| v1.0.1 | Early production-readiness fixes: config validation, port-release handling, `sensors.json` robustness |
 | v1.0.0 | First Stable Release |
 
 A substantial batch of security, storage-reliability, telemetry and TCP-transport work has landed on `main` since v1.8.4 and is pending its own release tag — see the [GitHub Releases page](https://github.com/FlintUA/MeshCenter/releases) for the authoritative, up-to-date list, and recent commits/PRs for anything not yet tagged.

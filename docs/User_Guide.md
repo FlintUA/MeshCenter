@@ -783,6 +783,16 @@ Confirm that the rendered sudoers files contain the actual service username.
 
 Use `Ctrl+F5`, clear the browser cache or open MeshCenter in a private browser window.
 
+### Browser cannot connect at all
+
+Verify the service is actually listening before checking anything else:
+
+```bash
+ss -tln
+```
+
+The default port is `5000`. If nothing is listening there, check `sudo systemctl status meshcenter.service` (see "Service does not start" above); if something is listening but the browser still can't reach it, check your firewall and that you're using the Pi's actual IP/hostname and port.
+
 ### Meshtastic CLI not found
 
 The `meshtastic` package lives in its own virtual environment, separate from Core's (`adapters/meshtastic/venv`, not `venv`) — check it's actually installed there:

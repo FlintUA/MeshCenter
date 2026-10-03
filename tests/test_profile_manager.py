@@ -84,6 +84,11 @@ def test_create_clean_profile_initializes_empty_state_files(tmp_path):
     profile_dir = tmp_path / "profiles" / "75fea2aa"
     assert (profile_dir / "messages.json").read_text(encoding="utf-8").strip() == "[]"
     assert (profile_dir / "nodes.json").read_text(encoding="utf-8").strip() == "{}"
+    # H2-B regression: this used to be a bare `[]`, which crashed
+    # server.py's ensure_chat() (AttributeError: 'list' object has no
+    # attribute 'get') on every inbound TCP position/text event for any
+    # profile created this way.
+    assert json.loads((profile_dir / "deleted_dm.json").read_text(encoding="utf-8")) == {"deleted": []}
     assert profile["profile_id"] == "75fea2aa"
 
 

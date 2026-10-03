@@ -115,6 +115,12 @@ jobs:
       - name: browser asset cache-busting check
         run: python scripts/check_asset_cache_busting.py
 
+      - name: API docs consistency check (H2-A4)
+        run: python scripts/check_api_docs.py
+
+      - name: Documentation relative-link check (H2-A4)
+        run: python scripts/check_doc_links.py
+
       - name: Run pytest
         run: python -m pytest
 

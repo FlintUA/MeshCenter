@@ -89,6 +89,12 @@ def test_create_clean_profile_initializes_empty_state_files(tmp_path):
     # attribute 'get') on every inbound TCP position/text event for any
     # profile created this way.
     assert json.loads((profile_dir / "deleted_dm.json").read_text(encoding="utf-8")) == {"deleted": []}
+    # Same class of bug: telemetry/telemetry.py's load_telemetry() expects
+    # {"history": [...], "config": {...}}, not a bare list.
+    assert json.loads((profile_dir / "telemetry_history.json").read_text(encoding="utf-8")) == {
+        "history": [],
+        "config": {"interval": 300, "enabled": True},
+    }
     assert profile["profile_id"] == "75fea2aa"
 
 

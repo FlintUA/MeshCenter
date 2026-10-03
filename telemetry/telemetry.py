@@ -9,6 +9,11 @@ from utils.helpers import now
 
 TELEMETRY_FILE = os.path.join(DATA_DIR, "telemetry_history.json")
 
+# Also mirrored in storage/profile_manager.py's create_clean_profile(),
+# which writes a brand-new profile's telemetry_history.json directly
+# rather than going through load_telemetry() - keep both in sync.
+DEFAULT_TELEMETRY_CONFIG = {"interval": 300, "enabled": True}
+
 # F4.1 PR 2: save_telemetry() took no lock of its own. The serial --listen
 # parser thread and the TCP inbound worker thread could both call
 # add_telemetry_record()/add_node_telemetry_record() concurrently with each
@@ -165,7 +170,7 @@ def _enforce_all_caps_after_load():
 
 
 telemetry_history = []
-telemetry_config = {"interval": 300, "enabled": True}
+telemetry_config = dict(DEFAULT_TELEMETRY_CONFIG)
 telemetry_current = {
     "temperature": None,
     "humidity": None,
@@ -186,7 +191,7 @@ def load_telemetry():
         data = safe_read_json(TELEMETRY_FILE, {})
         if data:
             telemetry_history = data.get("history", [])
-            telemetry_config = data.get("config", {"interval": 300, "enabled": True})
+            telemetry_config = data.get("config", dict(DEFAULT_TELEMETRY_CONFIG))
             _rebuild_record_counts()
             if _enforce_all_caps_after_load():
                 save_telemetry()

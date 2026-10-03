@@ -301,3 +301,24 @@ def test_restore_deleted_dm_success_removes_marker(server_module):
     assert resp.status_code == 200
     assert resp.get_json()["ok"] is True
     assert not os.path.exists(server_module.DELETED_DM_FILE)
+
+
+def test_ensure_chat_tolerates_legacy_list_shaped_deleted_dm_file(server_module):
+    """H2-B regression: storage/profile_manager.py's create_clean_profile()
+    used to initialize deleted_dm.json as a bare `[]` instead of the
+    `{"deleted": [...]}` shape every writer (api_delete_all_dm) and reader
+    (ensure_chat) actually use. Any profile created while that bug was live
+    has a `[]` on disk forever (nothing rewrites this file except
+    delete_all_dm/restore_deleted_dm), so ensure_chat() must tolerate the
+    legacy shape, not just rely on the writer being fixed. This is what
+    crashed live on pixel-111's TCP position/text inbound paths (both call
+    ensure_chat(..., force=False)) with
+    AttributeError: 'list' object has no attribute 'get'.
+    """
+    with server_module.state_lock:
+        server_module.safe_write_json(server_module.DELETED_DM_FILE, [])
+
+    with server_module.state_lock:
+        server_module.ensure_chat("!aabbccdd", "Test Node", force=False)
+
+    assert "!aabbccdd" in server_module.chats

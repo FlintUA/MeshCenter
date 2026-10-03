@@ -1,5 +1,11 @@
 # Backend Protocol v1
 
+> **Not the browser-facing HTTP API.** This document is the internal
+> Core↔adapter-subprocess IPC protocol described below (newline-delimited
+> JSON over stdin/stdout). For the Flask `/api/...` routes the browser
+> actually calls, see [docs/API_ROUTES.md](API_ROUTES.md) (the complete,
+> auto-generated list) and [docs/architecture/Architecture.md](architecture/Architecture.md#rest-api).
+
 Status: **implemented and live** — `SerialTransport` (Task 44) and
 `BLETransport` (Task 45) implement this contract; the Python interface lives
 in [`meshsrv/radio_transport.py`](../meshsrv/radio_transport.py) as an

@@ -248,7 +248,10 @@ of this automatically.
 1. [ ] **OS packages, dialout group, reboot**
    ```bash
    sudo apt update
-   sudo apt install -y git python3 python3-venv python3-pip network-manager iw
+   # lsof: used (with graceful degradation if missing) to check whether the
+   # serial port is genuinely free before releasing it for an external tool
+   # or the Meshtastic TCP adapter - see meshsrv/serial_port_supervisor.py.
+   sudo apt install -y git python3 python3-venv python3-pip network-manager iw lsof
    # USB camera support (ffmpeg/v4l-utils) — not gated behind the optional
    # CSI camera install below; needed for any USB/UVC webcam:
    sudo apt install -y ffmpeg v4l-utils

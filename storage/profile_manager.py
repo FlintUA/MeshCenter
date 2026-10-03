@@ -219,6 +219,13 @@ class ProfileManager:
             # `if data:` check takes the same "nothing saved yet" branch it
             # would for a missing file - but the next reader that doesn't
             # guard the same way would hit the same class of AttributeError.
+            # The literal below must match telemetry/telemetry.py's own
+            # DEFAULT_TELEMETRY_CONFIG - not imported directly because
+            # telemetry.py pulls in `config.DATA_DIR` at module load, which
+            # would saddle this lower-level, config-agnostic module (and
+            # anything that tests it in isolation, e.g. tests/
+            # test_profile_manager.py) with a hard dependency on config.py
+            # for a two-key dict. Keep both literals in sync by hand.
             "telemetry_history.json": {"history": [], "config": {"interval": 300, "enabled": True}},
         }
         for filename, default in empty_json_defaults.items():

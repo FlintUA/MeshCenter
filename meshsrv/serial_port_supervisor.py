@@ -52,6 +52,13 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from meshsrv.radio_transport import TransportError, TransportErrorCode
+from meshsrv.serial_reconnect import (
+    DeviceIdentity,
+    capture_device_identity,
+    device_identity_changed,
+    identity_retry_delay,
+    line_signals_disconnect,
+)
 
 
 class PortReleaseOutcome(str, Enum):
@@ -85,6 +92,9 @@ class SerialPortSupervisor:
         on_raw_line: Optional[Callable[[str], None]] = None,
         on_lifecycle_event: Optional[Callable[[str, Optional[bool]], None]] = None,
         on_log: Optional[Callable[..., None]] = None,
+        resolve_port: Optional[Callable[[], str]] = None,
+        verify_identity: Optional[Callable[[str], str]] = None,
+        on_identity_mismatch: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._cli_path = cli_path
         self._port = port
@@ -97,9 +107,36 @@ class SerialPortSupervisor:
         # extended with **kwargs/intentional in PR #168 - same pattern, same
         # file. The no-op default below just needs to not blow up on them.
         self._on_log = on_log or (lambda msg, level="INFO", **kwargs: None)
+        # H2-C Phase 2 (serial hot-reconnect): resolve_port() is consulted
+        # before every (re)start, not just once at construction - the
+        # default just keeps returning the fixed self._port, matching this
+        # class's original, always-static behavior for any caller that
+        # doesn't inject real by-id resolution (meshsrv/serial_reconnect.py's
+        # resolve_by_id_target(), wired in by server.py). verify_identity()
+        # is only ever consulted after a REAL disconnect was detected (see
+        # _disconnect_detected below) - never on an ordinary crash-loop
+        # retry, since a --info probe is comparatively slow. Its return
+        # value is the same status vocabulary meshsrv/radio_identity.py
+        # already uses ("MATCH"/"MISMATCH"/"DETECTION_ERROR"/"NOT_FOUND");
+        # the default ("MATCH" always) preserves the pre-H2-C behavior of
+        # just retrying blindly, for any caller that doesn't inject a real
+        # verifier.
+        self._resolve_port = resolve_port or (lambda: self._port)
+        self._verify_identity = verify_identity or (lambda port: "MATCH")
+        self._on_identity_mismatch = on_identity_mismatch or (lambda port: None)
 
         self._listen_process: Optional[subprocess.Popen] = None
         self._connected_since: Optional[float] = None
+
+        # H2-C Phase 2 state - see run_listener()'s own docstring and
+        # meshsrv/serial_reconnect.py's module docstring for the three
+        # failure modes this closes.
+        self._device_identity_snapshot: Optional[DeviceIdentity] = None
+        self._disconnect_detected = threading.Event()
+        self._mismatch_active = threading.Event()
+        self._mismatch_port: str = ""
+        self._identity_retry_attempt = 0
+        self._consecutive_errors = 0
 
     # ------------------------------------------------------------------
     # Listener subprocess (Stage A - see adapters/meshtastic/
@@ -110,146 +147,312 @@ class SerialPortSupervisor:
     # process is a separate, not-yet-done "Stage B").
     # ------------------------------------------------------------------
     def run_listener(self) -> None:
-        """Blocking retry loop - unchanged from SerialTransport's former
-        run_listener(), itself a 1:1 replacement for server.py's former
-        listen_meshtastic() (Task 44), minus the Meshtastic-protocol
+        """Blocking retry loop - itself a 1:1 replacement for server.py's
+        former listen_meshtastic() (Task 44), minus the Meshtastic-protocol
         parsing (delivered line-by-line to on_raw_line instead of parsed
-        inline). Call this from Core's own daemon thread, same as
-        before."""
-        consecutive_errors = 0
-        max_consecutive_errors = 10
+        inline). Call this from Core's own daemon thread, same as before.
 
+        H2-C Phase 2 (serial hot-reconnect): the per-iteration body lives in
+        _listener_cycle() so it's directly testable (construct a supervisor,
+        monkeypatch subprocess.Popen, call _listener_cycle() once) without
+        needing a real infinite loop or a real subprocess - this method
+        itself is just the loop."""
+        self._consecutive_errors = 0
         while True:
-            if self._pause_listen.is_set():
-                time.sleep(0.5)
-                continue
+            self._listener_cycle()
 
+    _MAX_CONSECUTIVE_ERRORS = 10
+
+    def _listener_cycle(self) -> None:
+        """One full iteration of run_listener()'s loop - see that method's
+        own docstring for why this is split out."""
+        if self._pause_listen.is_set():
+            # An intentional claim (Release radio, Node Tools, any
+            # claim_exclusive_access() caller) always wins over the
+            # disconnect-recovery/mismatch state below - it must suppress
+            # re-detection entirely until the claim ends and/or Reconnect
+            # is used, never race a --info probe against whatever the
+            # claim itself is doing with the port.
+            time.sleep(0.5)
+            return
+
+        if self._mismatch_active.is_set():
+            # A different radio than the accepted one answered on this
+            # port (see _verify_identity() below) - stay halted, no
+            # Popen, until clear_mismatch() is called externally (the
+            # Reconnect-radio flow, or a profile switch). Polled slowly;
+            # this is a wait state, not a retry loop.
+            time.sleep(2.0)
+            return
+
+        if self._disconnect_detected.is_set():
+            if not self._await_identity_before_restart():
+                return
+            # _await_identity_before_restart() only returns True once a
+            # fresh MATCH was confirmed - fall through to the ordinary
+            # Popen path below, same as any other restart.
+
+        with self._radio_lock:
+            self._listen_process = None
+
+        try:
+            time.sleep(0.5)
+
+            with self._radio_lock:
+                if self._pause_listen.is_set():
+                    return
+
+                from meshsrv.runtime_identity import meshtastic_command
+
+                # Resolved fresh before every (re)start, not just once at
+                # construction - the default resolver just returns the
+                # fixed self._port (pre-H2-C behavior), but server.py
+                # wires in by-id resolution here so a replug that changes
+                # /dev/ttyACMx is picked up without needing the identity-
+                # verification detour above (that only runs after a
+                # detected disconnect - an ordinary crash-loop retry with
+                # the device never actually having moved still just works).
+                resolved_port = self._resolve_port()
+                if resolved_port:
+                    self._port = resolved_port
+                self._device_identity_snapshot = capture_device_identity(self._port)
+
+                listener_cmd = meshtastic_command(self._cli_path, self._port, "--listen")
+                proc = subprocess.Popen(
+                    listener_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    errors="ignore",
+                )
+                self._listen_process = proc
+                self._connected_since = time.time()
+                self._on_lifecycle_event("listener_start", intentional=None)
+                self._consecutive_errors = 0
+
+            disconnect_signal_seen = False
+            for line in proc.stdout:
+                if self._pause_listen.is_set():
+                    break
+                # Every line - including one that strips to empty - is
+                # handed to on_raw_line, same as the original inline
+                # loop called radio_event("packet") unconditionally
+                # before checking for emptiness. Filtering blank lines
+                # out here instead would silently drop that signal;
+                # the empty check belongs to the Core-side handler.
+                line = line.strip()
+                # H2-C Phase 2: the Meshtastic library's own disconnect
+                # warning means the device is genuinely gone even though
+                # this process hasn't exited (and, left alone, might
+                # never exit - the "hung-but-alive" failure mode found
+                # live on dev, 2026-10-03). Detected here, acted on right
+                # below instead of waiting for a process exit that may
+                # never come.
+                if line_signals_disconnect(line):
+                    disconnect_signal_seen = True
+                try:
+                    self._on_raw_line(line)
+                except Exception as e:
+                    print(f"[SerialPortSupervisor] on_raw_line error: {e}", file=sys.stderr, flush=True)
+                if disconnect_signal_seen:
+                    break
+
+            if disconnect_signal_seen:
+                self._terminate_process(proc)
+                self._disconnect_detected.set()
+                self._identity_retry_attempt = 0
+
+            with self._radio_lock:
+                current = self._listen_process
+            return_code = current.poll() if current is not None else None
+
+            # P1-B stabilization follow-up: this is the ONLY moment
+            # that actually knows whether the stop about to be
+            # reported was intentional (pause_listen already set) or
+            # not - captured once, into a plain bool, and threaded
+            # through to on_lifecycle_event() below instead of being
+            # re-read later by whatever handles the event. Between
+            # this read and that later handling, a DIFFERENT caller
+            # (radio_session()/prepare_radio_command() elsewhere)
+            # can legitimately set/clear this same shared
+            # threading.Event - a re-read at that later, asynchronous
+            # point can observe a value that no longer reflects what
+            # was true at the actual transition, misclassifying a
+            # routine, intentional stop as an unexpected one (or vice
+            # versa). See server.py's radio_event() for the consumer
+            # side of this fix.
+            #
+            # KNOWN, DEFERRED (live-observed on dev during this same
+            # fix's own soak test, not fixed here): this read is
+            # synchronous and correct for the bug above, but it's
+            # still a plain, un-locked read of a shared
+            # threading.Event - a DIFFERENT, concurrent, overlapping
+            # claim_exclusive_access()/radio_session() call can still
+            # toggle pause_listen in the narrow window between "the
+            # listener process actually dies" and "this thread gets
+            # scheduled to reach this line", producing one
+            # occasional, isolated "Listener stopped (unexpected)"
+            # even though the stop really was contention-driven, not
+            # a genuine crash. Live-confirmed: happened once during
+            # dev's own post-deploy soak, self-recovered within
+            # seconds, no sustained outage. A real fix would mean
+            # holding radio_lock across this whole notice-and-report
+            # sequence, claim_exclusive_access()-style (see that
+            # method's own DELIBERATE DIVERGENCE note) - a bigger,
+            # architectural change that overlaps with the P1-A
+            # follow-up, not attempted here. Tracked as backlog, not
+            # scheduled separately (rare, narrow, self-recovering).
+            stop_was_intentional = self._pause_listen.is_set()
+
+            if stop_was_intentional:
+                if current is not None:
+                    self._terminate_process(current)
+                self._on_lifecycle_event("listener_stop", intentional=True)
+                with self._radio_lock:
+                    self._listen_process = None
+                time.sleep(0.5)
+                return
+
+            if return_code is not None and return_code != 0:
+                print(
+                    f"[SerialPortSupervisor] Listener process ended with code: {return_code}",
+                    file=sys.stderr, flush=True,
+                )
+                self._consecutive_errors += 1
+            else:
+                self._consecutive_errors = 0
+
+            self._on_lifecycle_event("listener_stop", intentional=stop_was_intentional)
             with self._radio_lock:
                 self._listen_process = None
 
+        except Exception as e:
+            self._consecutive_errors += 1
+            print(
+                f"[SerialPortSupervisor] run_listener (attempt {self._consecutive_errors}): {e}",
+                file=sys.stderr, flush=True,
+            )
+            delay = min(self._consecutive_errors * 2, 30)
+            time.sleep(delay)
+            return
+
+        if self._consecutive_errors > self._MAX_CONSECUTIVE_ERRORS:
+            self._consecutive_errors = 0
+            time.sleep(5)
+        else:
+            time.sleep(2)
+
+    @staticmethod
+    def _terminate_process(proc: "subprocess.Popen") -> None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except Exception:
             try:
-                time.sleep(0.5)
+                proc.kill()
+            except Exception:
+                pass
 
-                with self._radio_lock:
-                    if self._pause_listen.is_set():
-                        continue
+    # ------------------------------------------------------------------
+    # H2-C Phase 2: disconnect -> re-resolve -> re-verify identity, instead
+    # of blindly retrying the same fixed port forever. Only entered after a
+    # REAL disconnect was detected (the stdout marker above, or
+    # terminate_if_device_changed() below) - never on an ordinary crash-
+    # loop retry, since --info is comparatively slow (seconds on a Pi
+    # Zero 2W) and most crashes have nothing to do with the device itself.
+    # ------------------------------------------------------------------
+    def _await_identity_before_restart(self) -> bool:
+        """Returns True once a fresh MATCH clears the way to restart the
+        listener normally; False means "not yet" (caller should just
+        return and let the next cycle check again) - either because the
+        device isn't back yet, identity verification errored transiently
+        (backed off per identity_retry_delay()), or a MISMATCH just halted
+        everything (_mismatch_active handles that from here on, not this
+        method)."""
+        resolved_port = self._resolve_port()
+        if not resolved_port or not os.path.exists(resolved_port):
+            delay = identity_retry_delay(self._identity_retry_attempt)
+            self._identity_retry_attempt += 1
+            time.sleep(delay)
+            return False
 
-                    from meshsrv.runtime_identity import meshtastic_command
+        status = self._verify_identity(resolved_port)
 
-                    listener_cmd = meshtastic_command(self._cli_path, self._port, "--listen")
-                    proc = subprocess.Popen(
-                        listener_cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1,
-                        errors="ignore",
-                    )
-                    self._listen_process = proc
-                    self._connected_since = time.time()
-                    self._on_lifecycle_event("listener_start", intentional=None)
-                    consecutive_errors = 0
+        if status == "MATCH":
+            self._disconnect_detected.clear()
+            self._identity_retry_attempt = 0
+            self._port = resolved_port
+            return True
 
-                for line in proc.stdout:
-                    if self._pause_listen.is_set():
-                        break
-                    # Every line - including one that strips to empty - is
-                    # handed to on_raw_line, same as the original inline
-                    # loop called radio_event("packet") unconditionally
-                    # before checking for emptiness. Filtering blank lines
-                    # out here instead would silently drop that signal;
-                    # the empty check belongs to the Core-side handler.
-                    line = line.strip()
-                    try:
-                        self._on_raw_line(line)
-                    except Exception as e:
-                        print(f"[SerialPortSupervisor] on_raw_line error: {e}", file=sys.stderr, flush=True)
+        if status == "MISMATCH":
+            self._mismatch_active.set()
+            self._mismatch_port = resolved_port
+            self._disconnect_detected.clear()
+            self._identity_retry_attempt = 0
+            self._on_identity_mismatch(resolved_port)
+            return False
 
-                with self._radio_lock:
-                    current = self._listen_process
-                return_code = current.poll() if current is not None else None
+        # DETECTION_ERROR / NOT_FOUND - the radio hasn't proven itself yet,
+        # try again after backing off. Stays in _disconnect_detected state
+        # (not cleared) so the next cycle re-enters this same method.
+        delay = identity_retry_delay(self._identity_retry_attempt)
+        self._identity_retry_attempt += 1
+        time.sleep(delay)
+        return False
 
-                # P1-B stabilization follow-up: this is the ONLY moment
-                # that actually knows whether the stop about to be
-                # reported was intentional (pause_listen already set) or
-                # not - captured once, into a plain bool, and threaded
-                # through to on_lifecycle_event() below instead of being
-                # re-read later by whatever handles the event. Between
-                # this read and that later handling, a DIFFERENT caller
-                # (radio_session()/prepare_radio_command() elsewhere)
-                # can legitimately set/clear this same shared
-                # threading.Event - a re-read at that later, asynchronous
-                # point can observe a value that no longer reflects what
-                # was true at the actual transition, misclassifying a
-                # routine, intentional stop as an unexpected one (or vice
-                # versa). See server.py's radio_event() for the consumer
-                # side of this fix.
-                #
-                # KNOWN, DEFERRED (live-observed on dev during this same
-                # fix's own soak test, not fixed here): this read is
-                # synchronous and correct for the bug above, but it's
-                # still a plain, un-locked read of a shared
-                # threading.Event - a DIFFERENT, concurrent, overlapping
-                # claim_exclusive_access()/radio_session() call can still
-                # toggle pause_listen in the narrow window between "the
-                # listener process actually dies" and "this thread gets
-                # scheduled to reach this line", producing one
-                # occasional, isolated "Listener stopped (unexpected)"
-                # even though the stop really was contention-driven, not
-                # a genuine crash. Live-confirmed: happened once during
-                # dev's own post-deploy soak, self-recovered within
-                # seconds, no sustained outage. A real fix would mean
-                # holding radio_lock across this whole notice-and-report
-                # sequence, claim_exclusive_access()-style (see that
-                # method's own DELIBERATE DIVERGENCE note) - a bigger,
-                # architectural change that overlaps with the P1-A
-                # follow-up, not attempted here. Tracked as backlog, not
-                # scheduled separately (rare, narrow, self-recovering).
-                stop_was_intentional = self._pause_listen.is_set()
+    def terminate_if_device_changed(self) -> bool:
+        """Called periodically from OUTSIDE this thread (server.py's
+        radio_health_worker(), ~every 30s) - detects a hung-but-alive
+        listener process (the Meshtastic library noticed its own
+        disconnect and logged it, see line_signals_disconnect(), but the
+        Python process itself never exited) by comparing the device node
+        currently at self._port against the snapshot captured when this
+        process was started. Kills it if changed/gone, which hands control
+        back to run_listener()'s own unintentional-stop-and-recover path -
+        the normal crash-and-retry flow, just triggered externally instead
+        of by the process exiting on its own. Returns True if it acted.
 
-                if stop_was_intentional:
-                    if current is not None:
-                        try:
-                            current.terminate()
-                            current.wait(timeout=3)
-                        except Exception:
-                            try:
-                                current.kill()
-                            except Exception:
-                                pass
-                    self._on_lifecycle_event("listener_stop", intentional=True)
-                    with self._radio_lock:
-                        self._listen_process = None
-                    time.sleep(0.5)
-                    continue
+        Deliberately conservative: does nothing while an intentional claim
+        (pause_listen) is in progress - this is a safety net for a
+        process that's ALIVE but silently dead-ended, not a replacement
+        for the normal claim/release dance."""
+        with self._radio_lock:
+            proc = self._listen_process
+            if proc is None or proc.poll() is not None:
+                return False
+            if self._pause_listen.is_set():
+                return False
+            snapshot = self._device_identity_snapshot
+            port = self._port
 
-                if return_code is not None and return_code != 0:
-                    print(
-                        f"[SerialPortSupervisor] Listener process ended with code: {return_code}",
-                        file=sys.stderr, flush=True,
-                    )
-                    consecutive_errors += 1
-                else:
-                    consecutive_errors = 0
+        if not device_identity_changed(snapshot, port):
+            return False
 
-                self._on_lifecycle_event("listener_stop", intentional=stop_was_intentional)
-                with self._radio_lock:
-                    self._listen_process = None
+        self._terminate_process(proc)
+        with self._radio_lock:
+            if self._listen_process is proc:
+                self._listen_process = None
+        self._disconnect_detected.set()
+        self._identity_retry_attempt = 0
+        return True
 
-            except Exception as e:
-                consecutive_errors += 1
-                print(
-                    f"[SerialPortSupervisor] run_listener (attempt {consecutive_errors}): {e}",
-                    file=sys.stderr, flush=True,
-                )
-                delay = min(consecutive_errors * 2, 30)
-                time.sleep(delay)
+    def clear_mismatch(self) -> None:
+        """Called by the Reconnect-radio flow / a profile switch to leave
+        the halted-on-mismatch state and try again from scratch (a fresh
+        by-id resolve + identity check, not an assumption that the
+        mismatch is resolved just because the user clicked something)."""
+        self._mismatch_active.clear()
+        self._mismatch_port = ""
+        self._disconnect_detected.set()
+        self._identity_retry_attempt = 0
 
-            if consecutive_errors > max_consecutive_errors:
-                consecutive_errors = 0
-                time.sleep(5)
-            else:
-                time.sleep(2)
+    def is_mismatch_active(self) -> bool:
+        return self._mismatch_active.is_set()
+
+    @property
+    def mismatch_port(self) -> str:
+        return self._mismatch_port
 
     def get_listener_pid(self) -> Optional[int]:
         """Status introspection for Core's /api/node-manager/dashboard -

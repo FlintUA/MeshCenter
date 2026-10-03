@@ -205,7 +205,13 @@ class ProfileManager:
             "nodes.json": {},
             "sensors.json": {},
             "chats.json": {},
-            "deleted_dm.json": [],
+            # H2-B: must match the {"deleted": [...]} shape every reader
+            # (server.py's ensure_chat()) and writer (api_delete_all_dm())
+            # actually use - a bare `[]` here crashed ensure_chat() with
+            # AttributeError on every TCP position/text event for any
+            # profile created while this was wrong, since nothing else
+            # ever rewrites this file to correct it.
+            "deleted_dm.json": {"deleted": []},
             "telemetry_history.json": [],
         }
         for filename, default in empty_json_defaults.items():

@@ -1865,8 +1865,15 @@ def ensure_chat(node_id, node_name=None, force=False):
         # F4.1: folded onto the shared storage.json_store helper (handles
         # missing/corrupt itself - a corrupt deleted_dm.json is now
         # quarantined instead of just logged and ignored in place).
+        # H2-B: a profile created by storage/profile_manager.py's old
+        # create_clean_profile() has this file on disk as a bare `[]`
+        # instead of the `{"deleted": [...]}` every writer/reader here
+        # actually uses - nothing ever rewrites it except delete_all_dm/
+        # restore_deleted_dm, so that legacy shape persists forever and
+        # must be tolerated here, not just fixed at the writer.
         deleted_data = safe_read_json(deleted_file, default={})
-        if node_id in deleted_data.get("deleted", []):
+        deleted_ids = deleted_data.get("deleted", []) if isinstance(deleted_data, dict) else []
+        if node_id in deleted_ids:
             return
 
     name = node_name or get_node_name(node_id)

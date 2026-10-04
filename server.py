@@ -655,7 +655,7 @@ def _on_listener_port_changed(old_port, new_port):
     """on_port_changed callable for listener_supervisor - fires once per
     genuine verified-port change (never the first-ever verification), from
     the listener thread, AFTER radio_lock has already been released (see
-    _await_identity_before_restart()'s own MATCH branch). Three things
+    _await_identity_before_restart()'s own MATCH branch). Four things
     need to happen for everything else in the system to agree with the
     listener about which path is now current:
 
@@ -668,7 +668,17 @@ def _on_listener_port_changed(old_port, new_port):
        its own frozen copy of the port from whenever it last spawned, and
        has no other way to learn the path changed. current_serial_port()
        (read fresh on the next spawn) will then return `new_port`.
-    3. One System Log line, for the audit trail - a user watching the
+    3. Update serial_ipc_transport's OWN cached descriptor to the new
+       port (review round 4 follow-up, live-caught: get_connection_info()
+       is cache-only by design - never crosses the IPC boundary - so
+       without this it would keep reporting the OLD port until some
+       unrelated call happened to refresh it. Anything that reconnects
+       using that stale cached descriptor as the "last known address"
+       for the freshly-respawned, memory-less adapter from step 2 - the
+       #296 reconnect-after-respawn path, Reconnect, the health worker's
+       own transport recovery - would push the stale path right back
+       into the adapter that was JUST recycled to get away from it).
+    4. One System Log line, for the audit trail - a user watching the
        System workspace sees why the adapter subprocess just restarted.
     """
     global INSTANCE_IDENTITY
@@ -689,6 +699,11 @@ def _on_listener_port_changed(old_port, new_port):
         adapter_supervisor.shutdown(ble_address_for_cleanup=ble_address)
     except Exception as e:
         print(f"[IDENTITY] Failed to recycle adapter after port change: {e}", flush=True)
+
+    try:
+        serial_ipc_transport.update_cached_descriptor(new_port)
+    except Exception as e:
+        print(f"[IDENTITY] Failed to update cached descriptor after port change: {e}", flush=True)
 
     log_system_event(
         "Radio reconnected on a new path",
@@ -8689,7 +8704,15 @@ def restore_active_transport(accepted_radio, identity_match):
             serial_transport=serial_ipc_transport,
             ble_transport=ble_ipc_transport,
             tcp_transport=tcp_ipc_transport,
-            serial_port=MESHTASTIC_PORT,
+            # Review round 4 follow-up: current_serial_port() (the
+            # callable itself, read fresh inside build_transport_
+            # connect_new()'s own closure at actual connect time) - not
+            # MESHTASTIC_PORT. Unreachable today (active_transport is
+            # never "serial" here, see the early return above), but kept
+            # consistent with every other build_transport_connect_new()
+            # call site rather than leaving a stale value that would
+            # matter the moment that early return is ever relaxed.
+            serial_port=current_serial_port,
             ble_address=endpoint.get("address", ""),
             ble_name=endpoint.get("label", ""),
             tcp_host=endpoint.get("host", ""),

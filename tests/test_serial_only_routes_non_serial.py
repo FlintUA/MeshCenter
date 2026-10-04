@@ -474,6 +474,29 @@ def test_on_listener_port_changed_recycles_the_adapter(server_module, _preserve,
     assert len(shutdown_calls) == 1
 
 
+def test_on_listener_port_changed_updates_the_adapter_transports_own_cached_descriptor(
+    server_module, _preserve, monkeypatch
+):
+    """Review round 4 follow-up (live-caught): recycling the adapter
+    subprocess alone isn't enough - AdapterIPCTransport's own Core-side
+    cache (get_connection_info(), never crosses IPC) would otherwise keep
+    reporting the OLD port until some unrelated call refreshed it, and a
+    reconnect using that stale cached descriptor would push the old path
+    right back into the freshly-recycled adapter."""
+    monkeypatch.setattr(server_module.adapter_supervisor, "shutdown", lambda ble_address_for_cleanup=None: None)
+    monkeypatch.setattr(server_module, "log_system_event", lambda *a, **k: None)
+
+    update_calls = []
+    monkeypatch.setattr(
+        server_module.serial_ipc_transport, "update_cached_descriptor",
+        lambda new_address: update_calls.append(new_address),
+    )
+
+    server_module._on_listener_port_changed("/dev/ttyACM0", "/dev/ttyACM1")
+
+    assert update_calls == ["/dev/ttyACM1"]
+
+
 def test_reconnect_recycles_the_adapter_onto_the_current_verified_port(server_module, _preserve, monkeypatch):
     """Review round 4, item 5: Release -> Reconnect must end with the
     adapter synced too, unconditionally - not only when

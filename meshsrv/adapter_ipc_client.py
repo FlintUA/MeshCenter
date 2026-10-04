@@ -812,6 +812,34 @@ class AdapterIPCTransport(RadioTransport):
             raise
         return ipc_protocol.received_batch_from_dict(result)
 
+    def update_cached_descriptor(self, new_address: str) -> None:
+        """Review round 4 follow-up: called by Core (server.py's
+        _on_listener_port_changed()) right after a verified serial path
+        change recycles the adapter subprocess - get_connection_info()/
+        is_connected() are cache-only BY DESIGN (never cross the IPC
+        boundary, see this class's own docstring), so without this,
+        _cached_info.descriptor would keep reporting the OLD path until
+        some unrelated call happened to call connect()/reconnect()/
+        refresh_connection_info() and overwrite it. In the meantime,
+        anything that reconnects using THIS cached descriptor as the
+        "last known address" to hand to a freshly-respawned, memory-less
+        adapter (the #296 reconnect-after-respawn path, Reconnect, the
+        health-worker's own transport recovery) would push the stale
+        path right back into the adapter that was JUST recycled to get
+        away from it - this morning's live failure again, one call
+        later. Updates the descriptor's address in place; state/node_id/
+        connected_since/last_error are left as whatever they already
+        were (this is a address correction, not a fresh connection
+        result - the next real call still determines actual state)."""
+        previous = self._cached_info
+        self._cached_info = ConnectionInfo(
+            state=previous.state,
+            descriptor=ConnectionDescriptor(type=self._transport_type, address=new_address),
+            node_id=previous.node_id,
+            connected_since=previous.connected_since,
+            last_error=previous.last_error,
+        )
+
     def refresh_connection_info(self, *, timeout: float = 5.0) -> ConnectionInfo:
         """Pulls the adapter's own view of the link into the Core-side cache.
         get_connection_info() is cache-only (never crosses IPC), so without

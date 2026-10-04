@@ -195,10 +195,14 @@ def register_meshtastic_routes(
             disconnect_timeout=_SWITCH_DISCONNECT_TIMEOUT_S,
         )
         if previous == "serial":
-            current_port = serial_port()
-            if not current_port:
+            if not serial_port():
                 return None, None
-            return previous, build_transport_connect_new("serial", serial_port=current_port, **kwargs)
+            # Review round 4 follow-up: pass the callable itself, not a
+            # value resolved now - build_transport_connect_new()'s own
+            # _connect_new() closure reads it fresh at actual connect
+            # time, which can be later than this call (TransportRouter.
+            # switch() is what actually invokes the returned callable).
+            return previous, build_transport_connect_new("serial", serial_port=serial_port, **kwargs)
         if previous == "bluetooth":
             address = str(saved.get("ble_address") or "").strip()
             if not address:
@@ -404,7 +408,11 @@ def register_meshtastic_routes(
             serial_transport=serial_transport,
             ble_transport=ble_transport,
             tcp_transport=tcp_transport,
-            serial_port=serial_port(),
+            # Review round 4 follow-up: the callable itself, not a value
+            # resolved now - see build_transport_connect_new()'s own
+            # docstring for why (the returned connect_new() can be
+            # invoked later than this call).
+            serial_port=serial_port,
             connect_timeout=_SWITCH_CONNECT_TIMEOUT_S,
             disconnect_timeout=_SWITCH_DISCONNECT_TIMEOUT_S,
             **endpoint_kwargs,

@@ -243,6 +243,7 @@ MeshCenter's browser interface talks to itself over a REST API — primarily for
 | KI-002 | The Meshtastic Python API (2.7.x) does not support reading a node's current time | Waiting on upstream |
 | KI-003 | The field picker UI for the "Send data report" schedule action is still basic | Planned |
 | KI-007 | Chat-list timestamps are formatted server-side and don't react to the 12h/24h toggle | Planned |
+| KI-009 | During quiet operation the serial listener occasionally restarts (claim pauses, an unrelated library quirk) - pre-existing, not a hot-reconnect regression | Open, backlog |
 
 Full history and root-cause details for these and other issues: see [KNOWN_ISSUES.md](KNOWN_ISSUES.md). See also the Radio Connection limitations above (TCP's narrower receive scope, Bluetooth's send-only behavior) and [docs/User_Guide.md's Troubleshooting section](docs/User_Guide.md#17-troubleshooting).
 

@@ -111,8 +111,8 @@ Next step: route chat-list timestamp formatting through the same
 client-side `TimeFormatter` the Time card and other timestamps already use,
 instead of a server-formatted string.
 
-## KI-008: Serial hot-reconnect (H2-C) - implemented, pending live-hardware verification
-Status: implemented and unit-tested, not yet confirmed on real hardware
+## KI-008: Serial hot-reconnect (H2-C) - RESOLVED
+Status: resolved 2026-10-04, live-verified on dev (192.168.2.104), PR #331
 Background: previously, an unplugged-then-replugged serial radio
 (including a USB cable swap/reseat, or a power cycle of the radio itself)
 did not reliably recover without a full `sudo systemctl restart
@@ -137,14 +137,70 @@ Meshtastic Radio`) once you've confirmed which radio should actually be
 plugged in, or switch profiles if you intend to use the new one.
 Boot-time identity failures (radio not present/verified at service
 start) now enter the same wait-and-recheck state instead of permanently
-disabling recovery.
+disabling recovery. The separate adapter subprocess (send/`get_channels()`)
+now also tracks the listener's current verified port
+(`current_verified_port()`/`on_port_changed()`), so it no longer keeps
+retrying a stale path after a real device-path change - see PR #331's
+description for the full round-4 design writeup.
+Live verification: Steps 1-3 (USB unplug/replug on the same path, on a
+renumbered `ttyACM0->ttyACM1` path, and a forced path change while the
+adapter has an outstanding call) each passed across two independent
+rounds on dev, including a 30-minute quiet-period comparison against
+`main` (see PR #331 description) confirming no regression. **Not yet
+live-verified: a different physical radio connected on replug (the
+identity-MISMATCH path)** - no second USB Meshtastic radio was available
+for this round. That path is covered by the automated test suite
+(`tests/test_serial_hot_reconnect.py`) but remains live-unverified; treat
+it as the one still-open sub-case of this otherwise-resolved issue.
 Status detail: covered by an extensive unit-test suite
 (`tests/test_serial_hot_reconnect.py`, `tests/test_serial_reconnect.py`,
 `tests/test_serial_only_routes_non_serial.py`,
-`tests/test_start_runtime_worker_gate.py`) and mutation-tested against
-the specific regressions each test claims to catch, but has not yet been
-through a live hardware replug/power-cycle verification round. The
-pre-H2-C limitation ("no hot-reconnect after a physical serial cable
-swap") stays documented as the operative behavior until that live round
-passes - update this entry (and CLAUDE.md's own "Known, accepted
-trade-offs" section) once it does.
+`tests/test_start_runtime_worker_gate.py`, `tests/test_adapter_ipc_client.py`,
+`tests/test_autorecovery_supervisor_gate.py`,
+`tests/test_channel_discovery_port_absent_backoff.py`) and mutation-tested
+against the specific regressions each test claims to catch.
+
+## KI-009: Quiet-period listener restarts during normal operation (pre-existing, not a #331 regression)
+Status: open, documented 2026-10-04, not a release blocker
+Symptom: during a quiet 30-minute window with one browser tab open
+polling the UI, the serial listener subprocess restarts a handful of
+times (roughly every 6-10 minutes) for two unrelated, non-hardware
+reasons:
+1. `get_channels()`/`set_device_time()` legitimately pause the listener
+   while they claim the serial port through the adapter subprocess - the
+   claim itself takes 10-15s (channel discovery is a real multi-packet
+   radio round-trip, not a cache hit), occasionally landing the health
+   check mid-claim and reporting `LISTENER_DOWN` instead of the more
+   accurate `PAUSED`. Router-lock hold mechanism:
+   `meshsrv/transport_router.py:151-181` (`TransportRouter._delegate()`);
+   caller: `api/api_chat.py:276` (`discover_radio_channels()`).
+2. An independent Meshtastic-library-internal event - stdout line
+   `DEBUG file:stream_interface.py _disconnected line:102 Closing our
+   port`, process exit code 1, with **no** corresponding dmesg/USB event.
+   Confirmed by code inspection this is NOT the H2-C disconnect-detection
+   path: `DISCONNECT_LINE_MARKER` (`meshsrv/serial_reconnect.py:42`) is
+   `"device reports readiness to read but returned no data"`, which does
+   not match this line, so `line_signals_disconnect()` returns `False`
+   and the event falls through to the plain `return_code != 0` respawn
+   branch (`meshsrv/serial_port_supervisor.py:399-404`) - a path #331
+   did not add or modify. Self-recovers within ~5s every time, no new
+   `[IDENTITY]` re-check line, no lost messages observed.
+Why documented now, not fixed: a controlled A/B (main @ v1.9.0 vs PR
+#331's head, same 30-minute single-browser-tab condition, same dev node)
+showed both symptoms present on `main` at the same order of magnitude
+(get_channels() hold times 13.1-15.1s on both; the "Closing our port"
+quirk fired on both, 1x on main vs 4x on the PR branch, with no adapter
+activity within +-5s of any occurrence on either branch) - confirming
+pre-existing, unrelated to #331's changes. The PR branch additionally
+showed zero adapter-subprocess-killed-for-non-response events during its
+window, vs 3 on main, so if anything the PR branch's behavior under the
+same conditions is no worse.
+Next step (backlog, not scheduled): (a) make `discover_radio_channels()`
+cache more aggressively so a 10-15s claim isn't on the hot path of a
+routine UI poll; (b) have the radio-health check avoid classifying an
+in-progress claim's pause as `LISTENER_DOWN` (it already has the
+`PAUSED` status for exactly this - tighten the race window); (c)
+investigate the Meshtastic library's own "Closing our port" condition
+upstream, or detect+suppress it the same way H2-C already handles the
+"readiness to read" disconnect warning, if it turns out frequent enough
+to matter in practice.

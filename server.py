@@ -634,6 +634,71 @@ def _resolve_listener_port():
     return fallback_port
 
 
+def current_serial_port():
+    """The one function every runtime serial-port consumer (the adapter
+    subprocess, Node Tools, rescan, the Settings serial-connect descriptor)
+    should call instead of reading MESHTASTIC_PORT directly - review round
+    4's adapter-port design, closing the live-caught gap where the adapter
+    subprocess kept a by-id/path change invisible after the LISTENER had
+    already recovered on it.
+
+    listener_supervisor.current_verified_port() (set only on a confirmed
+    MATCH - never a freshly-resolved-but-unverified path) when something
+    has actually been verified since boot; MESHTASTIC_PORT (the configured
+    startup default) otherwise - boot itself, or serial isn't the accepted
+    transport at all, in which case MESHTASTIC_PORT is simply whatever was
+    configured and nothing dynamic applies anyway."""
+    return listener_supervisor.current_verified_port() or MESHTASTIC_PORT
+
+
+def _on_listener_port_changed(old_port, new_port):
+    """on_port_changed callable for listener_supervisor - fires once per
+    genuine verified-port change (never the first-ever verification), from
+    the listener thread, AFTER radio_lock has already been released (see
+    _await_identity_before_restart()'s own MATCH branch). Three things
+    need to happen for everything else in the system to agree with the
+    listener about which path is now current:
+
+    1. Persist the new port (+ by-id, if `new_port` itself isn't already
+       one) into the connections model, mirroring _resolve_listener_port()'s
+       own opportunistic by-id persistence - so a later profile reload or
+       restart starts from the right place too.
+    2. Recycle the shared adapter subprocess (serial send/get_channels/
+       get_info, and potentially BLE) - it is a SEPARATE OS process with
+       its own frozen copy of the port from whenever it last spawned, and
+       has no other way to learn the path changed. current_serial_port()
+       (read fresh on the next spawn) will then return `new_port`.
+    3. One System Log line, for the audit trail - a user watching the
+       System workspace sees why the adapter subprocess just restarted.
+    """
+    global INSTANCE_IDENTITY
+    try:
+        accepted_radio = normalize_radio_record(INSTANCE_IDENTITY.get("radio", {}))
+        by_id = new_port if "/by-id/" in new_port else find_by_id_for_port(new_port)
+        updated_radio = remember_connection(
+            accepted_radio, "serial", {"port": new_port, "by_id": by_id}
+        )
+        updated_identity = dict(INSTANCE_IDENTITY)
+        updated_identity["radio"] = updated_radio
+        INSTANCE_IDENTITY = instance_manager.save(updated_identity)
+    except Exception as e:
+        print(f"[IDENTITY] Failed to persist port change {old_port} -> {new_port}: {e}", flush=True)
+
+    try:
+        ble_address = (settings.get("meshtastic") or {}).get("ble_address") or None
+        adapter_supervisor.shutdown(ble_address_for_cleanup=ble_address)
+    except Exception as e:
+        print(f"[IDENTITY] Failed to recycle adapter after port change: {e}", flush=True)
+
+    log_system_event(
+        "Radio reconnected on a new path",
+        "INFO",
+        f"Serial port changed from {old_port} to {new_port} - the adapter "
+        "subprocess (send/channel discovery) has been resynced to the new path.",
+        source="identity",
+    )
+
+
 def _verify_listener_identity(port):
     """verify_identity callable for listener_supervisor - called ONLY
     after a real detected disconnect (see meshsrv/serial_reconnect.py's
@@ -1252,6 +1317,12 @@ listener_supervisor = SerialPortSupervisor(
     # on_serial_identity_match()'s state_lock/file-write/thread-start work
     # must not run while radio_lock is still held.
     on_match=lambda port, output: on_serial_identity_match(output),
+    # Review round 4 (adapter-port design): current_verified_port()
+    # prefers the stable by-id link for the just-verified path, found the
+    # same way _resolve_listener_port()'s own by-id-persistence code
+    # already does.
+    by_id_for_port=lambda port: find_by_id_for_port(port),
+    on_port_changed=lambda old, new: _on_listener_port_changed(old, new),
 )
 
 # Task 48: one persistent adapter subprocess, spawned/supervised here,
@@ -1264,7 +1335,15 @@ listener_supervisor = SerialPortSupervisor(
 adapter_supervisor = AdapterSupervisor(
     adapter_python=str(resolve_adapter_venv_dir(PROJECT_DIR) / "bin" / "python"),
     project_dir=PROJECT_DIR,
-    serial_port=MESHTASTIC_PORT,
+    # Review round 4 (adapter-port design, live-caught 2026-10-04): used
+    # to be the fixed MESHTASTIC_PORT, frozen at startup - a by-id/path
+    # change the listener recovered from correctly was invisible to this
+    # SEPARATE adapter subprocess (send/get_channels/get_info), which kept
+    # retrying the stale path until a full service restart. Read fresh on
+    # every spawn now; current_serial_port() (defined below) is the single
+    # place that falls back to MESHTASTIC_PORT when nothing has been
+    # verified yet (boot, or serial isn't the active transport at all).
+    serial_port=lambda: current_serial_port(),
     meshtastic_cli=MESHTASTIC_CMD,
     on_log=lambda msg, level="INFO": log_system_event(
         title="Meshtastic Adapter", details=msg, level=level, source="adapter_ipc"
@@ -4236,19 +4315,41 @@ def prepare_radio_command(device=None, timeout=8):
     return True
 
 
+def _on_radio_reconnect_requested():
+    """on_reconnect callable for radio_connection_manager - the radio may
+    have been swapped or reconfigured while released to an external tool
+    (the whole point of Release/Reconnect), so resuming must force a fresh
+    identity re-check rather than silently trust whatever was true before
+    the release.
+
+    clear_mismatch() (H2-C Phase 2) does that for the listener side,
+    unconditionally - a harmless no-op on those two fields if no mismatch
+    was actually active.
+
+    Review round 4, item 5: also unconditionally recycle the shared
+    adapter subprocess (send/get_channels/get_info, potentially BLE) -
+    the whole point of Release is that something may have changed on the
+    port while it was out of MeshCenter's control, and the adapter has no
+    other way to notice that short of a respawn. Unconditional, not
+    gated on whether listener_supervisor's own on_port_changed happens to
+    fire afterward: a same-path-different-device swap, or anything that
+    left the adapter's own internal state stale while released, needs
+    this regardless of whether the verified PORT STRING itself changed."""
+    listener_supervisor.clear_mismatch()
+    try:
+        ble_address = (settings.get("meshtastic") or {}).get("ble_address") or None
+        adapter_supervisor.shutdown(ble_address_for_cleanup=ble_address)
+    except Exception as e:
+        print(f"[RADIO MANAGER] Failed to recycle adapter on reconnect: {e}", flush=True)
+
+
 radio_connection_manager = RadioConnectionManager(
     pause_event=pause_listen,
     stop_listener=stop_listener,
     wait_serial_release=wait_serial_release,
-    serial_port=MESHTASTIC_PORT,
+    serial_port=current_serial_port,
     log_event=log_system_event,
-    # H2-C Phase 2: the radio may have been swapped or reconfigured while
-    # released to an external tool (the whole point of Release/Reconnect) -
-    # reconnect() should force a fresh identity re-check rather than
-    # silently resuming whatever was true before the release.
-    # clear_mismatch() does exactly this regardless of whether a mismatch
-    # was actually active (a harmless no-op on those two fields if not).
-    on_reconnect=listener_supervisor.clear_mismatch,
+    on_reconnect=_on_radio_reconnect_requested,
 )
 
 
@@ -5034,6 +5135,22 @@ def process_listener_autorecovery(status, listener_running, now_ts, escalated_fr
         state["limit_logged"] = False
         return
 
+    # Review round 4, item 2: while listener_supervisor's own H2-C
+    # disconnect-recovery/mismatch state machine is active, IT owns
+    # recovery - this older, blunter "stop then Popen again" mechanism
+    # must stand down entirely rather than race it. Live-caught
+    # (2026-10-04): this function's own stop_listener() call raced
+    # _await_identity_before_restart()'s radio_lock-held --info probe
+    # mid-flight, discarding a MATCH that would otherwise have landed one
+    # cycle earlier. Resets state the same way the disabled-by-setting
+    # branch above does, so nothing stale lingers once the supervisor
+    # resolves things on its own.
+    if listener_supervisor.owns_recovery():
+        state["down_since"] = None
+        state["restart_pending"] = False
+        state["restart_requested_at"] = None
+        return
+
     # Keep only attempts made inside the current 30-minute window.
     state["attempts"] = [
         timestamp
@@ -5713,6 +5830,7 @@ def compute_radio_health_status(
     listener_running,
     packet_age,
     transport_state,
+    awaiting_identity=False,
 ):
     """Pure status/level/reason/recommendation decision for
     radio_health_worker() - split out the same way
@@ -5740,6 +5858,14 @@ def compute_radio_health_status(
     RadioConnectionManager/pause_listen concepts - both serial-port-
     release-specific and meaningless for TCP/BLE - so this branch doesn't
     consult is_released/is_paused/listener_running/packet_age at all.
+
+    awaiting_identity (review round 4, item 2): True while listener_
+    supervisor's own H2-C disconnect-recovery/mismatch state machine owns
+    recovery (listener_supervisor.owns_recovery()) - surfaced as its own
+    status rather than the generic "LISTENER_DOWN"/"Restart the
+    Meshtastic listener" (which used to suggest a user action that isn't
+    needed and, worse, races the supervisor's own recovery if actually
+    followed via process_listener_autorecovery()).
     """
     if active_transport == "serial":
         if is_released:
@@ -5759,6 +5885,13 @@ def compute_radio_health_status(
             )
 
         if not listener_running:
+            if awaiting_identity:
+                return (
+                    "AWAITING_IDENTITY",
+                    "WARNING",
+                    "Waiting for the radio to reappear and verify its identity",
+                    "No action required - this resolves automatically once the radio answers",
+                )
             return (
                 "LISTENER_DOWN",
                 "ERROR",
@@ -5971,6 +6104,7 @@ def radio_health_worker():
                     listener_running=listener_running,
                     packet_age=packet_age,
                     transport_state=transport_state,
+                    awaiting_identity=listener_supervisor.owns_recovery(),
                 )
 
                 previous_status = radio_health.get("status")
@@ -6221,7 +6355,7 @@ register_node_tools_routes(
     state_lock=state_lock,
     save_nodes=save_nodes,
     MESHTASTIC_CMD=MESHTASTIC_CMD,
-    MESHTASTIC_PORT=MESHTASTIC_PORT,
+    current_serial_port=current_serial_port,
     radio_session=radio_session,
     RadioBusyError=RadioBusyError,
     log_system_event=log_system_event,
@@ -6229,15 +6363,17 @@ register_node_tools_routes(
 )
 register_node_icon_routes(app, PROFILE_DATA_DIR, LOCAL_NODE_ID, is_valid_node_id)
 
-# LOCAL_NODE_ID/LOCAL_NODE_NAME/MESHTASTIC_CMD/MESHTASTIC_PORT are passed by
-# value here, same as register_node_tools_routes() above - all four are
+# LOCAL_NODE_ID/LOCAL_NODE_NAME are passed by value here - both are
 # assigned exactly once at startup (before any register_*_routes() call),
 # never reassigned while the process is running (a radio profile switch
 # restarts the whole process instead of mutating them in place - see
 # CLAUDE.md's "Multi-radio profiles" section), so there is no accessor-
 # function-style staleness risk here the way system/cpu_history.py's
 # get_current_usage() exists for a value that genuinely does change while
-# the process runs.
+# the process runs. (MESHTASTIC_PORT is a different story now - see
+# current_serial_port()'s own docstring and register_node_tools_routes()'s
+# call site above, review round 4's adapter-port design; this route group
+# just never happened to take it as a parameter in the first place.)
 register_waypoint_routes(
     app,
     waypoint_store,
@@ -6382,7 +6518,7 @@ register_meshtastic_routes(
     serial_ipc_transport,
     ble_ipc_transport,
     tcp_ipc_transport,
-    MESHTASTIC_PORT,
+    current_serial_port,
     LOCAL_NODE_ID,
     listener_supervisor,
     instance_manager,
@@ -7728,12 +7864,17 @@ def api_rescan_nodes():
         }), 409
 
     try:
-        with radio_session(device=MESHTASTIC_PORT, timeout=10, cooldown=2.0):
+        # Review round 4 (adapter-port design): current_serial_port(), not
+        # the fixed MESHTASTIC_PORT - a rescan right after a by-id/path
+        # change must hit the device the listener actually verified, not a
+        # stale startup value.
+        rescan_port = current_serial_port()
+        with radio_session(device=rescan_port, timeout=10, cooldown=2.0):
             # Fetch --info while still holding radio_lock, so this doesn't
             # race the listener (or any other radio_session caller) the way
             # a bare parse_nodes_from_info() call used to: that helper runs
             # its own unlocked subprocess when given no info_output.
-            result = meshtastic_transport.get_info(MESHTASTIC_CMD, serial_port=MESHTASTIC_PORT, timeout=30)
+            result = meshtastic_transport.get_info(MESHTASTIC_CMD, serial_port=rescan_port, timeout=30)
             info_output = result.stdout + result.stderr
 
         success = parse_nodes_from_info(info_output=info_output)

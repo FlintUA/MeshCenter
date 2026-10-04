@@ -30,7 +30,7 @@ def register_meshtastic_routes(
     serial_transport,
     ble_transport,
     tcp_transport,
-    serial_port,
+    serial_port,  # zero-arg callable - review round 4 (adapter-port design)
     local_node_id,
     core_serial_transport,
     instance_manager,
@@ -128,7 +128,7 @@ def register_meshtastic_routes(
             elif transport_name == "tcp":
                 endpoint = {"host": tcp_host, "port": tcp_port}
             else:
-                endpoint = {"port": serial_port}
+                endpoint = {"port": serial_port()}
 
             # Multi-connection model (Radio Profiles & Connections Model,
             # PR 1): remember_connection() merges this endpoint into
@@ -164,7 +164,7 @@ def register_meshtastic_routes(
             # whatever this radio record was before, which must not
             # influence non-serial behavior/UI (schema-compat only, some
             # old readers still touch radio.get("port")).
-            radio["port"] = serial_port if transport_name == "serial" else ""
+            radio["port"] = serial_port() if transport_name == "serial" else ""
 
             updated["radio"] = radio
             instance_manager.save(updated)
@@ -195,9 +195,10 @@ def register_meshtastic_routes(
             disconnect_timeout=_SWITCH_DISCONNECT_TIMEOUT_S,
         )
         if previous == "serial":
-            if not serial_port:
+            current_port = serial_port()
+            if not current_port:
                 return None, None
-            return previous, build_transport_connect_new("serial", serial_port=serial_port, **kwargs)
+            return previous, build_transport_connect_new("serial", serial_port=current_port, **kwargs)
         if previous == "bluetooth":
             address = str(saved.get("ble_address") or "").strip()
             if not address:
@@ -403,7 +404,7 @@ def register_meshtastic_routes(
             serial_transport=serial_transport,
             ble_transport=ble_transport,
             tcp_transport=tcp_transport,
-            serial_port=serial_port,
+            serial_port=serial_port(),
             connect_timeout=_SWITCH_CONNECT_TIMEOUT_S,
             disconnect_timeout=_SWITCH_DISCONNECT_TIMEOUT_S,
             **endpoint_kwargs,

@@ -215,15 +215,30 @@ def resolve_by_id_target(by_id_path: str) -> str:
         return ""
 
 
+# Review round 4, item 1 (live-caught, 2026-10-04): a long outage used to
+# grow identity_retry_delay() all the way to 60s WHILE THE DEVICE WAS STILL
+# ABSENT - so a replug right after that backoff escalated could still wait
+# up to 60s before the first --info probe even ran, even though the only
+# thing that happened during the absence was "keep checking os.path.exists()
+# got nothing". DEVICE_PRESENCE_POLL_INTERVAL_S is for exactly that
+# "nothing there yet" case: cheap (a single os.path.exists()/by-id-resolve,
+# no CLI subprocess), fixed-interval, no growing backoff - so replug->MATCH
+# latency is dominated by how long the device itself takes to actually
+# re-enumerate and settle, not by a stale backoff counter from before it
+# came back.
+DEVICE_PRESENCE_POLL_INTERVAL_S = 2.0
+
 # Backoff schedule for retrying identity verification after a
-# DETECTION_ERROR (the radio hasn't reappeared yet, or a probe failed
-# transiently) - H2-C Phase 2 design: 5s, 10s, 30s, then settle at 60s.
+# DETECTION_ERROR (the radio IS present but a real --info probe against it
+# failed/errored) - H2-C Phase 2 design: 5s, 10s, 30s, then settle at 60s.
 # Deliberately NOT the schedule used for a plain crash-and-retry of an
 # already-verified listener (SerialPortSupervisor's own existing fast
-# backoff, unchanged) - this one is only for "waiting for the radio to
-# come back and prove its identity before touching the port again", where
-# --info is comparatively slow (seconds on a Pi Zero 2W) and shouldn't be
-# re-run every couple of seconds.
+# backoff, unchanged) - this one is only for "the device is here, but
+# couldn't be verified yet", where --info is comparatively slow (seconds on
+# a Pi Zero 2W) and shouldn't be re-run every couple of seconds. Reset to
+# attempt 0 whenever the device disappears again (see
+# DEVICE_PRESENCE_POLL_INTERVAL_S above) - this schedule is scoped to
+# "device present, probe failing", not "device absent".
 IDENTITY_RETRY_BACKOFF_S = (5.0, 10.0, 30.0, 60.0)
 
 

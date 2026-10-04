@@ -869,6 +869,85 @@ def test_stderr_drain_forwards_lines_to_on_log():
 # supervisor able to respawn on the next call.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Review round 4 (adapter-port design): `serial_port` may be a zero-arg
+# callable instead of a fixed string, read FRESH on every spawn so a
+# verified by-id/path change reaches a RESPAWNED adapter subprocess instead
+# of it coming back on the stale path it was first spawned with.
+# ---------------------------------------------------------------------------
+
+class _FakeSpawnedProcess:
+    """Minimal subprocess.Popen stand-in for _spawn_locked()'s own
+    bookkeeping (pid, poll(), an empty-but-iterable stderr for the drain
+    thread) - deliberately not a real process, since these tests only
+    care about what command _spawn_locked() builds, not what runs it."""
+
+    def __init__(self):
+        self.pid = 4242
+        self.stdin = None
+        self.stdout = None
+        self.stderr = iter(())
+
+    def poll(self):
+        return None
+
+    def kill(self):
+        pass
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_spawn_reads_the_serial_port_provider_fresh_each_time(monkeypatch):
+    captured_commands = []
+    monkeypatch.setattr(
+        adapter_ipc_client.subprocess, "Popen",
+        lambda command, **kwargs: captured_commands.append(command) or _FakeSpawnedProcess(),
+    )
+    ports = iter(["/dev/ttyACM0", "/dev/ttyACM1"])
+    supervisor = AdapterSupervisor(
+        adapter_python=sys.executable,
+        project_dir=_PROJECT_DIR,
+        serial_port=lambda: next(ports),
+        meshtastic_cli="meshtastic",
+    )
+
+    supervisor._spawn_locked()
+    supervisor._kill_locked(None)
+    supervisor._spawn_locked()
+
+    def _port_arg(command):
+        return command[command.index("--serial-port") + 1]
+
+    assert len(captured_commands) == 2
+    assert _port_arg(captured_commands[0]) == "/dev/ttyACM0"
+    assert _port_arg(captured_commands[1]) == "/dev/ttyACM1", (
+        "a respawn must read the provider again, not reuse the port from the first spawn"
+    )
+
+
+def test_spawn_with_a_plain_string_serial_port_is_unchanged():
+    """Backward compatibility: every existing caller (production and
+    every other test in this file) passes a plain string - must keep
+    working exactly as before."""
+    captured_commands = []
+
+    def _fake_popen(command, **kwargs):
+        captured_commands.append(command)
+        return _FakeSpawnedProcess()
+
+    with patch.object(adapter_ipc_client.subprocess, "Popen", _fake_popen):
+        supervisor = AdapterSupervisor(
+            adapter_python=sys.executable,
+            project_dir=_PROJECT_DIR,
+            serial_port="/dev/ttyFAKE",
+            meshtastic_cli="meshtastic",
+        )
+        supervisor._spawn_locked()
+
+    assert captured_commands[0][captured_commands[0].index("--serial-port") + 1] == "/dev/ttyFAKE"
+
+
 def test_shutdown_before_any_spawn_is_a_noop():
     supervisor = _make_supervisor()
     supervisor.shutdown()

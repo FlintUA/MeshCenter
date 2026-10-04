@@ -184,21 +184,23 @@ def test_disconnect_then_match_on_a_different_path_resolved_via_by_id_resumes(mo
     assert supervisor._port == "/dev/ttyACM1", "must adopt the newly-resolved path, not keep the stale one"
 
 
-def test_disconnect_with_no_device_present_backs_off_without_verifying_identity(monkeypatch):
-    """Nothing to verify identity against yet - must back off (per
-    identity_retry_delay()) rather than call verify_identity() against a
+def test_disconnect_with_no_device_present_polls_cheaply_without_verifying_identity(monkeypatch):
+    """Nothing to verify identity against yet - must poll cheaply (review
+    round 4, item 1: DEVICE_PRESENCE_POLL_INTERVAL_S, not the growing
+    identity-retry backoff) rather than call verify_identity() against a
     path that doesn't exist, and must NOT attempt a Popen."""
     import meshsrv.serial_port_supervisor as spv_module
 
     verify_calls = []
     popen_calls = []
+    sleep_calls = []
     supervisor = _make_supervisor(
         resolve_port=lambda: "/dev/ttyACM0",
         verify_identity=lambda port: verify_calls.append(port) or ("MATCH", ""),
     )
     supervisor._disconnect_detected.set()
     monkeypatch.setattr(spv_module.os.path, "exists", lambda p: False)
-    monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(spv_module.time, "sleep", lambda s: sleep_calls.append(s))
     monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a) or _FakeListenProcess([]))
 
     supervisor._listener_cycle()
@@ -206,6 +208,70 @@ def test_disconnect_with_no_device_present_backs_off_without_verifying_identity(
     assert verify_calls == []
     assert popen_calls == []
     assert supervisor._disconnect_detected.is_set(), "must stay in the disconnect-recovery state, not give up"
+    assert sleep_calls == [spv_module.DEVICE_PRESENCE_POLL_INTERVAL_S]
+    assert supervisor._identity_retry_attempt == 0, (
+        "the identity-retry schedule is reserved for a PRESENT device whose probe fails - "
+        "an absent device must not grow it (this is what made a long outage wait up to 60s "
+        "for the first --info attempt once the device actually came back)"
+    )
+
+
+def test_long_absence_then_device_appears_probes_within_the_cheap_poll_interval(monkeypatch):
+    """Review round 4, item 1's explicit regression test: even after a
+    long absence that would have escalated the OLD backoff counter all
+    the way to 60s, the device reappearing must be noticed - and the
+    --info probe attempted - within DEVICE_PRESENCE_POLL_INTERVAL_S, not
+    whatever the stale backoff value was."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    verify_calls = []
+    sleep_calls = []
+    supervisor = _make_supervisor(
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=lambda port: verify_calls.append(port) or ("MATCH", ""),
+    )
+    supervisor._disconnect_detected.set()
+    # Simulate a long absence: several prior absent-device cycles would
+    # have left a naive always-incrementing counter deep into the backoff
+    # schedule (60s) by now.
+    supervisor._identity_retry_attempt = 10
+    monkeypatch.setattr(spv_module.time, "sleep", lambda s: sleep_calls.append(s))
+
+    # Cycle 1: device still absent - must poll cheaply, not wait 60s.
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: False)
+    result = supervisor._await_identity_before_restart()
+    assert result is False
+    assert sleep_calls == [spv_module.DEVICE_PRESENCE_POLL_INTERVAL_S]
+    assert verify_calls == []
+
+    # Cycle 2: device has reappeared - the --info probe must be attempted
+    # immediately (no sleep at all on the success path), not after a
+    # leftover 60s-class delay.
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+    result = supervisor._await_identity_before_restart()
+    assert result is True
+    assert verify_calls == ["/dev/ttyACM0"]
+    assert sleep_calls == [spv_module.DEVICE_PRESENCE_POLL_INTERVAL_S], "no additional sleep on the probe-success path"
+
+
+def test_device_present_but_probe_fails_still_uses_the_growing_backoff(monkeypatch):
+    """The other half: once the device IS present, a failing probe
+    (DETECTION_ERROR/NOT_FOUND) still backs off per identity_retry_delay()
+    - only the "nothing there at all" case got cheaper."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    sleep_calls = []
+    supervisor = _make_supervisor(
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=lambda port: ("DETECTION_ERROR", ""),
+    )
+    supervisor._disconnect_detected.set()
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(spv_module.time, "sleep", lambda s: sleep_calls.append(s))
+
+    supervisor._await_identity_before_restart()
+
+    assert sleep_calls == [spv_module.identity_retry_delay(0)]
     assert supervisor._identity_retry_attempt == 1
 
 
@@ -658,3 +724,137 @@ def test_on_match_runs_after_radio_lock_is_released(monkeypatch):
     assert observations[1] == ("during_on_match", True, "fake --info output"), (
         "radio_lock must already be released, and the --info output passed through, by the time on_match() runs"
     )
+
+
+# --- Review round 4 (adapter-port design): current_verified_port() / -----
+# on_port_changed() - the single source of truth other subsystems (the
+# adapter subprocess, Node Tools, rescan) read to stay in sync with
+# whatever path the listener actually verified. ----------------------------
+
+
+def test_current_verified_port_empty_until_something_has_matched():
+    supervisor = _make_supervisor()
+    assert supervisor.current_verified_port() == ""
+
+
+def test_match_sets_current_verified_port_to_the_resolved_path_without_by_id(monkeypatch):
+    supervisor = _make_supervisor(
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=lambda port: ("MATCH", ""),
+    )
+    import meshsrv.serial_port_supervisor as spv_module
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+
+    supervisor._await_identity_before_restart()
+
+    assert supervisor.current_verified_port() == "/dev/ttyACM0"
+
+
+def test_match_prefers_the_by_id_path_over_the_resolved_one(monkeypatch):
+    """Review design intent: with a by-id link on record, a later pure
+    ACM0->ACM1 enumeration change doesn't even require propagation -
+    current_verified_port() keeps returning the same by-id string."""
+    supervisor = _make_supervisor(
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=lambda port: ("MATCH", ""),
+        by_id_for_port=lambda port: "/dev/serial/by-id/usb-Fake_Radio-if00",
+    )
+    import meshsrv.serial_port_supervisor as spv_module
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+
+    supervisor._await_identity_before_restart()
+
+    assert supervisor.current_verified_port() == "/dev/serial/by-id/usb-Fake_Radio-if00"
+
+
+def test_on_port_changed_fires_when_the_verified_path_genuinely_changes(monkeypatch):
+    """The explicit scenario: the verified port changes (a by-id-less
+    replug onto a different ttyACMx) -> on_port_changed(old, new) fires
+    exactly once with the right values, so a caller (server.py's
+    adapter-recycle hook) knows to act."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    changes = []
+    supervisor = _make_supervisor(
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=lambda port: ("MATCH", ""),
+        on_port_changed=lambda old, new: changes.append((old, new)),
+    )
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+
+    # First-ever verification - nothing to compare against, must NOT fire.
+    supervisor._await_identity_before_restart()
+    assert changes == []
+    assert supervisor.current_verified_port() == "/dev/ttyACM0"
+
+    # A genuine path change - by-id-less, so current_verified_port() must
+    # pick up the new resolved path and fire exactly once.
+    supervisor._resolve_port = lambda: "/dev/ttyACM1"
+    supervisor._disconnect_detected.set()
+    supervisor._await_identity_before_restart()
+
+    assert changes == [("/dev/ttyACM0", "/dev/ttyACM1")]
+    assert supervisor.current_verified_port() == "/dev/ttyACM1"
+
+
+def test_on_port_changed_does_not_fire_when_the_path_is_unchanged(monkeypatch):
+    import meshsrv.serial_port_supervisor as spv_module
+
+    changes = []
+    supervisor = _make_supervisor(
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=lambda port: ("MATCH", ""),
+        on_port_changed=lambda old, new: changes.append((old, new)),
+    )
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+
+    supervisor._await_identity_before_restart()
+    supervisor._disconnect_detected.set()
+    supervisor._await_identity_before_restart()
+
+    assert changes == [], "replugging back onto the SAME verified path must not fire a change"
+
+
+def test_mismatch_never_updates_current_verified_port_or_fires_on_port_changed(monkeypatch):
+    """The explicit 'no MATCH yet' scenario: a MISMATCH (or any non-MATCH
+    status) must leave current_verified_port() exactly as it was, and must
+    never call on_port_changed() - the adapter must not be pointed at an
+    unproven device."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    changes = []
+    supervisor = _make_supervisor(
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=lambda port: ("MATCH", ""),
+        on_port_changed=lambda old, new: changes.append((old, new)),
+    )
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+    supervisor._await_identity_before_restart()
+    assert supervisor.current_verified_port() == "/dev/ttyACM0"
+
+    # Now a different device answers at a different path - MISMATCH, not
+    # MATCH.
+    supervisor._resolve_port = lambda: "/dev/ttyACM1"
+    supervisor._verify_identity = lambda port: ("MISMATCH", "")
+    supervisor._disconnect_detected.set()
+    supervisor._await_identity_before_restart()
+
+    assert supervisor.current_verified_port() == "/dev/ttyACM0", "must stay on the last PROVEN path"
+    assert changes == [], "a mismatch must never trigger the adapter-recycle notification"
+
+
+def test_mark_device_verified_seeds_current_verified_port_without_firing_on_port_changed():
+    """The boot-time counterpart: mark_device_verified() also populates
+    current_verified_port() (by-id preferred), but - being the first-ever
+    verification - must never fire on_port_changed() either (nothing to
+    propagate: the adapter was already spawned with this same boot port)."""
+    changes = []
+    supervisor = _make_supervisor(
+        by_id_for_port=lambda port: "/dev/serial/by-id/usb-Fake_Radio-if00",
+        on_port_changed=lambda old, new: changes.append((old, new)),
+    )
+
+    supervisor.mark_device_verified("/dev/ttyACM0")
+
+    assert supervisor.current_verified_port() == "/dev/serial/by-id/usb-Fake_Radio-if00"
+    assert changes == []

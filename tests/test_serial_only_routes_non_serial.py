@@ -14,10 +14,26 @@ def _preserve(server_module):
     original_identity = server_module.instance_manager.get()
     original_result = server_module.RADIO_IDENTITY_RESULT
     original_pause = server_module.pause_listen.is_set()
+    # Review round 4 (adapter-port design): listener_supervisor is a
+    # session-scoped singleton like everything else here - current_
+    # verified_port() leaking a real value from one test into the next
+    # (e.g. a MATCH flow run by an earlier test in this same file) would
+    # otherwise make an "empty until verified" test order-dependent.
+    original_verified_port = server_module.listener_supervisor._verified_port
+    # Pre-existing leak this round's own tests surfaced: a few tests here
+    # (reconnect-related, both pre-existing and new) set
+    # radio_connection_manager._mode directly and/or drive it to
+    # "reconnecting" via a real reconnect() call, with nothing restoring
+    # it afterward - commands_allowed()/is_radio_available() then stay
+    # wrong for every later test in the session (radio_connection_manager
+    # is a session-scoped singleton like everything else here).
+    original_connection_mode = server_module.radio_connection_manager._mode
     yield
     server_module.instance_manager.save(original_identity)
     server_module.INSTANCE_IDENTITY = original_identity
     server_module.RADIO_IDENTITY_RESULT = original_result
+    server_module.listener_supervisor._verified_port = original_verified_port
+    server_module.radio_connection_manager._mode = original_connection_mode
     if original_pause:
         server_module.pause_listen.set()
     else:
@@ -370,3 +386,112 @@ def test_radio_health_reports_the_active_transport(server_module, _preserve, tra
         data = server_module.api_radio_health().get_json()
 
     assert data["transport"] == transport
+
+
+# --- Review round 4 (adapter-port design): current_serial_port()/the --------
+# adapter subprocess must follow a verified path change, not keep the
+# fixed MESHTASTIC_PORT it was first spawned with. --------------------------
+
+
+def test_current_serial_port_falls_back_to_meshtastic_port_before_anything_verified(server_module, _preserve):
+    # listener_supervisor is session-scoped like everything else here - an
+    # earlier test's own MATCH flow may have already populated this, so
+    # this test (specifically about the "nothing verified yet" state)
+    # must force it back to that state itself rather than assume it.
+    server_module.listener_supervisor._verified_port = ""
+    assert server_module.listener_supervisor.current_verified_port() == ""
+    assert server_module.current_serial_port() == server_module.MESHTASTIC_PORT
+
+
+def test_current_serial_port_follows_a_verified_path_change(server_module, _preserve, monkeypatch):
+    import meshsrv.serial_port_supervisor as spv_module
+
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+    server_module.listener_supervisor._resolve_port = lambda: "/dev/ttyACM7"
+    server_module.listener_supervisor._verify_identity = lambda port: ("MATCH", "")
+    server_module.listener_supervisor._by_id_for_port = lambda port: ""
+
+    server_module.listener_supervisor._await_identity_before_restart()
+
+    assert server_module.current_serial_port() == "/dev/ttyACM7"
+
+
+def test_adapter_respawn_after_a_verified_path_change_uses_the_new_port_not_meshtastic_port(
+    server_module, _preserve, monkeypatch
+):
+    """The explicitly-requested regression test: the next adapter spawn
+    must read current_serial_port() fresh, not the fixed MESHTASTIC_PORT
+    it was constructed with."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+    server_module.listener_supervisor._resolve_port = lambda: "/dev/ttyACM9"
+    server_module.listener_supervisor._verify_identity = lambda port: ("MATCH", "")
+    server_module.listener_supervisor._by_id_for_port = lambda port: ""
+    server_module.listener_supervisor._await_identity_before_restart()
+    assert server_module.current_serial_port() == "/dev/ttyACM9"
+    assert server_module.current_serial_port() != server_module.MESHTASTIC_PORT
+
+    captured_commands = []
+
+    class _FakeProc:
+        pid = 1
+        stdin = None
+        stdout = None
+        stderr = iter(())
+
+        def poll(self):
+            return None
+
+    import meshsrv.adapter_ipc_client as adapter_ipc_client_module
+    monkeypatch.setattr(
+        adapter_ipc_client_module.subprocess, "Popen",
+        lambda command, **kwargs: captured_commands.append(command) or _FakeProc(),
+    )
+
+    server_module.adapter_supervisor._spawn_locked()
+
+    port_arg = captured_commands[0][captured_commands[0].index("--serial-port") + 1]
+    assert port_arg == "/dev/ttyACM9"
+
+
+def test_on_listener_port_changed_recycles_the_adapter(server_module, _preserve, monkeypatch):
+    """_on_listener_port_changed() (wired as listener_supervisor's
+    on_port_changed callback) must recycle the shared adapter subprocess
+    so its NEXT call reads the new port - verified here via
+    AdapterSupervisor.shutdown() actually being called (a killed adapter
+    always respawns lazily on its next real call, already covered by
+    AdapterSupervisor's own tests)."""
+    shutdown_calls = []
+    monkeypatch.setattr(
+        server_module.adapter_supervisor, "shutdown",
+        lambda ble_address_for_cleanup=None: shutdown_calls.append(ble_address_for_cleanup),
+    )
+    monkeypatch.setattr(server_module, "log_system_event", lambda *a, **k: None)
+
+    server_module._on_listener_port_changed("/dev/ttyACM0", "/dev/ttyACM1")
+
+    assert len(shutdown_calls) == 1
+
+
+def test_reconnect_recycles_the_adapter_onto_the_current_verified_port(server_module, _preserve, monkeypatch):
+    """Review round 4, item 5: Release -> Reconnect must end with the
+    adapter synced too, unconditionally - not only when
+    listener_supervisor's own on_port_changed happens to fire."""
+    _accept(server_module, "serial")
+    server_module.radio_connection_manager._mode = "released"
+    monkeypatch.setattr(server_module, "stop_listener", lambda: True)
+    monkeypatch.setattr(server_module, "radio_event", lambda *a, **k: None)
+    monkeypatch.setattr(server_module, "log_system_event", lambda *a, **k: None)
+    monkeypatch.setattr(server_module.listener_supervisor, "clear_mismatch", lambda: None)
+
+    shutdown_calls = []
+    monkeypatch.setattr(
+        server_module.adapter_supervisor, "shutdown",
+        lambda ble_address_for_cleanup=None: shutdown_calls.append(ble_address_for_cleanup),
+    )
+
+    data, status_code = _post(server_module, server_module.api_radio_connection_reconnect, "/api/radio_connection/reconnect")
+
+    assert status_code == 200 and data["ok"] is True
+    assert len(shutdown_calls) == 1, "Reconnect must recycle the adapter unconditionally, not just on a detected path change"

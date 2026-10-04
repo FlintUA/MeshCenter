@@ -313,14 +313,24 @@ class AdapterSupervisor:
         *,
         adapter_python: str,
         project_dir: str,
-        serial_port: str,
+        serial_port: str | Callable[[], str],
         meshtastic_cli: str,
         on_log: Optional[Callable[[str, str], None]] = None,
         command: Optional[list[str]] = None,
     ) -> None:
         self._adapter_python = adapter_python
         self._project_dir = project_dir
-        self._serial_port = serial_port
+        # Review round 4 (adapter-port design): `serial_port` may now be a
+        # zero-arg callable instead of a fixed string, read FRESH on every
+        # spawn (see _spawn_locked() below) rather than frozen at
+        # construction time - this is what lets a replug's by-id-resolved
+        # path reach a RESPAWNED adapter subprocess instead of it coming
+        # back on the stale path it was first spawned with. A plain string
+        # (every existing caller/test) is wrapped into a trivial callable
+        # so nothing else about this class's behavior changes for them.
+        self._serial_port_provider: Callable[[], str] = (
+            serial_port if callable(serial_port) else (lambda: serial_port)
+        )
         self._meshtastic_cli = meshtastic_cli
         self._on_log = on_log or (lambda msg, level="INFO": None)
         # Test-only seam: a real adapter needs meshtastic/bleak installed,
@@ -339,12 +349,14 @@ class AdapterSupervisor:
 
     def _spawn_locked(self) -> None:
         env = {**os.environ, "PYTHONPATH": str(self._project_dir)}
+        # Read fresh on every spawn, not just the first one - see
+        # __init__'s own comment on _serial_port_provider.
         command = self._command_override or [
             str(self._adapter_python),
             "-m",
             "adapters.meshtastic.ipc_server",
             "--serial-port",
-            str(self._serial_port),
+            str(self._serial_port_provider()),
             "--meshtastic-cli",
             str(self._meshtastic_cli),
         ]
@@ -644,15 +656,24 @@ class AdapterSupervisor:
             except Exception as error:
                 self._on_log(f"bluetoothctl disconnect after adapter kill failed: {error}", "WARNING")
 
-    def shutdown(self) -> None:
+    def shutdown(self, ble_address_for_cleanup: Optional[str] = None) -> None:
         """Kills the adapter subprocess if one is running (idempotent; the
-        next call() respawns it). For a supervisor that owns a deliberately
-        short-lived process - the TCP identity probe's own (TCP lifecycle
-        P0), where process death is what guarantees the OS closes the
-        probe's socket, independent of any close() path inside the adapter.
-        No BLE cleanup: a probe supervisor never talks to Bluetooth."""
+        next call() respawns it, reading _serial_port_provider() fresh at
+        that point). Originally written for a supervisor that owns a
+        deliberately short-lived process - the TCP identity probe's own
+        (TCP lifecycle P0), where process death is what guarantees the OS
+        closes the probe's socket, independent of any close() path inside
+        the adapter - hence no BLE cleanup by default there.
+
+        Review round 4 (adapter-port design): also used to force the
+        SHARED serial+BLE+TCP adapter_supervisor to respawn on the current
+        serial port after a verified path change (on_port_changed()) or a
+        Release->Reconnect - that instance DOES potentially hold a live
+        BLE session, so its caller passes ble_address_for_cleanup (the
+        same value an AdapterIPCTransport.call() would have supplied) so
+        _kill_locked() still runs its bluetoothctl disconnect."""
         with self._proc_lock:
-            self._kill_locked(None)
+            self._kill_locked(ble_address_for_cleanup)
 
 
 class AdapterIPCTransport(RadioTransport):

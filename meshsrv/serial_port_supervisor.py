@@ -53,6 +53,7 @@ from typing import Callable, Optional
 
 from meshsrv.radio_transport import TransportError, TransportErrorCode
 from meshsrv.serial_reconnect import (
+    DEVICE_PRESENCE_POLL_INTERVAL_S,
     DeviceIdentity,
     capture_device_identity,
     device_identity_changed,
@@ -96,6 +97,8 @@ class SerialPortSupervisor:
         verify_identity: Optional[Callable[[str], tuple[str, str]]] = None,
         on_identity_mismatch: Optional[Callable[[str], None]] = None,
         on_match: Optional[Callable[[str, str], None]] = None,
+        by_id_for_port: Optional[Callable[[str], str]] = None,
+        on_port_changed: Optional[Callable[[str, str], None]] = None,
     ) -> None:
         self._cli_path = cli_path
         self._port = port
@@ -142,9 +145,34 @@ class SerialPortSupervisor:
         # every claim and adding a radio_lock -> state_lock ordering edge
         # that doesn't need to exist.
         self._on_match = on_match or (lambda port, output: None)
+        # Review round 4 (adapter-port design): maps a resolved real
+        # device path to its stable /dev/serial/by-id/* link, if one
+        # exists - used to populate current_verified_port() with the
+        # by-id string in preference to the resolved /dev/ttyACMx path,
+        # since a by-id path keeps working across a later ttyACMx
+        # renumbering with no propagation needed at all. No-op default
+        # (always "") for any caller that doesn't inject real by-id
+        # lookup - current_verified_port() then just falls back to the
+        # resolved path, same as before this existed.
+        self._by_id_for_port = by_id_for_port or (lambda port: "")
+        # Fired when current_verified_port()'s value actually CHANGES
+        # (never on the first-ever verification, where there is nothing
+        # to compare against) - the single notification point for "a
+        # different physical path is now the verified one", so Core can
+        # update the connections model and resync the adapter subprocess
+        # (which cannot discover this on its own - it is a separate OS
+        # process with its own frozen copy of the port). Called OUTSIDE
+        # radio_lock, same as on_match() above and for the same reason.
+        self._on_port_changed = on_port_changed or (lambda old, new: None)
 
         self._listen_process: Optional[subprocess.Popen] = None
         self._connected_since: Optional[float] = None
+        # Review round 4: the single source of truth for "the port other
+        # subsystems should use right now" (current_verified_port()) -
+        # set only on a confirmed MATCH (_await_identity_before_restart()
+        # or mark_device_verified() at boot), never a freshly-resolved-
+        # but-unverified path.
+        self._verified_port: str = ""
 
         # H2-C Phase 2 state - see run_listener()'s own docstring and
         # meshsrv/serial_reconnect.py's module docstring for the three
@@ -426,9 +454,16 @@ class SerialPortSupervisor:
         method)."""
         resolved_port = self._resolve_port()
         if not resolved_port or not os.path.exists(resolved_port):
-            delay = identity_retry_delay(self._identity_retry_attempt)
-            self._identity_retry_attempt += 1
-            time.sleep(delay)
+            # Review round 4, item 1: the device is genuinely ABSENT - a
+            # cheap, fixed-interval presence poll (no --info probe, so no
+            # reason to back off at all), not the growing identity-retry
+            # schedule below. Also resets _identity_retry_attempt: that
+            # schedule is reserved for "device present, probe failing" -
+            # letting it keep growing while there's nothing to probe yet
+            # is exactly what made a long-absence replug wait up to 60s
+            # for the FIRST --info attempt, live-caught 2026-10-04.
+            self._identity_retry_attempt = 0
+            time.sleep(DEVICE_PRESENCE_POLL_INTERVAL_S)
             return False
 
         # Review follow-up: an --info probe is comparatively slow (a real
@@ -467,6 +502,20 @@ class SerialPortSupervisor:
                 f"{self._verified_device!r}",
                 file=sys.stderr, flush=True,
             )
+            # Review round 4 (adapter-port design): current_verified_port()
+            # prefers the stable by-id link for this resolved path, if one
+            # is on record - falls back to the resolved path itself
+            # otherwise. Fires on_port_changed() only on a genuine change
+            # (never the first-ever verification - old_verified_port is ""
+            # then, nothing to propagate yet) so an ordinary boot or a
+            # replug back onto the SAME path never triggers a pointless
+            # adapter recycle.
+            old_verified_port = self._verified_port
+            by_id = self._by_id_for_port(resolved_port)
+            new_verified_port = by_id or resolved_port
+            self._verified_port = new_verified_port
+            if old_verified_port and new_verified_port != old_verified_port:
+                self._on_port_changed(old_verified_port, new_verified_port)
             # Review round 2, item 3: called here, OUTSIDE the `with
             # self._radio_lock:` block above - radio_lock is already
             # released by this point, so on_match()'s own work (state_lock,
@@ -578,11 +627,53 @@ class SerialPortSupervisor:
         Popen attempt doesn't immediately fail the pre-Popen verified-
         device check (_listener_cycle() would otherwise treat a freshly-
         started process as "never verified" and loop straight back into
-        disconnect-recovery before ever sending a single --listen)."""
+        disconnect-recovery before ever sending a single --listen).
+
+        Also seeds current_verified_port() the same way the MATCH branch
+        does (by-id preferred) - deliberately never fires on_port_changed()
+        here: this is the FIRST verification of the process's life, there
+        is no prior value to compare against, and the adapter subprocess
+        was already constructed with this same boot-time port, so nothing
+        needs to be propagated yet."""
         self._verified_device = capture_device_identity(port)
+        self._verified_port = self._by_id_for_port(port) or port
+
+    def current_verified_port(self) -> str:
+        """Single source of truth for 'the port other subsystems (the
+        adapter subprocess, Node Tools, rescan) should use right now' -
+        review round 4's adapter-port design. The by-id path when one was
+        on record for the last verified device (preferred - pyserial/
+        SerialInterface open the symlink fine, and it keeps working across
+        a later ttyACMx renumbering with no propagation needed at all),
+        else the resolved /dev/ttyACMx path itself. Empty string if
+        nothing has ever been verified yet - callers must fall back to
+        their own configured default in that case, never treat '' as a
+        real path.
+
+        Deliberately reflects only _verified_port (set exclusively by a
+        confirmed MATCH or mark_device_verified() at boot) - never a
+        freshly-resolved-but-unverified path, so nothing downstream can
+        be pointed at an unproven device."""
+        return self._verified_port
 
     def is_mismatch_active(self) -> bool:
         return self._mismatch_active.is_set()
+
+    def owns_recovery(self) -> bool:
+        """True while this supervisor's own disconnect-recovery/mismatch
+        state machine is actively handling recovery (_disconnect_detected
+        or _mismatch_active) - server.py's older, blunter
+        process_listener_autorecovery() (a plain "stop then Popen again"
+        mechanism, predates H2-C Phase 2) must stand down entirely while
+        this is true, not attempt its own restart in parallel.
+
+        Review round 4, item 2 (live-caught, 2026-10-04): that older
+        mechanism's stop_listener() call raced _await_identity_before_
+        restart()'s own radio_lock-held --info probe mid-flight, discarding
+        a MATCH that would otherwise have landed one cycle earlier (the
+        item-3 fix correctly discarded it - this is about not causing the
+        race in the first place, not about the discard being wrong)."""
+        return self._disconnect_detected.is_set() or self._mismatch_active.is_set()
 
     @property
     def mismatch_port(self) -> str:

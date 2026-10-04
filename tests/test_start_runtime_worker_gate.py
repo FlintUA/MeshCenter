@@ -61,7 +61,13 @@ def run_start_runtime(server_module, monkeypatch):
     restore_active_transport calls)."""
     original_pause = server_module.pause_listen.is_set()
 
-    def _run(transport, identity_status="MATCH"):
+    def _run(transport, identity_status="MATCH", info_output="", skip_mocking=()):
+        """`info_output` becomes verify_radio_identity()'s return value
+        (start_runtime()'s own startup_info_output) - pass real --info text
+        to exercise parse_nodes_from_info() for real. `skip_mocking` is the
+        subset of the usual no-op list to leave as the REAL function (e.g.
+        {"parse_nodes_from_info", "save_chats"}), for tests that need to
+        observe its actual side effects (review round 2, item 2)."""
         _RecordingThread.started = []
         restore_calls = []
 
@@ -83,17 +89,20 @@ def run_start_runtime(server_module, monkeypatch):
         # test and silently no-op.
         monkeypatch.setattr(server_module, "_serial_identity_match_done", False)
         monkeypatch.setattr(server_module, "_acquire_runtime_lock", lambda: None)
-        monkeypatch.setattr(server_module, "verify_radio_identity", lambda: "")
+        monkeypatch.setattr(server_module, "verify_radio_identity", lambda: info_output)
         for name in (
             "load_messages", "reconcile_interrupted_sends", "load_nodes", "load_sensors_data", "load_chats",
             "ensure_known_nodes", "normalize_unknown_nodes", "parse_nodes_from_info", "load_settings",
             "load_cpu_history", "update_base_status_from_info", "get_telemetry_from_info", "save_chats",
             "start_time_service", "start_installation_time_assignment", "start_schedule_engine",
         ):
+            if name in skip_mocking:
+                continue
             monkeypatch.setattr(server_module, name, lambda *a, **k: None)
         monkeypatch.setattr(server_module.telemetry, "load_telemetry", lambda *a, **k: None)
         monkeypatch.setattr(server_module.camera, "load_camera_settings", lambda *a, **k: None)
-        monkeypatch.setattr(server_module, "KNOWN_NODES", {})
+        if "KNOWN_NODES" not in skip_mocking:
+            monkeypatch.setattr(server_module, "KNOWN_NODES", {})
         monkeypatch.setattr(server_module, "camera_power_enabled_at_startup", False)
         monkeypatch.setattr(server_module, "EPAPER_ENABLED", False)
         monkeypatch.setattr(server_module.mca_runtime, "start_attachments_service", lambda *a, **k: None)
@@ -200,6 +209,59 @@ def test_boot_in_recovery_then_later_match_starts_the_full_worker_group_once(
         "base_status": ["fake --info output"],
         "telemetry": ["fake --info output"],
     }
+
+
+def test_boot_match_seeds_a_new_info_only_node_before_start_runtime_returns(server_module, run_start_runtime, monkeypatch):
+    """Review round 2, item 2 (simple case): a node that appears ONLY in
+    the boot --info dump (not in KNOWN_NODES at all) must have a chat by
+    the time start_runtime() returns, regardless of whether
+    parse_nodes_from_info() runs via the early inline call or later via
+    on_serial_identity_match()."""
+    from fixtures.cli_output_synthetic import INFO_OUTPUT_NODES_IN_MESH
+
+    node_id = "!820af75a"
+    monkeypatch.setattr(server_module, "chats", {})
+    monkeypatch.setattr(server_module, "nodes", {})
+
+    run_start_runtime(
+        "serial",
+        identity_status="MATCH",
+        info_output=INFO_OUTPUT_NODES_IN_MESH,
+        skip_mocking={"parse_nodes_from_info", "save_chats"},
+    )
+
+    assert node_id in server_module.chats
+    assert server_module.chats[node_id]["name"] == "Flint's Test Node"
+
+
+def test_boot_match_info_name_wins_over_a_stale_known_nodes_placeholder(server_module, run_start_runtime, monkeypatch):
+    """Review round 2, item 2 (the actual regression): parse_nodes_from_
+    info() must run BEFORE the `for node_id in KNOWN_NODES:
+    ensure_chat(...)` loop inside start_runtime() - that loop's own
+    `if node_id not in chats` guard means a node known via BOTH
+    KNOWN_NODES (an early, often-stale configured name) and this boot's
+    --info dump (the live, accurate name) would otherwise keep the stale
+    KNOWN_NODES name forever: once the KNOWN_NODES loop creates the chat
+    first, ensure_chat()'s own rename-on-mismatch logic never gets a
+    chance to run for it, since parse_nodes_from_info()'s internal
+    `if node_id not in chats: ensure_chat(...)` guard then skips it too."""
+    from fixtures.cli_output_synthetic import INFO_OUTPUT_NODES_IN_MESH
+
+    node_id = "!820af75a"
+    monkeypatch.setattr(server_module, "chats", {})
+    monkeypatch.setattr(server_module, "nodes", {})
+    monkeypatch.setattr(server_module, "KNOWN_NODES", {node_id: "Known Nodes Placeholder"})
+
+    run_start_runtime(
+        "serial",
+        identity_status="MATCH",
+        info_output=INFO_OUTPUT_NODES_IN_MESH,
+        skip_mocking={"parse_nodes_from_info", "save_chats", "KNOWN_NODES"},
+    )
+
+    assert server_module.chats[node_id]["name"] == "Flint's Test Node", (
+        "the live --info name must win over the stale KNOWN_NODES placeholder"
+    )
 
 
 def test_serial_on_mismatch_still_starts_the_listener_thread_and_health_worker(run_start_runtime):

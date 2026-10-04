@@ -253,7 +253,7 @@ def test_restart_listener_never_popens_without_a_fresh_match_even_on_a_persistin
     monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a))
     monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
     server_module.listener_supervisor._resolve_port = lambda: "/dev/ttyACM0"
-    server_module.listener_supervisor._verify_identity = lambda port: "MISMATCH"
+    server_module.listener_supervisor._verify_identity = lambda port: ("MISMATCH", "")
 
     server_module.listener_supervisor._listener_cycle()
 
@@ -290,7 +290,7 @@ def test_restart_listener_resumes_once_the_re_check_actually_confirms_match(serv
     stable_identity = DeviceIdentity(st_rdev=1, st_ino=100)
     monkeypatch.setattr(spv_module, "capture_device_identity", lambda port: stable_identity)
     server_module.listener_supervisor._resolve_port = lambda: "/dev/ttyACM0"
-    server_module.listener_supervisor._verify_identity = lambda port: "MATCH"
+    server_module.listener_supervisor._verify_identity = lambda port: ("MATCH", "")
 
     server_module.listener_supervisor._listener_cycle()
 
@@ -340,7 +340,7 @@ def test_reconnect_route_never_popens_without_a_fresh_match_even_on_a_persisting
     monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a))
     monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
     server_module.listener_supervisor._resolve_port = lambda: "/dev/ttyACM0"
-    server_module.listener_supervisor._verify_identity = lambda port: "MISMATCH"  # the radio was swapped during release
+    server_module.listener_supervisor._verify_identity = lambda port: ("MISMATCH", "")  # the radio was swapped during release
 
     server_module.listener_supervisor._listener_cycle()
 

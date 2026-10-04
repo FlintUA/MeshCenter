@@ -147,7 +147,7 @@ def test_disconnect_then_match_on_the_same_path_resumes(monkeypatch):
     calls = []
     supervisor = _make_supervisor(
         resolve_port=lambda: "/dev/ttyACM0",
-        verify_identity=lambda port: calls.append(port) or "MATCH",
+        verify_identity=lambda port: calls.append(port) or ("MATCH", ""),
     )
     supervisor._disconnect_detected.set()
     import meshsrv.serial_port_supervisor as spv_module
@@ -170,7 +170,7 @@ def test_disconnect_then_match_on_a_different_path_resolved_via_by_id_resumes(mo
     supervisor = _make_supervisor(
         port="/dev/ttyACM0",
         resolve_port=lambda: "/dev/ttyACM1",
-        verify_identity=lambda port: calls.append(port) or "MATCH",
+        verify_identity=lambda port: calls.append(port) or ("MATCH", ""),
     )
     supervisor._disconnect_detected.set()
     import meshsrv.serial_port_supervisor as spv_module
@@ -194,7 +194,7 @@ def test_disconnect_with_no_device_present_backs_off_without_verifying_identity(
     popen_calls = []
     supervisor = _make_supervisor(
         resolve_port=lambda: "/dev/ttyACM0",
-        verify_identity=lambda port: verify_calls.append(port) or "MATCH",
+        verify_identity=lambda port: verify_calls.append(port) or ("MATCH", ""),
     )
     supervisor._disconnect_detected.set()
     monkeypatch.setattr(spv_module.os.path, "exists", lambda p: False)
@@ -227,7 +227,7 @@ def test_disconnect_then_mismatch_halts_and_surfaces_without_starting_the_listen
     popen_calls = []
     supervisor = _make_supervisor(
         resolve_port=lambda: "/dev/ttyACM0",
-        verify_identity=lambda port: "MISMATCH",
+        verify_identity=lambda port: ("MISMATCH", ""),
         on_identity_mismatch=mismatch_calls.append,
     )
     supervisor._disconnect_detected.set()
@@ -257,7 +257,7 @@ def test_on_identity_mismatch_fires_exactly_once_not_per_tick(monkeypatch):
     popen_calls = []
     supervisor = _make_supervisor(
         resolve_port=lambda: "/dev/ttyACM0",
-        verify_identity=lambda port: "MISMATCH",
+        verify_identity=lambda port: ("MISMATCH", ""),
         on_identity_mismatch=mismatch_calls.append,
     )
     supervisor._disconnect_detected.set()
@@ -324,7 +324,7 @@ def test_intentional_pause_suppresses_disconnect_recovery_entirely(monkeypatch):
     supervisor = _make_supervisor(
         pause_listen=pause_listen,
         resolve_port=lambda: "/dev/ttyACM0",
-        verify_identity=lambda port: verify_calls.append(port) or "MATCH",
+        verify_identity=lambda port: verify_calls.append(port) or ("MATCH", ""),
     )
     supervisor._disconnect_detected.set()  # a prior outage was mid-recovery when the claim started
     monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
@@ -428,7 +428,7 @@ def test_boot_in_recovery_state_then_device_appears_and_matches_starts_the_liste
     popen_calls = []
     supervisor = _make_supervisor(
         resolve_port=lambda: "/dev/ttyACM0",
-        verify_identity=lambda port: "MATCH",
+        verify_identity=lambda port: ("MATCH", ""),
     )
     supervisor.start_in_recovery_state(mismatch=False)
 
@@ -474,7 +474,7 @@ def test_vanish_via_plain_nonzero_exit_then_reappear_verifies_before_popen(monke
     popen_calls = []
     supervisor = _make_supervisor(
         resolve_port=lambda: "/dev/ttyACM0",
-        verify_identity=lambda port: verify_calls.append(port) or "MATCH",
+        verify_identity=lambda port: verify_calls.append(port) or ("MATCH", ""),
     )
     monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a) or _FakeListenProcess([]))
     monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
@@ -514,7 +514,7 @@ def test_fallback_resolution_to_a_different_device_verifies_before_popen(monkeyp
     popen_calls = []
     supervisor = _make_supervisor(
         resolve_port=lambda: "/dev/ttyACM0",
-        verify_identity=lambda port: verify_calls.append(port) or "MATCH",
+        verify_identity=lambda port: verify_calls.append(port) or ("MATCH", ""),
     )
     monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a) or _FakeListenProcess([]))
     monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
@@ -549,7 +549,7 @@ def test_plain_crash_against_the_same_verified_device_never_probes_identity(monk
     popen_calls = []
     supervisor = _make_supervisor(
         resolve_port=lambda: "/dev/ttyACM0",
-        verify_identity=lambda port: verify_calls.append(port) or "MATCH",
+        verify_identity=lambda port: verify_calls.append(port) or ("MATCH", ""),
     )
     monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a) or _FakeListenProcess([]))
     monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
@@ -589,7 +589,7 @@ def test_identity_probe_match_is_discarded_if_a_claim_starts_mid_probe(monkeypat
         # release where the claim has now started but this method hasn't
         # yet re-checked pause_listen.
         pause_listen.set()
-        return "MATCH"
+        return "MATCH", ""
 
     supervisor = _make_supervisor(
         port="/dev/ttyUSB-OLD",
@@ -605,3 +605,56 @@ def test_identity_probe_match_is_discarded_if_a_claim_starts_mid_probe(monkeypat
     assert supervisor._verified_device is _STABLE_DEVICE, "must not overwrite the prior verified device"
     assert supervisor._port == "/dev/ttyUSB-OLD", "must not adopt the newly-resolved port either"
     assert supervisor._identity_retry_attempt == 0, "discarding is not a failed retry - no backoff owed"
+
+
+def test_on_match_runs_after_radio_lock_is_released(monkeypatch):
+    """Review round 2, item 3: on_match() (server.py's
+    on_serial_identity_match(), via the supervisor's on_match callback)
+    must run AFTER radio_lock is released, not from inside
+    verify_identity() while the lock is still held - the old shape called
+    the hook's heavy work (state_lock, file writes, starting threads)
+    directly from server.py's _verify_listener_identity(), which IS
+    verify_identity() here, called from inside
+    _await_identity_before_restart()'s own `with self._radio_lock:` block.
+
+    Uses a plain, non-reentrant threading.Lock as the test double's
+    radio_lock rather than the production RLock - an RLock lets the SAME
+    thread re-acquire it even while genuinely still "held" from the
+    caller's perspective, which would make this test pass even with the
+    bug still present."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    lock = threading.Lock()
+    observations = []
+
+    def fake_verify_identity(port):
+        # Also proves the probe itself genuinely DOES hold the lock while
+        # it runs - otherwise this test would pass for the wrong reason
+        # (a lock nobody ever holds "looks released" everywhere).
+        acquired = lock.acquire(blocking=False)
+        if acquired:
+            lock.release()
+        observations.append(("during_verify_identity", acquired))
+        return "MATCH", "fake --info output"
+
+    def fake_on_match(port, output):
+        acquired = lock.acquire(blocking=False)
+        if acquired:
+            lock.release()
+        observations.append(("during_on_match", acquired, output))
+
+    supervisor = _make_supervisor(
+        radio_lock=lock,
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=fake_verify_identity,
+    )
+    supervisor._on_match = fake_on_match
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+
+    result = supervisor._await_identity_before_restart()
+
+    assert result is True
+    assert observations[0] == ("during_verify_identity", False), "radio_lock must be held while verify_identity() runs"
+    assert observations[1] == ("during_on_match", True, "fake --info output"), (
+        "radio_lock must already be released, and the --info output passed through, by the time on_match() runs"
+    )

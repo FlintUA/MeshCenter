@@ -666,14 +666,18 @@ def _verify_listener_identity(port):
 
     status = result.get("status")
     print(f"[IDENTITY] Re-check after replug on {port}: {status}", flush=True)
-    if status == "MATCH":
-        # Boot-in-recovery case (review item 1): a boot-time DETECTION_ERROR/
-        # NOT_FOUND that only resolves to MATCH later, via a live replug,
-        # still needs the listener-dependent workers started and the
-        # one-time --info seeding run - on_serial_identity_match() is a
-        # no-op if start_runtime() already did this at boot.
-        on_serial_identity_match(output)
-    return status
+    # Review round 2, item 3: used to call on_serial_identity_match(output)
+    # right here on MATCH - but this function IS listener_supervisor's
+    # verify_identity callable, called from inside
+    # _await_identity_before_restart()'s own `with self._radio_lock:`
+    # block. Calling the hook from here meant its own state_lock
+    # acquisition, file writes, and thread-starts all happened while
+    # radio_lock was still held, blocking every claim for that whole
+    # duration and adding a radio_lock -> state_lock ordering edge that
+    # has no reason to exist. Returning (status, output) instead lets the
+    # supervisor's own on_match callback (wired below, at listener_
+    # supervisor's construction) call it AFTER radio_lock is released.
+    return status, output
 
 
 def _on_listener_identity_mismatch(port):
@@ -1243,6 +1247,11 @@ listener_supervisor = SerialPortSupervisor(
     resolve_port=lambda: _resolve_listener_port(),
     verify_identity=lambda port: _verify_listener_identity(port),
     on_identity_mismatch=lambda port: _on_listener_identity_mismatch(port),
+    # Review round 2, item 3: called by the supervisor AFTER radio_lock is
+    # released (see _await_identity_before_restart()'s own MATCH branch) -
+    # on_serial_identity_match()'s state_lock/file-write/thread-start work
+    # must not run while radio_lock is still held.
+    on_match=lambda port, output: on_serial_identity_match(output),
 )
 
 # Task 48: one persistent adapter subprocess, spawned/supervised here,
@@ -8625,13 +8634,32 @@ def start_runtime():
             f"[PROFILE] Radio writes blocked for profile {ACTIVE_PROFILE_ID}: identity={identity_status}",
             flush=True,
         )
-    # parse_nodes_from_info()/update_base_status_from_info()/
-    # get_telemetry_from_info() all now run via on_serial_identity_match()
-    # below, once the serial listener-dependent worker group starts -
-    # review item 1 fix: these used to run inline here, gated on this same
-    # boot-time identity_match snapshot, which meant a boot-in-recovery
-    # radio that only matched later (after start_runtime() already
-    # returned) never got seeded until a full restart.
+    else:
+        # Review round 2, item 2: parse_nodes_from_info() must run HERE,
+        # before the `for node_id in KNOWN_NODES: ensure_chat(...)` loop
+        # further down - not only later, via on_serial_identity_match()
+        # (which also calls it, for the boot-in-recovery/live-replug
+        # case this position can't reach). That loop's own
+        # `if node_id not in chats` guard means a node known via BOTH
+        # KNOWN_NODES (an early, often-stale configured name) and this
+        # boot's --info dump (the live, accurate name) would otherwise
+        # keep the stale KNOWN_NODES name forever - ensure_chat()'s own
+        # rename-on-mismatch logic never gets a chance to run for it once
+        # a chat already exists. on_serial_identity_match()'s own later
+        # call against the same --info output is then a harmless,
+        # idempotent no-op for the boot-MATCH case (nothing left to
+        # import/update), so this is a deliberate redundant call, not a
+        # duplicate bug.
+        parse_nodes_from_info(startup_info_output)
+    # update_base_status_from_info()/get_telemetry_from_info() still only
+    # run via on_serial_identity_match() below, once the serial listener-
+    # dependent worker group starts - review item 1 fix: these used to run
+    # inline here, gated on this same boot-time identity_match snapshot,
+    # which meant a boot-in-recovery radio that only matched later (after
+    # start_runtime() already returned) never got seeded until a full
+    # restart. Unlike parse_nodes_from_info() above, neither of these has
+    # an ordering dependency on the KNOWN_NODES loop below, so there's no
+    # reason to also duplicate them here.
     load_settings()
     # weather_manager's providers were constructed before settings.json was
     # loaded (they're module-level singletons, built long before this

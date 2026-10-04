@@ -93,8 +93,9 @@ class SerialPortSupervisor:
         on_lifecycle_event: Optional[Callable[[str, Optional[bool]], None]] = None,
         on_log: Optional[Callable[..., None]] = None,
         resolve_port: Optional[Callable[[], str]] = None,
-        verify_identity: Optional[Callable[[str], str]] = None,
+        verify_identity: Optional[Callable[[str], tuple[str, str]]] = None,
         on_identity_mismatch: Optional[Callable[[str], None]] = None,
+        on_match: Optional[Callable[[str, str], None]] = None,
     ) -> None:
         self._cli_path = cli_path
         self._port = port
@@ -115,15 +116,32 @@ class SerialPortSupervisor:
         # resolve_by_id_target(), wired in by server.py). verify_identity()
         # is only ever consulted after a REAL disconnect was detected (see
         # _disconnect_detected below) - never on an ordinary crash-loop
-        # retry, since a --info probe is comparatively slow. Its return
-        # value is the same status vocabulary meshsrv/radio_identity.py
-        # already uses ("MATCH"/"MISMATCH"/"DETECTION_ERROR"/"NOT_FOUND");
-        # the default ("MATCH" always) preserves the pre-H2-C behavior of
-        # just retrying blindly, for any caller that doesn't inject a real
-        # verifier.
+        # retry, since a --info probe is comparatively slow. Returns
+        # (status, output): status is the same vocabulary meshsrv/
+        # radio_identity.py already uses ("MATCH"/"MISMATCH"/
+        # "DETECTION_ERROR"/"NOT_FOUND"); output is the raw --info text the
+        # probe captured (review round 2, item 3 - needed so on_match()
+        # below can be called with it AFTER radio_lock is released,
+        # instead of the caller running its own post-MATCH side effects
+        # from inside _verify_identity() itself, while still holding the
+        # lock). The default (("MATCH", "") always) preserves the
+        # pre-H2-C behavior of just retrying blindly, for any caller that
+        # doesn't inject a real verifier.
         self._resolve_port = resolve_port or (lambda: self._port)
-        self._verify_identity = verify_identity or (lambda port: "MATCH")
+        self._verify_identity = verify_identity or (lambda port: ("MATCH", ""))
         self._on_identity_mismatch = on_identity_mismatch or (lambda port: None)
+        # Review round 2, item 3: called on a fresh MATCH, AFTER
+        # radio_lock has already been released (see
+        # _await_identity_before_restart() below) - verify_identity()
+        # itself runs INSIDE that lock (it's the slow --info probe the
+        # lock exists to serialize against a concurrent claim), so any
+        # caller-side work that doesn't need the lock (seeding node/
+        # telemetry state, starting background workers) must happen here
+        # instead, not from within verify_identity() - doing it there
+        # would hold radio_lock for that whole duration too, blocking
+        # every claim and adding a radio_lock -> state_lock ordering edge
+        # that doesn't need to exist.
+        self._on_match = on_match or (lambda port, output: None)
 
         self._listen_process: Optional[subprocess.Popen] = None
         self._connected_since: Optional[float] = None
@@ -241,6 +259,14 @@ class SerialPortSupervisor:
                 # costs nothing extra (no --info probe).
                 current_identity = capture_device_identity(self._port)
                 if current_identity is None or current_identity != self._verified_device:
+                    # Live-round diagnostic (review round 2, item 1) - see
+                    # terminate_if_device_changed()'s matching print for
+                    # the same reasoning.
+                    print(
+                        f"[SerialPortSupervisor] Pre-Popen identity mismatch on {self._port}: "
+                        f"current={current_identity!r} verified={self._verified_device!r}",
+                        file=sys.stderr, flush=True,
+                    )
                     self._disconnect_detected.set()
                     return
                 self._device_identity_snapshot = current_identity
@@ -425,7 +451,7 @@ class SerialPortSupervisor:
         with self._radio_lock:
             if self._pause_listen.is_set():
                 return False
-            status = self._verify_identity(resolved_port)
+            status, output = self._verify_identity(resolved_port)
             if self._pause_listen.is_set():
                 return False
 
@@ -434,6 +460,19 @@ class SerialPortSupervisor:
             self._identity_retry_attempt = 0
             self._port = resolved_port
             self._verified_device = capture_device_identity(resolved_port)
+            # Live-round diagnostic (review round 2, item 1) - the freshly
+            # verified identity, captured right after a confirmed MATCH.
+            print(
+                f"[SerialPortSupervisor] Identity verified MATCH on {resolved_port}: "
+                f"{self._verified_device!r}",
+                file=sys.stderr, flush=True,
+            )
+            # Review round 2, item 3: called here, OUTSIDE the `with
+            # self._radio_lock:` block above - radio_lock is already
+            # released by this point, so on_match()'s own work (state_lock,
+            # file writes, starting threads) never happens while this
+            # listener thread is still holding radio_lock.
+            self._on_match(resolved_port, output)
             return True
 
         if status == "MISMATCH":
@@ -479,6 +518,19 @@ class SerialPortSupervisor:
 
         if not device_identity_changed(snapshot, port):
             return False
+
+        # Live-round diagnostic (review round 2, item 1): captures exactly
+        # which field(s) actually differ on a real replug - requested so
+        # the live hardware round can confirm USB busnum/devnum behaves as
+        # expected (monotonic per plug-in) versus st_ino (which CI showed
+        # can be reused), without needing to re-run with extra logging
+        # later.
+        current = capture_device_identity(port)
+        print(
+            f"[SerialPortSupervisor] Device identity changed on {port}: "
+            f"old={snapshot!r} new={current!r}",
+            file=sys.stderr, flush=True,
+        )
 
         self._terminate_process(proc)
         with self._radio_lock:

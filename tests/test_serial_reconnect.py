@@ -114,17 +114,69 @@ def test_device_identity_changed_false_despite_a_metadata_only_change(tmp_path):
     assert device_identity_changed(old, str(port)) is False
 
 
-def test_device_identity_changed_true_for_a_different_device_at_the_same_path(tmp_path):
-    """The actual replug case: the old inode is gone, a new file (new
-    inode) now sits at the same path - a different physical device
-    re-enumerated under the same name."""
+def test_device_identity_changed_true_for_a_different_device_at_the_same_path(tmp_path, monkeypatch):
+    """The actual replug case: a different physical device re-enumerates
+    under the same path/name. Live-caught on Linux CI (review round 2,
+    item 1): this test originally relied on a real unlink()+recreate to
+    produce a genuinely new inode, but the filesystem can - and on that
+    CI run, did - reuse the just-freed inode number immediately, making
+    (st_rdev, st_ino) alone report "unchanged" for a device that had
+    actually changed. Fixed at the DeviceIdentity level (USB busnum/devnum
+    from sysfs, monotonic per physical plug-in unlike inode numbers), and
+    this test is now deliberately independent of real inode-reuse timing:
+    it keeps the SAME inode throughout and only changes the injected USB
+    devnum, so it fails again if DeviceIdentity ever goes back to
+    comparing inodes alone."""
+    import meshsrv.serial_reconnect as reconnect_module
+
     port = tmp_path / "ttyACM0"
     port.write_text("")
+    monkeypatch.setattr(reconnect_module, "capture_usb_enumeration", lambda p: (1, 4))
     old = capture_device_identity(str(port))
-    port.unlink()
-    port.write_text("")  # same path, brand new inode
+
+    # Same path, SAME inode (as a reused-inode replug would look) - only
+    # the USB enumeration changed, simulating the actual monotonic signal
+    # (dmesg: "device number 3 -> 4 -> 5") a real replug produces.
+    monkeypatch.setattr(reconnect_module, "capture_usb_enumeration", lambda p: (1, 5))
+    new = capture_device_identity(str(port))
+    assert new.st_ino == old.st_ino, "this test's own premise: the inode is unchanged, only USB enumeration differs"
 
     assert device_identity_changed(old, str(port)) is True
+
+
+def test_device_identity_changed_false_when_usb_enumeration_also_matches(tmp_path, monkeypatch):
+    """The unchanged-device case, now also covering the USB fields: two
+    captures of the exact same device (same inode, same busnum/devnum)
+    must compare equal."""
+    import meshsrv.serial_reconnect as reconnect_module
+
+    port = tmp_path / "ttyACM0"
+    port.write_text("")
+    monkeypatch.setattr(reconnect_module, "capture_usb_enumeration", lambda p: (1, 4))
+    old = capture_device_identity(str(port))
+
+    assert device_identity_changed(old, str(port)) is False
+
+
+def test_capture_device_identity_falls_back_to_stat_only_when_sysfs_is_unavailable(tmp_path, monkeypatch):
+    """Non-Linux, or a USB-serial device sysfs doesn't expose busnum/devnum
+    for: capture_usb_enumeration() reports (None, None), and
+    DeviceIdentity still captures a usable (st_rdev, st_ino)-based
+    identity rather than failing outright - the pre-review-round-2
+    fallback behavior, still relied on wherever sysfs genuinely isn't
+    there (this project's own CI included, on Windows)."""
+    import meshsrv.serial_reconnect as reconnect_module
+
+    port = tmp_path / "ttyACM0"
+    port.write_text("")
+    monkeypatch.setattr(reconnect_module, "capture_usb_enumeration", lambda p: (None, None))
+
+    identity = capture_device_identity(str(port))
+
+    assert identity is not None
+    assert identity.usb_busnum is None and identity.usb_devnum is None
+    real_stat = os.stat(str(port))
+    assert identity.st_ino == real_stat.st_ino
 
 
 def test_resolve_by_id_target_returns_empty_for_blank_or_missing():

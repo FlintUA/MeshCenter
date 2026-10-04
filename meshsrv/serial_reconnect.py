@@ -58,15 +58,73 @@ class DeviceIdentity:
     ttyACM number after a different device was plugged in, or a genuine
     radio swap).
 
-    Deliberately (st_rdev, st_ino) only - NOT st_ctime (review follow-up).
-    On Linux, a re-created devtmpfs node already gets a fresh st_ino on
-    its own, which is the actual "this is a different device" signal;
-    st_ctime can also change for the SAME device on a plain metadata
+    Deliberately (st_rdev, st_ino) - NOT st_ctime (review follow-up). On
+    Linux, a re-created devtmpfs node USUALLY gets a fresh st_ino on its
+    own; st_ctime can also change for the SAME device on a plain metadata
     update (chmod/chown/ACL - udev rules, ModemManager, ...), which would
     have made terminate_if_device_changed() kill a perfectly healthy
-    listener and force an unnecessary --info re-verification."""
+    listener and force an unnecessary --info re-verification.
+
+    Review round 2, item 1 - also usb_busnum/usb_devnum (both None if
+    unavailable): st_ino alone is NOT reliable - live-caught on Linux CI,
+    a freed inode number was reused immediately on a replug, so the "same"
+    inode masked a genuine device change. USB enumeration (busnum/devnum
+    from sysfs) is monotonic per physical plug-in (dmesg showed "device
+    number 3 -> 4 -> 5" for the same radio replugged repeatedly during the
+    H2-C Phase 1 live investigation) in a way inode reuse is not - it is
+    the primary signal when available, with (st_rdev, st_ino) kept as the
+    fallback for a non-Linux platform, a non-USB serial device, or a test
+    double with no real sysfs to read."""
     st_rdev: int
     st_ino: int
+    usb_busnum: Optional[int] = None
+    usb_devnum: Optional[int] = None
+
+
+# Linux-only, read via sysfs - see DeviceIdentity's own docstring for why
+# this exists alongside (st_rdev, st_ino) rather than replacing them.
+_SYSFS_TTY_CLASS_DIR = "/sys/class/tty"
+# Bounds the walk up the sysfs device tree from a tty's own `device` link
+# to the ancestor directory that actually has busnum/devnum files (the USB
+# device node itself, not one of the intermediate interface/endpoint
+# nodes) - generous for any real USB topology, just a safety net against
+# an unexpected sysfs shape looping forever.
+_USB_SYSFS_WALK_LIMIT = 8
+
+
+def capture_usb_enumeration(port: str) -> tuple[Optional[int], Optional[int]]:
+    """(busnum, devnum) ints for the USB device backing `port`, or
+    (None, None) if unavailable - non-Linux, not a USB-serial device, or
+    sysfs doesn't expose it for some other reason. A public, deliberately
+    injectable seam: tests monkeypatch this function directly rather than
+    faking the full /sys/class/tty walk and the real files underneath it,
+    since actual sysfs/inode behavior is filesystem- and platform-
+    dependent in ways a unit test must never rely on (review round 2,
+    item 1 - exactly what the (st_rdev, st_ino)-only design got wrong)."""
+    try:
+        real = os.path.realpath(port)
+        tty_name = os.path.basename(real)
+        if not tty_name:
+            return None, None
+        current = os.path.realpath(os.path.join(_SYSFS_TTY_CLASS_DIR, tty_name, "device"))
+        if not current or not os.path.isdir(current):
+            return None, None
+        for _ in range(_USB_SYSFS_WALK_LIMIT):
+            busnum_path = os.path.join(current, "busnum")
+            devnum_path = os.path.join(current, "devnum")
+            if os.path.isfile(busnum_path) and os.path.isfile(devnum_path):
+                with open(busnum_path, encoding="ascii") as f:
+                    busnum = int(f.read().strip())
+                with open(devnum_path, encoding="ascii") as f:
+                    devnum = int(f.read().strip())
+                return busnum, devnum
+            parent = os.path.dirname(current)
+            if not parent or parent == current:
+                return None, None
+            current = parent
+    except (OSError, ValueError):
+        return None, None
+    return None, None
 
 
 def capture_device_identity(port: str) -> Optional[DeviceIdentity]:
@@ -83,7 +141,13 @@ def capture_device_identity(port: str) -> Optional[DeviceIdentity]:
     # plain file - 0 there) - getattr keeps this importable/testable on a
     # non-POSIX dev machine without changing real behavior on the actual
     # deployment target (Raspberry Pi).
-    return DeviceIdentity(st_rdev=getattr(st, "st_rdev", 0), st_ino=st.st_ino)
+    usb_busnum, usb_devnum = capture_usb_enumeration(port)
+    return DeviceIdentity(
+        st_rdev=getattr(st, "st_rdev", 0),
+        st_ino=st.st_ino,
+        usb_busnum=usb_busnum,
+        usb_devnum=usb_devnum,
+    )
 
 
 def device_identity_changed(old: Optional[DeviceIdentity], port: str) -> bool:

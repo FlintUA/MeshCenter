@@ -110,3 +110,41 @@ toggle the rest of the interface respects (`TimeFormatter`).
 Next step: route chat-list timestamp formatting through the same
 client-side `TimeFormatter` the Time card and other timestamps already use,
 instead of a server-formatted string.
+
+## KI-008: Serial hot-reconnect (H2-C) - implemented, pending live-hardware verification
+Status: implemented and unit-tested, not yet confirmed on real hardware
+Background: previously, an unplugged-then-replugged serial radio
+(including a USB cable swap/reseat, or a power cycle of the radio itself)
+did not reliably recover without a full `sudo systemctl restart
+meshcenter.service` - the listener's own fixed, once-resolved port and
+device identity never noticed the physical change. Confirmed live on dev
+(192.168.2.104, 2026-10-03) across three distinct failure shapes: the
+listener subprocess going hung-but-alive instead of exiting; the radio
+re-enumerating at a different `/dev/ttyACMx` path; and a boot-time
+identity check failure permanently disabling recovery even once the radio
+came back.
+What changed: the serial listener (`meshsrv/serial_port_supervisor.py`,
+`meshsrv/serial_reconnect.py`) now detects a genuine disconnect (the
+Meshtastic library's own stdout warning, or a changed/missing device
+node), resolves the radio's `/dev/serial/by-id/*` link so a changed
+`/dev/ttyACMx` number doesn't matter, and re-verifies the radio's identity
+with a real `--info` probe before resuming - so a different physical
+radio appearing at the same path is never silently treated as the
+accepted one. If a different radio is detected, the listener halts (no
+automatic resume) and shows "A different radio was connected" in the
+System Log and as a notification; use **Reconnect Radio** (`Settings >
+Meshtastic Radio`) once you've confirmed which radio should actually be
+plugged in, or switch profiles if you intend to use the new one.
+Boot-time identity failures (radio not present/verified at service
+start) now enter the same wait-and-recheck state instead of permanently
+disabling recovery.
+Status detail: covered by an extensive unit-test suite
+(`tests/test_serial_hot_reconnect.py`, `tests/test_serial_reconnect.py`,
+`tests/test_serial_only_routes_non_serial.py`,
+`tests/test_start_runtime_worker_gate.py`) and mutation-tested against
+the specific regressions each test claims to catch, but has not yet been
+through a live hardware replug/power-cycle verification round. The
+pre-H2-C limitation ("no hot-reconnect after a physical serial cable
+swap") stays documented as the operative behavior until that live round
+passes - update this entry (and CLAUDE.md's own "Known, accepted
+trade-offs" section) once it does.

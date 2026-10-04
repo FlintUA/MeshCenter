@@ -56,10 +56,17 @@ class DeviceIdentity:
     one point in time - enough to tell "the same physical device is still
     here" from "something else is here now at the same name" (a reused
     ttyACM number after a different device was plugged in, or a genuine
-    radio swap)."""
+    radio swap).
+
+    Deliberately (st_rdev, st_ino) only - NOT st_ctime (review follow-up).
+    On Linux, a re-created devtmpfs node already gets a fresh st_ino on
+    its own, which is the actual "this is a different device" signal;
+    st_ctime can also change for the SAME device on a plain metadata
+    update (chmod/chown/ACL - udev rules, ModemManager, ...), which would
+    have made terminate_if_device_changed() kill a perfectly healthy
+    listener and force an unnecessary --info re-verification."""
     st_rdev: int
     st_ino: int
-    st_ctime: float
 
 
 def capture_device_identity(port: str) -> Optional[DeviceIdentity]:
@@ -76,7 +83,7 @@ def capture_device_identity(port: str) -> Optional[DeviceIdentity]:
     # plain file - 0 there) - getattr keeps this importable/testable on a
     # non-POSIX dev machine without changing real behavior on the actual
     # deployment target (Raspberry Pi).
-    return DeviceIdentity(st_rdev=getattr(st, "st_rdev", 0), st_ino=st.st_ino, st_ctime=st.st_ctime)
+    return DeviceIdentity(st_rdev=getattr(st, "st_rdev", 0), st_ino=st.st_ino)
 
 
 def device_identity_changed(old: Optional[DeviceIdentity], port: str) -> bool:

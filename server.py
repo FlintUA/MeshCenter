@@ -606,6 +606,25 @@ def _resolve_listener_port():
     if not by_id and fallback_port:
         found_by_id = find_by_id_for_port(fallback_port)
         if found_by_id:
+            # Review follow-up (minor item): this read-modify-write of
+            # INSTANCE_IDENTITY is called from the listener thread, which
+            # is safe against ITSELF (_verify_listener_identity() runs on
+            # this same thread, never concurrently with this). It is NOT
+            # safe against a genuinely concurrent writer on a different
+            # thread (e.g. a profile/settings-save HTTP handler calling
+            # instance_manager.save() around the same moment) - each of
+            # the 9 call sites across this file does its own snapshot-
+            # mutate-save of the whole dict, and instance_manager.save()'s
+            # own internal lock only makes each individual write atomic
+            # to the FILE, not the overall read-modify-write sequence
+            # atomic against another caller's concurrent one (a classic
+            # lost-update window, not file corruption). Accepted,
+            # pre-existing pattern - not unique to this by-id persistence
+            # call, and not attempted here: a real fix needs one shared
+            # read-modify-write lock (or a InstanceManager.update(mutator)
+            # API) adopted at all 9 sites, a larger change than this
+            # narrow, self-healing write justifies on its own (a lost
+            # by-id record is simply rediscovered on the next replug).
             updated_radio = remember_connection(accepted_radio, "serial", {"port": fallback_port, "by_id": found_by_id})
             updated_identity = dict(INSTANCE_IDENTITY)
             updated_identity["radio"] = updated_radio
@@ -626,7 +645,7 @@ def _verify_listener_identity(port):
     replug is a genuine re-verification, not just "the listener quietly
     started again"."""
     global INSTANCE_IDENTITY, RADIO_IDENTITY_RESULT
-    result, _output = detect_radio_identity(MESHTASTIC_CMD, port, timeout=25)
+    result, output = detect_radio_identity(MESHTASTIC_CMD, port, timeout=25)
     configured = dict(INSTANCE_IDENTITY.get("radio", {}))
     detected = dict(result.get("detected") or {})
     result["configured"] = configured
@@ -647,6 +666,13 @@ def _verify_listener_identity(port):
 
     status = result.get("status")
     print(f"[IDENTITY] Re-check after replug on {port}: {status}", flush=True)
+    if status == "MATCH":
+        # Boot-in-recovery case (review item 1): a boot-time DETECTION_ERROR/
+        # NOT_FOUND that only resolves to MATCH later, via a live replug,
+        # still needs the listener-dependent workers started and the
+        # one-time --info seeding run - on_serial_identity_match() is a
+        # no-op if start_runtime() already did this at boot.
+        on_serial_identity_match(output)
     return status
 
 
@@ -677,6 +703,69 @@ def _on_listener_identity_mismatch(port):
         source="radio",
         title="A different radio was connected",
         body=f"Expected {configured_label}, found {detected_label} on {port}.",
+    )
+
+
+_serial_identity_match_lock = threading.Lock()
+_serial_identity_match_done = False
+
+
+def on_serial_identity_match(info_output=""):
+    """Idempotent one-time seeding - runs exactly once per process lifetime
+    the first time serial identity is confirmed MATCH, whether that
+    happens synchronously at boot (start_runtime(), identity already
+    MATCH) or asynchronously later (listener_supervisor's own
+    _verify_listener_identity() callback, after a boot-in-recovery-state
+    listener's first successful re-verification).
+
+    H2-C Phase 2 review bug fix: before this, the four listener-dependent
+    background workers (cleanup_seen_ids/telemetry_worker/
+    telemetry_buffer_worker/ack_timeout_worker) and the three one-time
+    --info seeding calls (parse_nodes_from_info/update_base_status_from_
+    info/get_telemetry_from_info) were gated ONLY on start_runtime()'s own
+    boot-time identity_match snapshot - a boot-time DETECTION_ERROR that
+    later resolved via the listener's own recovery state machine left
+    these permanently un-started/un-seeded until a full service restart,
+    even though the listener itself was running and receiving packets.
+    Guarded by a real Lock (not just an Event's is_set() check) since this
+    can in principle be reached from either the boot thread or the
+    listener thread, and a bare check-then-set has a race either way."""
+    global _serial_identity_match_done
+    with _serial_identity_match_lock:
+        if _serial_identity_match_done:
+            return
+        _serial_identity_match_done = True
+
+    try:
+        parse_nodes_from_info(info_output)
+    except Exception as e:
+        print(f"[INIT] parse_nodes_from_info error: {e}", flush=True)
+    try:
+        update_base_status_from_info(info_output)
+    except Exception as e:
+        print(f"[WARN] Base status update failed: {e}", flush=True)
+    try:
+        print("[INIT] Initial telemetry fetch...", flush=True)
+        get_telemetry_from_info(info_output)
+    except Exception as e:
+        print(f"[INIT] Telemetry fetch error: {e}", flush=True)
+
+    threading.Thread(target=cleanup_seen_ids, daemon=True).start()
+    threading.Thread(target=telemetry_worker, daemon=True).start()
+    threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
+    # NOT listener-dependent, unlike the others - a pure timer over
+    # `messages` (see ack_timeout_worker()) - but starting it for TCP/
+    # Bluetooth would start flipping every DM there to "unconfirmed" after
+    # 60s (no inbound relay means an ACK can never be observed), a user-
+    # visible delivery-status decision, not a bug fix. This hook is only
+    # ever called for the serial path (boot's own call site is inside the
+    # `active_transport == "serial"` branch; the listener callback only
+    # exists on SerialPortSupervisor), so that constraint still holds.
+    threading.Thread(target=ack_timeout_worker, daemon=True).start()
+    print(
+        "[IDENTITY] Serial identity confirmed MATCH - listener-dependent "
+        "workers started, --info seeding complete",
+        flush=True,
     )
 
 
@@ -4395,6 +4484,17 @@ def listen_meshtastic():
             mismatch=(status == "MISMATCH"),
             port=MESHTASTIC_PORT,
         )
+    else:
+        # Review item 2 follow-up: without this, _verified_device starts
+        # as None and _listener_cycle()'s own pre-Popen invariant (any
+        # current_identity != _verified_device routes through a full
+        # --info re-verification first) would treat the very first start
+        # after a perfectly healthy MATCH-at-boot as an unverified device -
+        # forcing one redundant identity probe on every single boot, not
+        # just a genuine recovery. Boot-time MATCH already proved the
+        # device's identity (verify_radio_identity(), called before this
+        # thread even starts) - mark_device_verified() just records that.
+        listener_supervisor.mark_device_verified(MESHTASTIC_PORT)
     listener_supervisor.run_listener()
 
 
@@ -7501,6 +7601,19 @@ def api_radio_connection_status():
 @app.route("/api/radio_connection/release", methods=["POST"])
 @handle_errors
 def api_radio_connection_release():
+    # Review item 5 (H2-C Phase 2 follow-up): radio_connection_manager's
+    # release()/reconnect() both delegate to stop_listener()/
+    # wait_serial_release(), which are hardwired to listener_supervisor -
+    # the SERIAL listener supervisor, unconditionally, regardless of which
+    # transport is actually active. For TCP/Bluetooth this "succeeds"
+    # without releasing anything real (there is no serial port in use to
+    # release), which is confusing rather than dangerous on its own, but
+    # reconnect()'s on_reconnect hook (listener_supervisor.clear_mismatch())
+    # only ever re-verifies SERIAL identity - so refuse both routes outright
+    # for a non-serial radio, same pattern as restart_listener/rescan_nodes.
+    refusal = serial_only_action_refusal("Releasing the radio")
+    if refusal:
+        return refusal
     ok, status = radio_connection_manager.release(timeout=12)
     return jsonify({
         "ok": ok,
@@ -7524,6 +7637,15 @@ def api_radio_connection_reconnect():
     # see that module's own docstring and
     # test_restart_listener_never_popens_without_a_fresh_match_even_on_a_
     # persisting_mismatch's sibling test below for the proof.
+    #
+    # Review item 5: that fresh re-check is itself SERIAL-only
+    # (listener_supervisor.clear_mismatch(), see api_radio_connection_
+    # release()'s own comment above) - refuse outright for TCP/Bluetooth
+    # rather than silently no-op "succeeding" with no real re-verification
+    # of a non-serial radio's identity.
+    refusal = serial_only_action_refusal("Reconnecting the radio")
+    if refusal:
+        return refusal
     ok, status = radio_connection_manager.reconnect()
     if ok:
         radio_event("restart")
@@ -8498,13 +8620,18 @@ def start_runtime():
     load_chats()
     ensure_known_nodes()
     normalize_unknown_nodes()
-    if identity_match and active_transport == "serial":
-        parse_nodes_from_info(startup_info_output)
-    else:
+    if not (identity_match and active_transport == "serial"):
         print(
             f"[PROFILE] Radio writes blocked for profile {ACTIVE_PROFILE_ID}: identity={identity_status}",
             flush=True,
         )
+    # parse_nodes_from_info()/update_base_status_from_info()/
+    # get_telemetry_from_info() all now run via on_serial_identity_match()
+    # below, once the serial listener-dependent worker group starts -
+    # review item 1 fix: these used to run inline here, gated on this same
+    # boot-time identity_match snapshot, which meant a boot-in-recovery
+    # radio that only matched later (after start_runtime() already
+    # returned) never got seeded until a full restart.
     load_settings()
     # weather_manager's providers were constructed before settings.json was
     # loaded (they're module-level singletons, built long before this
@@ -8517,12 +8644,6 @@ def start_runtime():
     weather_manager.active().set_language(resolve_weather_language(settings.get("language", "auto")))
     load_cpu_history(CPU_HISTORY_FILE)
 
-    if identity_match and active_transport == "serial":
-        try:
-            update_base_status_from_info(startup_info_output)
-        except Exception as e:
-            print(f"[WARN] Base status update failed: {e}")
-    
     telemetry.load_telemetry()
     camera.load_camera_settings()    # <--- вызов через модуль
     
@@ -8530,14 +8651,7 @@ def start_runtime():
         if node_id not in chats:
             ensure_chat(node_id, KNOWN_NODES[node_id], force=True)
     save_chats()
-    
-    if identity_match and active_transport == "serial":
-        try:
-            print("[INIT] Initial telemetry fetch...")
-            get_telemetry_from_info(startup_info_output)
-        except Exception as e:
-            print(f"[INIT] Telemetry fetch error: {e}")
-    
+
     # Camera driver framework (see camera/camera_manager.py) - replaces
     # the old CSI-only camera.init_camera() startup path. Built here (not
     # lazily on the first Devices-tab rescan, like api_camera_manager.py
@@ -8693,16 +8807,13 @@ def start_runtime():
         # _disconnect_detected state, not by this shared Event.
         threading.Thread(target=listen_meshtastic, daemon=True).start()
         if identity_match:
-            threading.Thread(target=cleanup_seen_ids, daemon=True).start()
-            threading.Thread(target=telemetry_worker, daemon=True).start()
-            threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
-            # NOT listener-dependent, unlike the others - a pure timer over
-            # `messages` (see ack_timeout_worker()) - but starting it for TCP/
-            # Bluetooth would start flipping every DM there to "unconfirmed"
-            # after 60s (no inbound relay means an ACK can never be observed),
-            # a user-visible delivery-status decision, not a bug fix. Left
-            # serial-only here on purpose; tracked as a follow-up decision.
-            threading.Thread(target=ack_timeout_worker, daemon=True).start()
+            # Review item 1: the four listener-dependent workers and the
+            # three --info seeding calls all now run through this one
+            # idempotent hook (see its own docstring) instead of being
+            # inlined here directly - the listener_supervisor's own
+            # _verify_listener_identity() callback calls the same hook
+            # for the boot-in-recovery case this snapshot can't see.
+            on_serial_identity_match(startup_info_output)
     else:
         pause_listen.set()
         print(

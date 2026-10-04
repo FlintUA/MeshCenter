@@ -73,6 +73,15 @@ def run_start_runtime(server_module, monkeypatch):
         )
 
         monkeypatch.setattr(server_module, "_runtime_started", False)
+        # Review item 1's on_serial_identity_match() is idempotent for the
+        # life of a real process (by design - see its own docstring), but
+        # server_module is a session-scoped import here, so without
+        # resetting this between simulated runs, only the FIRST test in
+        # the session that reaches a serial+MATCH boot would ever see the
+        # four listener-dependent workers start; every later one (serial
+        # or not) would see the guard already latched true from a prior
+        # test and silently no-op.
+        monkeypatch.setattr(server_module, "_serial_identity_match_done", False)
         monkeypatch.setattr(server_module, "_acquire_runtime_lock", lambda: None)
         monkeypatch.setattr(server_module, "verify_radio_identity", lambda: "")
         for name in (
@@ -138,6 +147,59 @@ def test_no_radio_workers_start_on_identity_mismatch(run_start_runtime, transpor
 
     assert "radio_health_worker" not in started
     assert not (SERIAL_ONLY_WORKERS & set(started))
+
+
+def test_boot_in_recovery_then_later_match_starts_the_full_worker_group_once(
+    server_module, run_start_runtime, monkeypatch
+):
+    """Review item 1's explicit regression test: a boot-time DETECTION_ERROR
+    (radio not yet present/verified) must not permanently strand the four
+    listener-dependent workers, or the one-time --info seeding, once the
+    radio later proves MATCH - the exact live gap found on dev (2026-10-03,
+    zero further log lines for 6+ minutes with the device physically
+    present). Simulates listener_supervisor's own later callback
+    (_verify_listener_identity() -> on_serial_identity_match()) by calling
+    the hook directly, since this fixture doesn't run a real listener
+    thread."""
+    started, _ = run_start_runtime("serial", identity_status="DETECTION_ERROR")
+
+    # Boot itself: the listener thread starts (H2-C Phase 2's own fix -
+    # always starts for serial), but nothing in SERIAL_MATCH_ONLY_WORKERS
+    # does yet, and no base-status/node/telemetry seeding happened -
+    # identity hasn't matched yet.
+    assert "listen_meshtastic" in started
+    assert not (SERIAL_MATCH_ONLY_WORKERS & set(started))
+
+    seed_calls = {"nodes": [], "base_status": [], "telemetry": []}
+    monkeypatch.setattr(server_module, "parse_nodes_from_info", lambda output: seed_calls["nodes"].append(output))
+    monkeypatch.setattr(server_module, "update_base_status_from_info", lambda output: seed_calls["base_status"].append(output))
+    monkeypatch.setattr(server_module, "get_telemetry_from_info", lambda output: seed_calls["telemetry"].append(output))
+
+    # The radio appears and verifies MATCH later - listener_supervisor's
+    # own callback would call this; simulated directly here.
+    server_module.on_serial_identity_match("fake --info output")
+
+    assert SERIAL_MATCH_ONLY_WORKERS <= set(_RecordingThread.started)
+    for worker in SERIAL_MATCH_ONLY_WORKERS:
+        assert _RecordingThread.started.count(worker) == 1, f"{worker} must start exactly once"
+    assert seed_calls == {
+        "nodes": ["fake --info output"],
+        "base_status": ["fake --info output"],
+        "telemetry": ["fake --info output"],
+    }
+
+    # A second MATCH (e.g. a later replug re-confirming the same radio)
+    # must be a no-op - idempotent for the process's whole lifetime, not
+    # re-seeding or re-starting anything a second time.
+    server_module.on_serial_identity_match("a different --info output")
+
+    for worker in SERIAL_MATCH_ONLY_WORKERS:
+        assert _RecordingThread.started.count(worker) == 1, f"{worker} must not start a second time"
+    assert seed_calls == {
+        "nodes": ["fake --info output"],
+        "base_status": ["fake --info output"],
+        "telemetry": ["fake --info output"],
+    }
 
 
 def test_serial_on_mismatch_still_starts_the_listener_thread_and_health_worker(run_start_runtime):

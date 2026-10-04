@@ -16,6 +16,16 @@ import time
 import pytest
 
 from meshsrv.serial_port_supervisor import SerialPortSupervisor
+from meshsrv.serial_reconnect import DeviceIdentity
+
+# A stable stand-in "verified device" - most tests exercise behavior OTHER
+# than the pre-Popen verified-device invariant (review follow-up) and
+# shouldn't also need to think about it. _make_supervisor() seeds
+# _verified_device to this value and _run_one_cycle() makes
+# capture_device_identity() always return it too, so "the device hasn't
+# changed" is the default for every test unless it deliberately overrides
+# one side or the other to simulate a real change.
+_STABLE_DEVICE = DeviceIdentity(st_rdev=1, st_ino=100)
 
 
 class _FakeListenProcess:
@@ -58,16 +68,35 @@ def _make_supervisor(**kwargs):
         pause_listen=threading.Event(),
     )
     defaults.update(kwargs)
-    return SerialPortSupervisor(**defaults)
+    supervisor = SerialPortSupervisor(**defaults)
+    # Review follow-up: _listener_cycle()'s pre-Popen invariant compares
+    # capture_device_identity(self._port) against _verified_device on
+    # EVERY restart attempt now, not just ones a disconnect marker or
+    # health-tick already flagged. Most of this module's tests exercise
+    # something else entirely and would otherwise have to fight that
+    # invariant just to get as far as Popen - seed it "already verified"
+    # here by default; tests that specifically want to exercise the
+    # invariant override it (or the capture_device_identity patch in
+    # _run_one_cycle below) explicitly.
+    supervisor._verified_device = _STABLE_DEVICE
+    return supervisor
 
 
-def _run_one_cycle(supervisor, monkeypatch, fake_process, *, sleep_patch=True):
+def _run_one_cycle(supervisor, monkeypatch, fake_process, *, sleep_patch=True, device_identity=_STABLE_DEVICE):
     """Runs exactly one _listener_cycle() against `fake_process`, with
     subprocess.Popen and time.sleep stubbed so the test is fast and
-    deterministic (identity-retry backoff can be up to 60s for real)."""
+    deterministic (identity-retry backoff can be up to 60s for real).
+
+    `device_identity` is what capture_device_identity() reports for the
+    supervisor's port during this cycle - defaults to the same
+    _STABLE_DEVICE _make_supervisor() seeds into _verified_device, so the
+    pre-Popen identity invariant is satisfied unless a test deliberately
+    passes a different value (or None, for "device vanished") to exercise
+    it."""
     import meshsrv.serial_port_supervisor as spv_module
 
     monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: fake_process)
+    monkeypatch.setattr(spv_module, "capture_device_identity", lambda port: device_identity)
     if sleep_patch:
         monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
     supervisor._listener_cycle()
@@ -405,6 +434,13 @@ def test_boot_in_recovery_state_then_device_appears_and_matches_starts_the_liste
 
     monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
     monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
+    # Fake /dev/ttyACM0 doesn't really exist on this machine, so
+    # capture_device_identity() would otherwise return None both when
+    # _await_identity_before_restart() seeds _verified_device on MATCH and
+    # when the pre-Popen invariant re-checks it a moment later - stub it to
+    # a stable identity so the test exercises "MATCH then Popen", not the
+    # unrelated "device identity unknowable in this test environment" path.
+    monkeypatch.setattr(spv_module, "capture_device_identity", lambda port: _STABLE_DEVICE)
     monkeypatch.setattr(
         spv_module.subprocess, "Popen",
         lambda *a, **k: popen_calls.append(a) or _FakeListenProcess(["line\n"], exit_code=0),
@@ -414,3 +450,158 @@ def test_boot_in_recovery_state_then_device_appears_and_matches_starts_the_liste
 
     assert len(popen_calls) == 1
     assert supervisor._disconnect_detected.is_set() is False
+
+
+# --- Review follow-up (item 2): the pre-Popen _verified_device invariant -
+# closes the fallback hole where a restart could reach Popen against a
+# device that was never actually re-verified, because the two existing
+# detectors (the stdout marker, and terminate_if_device_changed()'s own
+# health-tick check) both only ever act on a LIVE process - a plain
+# nonzero-exit crash with no marker, or _resolve_port()'s own by-id-missing
+# fallback landing on a different device, previously reached Popen with no
+# re-check at all. -----------------------------------------------------
+
+
+def test_vanish_via_plain_nonzero_exit_then_reappear_verifies_before_popen(monkeypatch):
+    """A crash with no disconnect marker (the live T1 case - the CLI just
+    exits nonzero) must still be caught by the pre-Popen invariant once the
+    device is actually gone: capture_device_identity() returning None
+    (nothing there right now) must route through identity verification
+    before any Popen, not restart blindly against a vanished port."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    verify_calls = []
+    popen_calls = []
+    supervisor = _make_supervisor(
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=lambda port: verify_calls.append(port) or "MATCH",
+    )
+    monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a) or _FakeListenProcess([]))
+    monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
+
+    # Cycle 1: an ordinary crash-loop retry (no disconnect_detected set
+    # yet) finds the device genuinely gone - capture_device_identity()
+    # returns None for the fake path.
+    monkeypatch.setattr(spv_module, "capture_device_identity", lambda port: None)
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+    supervisor._listener_cycle()
+
+    assert popen_calls == [], "must not Popen against a vanished device"
+    assert verify_calls == [], "no --info probe yet - disconnect was only just detected this cycle"
+    assert supervisor._disconnect_detected.is_set() is True
+
+    # Cycle 2: the device has reappeared - capture_device_identity() now
+    # reports a real identity, so the disconnect-detected branch runs
+    # _await_identity_before_restart() first.
+    monkeypatch.setattr(spv_module, "capture_device_identity", lambda port: _STABLE_DEVICE)
+    supervisor._listener_cycle()
+
+    assert verify_calls == ["/dev/ttyACM0"], "must verify identity before resuming"
+    assert len(popen_calls) == 1, "a confirmed MATCH must then actually resume the listener"
+
+
+def test_fallback_resolution_to_a_different_device_verifies_before_popen(monkeypatch):
+    """_resolve_listener_port()'s by-id-missing fallback can land on a
+    DIFFERENT physical device than the one last verified (e.g. a second
+    USB-serial adapter already occupying /dev/ttyACM0 by the time the
+    accepted radio's by-id link disappears). Even with no marker and no
+    detected process death, the pre-Popen invariant must still catch a
+    changed device identity and verify before Popen."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    different_device = DeviceIdentity(st_rdev=1, st_ino=999)
+    verify_calls = []
+    popen_calls = []
+    supervisor = _make_supervisor(
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=lambda port: verify_calls.append(port) or "MATCH",
+    )
+    monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a) or _FakeListenProcess([]))
+    monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+
+    # _verified_device defaults to _STABLE_DEVICE (seeded by
+    # _make_supervisor); the device now actually present is a different
+    # one entirely - no vanish, no marker, just a different physical node.
+    monkeypatch.setattr(spv_module, "capture_device_identity", lambda port: different_device)
+    supervisor._listener_cycle()
+
+    assert popen_calls == [], "must not Popen against an unverified different device"
+    assert verify_calls == [], "disconnect was only just detected this cycle"
+    assert supervisor._disconnect_detected.is_set() is True
+
+    # Next cycle: identity verification confirms this new device is in
+    # fact the accepted radio (MATCH) - only then does it resume.
+    supervisor._listener_cycle()
+
+    assert verify_calls == ["/dev/ttyACM0"]
+    assert len(popen_calls) == 1
+
+
+def test_plain_crash_against_the_same_verified_device_never_probes_identity(monkeypatch):
+    """The cheap-path guarantee the invariant is designed to preserve: a
+    healthy crash-loop retry against a device that hasn't actually changed
+    must never pay for an --info probe - capture_device_identity() is a
+    single os.stat(), verify_identity() is a slow real CLI invocation."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    verify_calls = []
+    popen_calls = []
+    supervisor = _make_supervisor(
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=lambda port: verify_calls.append(port) or "MATCH",
+    )
+    monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a) or _FakeListenProcess([]))
+    monkeypatch.setattr(spv_module.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+    # Same identity as _verified_device (seeded to _STABLE_DEVICE) - an
+    # ordinary crash against the unchanged device.
+    monkeypatch.setattr(spv_module, "capture_device_identity", lambda port: _STABLE_DEVICE)
+
+    supervisor._listener_cycle()
+
+    assert verify_calls == [], "no --info cost for a plain crash against the same device"
+    assert len(popen_calls) == 1
+    assert supervisor._disconnect_detected.is_set() is False
+
+
+# --- Review follow-up (item 3): the --info probe must not race a claim. --
+
+
+def test_identity_probe_match_is_discarded_if_a_claim_starts_mid_probe(monkeypatch):
+    """_await_identity_before_restart() holds radio_lock for the probe and
+    re-checks pause_listen both immediately before and immediately after
+    calling verify_identity() - if a claim (Release radio / Node Tools)
+    starts WHILE the probe is in flight, even a MATCH result must be
+    discarded entirely, not acted on. Otherwise a claim that starts mid-
+    probe could race the Popen path for the same port right after this
+    method returns True."""
+    import meshsrv.serial_port_supervisor as spv_module
+
+    pause_listen = threading.Event()
+
+    def verify_identity_racing_a_claim(port):
+        # Stands in for a concurrent claim_exclusive_access() call setting
+        # pause_listen while this probe is still in flight - the probe
+        # itself holds radio_lock for its whole duration, so a real claim
+        # would actually block on that same lock until the probe
+        # releases it; this directly simulates the moment right after
+        # release where the claim has now started but this method hasn't
+        # yet re-checked pause_listen.
+        pause_listen.set()
+        return "MATCH"
+
+    supervisor = _make_supervisor(
+        port="/dev/ttyUSB-OLD",
+        pause_listen=pause_listen,
+        resolve_port=lambda: "/dev/ttyACM0",
+        verify_identity=verify_identity_racing_a_claim,
+    )
+    monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+
+    result = supervisor._await_identity_before_restart()
+
+    assert result is False, "a MATCH that races a claim must be discarded, not acted on"
+    assert supervisor._verified_device is _STABLE_DEVICE, "must not overwrite the prior verified device"
+    assert supervisor._port == "/dev/ttyUSB-OLD", "must not adopt the newly-resolved port either"
+    assert supervisor._identity_retry_attempt == 0, "discarding is not a failed retry - no backoff owed"

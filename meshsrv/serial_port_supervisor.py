@@ -137,6 +137,16 @@ class SerialPortSupervisor:
         self._mismatch_port: str = ""
         self._identity_retry_attempt = 0
         self._consecutive_errors = 0
+        # Review follow-up: the device last PROVEN to match the accepted
+        # radio (set only by _await_identity_before_restart()'s own MATCH
+        # branch, or mark_device_verified() for the boot-time case below).
+        # _listener_cycle()'s own pre-Popen check compares against this on
+        # every single restart attempt, not just ones a disconnect marker
+        # or health-tick already flagged - closing the gap where a plain
+        # nonzero-exit crash-loop (no marker at all) or _resolve_port()'s
+        # own by-id-missing fallback could Popen against an unverified
+        # device.
+        self._verified_device: Optional[DeviceIdentity] = None
 
     # ------------------------------------------------------------------
     # Listener subprocess (Stage A - see adapters/meshtastic/
@@ -215,7 +225,25 @@ class SerialPortSupervisor:
                 resolved_port = self._resolve_port()
                 if resolved_port:
                     self._port = resolved_port
-                self._device_identity_snapshot = capture_device_identity(self._port)
+
+                # Review follow-up: the invariant that actually closes the
+                # fallback hole - only ever Popen on a device node whose
+                # identity was proven to match the accepted radio since it
+                # last appeared (_verified_device, set only by
+                # _await_identity_before_restart()'s own MATCH branch or
+                # mark_device_verified() at boot). This subsumes both the
+                # stdout-marker and health-tick detection paths below: a
+                # plain nonzero exit with no marker, or _resolve_port()'s
+                # own by-id-missing fallback resolving to a DIFFERENT
+                # device than the one last verified, both land here - a
+                # single cheap os.stat() checked on every attempt, so a
+                # healthy crash-loop against the SAME unchanged device
+                # costs nothing extra (no --info probe).
+                current_identity = capture_device_identity(self._port)
+                if current_identity is None or current_identity != self._verified_device:
+                    self._disconnect_detected.set()
+                    return
+                self._device_identity_snapshot = current_identity
 
                 listener_cmd = meshtastic_command(self._cli_path, self._port, "--listen")
                 proc = subprocess.Popen(
@@ -377,12 +405,35 @@ class SerialPortSupervisor:
             time.sleep(delay)
             return False
 
-        status = self._verify_identity(resolved_port)
+        # Review follow-up: an --info probe is comparatively slow (a real
+        # CLI invocation, seconds on a Pi Zero 2W) - without holding the
+        # same lock the Popen path holds, a Release/Node Tools claim could
+        # start mid-probe and race it for the port. Holding radio_lock for
+        # the probe's own duration serializes against claim_exclusive_
+        # access() (which acquires this same lock before its own
+        # prepare+work+cooldown span) by construction; the pause_listen
+        # checks on both sides of the probe additionally catch
+        # prepare_radio_command()'s own un-bounded phase (CLAUDE.md's
+        # documented "radio_lock bounded, but prepare_radio_command()'s
+        # own phase is not" trade-off - that path can set pause_listen
+        # without needing this lock first). Either way: discard the
+        # result entirely rather than act on a probe that ran
+        # concurrently with, or was immediately followed by, someone
+        # else's claim - the next cycle naturally retries once the claim
+        # clears pause_listen (_listener_cycle()'s own top-level check
+        # suppresses everything while paused).
+        with self._radio_lock:
+            if self._pause_listen.is_set():
+                return False
+            status = self._verify_identity(resolved_port)
+            if self._pause_listen.is_set():
+                return False
 
         if status == "MATCH":
             self._disconnect_detected.clear()
             self._identity_retry_attempt = 0
             self._port = resolved_port
+            self._verified_device = capture_device_identity(resolved_port)
             return True
 
         if status == "MISMATCH":
@@ -466,6 +517,17 @@ class SerialPortSupervisor:
             self._mismatch_port = port
         else:
             self._disconnect_detected.set()
+
+    def mark_device_verified(self, port: str) -> None:
+        """The boot-time counterpart to _await_identity_before_restart()'s
+        own MATCH branch - the only OTHER way _verified_device is ever
+        set. Called once by server.py's listen_meshtastic() when boot-time
+        identity verification already confirmed MATCH, so the very first
+        Popen attempt doesn't immediately fail the pre-Popen verified-
+        device check (_listener_cycle() would otherwise treat a freshly-
+        started process as "never verified" and loop straight back into
+        disconnect-recovery before ever sending a single --listen)."""
+        self._verified_device = capture_device_identity(port)
 
     def is_mismatch_active(self) -> bool:
         return self._mismatch_active.is_set()

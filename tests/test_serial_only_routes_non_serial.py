@@ -88,6 +88,98 @@ def test_refusal_wins_over_identity_gate_message(server_module, _preserve, monke
     assert status == 409 and data["error_code"] == "listener_not_applicable"
 
 
+@pytest.mark.parametrize("transport", ["tcp", "bluetooth"])
+def test_radio_connection_release_is_refused_for_non_serial(server_module, _preserve, monkeypatch, transport):
+    """Review item 5: radio_connection_manager.release()/reconnect() both
+    delegate to stop_listener()/wait_serial_release(), which are hardwired
+    to the SERIAL listener_supervisor regardless of which transport is
+    actually active - for TCP/Bluetooth this used to "succeed" without
+    releasing anything real. Refuse outright, same pattern as
+    restart_listener, before radio_connection_manager.release() ever
+    runs."""
+    _accept(server_module, transport)
+    monkeypatch.setattr(server_module.radio_connection_manager, "release", _boom)
+
+    data, status = _post(server_module, server_module.api_radio_connection_release, "/api/radio_connection/release")
+
+    assert status == 409
+    assert data["ok"] is False
+    assert data["error_code"] == "listener_not_applicable"
+    assert data["transport"] == transport
+
+
+def test_listen_meshtastic_marks_device_verified_on_a_healthy_match_boot(server_module, _preserve, monkeypatch):
+    """Review item 2 follow-up: without mark_device_verified(), a perfectly
+    healthy MATCH-at-boot would still leave listener_supervisor's
+    _verified_device as None - _listener_cycle()'s own pre-Popen invariant
+    (any current_identity != _verified_device forces a full --info
+    re-verification first) would then treat the very FIRST start after
+    every single boot as an unverified device, costing one redundant
+    identity probe even in the common, fully healthy case."""
+    from meshsrv.serial_reconnect import capture_device_identity
+
+    server_module.RADIO_IDENTITY_RESULT = {"status": "MATCH", "detected": {}, "error": None}
+    monkeypatch.setattr(server_module.listener_supervisor, "run_listener", lambda: None)
+    monkeypatch.setattr(server_module.listener_supervisor, "start_in_recovery_state", _boom)
+    server_module.listener_supervisor._verified_device = None
+
+    server_module.listen_meshtastic()
+
+    expected = capture_device_identity(server_module.MESHTASTIC_PORT)
+    assert expected is not None, "the test's own fake serial port must be a real file"
+    assert server_module.listener_supervisor._verified_device == expected
+
+
+def test_listen_meshtastic_boot_in_recovery_state_does_not_mark_device_verified(server_module, _preserve, monkeypatch):
+    """The other half: a bad boot-time identity must still enter recovery
+    state, not be waved through as pre-verified."""
+    server_module.RADIO_IDENTITY_RESULT = {"status": "DETECTION_ERROR", "detected": {}, "error": "x"}
+    monkeypatch.setattr(server_module.listener_supervisor, "run_listener", lambda: None)
+    recovery_calls = []
+    monkeypatch.setattr(
+        server_module.listener_supervisor, "start_in_recovery_state",
+        lambda **kwargs: recovery_calls.append(kwargs),
+    )
+    server_module.listener_supervisor._verified_device = None
+
+    server_module.listen_meshtastic()
+
+    assert recovery_calls == [{"mismatch": False, "port": server_module.MESHTASTIC_PORT}]
+    assert server_module.listener_supervisor._verified_device is None
+
+
+@pytest.mark.parametrize("transport", ["tcp", "bluetooth"])
+def test_radio_connection_reconnect_is_refused_for_non_serial(server_module, _preserve, monkeypatch, transport):
+    """Same as above for reconnect(): its on_reconnect hook (listener_
+    supervisor.clear_mismatch()) only ever re-verifies SERIAL identity, so
+    letting it "succeed" for TCP/Bluetooth would silently skip any real
+    re-verification of a radio that may have been swapped."""
+    _accept(server_module, transport)
+    monkeypatch.setattr(server_module.radio_connection_manager, "reconnect", _boom)
+    monkeypatch.setattr(server_module, "radio_event", _boom)
+
+    data, status = _post(server_module, server_module.api_radio_connection_reconnect, "/api/radio_connection/reconnect")
+
+    assert status == 409
+    assert data["ok"] is False
+    assert data["error_code"] == "listener_not_applicable"
+    assert data["transport"] == transport
+
+
+def test_radio_connection_release_and_reconnect_still_work_for_serial(server_module, _preserve, monkeypatch):
+    """The refusal must not catch the serial case it isn't meant for."""
+    _accept(server_module, "serial")
+    monkeypatch.setattr(server_module.radio_connection_manager, "release", lambda timeout=12: (True, {"mode": "released", "message": "ok"}))
+    monkeypatch.setattr(server_module.radio_connection_manager, "reconnect", lambda: (True, {"mode": "connected", "message": "ok"}))
+    monkeypatch.setattr(server_module, "radio_event", lambda *a, **k: None)
+
+    release_data, release_status = _post(server_module, server_module.api_radio_connection_release, "/api/radio_connection/release")
+    reconnect_data, reconnect_status = _post(server_module, server_module.api_radio_connection_reconnect, "/api/radio_connection/reconnect")
+
+    assert release_status == 200 and release_data["ok"] is True
+    assert reconnect_status == 200 and reconnect_data["ok"] is True
+
+
 def test_restart_listener_on_serial_is_unchanged(server_module, _preserve, monkeypatch):
     _accept(server_module, "serial")
     calls = []
@@ -187,6 +279,16 @@ def test_restart_listener_resumes_once_the_re_check_actually_confirms_match(serv
     popen_calls = []
     monkeypatch.setattr(spv_module.subprocess, "Popen", lambda *a, **k: popen_calls.append(a) or _FakeProc())
     monkeypatch.setattr(spv_module.os.path, "exists", lambda p: True)
+    # Review follow-up: the pre-Popen identity invariant re-checks
+    # capture_device_identity() against _verified_device right before
+    # Popen too, not just inside _await_identity_before_restart() - the
+    # fake /dev/ttyACM0 path doesn't really exist on this machine, so
+    # without this stub both calls would see None and the invariant would
+    # (correctly, for a REAL unknown device) refuse to Popen, which isn't
+    # what this test is exercising.
+    from meshsrv.serial_reconnect import DeviceIdentity
+    stable_identity = DeviceIdentity(st_rdev=1, st_ino=100)
+    monkeypatch.setattr(spv_module, "capture_device_identity", lambda port: stable_identity)
     server_module.listener_supervisor._resolve_port = lambda: "/dev/ttyACM0"
     server_module.listener_supervisor._verify_identity = lambda port: "MATCH"
 

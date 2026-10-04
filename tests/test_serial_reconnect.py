@@ -94,6 +94,26 @@ def test_device_identity_changed_false_for_the_same_unchanged_device(tmp_path):
     assert device_identity_changed(old, str(port)) is False
 
 
+def test_device_identity_changed_false_despite_a_metadata_only_change(tmp_path):
+    """Review follow-up: a chmod (or any other metadata-only change - udev
+    rules, ModemManager renegotiating, ACL updates) touches st_ctime on
+    the SAME device without creating a new inode. Must NOT be treated as
+    a device change - DeviceIdentity deliberately excludes st_ctime for
+    exactly this reason."""
+    port = tmp_path / "ttyACM0"
+    port.write_text("")
+    old = capture_device_identity(str(port))
+
+    os.chmod(str(port), 0o644)
+    # A real ctime bump needs a brief pause on some filesystems (ctime
+    # resolution); not asserting ctime moved here, just that identity
+    # comparison never looks at it regardless.
+    new = capture_device_identity(str(port))
+
+    assert new.st_ino == old.st_ino and new.st_rdev == old.st_rdev
+    assert device_identity_changed(old, str(port)) is False
+
+
 def test_device_identity_changed_true_for_a_different_device_at_the_same_path(tmp_path):
     """The actual replug case: the old inode is gone, a new file (new
     inode) now sits at the same path - a different physical device

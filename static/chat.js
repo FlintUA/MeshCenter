@@ -544,14 +544,14 @@ function renderNotificationsCard(notifications, unreadCount) {
     const readCls = n.read ? 'notifications-item--read' : '';
 
     html += `
-      <div class="notifications-item ${readCls}" data-id="${n.id}"
-           onclick="markBackendNotificationRead('${n.id}', this)">
+      <div class="notifications-item ${readCls}" data-id="${escapeHtml(n.id)}"
+           data-chat-action="notif-mark-read">
         <span class="notifications-item-icon">${icon}</span>
         <span class="notifications-item-time">${timeStr}</span>
         <span class="notifications-item-title">${escapeHtml(n.title)}</span>
         ${n.body ? `<span class="notifications-item-body">${escapeHtml(n.body)}</span>` : ''}
         <button class="notifications-item-dismiss"
-                onclick="event.stopPropagation(); deleteNotification('${n.id}', this.closest('.notifications-item'))"
+                data-chat-action="notif-dismiss"
                 aria-label="Dismiss">✕</button>
       </div>`;
   }
@@ -4250,6 +4250,34 @@ function escapeHtml(value) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 }
+
+// ============================================================
+// Delegated click handling for data-chat-action (H2-D / F1.2).
+// One document-level listener dispatching by data-chat-action, replacing
+// per-row onclick="fn('${escapeJsString(x)}')" attributes built from
+// template literals - the same shape as static/files.js's own
+// data-files-action delegation (see that file's "event delegation (C10)"
+// section). Converting a render site: drop the onclick attribute, add
+// data-chat-action="<verb>" plus whatever data-* fields the handler below
+// needs, then add a branch here. Being converted area by area (not all at
+// once) - see KNOWN_ISSUES.md-adjacent H2-D PR description for progress.
+function onChatActionClick(e) {
+    const target = e.target.closest('[data-chat-action]');
+    if (!target) return;
+    const action = target.getAttribute('data-chat-action');
+
+    if (action === 'notif-mark-read') {
+        markBackendNotificationRead(target.getAttribute('data-id'), target);
+        return;
+    }
+    if (action === 'notif-dismiss') {
+        e.stopPropagation();
+        const row = target.closest('.notifications-item');
+        deleteNotification(row ? row.getAttribute('data-id') : null, row);
+        return;
+    }
+}
+document.addEventListener('click', onChatActionClick);
 
 function formatTime(timeStr) {
     if (!timeStr) return '';

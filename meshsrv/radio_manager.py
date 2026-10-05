@@ -16,12 +16,31 @@ class RadioConnectionManager:
         wait_serial_release,
         serial_port,
         log_event=None,
+        on_reconnect=None,
     ):
         self._pause_event = pause_event
         self._stop_listener = stop_listener
         self._wait_serial_release = wait_serial_release
-        self._serial_port = serial_port
+        # Review round 4 (adapter-port design): `serial_port` may be a
+        # zero-arg callable (server.py's current_serial_port, reflecting
+        # whatever listener_supervisor last actually verified) instead of
+        # a fixed string, read fresh wherever it's displayed/reported -
+        # display-only here (wait_serial_release's own `device` arg below
+        # is accepted for call-site compatibility but not actually used,
+        # see server.py's wait_serial_release() docstring), but a stale
+        # value here was still a real, if minor, discrepancy for anyone
+        # reading status()'s "serial_port" field after a replug. A plain
+        # string (every existing caller/test) is wrapped so nothing else
+        # changes for them.
+        self._serial_port_provider = serial_port if callable(serial_port) else (lambda: serial_port)
         self._log_event = log_event
+        # H2-C Phase 2: called at the start of reconnect() - the radio may
+        # have been swapped or reconfigured while released to an external
+        # tool (the whole point of the release), so resuming should
+        # re-verify identity rather than silently trust whatever was true
+        # before the release. Optional/no-op default so this class stays
+        # usable standalone (e.g. in tests) without a listener supervisor.
+        self._on_reconnect = on_reconnect or (lambda: None)
         self._lock = threading.RLock()
         self._mode = "connected"
         self._message = "The radio is controlled by MeshCenter."
@@ -71,15 +90,16 @@ class RadioConnectionManager:
             if not stopped:
                 raise RuntimeError("The Meshtastic listener could not be stopped")
 
+            current_port = self._serial_port_provider()
             released = bool(
                 self._wait_serial_release(
-                    device=self._serial_port,
+                    device=current_port,
                     timeout=timeout,
                 )
             )
             if not released:
                 raise RuntimeError(
-                    f"The serial port is still busy: {self._serial_port}"
+                    f"The serial port is still busy: {current_port}"
                 )
 
             with self._lock:
@@ -123,6 +143,10 @@ class RadioConnectionManager:
             self._updated_at = time.time()
 
         print("[RADIO MANAGER] Reconnect requested", flush=True)
+        try:
+            self._on_reconnect()
+        except Exception as error:
+            print(f"[RADIO MANAGER] on_reconnect hook error: {error}", flush=True)
         self._pause_event.clear()
         self._log(
             "ACTION",
@@ -162,7 +186,7 @@ class RadioConnectionManager:
                 },
                 "listener_running": bool(listener_running),
                 "message": self._message,
-                "serial_port": self._serial_port,
+                "serial_port": self._serial_port_provider(),
                 "updated_at": self._updated_at,
                 "released_at": self._released_at,
                 "last_error": self._last_error,

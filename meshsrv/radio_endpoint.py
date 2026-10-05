@@ -176,7 +176,7 @@ def build_transport_connect_new(
     serial_transport: RadioTransport,
     ble_transport: RadioTransport,
     tcp_transport: RadioTransport,
-    serial_port: str = "",
+    serial_port: str | Callable[[], str] = "",
     ble_address: str = "",
     ble_name: str = "",
     tcp_host: str = "",
@@ -200,6 +200,18 @@ def build_transport_connect_new(
     TCP via their shared _detach_and_close_async() pattern) - and at most
     one of the two is ever actually holding a real link, since
     TransportRouter only ever has one _active transport at a time.
+
+    `serial_port` may be a zero-arg callable instead of a fixed string
+    (review round 4 follow-up) - read fresh inside the returned
+    _connect_new() closure, at actual connect time, rather than captured
+    here at build time. All three current callers (server.py's
+    restore_active_transport() and api/api_meshtastic.py's
+    _previous_transport_recovery()/_connect_new_for()) pass
+    current_serial_port()/serial_port directly for exactly this reason:
+    the returned callable can sit unused for a while before
+    TransportRouter.switch() actually invokes it, and a verified path
+    change in that window must reach the connect, not get silently
+    overridden by whatever was current when this builder ran.
     """
 
     def _disconnect_others(target: RadioTransport) -> None:
@@ -209,9 +221,19 @@ def build_transport_connect_new(
 
     if transport_type == "serial":
         def _connect_new():
+            # Review round 4 follow-up: `serial_port` may be a zero-arg
+            # callable (server.py's current_serial_port) instead of a
+            # fixed string - read fresh HERE, at actual connect time, not
+            # whenever build_transport_connect_new() itself happened to
+            # be called. The returned _connect_new callable can sit
+            # unused for a while (TransportRouter.switch() is the only
+            # thing that ever calls it) - a verified path change in that
+            # window must not get silently overridden by whatever was
+            # current when this closure was first built.
+            resolved_serial_port = serial_port() if callable(serial_port) else serial_port
             _disconnect_others(serial_transport)
             serial_transport.connect(
-                ConnectionDescriptor(type=ConnectionType.SERIAL, address=serial_port),
+                ConnectionDescriptor(type=ConnectionType.SERIAL, address=resolved_serial_port),
                 force=True,
                 timeout=connect_timeout,
             )

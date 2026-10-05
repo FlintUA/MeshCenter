@@ -106,6 +106,11 @@ CORE_WHITELIST=(
 #     -> meshsrv.radio_transport, meshsrv.ipc_protocol,
 #        meshsrv.meshtastic_transport, meshsrv.node_time_sync,
 #        meshsrv.serial_port_supervisor
+#   meshsrv.serial_port_supervisor -> meshsrv.serial_reconnect (H2-C Phase 2 -
+#     caught live by this script's own adapter smoke test: a bare `import
+#     meshsrv.serial_port_supervisor` inside a clean venv built only from
+#     this whitelist raised ModuleNotFoundError the moment that import was
+#     added, since nothing else in the closure happened to pull it in)
 #   meshsrv.node_time_sync -> meshsrv.time_service -> hardware.rtc_service
 #     -> hardware.i2c_service
 # All of the above are MIT/stdlib-only (no meshtastic import, no native/
@@ -131,6 +136,7 @@ ADAPTER_WHITELIST=(
     meshsrv/meshtastic_transport.py
     meshsrv/node_time_sync.py
     meshsrv/serial_port_supervisor.py
+    meshsrv/serial_reconnect.py
     meshsrv/time_service.py
     hardware/__init__.py
     hardware/rtc_service.py

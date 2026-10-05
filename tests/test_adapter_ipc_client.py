@@ -869,6 +869,85 @@ def test_stderr_drain_forwards_lines_to_on_log():
 # supervisor able to respawn on the next call.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Review round 4 (adapter-port design): `serial_port` may be a zero-arg
+# callable instead of a fixed string, read FRESH on every spawn so a
+# verified by-id/path change reaches a RESPAWNED adapter subprocess instead
+# of it coming back on the stale path it was first spawned with.
+# ---------------------------------------------------------------------------
+
+class _FakeSpawnedProcess:
+    """Minimal subprocess.Popen stand-in for _spawn_locked()'s own
+    bookkeeping (pid, poll(), an empty-but-iterable stderr for the drain
+    thread) - deliberately not a real process, since these tests only
+    care about what command _spawn_locked() builds, not what runs it."""
+
+    def __init__(self):
+        self.pid = 4242
+        self.stdin = None
+        self.stdout = None
+        self.stderr = iter(())
+
+    def poll(self):
+        return None
+
+    def kill(self):
+        pass
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_spawn_reads_the_serial_port_provider_fresh_each_time(monkeypatch):
+    captured_commands = []
+    monkeypatch.setattr(
+        adapter_ipc_client.subprocess, "Popen",
+        lambda command, **kwargs: captured_commands.append(command) or _FakeSpawnedProcess(),
+    )
+    ports = iter(["/dev/ttyACM0", "/dev/ttyACM1"])
+    supervisor = AdapterSupervisor(
+        adapter_python=sys.executable,
+        project_dir=_PROJECT_DIR,
+        serial_port=lambda: next(ports),
+        meshtastic_cli="meshtastic",
+    )
+
+    supervisor._spawn_locked()
+    supervisor._kill_locked(None)
+    supervisor._spawn_locked()
+
+    def _port_arg(command):
+        return command[command.index("--serial-port") + 1]
+
+    assert len(captured_commands) == 2
+    assert _port_arg(captured_commands[0]) == "/dev/ttyACM0"
+    assert _port_arg(captured_commands[1]) == "/dev/ttyACM1", (
+        "a respawn must read the provider again, not reuse the port from the first spawn"
+    )
+
+
+def test_spawn_with_a_plain_string_serial_port_is_unchanged():
+    """Backward compatibility: every existing caller (production and
+    every other test in this file) passes a plain string - must keep
+    working exactly as before."""
+    captured_commands = []
+
+    def _fake_popen(command, **kwargs):
+        captured_commands.append(command)
+        return _FakeSpawnedProcess()
+
+    with patch.object(adapter_ipc_client.subprocess, "Popen", _fake_popen):
+        supervisor = AdapterSupervisor(
+            adapter_python=sys.executable,
+            project_dir=_PROJECT_DIR,
+            serial_port="/dev/ttyFAKE",
+            meshtastic_cli="meshtastic",
+        )
+        supervisor._spawn_locked()
+
+    assert captured_commands[0][captured_commands[0].index("--serial-port") + 1] == "/dev/ttyFAKE"
+
+
 def test_shutdown_before_any_spawn_is_a_noop():
     supervisor = _make_supervisor()
     supervisor.shutdown()
@@ -980,3 +1059,140 @@ def test_probe_supervisor_spawned_from_a_request_thread_survives_that_thread():
 
     assert proc.poll() is not None, "shutdown() from a short-lived thread must still kill the process"
     assert supervisor._proc is None
+
+
+# ---------------------------------------------------------------------------
+# Review round 4 follow-up (live-caught, 2026-10-04): AdapterIPCTransport's
+# own Core-side cache (get_connection_info()/is_connected(), cache-only by
+# design - see the class's own docstring) must be told about a verified
+# port change too, not just the adapter subprocess underneath it (recycled
+# separately via AdapterSupervisor.shutdown()). Without this, the cache
+# keeps reporting the OLD address until some unrelated call happens to
+# refresh it - and refresh_connection_info()'s own "keep the cached
+# descriptor when a respawned adapter reports an empty endpoint" behavior
+# means a fresh adapter's genuinely-empty-until-connected state would
+# otherwise silently preserve the STALE address forever, which is exactly
+# what a reconnect-after-respawn call (the #296 path, Reconnect, the
+# health worker's own transport recovery) would then push right back into
+# the freshly-recycled adapter.
+#
+# A real fake_adapter.py subprocess round-trip can't model a connection_
+# info-shaped response (it only ever echoes its request params) - these
+# tests exercise AdapterIPCTransport's own real methods (update_cached_
+# descriptor/refresh_connection_info/get_connection_info) against a
+# minimal fake supervisor whose call() is fully controlled, the same
+# "fake the IPC boundary, not the class under test" shape
+# _FakeCoreSerialTransport already uses above for the OTHER side of this
+# same class.
+# ---------------------------------------------------------------------------
+
+class _FakeIPCSupervisor:
+    """Stands in for AdapterSupervisor - returns whatever response dict
+    the test queues next for call(), with no real subprocess at all."""
+
+    def __init__(self):
+        self.responses = []
+        self.calls = []
+
+    def call(self, request, *, timeout, ble_address_for_cleanup):
+        self.calls.append(request)
+        return self.responses.pop(0)
+
+
+def _connection_info_response(address, state="connected"):
+    return {
+        "ok": True,
+        "result": {
+            "state": state,
+            "descriptor": {"type": "serial", "address": address, "label": ""},
+            "node_id": None,
+            "connected_since": None,
+            "last_error": None,
+        },
+    }
+
+
+def test_update_cached_descriptor_changes_the_address_other_fields_unchanged():
+    supervisor = _FakeIPCSupervisor()
+    supervisor.responses.append(_connection_info_response("/dev/ttyACM0"))
+    transport = AdapterIPCTransport(ConnectionType.SERIAL, supervisor)
+    transport.refresh_connection_info()
+    assert transport.get_connection_info().descriptor.address == "/dev/ttyACM0"
+
+    transport.update_cached_descriptor("/dev/ttyACM1")
+
+    info = transport.get_connection_info()
+    assert info.descriptor.address == "/dev/ttyACM1"
+    assert info.descriptor.type == ConnectionType.SERIAL
+    assert info.state == ConnectionState.CONNECTED, "only the address changes - state is not a fresh result"
+
+
+def test_path_change_then_recycle_then_empty_endpoint_report_keeps_the_new_port():
+    """The exact scenario from the live round: path change -> recycle ->
+    refresh_connection_info() with an empty reported endpoint (a freshly
+    respawned, not-yet-connected adapter) -> the cached descriptor (what
+    the next connect/reconnect call would use as "the last known
+    address") must be the NEW port, never the stale old one."""
+    supervisor = _FakeIPCSupervisor()
+    supervisor.responses.append(_connection_info_response("/dev/ttyACM0"))
+    transport = AdapterIPCTransport(ConnectionType.SERIAL, supervisor)
+    transport.refresh_connection_info()
+    assert transport.get_connection_info().descriptor.address == "/dev/ttyACM0"
+
+    # on_port_changed() fires: update the cache to the new port (the
+    # adapter subprocess itself is recycled separately, out of band).
+    transport.update_cached_descriptor("/dev/ttyACM1")
+
+    # The next refresh hits the freshly-respawned adapter, which hasn't
+    # connected to anything yet - empty endpoint, exactly the case
+    # refresh_connection_info()'s own docstring describes.
+    supervisor.responses.append(_connection_info_response("", state="disconnected"))
+    info = transport.refresh_connection_info()
+
+    assert info.descriptor.address == "/dev/ttyACM1", (
+        "an empty-endpoint report from a freshly-respawned adapter must keep the "
+        "NEW cached address, not revert to whatever was cached before the change"
+    )
+    assert transport.get_connection_info().descriptor.address == "/dev/ttyACM1"
+
+
+def test_connect_descriptor_reflects_a_path_change_made_after_the_connect_new_callable_was_built():
+    """Review round 4 follow-up, item 2: build_transport_connect_new()'s
+    serial_port may be a callable, read fresh INSIDE the returned
+    connect_new() closure at actual invocation time - not whenever
+    build_transport_connect_new() itself was called. Proves the fix
+    directly: change the callable's return value AFTER building the
+    closure but BEFORE invoking it, and the connect() call must still see
+    the new value."""
+    from meshsrv.radio_endpoint import build_transport_connect_new
+
+    supervisor = _FakeIPCSupervisor()
+    serial_transport = AdapterIPCTransport(ConnectionType.SERIAL, supervisor)
+    ble_transport = AdapterIPCTransport(ConnectionType.BLUETOOTH, supervisor)
+    tcp_transport = AdapterIPCTransport(ConnectionType.TCP, supervisor)
+
+    current_port = {"value": "/dev/ttyACM0"}
+    connect_new = build_transport_connect_new(
+        "serial",
+        serial_transport=serial_transport,
+        ble_transport=ble_transport,
+        tcp_transport=tcp_transport,
+        serial_port=lambda: current_port["value"],
+    )
+
+    # The path changes AFTER the callable was built but BEFORE it's ever
+    # invoked - exactly the window restore_active_transport()'s own
+    # deferred connect_new() can sit in.
+    current_port["value"] = "/dev/ttyACM1"
+
+    supervisor.responses.append(_connection_info_response("", state="disconnected"))  # disconnect(ble)
+    supervisor.responses.append(_connection_info_response("", state="disconnected"))  # disconnect(tcp)
+    supervisor.responses.append(_connection_info_response("/dev/ttyACM1"))  # connect(serial)
+
+    connect_new()
+
+    connect_request = supervisor.calls[-1]
+    assert connect_request["params"]["descriptor"]["address"] == "/dev/ttyACM1", (
+        "connect() must use the CURRENT port at invocation time, not whatever "
+        "was current when build_transport_connect_new() was called"
+    )

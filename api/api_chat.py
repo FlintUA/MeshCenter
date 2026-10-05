@@ -236,6 +236,37 @@ def register_chat_routes(
     channel_cache = {"timestamp": 0.0, "channels": []}
     channel_cache_lock = threading.Lock()
 
+    # Review round 4, item 4 (live-caught, 2026-10-04): a FAILED discovery
+    # never updated channel_cache's own timestamp, so once the radio was
+    # physically absent (a replug mid-path-change, the serial device node
+    # genuinely gone), the 10s UI poll re-attempted radio_transport.
+    # get_channels() on every single call - each one claiming and failing
+    # against the router lock - for as long as the radio stayed away (8+
+    # minutes, observed live). "The port doesn't exist" is a distinct,
+    # cheap-to-recognize signal from every other discovery failure (a busy
+    # port, a timeout, a protocol hiccup) and deserves a real backoff
+    # instead of being retried at full UI-poll frequency.
+    CHANNEL_DISCOVERY_ABSENT_BACKOFF_S = 30
+    _PORT_ABSENT_PATTERNS = ("no such file or directory", "file not found error", "could not open port")
+    channel_discovery_backoff = {"until": 0.0}
+
+    def _looks_like_port_absent(error):
+        text = str(error or "").lower()
+        return any(pattern in text for pattern in _PORT_ABSENT_PATTERNS)
+
+    def _primary_channel_fallback():
+        return [{
+            "id": CHANNEL_CHAT_ID,
+            "index": 0,
+            "name": f"{CHANNEL_CHAT_NAME} [0]",
+            "type": "channel",
+            "is_channel": True,
+            "is_demo": False,
+            "last_message": "",
+            "last_time": "",
+            "unread": 0,
+        }]
+
     def channel_chat_id(index):
         return CHANNEL_CHAT_ID if int(index) == 0 else f"channel:{int(index)}"
 
@@ -264,19 +295,18 @@ def register_chat_routes(
         discovery_error = None
 
         if not is_radio_available():
-            if cached_channels:
-                return cached_channels
-            return [{
-                "id": CHANNEL_CHAT_ID,
-                "index": 0,
-                "name": f"{CHANNEL_CHAT_NAME} [0]",
-                "type": "channel",
-                "is_channel": True,
-                "is_demo": False,
-                "last_message": "",
-                "last_time": "",
-                "unread": 0,
-            }]
+            return cached_channels or _primary_channel_fallback()
+
+        # Review round 4, item 4: the radio was detected as physically
+        # absent (ENOENT on the port) recently - skip the real attempt
+        # entirely rather than hammering the router lock again this soon.
+        # is_radio_available() above doesn't catch this window: it reads
+        # RADIO_IDENTITY_RESULT, which a disconnect doesn't update until
+        # the supervisor's own re-verification actually runs (that's the
+        # live gap - the health worker can still report a now-stale MATCH
+        # for a while after the device is physically gone).
+        if now_ts < channel_discovery_backoff["until"]:
+            return cached_channels or _primary_channel_fallback()
 
         # radio_transport.get_channels() already does the settle dance
         # (waitForConfig() + the extra sleep for secondary-channel roles
@@ -301,9 +331,21 @@ def register_chat_routes(
                 })
         except Exception as error:
             discovery_error = error
-            print(f"[CHANNELS] Discovery warning: {error}", flush=True)
+            if _looks_like_port_absent(error):
+                channel_discovery_backoff["until"] = now_ts + CHANNEL_DISCOVERY_ABSENT_BACKOFF_S
+                print(
+                    f"[CHANNELS] Radio port not found - backing off {CHANNEL_DISCOVERY_ABSENT_BACKOFF_S}s "
+                    f"instead of retrying every poll: {error}",
+                    flush=True,
+                )
+            else:
+                print(f"[CHANNELS] Discovery warning: {error}", flush=True)
 
         if discovered:
+            # A successful discovery proves the port is no longer absent -
+            # clear any leftover backoff immediately rather than waiting
+            # it out.
+            channel_discovery_backoff["until"] = 0.0
             # One item per slot, ordered exactly as on the radio.
             by_index = {item["index"]: item for item in discovered}
             discovered = [by_index[index] for index in sorted(by_index)]
@@ -352,17 +394,7 @@ def register_chat_routes(
             return cached_channels
 
         # A primary channel is always a safe final fallback on first startup.
-        fallback = [{
-            "id": CHANNEL_CHAT_ID,
-            "index": 0,
-            "name": f"{CHANNEL_CHAT_NAME} [0]",
-            "type": "channel",
-            "is_channel": True,
-            "is_demo": False,
-            "last_message": "",
-            "last_time": "",
-            "unread": 0,
-        }]
+        fallback = _primary_channel_fallback()
         with channel_cache_lock:
             channel_cache["timestamp"] = now_ts
             channel_cache["channels"] = [dict(item) for item in fallback]

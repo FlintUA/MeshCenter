@@ -229,7 +229,7 @@ def _register(
     ble_transport,
     tcp_transport,
     settings,
-    serial_port="/dev/ttyACM0",
+    serial_port=lambda: "/dev/ttyACM0",
     instance_manager=None,
     resolve_reconnect_descriptor=None,
 ):

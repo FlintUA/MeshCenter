@@ -747,6 +747,15 @@ id
 
 Confirm that the user belongs to `dialout`, the USB cable carries data and `MESHTASTIC_PORT` matches the actual device.
 
+### A different radio was connected
+
+If the System Log (or a notification) shows **"A different radio was connected"** after a USB cable was unplugged/replugged or the radio was power-cycled, MeshCenter detected that the physical radio now answering on the serial port is not the one this installation is configured for, and deliberately left the listener halted rather than silently mixing in a different radio's data. To resolve it:
+
+- If the correct radio is actually connected now (e.g. it was briefly swapped and has been put back), click **Reconnect Radio** under `Settings > Meshtastic Radio` to force a fresh check.
+- If you intentionally connected a different radio, use **Node Manager** to switch to (or set up) that radio's own profile instead — each radio keeps its own isolated data (see [Working with multiple radios](#working-with-multiple-radios)).
+
+Automatic recovery for a known-good USB reconnect (same radio, no identity change — no manual `Restart Listener` or service restart) is in development; until that work is confirmed on real hardware, the behavior described in [Radio connection type](#12-radio-connection-type) still applies.
+
 ### Serial port is busy
 
 Only one active process should control the same radio connection. Close official CLI listeners and other serial programs, then restart MeshCenter:

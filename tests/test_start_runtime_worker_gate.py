@@ -22,6 +22,20 @@ SERIAL_ONLY_WORKERS = {
     "ack_timeout_worker",
 }
 
+# H2-C Phase 2: listen_meshtastic() now always starts for serial regardless
+# of boot-time identity status - its own disconnect-recovery/mismatch
+# state machine (SerialPortSupervisor.start_in_recovery_state()) is what
+# decides whether to actually Popen, not this gate (see that function's
+# own docstring and server.py's start_runtime() comment at its call site).
+# These four siblings still only start once identity_match is True - they
+# have nothing to do until the listener is actually producing real data.
+SERIAL_MATCH_ONLY_WORKERS = {
+    "cleanup_seen_ids",
+    "telemetry_worker",
+    "telemetry_buffer_worker",
+    "ack_timeout_worker",
+}
+
 
 class _RecordingThread:
     started = []
@@ -47,7 +61,13 @@ def run_start_runtime(server_module, monkeypatch):
     restore_active_transport calls)."""
     original_pause = server_module.pause_listen.is_set()
 
-    def _run(transport, identity_status="MATCH"):
+    def _run(transport, identity_status="MATCH", info_output="", skip_mocking=()):
+        """`info_output` becomes verify_radio_identity()'s return value
+        (start_runtime()'s own startup_info_output) - pass real --info text
+        to exercise parse_nodes_from_info() for real. `skip_mocking` is the
+        subset of the usual no-op list to leave as the REAL function (e.g.
+        {"parse_nodes_from_info", "save_chats"}), for tests that need to
+        observe its actual side effects (review round 2, item 2)."""
         _RecordingThread.started = []
         restore_calls = []
 
@@ -59,18 +79,30 @@ def run_start_runtime(server_module, monkeypatch):
         )
 
         monkeypatch.setattr(server_module, "_runtime_started", False)
+        # Review item 1's on_serial_identity_match() is idempotent for the
+        # life of a real process (by design - see its own docstring), but
+        # server_module is a session-scoped import here, so without
+        # resetting this between simulated runs, only the FIRST test in
+        # the session that reaches a serial+MATCH boot would ever see the
+        # four listener-dependent workers start; every later one (serial
+        # or not) would see the guard already latched true from a prior
+        # test and silently no-op.
+        monkeypatch.setattr(server_module, "_serial_identity_match_done", False)
         monkeypatch.setattr(server_module, "_acquire_runtime_lock", lambda: None)
-        monkeypatch.setattr(server_module, "verify_radio_identity", lambda: "")
+        monkeypatch.setattr(server_module, "verify_radio_identity", lambda: info_output)
         for name in (
             "load_messages", "reconcile_interrupted_sends", "load_nodes", "load_sensors_data", "load_chats",
             "ensure_known_nodes", "normalize_unknown_nodes", "parse_nodes_from_info", "load_settings",
             "load_cpu_history", "update_base_status_from_info", "get_telemetry_from_info", "save_chats",
             "start_time_service", "start_installation_time_assignment", "start_schedule_engine",
         ):
+            if name in skip_mocking:
+                continue
             monkeypatch.setattr(server_module, name, lambda *a, **k: None)
         monkeypatch.setattr(server_module.telemetry, "load_telemetry", lambda *a, **k: None)
         monkeypatch.setattr(server_module.camera, "load_camera_settings", lambda *a, **k: None)
-        monkeypatch.setattr(server_module, "KNOWN_NODES", {})
+        if "KNOWN_NODES" not in skip_mocking:
+            monkeypatch.setattr(server_module, "KNOWN_NODES", {})
         monkeypatch.setattr(server_module, "camera_power_enabled_at_startup", False)
         monkeypatch.setattr(server_module, "EPAPER_ENABLED", False)
         monkeypatch.setattr(server_module.mca_runtime, "start_attachments_service", lambda *a, **k: None)
@@ -117,20 +149,152 @@ def test_non_serial_does_not_start_the_serial_listener_workers(run_start_runtime
     assert not (SERIAL_ONLY_WORKERS & set(started)), sorted(SERIAL_ONLY_WORKERS & set(started))
 
 
-@pytest.mark.parametrize("transport", ["serial", "tcp", "bluetooth"])
+@pytest.mark.parametrize("transport", ["tcp", "bluetooth"])
 def test_no_radio_workers_start_on_identity_mismatch(run_start_runtime, transport):
-    """A definitive MISMATCH never gets a health worker, on any transport."""
+    """A definitive MISMATCH never gets a health worker, on tcp/bluetooth."""
     started, _ = run_start_runtime(transport, identity_status="MISMATCH")
 
     assert "radio_health_worker" not in started
     assert not (SERIAL_ONLY_WORKERS & set(started))
 
 
-@pytest.mark.parametrize("transport", ["serial", "tcp", "bluetooth"])
+def test_boot_in_recovery_then_later_match_starts_the_full_worker_group_once(
+    server_module, run_start_runtime, monkeypatch
+):
+    """Review item 1's explicit regression test: a boot-time DETECTION_ERROR
+    (radio not yet present/verified) must not permanently strand the four
+    listener-dependent workers, or the one-time --info seeding, once the
+    radio later proves MATCH - the exact live gap found on dev (2026-10-03,
+    zero further log lines for 6+ minutes with the device physically
+    present). Simulates listener_supervisor's own later callback
+    (_verify_listener_identity() -> on_serial_identity_match()) by calling
+    the hook directly, since this fixture doesn't run a real listener
+    thread."""
+    started, _ = run_start_runtime("serial", identity_status="DETECTION_ERROR")
+
+    # Boot itself: the listener thread starts (H2-C Phase 2's own fix -
+    # always starts for serial), but nothing in SERIAL_MATCH_ONLY_WORKERS
+    # does yet, and no base-status/node/telemetry seeding happened -
+    # identity hasn't matched yet.
+    assert "listen_meshtastic" in started
+    assert not (SERIAL_MATCH_ONLY_WORKERS & set(started))
+
+    seed_calls = {"nodes": [], "base_status": [], "telemetry": []}
+    monkeypatch.setattr(server_module, "parse_nodes_from_info", lambda output: seed_calls["nodes"].append(output))
+    monkeypatch.setattr(server_module, "update_base_status_from_info", lambda output: seed_calls["base_status"].append(output))
+    monkeypatch.setattr(server_module, "get_telemetry_from_info", lambda output: seed_calls["telemetry"].append(output))
+
+    # The radio appears and verifies MATCH later - listener_supervisor's
+    # own callback would call this; simulated directly here.
+    server_module.on_serial_identity_match("fake --info output")
+
+    assert SERIAL_MATCH_ONLY_WORKERS <= set(_RecordingThread.started)
+    for worker in SERIAL_MATCH_ONLY_WORKERS:
+        assert _RecordingThread.started.count(worker) == 1, f"{worker} must start exactly once"
+    assert seed_calls == {
+        "nodes": ["fake --info output"],
+        "base_status": ["fake --info output"],
+        "telemetry": ["fake --info output"],
+    }
+
+    # A second MATCH (e.g. a later replug re-confirming the same radio)
+    # must be a no-op - idempotent for the process's whole lifetime, not
+    # re-seeding or re-starting anything a second time.
+    server_module.on_serial_identity_match("a different --info output")
+
+    for worker in SERIAL_MATCH_ONLY_WORKERS:
+        assert _RecordingThread.started.count(worker) == 1, f"{worker} must not start a second time"
+    assert seed_calls == {
+        "nodes": ["fake --info output"],
+        "base_status": ["fake --info output"],
+        "telemetry": ["fake --info output"],
+    }
+
+
+def test_boot_match_seeds_a_new_info_only_node_before_start_runtime_returns(server_module, run_start_runtime, monkeypatch):
+    """Review round 2, item 2 (simple case): a node that appears ONLY in
+    the boot --info dump (not in KNOWN_NODES at all) must have a chat by
+    the time start_runtime() returns, regardless of whether
+    parse_nodes_from_info() runs via the early inline call or later via
+    on_serial_identity_match()."""
+    from fixtures.cli_output_synthetic import INFO_OUTPUT_NODES_IN_MESH
+
+    node_id = "!820af75a"
+    monkeypatch.setattr(server_module, "chats", {})
+    monkeypatch.setattr(server_module, "nodes", {})
+
+    run_start_runtime(
+        "serial",
+        identity_status="MATCH",
+        info_output=INFO_OUTPUT_NODES_IN_MESH,
+        skip_mocking={"parse_nodes_from_info", "save_chats"},
+    )
+
+    assert node_id in server_module.chats
+    assert server_module.chats[node_id]["name"] == "Flint's Test Node"
+
+
+def test_boot_match_info_name_wins_over_a_stale_known_nodes_placeholder(server_module, run_start_runtime, monkeypatch):
+    """Review round 2, item 2 (the actual regression): parse_nodes_from_
+    info() must run BEFORE the `for node_id in KNOWN_NODES:
+    ensure_chat(...)` loop inside start_runtime() - that loop's own
+    `if node_id not in chats` guard means a node known via BOTH
+    KNOWN_NODES (an early, often-stale configured name) and this boot's
+    --info dump (the live, accurate name) would otherwise keep the stale
+    KNOWN_NODES name forever: once the KNOWN_NODES loop creates the chat
+    first, ensure_chat()'s own rename-on-mismatch logic never gets a
+    chance to run for it, since parse_nodes_from_info()'s internal
+    `if node_id not in chats: ensure_chat(...)` guard then skips it too."""
+    from fixtures.cli_output_synthetic import INFO_OUTPUT_NODES_IN_MESH
+
+    node_id = "!820af75a"
+    monkeypatch.setattr(server_module, "chats", {})
+    monkeypatch.setattr(server_module, "nodes", {})
+    monkeypatch.setattr(server_module, "KNOWN_NODES", {node_id: "Known Nodes Placeholder"})
+
+    run_start_runtime(
+        "serial",
+        identity_status="MATCH",
+        info_output=INFO_OUTPUT_NODES_IN_MESH,
+        skip_mocking={"parse_nodes_from_info", "save_chats", "KNOWN_NODES"},
+    )
+
+    assert server_module.chats[node_id]["name"] == "Flint's Test Node", (
+        "the live --info name must win over the stale KNOWN_NODES placeholder"
+    )
+
+
+def test_serial_on_mismatch_still_starts_the_listener_thread_and_health_worker(run_start_runtime):
+    """H2-C Phase 2: serial now always starts listen_meshtastic() and
+    radio_health_worker() too, even on a known boot-time MISMATCH - the
+    listener thread's own state machine
+    (SerialPortSupervisor.start_in_recovery_state()) is what actually
+    keeps it from ever Popen'ing on a mismatch, not this gate. The four
+    siblings that only matter once real listener data is flowing still
+    correctly stay off."""
+    started, _ = run_start_runtime("serial", identity_status="MISMATCH")
+
+    assert "listen_meshtastic" in started
+    assert "radio_health_worker" in started
+    assert not (SERIAL_MATCH_ONLY_WORKERS & set(started))
+
+
+@pytest.mark.parametrize("transport", ["tcp", "bluetooth"])
 def test_not_found_stays_fail_closed(run_start_runtime, transport):
     started, _ = run_start_runtime(transport, identity_status="NOT_FOUND")
 
     assert "radio_health_worker" not in started
+
+
+def test_serial_on_not_found_still_starts_the_listener_thread_and_health_worker(run_start_runtime):
+    """Same H2-C Phase 2 reasoning as the MISMATCH case above - NOT_FOUND
+    (a radio answered but reported no ID) still gets the listener thread
+    and health worker, just not the data-dependent siblings."""
+    started, _ = run_start_runtime("serial", identity_status="NOT_FOUND")
+
+    assert "listen_meshtastic" in started
+    assert "radio_health_worker" in started
+    assert not (SERIAL_MATCH_ONLY_WORKERS & set(started))
 
 
 @pytest.mark.parametrize("transport", ["tcp", "bluetooth"])
@@ -144,16 +308,28 @@ def test_non_serial_health_worker_starts_on_transient_detection_error(run_start_
     assert not (SERIAL_ONLY_WORKERS & set(started))
 
 
-def test_serial_health_worker_still_requires_match_on_detection_error(run_start_runtime):
+def test_serial_health_worker_now_starts_on_detection_error_too(run_start_runtime):
+    """H2-C Phase 2 (was: 'still requires MATCH on DETECTION_ERROR' - the
+    old behavior that left the service permanently stuck with zero further
+    log lines even once the radio physically came back, confirmed live on
+    dev 2026-10-03). listen_meshtastic()'s own recovery state machine
+    (not this gate) now does the actual waiting."""
     started, _ = run_start_runtime("serial", identity_status="DETECTION_ERROR")
 
-    assert "radio_health_worker" not in started
+    assert "radio_health_worker" in started
+    assert "listen_meshtastic" in started
+    assert not (SERIAL_MATCH_ONLY_WORKERS & set(started))
 
 
 @pytest.mark.parametrize("status,transport,expected", [
     ("MATCH", "serial", True), ("MATCH", "tcp", True),
     ("DETECTION_ERROR", "tcp", True), ("NOT_CHECKED", "bluetooth", True),
-    ("DETECTION_ERROR", "serial", False), ("NOT_CHECKED", "serial", False),
+    # H2-C Phase 2: serial is unconditional now - see should_start_health_
+    # worker()'s own docstring for why freezing this worker no longer
+    # serves any purpose once the listener thread has its own recovery
+    # state machine.
+    ("DETECTION_ERROR", "serial", True), ("NOT_CHECKED", "serial", True),
+    ("MISMATCH", "serial", True), ("NOT_FOUND", "serial", True),
     ("MISMATCH", "tcp", False), ("NOT_FOUND", "tcp", False), ("MISMATCH", "bluetooth", False),
 ])
 def test_should_start_health_worker_table(server_module, status, transport, expected):

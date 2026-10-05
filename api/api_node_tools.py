@@ -334,7 +334,7 @@ def register_node_tools_routes(
     state_lock,
     save_nodes,
     MESHTASTIC_CMD,
-    MESHTASTIC_PORT,
+    current_serial_port,
     radio_session,
     RadioBusyError,
     log_system_event,
@@ -348,12 +348,11 @@ def register_node_tools_routes(
     plugin and device actions.
     """
     cli_path = str(MESHTASTIC_CMD or "").strip()
-    configured_port = str(MESHTASTIC_PORT or "").strip()
     if not cli_path:
         raise RuntimeError("Node Tools received an empty Meshtastic CLI path")
     if not os.path.isfile(cli_path) or not os.access(cli_path, os.X_OK):
         raise RuntimeError(f"Meshtastic CLI is not executable: {cli_path}")
-    if not configured_port:
+    if not str(current_serial_port() or "").strip():
         raise RuntimeError("Node Tools received an empty Meshtastic serial port")
 
     node_tools_lock = threading.Lock()
@@ -409,6 +408,11 @@ def register_node_tools_routes(
         action = context.action.action_id
         node_id = context.node_id
         node_name = context.node_name
+        # Review round 4 (adapter-port design): read fresh on every call,
+        # not captured once at registration - a Node Tools command right
+        # after a by-id/path change must target the device the listener
+        # actually verified, not a stale startup value.
+        configured_port = str(current_serial_port() or "").strip()
         resolved_port = _resolve_serial_port(configured_port)
 
         (

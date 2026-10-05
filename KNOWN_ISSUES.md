@@ -160,12 +160,11 @@ Status detail: covered by an extensive unit-test suite
 `tests/test_channel_discovery_port_absent_backoff.py`) and mutation-tested
 against the specific regressions each test claims to catch.
 
-## KI-009: Quiet-period listener restarts during normal operation (pre-existing, not a #331 regression)
-Status: open, documented 2026-10-04, not a release blocker
-Symptom: during a quiet 30-minute window with one browser tab open
-polling the UI, the serial listener subprocess restarts a handful of
-times (roughly every 6-10 minutes) for two unrelated, non-hardware
-reasons:
+## KI-009: Quiet-period listener restarts during normal operation (monitoring, not confirmed as a #331 regression)
+Status: open, under passive measurement since 2026-10-05 (PR #331 merged
+as `23d3671`), not a release blocker
+Symptom: during normal operation the serial listener subprocess restarts
+a handful of times per hour for two unrelated, non-hardware reasons:
 1. `get_channels()`/`set_device_time()` legitimately pause the listener
    while they claim the serial port through the adapter subprocess - the
    claim itself takes 10-15s (channel discovery is a real multi-packet
@@ -173,7 +172,9 @@ reasons:
    check mid-claim and reporting `LISTENER_DOWN` instead of the more
    accurate `PAUSED`. Router-lock hold mechanism:
    `meshsrv/transport_router.py:151-181` (`TransportRouter._delegate()`);
-   caller: `api/api_chat.py:276` (`discover_radio_channels()`).
+   caller: `api/api_chat.py:276` (`discover_radio_channels()`). Confirmed
+   present at the same 13-15s hold times on both `main` and the PR branch
+   - pre-existing, unrelated to #331.
 2. An independent Meshtastic-library-internal event - stdout line
    `DEBUG file:stream_interface.py _disconnected line:102 Closing our
    port`, process exit code 1, with **no** corresponding dmesg/USB event.
@@ -185,22 +186,48 @@ reasons:
    branch (`meshsrv/serial_port_supervisor.py:399-404`) - a path #331
    did not add or modify. Self-recovers within ~5s every time, no new
    `[IDENTITY]` re-check line, no lost messages observed.
-Why documented now, not fixed: a controlled A/B (main @ v1.9.0 vs PR
-#331's head, same 30-minute single-browser-tab condition, same dev node)
-showed both symptoms present on `main` at the same order of magnitude
-(get_channels() hold times 13.1-15.1s on both; the "Closing our port"
-quirk fired on both, 1x on main vs 4x on the PR branch, with no adapter
-activity within +-5s of any occurrence on either branch) - confirming
-pre-existing, unrelated to #331's changes. The PR branch additionally
-showed zero adapter-subprocess-killed-for-non-response events during its
-window, vs 3 on main, so if anything the PR branch's behavior under the
-same conditions is no worse.
-Next step (backlog, not scheduled): (a) make `discover_radio_channels()`
-cache more aggressively so a 10-15s claim isn't on the hot path of a
-routine UI poll; (b) have the radio-health check avoid classifying an
-in-progress claim's pause as `LISTENER_DOWN` (it already has the
-`PAUSED` status for exactly this - tighten the race window); (c)
-investigate the Meshtastic library's own "Closing our port" condition
-upstream, or detect+suppress it the same way H2-C already handles the
-"readiness to read" disconnect warning, if it turns out frequent enough
-to matter in practice.
+Investigation so far (2026-10-04/05, dev node, item 2 specifically):
+- **The pre-H2-C historical baseline no longer exists.** `journalctl`'s
+  own retention on dev had already rotated past the point needed
+  (`--disk-usage` reported 7.2M total, one boot listed) by the time this
+  was checked - everything before 2026-10-05 10:21 CEST is gone,
+  including all of main's pre-#331 history. `dmesg`'s much smaller-volume
+  kernel ring buffer still reached back to September, confirming this
+  was rotation, not an actual reboot - but the application-level lines
+  needed to count this specific event are gone for good. No further
+  historical reconstruction is possible on this node.
+- **Two comparisons were run same-day instead, with different results.**
+  A controlled, same-tab-condition, back-to-back A/B (`main` 21:14-21:46
+  vs PR `45770d1` 21:46-22:17, 2026-10-04) measured 1 event/32min on
+  `main` vs 4 events/31min on the PR branch (~4.2x). A much larger but
+  uncontrolled same-day sample (~10h of PR-branch operation spanning
+  normal daytime use, browser activity unknown) measured ~3.8/hr,
+  against that same single `main` data point at ~1.9/hr (~2.0x) - right
+  at the "pre-existing" threshold instead of clearly over it. The two
+  comparisons disagree because the controlled pair has an n=1 main
+  sample (high variance) and the larger sample isn't actually
+  apples-to-apples (unknown tab/load conditions).
+- **A candidate mechanism was raised and considered, then set aside.**
+  `radio_health_worker`'s ~30s tick unconditionally calls
+  `listener_supervisor.terminate_if_device_changed()` for every serial
+  tick (`server.py:6197`), which calls `capture_device_identity(port)` -
+  an `os.stat()` of the device node plus, for USB, a sysfs walk
+  (`meshsrv/serial_reconnect.py:95-130`) - a new per-tick filesystem
+  touch that doesn't exist on `main`. Reviewed and set aside as the
+  cause: neither operation opens the tty itself, so there's no plausible
+  path from a `stat()`/sysfs read to the Meshtastic library deciding to
+  close its own port. Not ruled out with a live trace, just judged
+  unlikely enough not to justify a defensive code change without
+  evidence.
+Current plan: passive 24h measurement, no deliberate interaction beyond
+normal use, starting from the 2026-10-05 merge/deploy of `23d3671` to
+dev/camtest/pixel-111. After 24h, count "Closing our port"+exit-1 (no
+dmesg USB event) and `LISTENER_DOWN` occurrences per hour, excluding any
+window with a deliberate replug or maintenance restart. Decision: a
+sustained rate above ~3/hr, or any occurrence that doesn't self-recover
+within its normal ~5-30s window, opens a dedicated follow-up that
+captures `lsof`/`strace` on the listener and adapter PIDs at the moment
+of the next occurrence to find what (if anything) touches the port
+concurrently, before considering any code change. A rate at or below
+that, with every occurrence self-recovering, closes this out as
+pre-existing/cosmetic and this entry is updated to reflect that.

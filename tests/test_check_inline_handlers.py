@@ -76,13 +76,46 @@ def fake_project(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(mod, "ALLOWLIST_PATH", allowlist_path)
-    monkeypatch.setattr(mod, "SCANNED_FILES", ["static/chat.js"])
     return tmp_path, js_path, allowlist_path
 
 
 def test_main_passes_when_file_matches_allowlist_exactly(fake_project, capsys):
     assert mod.main() == 0
     assert "OK" in capsys.readouterr().out
+
+
+def test_scanned_files_globs_every_static_js_not_a_fixed_list(tmp_path):
+    # Review follow-up (PR #333): a hardcoded file list let a handler in any
+    # OTHER static/*.js file through uncaught - live-confirmed with a new
+    # static/zz_new.js during review. scanned_files() must glob instead.
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "chat.js").write_text("", encoding="utf-8")
+    (static_dir / "zz_new_totally_unlisted_file.js").write_text("", encoding="utf-8")
+    found = mod.scanned_files(tmp_path)
+    assert "static/chat.js" in found
+    assert "static/zz_new_totally_unlisted_file.js" in found
+
+
+def test_scanned_files_excludes_vendored_and_minified(tmp_path):
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "chart.umd.min.js").write_text("", encoding="utf-8")
+    (static_dir / "some-other-lib.min.js").write_text("", encoding="utf-8")
+    (static_dir / "chat.js").write_text("", encoding="utf-8")
+    found = mod.scanned_files(tmp_path)
+    assert found == ["static/chat.js"]
+
+
+def test_main_fails_on_a_new_handler_in_a_brand_new_unlisted_file(fake_project, capsys):
+    # The exact regression the hardcoded SCANNED_FILES list missed.
+    tmp_path, _js_path, _allowlist_path = fake_project
+    new_file = tmp_path / "static" / "zz_new_totally_unlisted_file.js"
+    new_file.write_text("html += `<button onclick=\"pwn('${escapeJsString(y)}')\">go</button>`;\n", encoding="utf-8")
+    assert mod.main() == 1
+    err = capsys.readouterr().err
+    assert "NEW inline handler" in err
+    assert "zz_new_totally_unlisted_file.js" in err
 
 
 def test_main_fails_on_a_new_unlisted_handler(fake_project, capsys):

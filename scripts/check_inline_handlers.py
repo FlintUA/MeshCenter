@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """XSS remediation ratchet (H2-D, F1.3): no NEW inline event-handler attribute
-built from a template-literal interpolation may land in `static/*.js`, and the
-allowlist of pre-existing ones (seeded 2026-10-05 from the H2-D audit, PR #333)
-can only shrink, never grow or go stale.
+built from a template-literal interpolation may land in ANY `static/**/*.js`
+file (scanned by glob, not a fixed list - see `scanned_files()`'s own
+docstring for why that matters), and the allowlist of pre-existing ones
+(seeded 2026-10-05 from the H2-D audit, PR #333) can only shrink, never grow
+or go stale.
 
 Background: `onclick="fn('${value}')"` built from a JS template literal is the
 exact shape F1.1 (#311) found real bugs in (a value containing a stray quote
@@ -51,14 +53,29 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 ALLOWLIST_PATH = Path(__file__).parent / 'inline_handler_allowlist.json'
 
-SCANNED_FILES = [
-    'static/chat.js',
-    'static/chat-map.js',
-    'static/chat-updates-security.js',
-    'static/files.js',
-    'static/chat-telemetry.js',
-    'static/media.js',
-]
+# Review follow-up (PR #333): a fixed 6-file list silently let a handler in
+# any OTHER static/*.js file - an existing one not on the list, or a brand
+# new file - through uncaught (live-confirmed: a test file added under
+# static/ with its own inline handler passed as "OK"). Glob every
+# static/*.js file instead, so a new file is covered automatically, minus
+# the vendored/minified ones explicitly named below - those aren't this
+# project's own code, and a minifier's single-line output wouldn't match
+# this check's `${...}` shape meaningfully anyway.
+VENDORED_EXCLUDE = {
+    'static/chart.umd.min.js',  # Chart.js, vendored (see CLAUDE.md's Frontend section)
+}
+
+
+def scanned_files(repo_root: Path) -> list[str]:
+    """Every `static/**/*.js` file (posix-style, repo-relative), minus
+    `VENDORED_EXCLUDE` and anything matching `*.min.js` generically (a
+    second, future-proofing net in case a new vendored/minified file is
+    ever added without updating the explicit set above)."""
+    paths = sorted(
+        p.relative_to(repo_root).as_posix()
+        for p in repo_root.glob('static/**/*.js')
+    )
+    return [p for p in paths if p not in VENDORED_EXCLUDE and not p.endswith('.min.js')]
 
 # Word-boundary guarded so "data-contact=" doesn't match "on" inside
 # "contact" (a real false positive hit during the H2-D audit). Two separate
@@ -78,7 +95,7 @@ BLOCK_COMMENT_RE = re.compile(r'/\*.*?\*/', re.DOTALL)
 
 def strip_comments(source: str) -> str:
     """Good enough for this check, not a real JS parser: a `//` or `/* */`
-    inside a string literal would be mishandled, but none of the 6 scanned
+    inside a string literal would be mishandled, but none of the scanned
     files use that inside a line containing an on*= handler - verified by
     hand during the H2-D audit, not algorithmically guaranteed."""
     return LINE_COMMENT_RE.sub('', BLOCK_COMMENT_RE.sub('', source))
@@ -103,7 +120,7 @@ def main() -> int:
 
     failures: list[str] = []
 
-    for rel_path in SCANNED_FILES:
+    for rel_path in scanned_files(REPO_ROOT):
         path = REPO_ROOT / rel_path
         if not path.exists():
             continue

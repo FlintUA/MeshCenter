@@ -1,5 +1,73 @@
 [
   {
+    "file": "static/chat-map.js",
+    "snippet": "onchange=\"toggleWaypointSelection('${escapeJsString(id)}', this.checked)\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"centerMapOnWaypoint('${escapeJsString(waypoint?.waypoint_id)}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"copyCoordinates('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"copyCoordinates('${pos ? pos.latitude : ''}', '${pos ? pos.longitude : ''}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"deleteWaypoint('${escapeJsString(id)}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"openChat('${nodeId}', '${nodeName}', 'dm')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"openExternalNodeMap('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"runNodeTool('request_position', '${nodeId}', '${nodeName}', this)\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"runNodeTool('request_telemetry', '${nodeId}', '${nodeName}', this)\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"setNodeAsReference('${nodeId}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"setWaypointHidden('${escapeJsString(id)}', ${hidden ? 'false' : 'true'})\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"setWaypointHidden('${escapeJsString(waypoint?.waypoint_id)}', true)\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"showWaypointOnMap('${escapeJsString(id)}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick='openNodeMap(${latitude}, ${longitude}, ${JSON.stringify(String(node?.node_id || \"\"))})'"
+  },
+  {
+    "file": "static/chat-updates-security.js",
+    "snippet": "onclick=\"navigator.clipboard.writeText('${escapeHtml((applyData.instructions || '').replace(/'/g, ''))}')\""
+  },
+  {
+    "file": "static/chat-updates-security.js",
+    "snippet": "onclick=\"navigator.clipboard.writeText('git checkout ${escapeHtml(sha)} && sudo systemctl restart meshcenter.service')\""
+  },
+  {
+    "file": "static/chat-updates-security.js",
+    "snippet": "onclick=\"pollAfterUpdateRestart('${escapeHtml(expectedVersion)}', Date.now())\""
+  },
+  {
     "file": "static/chat.js",
     "snippet": "onchange=\"_scheduleUpdateTargetVisibility('${prefix}')\""
   },
@@ -170,74 +238,6 @@
   {
     "file": "static/chat.js",
     "snippet": "onclick='openNodeMap(${pos.latitude}, ${pos.longitude}, ${JSON.stringify(String(node.node_id || \"\"))})'"
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onchange=\"toggleWaypointSelection('${escapeJsString(id)}', this.checked)\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"centerMapOnWaypoint('${escapeJsString(waypoint?.waypoint_id)}')\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"copyCoordinates('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"copyCoordinates('${pos ? pos.latitude : ''}', '${pos ? pos.longitude : ''}')\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"deleteWaypoint('${escapeJsString(id)}')\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"openChat('${nodeId}', '${nodeName}', 'dm')\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"openExternalNodeMap('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"runNodeTool('request_position', '${nodeId}', '${nodeName}', this)\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"runNodeTool('request_telemetry', '${nodeId}', '${nodeName}', this)\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"setNodeAsReference('${nodeId}')\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"setWaypointHidden('${escapeJsString(id)}', ${hidden ? 'false' : 'true'})\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"setWaypointHidden('${escapeJsString(waypoint?.waypoint_id)}', true)\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"showWaypointOnMap('${escapeJsString(id)}')\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick='openNodeMap(${latitude}, ${longitude}, ${JSON.stringify(String(node?.node_id || \"\"))})'"
-  },
-  {
-    "file": "static/chat-updates-security.js",
-    "snippet": "onclick=\"navigator.clipboard.writeText('${escapeHtml((applyData.instructions || '').replace(/'/g, ''))}')\""
-  },
-  {
-    "file": "static/chat-updates-security.js",
-    "snippet": "onclick=\"navigator.clipboard.writeText('git checkout ${escapeHtml(sha)} && sudo systemctl restart meshcenter.service')\""
-  },
-  {
-    "file": "static/chat-updates-security.js",
-    "snippet": "onclick=\"pollAfterUpdateRestart('${escapeHtml(expectedVersion)}', Date.now())\""
   },
   {
     "file": "static/media.js",

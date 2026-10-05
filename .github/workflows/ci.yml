@@ -115,6 +115,9 @@ jobs:
       - name: browser asset cache-busting check
         run: python scripts/check_asset_cache_busting.py
 
+      - name: inline event-handler ratchet (H2-D, F1.3)
+        run: python scripts/check_inline_handlers.py
+
       - name: API docs consistency check (H2-A4)
         run: python scripts/check_api_docs.py
 

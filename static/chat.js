@@ -544,14 +544,14 @@ function renderNotificationsCard(notifications, unreadCount) {
     const readCls = n.read ? 'notifications-item--read' : '';
 
     html += `
-      <div class="notifications-item ${readCls}" data-id="${n.id}"
-           onclick="markBackendNotificationRead('${n.id}', this)">
+      <div class="notifications-item ${readCls}" data-id="${escapeHtml(n.id)}"
+           data-chat-action="notif-mark-read">
         <span class="notifications-item-icon">${icon}</span>
         <span class="notifications-item-time">${timeStr}</span>
         <span class="notifications-item-title">${escapeHtml(n.title)}</span>
         ${n.body ? `<span class="notifications-item-body">${escapeHtml(n.body)}</span>` : ''}
         <button class="notifications-item-dismiss"
-                onclick="event.stopPropagation(); deleteNotification('${n.id}', this.closest('.notifications-item'))"
+                data-chat-action="notif-dismiss"
                 aria-label="Dismiss">✕</button>
       </div>`;
   }
@@ -4250,6 +4250,49 @@ function escapeHtml(value) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 }
+
+// ============================================================
+// Delegated click handling for data-chat-action (H2-D / F1.2).
+// One document-level listener dispatching by data-chat-action, replacing
+// per-row onclick="fn('${escapeJsString(x)}')" attributes built from
+// template literals - the same shape as static/files.js's own
+// data-files-action delegation (see that file's "event delegation (C10)"
+// section). An action->handler map, not an if-chain: with 60+ sites still
+// to convert (see docs/security/xss-sink-inventory.md), a chain of `if
+// (action === ...)` would become unreadable long before that's done.
+//
+// Converting a render site: drop the onclick attribute, add
+// data-chat-action="<verb>" plus whatever data-* fields the handler needs,
+// add one entry to CHAT_ACTIONS below, then delete that site's entry from
+// scripts/inline_handler_allowlist.json. Being converted opportunistically
+// (whenever that render code is touched for an unrelated reason), not all
+// at once - see PR #333.
+//
+// Each handler receives (target, event) - `target` is the closest element
+// carrying the matched data-chat-action, not necessarily e.target itself
+// (a click can land on a child of the actionable element).
+const CHAT_ACTIONS = {
+    'notif-mark-read': (target) => {
+        markBackendNotificationRead(target.getAttribute('data-id'), target);
+    },
+    'notif-dismiss': (target) => {
+        // No stopPropagation() needed here (unlike the onclick="..." version
+        // this replaced): closest('[data-chat-action]') below already finds
+        // THIS button, not the containing row, since it's nearer to
+        // e.target - the row's own 'notif-mark-read' action is never
+        // consulted for a click that lands on the dismiss button.
+        const row = target.closest('.notifications-item');
+        deleteNotification(row ? row.getAttribute('data-id') : null, row);
+    },
+};
+
+function onChatActionClick(e) {
+    const target = e.target.closest('[data-chat-action]');
+    if (!target) return;
+    const handler = CHAT_ACTIONS[target.getAttribute('data-chat-action')];
+    if (handler) handler(target, e);
+}
+document.addEventListener('click', onChatActionClick);
 
 function formatTime(timeStr) {
     if (!timeStr) return '';

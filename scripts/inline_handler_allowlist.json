@@ -1,0 +1,246 @@
+[
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onchange=\"toggleWaypointSelection('${escapeJsString(id)}', this.checked)\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"centerMapOnWaypoint('${escapeJsString(waypoint?.waypoint_id)}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"copyCoordinates('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"copyCoordinates('${pos ? pos.latitude : ''}', '${pos ? pos.longitude : ''}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"deleteWaypoint('${escapeJsString(id)}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"openChat('${nodeId}', '${nodeName}', 'dm')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"openExternalNodeMap('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"runNodeTool('request_position', '${nodeId}', '${nodeName}', this)\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"runNodeTool('request_telemetry', '${nodeId}', '${nodeName}', this)\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"setNodeAsReference('${nodeId}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"setWaypointHidden('${escapeJsString(id)}', ${hidden ? 'false' : 'true'})\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"setWaypointHidden('${escapeJsString(waypoint?.waypoint_id)}', true)\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick=\"showWaypointOnMap('${escapeJsString(id)}')\""
+  },
+  {
+    "file": "static/chat-map.js",
+    "snippet": "onclick='openNodeMap(${latitude}, ${longitude}, ${JSON.stringify(String(node?.node_id || \"\"))})'"
+  },
+  {
+    "file": "static/chat-updates-security.js",
+    "snippet": "onclick=\"navigator.clipboard.writeText('${escapeHtml((applyData.instructions || '').replace(/'/g, ''))}')\""
+  },
+  {
+    "file": "static/chat-updates-security.js",
+    "snippet": "onclick=\"navigator.clipboard.writeText('git checkout ${escapeHtml(sha)} && sudo systemctl restart meshcenter.service')\""
+  },
+  {
+    "file": "static/chat-updates-security.js",
+    "snippet": "onclick=\"pollAfterUpdateRestart('${escapeHtml(expectedVersion)}', Date.now())\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onchange=\"_scheduleUpdateTargetVisibility('${prefix}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"${clickHandler}\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"activateNodeManagerProfile('${String(item.profile_id || '').replace(/'/g, \""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"closeNodeToolResult('${escapeHtml(nodeId)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"copyCoordinates('${pos.latitude}', '${pos.longitude}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"copyTextToClipboard('${String(radio.node_id || '').replace(/'/g, \""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"deleteTimer('${escapeHtml(t.id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"editRadioConnection('${escapedTransport}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"event.stopPropagation(); copyNodeId('${escapeHtml(node.node_id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"event.stopPropagation(); deleteScheduleRule('${escapeHtml(rule.id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"event.stopPropagation(); openNodeFilesFiltered('${escapeHtml(directionFilter)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"event.stopPropagation(); openNodeMap(${latitude}, ${longitude})\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"event.stopPropagation(); toggleScheduleEnabled('${escapeHtml(rule.id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"markNotificationRead('${escapeJsString(item.id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"openChat('${escapeJsString(nodeId)}', '${escapeJsString(displayName)}', 'dm')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"openExternalNodeMap(${hasPosition ? position.latitude : 0}, ${hasPosition ? position.longitude : 0})\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"openNodeMap(${hasPosition ? node.position.latitude : 0}, ${hasPosition ? node.position.longitude : 0}, '${escapeHtml(node.node_id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"openScheduleForm('${escapeHtml(rule.id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"pauseTimer('${escapeHtml(t.id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"reconnectActiveTransport('${type}'); setTimeout(() => loadNodeManagerDashboard(), 1800);\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"refreshNodeMetrics('${escapeHtml(node.node_id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"removeRadioConnection('${escapedTransport}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"resetTimer('${escapeHtml(t.id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"resumeTimer('${escapeHtml(t.id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"runNodeTool('request_position', '${escapeJsString(node.node_id)}', '${escapeJsString(node.clean_name || node.name || node.node_id)}', this)\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"runNodeTool('request_position', '${escapeJsString(nodeId)}', '${escapeJsString(displayName)}', this)\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"runNodeTool('request_telemetry', '${escapeJsString(nodeId)}', '${escapeJsString(displayName)}', this)\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"runNodeTool('request_telemetry', '${nodeId}', '${nodeName}', this)\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"runNodeTool('traceroute', '${escapeJsString(node.node_id)}', '${escapeJsString(node.clean_name || node.name || node.node_id)}', this)\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"runNodeTool('traceroute', '${escapeJsString(nodeId)}', '${escapeJsString(displayName)}', this)\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"runNotificationAction('${escapeJsString(item.id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"setActiveCamera('${escapeHtml(camera.id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"setNodeAsReference('${escapeHtml(node.node_id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"setNodeAsReference('${escapeHtml(nodeId)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"stopTimer('${escapeHtml(t.id)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"switchNodeDetailTab('${escapeHtml(tab.id)}', '${escapeHtml(nodeId)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"toggleFavorite('${escapeHtml(nodeId)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"toggleIgnore('${escapeHtml(nodeId)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"toggleNodeDetailCollapse('${escapeHtml(nodeId)}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"useRadioConnection('${escapedTransport}')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"viewTelemetryHistory('${nodeId}', 'environment')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick=\"viewTelemetryHistory('${nodeId}', 'power')\""
+  },
+  {
+    "file": "static/chat.js",
+    "snippet": "onclick='openNodeMap(${pos.latitude}, ${pos.longitude}, ${JSON.stringify(String(node.node_id || \"\"))})'"
+  },
+  {
+    "file": "static/media.js",
+    "snippet": "onclick='deleteMediaItem(${handlerFilename}, event)'"
+  }
+]

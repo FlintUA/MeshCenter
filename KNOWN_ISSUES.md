@@ -161,8 +161,8 @@ Status detail: covered by an extensive unit-test suite
 against the specific regressions each test claims to catch.
 
 ## KI-009: Quiet-period listener restarts during normal operation (monitoring, not confirmed as a #331 regression)
-Status: open, under passive measurement since 2026-10-05 (PR #331 merged
-as `23d3671`), not a release blocker
+Status: **closed, pre-existing/cosmetic** - resolved by the 24h passive
+measurement below (PR #331 merged as `23d3671`), not a release blocker
 Symptom: during normal operation the serial listener subprocess restarts
 a handful of times per hour for two unrelated, non-hardware reasons:
 1. `get_channels()`/`set_device_time()` legitimately pause the listener
@@ -231,3 +231,27 @@ of the next occurrence to find what (if anything) touches the port
 concurrently, before considering any code change. A rate at or below
 that, with every occurrence self-recovering, closes this out as
 pre-existing/cosmetic and this entry is updated to reflect that.
+
+**24h measurement result (dev, 2026-10-05 16:35 CEST -
+2026-10-06 16:46 CEST, ~24h12m):** `journalctl -u meshcenter.service`
+over the full window shows **zero** "Closing our port" lines and
+**zero** `LISTENER_DOWN` lines (2,902 `radio_health_worker` ticks, all
+`status=OK`) - a measured rate of **0/hr** for both signals, well below
+the ~3/hr threshold. One service restart occurred inside the window
+(18:04:28-18:04:50 CEST), tied to the deploy of PR #332 (this same
+KI-009 doc commit) and PR #333 (unrelated H2-D work) - excluded as
+deliberate maintenance per the plan above; it was the only gap, lasted
+22s, and dev's checkout stayed on a descendant of `23d3671` (confirmed
+via `git merge-base --is-ancestor 23d3671 HEAD`) for the entire window,
+so the measurement covers continuous #331-inclusive operation
+throughout. `dmesg -T` shows no USB disconnect/reconnect events for the
+radio's device during the window either (the only USB JTAG/serial
+events in the ring buffer are from 2026-10-04, two days prior, and
+unrelated to the Meshtastic radio). Decision: rate at/below threshold,
+closing this out as pre-existing/cosmetic per the stated rule - no
+further action needed on #331 specifically. The original item 2
+quirk ("Closing our port"/exit-1, no dmesg event) may still occur at
+low background rates under different conditions (the same-day A/B
+upstream suggested it exists on `main` too, at ~1-4/hr depending on
+sample), but this measurement found no evidence it is elevated by
+#331's hot-reconnect changes.

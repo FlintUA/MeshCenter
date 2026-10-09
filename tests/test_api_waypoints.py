@@ -353,3 +353,11 @@ def test_send_returns_500_waypoint_send_failed_for_other_transport_errors(waypoi
 
     assert response.status_code == 500
     assert response.get_json()["error_code"] == "waypoint_send_failed"
+
+
+def test_send_rejects_expiration_out_of_valid_range(waypoint_env):
+    response = waypoint_env["client"].post(
+        "/api/waypoints/send", json=_valid_send_payload(expire_at=10**20),
+    )
+    assert response.status_code == 400
+    assert response.get_json()["error_code"] == "waypoint_expiration_out_of_range"

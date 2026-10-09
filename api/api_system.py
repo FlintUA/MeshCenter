@@ -12,6 +12,31 @@ from utils.helpers import get_device_model
 MESHCenter_SERVICE = "meshcenter.service"
 
 
+def _validate_ssid(ssid):
+    """None if usable, else a short reason. 802.11 SSIDs are 1-32 octets; a
+    leading '-' would be parsed as an option by nmcli, and control
+    characters (newline in particular) would corrupt the NetworkManager
+    keyfile the helper writes."""
+    if not ssid:
+        return "SSID is required"
+    if len(ssid.encode("utf-8")) > 32:
+        return "SSID exceeds the maximum length of 32 bytes"
+    if ssid.startswith("-"):
+        return "Invalid SSID"
+    if any(ord(c) < 32 or ord(c) == 127 for c in ssid):
+        return "SSID contains invalid control characters"
+    return None
+
+
+def _json_object_or_none():
+    """The request body as a dict, or None for invalid JSON / a non-object."""
+    data = request.get_json(force=True, silent=True)
+    return data if isinstance(data, dict) else None
+
+
+_INVALID_BODY = ({"ok": False, "error": "Invalid JSON payload"}, 400)
+
+
 def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
     @app.route("/api/system/log")
@@ -230,7 +255,8 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
             return jsonify({"ok": True, "processes": results[:5]})
         except Exception as exc:
-            return jsonify({"ok": False, "error": str(exc)}), 500
+            log_system_event("Top processes failed", "ERROR", str(exc), source="system")
+            return jsonify({"ok": False, "error": "Failed to retrieve top processes"}), 500
 
     def get_saved_wifi_names():
         result = network_config.list_wifi_connections()
@@ -320,11 +346,14 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
     @app.route("/api/system/wifi/connect", methods=["POST"])
     def api_system_wifi_connect():
-        data = request.get_json(force=True)
-        ssid = (data.get("ssid") or "").strip()
-        password = data.get("password") or ""
-        if not ssid:
-            return jsonify({"ok": False, "error": "SSID is required"}), 400
+        data = _json_object_or_none()
+        if data is None:
+            return jsonify(_INVALID_BODY[0]), 400
+        ssid = str(data.get("ssid") or "").strip()
+        password = str(data.get("password") or "")
+        ssid_err = _validate_ssid(ssid)
+        if ssid_err:
+            return jsonify({"ok": False, "error": ssid_err}), 400
         # meshsrv.network_config.connect() sends `password` to the helper's
         # stdin, never as an argv element (P1 #8) - and the helper itself
         # unconditionally replaces any existing profile for this SSID
@@ -339,10 +368,13 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
     @app.route("/api/system/wifi/forget", methods=["POST"])
     def api_system_wifi_forget():
-        data = request.get_json(force=True)
-        ssid = (data.get("ssid") or "").strip()
-        if not ssid:
-            return jsonify({"ok": False, "error": "SSID is required"}), 400
+        data = _json_object_or_none()
+        if data is None:
+            return jsonify(_INVALID_BODY[0]), 400
+        ssid = str(data.get("ssid") or "").strip()
+        ssid_err = _validate_ssid(ssid)
+        if ssid_err:
+            return jsonify({"ok": False, "error": ssid_err}), 400
         result = network_config.forget(ssid)
         if result.get("ok"):
             return jsonify({"ok": True, "message": result.get("stdout", "")})
@@ -454,14 +486,18 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
     def api_create_schedule():
         from meshsrv.schedule_engine import create_rule
 
-        data = request.get_json(force=True)
+        data = _json_object_or_none()
+        if data is None:
+            return jsonify(_INVALID_BODY[0]), 400
         return jsonify(create_rule(data)), 201
 
     @app.route("/api/schedules/<sid>", methods=["PUT"])
     def api_update_schedule(sid):
         from meshsrv.schedule_engine import update_rule
 
-        data = request.get_json(force=True)
+        data = _json_object_or_none()
+        if data is None:
+            return jsonify(_INVALID_BODY[0]), 400
         result = update_rule(sid, data)
         if result is None:
             return jsonify({"error": "not found"}), 404
@@ -493,7 +529,9 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
     def api_create_timer():
         from meshsrv.timer_service import create_timer
 
-        data = request.get_json(force=True)
+        data = _json_object_or_none()
+        if data is None:
+            return jsonify(_INVALID_BODY[0]), 400
         label = data.get("label", "")
         duration_s = data.get("duration_s")
         notify_cfg = data.get("notify")

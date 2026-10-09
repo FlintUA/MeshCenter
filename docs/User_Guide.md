@@ -842,6 +842,7 @@ MeshCenter is intended for a trusted local network, and uses unencrypted HTTP by
 
 - Do not forward port 5000 directly to the Internet — use a VPN or authenticated/TLS-terminating reverse proxy for genuine remote access.
 - Keep the sudoers rules limited to the supplied commands.
+- If `data/initial_password.txt` exists (written by v1.8.x first-run), it is a plaintext copy of an old generated password. MeshCenter warns about it at every start (System Log + notification); change your password in Settings → Security if you never did, then delete the file — it is never removed automatically.
 - Back up local data before updates or hardware migration.
 - Remove Wi-Fi credentials, channel keys and personal message content before sharing logs or backups.
 - If you ever suspect your password or session was exposed, change the password immediately — that logs out every other session at once (see above).

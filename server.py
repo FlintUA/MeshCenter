@@ -104,6 +104,8 @@ from system.cpu_history import (
     register_cpu_history_routes,
 )
 from api.api_auth import register_auth_routes, load_auth_state
+from api.security_headers import register_security_headers
+from meshsrv.initial_password_check import warn_if_initial_password_file
 from system_log import log_system_event
 from storage.waypoint_store import WaypointStore
 from storage.profile_manager import ProfileManager
@@ -6495,6 +6497,7 @@ def resolve_ui_language():
 # near app = Flask(__name__)) because it needs state_lock/resolve_ui_language,
 # both defined above this point but not yet when app/auth_state were created.
 register_auth_routes(app, state_lock, auth_state, AUTH_FILE, handle_errors, resolve_ui_language=resolve_ui_language)
+register_security_headers(app)
 
 # Each provider owns its own ui.language -> provider-language-code mapping
 # (see WeatherProvider.LANGUAGE_MAP in weather/providers/base.py) since that
@@ -8769,6 +8772,14 @@ def start_runtime():
     # these up. 300s margin is generous slack past any write this process
     # could plausibly still have in flight at its own startup.
     cleanup_stale_temp_files(DATA_DIR, older_than_s=300)
+
+    # H3: warn once per start if a v1.8.x plaintext first-run password file
+    # is still lying around (never prints it, never deletes it).
+    try:
+        from meshsrv.notification_service import push_notification as _push_notification
+        warn_if_initial_password_file(DATA_DIR, auth_state, log_system_event, _push_notification)
+    except Exception as _exc:  # noqa: BLE001 - a warning must never block startup
+        print(f"[SECURITY] initial_password.txt check failed: {_exc}", flush=True)
 
     # Verify the physical radio before loading or mutating radio-profile data.
     startup_info_output = verify_radio_identity()

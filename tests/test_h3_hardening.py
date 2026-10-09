@@ -198,3 +198,21 @@ def test_delete_screenshot_refuses_directories(tmp_path, monkeypatch):
     body, status = cam.delete_screenshot("2026-10-01/a.jpg")
     assert status == 200
     assert not (tmp_path / "2026-10-01" / "a.jpg").exists()
+
+
+def test_handle_errors_sanitizes_exception_and_traceback(server_module):
+    app = Flask(__name__)
+
+    @app.route("/error")
+    @server_module.handle_errors
+    def faulty_route():
+        raise RuntimeError("secret internal error: /var/secrets/key.txt")
+
+    client = app.test_client()
+    res = client.get("/error")
+    assert res.status_code == 500
+    data = res.get_json()
+    assert data["ok"] is False
+    assert data["error"] == "Internal server error"
+    assert "traceback" not in data
+    assert "secret" not in res.get_data(as_text=True)
